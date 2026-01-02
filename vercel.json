@@ -3,6 +3,6 @@
     { "source": "/:path", "destination": "/index.html" },
     { "source": "/api/ncm/:path*", "destination": "https://ncm-api.prod.gbclstudio.cn/:path*" },
     { "source": "/api/la/:path*", "destination": "https://lyric-atlas-api.vercel.app/:path*" },
-    { "source": "/api/unm/:path*", "destination": "https://unm-server-8s5wg0k47-burial0268s-projects.vercel.app/:path*" }
+    { "source": "/api/unm/:path*", "destination": "https://unm-api.prod.gbclstudio.cn/:path*" }
   ]
 }
