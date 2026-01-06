@@ -1,18 +1,20 @@
 import axios from "axios";
+let baseURL = "";
 
 switch (process.env.NODE_ENV) {
   case "production":
     // 生产环境也使用 '/api'，需要在部署服务器 (Nginx、Apache、Netlify 等) 上做反向代理到真实后端，规避 CORS
-    axios.defaults.baseURL = "/api/ncm";
+    baseURL = import.meta.env.VITE_MUSIC_API;
     break;
   case "development":
-    axios.defaults.baseURL = "/api/ncm";
+    baseURL = "/api/ncm";
     break;
   default:
-    axios.defaults.baseURL = "/api/ncm";
+    baseURL = "/api/ncm";
     break;
 }
 
+axios.defaults.baseURL = baseURL;
 axios.defaults.timeout = 30000;
 axios.defaults.headers.common["X-Requested-With"] = "XMLHttpRequest";
 axios.defaults.withCredentials = true;
@@ -38,7 +40,7 @@ axios.interceptors.request.use(
     } else {
       // 对其他请求：
       // 1. 确保使用默认的 baseURL
-      request.baseURL = "/api/ncm";
+      request.baseURL = baseURL;
       // 2. 确保凭据设置为 true
       request.withCredentials = true;
       // 3. 确保 X-Requested-With 请求头存在

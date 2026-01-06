@@ -45,8 +45,7 @@ export const getMusicUrl = (id, level = "exhigh") => {
  */
 export const getMusicNumUrl = async (id) => {
   const server = "qq,pyncmd";
-  // 走同源代理路径，方便 dev/preview 代理和 Vercel rewrites 统一处理
-  const url = `/api/unm/match?id=${id}&server=${server}`;
+  const url = `${import.meta.env.VITE_UNM_API}match?id=${id}&server=${server}`;
   const response = await fetch(url, {
     method: "GET",
     headers: {
