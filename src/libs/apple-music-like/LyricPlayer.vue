@@ -31,9 +31,6 @@ const site = siteStore();
 const music = musicStore();
 const setting = settingStore();
 
-// 计算字体大小（用于 CSS v-bind）
-const fontSize = computed(() => `${setting.lyricsFontSize * 3}px`);
-
 // 直接复制 AMLL-Editor 的实现模式
 const playerKey = ref(Symbol());
 const amllLyricLines = shallowRef<LyricLine[]>([]);
@@ -74,10 +71,17 @@ const mainColor = computed(() => {
   return `rgb(${site.songPicColor})`;
 });
 
-// 只设置 AMLL-Editor 使用的样式变量（不设置 font-size，让组件使用默认值）
+// 设置样式（直接设置，不使用 v-bind 转换）
 const lyricStyles = computed(() => ({
   '--amll-lp-color': mainColor.value,
   '--amll-lyric-view-color': mainColor.value,
+  'font-weight': setting.lyricFontWeight,
+  'font-family': setting.lyricFont,
+  'letter-spacing': setting.lyricLetterSpacing,
+  'font-size': `${setting.lyricsFontSize * 3}px`,
+  'cursor': 'pointer',
+  'user-select': 'none',
+  '-webkit-tap-highlight-color': 'transparent',
 }));
 
 // 处理歌词点击（参考 AMLL-Editor 的 jumpSeek）
@@ -129,13 +133,6 @@ watch(
   line-height: 1.5;
   --bright-mask-alpha: 1;
   --dark-mask-alpha: 0.4;
-  font-weight: v-bind('setting.lyricFontWeight');
-  font-family: v-bind('setting.lyricFont');
-  letter-spacing: v-bind('setting.lyricLetterSpacing');
-  font-size: v-bind('fontSize');
-  cursor: pointer;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
 
   // Fix padding issue: letters like 'j' get cut off
   span[class^='_emphasizeWrapper'] span {
