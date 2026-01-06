@@ -664,8 +664,17 @@ const parseAMData = (
     translatedLyric = translatedLyric || ""; // Ensure it's not null/undefined
     romanLyric = romanLyric || "";
 
+    // 确保 words 数组包含所有必需的字段（romanWord 和 obscene 将在 convertToAMLL 中添加）
+    const words = (line.words || []).map(w => ({
+      word: w.word,
+      startTime: w.startTime,
+      endTime: w.endTime,
+      // 保留原始数据中可能存在的额外字段
+      ...(w as any),
+    }));
+    
     return {
-      words: line.words || [], // words from main lyric line (LyricWord[])
+      words, // words from main lyric line，将在 convertToAMLL 中转换为 AMLL 格式
       startTime: startTimeMs,
       endTime: endTimeMs,
       translatedLyric,
