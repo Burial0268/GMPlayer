@@ -30,7 +30,9 @@ import '@applemusic-like-lyrics/core/style.css';
 const site = siteStore();
 const music = musicStore();
 const setting = settingStore();
-const fontSize = ref(setting.lyricsFontSize * 3);
+
+// 计算字体大小（用于 CSS v-bind）
+const fontSize = computed(() => `${setting.lyricsFontSize * 3}px`);
 
 // 直接复制 AMLL-Editor 的实现模式
 const playerKey = ref(Symbol());
@@ -67,19 +69,15 @@ const alignPosition = computed(() =>
   setting.lyricsBlock === 'center' ? 0.5 : 0.2
 );
 
-// 计算歌词样式
+const mainColor = computed(() => {
+  if (!setting.immersivePlayer) return "rgb(239, 239, 239)";
+  return `rgb(${site.songPicColor})`;
+});
+
+// 只设置 AMLL-Editor 使用的样式变量（不设置 font-size，让组件使用默认值）
 const lyricStyles = computed(() => ({
   '--amll-lp-color': mainColor.value,
-  '--amll-lp-font-size': `${fontSize.value}px`,
-  '--amll-lp-height': setting.lyricLineHeight,
-  '--amll-lp-word-spacing': '0em',
-  'font-weight': setting.lyricFontWeight,
-  'font-family': setting.lyricFont,
-  'letter-spacing': setting.lyricLetterSpacing,
-  'cursor': 'pointer',
   '--amll-lyric-view-color': mainColor.value,
-  'user-select': 'none',
-  '-webkit-tap-highlight-color': 'transparent'
 }));
 
 // 处理歌词点击（参考 AMLL-Editor 的 jumpSeek）
@@ -89,11 +87,6 @@ const handleLineClick = (line: any) => {
   emit("lrcTextClick", time / 1000);
   emit("line-click", line);
 };
-
-const mainColor = computed(() => {
-  if (!setting.immersivePlayer) return "rgb(239, 239, 239)";
-  return `rgb(${site.songPicColor})`;
-});
 
 // 更新歌词数据（直接复制 AMLL-Editor 的 watch 模式）
 watch(
@@ -136,6 +129,13 @@ watch(
   line-height: 1.5;
   --bright-mask-alpha: 1;
   --dark-mask-alpha: 0.4;
+  font-weight: v-bind('setting.lyricFontWeight');
+  font-family: v-bind('setting.lyricFont');
+  letter-spacing: v-bind('setting.lyricLetterSpacing');
+  font-size: v-bind('fontSize');
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 
   // Fix padding issue: letters like 'j' get cut off
   span[class^='_emphasizeWrapper'] span {
