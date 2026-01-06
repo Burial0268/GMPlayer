@@ -92,65 +92,58 @@ function parseLrcToTimeMap(lrcText: string): Map<number, string> {
 }
 
 /**
- * 查找最接近的时间戳匹配（优化版：使用排序数组和二分查找）
+ * 查找最接近的时间戳匹配
+ * 优先选择时间戳 <= targetTime 且最接近的匹配，确保翻译/音译与原文正确对应
  * @param targetTime 目标时间
  * @param timeMap 时间映射
  * @param tolerance 容差范围
  * @returns 匹配的文本
  */
 function findBestTimeMatch(targetTime: number, timeMap: Map<number, string>, tolerance: number = 5000): string {
-  if (!timeMap || timeMap.size === 0) {
-    return "";
-  }
-  
   // 首先尝试精确匹配
   if (timeMap.has(targetTime)) {
     return timeMap.get(targetTime) || "";
   }
   
-  // 将 Map 转换为排序数组以提高查找效率
-  const sortedEntries = Array.from(timeMap.entries()).sort((a, b) => a[0] - b[0]);
-  
-  // 二分查找最接近的时间戳
-  let low = 0;
-  let high = sortedEntries.length - 1;
-  let closestMatch = "";
+  // 优先查找时间戳 <= targetTime 且最接近的匹配
+  let bestMatch = "";
+  let bestTime = -1;
   let minDiff = tolerance + 1;
   
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const [time, text] = sortedEntries[mid];
-    const diff = Math.abs(time - targetTime);
-    
-    if (diff < minDiff && diff <= tolerance) {
-      minDiff = diff;
-      closestMatch = text;
-    }
-    
-    if (time < targetTime) {
-      low = mid + 1;
-    } else {
-      high = mid - 1;
+  // 首先查找 <= targetTime 的最佳匹配
+  for (const [time, text] of timeMap.entries()) {
+    if (time <= targetTime) {
+      const diff = targetTime - time;
+      if (diff < minDiff) {
+        minDiff = diff;
+        bestTime = time;
+        bestMatch = text;
+      }
     }
   }
   
-  // 检查相邻元素（可能在二分查找边界附近）
-  if (low < sortedEntries.length) {
-    const [time, text] = sortedEntries[low];
-    const diff = Math.abs(time - targetTime);
-    if (diff < minDiff && diff <= tolerance) {
-      closestMatch = text;
+  // 如果没有找到 <= targetTime 的匹配，或者找到的匹配超出容差，尝试查找 > targetTime 的匹配（在容差范围内）
+  if (bestTime < 0 || minDiff > tolerance) {
+    let futureMinDiff = tolerance + 1;
+    let futureMatch = "";
+    
+    for (const [time, text] of timeMap.entries()) {
+      if (time > targetTime) {
+        const diff = time - targetTime;
+        if (diff < futureMinDiff && diff <= tolerance) {
+          futureMinDiff = diff;
+          futureMatch = text;
+        }
+      }
     }
-  }
-  if (high >= 0) {
-    const [time, text] = sortedEntries[high];
-    const diff = Math.abs(time - targetTime);
-    if (diff < minDiff && diff <= tolerance) {
-      closestMatch = text;
+    
+    // 如果找到未来的匹配，且比过去的匹配更接近，使用未来的匹配
+    if (futureMatch && (bestTime < 0 || futureMinDiff < minDiff)) {
+      return futureMatch;
     }
   }
   
-  return closestMatch;
+  return bestMatch;
 }
 
 /**
@@ -237,8 +230,19 @@ export function createLyricsProcessor(songLyric: SongLyric, settings: SettingSta
   // 首先转换为 AMLL 格式
   const amllLines = convertToAMLL(rawLyricsSource);
   
+  // 过滤空行：没有 words 或 words 为空的歌词行
+  const validLines = amllLines.filter((line) => {
+    // 检查是否有有效的 words
+    if (!line.words || line.words.length === 0) {
+      return false;
+    }
+    // 检查 words 中是否有非空内容
+    const hasContent = line.words.some(w => w.word && w.word.trim().length > 0);
+    return hasContent;
+  });
+  
   // 然后根据设置应用翻译和音译
-  return amllLines.map((line) => {
+  return validLines.map((line) => {
     // 根据设置动态决定是否包含翻译和音译
     let translatedLyric = line.translatedLyric;
     if (settings.showTransl) {
