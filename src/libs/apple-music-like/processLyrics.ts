@@ -1,29 +1,11 @@
 import { toRaw } from 'vue';
-import type { ComputedRef } from 'vue';
-import type { Store } from 'pinia';
+// 使用 @applemusic-like-lyrics/core 的类型定义，与 AMLL-Editor 保持一致
+import type { LyricLine as AMLLLine, LyricWord as AMLLWord } from '@applemusic-like-lyrics/core';
 
-/**
- * 歌词单词接口
- */
-export interface LyricWord {
-  word: string;
-  startTime: number;
-  endTime: number;
-  // rawWord?: InputLyricWord; // 可选，用于调试
-}
-
-/**
- * 歌词行接口
- */
-export interface LyricLine {
-  startTime: number;
-  endTime: number;
-  words: LyricWord[];
-  translatedLyric: string;
-  romanLyric: string;
-  isBG: boolean;
-  isDuet: boolean;
-}
+// 重新导出类型，方便其他模块使用
+export type { LyricLine as AMLLLine, LyricWord as AMLLWord };
+export type LyricLine = AMLLLine;
+export type LyricWord = AMLLWord;
 
 /**
  * 歌词数据接口
@@ -110,26 +92,60 @@ function parseLrcToTimeMap(lrcText: string): Map<number, string> {
 }
 
 /**
- * 查找最接近的时间戳匹配
+ * 查找最接近的时间戳匹配（优化版：使用排序数组和二分查找）
  * @param targetTime 目标时间
  * @param timeMap 时间映射
  * @param tolerance 容差范围
  * @returns 匹配的文本
  */
 function findBestTimeMatch(targetTime: number, timeMap: Map<number, string>, tolerance: number = 5000): string {
+  if (!timeMap || timeMap.size === 0) {
+    return "";
+  }
+  
   // 首先尝试精确匹配
   if (timeMap.has(targetTime)) {
     return timeMap.get(targetTime) || "";
   }
   
-  // 查找时间差最小的匹配
-  let closestMatch = "";
-  let minDiff = tolerance;
+  // 将 Map 转换为排序数组以提高查找效率
+  const sortedEntries = Array.from(timeMap.entries()).sort((a, b) => a[0] - b[0]);
   
-  for (const [time, text] of timeMap.entries()) {
+  // 二分查找最接近的时间戳
+  let low = 0;
+  let high = sortedEntries.length - 1;
+  let closestMatch = "";
+  let minDiff = tolerance + 1;
+  
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const [time, text] = sortedEntries[mid];
     const diff = Math.abs(time - targetTime);
-    if (diff < minDiff) {
+    
+    if (diff < minDiff && diff <= tolerance) {
       minDiff = diff;
+      closestMatch = text;
+    }
+    
+    if (time < targetTime) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  
+  // 检查相邻元素（可能在二分查找边界附近）
+  if (low < sortedEntries.length) {
+    const [time, text] = sortedEntries[low];
+    const diff = Math.abs(time - targetTime);
+    if (diff < minDiff && diff <= tolerance) {
+      closestMatch = text;
+    }
+  }
+  if (high >= 0) {
+    const [time, text] = sortedEntries[high];
+    const diff = Math.abs(time - targetTime);
+    if (diff < minDiff && diff <= tolerance) {
       closestMatch = text;
     }
   }
@@ -218,69 +234,64 @@ export function createLyricsProcessor(songLyric: SongLyric, settings: SettingSta
     }
   }
 
-  // 单遍处理所有歌词行
-  return rawLyricsSource.map((rawLineData: InputLyricLine, lineIndex: number): LyricLine => {
-    const rawLine = toRaw(rawLineData); // Ensure we are working with the raw object
-    
-    const processedWords = processWords(rawLine.words || []);
-
-    // 确定行开始和结束时间，优先使用行级别的时间戳
-    let lineStartTime: number = rawLine.startTime ?? (processedWords.length > 0 ? processedWords[0].startTime : 0);
-    let lineEndTime: number = rawLine.endTime ?? 
-                           (processedWords.length > 0 ? 
-                            processedWords[processedWords.length - 1].endTime : 
-                            lineStartTime); // Fallback to startTime if no words
-    
-    // 确保 endTime 不早于 startTime
-    if (lineEndTime < lineStartTime && processedWords.length > 0) {
-        lineEndTime = Math.max(processedWords[processedWords.length - 1].endTime, lineStartTime);
-    }
-     if (lineEndTime < lineStartTime) { // Final fallback if still inconsistent
-        lineEndTime = lineStartTime;
-    }
-
+  // 首先转换为 AMLL 格式
+  const amllLines = convertToAMLL(rawLyricsSource);
+  
+  // 然后根据设置应用翻译和音译
+  return amllLines.map((line) => {
     // 根据设置动态决定是否包含翻译和音译
-    let translatedLyric = "";
+    let translatedLyric = line.translatedLyric;
     if (settings.showTransl) {
-      // 优先使用行内预填充的翻译，否则从LRC时间映射中查找
-      translatedLyric = rawLine.translatedLyric || findBestTimeMatch(lineStartTime, translationMap);
+      // 如果行内没有翻译，从LRC时间映射中查找
+      if (!translatedLyric && translationMap.size > 0) {
+        translatedLyric = findBestTimeMatch(line.startTime, translationMap);
+      }
+    } else {
+      translatedLyric = ""; // 如果设置关闭，清空翻译
     }
 
-    let romanLyric = "";
+    let romanLyric = line.romanLyric;
     if (settings.showRoma) {
-      // 优先使用行内预填充的音译，否则从LRC时间映射中查找
-      romanLyric = rawLine.romanLyric || findBestTimeMatch(lineStartTime, romajiMap);
+      // 如果行内没有音译，从LRC时间映射中查找
+      if (!romanLyric && romajiMap.size > 0) {
+        romanLyric = findBestTimeMatch(line.startTime, romajiMap);
+      }
+    } else {
+      romanLyric = ""; // 如果设置关闭，清空音译
     }
 
     return {
-      startTime: lineStartTime,
-      endTime: lineEndTime,
-      words: processedWords,
+      ...line,
       translatedLyric,
       romanLyric,
-      isBG: rawLine.isBG ?? false,
-      isDuet: rawLine.isDuet ?? false,
     };
   });
 }
 
 /**
- * 处理原始单词数组，确保空格等特殊单词被正确处理。
- * @param words 原始单词数组 (来自解析库)
- * @returns 处理后的单词数组 (用于 LyricPlayer)
+ * 转换歌词行数据为 AMLL 格式
+ * 直接复制 AMLL-Editor 的 convertToAMLL 实现模式
+ * @see https://github.com/Linho1219/AMLL-Editor/blob/main/src/core/convert/amll.ts
+ * 
+ * @param lines 内部歌词行数组（包含 words 数组，来自 parseAMData）
+ * @returns AMLL 格式的歌词行数组（符合 @applemusic-like-lyrics/core 的 LyricLine 类型）
  */
-function processWords(words: InputLyricWord[]): LyricWord[] {
-  if (!words || words.length === 0) {
-    return [];
-  }
-  // 直接映射，假设解析库提供的单词已包含正确的空格表示
-  // (例如，TTML解析器应将空格处理为单独的word对象，如 {"startTime":0,"endTime":0,"word":" "})
-  return words.map(w => ({
-    word: w.word,
-    startTime: w.startTime,
-    endTime: w.endTime,
-    // rawWord: w // 调试时可以取消注释
-  }));
+function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
+  return lines.map((l) => ({
+    words: (l.words || []).map((w) => ({
+      startTime: w.startTime,
+      endTime: w.endTime,
+      word: w.word,
+      romanWord: (w as any).romanWord ?? (w as any).romanization ?? "",
+      obscene: (w as any).obscene ?? false,
+    })),
+    translatedLyric: l.translatedLyric ?? "",
+    romanLyric: l.romanLyric ?? "",
+    isBG: l.isBG ?? false,
+    isDuet: l.isDuet ?? false,
+    startTime: l.startTime ?? 0,
+    endTime: l.endTime ?? 0,
+  }))
 }
 
 /**

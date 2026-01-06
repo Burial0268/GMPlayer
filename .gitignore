@@ -28,3 +28,4 @@ coverage
 *.sln
 *.sw?
 .vercel
+ref/*
