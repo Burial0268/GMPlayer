@@ -46,34 +46,36 @@
               <Transition name="fade" mode="out-in">
                 <template v-if="setting.bottomLyricShow">
                   <Transition name="fade" mode="out-in">
-                    <AllArtists v-if="
-                      !music.getPlayState || !music.getPlaySongLyric?.lrc[0]
-                    " class="text-hidden" :artistsData="music.getPlaySongData.artist" />
-                    <n-text v-else-if="
-                      setting.showYrc &&
-                      music.getPlaySongLyricIndex != -1 &&
-                      music.getPlaySongLyric.hasYrc
-                    " class="lrc text-hidden">
-                      <n-text v-for="item in music.getPlaySongLyric.yrc[
-                        music.getPlaySongLyricIndex
-                      ].content" :key="item" :depth="3">
-                        {{ item.content }}
-                      </n-text>
-                    </n-text>
-                    <n-text v-else-if="
-                      music.getPlaySongLyricIndex != -1 &&
-                      music.getPlaySongLyric?.lrc[0]
-                    " class="lrc">
-                      <Transition name="fade" mode="out-in">
-                        <n-text class="text-hidden" :key="music.getPlaySongLyricIndex" :depth="3">
-                          {{
-                            music.getPlaySongLyric.lrc[
-                              music.getPlaySongLyricIndex
-                            ]?.content
-                          }}
+                    <template v-if="music.getPlaySongLyric?.lrc?.length">
+                      <n-text v-if="
+                        setting.showYrc &&
+                        music.getPlaySongLyricIndex != -1 &&
+                        music.getPlaySongLyric.hasYrc
+                      " class="lrc text-hidden">
+                        <n-text v-for="item in music.getPlaySongLyric.yrc[
+                          music.getPlaySongLyricIndex
+                        ].content" :key="item" :depth="3">
+                          {{ item.content }}
                         </n-text>
-                      </Transition>
-                    </n-text>
+                      </n-text>
+                      <n-text v-else class="lrc">
+                        <Transition name="fade" mode="out-in">
+                          <n-text
+                            class="text-hidden"
+                            :key="music.getPlaySongLyricIndex === -1 ? 'lrc-0' : music.getPlaySongLyricIndex"
+                            :depth="3"
+                          >
+                            {{
+                              music.getPlaySongLyric.lrc[
+                                music.getPlaySongLyricIndex === -1
+                                  ? 0
+                                  : music.getPlaySongLyricIndex
+                              ]?.content
+                            }}
+                          </n-text>
+                        </Transition>
+                      </n-text>
+                    </template>
                     <AllArtists v-else class="text-hidden" :artistsData="music.getPlaySongData.artist" />
                   </Transition>
                 </template>
