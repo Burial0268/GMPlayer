@@ -69,19 +69,6 @@
               {{ t('setting.eplorySetting.albumImageUrl.tip') }}
             </template>
           </n-form-item>
-          <!-- Lyric Atlas API Switch -->
-          <n-form-item :label="$t('setting.player.useLyricAtlas')">
-            <template #label>
-              {{ $t('setting.player.useLyricAtlas') }}
-              <n-tooltip trigger="hover">
-                <template #trigger>
-                  <n-icon class="tip" size="18" :component="Help" />
-                </template>
-                {{ $t('setting.player.useLyricAtlasTip') }}
-              </n-tooltip>
-            </template>
-            <n-switch v-model:value="useLyricAtlasAPI" />
-          </n-form-item>
         </n-form>
       </n-modal>
     </n-card>
