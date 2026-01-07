@@ -9,6 +9,10 @@ export interface AppleBackgroundRenderOptions {
     rotationSpeed?: number;
     saturation?: number;
     blurLevel?: number;
+    flowStrength?: number;
+    distortionStrength?: number;
+    brightness?: number;
+    baseColor?: [number, number, number];
 }
 
 export class FbmRenderer extends BaseRenderer {
@@ -31,14 +35,21 @@ export class FbmRenderer extends BaseRenderer {
 	private texCoordBuffer?: WebGLBuffer;
 	private indexBuffer?: WebGLBuffer;
 	private isNoCover = true;
+	private baseFlowSpeed = 0.4;
 	private timeMultiplier = 0.4;
+    private volumeFactor = 1;
 	private saturation = 1.0;
 	private blurLevel = 6.0;
 	private hasLyric = false;
 	private renderScale = 0.5;
+    private flowStrength = 0.2;
+    private distortionStrength = 0.12;
+    private brightness = 1.08;
+    private baseColor: [number, number, number] = [0.5, 0.5, 0.5];
 
 	setFlowSpeed(speed: number) {
-		this.timeMultiplier = speed;
+		this.baseFlowSpeed = speed;
+        this.timeMultiplier = this.baseFlowSpeed * this.volumeFactor;
 	}
 
 	setSaturation(saturation: number) {
@@ -53,6 +64,46 @@ export class FbmRenderer extends BaseRenderer {
 		this.renderScale = Math.max(0.1, Math.min(1, scale));
 		this.updateFramebufferSize();
 	}
+
+    private computeDominantColor(imageData: ImageData): [number, number, number] {
+        const data = imageData.data;
+        const totalPixels = data.length / 4;
+        const targetSamples = 5000;
+        const stepPx = Math.max(1, Math.floor(totalPixels / targetSamples));
+        const step = stepPx * 4;
+
+        let sumR = 0, sumG = 0, sumB = 0, count = 0;
+        let bestSat = -1;
+        let best: [number, number, number] = [0.5, 0.5, 0.5];
+
+        for (let i = 0; i < data.length; i += step) {
+            const r = data[i] / 255;
+            const g = data[i + 1] / 255;
+            const b = data[i + 2] / 255;
+            const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+            if (luma < 0.08 || luma > 0.98) continue;
+
+            sumR += r; sumG += g; sumB += b; count++;
+
+            const maxc = Math.max(r, g, b);
+            const minc = Math.min(r, g, b);
+            const chroma = maxc - minc;
+            const sat = chroma / (maxc + 1e-5);
+            if (sat > bestSat) {
+                bestSat = sat;
+                best = [r, g, b];
+            }
+        }
+
+        if (count === 0) return this.baseColor;
+        const avg: [number, number, number] = [sumR / count, sumG / count, sumB / count];
+        if (bestSat < 0.05) return avg;
+        return [
+            best[0] * 0.7 + avg[0] * 0.3,
+            best[1] * 0.7 + avg[1] * 0.3,
+            best[2] * 0.7 + avg[2] * 0.3,
+        ];
+    }
 
 	// This method is kept for API consistency but is no longer used by the metaball shader.
 	setWarp(amount: number) { }
@@ -71,6 +122,7 @@ export class FbmRenderer extends BaseRenderer {
 
 		this.currentImageData = imageData;
 		this.isNoCover = false;
+        this.baseColor = this.computeDominantColor(imageData);
 	}
 
 	setFPS(fps: number) {
@@ -97,7 +149,13 @@ export class FbmRenderer extends BaseRenderer {
 
         this.saturation = options.saturation ?? this.saturation;
         this.blurLevel = options.blurLevel ?? this.blurLevel;
-        this.timeMultiplier = options.rotationSpeed ?? this.timeMultiplier;
+        const initRotation = options.rotationSpeed ?? this.baseFlowSpeed;
+        this.baseFlowSpeed = initRotation;
+        this.timeMultiplier = initRotation;
+        this.flowStrength = options.flowStrength ?? this.flowStrength;
+        this.distortionStrength = options.distortionStrength ?? this.distortionStrength;
+        this.brightness = options.brightness ?? this.brightness;
+        this.baseColor = options.baseColor ?? this.baseColor;
 
 		this.mainProgram = new GLProgram(gl, mainVertexShader, mainFragmentShader, "main");
         this.flowMapProgram = new GLProgram(gl, mainVertexShader, flowMapFragmentShader, "flowmap");
@@ -193,6 +251,10 @@ export class FbmRenderer extends BaseRenderer {
         this.mainProgram.setUniform1f("time", this.frameTime * finalTimeMultiplier);
 		this.mainProgram.setUniform1f("u_saturation", this.saturation);
 		this.mainProgram.setUniform1f("u_blurLevel", this.blurLevel);
+        this.mainProgram.setUniform1f("u_flowStrength", this.flowStrength);
+        this.mainProgram.setUniform1f("u_distortionStrength", this.distortionStrength);
+        this.mainProgram.setUniform1f("u_globalBrightness", this.brightness);
+        this.mainProgram.setUniform3f("u_baseColor", this.baseColor[0], this.baseColor[1], this.baseColor[2]);
 
         gl.activeTexture(gl.TEXTURE0);
 		this.texture?.bind();
@@ -307,7 +369,8 @@ export class FbmRenderer extends BaseRenderer {
 	}
 
 	setVolume(volume: number) {
-		this.setFlowSpeed(this.timeMultiplier * volume);
+        this.volumeFactor = Math.max(0, volume);
+		this.setFlowSpeed(this.baseFlowSpeed);
 	}
 
 	setStaticMode(staticMode: boolean) {

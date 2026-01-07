@@ -281,21 +281,30 @@ export function createLyricsProcessor(songLyric: SongLyric, settings: SettingSta
  * @returns AMLL 格式的歌词行数组（符合 @applemusic-like-lyrics/core 的 LyricLine 类型）
  */
 function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
-  return lines.map((l) => ({
-    words: (l.words || []).map((w) => ({
+  return lines.map((l) => {
+    const words = (l.words || []).map((w) => ({
       startTime: w.startTime,
       endTime: w.endTime,
       word: w.word,
       romanWord: (w as any).romanWord ?? (w as any).romanization ?? "",
       obscene: (w as any).obscene ?? false,
-    })),
-    translatedLyric: l.translatedLyric ?? "",
-    romanLyric: l.romanLyric ?? "",
-    isBG: l.isBG ?? false,
-    isDuet: l.isDuet ?? false,
-    startTime: l.startTime ?? 0,
-    endTime: l.endTime ?? 0,
-  }))
+    }));
+
+    const firstWord = words[0];
+    const lastWord = words[words.length - 1];
+    const startTime = l.startTime ?? firstWord?.startTime ?? 0;
+    const endTime = l.endTime ?? lastWord?.endTime ?? startTime;
+
+    return {
+      words,
+      translatedLyric: l.translatedLyric ?? "",
+      romanLyric: l.romanLyric ?? "",
+      isBG: l.isBG ?? false,
+      isDuet: l.isDuet ?? false,
+      startTime,
+      endTime,
+    };
+  });
 }
 
 /**

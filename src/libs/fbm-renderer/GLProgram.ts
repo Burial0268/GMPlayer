@@ -109,6 +109,12 @@ export class GLProgram implements Disposable {
 		if (!location) this.warnUniformNotFound(name);
 		else gl.uniform1i(location, value);
 	}
+	setUniform3f(name: string, v1: number, v2: number, v3: number) {
+		const gl = this.gl;
+		const location = gl.getUniformLocation(this.program, name);
+		if (!location) this.warnUniformNotFound(name);
+		else gl.uniform3f(location, v1, v2, v3);
+	}
 	dispose() {
 		const gl = this.gl;
 		gl.deleteShader(this.vertexShader);

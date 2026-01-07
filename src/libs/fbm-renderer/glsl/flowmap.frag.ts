@@ -57,6 +57,8 @@ void main() {
 
     // The final vector is centered around 0.5, so we subtract 0.5 to make it
     // a directional vector ranging from -0.5 to 0.5.
-    fragColor = vec4(motion - 0.5, 0.0, 1.0);
+    // Pack back into 0..1 range to avoid precision issues when sampling as a texture.
+    vec2 packedMotion = motion * 0.5 + 0.5;
+    fragColor = vec4(packedMotion, 0.0, 1.0);
 }
 `; 
