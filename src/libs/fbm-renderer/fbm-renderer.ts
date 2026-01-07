@@ -44,7 +44,7 @@ export class FbmRenderer extends BaseRenderer {
 	private renderScale = 0.5;
     private flowStrength = 0.2;
     private distortionStrength = 0.12;
-    private brightness = 1.08;
+    private brightness = 1.28;
     private baseColor: [number, number, number] = [0.5, 0.5, 0.5];
 
 	setFlowSpeed(speed: number) {
@@ -73,6 +73,7 @@ export class FbmRenderer extends BaseRenderer {
         const step = stepPx * 4;
 
         let sumR = 0, sumG = 0, sumB = 0, count = 0;
+        let brightR = 0, brightG = 0, brightB = 0, brightCount = 0;
         let bestSat = -1;
         let best: [number, number, number] = [0.5, 0.5, 0.5];
 
@@ -84,6 +85,9 @@ export class FbmRenderer extends BaseRenderer {
             if (luma < 0.08 || luma > 0.98) continue;
 
             sumR += r; sumG += g; sumB += b; count++;
+            if (luma > 0.32) {
+                brightR += r; brightG += g; brightB += b; brightCount++;
+            }
 
             const maxc = Math.max(r, g, b);
             const minc = Math.min(r, g, b);
@@ -97,11 +101,24 @@ export class FbmRenderer extends BaseRenderer {
 
         if (count === 0) return this.baseColor;
         const avg: [number, number, number] = [sumR / count, sumG / count, sumB / count];
-        if (bestSat < 0.05) return avg;
+        const brightAvg: [number, number, number] = brightCount > 0 ? [brightR / brightCount, brightG / brightCount, brightB / brightCount] : avg;
+        const candidate = bestSat < 0.05 ? avg : [
+            best[0] * 0.6 + avg[0] * 0.4,
+            best[1] * 0.6 + avg[1] * 0.4,
+            best[2] * 0.6 + avg[2] * 0.4,
+        ];
+        const blended: [number, number, number] = [
+            candidate[0] * 0.55 + brightAvg[0] * 0.45,
+            candidate[1] * 0.55 + brightAvg[1] * 0.45,
+            candidate[2] * 0.55 + brightAvg[2] * 0.45,
+        ];
+        // Enforce a minimum luminance to avoid过暗背景
+        const l = 0.299 * blended[0] + 0.587 * blended[1] + 0.114 * blended[2];
+        const lift = l < 0.32 ? (0.32 - l) : 0;
         return [
-            best[0] * 0.7 + avg[0] * 0.3,
-            best[1] * 0.7 + avg[1] * 0.3,
-            best[2] * 0.7 + avg[2] * 0.3,
+            Math.min(1, blended[0] + lift),
+            Math.min(1, blended[1] + lift),
+            Math.min(1, blended[2] + lift),
         ];
     }
 
