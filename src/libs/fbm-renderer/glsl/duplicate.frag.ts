@@ -51,14 +51,20 @@ void main() {
 
     // Define positions for our metaballs.
     // Their movement is driven by sampling the fBm noise (flowMap) at different, slow-moving points.
-    vec2 pos1 = vec2(0.5) + (texture(u_flowMap, vec2(time * 0.03, 0.2)).xy - 0.5) * (0.65 + u_flowStrength);
-    vec2 pos2 = vec2(0.5) + (texture(u_flowMap, vec2(0.8, time * 0.02)).xy - 0.5) * (0.55 + u_flowStrength * 0.7);
-    vec2 pos3 = vec2(0.5) + (texture(u_flowMap, vec2(time * 0.01, time * 0.04)).xy - 0.5) * (0.6 + u_flowStrength * 0.9);
+    // Add alternating offsets to avoid clustering toward one quadrant.
+    vec2 pos1 = vec2(0.5) + (texture(u_flowMap, vec2(time * 0.031, 0.27)).xy - 0.5) * (0.65 + u_flowStrength);
+    vec2 pos2 = vec2(0.5) + (texture(u_flowMap, vec2(0.83, time * 0.023)).xy - 0.5) * (0.55 + u_flowStrength * 0.7);
+    vec2 pos3 = vec2(0.5) + (texture(u_flowMap, vec2(time * 0.017, 0.63 + time * 0.009)).xy - 0.5) * (0.64 + u_flowStrength * 0.85);
+    // Centering bias to keep blobs roughly balanced across canvas.
+    vec2 centerPull = vec2(0.5);
+    pos1 = mix(pos1, centerPull, 0.08);
+    pos2 = mix(pos2, centerPull, 0.08);
+    pos3 = mix(pos3, centerPull, 0.08);
 
     // Directional scale from flow map to create irregular Bezier-like blobs.
     vec2 axis1 = 1.0 + (texture(u_flowMap, pos1 * 0.7 + time * 0.01).xy - 0.5) * 0.6;
-    vec2 axis2 = 1.0 + (texture(u_flowMap, pos2 * 0.8 + time * 0.012).xy - 0.5) * 0.55;
-    vec2 axis3 = 1.0 + (texture(u_flowMap, pos3 * 0.75 + time * 0.009).xy - 0.5) * 0.58;
+    vec2 axis2 = 1.0 + (texture(u_flowMap, pos2 * 0.82 + time * 0.013).xy - 0.5) * 0.58;
+    vec2 axis3 = 1.0 + (texture(u_flowMap, pos3 * 0.78 + time * 0.011).xy - 0.5) * 0.62;
 
     // Extract colors for each metaball.
     // We sample from a blurred version of the texture (using textureLod) to prevent flickering
