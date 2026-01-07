@@ -62,7 +62,7 @@ const useSettingDataStore = defineStore("settingData", {
       // 播放背景是否显示图片
       backgroundImageShow: "blur",
       // 模糊背景设置
-      blurAmount: 30,
+      blurAmount: 10,
       contrastAmount: 1.2,
       // 流动背景设置
       fps: 60,
