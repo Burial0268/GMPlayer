@@ -41,41 +41,35 @@
             "
           >
             {{ music.getPlaySongData.artist[0].name }}
-            </span>
+          </span>
         </div>
-        <n-icon v-if="music.getPlaySongData && user.userLogin" 
-         class="like" size="20" 
-         :component="music.getSongIsLike(music.getPlaySongData.id)
-          ? FavoriteRound
-          : FavoriteBorderRound" 
-         @click.stop="
-          music.getSongIsLike(music.getPlaySongData.id)
-            ? music.changeLikeList(music.getPlaySongData.id, false)
-            : music.changeLikeList(music.getPlaySongData.id, true)" 
+        <n-icon
+          v-if="music.getPlaySongData"
+          class="more-button"
+          :component="MoreHorizRound"
         />
       </div>
       <div class="progress-bar">
-        <div class="progress-bar-content">
+        <div class="slider-wrapper">
+          <vue-slider
+            v-model="music.getPlaySongTime.barMoveDistance"
+            @drag-start="music.setPlayState(false)"
+            @drag-end="sliderDragEnd"
+            @click.stop="
+              songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)
+            "
+            :tooltip="'none'"
+          />
+        </div>
+        <div class="time-info">
           <span class="time-text">{{
             music.getPlaySongTime.songTimePlayed
           }}</span>
-          <div class="slider-container">
-            <div v-if="qualityText" class="quality-badge">
-              {{ qualityText }}
-            </div>
-            <vue-slider
-              v-model="music.getPlaySongTime.barMoveDistance"
-              @drag-start="music.setPlayState(false)"
-              @drag-end="sliderDragEnd"
-              @click.stop="
-            songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)
-              "
-              :tooltip="'none'"
-            />
+          <div v-if="qualityText" class="quality-badge">
+            <n-icon :component="IconLossless" />
+            {{ qualityText }}
           </div>
-          <span class="time-text">{{
-            music.getPlaySongTime.songTimeDuration
-          }}</span>
+          <span class="time-text">{{ remainingTime }}</span>
         </div>
       </div>
       <div class="buttons">
@@ -86,14 +80,9 @@
           : null
           "
           class="button-icon"
-          :component="
-            music.getPlaySongMode === 'random' ? ShuffleOne : PlayCycle
-          "
-          @click="
-            music.setPlaySongMode(
-              music.getPlaySongMode === 'random' ? 'normal' : 'random'
-            )
-          "
+          :class="{ active: music.getPlaySongMode !== 'normal' }"
+          :component="playModeIcon"
+          @click="cyclePlayMode"
         />
         <n-icon
           v-if="!music.getPersonalFmMode"
@@ -125,15 +114,8 @@
         />
         <n-icon
           class="button-icon"
-          :component="PlayOnce"
-          :style="
-            music.getPlaySongMode === 'single' ? 'color: var(--primary-color)' : ''
-          "
-          @click="
-            music.setPlaySongMode(
-              music.getPlaySongMode === 'single' ? 'normal' : 'single'
-            )
-          "
+          :component="MessageRound"
+          @click="goToComment"
         />
       </div>
       <div class="volume-control">
@@ -163,15 +145,15 @@ import {
   ThumbDownRound,
   VolumeOffRound,
   VolumeUpRound,
-  FavoriteRound,
-  FavoriteBorderRound,
+  MessageRound,
 } from "@vicons/material";
 import { computed, onMounted } from "vue";
 import IconForward from "./icons/IconForward.vue";
 import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
+import IconLossless from "./icons/IconLossless.vue";
 import IconPause from "./icons/IconPause.vue";
-import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
+import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
@@ -200,6 +182,37 @@ const qualityText = computed(() => {
   return qualityMap[level] || null;
 });
 
+// 剩余时间（负数格式）
+const remainingTime = computed(() => {
+  const songTime = music.getPlaySongTime;
+  if (!songTime?.duration) return "-0:00";
+  const currentSeconds = (songTime.duration / 100) * songTime.barMoveDistance;
+  const remainingSeconds = Math.max(0, songTime.duration - currentSeconds);
+  const minutes = Math.floor(remainingSeconds / 60);
+  const seconds = Math.floor(remainingSeconds % 60);
+  return `-${minutes}:${seconds.toString().padStart(2, "0")}`;
+});
+
+// 播放模式图标
+const playModeIcon = computed(() => {
+  const mode = music.getPlaySongMode;
+  if (mode === "random") return ShuffleOne;
+  if (mode === "single") return PlayOnce;
+  return PlayCycle;
+});
+
+// 循环切换播放模式: normal → random → single → normal
+const cyclePlayMode = () => {
+  const mode = music.getPlaySongMode;
+  if (mode === "normal") {
+    music.setPlaySongMode("random");
+  } else if (mode === "random") {
+    music.setPlaySongMode("single");
+  } else {
+    music.setPlaySongMode("normal");
+  }
+};
+
 // 歌曲进度条更新
 const sliderDragEnd = () => {
   songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance);
@@ -219,6 +232,17 @@ const routerJump = (url, query) => {
     path: url,
     query,
   });
+};
+
+// 跳转到评论
+const goToComment = () => {
+  if (music.getPlaySongData?.id) {
+    music.setBigPlayerState(false);
+    router.push({
+      path: "/comment",
+      query: { id: music.getPlaySongData.id },
+    });
+  }
 };
 
 // GSAP 动画
@@ -332,31 +356,39 @@ onMounted(() => {
     }
     .progress-bar {
       width: 100%;
-      .progress-bar-content {
       display: flex;
-      align-items: center;
-        gap: 1rem;
+      flex-direction: column;
+      gap: 0.5rem;
+      .slider-wrapper {
+        width: 100%;
+      }
+      .time-info {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
         color: var(--main-cover-color);
         .time-text {
           font-size: 0.75rem;
           opacity: 0.7;
-          min-width: 30px;
+          min-width: 36px;
+          &:last-child {
+            text-align: right;
+          }
         }
-        .slider-container {
-          width: 100%;
-          position: relative;
-          .quality-badge {
-            position: absolute;
-            top: -20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background-color: rgba(255, 255, 255, 0.1);
-            color: var(--main-cover-color);
-            opacity: 0.8;
-            font-size: 0.7rem;
-            padding: 2px 6px;
-            border-radius: 4px;
-            white-space: nowrap;
+        .quality-badge {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          background-color: rgba(255, 255, 255, 0.1);
+          color: var(--main-cover-color);
+          opacity: 0.8;
+          font-size: 0.75rem;
+          padding: 2px 8px;
+          border-radius: 4px;
+          white-space: nowrap;
+          .wave-icon {
+            width: 14px;
+            height: 14px;
           }
         }
       }
@@ -380,6 +412,10 @@ onMounted(() => {
         &:hover {
           opacity: 1;
         }
+        &.active {
+          opacity: 1;
+          color: var(--primary-color);
+        }
       }
     }
     .volume-control {
@@ -394,7 +430,7 @@ onMounted(() => {
     }
     .vue-slider {
       width: 100% !important;
-        cursor: pointer;
+      cursor: pointer;
       :deep(.vue-slider-rail) {
         height: 5px;
         background-color: rgba(255, 255, 255, 0.2);
@@ -402,9 +438,17 @@ onMounted(() => {
         .vue-slider-process {
           background-color: var(--main-cover-color);
         }
-        .vue-slider-dot {
-          display: none !important;
+      }
+      :deep(.vue-slider-dot) {
+        opacity: 0;
+        transition: opacity 0.2s ease;
+        .vue-slider-dot-handle {
+          background-color: var(--main-cover-color);
+          box-shadow: none;
         }
+      }
+      &:hover :deep(.vue-slider-dot) {
+        opacity: 1;
       }
     }
   }
