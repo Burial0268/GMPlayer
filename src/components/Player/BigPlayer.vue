@@ -144,13 +144,14 @@
           <PlayerCover v-if="setting.playerStyle === 'cover'" />
           <PlayerRecord v-else-if="setting.playerStyle === 'record'" />
         </div>
-        
-        <div class="right" ref="rightContentRef">
-          <div class="lrcShow" v-if="
-            music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
-            music.getPlaySongLyric.lrc[0] &&
-            music.getPlaySongLyric.lrc.length > 4
-          ">
+
+        <div class="right" ref="rightContentRef" v-if="
+          music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
+          music.getPlaySongLyric.lrc[0] &&
+          music.getPlaySongLyric.lrc.length > 4 &&
+          !music.getLoadingState
+        ">
+          <div class="lrcShow">
             <div class="data" v-show="setting.playerStyle === 'record' || setting.appleStyle">
               <div class="name text-hidden">
                 <span>{{
@@ -1394,18 +1395,13 @@ watch(
     position: relative;
 
     &.noLrc {
+      justify-content: center;
+
       .left {
         padding-right: 0;
-        width: 50%;
-        transform: translateX(25vh);
-
-        @media (max-width: 1200px) {
-          transform: translateX(22.2vh);
-        }
-
-        @media (min-width: 769px) and (max-width: 869px) {
-          transform: translateX(20.1vh);
-        }
+        width: auto;
+        transform: none;
+        align-items: center;
       }
     }
 
