@@ -46,37 +46,32 @@
               <Transition name="fade" mode="out-in">
                 <template v-if="setting.bottomLyricShow">
                   <Transition name="fade" mode="out-in">
-                    <template v-if="music.getPlaySongLyric?.lrc?.length">
-                      <n-text v-if="
-                        setting.showYrc &&
-                        music.getPlaySongLyricIndex != -1 &&
-                        music.getPlaySongLyric.hasYrc
-                      " class="lrc text-hidden">
-                        <n-text v-for="item in music.getPlaySongLyric.yrc[
-                          music.getPlaySongLyricIndex
-                        ].content" :key="item" :depth="3">
-                          {{ item.content }}
-                        </n-text>
+                    <n-text
+                      v-if="music.getPlaySongLyric?.lrc?.length && setting.showYrc && music.getPlaySongLyricIndex != -1 && music.getPlaySongLyric.hasYrc"
+                      :key="'yrc-' + music.getPlaySongLyricIndex"
+                      class="lrc text-hidden"
+                    >
+                      <n-text v-for="item in music.getPlaySongLyric.yrc[
+                        music.getPlaySongLyricIndex
+                      ].content" :key="item" :depth="3">
+                        {{ item.content }}
                       </n-text>
-                      <n-text v-else class="lrc">
-                        <Transition name="fade" mode="out-in">
-                          <n-text
-                            class="text-hidden"
-                            :key="music.getPlaySongLyricIndex === -1 ? 'lrc-0' : music.getPlaySongLyricIndex"
-                            :depth="3"
-                          >
-                            {{
-                              music.getPlaySongLyric.lrc[
-                                music.getPlaySongLyricIndex === -1
-                                  ? 0
-                                  : music.getPlaySongLyricIndex
-                              ]?.content
-                            }}
-                          </n-text>
-                        </Transition>
-                      </n-text>
-                    </template>
-                    <AllArtists v-else class="text-hidden" :artistsData="music.getPlaySongData.artist" />
+                    </n-text>
+                    <n-text
+                      v-else-if="music.getPlaySongLyric?.lrc?.length"
+                      :key="'lrc-' + music.getPlaySongLyricIndex"
+                      class="lrc text-hidden"
+                      :depth="3"
+                    >
+                      {{
+                        music.getPlaySongLyric.lrc[
+                          music.getPlaySongLyricIndex === -1
+                            ? 0
+                            : music.getPlaySongLyricIndex
+                        ]?.content
+                      }}
+                    </n-text>
+                    <AllArtists v-else key="artists" class="text-hidden" :artistsData="music.getPlaySongData.artist" />
                   </Transition>
                 </template>
                 <template v-else>
@@ -487,14 +482,14 @@ const fetchAndParseLyric = (id) => {
   const useAtlas = setting.useLyricAtlasAPI;
 
   getUnifiedLyric(id, useAtlas).then(lyricData => {
-    console.log(`[Player] Unified Lyric data received for ${id} (using Atlas: ${useAtlas}):`, lyricData);
+    console.log(`[Player] Unified Lyric data received for ${id} (using Atlas: ${useAtlas})`);
 
     const parsedResult = parseLyric(lyricData);
-    console.log(`[Player] Parsed lyric result for ${id}:`, parsedResult);
+    console.log(`[Player] Parsed lyric result for ${id}`);
 
     // 将解析后的歌词转换为标准LRC格式
     const formattedLrc = formatToLrc(parsedResult);
-    console.log(`[Player] Formatted LRC for ${id}:`, formattedLrc);
+    console.log(`[Player] Formatted LRC for ${id}`);
     
     // 添加格式化后的LRC到结果中
     parsedResult.formattedLrc = formattedLrc;
