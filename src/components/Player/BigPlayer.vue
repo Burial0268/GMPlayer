@@ -35,9 +35,11 @@
       <BackgroundRender 
         :fps="music.getPlayState ? setting.fps : 0"
         :playing="actualPlayingProp"
-        :flowSpeed="music.getPlayState ? (setting.dynamicFlowSpeed ? dynamicFlowSpeed : setting.flowSpeed) : 0"
+        :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
         :album="setting.albumImageUrl === 'none' ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') : setting.albumImageUrl"
         :renderScale="setting.renderScale" 
+        :lowFreqVolume="lowFreqVolume"
+        :staticMode="!music.showBigPlayer"
         class="overlay" />
     </template>
 
@@ -235,7 +237,7 @@ import VueSlider from "vue-slider-component";
 import "vue-slider-component/theme/default.css";
 import BackgroundRender from "@/libs/apple-music-like/BackgroundRender.vue";
 import { throttle } from "throttle-debounce";
-import { analyzeAudioIntensity } from "../../utils/fftIntensityAnalyze";
+import { LowFreqVolumeAnalyzer } from "../../utils/lowFreqVolumeAnalyzer";
 import { storeToRefs } from "pinia";
 import gsap from "gsap";
 import {
@@ -275,6 +277,22 @@ const bigPlayerRef = ref(null);
 const tipRef = ref(null);
 const leftContentRef = ref(null);
 const rightContentRef = ref(null);
+const lowFreqVolume = shallowRef(1.0);
+
+// Create low-frequency volume analyzer instance
+const lowFreqAnalyzer = new LowFreqVolumeAnalyzer();
+
+// Watch for spectrum data to calculate low-frequency volume for background rendering
+// This replaces the previous dynamicFlowSpeed approach with direct lowFreqVolume control
+watch(() => music.getSpectrumsData, throttle(100, (val) => {
+  if (!music.getPlayState || !val) {
+    return;
+  }
+
+  // Use the new analyzer to calculate smoothed low-frequency volume
+  const newLowFreqVolume = lowFreqAnalyzer.analyze(val);
+  lowFreqVolume.value = newLowFreqVolume;
+}));
 
 // 检测是否为移动设备
 const isMobile = ref(false);
@@ -310,9 +328,6 @@ const actualPlayingProp = computed(() => {
   );
   return result;
 });
-
-// Keep the dynamic flow speed logic if needed by :flowSpeed binding
-const dynamicFlowSpeed = ref(2);
 
 // 工具栏显隐
 const menuShow = ref(false);
@@ -788,6 +803,8 @@ onMounted(() => {
 onBeforeUnmount(() => {
   clearTimeout(timeOut.value);
   window.removeEventListener('resize', updateDeviceStatus);
+  // Reset the low-frequency volume analyzer
+  lowFreqAnalyzer.reset();
 });
 
 // 监听页面是否打开
@@ -832,13 +849,6 @@ watch(
   () => music.getPlaySongLyricIndex,
   (val) => lyricsScroll(val)
 );
-
-// 监听频谱更新
-watch(() => music.getSpectrumsData, throttle(200, (val) => {
-  if (!music.getPlayState || !setting.dynamicFlowSpeed) return;
-  const variance = Math.max(Math.round(analyzeAudioIntensity(val) * setting.dynamicFlowSpeedScale * 1.1), 6)
-  dynamicFlowSpeed.value = variance
-}))
 
 // 监听主题色改变
 watch(

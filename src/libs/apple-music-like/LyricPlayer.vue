@@ -21,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, watchEffect, toRaw, shallowRef } from 'vue';
+import { ref, computed, watch, watchEffect, toRaw, shallowRef, onMounted, nextTick } from 'vue';
 import { musicStore, settingStore, siteStore } from "../../store";
 import { LyricPlayer } from "@applemusic-like-lyrics/vue";
 import { preprocessLyrics, getProcessedLyrics, type LyricLine } from "./processLyrics";
@@ -40,6 +40,14 @@ const currentTime = shallowRef(0);
 
 watchEffect(() => {
   playState.value = music.playState;
+});
+
+// 在组件挂载时手动刷新 playState，确保暂停状态下打开播放器时歌词正确暂停
+onMounted(() => {
+  nextTick(() => {
+    // 强制触发 playState 更新
+    playState.value = music.playState;
+  });
 });
 
 const copyValue = (value: any) => {
