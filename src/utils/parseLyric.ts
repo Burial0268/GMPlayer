@@ -346,18 +346,18 @@ const parseLrcData = (lrcData: LyricLine[]): ParsedLyricLine[] => {
   }
 
   console.log(`[parseLrcData] 开始处理${lrcData.length}行歌词数据`);
-  
+
   const result = lrcData.map((line, index) => {
     // 确保line和line.words存在
     if (!line || !line.words || !line.words.length) {
       console.warn(`[parseLrcData] 第${index}行数据不完整`);
       return null;
     }
-    
-    // 获取行开始时间
+
+    // 获取行开始时间（转换为秒）
     let time = 0;
     if (line.words && line.words.length > 0) {
-      time = line.words[0].startTime;
+      time = msToS(line.words[0].startTime);
     }
 
     // 将歌词单词连接为完整内容
@@ -365,16 +365,16 @@ const parseLrcData = (lrcData: LyricLine[]): ParsedLyricLine[] => {
     if (line.words && line.words.length > 0) {
       content = line.words.map((word) => word.word || '').join('');
     }
-    
+
     // 只有有内容的行才返回
     if (!content || !content.trim()) {
       return null;
     }
 
     if (index < 5 || index % 10 === 0) {
-      console.log(`[parseLrcData] 处理第${index}行: 时间=${time}ms, 内容="${content.substring(0, 15)}..."`);
+      console.log(`[parseLrcData] 处理第${index}行: 时间=${time}s, 内容="${content.substring(0, 15)}..."`);
     }
-    
+
     return {
       time,
       content,
@@ -441,6 +441,7 @@ const alignLyrics = <T extends ParsedLyricLine | YrcLine>(
 
   console.log(`[alignLyrics] 开始对齐${key}歌词，主歌词${lyrics.length}行，辅助歌词${otherLyrics.length}行`);
 
+  // 策略1：行数相同时直接对应
   if (lyrics.length === otherLyrics.length) {
     console.log(`[alignLyrics] 使用策略1：行数相同，直接对应`);
     for (let i = 0; i < lyrics.length; i++) {
@@ -449,83 +450,39 @@ const alignLyrics = <T extends ParsedLyricLine | YrcLine>(
     return lyrics;
   }
 
-  console.log(`[alignLyrics] 使用策略2：时间最接近匹配 (优化版)`);
-  const sortedOtherLyrics = [...otherLyrics].sort((a, b) => a.time - b.time); // otherLyrics.time is in ms
+  console.log(`[alignLyrics] 使用策略2：时间最接近匹配`);
+
+  // 将 otherLyrics 按时间排序（时间单位：秒）
+  const sortedOtherLyrics = [...otherLyrics].sort((a, b) => a.time - b.time);
 
   lyrics.forEach(mainLine => {
     if (sortedOtherLyrics.length === 0) return;
 
-    // Determine mainLine's time in milliseconds for consistent comparison
-    // 'TextContent' in mainLine helps distinguish YrcLine from ParsedLyricLine.
-    // ParsedLyricLine has: time: number (ms); content: string;
-    // YrcLine has: time: number (s); endTime: number (s); content: object[]; TextContent: string;
-    const mainLineTimeInMs = ('TextContent' in mainLine && typeof mainLine.time === 'number')
-      ? mainLine.time * 1000 // YrcLine time is in seconds, convert to ms
-      : mainLine.time;        // ParsedLyricLine time is already in ms, or fallback if type check fails
+    // 获取主歌词行的时间（单位：秒）
+    const mainLineTimeInS = mainLine.time;
 
-    let low = 0;
-    let high = sortedOtherLyrics.length - 1;
+    // 查找时间差最小的匹配
     let closestMatch = sortedOtherLyrics[0];
-    // Compare otherLyrics time (ms) with mainLineTimeInMs (ms)
-    let minTimeDiff = Math.abs(mainLineTimeInMs - closestMatch.time);
+    let minTimeDiff = Math.abs(mainLineTimeInS - closestMatch.time);
 
-    while (low <= high) {
-      const mid = Math.floor((low + high) / 2);
-      const currentOtherTimeInMs = sortedOtherLyrics[mid].time;
-      const currentDiff = mainLineTimeInMs - currentOtherTimeInMs; // ms - ms
-      
-      if (Math.abs(currentDiff) < minTimeDiff) {
-        minTimeDiff = Math.abs(currentDiff);
-        closestMatch = sortedOtherLyrics[mid];
-      } else if (Math.abs(currentDiff) === minTimeDiff) {
-        // 时间差相同时，优先选择索引更小的（更早的歌词行）
-        if (currentOtherTimeInMs < closestMatch.time) { // if times are same, prefer earlier otherLyric
-            closestMatch = sortedOtherLyrics[mid];
-        }
-      }
-
-      if (currentDiff < 0) {
-        high = mid - 1;
-      } else if (currentDiff > 0) {
-        low = mid + 1;
-      } else {
-        // 完全匹配
-        closestMatch = sortedOtherLyrics[mid];
-        minTimeDiff = 0;
-        break;
+    for (const otherLine of sortedOtherLyrics) {
+      const diff = Math.abs(mainLineTimeInS - otherLine.time);
+      if (diff < minTimeDiff) {
+        minTimeDiff = diff;
+        closestMatch = otherLine;
       }
     }
-    
-    const checkNeighbor = (index: number) => {
-      if (index >= 0 && index < sortedOtherLyrics.length) {
-        const otherTimeInMs = sortedOtherLyrics[index].time;
-        const diff = Math.abs(mainLineTimeInMs - otherTimeInMs); // ms - ms
-        if (diff < minTimeDiff) {
-          minTimeDiff = diff;
-          closestMatch = sortedOtherLyrics[index];
-        } else if (diff === minTimeDiff && otherTimeInMs < closestMatch.time) {
-          closestMatch = sortedOtherLyrics[index];
-        }
-      }
-    };
 
-    // `low` 最终会指向大于target的第一个元素，或者等于target的元素，或者length
-    // `high` 最终会指向小于target的最后一个元素，或者等于target的元素，或者-1
-    // 需要检查 `low` 和 `high` 指向的元素（及其邻近）
-    checkNeighbor(low);
-    checkNeighbor(low - 1);
-    checkNeighbor(high);
-    checkNeighbor(high + 1);
+    // 设置匹配的翻译/音译内容
+    (mainLine as any)[key] = closestMatch.content;
 
-
-    if (closestMatch) { // Ensure closestMatch is defined before using it
-      (mainLine as any)[key] = closestMatch.content;
-      // minTimeDiff is now in milliseconds. So 1.0 second threshold is 1000 ms.
-      if (minTimeDiff > 1000) { 
-        console.log(`[alignLyrics] 警告：歌词对齐时间差较大 (${(minTimeDiff / 1000).toFixed(2)}秒)，主歌词"${
-          'TextContent' in mainLine ? mainLine.TextContent.substring(0, 10) : (mainLine as ParsedLyricLine).content.substring(0,10)
-        }..."，${key}歌词"${closestMatch.content.substring(0, 10)}..."`);
-      }
+    // 如果时间差超过2秒，输出警告
+    if (minTimeDiff > 2) {
+      const isYrcLine = 'TextContent' in mainLine;
+      const mainContent = isYrcLine
+        ? (mainLine as YrcLine).TextContent.substring(0, 15)
+        : (mainLine as ParsedLyricLine).content.substring(0, 15);
+      console.log(`[alignLyrics] 警告：${key}对齐时间差较大 (${minTimeDiff.toFixed(2)}秒)，主歌词"${mainContent}..."，${key}歌词"${closestMatch.content.substring(0, 15)}..."`);
     }
   });
 

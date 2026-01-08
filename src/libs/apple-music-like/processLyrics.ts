@@ -72,77 +72,68 @@ function generateSettingsHash(settings: SettingState): string {
 function parseLrcToTimeMap(lrcText: string): Map<number, string> {
   const timeMap = new Map<number, string>();
   if (!lrcText) return timeMap;
-  
+
   const lines = lrcText.split('\n');
   lines.forEach(line => {
-    const match = line.match(/^\[(\d+):(\d+)\.(\d+)\](.*)/);
+    // 支持多种LRC时间格式: [mm:ss.xx], [mm:ss.xxx], [mm:ss]
+    const match = line.match(/^\[(\d+):(\d+)(?:\.(\d+))?\](.*)/);
     if (match) {
       const min = parseInt(match[1]);
       const sec = parseInt(match[2]);
-      const ms = parseInt(match[3]);
-      const timeMs = min * 60000 + sec * 1000 + ms * 10; // LRC时间格式转毫秒
+      const msStr = match[3] || '0';
+      let timeMs: number;
+
+      // 根据小数部分位数判断是厘秒还是毫秒
+      if (msStr.length === 3) {
+        // 3位数是毫秒 (如 .123 = 123ms)
+        timeMs = min * 60000 + sec * 1000 + parseInt(msStr);
+      } else if (msStr.length === 2) {
+        // 2位数是厘秒 (如 .12 = 120ms)
+        timeMs = min * 60000 + sec * 1000 + parseInt(msStr) * 10;
+      } else if (msStr.length === 1) {
+        // 1位数是十分之一秒 (如 .1 = 100ms)
+        timeMs = min * 60000 + sec * 1000 + parseInt(msStr) * 100;
+      } else {
+        // 没有小数部分
+        timeMs = min * 60000 + sec * 1000;
+      }
+
       const text = match[4].trim();
       if (text) {
         timeMap.set(timeMs, text);
       }
     }
   });
-  
+
   return timeMap;
 }
 
 /**
  * 查找最接近的时间戳匹配
- * 优先选择时间戳 <= targetTime 且最接近的匹配，确保翻译/音译与原文正确对应
- * @param targetTime 目标时间
- * @param timeMap 时间映射
- * @param tolerance 容差范围
+ * 选择绝对时间差最小的匹配，确保翻译/音译与原文正确对应
+ * @param targetTime 目标时间 (毫秒)
+ * @param timeMap 时间映射 (时间戳毫秒 -> 文本)
+ * @param tolerance 容差范围 (毫秒)，默认3秒
  * @returns 匹配的文本
  */
-function findBestTimeMatch(targetTime: number, timeMap: Map<number, string>, tolerance: number = 5000): string {
+function findBestTimeMatch(targetTime: number, timeMap: Map<number, string>, tolerance: number = 3000): string {
   // 首先尝试精确匹配
   if (timeMap.has(targetTime)) {
     return timeMap.get(targetTime) || "";
   }
-  
-  // 优先查找时间戳 <= targetTime 且最接近的匹配
+
+  // 查找绝对时间差最小的匹配
   let bestMatch = "";
-  let bestTime = -1;
   let minDiff = tolerance + 1;
-  
-  // 首先查找 <= targetTime 的最佳匹配
+
   for (const [time, text] of timeMap.entries()) {
-    if (time <= targetTime) {
-      const diff = targetTime - time;
-      if (diff < minDiff) {
-        minDiff = diff;
-        bestTime = time;
-        bestMatch = text;
-      }
+    const diff = Math.abs(time - targetTime);
+    if (diff < minDiff) {
+      minDiff = diff;
+      bestMatch = text;
     }
   }
-  
-  // 如果没有找到 <= targetTime 的匹配，或者找到的匹配超出容差，尝试查找 > targetTime 的匹配（在容差范围内）
-  if (bestTime < 0 || minDiff > tolerance) {
-    let futureMinDiff = tolerance + 1;
-    let futureMatch = "";
-    
-    for (const [time, text] of timeMap.entries()) {
-      if (time > targetTime) {
-        const diff = time - targetTime;
-        if (diff < futureMinDiff && diff <= tolerance) {
-          futureMinDiff = diff;
-          futureMatch = text;
-        }
-      }
-    }
-    
-    // 如果找到未来的匹配，且比过去的匹配更接近，使用未来的匹配
-    if (futureMatch && (bestTime < 0 || futureMinDiff < minDiff)) {
-      return futureMatch;
-    }
-  }
-  
+
   return bestMatch;
 }
 

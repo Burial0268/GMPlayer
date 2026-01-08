@@ -84,15 +84,71 @@ function getYrcType(content: string): 'yrc' | 'qrc' {
   if (content.includes('[x-trans') || content.includes('[merge]')) {
     return 'yrc';
   }
-  
+
   // QRC 特征检测 - 包含类似<1,1,0>的时间标记
   if (content.includes('<') && content.includes(',') && content.includes('>')) {
     return 'qrc';
   }
-  
+
   // 默认返回qrc格式（这是一种保守做法）
   console.warn('[LyricService] 无法确定歌词类型，默认使用QRC格式');
   return 'qrc';
+}
+
+/**
+ * 解析LRC时间戳字符串为毫秒
+ * 支持多种格式: [mm:ss.xx], [mm:ss.xxx], [mm:ss]
+ * @param timeStr 时间字符串，如 "01:23.45" 或 "01:23.456"
+ * @returns 毫秒数
+ */
+function parseLrcTimeToMs(timeStr: string): number {
+  const match = timeStr.match(/(\d+):(\d+)(?:\.(\d+))?/);
+  if (!match) return 0;
+
+  const min = parseInt(match[1]);
+  const sec = parseInt(match[2]);
+  const msStr = match[3] || '0';
+
+  let timeMs: number;
+  if (msStr.length === 3) {
+    // 3位数是毫秒 (如 .123 = 123ms)
+    timeMs = min * 60000 + sec * 1000 + parseInt(msStr);
+  } else if (msStr.length === 2) {
+    // 2位数是厘秒 (如 .12 = 120ms)
+    timeMs = min * 60000 + sec * 1000 + parseInt(msStr) * 10;
+  } else if (msStr.length === 1) {
+    // 1位数是十分之一秒 (如 .1 = 100ms)
+    timeMs = min * 60000 + sec * 1000 + parseInt(msStr) * 100;
+  } else {
+    // 没有小数部分
+    timeMs = min * 60000 + sec * 1000;
+  }
+
+  return timeMs;
+}
+
+/**
+ * 解析LRC格式歌词文本为时间映射
+ * @param lrcText LRC格式歌词文本
+ * @returns 时间(毫秒) -> 文本 的映射
+ */
+function parseLrcToTimeMap(lrcText: string): Map<number, string> {
+  const timeMap = new Map<number, string>();
+  if (!lrcText) return timeMap;
+
+  const lines = lrcText.split('\n');
+  for (const line of lines) {
+    const match = line.match(/^\[(\d+:\d+(?:\.\d+)?)\](.*)/);
+    if (match) {
+      const timeMs = parseLrcTimeToMs(match[1]);
+      const text = match[2].trim();
+      if (text) {
+        timeMap.set(timeMs, text);
+      }
+    }
+  }
+
+  return timeMap;
 }
 
 // Implementation for the Netease API - Return raw data matching LyricData format
@@ -245,47 +301,31 @@ class LyricAtlasProvider implements LyricProvider {
             
             result.lrc = { lyric: lrcText };
             console.log(`[LyricAtlasProvider] Successfully created LRC from ${response.format} for id: ${id}`);
-            
+
             // 对于YRC/QRC格式，直接处理翻译和音译数据
             if (response.translation || response.romaji) {
               console.log(`[LyricAtlasProvider] 为YRC/QRC格式预处理翻译和音译数据`);
-              
+
               // 预处理翻译
               if (response.translation && parsedLyric.length > 0) {
                 try {
-                  // 解析翻译LRC
-                  const transLines = response.translation.split('\n');
-                  const transTimeMap = new Map<number, string>();
-                  
-                  // 构建翻译时间映射
-                  for (const line of transLines) {
-                    const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2})\](.*)/);
-                    if (match) {
-                      const min = parseInt(match[1]);
-                      const sec = parseInt(match[2]);
-                      const ms = parseInt(match[3]);
-                      const timeMs = min * 60000 + sec * 1000 + ms * 10;
-                      const text = match[4].trim();
-                      if (text) {
-                        transTimeMap.set(timeMs, text);
-                      }
-                    }
-                  }
-                  
+                  // 使用统一的LRC解析函数
+                  const transTimeMap = parseLrcToTimeMap(response.translation);
+
                   // 为每一行填充翻译
                   if (transTimeMap.size > 0) {
                     parsedLyric.forEach(line => {
                       if (line.words && line.words.length > 0) {
                         const timeMs = line.words[0].startTime;
-                        
+
                         // 先尝试精确匹配
                         if (transTimeMap.has(timeMs)) {
                           line.translatedLyric = transTimeMap.get(timeMs);
                         } else {
-                          // 查找最接近的时间
+                          // 查找时间差最小的匹配
                           let bestMatch = "";
                           let minDiff = 3000; // 3秒容差
-                          
+
                           for (const [time, text] of transTimeMap.entries()) {
                             const diff = Math.abs(time - timeMs);
                             if (diff < minDiff) {
@@ -293,57 +333,41 @@ class LyricAtlasProvider implements LyricProvider {
                               bestMatch = text;
                             }
                           }
-                          
+
                           if (bestMatch) {
                             line.translatedLyric = bestMatch;
                           }
                         }
                       }
                     });
-                    
+
                     console.log(`[LyricAtlasProvider] 成功为YRC/QRC预处理翻译数据`);
                   }
                 } catch (error) {
                   console.error(`[LyricAtlasProvider] 预处理YRC/QRC翻译数据出错:`, error);
                 }
               }
-              
+
               // 预处理音译
               if (response.romaji && parsedLyric.length > 0) {
                 try {
-                  // 解析音译LRC
-                  const romaLines = response.romaji.split('\n');
-                  const romaTimeMap = new Map<number, string>();
-                  
-                  // 构建音译时间映射
-                  for (const line of romaLines) {
-                    const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2})\](.*)/);
-                    if (match) {
-                      const min = parseInt(match[1]);
-                      const sec = parseInt(match[2]);
-                      const ms = parseInt(match[3]);
-                      const timeMs = min * 60000 + sec * 1000 + ms * 10;
-                      const text = match[4].trim();
-                      if (text) {
-                        romaTimeMap.set(timeMs, text);
-                      }
-                    }
-                  }
-                  
+                  // 使用统一的LRC解析函数
+                  const romaTimeMap = parseLrcToTimeMap(response.romaji);
+
                   // 为每一行填充音译
                   if (romaTimeMap.size > 0) {
                     parsedLyric.forEach(line => {
                       if (line.words && line.words.length > 0) {
                         const timeMs = line.words[0].startTime;
-                        
+
                         // 先尝试精确匹配
                         if (romaTimeMap.has(timeMs)) {
                           line.romanLyric = romaTimeMap.get(timeMs);
                         } else {
-                          // 查找最接近的时间
+                          // 查找时间差最小的匹配
                           let bestMatch = "";
                           let minDiff = 3000; // 3秒容差
-                          
+
                           for (const [time, text] of romaTimeMap.entries()) {
                             const diff = Math.abs(time - timeMs);
                             if (diff < minDiff) {
@@ -351,39 +375,21 @@ class LyricAtlasProvider implements LyricProvider {
                               bestMatch = text;
                             }
                           }
-                          
+
                           if (bestMatch) {
                             line.romanLyric = bestMatch;
                           }
                         }
                       }
                     });
-                    
+
                     console.log(`[LyricAtlasProvider] 成功为YRC/QRC预处理音译数据`);
                   }
                 } catch (error) {
                   console.error(`[LyricAtlasProvider] 预处理YRC/QRC音译数据出错:`, error);
                 }
               }
-              
-              // 创建一个包含特殊标记的字符串，表示这是已解析的LyricLine[]
-              // const serializedYrc = `___PARSED_LYRIC_LINES___${JSON.stringify(parsedLyric)}`; // 保留注释以备查验
-              // result.yrc = { lyric: serializedYrc }; // 保留注释以备查验
-              // 确保 result.yrc.lyric 仍然是原始的 response.content
-              if (result.yrc && response.content && result.yrc.lyric !== response.content) {
-                // 如果之前的逻辑意外修改了 result.yrc.lyric（理论上不应该，因为原始YRC已在分支开始时设置）
-                // 确保它被设置回原始API内容。
-                // 但更可能的情况是，初始的 result.yrc = { lyric: response.content } 已经正确设置。
-                // 此处的显式赋值是为了确保万无一失，尽管可能冗余。
-                // 实际上，由于上面两行被注释，此处的显式赋值可能不再必要，
-                // 只要确保分支开始时的 result.yrc = { lyric: response.content } 执行即可。
-                // 为了安全和明确，如果上面两行被注释，那么原始的YRC字符串应该已经存在于 result.yrc.lyric
-                // 因此，下面的赋值不是必须的，除非要强调这一点。
-                // 考虑到上面两行已经被注释掉了，这一行其实可以省略，
-                // 因为 result.yrc = { lyric: response.content } 在这个分支的早些时候已经执行过了。
-                // 我们只关注删除或注释掉序列化和覆盖的步骤。
-              }
-              
+
               console.log(`[LyricAtlasProvider] YRC/QRC预处理完成，已包含翻译和音译数据`);
             }
           } else {
@@ -400,54 +406,38 @@ class LyricAtlasProvider implements LyricProvider {
         // 处理 TTML 格式
         try {
           const ttmlLyric = parseTTML(response.content) as TTMLLyric;
-          
+
           // 标记拥有TTML格式歌词
           result.hasTTML = true;
           // 存储解析后的TTML数据
           result.ttml = ttmlLyric.lines;
-          
+
           // 为TTML准备数据
           if (ttmlLyric && ttmlLyric.lines && ttmlLyric.lines.length > 0) {
             // 对于TTML格式，直接处理翻译和音译数据
             if (response.translation || response.romaji) {
               console.log(`[LyricAtlasProvider] 为TTML格式预处理翻译和音译数据`);
-              
+
               // 预处理翻译
               if (response.translation && ttmlLyric.lines.length > 0) {
                 try {
-                  // 解析翻译LRC
-                  const transLines = response.translation.split('\n');
-                  const transTimeMap = new Map<number, string>();
-                  
-                  // 构建翻译时间映射
-                  for (const line of transLines) {
-                    const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2})\](.*)/);
-                    if (match) {
-                      const min = parseInt(match[1]);
-                      const sec = parseInt(match[2]);
-                      const ms = parseInt(match[3]);
-                      const timeMs = min * 60000 + sec * 1000 + ms * 10;
-                      const text = match[4].trim();
-                      if (text) {
-                        transTimeMap.set(timeMs, text);
-                      }
-                    }
-                  }
-                  
+                  // 使用统一的LRC解析函数
+                  const transTimeMap = parseLrcToTimeMap(response.translation);
+
                   // 为每一行填充翻译
                   if (transTimeMap.size > 0) {
                     ttmlLyric.lines.forEach(line => {
                       if (line.words && line.words.length > 0) {
                         const timeMs = line.words[0].startTime;
-                        
+
                         // 先尝试精确匹配
                         if (transTimeMap.has(timeMs)) {
                           line.translatedLyric = transTimeMap.get(timeMs) || "";
                         } else {
-                          // 查找最接近的时间
+                          // 查找时间差最小的匹配
                           let bestMatch = "";
                           let minDiff = 3000; // 3秒容差
-                          
+
                           for (const [time, text] of transTimeMap.entries()) {
                             const diff = Math.abs(time - timeMs);
                             if (diff < minDiff) {
@@ -455,57 +445,41 @@ class LyricAtlasProvider implements LyricProvider {
                               bestMatch = text;
                             }
                           }
-                          
+
                           if (bestMatch) {
                             line.translatedLyric = bestMatch;
                           }
                         }
                       }
                     });
-                    
+
                     console.log(`[LyricAtlasProvider] 成功为TTML预处理翻译数据`);
                   }
                 } catch (error) {
                   console.error(`[LyricAtlasProvider] 预处理TTML翻译数据出错:`, error);
                 }
               }
-              
+
               // 预处理音译
               if (response.romaji && ttmlLyric.lines.length > 0) {
                 try {
-                  // 解析音译LRC
-                  const romaLines = response.romaji.split('\n');
-                  const romaTimeMap = new Map<number, string>();
-                  
-                  // 构建音译时间映射
-                  for (const line of romaLines) {
-                    const match = line.match(/\[(\d{2}):(\d{2})\.(\d{2})\](.*)/);
-                    if (match) {
-                      const min = parseInt(match[1]);
-                      const sec = parseInt(match[2]);
-                      const ms = parseInt(match[3]);
-                      const timeMs = min * 60000 + sec * 1000 + ms * 10;
-                      const text = match[4].trim();
-                      if (text) {
-                        romaTimeMap.set(timeMs, text);
-                      }
-                    }
-                  }
-                  
+                  // 使用统一的LRC解析函数
+                  const romaTimeMap = parseLrcToTimeMap(response.romaji);
+
                   // 为每一行填充音译
                   if (romaTimeMap.size > 0) {
                     ttmlLyric.lines.forEach(line => {
                       if (line.words && line.words.length > 0) {
                         const timeMs = line.words[0].startTime;
-                        
+
                         // 先尝试精确匹配
                         if (romaTimeMap.has(timeMs)) {
                           line.romanLyric = romaTimeMap.get(timeMs) || "";
                         } else {
-                          // 查找最接近的时间
+                          // 查找时间差最小的匹配
                           let bestMatch = "";
                           let minDiff = 3000; // 3秒容差
-                          
+
                           for (const [time, text] of romaTimeMap.entries()) {
                             const diff = Math.abs(time - timeMs);
                             if (diff < minDiff) {
@@ -513,14 +487,14 @@ class LyricAtlasProvider implements LyricProvider {
                               bestMatch = text;
                             }
                           }
-                          
+
                           if (bestMatch) {
                             line.romanLyric = bestMatch;
                           }
                         }
                       }
                     });
-                    
+
                     console.log(`[LyricAtlasProvider] 成功为TTML预处理音译数据`);
                   }
                 } catch (error) {
