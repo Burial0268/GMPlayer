@@ -59,8 +59,8 @@ const useSettingDataStore = defineStore("settingData", {
       lrcMousePause: false,
       // 是否使用网易云解灰
       useUnmServer: true,
-      // 播放背景是否显示图片
-      backgroundImageShow: "blur",
+      // 播放器背景渲染模式
+      backgroundImageShow: "eplor",
       // 模糊背景设置
       blurAmount: 10,
       contrastAmount: 1.2,
