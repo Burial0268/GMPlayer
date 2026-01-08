@@ -46,6 +46,7 @@ export class FbmRenderer extends BaseRenderer {
     private distortionStrength = 0.12;
     private brightness = 1.28;
     private baseColor: [number, number, number] = [0.5, 0.5, 0.5];
+    private isSmallScreen = false;
 
 	setFlowSpeed(speed: number) {
 		this.baseFlowSpeed = speed;
@@ -216,6 +217,7 @@ export class FbmRenderer extends BaseRenderer {
         if (this.currentSize[0] === this.canvas.width && this.currentSize[1] === this.canvas.height) return;
         
         this.currentSize = vec2.fromValues(this.canvas.width, this.canvas.height);
+        this.isSmallScreen = Math.min(this.canvas.width, this.canvas.height) < 640;
         // Reduce resolution for better performance
         const width = Math.max(1, Math.floor(this.canvas.width * this.renderScale));
         const height = Math.max(1, Math.floor(this.canvas.height * this.renderScale));
@@ -266,6 +268,8 @@ export class FbmRenderer extends BaseRenderer {
 
         this.mainProgram.use();
         this.mainProgram.setUniform1f("time", this.frameTime * finalTimeMultiplier);
+        this.mainProgram.setUniform1f("u_isSmallScreen", this.isSmallScreen ? 1.0 : 0.0);
+
 		this.mainProgram.setUniform1f("u_saturation", this.saturation);
 		this.mainProgram.setUniform1f("u_blurLevel", this.blurLevel);
         this.mainProgram.setUniform1f("u_flowStrength", this.flowStrength);
