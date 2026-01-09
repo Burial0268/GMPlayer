@@ -31,14 +31,14 @@
       </div>
     </Transition>
 
-    <template v-if="setting.backgroundImageShow === 'eplor'">
+    <template v-if="setting.backgroundImageShow == 'eplor'">
       <BackgroundRender 
         :fps="music.getPlayState ? setting.fps : 0"
         :playing="actualPlayingProp"
         :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
         :album="setting.albumImageUrl === 'none' ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') : setting.albumImageUrl"
         :renderScale="setting.renderScale" 
-        :lowFreqVolume="lowFreqVolume"
+        :lowFreqVolume="setting.dynamicFlowSpeed ? lowFreqVolume : 1.0"
         :staticMode="!music.showBigPlayer"
         class="overlay" />
     </template>
@@ -352,8 +352,7 @@ watch(() => music.getSpectrumsData, throttle(100, (val) => {
   }
 
   // Use the new analyzer to calculate smoothed low-frequency volume
-  const newLowFreqVolume = lowFreqAnalyzer.analyze(val);
-  lowFreqVolume.value = newLowFreqVolume;
+  lowFreqVolume.value = lowFreqAnalyzer.analyze(val);
 }));
 
 // 检测是否为移动设备
@@ -363,8 +362,6 @@ const isMobile = ref(false);
 const mobileLayer = ref(1);
 
 // 移动端元素引用
-const mobileHeaderRef = ref(null);
-const mobileLyricsRef = ref(null);
 const mobileControlsRef = ref(null);
 const nameWrapperRef = ref(null);
 const nameTextRef = ref(null);
@@ -1702,9 +1699,15 @@ watch(
 
   &.bplayer-eplor,
   &.bplayer-blur {
+    background-color: transparent !important;
     .gray {
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
+      backdrop-filter: none !important;
+      -webkit-backdrop-filter: none !important;
+      transition: none !important;
+      background-color: transparent !important;
+    }
+    .overlay::after {
+      background-color: transparent !important;
     }
   }
 
