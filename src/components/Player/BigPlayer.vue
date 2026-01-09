@@ -1428,6 +1428,11 @@ watch(
       transform: translateY(20px);
       pointer-events: none;
       overflow: visible;
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+      ::-webkit-scrollbar {
+        display: none;
+      }
       transition: opacity 0.4s ease,
                   transform 0.4s ease,
                   bottom 0.4s ease,
