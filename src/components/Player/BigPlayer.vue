@@ -38,7 +38,7 @@
         :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
         :album="setting.albumImageUrl === 'none' ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') : setting.albumImageUrl"
         :renderScale="setting.renderScale" 
-        :lowFreqVolume="setting.dynamicFlowSpeed ? (Math.round(lowFreqVolume * 100) / 100).toFixed(2) : 1.0"
+        :lowFreqVolume="setting.dynamicFlowSpeed ? Number((Math.round(lowFreqVolume * 100) / 100).toFixed(1)) : 1.0"
         :staticMode="!music.showBigPlayer"
         class="overlay" />
     </template>

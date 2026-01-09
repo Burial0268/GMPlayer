@@ -67,11 +67,11 @@ const useSettingDataStore = defineStore("settingData", {
       // 流动背景设置
       fps: 60,
       flowSpeed: 2,
-      renderScale: 1,
+      renderScale: 0.5,
       albumImageUrl: "none",
       // 动态背景设置
-      dynamicFlowSpeed: false,
-      dynamicFlowSpeedScale: 2,
+      dynamicFlowSpeed: true,
+      dynamicFlowSpeedScale: 1,
       // 是否显示前奏等待
       countDownShow: true,
       // 是否显示歌词设置

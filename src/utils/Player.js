@@ -336,7 +336,7 @@ export const processSpectrum = (sound) => {
       const source = spectrumsData.audioCtx.createMediaElementSource(audioDom);
       const analyser = spectrumsData.audioCtx.createAnalyser();
       // 频谱分析器 FFT
-      analyser.fftSize = 2048;
+      analyser.fftSize = 1024;
       // 连接音频源和分析器，再连接至音频上下文的目标
       source.connect(analyser);
       analyser.connect(spectrumsData.audioCtx.destination);
