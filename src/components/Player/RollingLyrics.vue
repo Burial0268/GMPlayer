@@ -107,7 +107,6 @@ const currentLyrics = computed(() => {
               opacity 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
 
   @media (max-width: 768px) {
-    padding: 0 16px;
     height: 70vh;
   }
 
