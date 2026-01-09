@@ -1,89 +1,106 @@
 /**
  * Low Frequency Volume Analyzer
- * Based on applemusic-like-lyrics implementation
- * Extracts and smooths low-frequency (80-120Hz) volume data from FFT
+ * Combines approaches from AMLL and SPlayer implementations
+ * - Threshold-based filtering for noise rejection
+ * - Power function for dynamic range expansion
+ * - EMA smoothing for stability
+ * - Configurable parameters
  */
 
-/**
- * Convert amplitude (0-255) to logarithmic level (0-1)
- */
-function amplitudeToLevel(amplitude: number): number {
-  const normalizedAmplitude = amplitude / 255;
-  const level = 0.5 * Math.log10(normalizedAmplitude + 1);
-  return level;
+interface LowFreqAnalyzerOptions {
+  /** Number of low frequency bins to analyze (default: 3, ~0-280Hz at 48kHz/1024 FFT) */
+  binCount?: number;
+  /** EMA smoothing factor, higher = more responsive (default: 0.28) */
+  smoothFactor?: number;
+  /** Threshold below which values are treated as silence (default: 80) */
+  threshold?: number;
+  /** Power exponent for dynamic range expansion (default: 2) */
+  powerExponent?: number;
 }
 
+const DEFAULT_OPTIONS: Required<LowFreqAnalyzerOptions> = {
+  binCount: 3,
+  smoothFactor: 0.28,
+  threshold: 80,
+  powerExponent: 2,
+};
+
 /**
- * Low Frequency Volume Analyzer with sliding window smoothing
+ * Low Frequency Volume Analyzer with threshold filtering and EMA smoothing
  */
 export class LowFreqVolumeAnalyzer {
-  private volumeHistory: number[] = [];
-  private readonly windowSize = 10;
+  private smoothedVolume = 0;
+  private readonly options: Required<LowFreqAnalyzerOptions>;
 
-  /**
-   * Calculate raw low-frequency volume from FFT data
-   * Uses the first two frequency bins (80-120Hz range)
-   */
-  private calculateRawVolume(fftData: number[]): number {
-    if (!fftData || fftData.length < 2) {
-      return 0;
-    }
-
-    // Average the first two bins for low frequency range
-    const volume = (amplitudeToLevel(fftData[0]) + amplitudeToLevel(fftData[1])) * 0.5;
-    return Math.max(0, Math.min(1, volume));
+  constructor(options?: LowFreqAnalyzerOptions) {
+    this.options = { ...DEFAULT_OPTIONS, ...options };
   }
 
   /**
-   * Apply sliding window smoothing with adaptive threshold
-   * Matches AMLL implementation exactly
+   * Calculate raw low-frequency volume from FFT data
+   * Uses threshold-based normalization for better bass response
+   * @param fftData FFT amplitude data array (Uint8Array values 0-255)
    */
-  private smoothVolume(volume: number): number {
-    // Add to history
-    this.volumeHistory.push(volume);
+  private calculateRawVolume(fftData: number[]): number {
+    const { binCount, threshold, powerExponent } = this.options;
 
-    // Maintain window size
-    if (this.volumeHistory.length > this.windowSize) {
-      this.volumeHistory.shift();
+    if (!fftData || fftData.length < binCount) {
+      return 0;
     }
 
-    // Need at least a few samples for smoothing
-    if (this.volumeHistory.length < 3) {
-      return volume;
+    // Calculate average of low-frequency bins
+    let sum = 0;
+    for (let i = 0; i < binCount; i++) {
+      sum += fftData[i];
     }
+    const avg = sum / binCount;
 
-    // Find max and min in window
-    // AMLL: maxInInterval is already squared, minInInterval is not
-    const maxInInterval = Math.max(...this.volumeHistory) ** 2;
-    const minInInterval = Math.min(...this.volumeHistory);
+    // Threshold-based normalization (values below threshold treated as silence)
+    const maxValue = 255;
+    const normalized = Math.max(0, (avg - threshold) / (maxValue - threshold));
 
-    // Adaptive threshold: difference = max² - min (not min²)
-    const difference = maxInInterval - minInInterval;
+    // Power function for dynamic range expansion
+    // Makes quiet signals quieter while preserving louder values
+    return Math.pow(normalized, powerExponent);
+  }
 
-    // Return appropriate value based on threshold
-    // AMLL: returns max² or min * 0.25 (which is min * 0.5²)
-    if (difference > 0.35) {
-      return maxInInterval;  // Already squared
-    } else {
-      return minInInterval * 0.25;  // min * 0.5² = min * 0.25
-    }
+  /**
+   * Apply EMA (Exponential Moving Average) smoothing
+   */
+  private applySmoothing(rawVolume: number): number {
+    const { smoothFactor } = this.options;
+    this.smoothedVolume += smoothFactor * (rawVolume - this.smoothedVolume);
+    return this.smoothedVolume;
   }
 
   /**
    * Analyze FFT data and return smoothed low-frequency volume
-   * @param fftData FFT amplitude data array (should be 256 elements)
+   * @param fftData FFT amplitude data array (values 0-255)
    * @returns Smoothed low-frequency volume (0-1 range)
    */
   public analyze(fftData: number[]): number {
     const rawVolume = this.calculateRawVolume(fftData);
-    const smoothedVolume = this.smoothVolume(rawVolume);
-    return smoothedVolume;
+    return this.applySmoothing(rawVolume);
   }
 
   /**
-   * Reset the analyzer state (clear history)
+   * Get current smoothed volume without processing new data
+   */
+  public getCurrentVolume(): number {
+    return this.smoothedVolume;
+  }
+
+  /**
+   * Reset the analyzer state
    */
   public reset(): void {
-    this.volumeHistory = [];
+    this.smoothedVolume = 0;
+  }
+
+  /**
+   * Update options dynamically
+   */
+  public setOptions(options: Partial<LowFreqAnalyzerOptions>): void {
+    Object.assign(this.options, options);
   }
 }

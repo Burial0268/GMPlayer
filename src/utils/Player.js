@@ -336,7 +336,7 @@ export const processSpectrum = (sound) => {
       const source = spectrumsData.audioCtx.createMediaElementSource(audioDom);
       const analyser = spectrumsData.audioCtx.createAnalyser();
       // 频谱分析器 FFT
-      analyser.fftSize = 512;
+      analyser.fftSize = 2048;
       // 连接音频源和分析器，再连接至音频上下文的目标
       source.connect(analyser);
       analyser.connect(spectrumsData.audioCtx.destination);
@@ -365,9 +365,9 @@ const updateSpectrums = (analyser, dataArray) => {
   // 获取频率数据
   analyser.getByteFrequencyData(dataArray);
   status.spectrumsData = [...dataArray];
-  // 计算 scale
+  // 计算 scale (基于 512 频率 bins)
   const averageAmplitude = dataArray.reduce((acc, val) => acc + val, 0) / dataArray.length;
-  status.spectrumsScaleData = (averageAmplitude / 512 + 1).toFixed(2);
+  status.spectrumsScaleData = (averageAmplitude / 255 + 1).toFixed(2);
   // 递归调用，持续更新频谱数据
   requestAnimationFrame(() => {
     updateSpectrums(analyser, dataArray);

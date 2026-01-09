@@ -38,7 +38,7 @@
         :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
         :album="setting.albumImageUrl === 'none' ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') : setting.albumImageUrl"
         :renderScale="setting.renderScale" 
-        :lowFreqVolume="setting.dynamicFlowSpeed ? lowFreqVolume : 1.0"
+        :lowFreqVolume="setting.dynamicFlowSpeed ? (Math.round(lowFreqVolume * 100) / 100).toFixed(2) : 1.0"
         :staticMode="!music.showBigPlayer"
         class="overlay" />
     </template>
@@ -1699,7 +1699,7 @@ watch(
 
   &.bplayer-eplor,
   &.bplayer-blur {
-    background-color: transparent !important;
+    background-color: var(--main-cover-color) !important;
     .gray {
       backdrop-filter: none !important;
       -webkit-backdrop-filter: none !important;

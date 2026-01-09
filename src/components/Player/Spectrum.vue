@@ -50,8 +50,8 @@ const isKeepDrawing = ref(true);
   const canvasWidth = Math.min(1600, document.body.clientWidth);
   // 使用 props 中的高度设置画布高度
   const canvasHeight = props.height;
-  // 计算需要绘制的柱状图数量
-  const numBars = spectrumsData.value.length / 2.5;
+  // 计算需要绘制的柱状图数量 (512 bins, 取一半显示)
+  const numBars = Math.floor(spectrumsData.value.length / 10);
   // 计算每个柱状图的宽度
   const barWidth = canvasWidth / numBars / 2;
   // 获取圆角半径，从 props 中获取
@@ -69,8 +69,8 @@ const isKeepDrawing = ref(true);
 
   // 遍历数据绘制柱状图
   for (let i = 0; i < numBars; i++) {
-    // 计算柱状图的高度，从索引5开始跳过前5项数据
-    const barHeight = (data[i + 5] / 255) * canvasHeight;
+    // 计算柱状图的高度，从索引10开始跳过低频数据 (1024 FFT)
+    const barHeight = (data[i + 10] / 255) * canvasHeight;
     
     // 计算柱状图的 x 和 y 坐标
     const x1 = i * barWidth + canvasWidth / 2; // 右侧柱状图的 x 坐标
