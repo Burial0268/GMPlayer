@@ -388,7 +388,7 @@ const remainingTime = computed(() => {
 
 // 计算 lowFreqVolume 的最终值，优化性能
 const computedLowFreqVolume = computed(() => {
-  return setting.dynamicFlowSpeed ? Number((Math.round(lowFreqVolume.value * 100) / 100).toFixed(1)) : 1.0;
+  return setting.dynamicFlowSpeed ? Number((Math.round(lowFreqVolume.value * 100) / 100).toFixed(2)) : 1.0;
 });
 
 // 检测歌曲名称是否溢出
