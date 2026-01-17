@@ -38,7 +38,7 @@
         :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
         :album="setting.albumImageUrl === 'none' ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') : setting.albumImageUrl"
         :renderScale="setting.renderScale" 
-        :lowFreqVolume="setting.dynamicFlowSpeed ? Number((Math.round(lowFreqVolume * 100) / 100).toFixed(1)) : 1.0"
+        :lowFreqVolume="computedLowFreqVolume"
         :staticMode="!music.showBigPlayer"
         class="overlay" />
     </template>
@@ -384,6 +384,11 @@ const remainingTime = computed(() => {
   const minutes = Math.floor(remaining / 60);
   const seconds = Math.floor(remaining % 60);
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+});
+
+// 计算 lowFreqVolume 的最终值，优化性能
+const computedLowFreqVolume = computed(() => {
+  return setting.dynamicFlowSpeed ? Number((Math.round(lowFreqVolume.value * 100) / 100).toFixed(1)) : 1.0;
 });
 
 // 检测歌曲名称是否溢出
@@ -1699,7 +1704,7 @@ watch(
 
   &.bplayer-eplor,
   &.bplayer-blur {
-    background-color: var(--main-cover-color) !important;
+    background-color: gray !important;
     .gray {
       backdrop-filter: none !important;
       -webkit-backdrop-filter: none !important;
