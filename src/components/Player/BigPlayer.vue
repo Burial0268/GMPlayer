@@ -727,21 +727,7 @@ const lyricsScroll = (index) => {
 const changePwaColor = () => {
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');
   if (music.showBigPlayer) {
-    // 添加颜色变化动画
-    const oldColor = themeColorMeta.getAttribute("content");
     themeColorMeta.setAttribute("content", songPicColor);
-    
-    // 对整个播放器背景添加颜色过渡动画
-    if (bigPlayerRef.value) {
-      gsap.fromTo(bigPlayerRef.value, 
-        { background: `linear-gradient(to bottom, ${oldColor || '#000000'}, transparent)` },
-        { 
-          background: `linear-gradient(to bottom, ${songPicColor}, transparent)`, 
-          duration: 1, 
-          ease: "sine.inOut"
-        }
-      );
-    }
   } else {
     if (setting.getSiteTheme === "light") {
       themeColorMeta.setAttribute("content", "#ffffff");
