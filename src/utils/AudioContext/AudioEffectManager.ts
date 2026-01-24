@@ -28,6 +28,7 @@ export class AudioEffectManager {
   private initNodes(): void {
     this.analyserNode = this.audioCtx.createAnalyser();
     this.analyserNode.fftSize = 2048;
+    this.analyserNode.smoothingTimeConstant = 0.78;
   }
 
   /**
