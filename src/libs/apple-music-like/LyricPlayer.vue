@@ -15,15 +15,16 @@
     :line-scale-spring-params="copyValue('springParams.scale')"
     :enable-interlude-dots="true"
     :style="lyricStyles"
-    @line-click="handleLineClick"
+    @lineClick="handleLineClick"
     :key="playerKey"
+    ref="amllPlayerRef"
   />
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, watchEffect, toRaw, shallowRef, onMounted, nextTick } from 'vue';
 import { musicStore, settingStore, siteStore } from "../../store";
-import { LyricPlayer } from "@applemusic-like-lyrics/vue";
+import { LyricPlayer, LyricPlayerRef } from "@applemusic-like-lyrics/vue";
 import { preprocessLyrics, getProcessedLyrics, type LyricLine } from "./processLyrics";
 import '@applemusic-like-lyrics/core/style.css';
 
@@ -34,6 +35,7 @@ const setting = settingStore();
 // 直接复制 AMLL-Editor 的实现模式
 const playerKey = ref(Symbol());
 const amllLyricLines = shallowRef<LyricLine[]>([]);
+const amllPlayerRef = ref<LyricPlayerRef>();
 
 const playState = shallowRef(false);
 const currentTime = shallowRef(0);
@@ -93,11 +95,11 @@ const lyricStyles = computed(() => ({
 }));
 
 // 处理歌词点击（参考 AMLL-Editor 的 jumpSeek）
-const handleLineClick = (line: any) => {
-  if (!line?.line?.lyricLine?.startTime) return;
-  const time = line.line.lyricLine.startTime;
-  emit("lrcTextClick", time / 1000);
-  emit("line-click", line);
+const handleLineClick = (evt: any) => {
+  const targetTime = evt.line.getLine().startTime;
+  amllPlayerRef.value?.lyricPlayer.value?.setCurrentTime(targetTime, true);
+  emit("lrcTextClick", targetTime / 1000);
+  emit("line-click", evt);
 };
 
 // 更新歌词数据（直接复制 AMLL-Editor 的 watch 模式）

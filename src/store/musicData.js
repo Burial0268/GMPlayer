@@ -8,7 +8,7 @@ import { getMusicUrl } from "@/api/song";
 import { userStore, settingStore } from "@/store";
 import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
-import { soundStop, fadePlayOrPause } from "@/utils/Player";
+import { soundStop, fadePlayOrPause } from "@/utils/AudioContext";
 import getLanguageData from "@/utils/getLanguageData";
 import { preprocessLyrics } from "@/libs/apple-music-like/processLyrics";
 
@@ -51,6 +51,8 @@ const useMusicDataStore = defineStore("musicData", {
       // 音乐频谱数据
       spectrumsData: [],
       spectrumsScaleData: 1,
+      // 低频音量 (用于背景动画)
+      lowFreqVolume: 0,
       // 是否正在加载数据
       isLoadingSong: false,
       // 预加载过的歌曲ID
@@ -117,6 +119,10 @@ const useMusicDataStore = defineStore("musicData", {
     // 获取频谱数据
     getSpectrumsData(state) {
       return state.spectrumsData
+    },
+    // 获取低频音量
+    getLowFreqVolume(state) {
+      return state.lowFreqVolume
     },
     // 获取播放模式
     getPlaySongMode(state) {

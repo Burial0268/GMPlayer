@@ -207,7 +207,7 @@ import {
   setVolume,
   setSeek,
   fadePlayOrPause,
-} from "@/utils/Player";
+} from "@/utils/AudioContext";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import { useRouter } from "vue-router";
 import { debounce } from "throttle-debounce";

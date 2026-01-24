@@ -356,7 +356,7 @@ import { musicStore, settingStore, userStore } from "@/store";
 import { useRouter } from "vue-router";
 import { setCloudDel } from "@/api/user";
 import { NIcon } from "naive-ui";
-import { soundStop } from "@/utils/Player";
+import { soundStop } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";

@@ -50,8 +50,8 @@ const isKeepDrawing = ref(true);
   const canvasWidth = Math.min(1600, document.body.clientWidth);
   // 使用 props 中的高度设置画布高度
   const canvasHeight = props.height;
-  // 计算需要绘制的柱状图数量 (512 bins, 取一半显示)
-  const numBars = Math.floor(spectrumsData.value.length / 5);
+  // 计算需要绘制的柱状图数量 (2048 bins, 取一半显示)
+  const numBars = Math.floor(spectrumsData.value.length / 10);
   // 计算每个柱状图的宽度
   const barWidth = canvasWidth / numBars / 2;
   // 获取圆角半径，从 props 中获取

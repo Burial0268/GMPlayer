@@ -287,7 +287,7 @@ import {
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { useRouter } from "vue-router";
-import { setSeek } from "@/utils/Player";
+import { setSeek } from "@/utils/AudioContext";
 import PlayerRecord from "./PlayerRecord.vue";
 import PlayerCover from "./PlayerCover.vue";
 import RollingLyrics from "./RollingLyrics.vue";
@@ -297,8 +297,6 @@ import screenfull from "screenfull";
 import VueSlider from "vue-slider-component";
 import "vue-slider-component/theme/default.css";
 import BackgroundRender from "@/libs/apple-music-like/BackgroundRender.vue";
-import { throttle } from "throttle-debounce";
-import { LowFreqVolumeAnalyzer } from "../../utils/lowFreqVolumeAnalyzer";
 import { storeToRefs } from "pinia";
 import gsap from "gsap";
 import {
@@ -339,21 +337,6 @@ const bigPlayerRef = ref(null);
 const tipRef = ref(null);
 const leftContentRef = ref(null);
 const rightContentRef = ref(null);
-const lowFreqVolume = shallowRef(1.0);
-
-// Create low-frequency volume analyzer instance
-const lowFreqAnalyzer = new LowFreqVolumeAnalyzer();
-
-// Watch for spectrum data to calculate low-frequency volume for background rendering
-// This replaces the previous dynamicFlowSpeed approach with direct lowFreqVolume control
-watch(() => music.getSpectrumsData, throttle(100, (val) => {
-  if (!music.getPlayState || !val) {
-    return;
-  }
-
-  // Use the new analyzer to calculate smoothed low-frequency volume
-  lowFreqVolume.value = lowFreqAnalyzer.analyze(val);
-}));
 
 // 检测是否为移动设备
 const isMobile = ref(false);
@@ -388,7 +371,7 @@ const remainingTime = computed(() => {
 
 // 计算 lowFreqVolume 的最终值，优化性能
 const computedLowFreqVolume = computed(() => {
-  return setting.dynamicFlowSpeed ? Number((Math.round(lowFreqVolume.value * 100) / 100).toFixed(2)) : 1.0;
+  return setting.dynamicFlowSpeed ? Number((Math.round(music.lowFreqVolume * 100) / 100).toFixed(2)) : 1.0;
 });
 
 // 检测歌曲名称是否溢出

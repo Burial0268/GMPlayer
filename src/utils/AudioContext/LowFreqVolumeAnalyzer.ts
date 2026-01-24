@@ -7,21 +7,12 @@
  * - Configurable parameters
  */
 
-interface LowFreqAnalyzerOptions {
-  /** Number of low frequency bins to analyze (default: 3, ~0-280Hz at 48kHz/1024 FFT) */
-  binCount?: number;
-  /** EMA smoothing factor, higher = more responsive (default: 0.28) */
-  smoothFactor?: number;
-  /** Threshold below which values are treated as silence (default: 80) */
-  threshold?: number;
-  /** Power exponent for dynamic range expansion (default: 2) */
-  powerExponent?: number;
-}
+import type { LowFreqAnalyzerOptions } from './types';
 
 const DEFAULT_OPTIONS: Required<LowFreqAnalyzerOptions> = {
   binCount: 3,
   smoothFactor: 0.28,
-  threshold: 80,
+  threshold: 180,
   powerExponent: 2,
 };
 

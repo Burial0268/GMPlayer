@@ -55,7 +55,7 @@
 <script setup>
 import { musicStore, siteStore } from "@/store";
 import { DeleteFour } from "@icon-park/vue-next";
-import { soundStop } from "@/utils/Player";
+import { soundStop } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 

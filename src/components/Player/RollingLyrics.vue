@@ -23,9 +23,7 @@ const setting = settingStore();
 // 处理歌词点击
 const handleLineClick = (e: { line: { getLine: () => { startTime: number } } }) => {
   const time = e.line.getLine().startTime;
-  if (time != null) {
-    emit("lrcTextClick", time / 1000);
-  }
+  emit("lrcTextClick", time / 1000);
 };
 
 // 直接处理从 LyricPlayer 传递的 lrcTextClick 事件

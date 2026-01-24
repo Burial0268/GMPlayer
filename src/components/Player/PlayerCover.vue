@@ -157,7 +157,7 @@ import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
-import { setSeek } from "@/utils/Player";
+import { setSeek } from "@/utils/AudioContext";
 import VueSlider from "vue-slider-component";
 import "vue-slider-component/theme/default.css";
 import defaultCover from "/images/pic/default.png?url";
