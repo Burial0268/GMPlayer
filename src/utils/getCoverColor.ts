@@ -8,12 +8,16 @@ import {
 import { settingStore, siteStore } from '@/store'
 import { chunk } from "./chunk";
 
+type RGB = [number, number, number];
+type HSL = [number, number, number];
+type LAB = [number, number, number];
+
 /**
  * 将 RGB 颜色值转换为 HSL（色调、饱和度、亮度）颜色值
- * @param {number[]} rgb - 一个包含红色、绿色和蓝色通道值的数组（范围：0-255）
- * @returns {number[]} - 一个包含色调（H）、饱和度（S）和亮度（L）的数组，值的范围分别为 [0, 1]、[0, 1] 和 [0, 1]
+ * @param rgb - 一个包含红色、绿色和蓝色通道值的数组（范围：0-255）
+ * @returns 一个包含色调（H）、饱和度（S）和亮度（L）的数组，值的范围分别为 [0, 1]、[0, 1] 和 [0, 1]
  */
-export const rgb2Hsl = ([r, g, b]) => {
+export const rgb2Hsl = ([r, g, b]: RGB): HSL => {
   // 将 RGB 值转换为范围 [0, 1] 的值
   r /= 255;
   g /= 255;
@@ -22,8 +26,8 @@ export const rgb2Hsl = ([r, g, b]) => {
   const max = Math.max(r, g, b);
   const min = Math.min(r, g, b);
   // 初始化色调（H）、饱和度（S）、亮度（L）
-  let h,
-    s,
+  let h = 0,
+    s = 0,
     l = (max + min) / 2;
   if (max === min) {
     // 如果最大和最小通道值相等，颜色为灰色
@@ -52,16 +56,16 @@ export const rgb2Hsl = ([r, g, b]) => {
 /**
  * 将HSL（色相、饱和度、亮度）颜色值转换为RGB颜色值
  *
- * @param {number[]} hsl - 包含色相（0-1）、饱和度（0-1）和亮度（0-1）的数组
- * @returns {number[]} - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
+ * @param hsl - 包含色相（0-1）、饱和度（0-1）和亮度（0-1）的数组
+ * @returns 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
  */
-export const hsl2Rgb = ([h, s, l]) => {
-  let r, g, b;
+export const hsl2Rgb = ([h, s, l]: HSL): RGB => {
+  let r: number, g: number, b: number;
   if (s == 0) {
     // 如果饱和度为0，将RGB三个分量都设置为亮度
     r = g = b = l;
   } else {
-    const hue2rgb = (p, q, t) => {
+    const hue2rgb = (p: number, q: number, t: number): number => {
       if (t < 0) t += 1;
       if (t > 1) t -= 1;
       if (t < 1 / 6) return p + (q - p) * 6 * t;
@@ -82,23 +86,23 @@ export const hsl2Rgb = ([h, s, l]) => {
 /**
  * 根据输入的RGB颜色值，对颜色进行规范化处理（暂时无用）
  *
- * @param {number[]} rgb - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
- * @returns {number[]} - 规范化后的RGB颜色值数组（0-255）
+ * @param rgb - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
+ * @returns 规范化后的RGB颜色值数组（0-255）
  */
-export const normalizeColor = ([r, g, b]) => {
+export const normalizeColor = ([r, g, b]: RGB): RGB => {
   // 如果RGB三个分量之间的差值小于5，返回灰色
   if (Math.max(r, g, b) - Math.min(r, g, b) < 5) {
     return [150, 150, 150];
   }
   // 辅助函数，用于混合两个值
-  const mix = (a, b, p) => Math.round(a * (1 - p) + b * p);
+  const mix = (a: number, b: number, p: number): number => Math.round(a * (1 - p) + b * p);
   // 计算颜色的亮度
   const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   // 根据亮度调整颜色
   if (luminance < 60) {
-    [r, g, b] = [r, g, b].map((c) => mix(c, 255, 0.3 * (1 - luminance / 60)));
+    [r, g, b] = [r, g, b].map((c) => mix(c, 255, 0.3 * (1 - luminance / 60))) as RGB;
   } else if (luminance > 180) {
-    [r, g, b] = [r, g, b].map((c) => mix(c, 0, 0.5 * ((luminance - 180) / 76)));
+    [r, g, b] = [r, g, b].map((c) => mix(c, 0, 0.5 * ((luminance - 180) / 76))) as RGB;
   }
   // 将RGB颜色值转换为HSL颜色值
   let [h, s, l] = rgb2Hsl([r, g, b]);
@@ -114,30 +118,26 @@ export const normalizeColor = ([r, g, b]) => {
 /**
  * 计算输入颜色的白色调色板版本，通过混合颜色和白色来改变亮度（暂时无用）
  *
- * @param {number[]} rgb - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
- * @param {number} [p=0.5] - 混合颜色和白色的比例，范围为0到1，默认为0.5
- * @returns {number[]} - 新的RGB颜色值数组，表示经过白色调色板处理后的颜色
+ * @param rgb - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
+ * @param p - 混合颜色和白色的比例，范围为0到1，默认为0.5
+ * @returns 新的RGB颜色值数组，表示经过白色调色板处理后的颜色
  */
-export const calcWhiteShadeColor = ([r, g, b], p = 0.5) => {
+export const calcWhiteShadeColor = ([r, g, b]: RGB, p = 0.5): RGB => {
   /**
    * 辅助函数，用于混合两个值
-   * @param {number} a - 第一个值
-   * @param {number} b - 第二个值
-   * @param {number} p - 混合比例，范围为0到1
-   * @returns {number} - 混合后的值
    */
-  const mix = (a, b, p) => Math.round(a * (1 - p) + b * p);
+  const mix = (a: number, b: number, p: number): number => Math.round(a * (1 - p) + b * p);
   // 将输入颜色的每个分量与255进行混合，改变亮度
-  return [r, g, b].map((c) => mix(c, 255, p));
+  return [r, g, b].map((c) => mix(c, 255, p)) as RGB;
 };
 
 /**
  * 计算给定颜色的亮度
  *
- * @param {number[]} color - 包含红色、绿色和蓝色分量的颜色值数组（0-255）
- * @returns {number} - 颜色的亮度值，范围从0到1
+ * @param color - 包含红色、绿色和蓝色分量的颜色值数组（0-255）
+ * @returns 颜色的亮度值，范围从0到1
  */
-export const calcLuminance = (color) => {
+export const calcLuminance = (color: RGB): number => {
   // 将颜色值从0-255映射到0-1范围
   let [r, g, b] = color.map((c) => c / 255);
   // 对每个分量进行 gamma 校正
@@ -154,10 +154,10 @@ export const calcLuminance = (color) => {
 /**
  * 将RGB颜色值转换为CIELAB颜色空间中的LAB颜色值
  *
- * @param {number[]} color - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
- * @returns {number[]} - LAB颜色值数组，包含亮度（L）和色度（A、B）分量
+ * @param color - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
+ * @returns LAB颜色值数组，包含亮度（L）和色度（A、B）分量
  */
-export const rgb2Lab = (color) => {
+export const rgb2Lab = (color: RGB | null | undefined): LAB => {
   if (!color) return [0, 0, 0];
   // 将颜色值从0-255映射到0-1范围
   let [r, g, b] = color.map((c) => c / 255);
@@ -175,7 +175,7 @@ export const rgb2Lab = (color) => {
   const y = r * 0.2126 + g * 0.7152 + b * 0.0722;
   const z = r * 0.0193 + g * 0.1192 + b * 0.9505;
   // 辅助函数，用于将XYZ分量映射到LAB分量
-  const xyz2Lab = (c) => {
+  const xyz2Lab = (c: number): number => {
     if (c > 0.008856) {
       return Math.pow(c, 1 / 3);
     }
@@ -192,11 +192,11 @@ export const rgb2Lab = (color) => {
 /**
  * 计算两个颜色之间的颜色差异，使用CIELAB颜色空间中的欧氏距离
  *
- * @param {number[]} color1 - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
- * @param {number[]} color2 - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
- * @returns {number} - 两个颜色之间的颜色差异值
+ * @param color1 - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
+ * @param color2 - 包含红色、绿色和蓝色分量的RGB颜色值数组（0-255）
+ * @returns 两个颜色之间的颜色差异值
  */
-export const calcColorDifference = (color1, color2) => {
+export const calcColorDifference = (color1: RGB, color2: RGB): number => {
   // 将颜色值转换为LAB颜色值
   const [L1, A1, B1] = rgb2Lab(color1);
   const [L2, A2, B2] = rgb2Lab(color2);
@@ -211,10 +211,10 @@ export const calcColorDifference = (color1, color2) => {
 /**
  * 从给定调色板中生成渐变背景颜色
  *
- * @param {number[][]} palette - 包含多个颜色的调色板，每个颜色由红色、绿色和蓝色分量组成的数组（0-255）
- * @returns {string} - 表示渐变背景颜色的CSS线性渐变字符串
+ * @param palette - 包含多个颜色的调色板，每个颜色由红色、绿色和蓝色分量组成的数组（0-255）
+ * @returns 表示渐变背景颜色的CSS线性渐变字符串
  */
-export const getGradientFromPalette = (palette) => {
+export const getGradientFromPalette = (palette: RGB[]): string => {
   // 根据亮度对调色板进行排序
   palette = palette.sort((a, b) => {
     return calcLuminance(a) - calcLuminance(b);
@@ -228,7 +228,7 @@ export const getGradientFromPalette = (palette) => {
   // 选择最饱和的6个颜色
   palette = palette.slice(0, 6);
   // 计算颜色之间的差异
-  let differences = new Array(6);
+  const differences: number[][] = new Array(6);
   for (let i = 0; i < differences.length; i++) {
     differences[i] = new Array(6).fill(0);
   }
@@ -239,10 +239,10 @@ export const getGradientFromPalette = (palette) => {
     }
   }
   // 使用深度优先搜索找到最佳颜色序列
-  let used = new Array(6).fill(false);
+  const used = new Array(6).fill(false);
   let min = 10000000,
-    ansSeq = [];
-  const dfs = (depth, seq = [], currentMax = -1) => {
+    ansSeq: number[] = [];
+  const dfs = (depth: number, seq: number[] = [], currentMax = -1): void => {
     if (depth === 6) {
       if (currentMax < min) {
         min = currentMax;
@@ -263,8 +263,8 @@ export const getGradientFromPalette = (palette) => {
     used[i] = false;
   }
   // 根据最佳颜色序列构建渐变字符串
-  let colors = [];
-  for (let i of ansSeq) {
+  const colors: RGB[] = [];
+  for (const i of ansSeq) {
     colors.push(palette[i]);
   }
   let ans = "linear-gradient(-45deg,";
@@ -281,10 +281,10 @@ export const getGradientFromPalette = (palette) => {
 /**
  * 将32位ARGB颜色值转换为24位RGB颜色值
  *
- * @param {number} x - 32位ARGB颜色值
- * @returns {number[]} - 包含红色、绿色和蓝色分量的24位RGB颜色值数组（0-255）
+ * @param x - 32位ARGB颜色值
+ * @returns 包含红色、绿色和蓝色分量的24位RGB颜色值数组（0-255）
  */
-export const argb2Rgb = (x) => {
+export const argb2Rgb = (x: number): RGB => {
   // 提取红色、绿色和蓝色分量
   const r = (x >> 16) & 0xff;
   const g = (x >> 8) & 0xff;
@@ -296,12 +296,12 @@ export const argb2Rgb = (x) => {
 /**
  * 将24位RGB颜色值转换为32位ARGB颜色值
  *
- * @param {number} r - 红色分量（0-255）
- * @param {number} g - 绿色分量（0-255）
- * @param {number} b - 蓝色分量（0-255）
- * @returns {number} - 32位ARGB颜色值
+ * @param r - 红色分量（0-255）
+ * @param g - 绿色分量（0-255）
+ * @param b - 蓝色分量（0-255）
+ * @returns 32位ARGB颜色值
  */
-export const rgb2Argb = (r, g, b) => {
+export const rgb2Argb = (r: number, g: number, b: number): number => {
   // 使用位运算将RGB分量组合成32位ARGB颜色值
   return (0xff << 24) | (r << 16) | (g << 8) | b;
 };
@@ -309,12 +309,12 @@ export const rgb2Argb = (r, g, b) => {
 /**
  * 将24位RGB颜色值转换为16进制表示的颜色字符串
  *
- * @param {number} r - 红色分量（0-255）
- * @param {number} g - 绿色分量（0-255）
- * @param {number} b - 蓝色分量（0-255）
- * @returns {string} - 16进制表示的颜色字符串，以"#"开头
+ * @param r - 红色分量（0-255）
+ * @param g - 绿色分量（0-255）
+ * @param b - 蓝色分量（0-255）
+ * @returns 16进制表示的颜色字符串，以"#"开头
  */
-export const Rgb2Hex = (r, g, b) => {
+export const Rgb2Hex = (r: number, g: number, b: number): string => {
   // 将每个分量转换为16进制，并确保每个分量都有两位
   const hexR = (r < 16 ? "0" : "") + r.toString(16);
   const hexG = (g < 16 ? "0" : "") + g.toString(16);
@@ -325,9 +325,9 @@ export const Rgb2Hex = (r, g, b) => {
 
 /**
  * 根据图像的主色获取渐变色
- * @param {string} coverSrc - 图片 URL
+ * @param coverSrc - 图片 URL
  */
-export const getCoverColor = (coverSrc) => {
+export const getCoverColor = (coverSrc: string): Promise<string> => {
   coverSrc = coverSrc.replace(/^http:/, "https:");
   return new Promise((resolve, reject) => {
     try {
@@ -356,20 +356,20 @@ export const getCoverColor = (coverSrc) => {
 
 /**
  * 从图像中计算强调色并更新页面主题
- * @param {HTMLImageElement} dom - 包含图像的 DOM 元素
+ * @param dom - 包含图像的 DOM 元素
  */
-const calcAccentColor = (dom) => {
+const calcAccentColor = (dom: HTMLImageElement): void => {
   const settings = settingStore()
   const site = siteStore();
-  let caccentColor;
+  let caccentColor: string;
   // 创建一个用于提取颜色的 canvas
   const canvas = document.createElement("canvas");
   canvas.width = 50;
   canvas.height = 50;
   // 获取 50x50 大小的图像颜色数据
-  const ctx = canvas.getContext("2d");
+  const ctx = canvas.getContext("2d")!;
   ctx.drawImage(dom, 0, 0, dom.naturalWidth, dom.naturalHeight, 0, 0, 50, 50);
-  const pixels = chunk(ctx.getImageData(0, 0, 50, 50).data, 4).map((pixel) => {
+  const pixels = chunk(Array.from(ctx.getImageData(0, 0, 50, 50).data), 4).map((pixel) => {
     // 将颜色数据转换为整数表示
     return (
       (((pixel[3] << 24) >>> 0) | ((pixel[0] << 16) >>> 0) | ((pixel[1] << 8) >>> 0) | pixel[2]) >>>
@@ -389,7 +389,7 @@ const calcAccentColor = (dom) => {
   const ranked = Score.score(new Map(sortedQuantizedColors.slice(0, 50)));
   const top = ranked[0];
   const theme = themeFromSourceColor(top);
-  const variant = settings.colorType;
+  const variant = settings.colorType as keyof typeof theme.palettes;
 
   caccentColor = getAccentColor(
     Hct.from(theme.palettes[variant].hue, theme.palettes[variant].chroma, 90).toInt(),
@@ -401,13 +401,13 @@ const calcAccentColor = (dom) => {
 /**
  * 使用灰色强调色
  */
-const useGreyAccentColor = () => getAccentColor(rgb2Argb(20, 20, 20))
+const useGreyAccentColor = (): string => getAccentColor(rgb2Argb(20, 20, 20))
 
 /**
  * 主色以 RGB 格式返回
- * @param {number} argb - 表示颜色的 ARGB 格式整数
+ * @param argb - 表示颜色的 ARGB 格式整数
  */
-const getAccentColor = (argb) => {
+const getAccentColor = (argb: number): string => {
   // 将 ARGB 转换为 RGB
   const [r, g, b] = [...argb2Rgb(argb)];
   // 返回 rgb

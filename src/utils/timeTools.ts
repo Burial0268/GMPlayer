@@ -6,21 +6,21 @@ import duration from 'dayjs/plugin/duration';
 // 初始化dayjs的duration插件
 dayjs.extend(duration);
 
-export const msToS = (milliseconds, decimalPlaces = 2)=> {
+export const msToS = (milliseconds: number, decimalPlaces = 2): number => {
   return Number((milliseconds / 1000).toFixed(decimalPlaces));
 };
 
-export const msToTime = (milliseconds) => {
+export const msToTime = (milliseconds: number): string => {
   const dur = dayjs.duration(milliseconds, "milliseconds");
   return milliseconds < 3600000 ? dur.format("mm:ss") : dur.format("H:mm:ss");
 };
 
 /**
  * 歌曲时长时间戳转换
- * @param {number} mss 毫秒数
- * @returns {string} 格式为 "mm:ss" 的字符串
+ * @param mss 毫秒数
+ * @returns 格式为 "mm:ss" 的字符串
  */
-export const getSongTime = (mss) => {
+export const getSongTime = (mss: number): string => {
   const date = new Date(0);
   date.setMilliseconds(mss);
 
@@ -30,11 +30,11 @@ export const getSongTime = (mss) => {
 
 /**
  * 获取时间戳对应的日期
- * @param {number} mss - 时间戳
- * @returns {string} - 日期字符串
+ * @param mss - 时间戳
+ * @returns 日期字符串
  */
-export const getLongTime = (mss) => {
-  const date = new Date(parseInt(mss));
+export const getLongTime = (mss: number | string): string => {
+  const date = new Date(parseInt(String(mss)));
   const y = date.getFullYear();
   const m = `0${date.getMonth() + 1}`.slice(-2);
   const d = `0${date.getDate()}`.slice(-2);
@@ -43,10 +43,10 @@ export const getLongTime = (mss) => {
 
 /**
  * 将时间戳转化为对应的时间格式
- * @param {number} t - 时间戳，单位为毫秒
- * @returns {string} - 转换后的时间字符串
+ * @param t - 时间戳，单位为毫秒
+ * @returns 转换后的时间字符串
  */
-export const getCommentTime = (t) => {
+export const getCommentTime = (t: number): string => {
   const nowDate = new Date(); // Current date object
   const nowTime = nowDate.getTime(); // Current timestamp
 
@@ -91,15 +91,15 @@ export const getCommentTime = (t) => {
 
 /**
  * 过万/亿数字转化
- * @param {number} num 需要格式化的数字
- * @returns {string|number} 格式化后的字符串或原样返回的数字
+ * @param num 需要格式化的数字
+ * @returns 格式化后的字符串或原样返回的数字
  */
-export const formatNumber = (num) => {
+export const formatNumber = (num: number | string): string | number => {
   const n = Number(num);
-  
+
   // If the number is less than 10000 or zero, return as-is
   if (n === 0 || n < 10000) return n;
-  
+
   // Define formatter based on the current locale
   const formatter = new Intl.NumberFormat(undefined, {
     minimumFractionDigits: 1,
@@ -107,10 +107,10 @@ export const formatNumber = (num) => {
   });
 
   // Function to format the number into million or billion
-  const formatToMillionOrBillion = (number) => {
+  const formatToMillionOrBillion = (number: number): string => {
     const million = getLanguageData("million"); // Replace with your i18n function
     const billion = getLanguageData("billion"); // Replace with your i18n function
-    
+
     if (number < 100000000) {
       return formatter.format(number / 10000) + million;
     } else {
@@ -122,13 +122,13 @@ export const formatNumber = (num) => {
   return formatToMillionOrBillion(n);
 };
 
-const memo = {};
+const memo: Record<number, string> = {};
 /**
  * 歌曲播放时间转换
- * @param {number} num 歌曲播放时间，单位为秒
- * @returns {string} 格式为 "mm:ss" 的字符串
+ * @param num 歌曲播放时间，单位为秒
+ * @returns 格式为 "mm:ss" 的字符串
  */
-export const getSongPlayingTime = (num) => {
+export const getSongPlayingTime = (num: number): string => {
   // Check if result is memoized
   if (memo[num]) return memo[num];
 
