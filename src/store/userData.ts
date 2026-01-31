@@ -1,6 +1,6 @@
-import { defineStore } from "pinia";
+import { defineStore, acceptHMRUpdate } from "pinia";
 import {
-  userLogOut,
+  userLogOut as apiUserLogOut,
   getUserLevel,
   getUserSubcount,
   getUserPlaylist,
@@ -10,31 +10,92 @@ import {
 import { formatNumber, getLongTime } from "@/utils/timeTools";
 import getLanguageData from "@/utils/getLanguageData";
 
+declare const $message: any;
+
+interface UserData {
+  userId?: number;
+  [key: string]: any;
+}
+
+interface UserOtherData {
+  level?: any;
+  subcount?: any;
+  [key: string]: any;
+}
+
+interface PlaylistItem {
+  id: number;
+  cover: string;
+  name: string;
+  artist: any;
+  desc?: string;
+  tags?: string[];
+  playCount: string;
+  trackCount?: number;
+}
+
+interface UserPlayLists {
+  isLoading: boolean;
+  has: boolean;
+  own: PlaylistItem[];
+  like: PlaylistItem[];
+}
+
+interface AlbumItem {
+  id: number;
+  cover: string;
+  name: string;
+  artist: any;
+  time: string;
+}
+
+interface UserAlbum {
+  isLoading: boolean;
+  has: boolean;
+  list: AlbumItem[];
+}
+
+interface ArtistItem {
+  id: number;
+  name: string;
+  cover: string;
+  size: number;
+}
+
+interface UserArtistLists {
+  isLoading: boolean;
+  has: boolean;
+  list: ArtistItem[];
+}
+
+interface UserDataState {
+  userLogin: boolean;
+  cookie: string | null;
+  userData: UserData;
+  userOtherData: UserOtherData;
+  userPlayLists: UserPlayLists;
+  userAlbum: UserAlbum;
+  userArtistLists: UserArtistLists;
+}
+
 const useUserDataStore = defineStore("userData", {
-  state: () => {
+  state: (): UserDataState => {
     return {
-      // 用户登录状态
       userLogin: false,
-      // 用户 cookie
       cookie: null,
-      // 用户基础数据
       userData: {},
-      // 用户详情数据
       userOtherData: {},
-      // 用户歌单
       userPlayLists: {
         isLoading: false,
         has: false,
-        own: [], // 创建歌单
-        like: [], // 收藏歌单
+        own: [],
+        like: [],
       },
-      // 用户专辑
       userAlbum: {
         isLoading: false,
         has: false,
         list: [],
       },
-      // 用户收藏歌手
       userArtistLists: {
         isLoading: false,
         has: false,
@@ -43,42 +104,33 @@ const useUserDataStore = defineStore("userData", {
     };
   },
   getters: {
-    // 获取 cookie
-    getCookie(state) {
+    getCookie(state): string | null {
       return state.cookie;
     },
-    // 获取用户基础数据
-    getUserData(state) {
+    getUserData(state): UserData {
       return state.userData;
     },
-    // 获取用户详情数据
-    getUserOtherData(state) {
+    getUserOtherData(state): UserOtherData {
       return state.userOtherData;
     },
-    // 获取用户歌单
-    getUserPlayLists(state) {
+    getUserPlayLists(state): UserPlayLists {
       return state.userPlayLists;
     },
-    // 获取用户收藏歌手
-    getUserArtistLists(state) {
+    getUserArtistLists(state): UserArtistLists {
       return state.userArtistLists;
     },
-    // 获取用户收藏专辑
-    getUserAlbumLists(state) {
+    getUserAlbumLists(state): UserAlbum {
       return state.userAlbum;
     },
   },
   actions: {
-    // 更改 cookie
-    setCookie(value) {
+    setCookie(value: string) {
       window.localStorage.setItem("cookie", value);
       this.cookie = value;
     },
-    // 更改用户数据
-    setUserData(value) {
+    setUserData(value: UserData) {
       this.userData = value;
     },
-    // 更改用户等级信息
     setUserOtherData() {
       if (this.userLogin) {
         const getOtherData = [getUserLevel(), getUserSubcount()];
@@ -87,7 +139,6 @@ const useUserDataStore = defineStore("userData", {
             console.log(res);
             this.userOtherData.level = res[0].data;
             this.userOtherData.subcount = res[1];
-            // this.setUserPlayLists();
           })
           .catch((err) => {
             console.error(getLanguageData("getDataError"), err);
@@ -95,34 +146,31 @@ const useUserDataStore = defineStore("userData", {
           });
       }
     },
-    // 退出登录
     userLogOut() {
       this.userLogin = false;
       this.cookie = null;
       this.userData = {};
       this.userOtherData = {};
       localStorage.removeItem("cookie");
-      // 调用退出登录接口
-      userLogOut();
+      apiUserLogOut();
     },
-    // 更改用户歌单
-    async setUserPlayLists(callback) {
+    async setUserPlayLists(callback?: () => void) {
       if (this.userLogin) {
         try {
           this.userPlayLists.isLoading = true;
           const { userId } = this.userData;
-          // const { subcount } = this.userOtherData;
           const { createdPlaylistCount, subPlaylistCount } =
             await getUserSubcount();
-          const number = createdPlaylistCount + subPlaylistCount ?? 30;
-          const res = await getUserPlaylist(userId, number);
+          const number = (createdPlaylistCount + subPlaylistCount) || 30;
+          const res = await getUserPlaylist(userId!, number);
           if (res.playlist) {
             this.userPlayLists = {
+              isLoading: false,
               has: true,
               own: [],
               like: [],
             };
-            res.playlist.forEach((v) => {
+            res.playlist.forEach((v: any) => {
               if (v.creator.userId === this.getUserData.userId) {
                 this.userPlayLists.own.push({
                   id: v.id,
@@ -163,8 +211,7 @@ const useUserDataStore = defineStore("userData", {
         $message.error(getLanguageData("needLogin"));
       }
     },
-    // 更改用户收藏歌手
-    async setUserArtistLists(callback) {
+    async setUserArtistLists(callback?: () => void) {
       if (this.userLogin) {
         try {
           this.userArtistLists.isLoading = true;
@@ -172,7 +219,7 @@ const useUserDataStore = defineStore("userData", {
           if (res.data) {
             this.userArtistLists.list = [];
             this.userArtistLists.has = true;
-            res.data.forEach((v) => {
+            res.data.forEach((v: any) => {
               this.userArtistLists.list.push({
                 id: v.id,
                 name: v.name,
@@ -199,17 +246,16 @@ const useUserDataStore = defineStore("userData", {
         $message.error(getLanguageData("needLogin"));
       }
     },
-    // 更改用户收藏专辑
-    async setUserAlbumLists(callback) {
+    async setUserAlbumLists(callback?: () => void) {
       if (this.userLogin) {
         try {
           let offset = 0;
-          let totalCount = null;
+          let totalCount: number | null = null;
           this.userAlbum.isLoading = true;
           this.userAlbum.list = [];
           while (totalCount === null || offset < totalCount) {
             const res = await getUserAlbum(30, offset);
-            res.data.forEach((v) => {
+            res.data.forEach((v: any) => {
               this.userAlbum.list.push({
                 id: v.id,
                 cover: v.picUrl,
@@ -239,7 +285,6 @@ const useUserDataStore = defineStore("userData", {
       }
     },
   },
-  // 开启数据持久化
   persist: [
     {
       storage: localStorage,
@@ -247,5 +292,9 @@ const useUserDataStore = defineStore("userData", {
     },
   ],
 });
+
+if (import.meta.hot) {
+  import.meta.hot.accept(acceptHMRUpdate(useUserDataStore, import.meta.hot))
+}
 
 export default useUserDataStore;

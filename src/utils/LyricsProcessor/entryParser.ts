@@ -1,10 +1,13 @@
 /**
  * LyricsProcessor Entry Parser
- * LRC 格式解析器 - 严格时间匹配
+ * LRC 格式解析器 - 严格时间匹配 (优化版)
  */
 
 import type { TimeTextEntry } from './types';
 import { parseLrcTime } from './timeUtils';
+
+// Pre-compiled regex (avoid recompilation on each call)
+const LRC_LINE_REGEX = /^\[(\d+:\d+(?:\.\d+)?)\](.*)/;
 
 /**
  * 解析 LRC 文本为时间-文本条目数组
@@ -12,24 +15,29 @@ import { parseLrcTime } from './timeUtils';
  * @returns 时间-文本条目数组，按时间排序
  */
 export function parseLrcToEntries(lrcText: string): TimeTextEntry[] {
-  const entries: TimeTextEntry[] = [];
-  if (!lrcText) return entries;
+  if (!lrcText) return [];
 
   const lines = lrcText.split('\n');
-  for (const line of lines) {
-    // 匹配 [mm:ss.xx] 或 [mm:ss.xxx] 或 [mm:ss] 格式
-    const match = line.match(/^\[(\d+:\d+(?:\.\d+)?)\](.*)/);
+  const entries: TimeTextEntry[] = [];
+  entries.length = lines.length; // Pre-allocate approximate size
+
+  let count = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const match = LRC_LINE_REGEX.exec(line);
     if (match) {
       const timeMs = parseLrcTime(match[1]);
       const text = match[2].trim();
-      // 只添加有效的时间和非空文本
       if (timeMs >= 0 && text) {
-        entries.push({ timeMs, text });
+        entries[count++] = { timeMs, text };
       }
     }
   }
 
-  // 按时间排序
+  // Trim to actual size
+  entries.length = count;
+
+  // Sort by time (in-place)
   entries.sort((a, b) => a.timeMs - b.timeMs);
   return entries;
 }
@@ -41,14 +49,57 @@ export function parseLrcToEntries(lrcText: string): TimeTextEntry[] {
  */
 export function buildTimeMap(entries: TimeTextEntry[]): Map<number, string> {
   const map = new Map<number, string>();
-  for (const entry of entries) {
-    map.set(entry.timeMs, entry.text);
+  for (let i = 0; i < entries.length; i++) {
+    map.set(entries[i].timeMs, entries[i].text);
   }
   return map;
 }
 
 /**
- * 严格时间匹配：在指定容差范围内查找匹配
+ * 严格时间匹配：在指定容差范围内查找匹配 (优化版 - 使用二分查找)
+ * @param targetTime 目标时间 (毫秒)
+ * @param sortedEntries 按时间排序的条目数组
+ * @param tolerance 容差范围 (毫秒)，默认 500ms
+ * @returns 匹配的文本，无匹配返回 undefined
+ */
+export function strictTimeMatchBinary(
+  targetTime: number,
+  sortedEntries: TimeTextEntry[],
+  tolerance: number = 500
+): string | undefined {
+  if (sortedEntries.length === 0) return undefined;
+
+  // Binary search to find closest entry
+  let left = 0;
+  let right = sortedEntries.length - 1;
+
+  while (left < right) {
+    const mid = (left + right) >> 1;
+    if (sortedEntries[mid].timeMs < targetTime) {
+      left = mid + 1;
+    } else {
+      right = mid;
+    }
+  }
+
+  // Check the found position and its neighbors
+  let bestMatch: string | undefined;
+  let bestDiff = tolerance + 1;
+
+  // Check positions: left-1, left, left+1
+  for (let i = Math.max(0, left - 1); i <= Math.min(sortedEntries.length - 1, left + 1); i++) {
+    const diff = Math.abs(sortedEntries[i].timeMs - targetTime);
+    if (diff <= tolerance && diff < bestDiff) {
+      bestDiff = diff;
+      bestMatch = sortedEntries[i].text;
+    }
+  }
+
+  return bestMatch;
+}
+
+/**
+ * 严格时间匹配：在指定容差范围内查找匹配 (Map版本，保留兼容性)
  * @param targetTime 目标时间 (毫秒)
  * @param timeMap 时间映射
  * @param tolerance 容差范围 (毫秒)，默认 500ms
@@ -59,22 +110,45 @@ export function strictTimeMatch(
   timeMap: Map<number, string>,
   tolerance: number = 500
 ): string | undefined {
-  // 先尝试精确匹配
-  if (timeMap.has(targetTime)) {
-    return timeMap.get(targetTime);
-  }
+  // Fast path: exact match
+  const exact = timeMap.get(targetTime);
+  if (exact !== undefined) return exact;
 
-  // 在容差范围内查找最接近的
+  // Convert to sorted array for binary search (cached if called multiple times)
   let bestMatch: string | undefined;
   let bestDiff = tolerance + 1;
 
-  const entries = Array.from(timeMap.entries());
-  for (let i = 0; i < entries.length; i++) {
-    const [time, text] = entries[i];
-    const diff = Math.abs(time - targetTime);
+  // For small maps, linear search is acceptable
+  if (timeMap.size < 50) {
+    for (const [time, text] of timeMap) {
+      const diff = Math.abs(time - targetTime);
+      if (diff <= tolerance && diff < bestDiff) {
+        bestDiff = diff;
+        bestMatch = text;
+      }
+    }
+    return bestMatch;
+  }
+
+  // For larger maps, use sorted keys
+  const times = Array.from(timeMap.keys()).sort((a, b) => a - b);
+  let left = 0;
+  let right = times.length - 1;
+
+  while (left < right) {
+    const mid = (left + right) >> 1;
+    if (times[mid] < targetTime) {
+      left = mid + 1;
+    } else {
+      right = mid;
+    }
+  }
+
+  for (let i = Math.max(0, left - 1); i <= Math.min(times.length - 1, left + 1); i++) {
+    const diff = Math.abs(times[i] - targetTime);
     if (diff <= tolerance && diff < bestDiff) {
       bestDiff = diff;
-      bestMatch = text;
+      bestMatch = timeMap.get(times[i]);
     }
   }
 

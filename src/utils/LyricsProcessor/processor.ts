@@ -1,5 +1,5 @@
 /**
- * LyricsProcessor - 歌词处理核心模块
+ * LyricsProcessor - 歌词处理核心模块 (优化版)
  *
  * 主要功能：
  * 1. 将歌词源数据转换为 AMLL 格式
@@ -14,39 +14,50 @@ import { parseLrcToEntries } from './entryParser';
 import { isInterludeLine, buildIndexMatching } from './alignment';
 import { convertToAMLL } from './formatParser';
 
+// Debug flag - disable in production for better performance
+const DEBUG = false;
+
 /**
  * 生成设置状态的哈希值
  */
 function generateSettingsHash(settings: ProcessingSettings): string {
-  return `${settings.showYrc}-${settings.showRoma}-${settings.showTransl}`;
+  // Use bit flags for faster comparison (3 booleans = 3 bits)
+  const flags = (settings.showYrc ? 4 : 0) | (settings.showRoma ? 2 : 0) | (settings.showTransl ? 1 : 0);
+  return String(flags);
 }
 
 /**
- * 从 SongLyric 中提取翻译文本
+ * 从 SongLyric 中提取翻译文本 (优化版 - 减少对象访问)
  */
 function extractTranslationText(songLyric: SongLyric): string | undefined {
-  if (songLyric.tlyric?.lyric) return songLyric.tlyric.lyric;
-  if (typeof songLyric.translation === 'string') return songLyric.translation;
-  if (typeof songLyric.translation === 'object' && songLyric.translation?.lyric) {
-    return songLyric.translation.lyric;
+  const tlyric = songLyric.tlyric;
+  if (tlyric?.lyric) return tlyric.lyric;
+
+  const translation = songLyric.translation;
+  if (typeof translation === 'string') return translation;
+  if (translation && typeof translation === 'object' && 'lyric' in translation) {
+    return translation.lyric;
   }
   return undefined;
 }
 
 /**
- * 从 SongLyric 中提取音译文本
+ * 从 SongLyric 中提取音译文本 (优化版 - 减少对象访问)
  */
 function extractRomajiText(songLyric: SongLyric): string | undefined {
-  if (songLyric.romalrc?.lyric) return songLyric.romalrc.lyric;
-  if (typeof songLyric.romaji === 'string') return songLyric.romaji;
-  if (typeof songLyric.romaji === 'object' && songLyric.romaji?.lyric) {
-    return songLyric.romaji.lyric;
+  const romalrc = songLyric.romalrc;
+  if (romalrc?.lyric) return romalrc.lyric;
+
+  const romaji = songLyric.romaji;
+  if (typeof romaji === 'string') return romaji;
+  if (romaji && typeof romaji === 'object' && 'lyric' in romaji) {
+    return romaji.lyric;
   }
   return undefined;
 }
 
 /**
- * 处理歌词数据 - 使用行索引匹配
+ * 处理歌词数据 - 使用行索引匹配 (优化版)
  *
  * @param songLyric 歌曲歌词
  * @param settings 设置状态
@@ -54,95 +65,116 @@ function extractRomajiText(songLyric: SongLyric): string | undefined {
  */
 export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings): AMLLLine[] {
   // 选择歌词源：TTML > YRC > LRC
-  let rawLyricsSource: InputLyricLine[] = [];
+  let rawLyricsSource: InputLyricLine[];
 
-  if (songLyric.hasTTML && songLyric.ttml && songLyric.ttml.length > 0) {
-    console.log('[LyricsProcessor] 使用 TTML 格式歌词');
+  const hasTTML = songLyric.hasTTML && songLyric.ttml && songLyric.ttml.length > 0;
+  const hasYrc = settings.showYrc && songLyric.yrcAMData && songLyric.yrcAMData.length > 0;
+  const hasLrc = songLyric.lrcAMData && songLyric.lrcAMData.length > 0;
+
+  if (hasTTML) {
     rawLyricsSource = toRaw(songLyric.ttml) as InputLyricLine[];
-  } else if (settings.showYrc && songLyric.yrcAMData?.length) {
-    console.log('[LyricsProcessor] 使用 YRC 格式歌词');
+  } else if (hasYrc) {
     rawLyricsSource = toRaw(songLyric.yrcAMData) as InputLyricLine[];
-  } else if (songLyric.lrcAMData?.length) {
-    console.log('[LyricsProcessor] 使用 LRC 格式歌词');
+  } else if (hasLrc) {
     rawLyricsSource = toRaw(songLyric.lrcAMData) as InputLyricLine[];
   } else {
-    console.log('[LyricsProcessor] 没有有效的歌词源数据');
     return [];
   }
 
   // 转换为 AMLL 格式
   const amllLines = convertToAMLL(rawLyricsSource);
 
-  // 过滤完全空白的行（保留间奏行，但间奏行不会获得翻译/音译）
-  const validLines = amllLines.filter((line) => {
-    if (!line.words || line.words.length === 0) return false;
-    return line.words.some(w => w.word && w.word.trim().length > 0);
-  });
+  // 过滤完全空白的行 - 使用更高效的过滤
+  const validLines: AMLLLine[] = [];
+  validLines.length = amllLines.length;
+  let validCount = 0;
 
-  // 解析翻译和音译
-  let translationEntries: TimeTextEntry[] = [];
-  let romajiEntries: TimeTextEntry[] = [];
+  for (let i = 0; i < amllLines.length; i++) {
+    const line = amllLines[i];
+    const words = line.words;
+    if (!words || words.length === 0) continue;
+
+    // Check if any word has content
+    let hasContent = false;
+    for (let j = 0; j < words.length; j++) {
+      const word = words[j].word;
+      if (word && word.trim().length > 0) {
+        hasContent = true;
+        break;
+      }
+    }
+
+    if (hasContent) {
+      validLines[validCount++] = line;
+    }
+  }
+  validLines.length = validCount;
+
+  // 早期返回：如果不需要翻译和音译
+  if (!settings.showTransl && !settings.showRoma) {
+    return validLines;
+  }
+
+  // 解析翻译和音译（只在需要时解析）
+  let translationMatchMap: Map<number, string> | null = null;
+  let romajiMatchMap: Map<number, string> | null = null;
 
   if (settings.showTransl) {
     const transText = extractTranslationText(songLyric);
     if (transText) {
-      translationEntries = parseLrcToEntries(transText);
-      console.log(`[LyricsProcessor] 解析翻译歌词: ${translationEntries.length} 行`);
+      const translationEntries = parseLrcToEntries(transText);
+      if (translationEntries.length > 0) {
+        translationMatchMap = buildIndexMatching(validLines, translationEntries);
+      }
     }
   }
 
   if (settings.showRoma) {
     const romaText = extractRomajiText(songLyric);
     if (romaText) {
-      romajiEntries = parseLrcToEntries(romaText);
-      console.log(`[LyricsProcessor] 解析音译歌词: ${romajiEntries.length} 行`);
+      const romajiEntries = parseLrcToEntries(romaText);
+      if (romajiEntries.length > 0) {
+        romajiMatchMap = buildIndexMatching(validLines, romajiEntries);
+      }
     }
   }
 
-  // 构建行索引匹配（按行号一一对应，不基于时间）
-  const translationMatchMap = settings.showTransl && translationEntries.length > 0
-    ? buildIndexMatching(validLines, translationEntries)
-    : new Map<number, string>();
+  // 如果没有任何匹配，直接返回
+  if (!translationMatchMap && !romajiMatchMap) {
+    return validLines;
+  }
 
-  const romajiMatchMap = settings.showRoma && romajiEntries.length > 0
-    ? buildIndexMatching(validLines, romajiEntries)
-    : new Map<number, string>();
+  // 应用翻译和音译 - 修改原数组以减少内存分配
+  for (let i = 0; i < validCount; i++) {
+    const line = validLines[i];
 
-  // 应用翻译和音译
-  return validLines.map((line, index) => {
-    let translatedLyric = "";
-    let romanLyric = "";
-
-    // 处理翻译 - 行索引匹配
-    if (settings.showTransl) {
+    // 处理翻译
+    if (translationMatchMap) {
       // 优先使用行内已有的翻译（来自 TTML 等格式）
-      if (line.translatedLyric) {
-        translatedLyric = line.translatedLyric;
-      } else {
-        translatedLyric = translationMatchMap.get(index) || "";
+      if (!line.translatedLyric) {
+        const matched = translationMatchMap.get(i);
+        if (matched) {
+          line.translatedLyric = matched;
+        }
       }
     }
 
-    // 处理音译 - 行索引匹配
-    if (settings.showRoma) {
-      // 优先使用行内已有的音译
-      if (line.romanLyric) {
-        romanLyric = line.romanLyric;
-      } else {
-        romanLyric = romajiMatchMap.get(index) || "";
+    // 处理音译
+    if (romajiMatchMap) {
+      if (!line.romanLyric) {
+        const matched = romajiMatchMap.get(i);
+        if (matched) {
+          line.romanLyric = matched;
+        }
       }
     }
+  }
 
-    return {
-      ...line,
-      translatedLyric,
-      romanLyric,
-    };
-  });
+  return validLines;
 }
 
 /**
- * 预处理并缓存歌词数据
+ * 预处理并缓存歌词数据 (优化版)
  *
  * @param songLyric 歌曲歌词
  * @param settings 设置状态
@@ -156,24 +188,15 @@ export function preprocessLyrics(songLyric: SongLyric, settings: ProcessingSetti
     songLyric.processedLyrics.length > 0 &&
     songLyric.settingsHash === currentHash
   ) {
-    console.log('[LyricsProcessor] 使用缓存的预处理歌词数据');
     return;
   }
 
-  console.log('[LyricsProcessor] 开始预处理歌词数据');
-  const startTime = performance.now();
-
   songLyric.processedLyrics = processLyrics(songLyric, settings);
   songLyric.settingsHash = currentHash;
-
-  const endTime = performance.now();
-  console.log(
-    `[LyricsProcessor] 预处理完成，耗时: ${(endTime - startTime).toFixed(2)}ms，行数: ${songLyric.processedLyrics.length}`
-  );
 }
 
 /**
- * 获取处理后的歌词行，优先使用缓存
+ * 获取处理后的歌词行，优先使用缓存 (优化版)
  *
  * @param songLyric 歌曲歌词
  * @param settings 设置状态
@@ -183,18 +206,15 @@ export function getProcessedLyrics(songLyric: SongLyric, settings: ProcessingSet
   const currentHash = generateSettingsHash(settings);
 
   // 检查缓存
-  if (
-    songLyric.processedLyrics &&
-    songLyric.processedLyrics.length > 0 &&
-    songLyric.settingsHash === currentHash
-  ) {
-    return songLyric.processedLyrics;
+  const cached = songLyric.processedLyrics;
+  if (cached && cached.length > 0 && songLyric.settingsHash === currentHash) {
+    return cached;
   }
 
   // 重新处理并缓存
-  console.log('[LyricsProcessor] 缓存未命中，重新处理歌词');
-  songLyric.processedLyrics = processLyrics(songLyric, settings);
+  const processed = processLyrics(songLyric, settings);
+  songLyric.processedLyrics = processed;
   songLyric.settingsHash = currentHash;
 
-  return songLyric.processedLyrics;
+  return processed;
 }

@@ -27,7 +27,7 @@ export type {
 export { parseLrcTime, formatLrcTime, detectYrcType } from './timeUtils';
 
 // Entry parsing
-export { parseLrcToEntries, buildTimeMap, strictTimeMatch } from './entryParser';
+export { parseLrcToEntries, buildTimeMap, strictTimeMatch, strictTimeMatchBinary } from './entryParser';
 
 // Format parsing
 export { parseLrcLines, parseYrcLines, buildAMLLData, convertToAMLL } from './formatParser';
