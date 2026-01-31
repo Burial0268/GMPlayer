@@ -1,17 +1,31 @@
-import axios from "axios";
+import axios, { AxiosRequestConfig, AxiosResponse, AxiosError, InternalAxiosRequestConfig, AxiosHeaders } from "axios";
+
+// Extend AxiosRequestConfig to include custom hiddenBar property
+export interface CustomAxiosRequestConfig extends AxiosRequestConfig {
+  hiddenBar?: boolean;
+}
+
+// Extend InternalAxiosRequestConfig for interceptor use
+interface CustomInternalAxiosRequestConfig extends InternalAxiosRequestConfig {
+  hiddenBar?: boolean;
+}
+
+// Declare global $loadingBar
+declare global {
+  var $loadingBar: {
+    start: () => void;
+    finish: () => void;
+    error: () => void;
+  } | undefined;
+}
+
 let baseURL = "";
 
-switch (process.env.NODE_ENV) {
-  case "production":
-    // 生产环境也使用 '/api'，需要在部署服务器 (Nginx、Apache、Netlify 等) 上做反向代理到真实后端，规避 CORS
-    baseURL = import.meta.env.VITE_MUSIC_API;
-    break;
-  case "development":
-    baseURL = "/api/ncm";
-    break;
-  default:
-    baseURL = "/api/ncm";
-    break;
+// Use Vite's environment detection
+if (import.meta.env.PROD) {
+  baseURL = import.meta.env.VITE_MUSIC_API as string;
+} else {
+  baseURL = "/api/ncm";
 }
 
 axios.defaults.baseURL = baseURL;
@@ -21,19 +35,21 @@ axios.defaults.withCredentials = true;
 
 // 请求拦截
 axios.interceptors.request.use(
-  (request) => {
+  (request: CustomInternalAxiosRequestConfig) => {
     // 检查是否为 Lyric Atlas API 的请求
     const isLyricAtlasRequest = request.url && request.url.startsWith('/api/la');
 
     // Ensure headers object exists
-    request.headers = request.headers || {};
+    if (!request.headers) {
+      request.headers = new AxiosHeaders();
+    }
 
     if (isLyricAtlasRequest) {
       // 对 Lyric Atlas API：
       // 1. 禁用凭据
       request.withCredentials = false;
       // 2. 移除 X-Requested-With 请求头
-      delete request.headers['X-Requested-With'];
+      request.headers.delete('X-Requested-With');
       // 3. 覆盖默认的 baseURL，确保请求根路径正确
       request.baseURL = '/';
       console.log('[Axios Interceptor] Lyric Atlas request - Overrode baseURL, removed X-Requested-With, set withCredentials=false');
@@ -44,8 +60,8 @@ axios.interceptors.request.use(
       // 2. 确保凭据设置为 true
       request.withCredentials = true;
       // 3. 确保 X-Requested-With 请求头存在
-      if (!request.headers['X-Requested-With']) {
-          request.headers['X-Requested-With'] = 'XMLHttpRequest';
+      if (!request.headers.has('X-Requested-With')) {
+        request.headers.set('X-Requested-With', 'XMLHttpRequest');
       }
       console.log('[Axios Interceptor] Other request - Ensured baseURL, X-Requested-With, set withCredentials=true');
     }
@@ -54,8 +70,8 @@ axios.interceptors.request.use(
       $loadingBar.start();
     return request;
   },
-  (error) => {
-    if (typeof $loadingBar !== "undefined") $loadingBar.error(); // Ensure loading bar handles error
+  (error: AxiosError) => {
+    if (typeof $loadingBar !== "undefined") $loadingBar.error();
     console.error("请求失败，请稍后重试");
     return Promise.reject(error);
   }
@@ -63,14 +79,14 @@ axios.interceptors.request.use(
 
 // 响应拦截
 axios.interceptors.response.use(
-  (response) => {
+  (response: AxiosResponse) => {
     if (typeof $loadingBar !== "undefined") $loadingBar.finish();
     return response.data;
   },
-  (error) => {
-    if (typeof $loadingBar !== "undefined") $loadingBar.error(); // Ensure loading bar handles error
+  (error: AxiosError) => {
+    if (typeof $loadingBar !== "undefined") $loadingBar.error();
     if (error.response) {
-      const data = error.response.data;
+      const data = error.response.data as { message?: string };
       switch (error.response.status) {
         case 401:
           console.error(data.message ? data.message : "无权限访问");
@@ -95,4 +111,10 @@ axios.interceptors.response.use(
   }
 );
 
-export default axios; 
+// Create a typed request function
+function request<T = any>(config: CustomAxiosRequestConfig): Promise<T> {
+  return axios(config) as Promise<T>;
+}
+
+export { request };
+export default request;

@@ -23,7 +23,7 @@
     "allowJs": true,
 
     /* Vue */
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"]
   },
   "include": [
     "src/**/*.ts",

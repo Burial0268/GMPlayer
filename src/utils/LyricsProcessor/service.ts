@@ -3,8 +3,7 @@
  * 歌词服务 - 歌词获取与处理
  */
 
-// @ts-ignore
-import axios from "@/utils/request.js";
+import request from "@/utils/request";
 // @ts-ignore
 import { parseLrc, parseQrc, parseYrc, parseTTML, LyricLine } from "@applemusic-like-lyrics/lyric";
 import { preprocessLyrics } from './processor';
@@ -29,6 +28,10 @@ interface LyricData {
   processedLyrics?: any;
   // 添加歌词元数据字段
   meta?: LyricMeta;
+  // 添加AMLL格式数据字段（由preprocessLyrics填充）
+  lrcAMData?: any[];
+  yrcAMData?: any[];
+  settingsHash?: string;
 }
 
 // Interface for the raw response from Netease /lyric/new endpoint (assumed structure)
@@ -74,16 +77,16 @@ interface TTMLLyric {
 
 // Define the Lyric Provider interface - now returns LyricData
 interface LyricProvider {
-  getLyric(id: number): Promise<LyricData | null>;
+  getLyric(id: number, fast?: boolean): Promise<LyricData | null>;
   // 新增: 获取歌词元数据信息的方法
-  checkLyricMeta?(id: number): Promise<LyricMeta | null>;
+  checkLyricMeta?(id: number, fast?: boolean): Promise<LyricMeta | null>;
 }
 
 // Implementation for the Netease API - Return raw data matching LyricData format
 class NeteaseLyricProvider implements LyricProvider {
-  async getLyric(id: number): Promise<LyricData | null> {
+  async getLyric(id: number, _fast?: boolean): Promise<LyricData | null> {
     try {
-      const response: NeteaseRawLyricResponse = await axios({
+      const response: NeteaseRawLyricResponse = await request({
         method: "GET",
         hiddenBar: true,
         url: "/lyric/new",
@@ -110,7 +113,7 @@ class NeteaseLyricProvider implements LyricProvider {
 
 // Implementation for the Lyric-Atlas API - ADJUSTED FOR ACTUAL RESPONSE
 class LyricAtlasProvider implements LyricProvider {
-  async getLyric(id: number): Promise<LyricData | null> {
+  async getLyric(id: number, fast?: boolean): Promise<LyricData | null> {
     try {
       // 首先尝试获取元数据，检查是否有歌词和可用的格式
       const meta = await this.checkLyricMeta(id);
@@ -122,11 +125,15 @@ class LyricAtlasProvider implements LyricProvider {
       }
 
       // Expecting the direct response structure now
-      const response: LyricAtlasDirectResponse = await axios({
+      const params: Record<string, any> = { id };
+      if (fast) {
+        params.fast = null; // flag-style param: &fast (no value)
+      }
+      const response: LyricAtlasDirectResponse = await request({
         method: 'GET',
         hiddenBar: true,
         url: `/api/la/api/search`,
-        params: { id }, // Keep numeric ID for request
+        params,
       });
 
       // Log the raw response from Lyric Atlas API
@@ -444,16 +451,21 @@ class LyricAtlasProvider implements LyricProvider {
   /**
    * 检查歌词元数据，例如支持的格式和翻译/音译的可用性
    * @param id 歌曲ID
+   * @param fast 是否仅获取仓库结果
    * @returns 包含元数据信息的LyricMeta对象，如果请求失败则返回null
    */
-  async checkLyricMeta(id: number): Promise<LyricMeta | null> {
+  async checkLyricMeta(id: number, fast?: boolean): Promise<LyricMeta | null> {
     try {
       // 使用新的元数据API端点
-      const response = await axios({
+      const params: Record<string, any> = { id };
+      if (fast) {
+        params.fast = null; // flag-style param: &fast (no value)
+      }
+      const response = await request({
         method: 'GET',
         hiddenBar: true,
         url: `/api/la/api/lyrics/meta`,
-        params: { id }, // 使用歌曲ID作为参数
+        params,
       });
 
       // 检查响应是否有效
@@ -682,8 +694,11 @@ export class LyricService {
         // 预处理歌词数据，提前生成缓存以提高性能
         console.time('[LyricService] 预处理歌词');
         try {
+          // 初始化AMLL数据字段
+          result.lrcAMData = result.lrcAMData || [];
+          result.yrcAMData = result.yrcAMData || [];
           // 这里我们调用改进后的预处理函数，将处理结果缓存到歌词对象中
-          preprocessLyrics(result, options);
+          preprocessLyrics(result as any, options);
           console.log(`[LyricService] 歌曲ID ${id} 歌词预处理成功`);
         } catch (err) {
           console.warn(`[LyricService] 歌曲ID ${id} 歌词预处理失败:`, err);
@@ -796,13 +811,14 @@ export class LyricService {
   /**
    * 检查歌词元数据
    * @param id 歌曲ID
+   * @param fast 是否仅获取仓库结果
    * @returns 歌词元数据信息，若不支持或出错则返回null
    */
-  async checkLyricMeta(id: number): Promise<LyricMeta | null> {
+  async checkLyricMeta(id: number, fast?: boolean): Promise<LyricMeta | null> {
     // 检查provider是否支持元数据检查
     if (this.provider.checkLyricMeta) {
       try {
-        return await this.provider.checkLyricMeta(id);
+        return await this.provider.checkLyricMeta(id, fast);
       } catch (error) {
         console.error(`[LyricService] Error checking lyric meta for id ${id}:`, error);
         return null;

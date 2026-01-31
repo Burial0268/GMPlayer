@@ -95,6 +95,10 @@ export default ({ mode }) =>
       open: true,
       http: true,
       ssr: true,
+      headers: {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "credentialless",
+      },
       proxy: {
         "/api/ncm": {
           target: loadEnv(mode, process.cwd()).VITE_MUSIC_API,
@@ -132,6 +136,10 @@ export default ({ mode }) =>
       sourcemap: !!process.env.TAURI_DEBUG,
     },
     preview: {
+      headers: {
+        "Cross-Origin-Opener-Policy": "same-origin",
+        "Cross-Origin-Embedder-Policy": "credentialless",
+      },
       proxy: {
         "/api/ncm": {
           target: loadEnv(mode, process.cwd()).VITE_MUSIC_API,
