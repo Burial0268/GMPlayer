@@ -1,5 +1,5 @@
 import axios from "@/utils/request";
-import { LyricService } from "@/services/lyricsService";
+import { LyricService } from "@/utils/LyricsProcessor";
 
 /**
  * 歌曲部分

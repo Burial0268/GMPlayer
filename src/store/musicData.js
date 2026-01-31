@@ -10,7 +10,7 @@ import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { soundStop, fadePlayOrPause } from "@/utils/AudioContext";
 import getLanguageData from "@/utils/getLanguageData";
-import { preprocessLyrics } from "@/libs/apple-music-like/processLyrics";
+import { preprocessLyrics } from "@/utils/LyricsProcessor";
 
 const useMusicDataStore = defineStore("musicData", {
   state: () => {

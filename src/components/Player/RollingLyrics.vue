@@ -11,7 +11,7 @@
 import { computed, watch } from 'vue';
 import { musicStore, settingStore } from "../../store";
 import LyricPlayer from "../../libs/apple-music-like/LyricPlayer.vue";
-import { getProcessedLyrics, preprocessLyrics } from "../../libs/apple-music-like/processLyrics";
+import { getProcessedLyrics, preprocessLyrics } from "@/utils/LyricsProcessor";
 
 const emit = defineEmits<{
   lrcTextClick: [time: number]

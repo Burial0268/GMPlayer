@@ -219,7 +219,7 @@ import AllArtists from "@/components/DataList/AllArtists.vue";
 import BigPlayer from "./BigPlayer.vue";
 import "vue-slider-component/theme/default.css";
 import { watch } from "vue";
-import parseLyric, { formatToLrc } from "@/utils/parseLyric";
+import { parseLyricData as parseLyric, formatAsLrc as formatToLrc } from "@/utils/LyricsProcessor";
 
 const { t } = useI18n();
 const router = useRouter();

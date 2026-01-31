@@ -31,7 +31,7 @@
 import { ref, computed, watch, watchEffect, toRaw, shallowRef, onMounted, nextTick } from 'vue';
 import { musicStore, settingStore, siteStore } from "../../store";
 import { LyricPlayer, LyricPlayerRef } from "@applemusic-like-lyrics/vue";
-import { preprocessLyrics, getProcessedLyrics, type LyricLine } from "./processLyrics";
+import { preprocessLyrics, getProcessedLyrics, type LyricLine } from "@/utils/LyricsProcessor";
 import '@applemusic-like-lyrics/core/style.css';
 
 const site = siteStore();
