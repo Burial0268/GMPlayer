@@ -456,11 +456,11 @@ watch(
       if (player.value && !music.isLoadingSong) {
          const hPlayer = player.value; // Assuming player.value is the Howl instance
          if (typeof hPlayer.playing !== 'function') {
-           console.error("[Player] player.value is not a valid Howler instance or 'playing' method missing", hPlayer);
+           console.error("[Player] player.value is not a valid NativeSound instance or 'playing' method missing", hPlayer);
            return;
          }
          const isPlaying = hPlayer.playing();
-         console.log(`[Player] Current Howler playing state: ${isPlaying}`);
+         console.log(`[Player] Current NativeSound playing state: ${isPlaying}`);
 
          if (val && !isPlaying) {
             console.log("[Player] Calling fadePlayOrPause with 'play'");

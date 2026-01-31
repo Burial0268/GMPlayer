@@ -14,7 +14,7 @@ export interface SoundOptions {
 /**
  * Supported sound event types
  */
-export type SoundEventType = 'load' | 'play' | 'pause' | 'end' | 'fade' | 'loaderror' | 'playerror';
+export type SoundEventType = 'load' | 'play' | 'pause' | 'end' | 'fade' | 'loaderror' | 'playerror' | 'progress';
 
 /**
  * Sound event callback function signature
@@ -36,7 +36,7 @@ export interface ISound {
   on(event: SoundEventType, callback: SoundEventCallback): this;
   once(event: SoundEventType, callback: SoundEventCallback): this;
   off(event: SoundEventType, callback?: SoundEventCallback): this;
-  getFrequencyData(): Uint8Array;
+  getFrequencyData(): Uint8Array<ArrayBuffer>;
   getLowFrequencyVolume(): number;
   unload(): void;
 }
@@ -49,7 +49,7 @@ export interface LowFreqAnalyzerOptions {
   binCount?: number;
   /** EMA smoothing factor, higher = more responsive (default: 0.28) */
   smoothFactor?: number;
-  /** Threshold below which values are treated as silence (default: 180) */
+  /** Threshold below which values are treated as silence (default: 80) */
   threshold?: number;
   /** Power exponent for dynamic range expansion (default: 2) */
   powerExponent?: number;

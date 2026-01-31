@@ -1,5 +1,10 @@
 /**
  * PlayerFunctions - Exported player functions with store integration
+ *
+ * Key improvements:
+ * - Visibility-aware spectrum updates (pause in background)
+ * - Reduced debug logging in production
+ * - Improved error handling
  */
 
 import { h } from 'vue';
@@ -9,9 +14,12 @@ import { NIcon } from 'naive-ui';
 import { MusicNoteFilled } from '@vicons/material';
 import getLanguageData from '@/utils/getLanguageData';
 import { getCoverColor } from '@/utils/getCoverColor';
-import { NativeSound } from './NativeSound';
+import { BufferedSound } from './BufferedSound';
 import { SoundManager } from './SoundManager';
-import type { ISound, PlaySongTime } from './types';
+import { AudioContextManager } from './AudioContextManager';
+import type { ISound } from './types';
+
+const IS_DEV = import.meta.env?.DEV ?? false;
 
 // 歌曲信息更新定时器
 let timeupdateInterval: number | null = null;
@@ -21,6 +29,15 @@ let scrobbleTimeout: ReturnType<typeof setTimeout> | null = null;
 let testNumber = 0;
 // 频谱更新动画帧 ID
 let spectrumAnimationId: number | null = null;
+// 页面可见性状态
+let isPageVisible = true;
+
+// Track page visibility for spectrum throttling
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    isPageVisible = document.visibilityState === 'visible';
+  });
+}
 
 /**
  * 停止频谱更新
@@ -34,10 +51,11 @@ const stopSpectrumUpdate = (): void => {
 
 /**
  * 启动频谱更新
+ * Pauses updates when page is not visible (saves CPU in background)
  * @param sound - 音频对象
  * @param music - pinia store
  */
-const startSpectrumUpdate = (sound: NativeSound, music: ReturnType<typeof musicStore>): void => {
+const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   stopSpectrumUpdate();
 
   const updateLoop = (): void => {
@@ -46,16 +64,23 @@ const startSpectrumUpdate = (sound: NativeSound, music: ReturnType<typeof musicS
       return;
     }
 
-    // 获取频谱数据
-    const frequencyData = sound.getFrequencyData();
-    music.spectrumsData = [...frequencyData];
+    // Skip spectrum computation when page is not visible
+    if (isPageVisible) {
+      // 获取频谱数据
+      const frequencyData = sound.getFrequencyData();
+      music.spectrumsData = [...frequencyData];
 
-    // 计算平均振幅用于 scale
-    const averageAmplitude = frequencyData.reduce((acc, val) => acc + val, 0) / frequencyData.length;
-    music.spectrumsScaleData = (averageAmplitude / 255 + 1).toFixed(2);
+      // 计算平均振幅用于 scale
+      let sum = 0;
+      for (let i = 0; i < frequencyData.length; i++) {
+        sum += frequencyData[i];
+      }
+      const averageAmplitude = sum / frequencyData.length;
+      music.spectrumsScaleData = (averageAmplitude / 255 + 1).toFixed(2);
 
-    // 获取低频音量 (直接从 effectManager 计算，已内置平滑处理)
-    music.lowFreqVolume = sound.getLowFrequencyVolume();
+      // 获取低频音量 (直接从 effectManager 计算，已内置平滑处理)
+      music.lowFreqVolume = sound.getLowFrequencyVolume();
+    }
 
     spectrumAnimationId = requestAnimationFrame(updateLoop);
   };
@@ -83,28 +108,20 @@ const checkAudioTime = (sound: ISound, music: ReturnType<typeof musicStore>): vo
 const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
   if ('mediaSession' in navigator && Object.keys(music.getPlaySongData).length) {
     const artists = music.getPlaySongData.artist.map((a: { name: string }) => a.name);
-    if (music.getPlaySongData.album.picUrl == undefined) {
-      // getAlbum is not imported, skip this case
-      // In the original code this was also an issue - getAlbum was used but not imported
-    }
+    const picUrl = music.getPlaySongData.album?.picUrl;
+    const artwork = picUrl
+      ? [
+          { src: picUrl.replace(/^http:/, 'https:') + '?param=96y96', sizes: '96x96' },
+          { src: picUrl.replace(/^http:/, 'https:') + '?param=128y128', sizes: '128x128' },
+          { src: picUrl.replace(/^http:/, 'https:') + '?param=512x512', sizes: '512x512' },
+        ]
+      : [];
+
     navigator.mediaSession.metadata = new MediaMetadata({
       title: music.getPlaySongData.name,
       artist: artists.join(' & '),
-      album: music.getPlaySongData.album.name,
-      artwork: [
-        {
-          src: music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=96y96',
-          sizes: '96x96',
-        },
-        {
-          src: music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=128y128',
-          sizes: '128x128',
-        },
-        {
-          src: music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=512x512',
-          sizes: '512x512',
-        },
-      ],
+      album: music.getPlaySongData.album?.name || '',
+      artwork,
     });
     navigator.mediaSession.setActionHandler('nexttrack', () => {
       music.setPlaySongIndex('next');
@@ -118,6 +135,19 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
     navigator.mediaSession.setActionHandler('pause', () => {
       music.setPlayState(false);
     });
+
+    // Mobile-specific: seekto support
+    if (AudioContextManager.isMobile()) {
+      try {
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+          if (details.seekTime !== undefined && window.$player) {
+            setSeek(window.$player, details.seekTime);
+          }
+        });
+      } catch (e) {
+        // seekto not supported
+      }
+    }
   }
 };
 
@@ -136,7 +166,9 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
     const site = siteStore();
     const settings = settingStore();
     const user = userStore();
-    const sound = new NativeSound({
+
+    // Use BufferedSound for full audio buffering (prevents interruption on tab switch)
+    const sound = new BufferedSound({
       src: [src],
       preload: true,
       volume: music.persistData.playVolume,
@@ -152,18 +184,25 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
         console.error('取色出错', err);
       });
 
-    console.log('[createSound] autoPlay:', autoPlay, 'getPlayState:', music.getPlayState);
+    if (IS_DEV) {
+      console.log('[createSound] autoPlay:', autoPlay, 'getPlayState:', music.getPlayState);
+    }
+
     if (autoPlay) {
-      console.log('[createSound] Calling fadePlayOrPause with play');
       fadePlayOrPause(sound, 'play', music.persistData.playVolume);
     }
+
     // 首次加载事件
     sound?.once('load', () => {
       const songId = music.getPlaySongData?.id;
       const sourceId = music.getPlaySongData?.sourceId ? music.getPlaySongData.sourceId : 0;
       const isLogin = user.userLogin;
       const isMemory = settings.memoryLastPlaybackPosition;
-      console.log('首次缓冲完成：' + songId + ' / 来源：' + sourceId);
+
+      if (IS_DEV) {
+        console.log('首次缓冲完成：' + songId + ' / 来源：' + sourceId);
+      }
+
       if (isMemory) {
         sound?.seek(music.persistData.playSongTime.currentTime);
       } else {
@@ -183,7 +222,9 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
         scrobbleTimeout = setTimeout(() => {
           songScrobble(songId, sourceId)
             .then((res) => {
-              console.log('歌曲打卡完成', res);
+              if (IS_DEV) {
+                console.log('歌曲打卡完成', res);
+              }
             })
             .catch((err) => {
               console.error('歌曲打卡失败：' + err);
@@ -221,7 +262,9 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
         window.$message.warning(getLanguageData('songNotDetails'));
       }
 
-      console.log(`开始播放：${songName} - ${songArtist}`);
+      if (IS_DEV) {
+        console.log(`开始播放：${songName} - ${songArtist}`);
+      }
       setMediaSession(music);
 
       // 预加载下一首
@@ -249,7 +292,9 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
     // 暂停事件
     sound?.on('pause', () => {
       if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
-      console.log('音乐暂停');
+      if (IS_DEV) {
+        console.log('音乐暂停');
+      }
       music.setPlayState(false);
       // 更改页面标题
       window.$setSiteTitle();
@@ -258,7 +303,9 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
     sound?.on('end', () => {
       if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
       stopSpectrumUpdate();
-      console.log('歌曲播放结束');
+      if (IS_DEV) {
+        console.log('歌曲播放结束');
+      }
       music.setPlaySongIndex('next');
     });
     // 错误事件
@@ -331,20 +378,18 @@ export const fadePlayOrPause = (
   volume: number,
   duration = 300
 ): void => {
-  console.log('[fadePlayOrPause] type:', type, 'sound:', !!sound, 'playing:', sound?.playing());
+  if (IS_DEV) {
+    console.log('[fadePlayOrPause] type:', type, 'sound:', !!sound, 'playing:', sound?.playing());
+  }
   const settingData = JSON.parse(localStorage.getItem('settingData') || '{}');
   const isFade = settingData.songVolumeFade ?? true;
-  console.log('[fadePlayOrPause] isFade:', isFade);
   if (isFade) {
     if (type === 'play') {
       if (sound?.playing()) {
-        console.log('[fadePlayOrPause] Already playing, returning');
         return;
       }
-      console.log('[fadePlayOrPause] Calling sound.play()');
       sound?.play();
       sound?.once('play', () => {
-        console.log('[fadePlayOrPause] play event received, starting fade');
         sound?.fade(0, volume, duration);
       });
     } else if (type === 'pause') {
@@ -374,5 +419,7 @@ export const soundStop = (sound: ISound | undefined): void => {
  */
 export const processSpectrum = (sound: ISound | undefined): void => {
   // No longer needed - spectrum is handled internally by NativeSound
-  console.log('processSpectrum called - now handled internally by NativeSound');
+  if (IS_DEV) {
+    console.log('processSpectrum called - now handled internally by NativeSound');
+  }
 };

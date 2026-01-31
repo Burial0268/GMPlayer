@@ -12,7 +12,7 @@ import type { LowFreqAnalyzerOptions } from './types';
 const DEFAULT_OPTIONS: Required<LowFreqAnalyzerOptions> = {
   binCount: 3,
   smoothFactor: 0.28,
-  threshold: 180,
+  threshold: 80,
   powerExponent: 2,
 };
 

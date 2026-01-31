@@ -27,6 +27,8 @@ export type {
 
 // Export classes for advanced usage
 export { NativeSound } from './NativeSound';
+export { BufferedSound } from './BufferedSound';
 export { SoundManager } from './SoundManager';
 export { AudioEffectManager } from './AudioEffectManager';
 export { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
+export { AudioContextManager } from './AudioContextManager';
