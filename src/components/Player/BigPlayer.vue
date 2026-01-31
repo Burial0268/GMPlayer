@@ -36,7 +36,7 @@
         :fps="music.getPlayState ? setting.fps : 0"
         :playing="actualPlayingProp"
         :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
-        :album="setting.albumImageUrl === 'none' ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') : setting.albumImageUrl"
+        :album="setting.albumImageUrl === 'none' ? music.getPlaySongData?.album?.picUrl?.replace(/^http:/, 'https:') : setting.albumImageUrl"
         :renderScale="setting.renderScale" 
         :lowFreqVolume="computedLowFreqVolume"
         :staticMode="!music.showBigPlayer"
