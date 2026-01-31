@@ -86,9 +86,31 @@
             @click.stop="music.setPlaySongIndex('prev')" />
           <n-icon v-else class="dislike" size="20" :component="ThumbDownRound"
             @click="music.setFmDislike(music.getPersonalFmData.id)" />
-          <div class="play-state">
-            <n-icon size="46" :component="music.getPlayState ? PauseCircleFilled : PlayCircleFilled
-              " @click.stop="music.setPlayState(!music.getPlayState)" />
+          <div class="play-state" @click.stop="music.getLoadingState ? null : music.setPlayState(!music.getPlayState)">
+            <AnimatePresence mode="wait">
+              <Motion
+                v-if="music.getLoadingState"
+                key="loading"
+                :initial="{ opacity: 0, scale: 0.8 }"
+                :animate="{ opacity: 1, scale: 1 }"
+                :exit="{ opacity: 0, scale: 0.8 }"
+                :transition="{ duration: 0.2 }"
+                class="play-state-inner"
+              >
+                <n-spin :size="28" stroke="var(--main-color)" />
+              </Motion>
+              <Motion
+                v-else
+                :key="music.getPlayState ? 'pause' : 'play'"
+                :initial="{ opacity: 0, scale: 0.8 }"
+                :animate="{ opacity: 1, scale: 1 }"
+                :exit="{ opacity: 0, scale: 0.8 }"
+                :transition="{ duration: 0.2 }"
+                class="play-state-inner"
+              >
+                <n-icon size="46" :component="music.getPlayState ? PauseCircleFilled : PlayCircleFilled" />
+              </Motion>
+            </AnimatePresence>
           </div>
           <n-icon class="next" size="30" :component="SkipNextRound" @click.stop="music.setPlaySongIndex('next')" />
         </div>
@@ -182,6 +204,7 @@ import {
   getMusicDetail,
   getUnifiedLyric,
 } from "@/api/song";
+import { Motion, AnimatePresence } from "motion-v";
 import { NIcon } from "naive-ui";
 import {
   KeyboardArrowUpFilled,
@@ -713,6 +736,17 @@ const fetchAndParseLyric = (id) => {
         cursor: pointer;
         transform: scale(1);
         transition: all 0.3s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+
+        .play-state-inner {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          position: absolute;
+        }
 
         &:hover {
           transform: scale(1.1);

@@ -68,54 +68,121 @@
         <div class="handle-bar"></div>
       </div>
 
-      <!-- 顶部 Header 区域：仅封面 -->
+      <!-- 顶部 Header 区域：仅封面 - 使用 motion-v layoutId 实现共享元素动画 -->
       <div
         ref="mobileHeaderRef"
         class="mobile-header"
-        :class="{ 'is-compact': mobileLayer === 2 }"
       >
-        <!-- 封面 -->
-        <div class="mobile-cover" @click="switchMobileLayer(mobileLayer === 1 ? 2 : 1)">
-          <img
-            :src="music.getPlaySongData ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500' : '/images/pic/default.png'"
-            alt="cover"
-          />
-        </div>
+        <!-- 封面 - Layer 1 展开状态 -->
+        <AnimatePresence>
+          <Motion
+            v-if="mobileLayer === 1"
+            layout
+            layoutId="mobile-album-cover"
+            class="mobile-cover mobile-cover-expanded"
+            :transition="coverLayoutTransition"
+            @click="switchMobileLayer(2)"
+          >
+            <img
+              :src="music.getPlaySongData ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500' : '/images/pic/default.png'"
+              alt="cover"
+            />
+          </Motion>
+          <!-- 封面 - Layer 2 紧凑状态 -->
+          <Motion
+            v-else
+            layout
+            layoutId="mobile-album-cover"
+            class="mobile-cover mobile-cover-compact"
+            :transition="coverLayoutTransition"
+            @click="switchMobileLayer(1)"
+          >
+            <img
+              :src="music.getPlaySongData ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500' : '/images/pic/default.png'"
+              alt="cover"
+            />
+          </Motion>
+        </AnimatePresence>
       </div>
 
-      <!-- 歌曲信息行：绝对定位，统一用 top 实现平滑过渡 -->
-      <div class="mobile-song-info-row" :class="{ 'is-compact': mobileLayer === 2 }">
-        <div class="mobile-song-info">
-          <div class="name-wrapper" ref="nameWrapperRef">
-            <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
-              <span class="name-inner">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
-              <span class="name-inner" v-if="isNameOverflow">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
+      <!-- 歌曲信息行 - 使用 motion-v layoutId 实现位置过渡 -->
+      <!-- Layer 1: 底部展开状态 -->
+      <AnimatePresence>
+        <Motion
+          v-if="mobileLayer === 1"
+          layout
+          layoutId="mobile-song-info"
+          class="mobile-song-info-row mobile-song-info-expanded"
+          :transition="infoLayoutTransition"
+        >
+          <div class="mobile-song-info">
+            <div class="name-wrapper" ref="nameWrapperRef">
+              <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
+                <span class="name-inner">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
+                <span class="name-inner" v-if="isNameOverflow">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
+              </div>
+            </div>
+            <div class="artists text-hidden" v-if="music.getPlaySongData && music.getPlaySongData.artist">
+              <span v-for="(item, index) in music.getPlaySongData.artist" :key="item">
+                {{ item.name }}<span v-if="index != music.getPlaySongData.artist.length - 1"> / </span>
+              </span>
             </div>
           </div>
-          <div class="artists text-hidden" v-if="music.getPlaySongData && music.getPlaySongData.artist">
-            <span v-for="(item, index) in music.getPlaySongData.artist" :key="item">
-              {{ item.name }}<span v-if="index != music.getPlaySongData.artist.length - 1"> / </span>
-            </span>
+          <!-- 操作按钮 -->
+          <div class="mobile-header-actions">
+            <n-icon size="24" :component="StarBorderRound" @click.stop="
+              music.getPlaySongData && (
+                music.getSongIsLike(music.getPlaySongData.id)
+                  ? music.changeLikeList(music.getPlaySongData.id, false)
+                  : music.changeLikeList(music.getPlaySongData.id, true)
+              )
+            " />
+            <n-icon size="24" :component="MoreVertRound" @click.stop="" />
           </div>
-        </div>
-        <!-- 操作按钮 -->
-        <div class="mobile-header-actions">
-          <n-icon size="24" :component="StarBorderRound" @click.stop="
-            music.getPlaySongData && (
-              music.getSongIsLike(music.getPlaySongData.id)
-                ? music.changeLikeList(music.getPlaySongData.id, false)
-                : music.changeLikeList(music.getPlaySongData.id, true)
-            )
-          " />
-          <n-icon size="24" :component="MoreVertRound" @click.stop="" />
-        </div>
-      </div>
+        </Motion>
+        <!-- Layer 2: 顶部紧凑状态 -->
+        <Motion
+          v-else
+          layout
+          layoutId="mobile-song-info"
+          class="mobile-song-info-row mobile-song-info-compact"
+          :transition="infoLayoutTransition"
+        >
+          <div class="mobile-song-info">
+            <div class="name-wrapper" ref="nameWrapperRef">
+              <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
+                <span class="name-inner">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
+                <span class="name-inner" v-if="isNameOverflow">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
+              </div>
+            </div>
+            <div class="artists text-hidden" v-if="music.getPlaySongData && music.getPlaySongData.artist">
+              <span v-for="(item, index) in music.getPlaySongData.artist" :key="item">
+                {{ item.name }}<span v-if="index != music.getPlaySongData.artist.length - 1"> / </span>
+              </span>
+            </div>
+          </div>
+          <!-- 操作按钮 -->
+          <div class="mobile-header-actions">
+            <n-icon size="24" :component="StarBorderRound" @click.stop="
+              music.getPlaySongData && (
+                music.getSongIsLike(music.getPlaySongData.id)
+                  ? music.changeLikeList(music.getPlaySongData.id, false)
+                  : music.changeLikeList(music.getPlaySongData.id, true)
+              )
+            " />
+            <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+          </div>
+        </Motion>
+      </AnimatePresence>
 
-      <!-- 歌词区域 - 仅在 Layer 2 显示 -->
-      <div
+      <!-- 歌词区域 - 使用 Motion :animate 控制显隐，保持组件挂载 -->
+      <Motion
         ref="mobileLyricsRef"
         class="mobile-lyrics-area"
-        :class="{ 'is-visible': mobileLayer === 2, 'is-expanded': lyricsExpanded }"
+        :class="{ 'is-expanded': lyricsExpanded }"
+        :animate="mobileLayer === 2 ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }"
+        :transition="lyricsPresenceTransition"
+        :style="{ pointerEvents: mobileLayer === 2 ? 'auto' : 'none' }"
         @click.capture="handleLyricsAreaClick"
       >
         <div
@@ -134,15 +201,17 @@
           ></RollingLyrics>
         </div>
         <div v-else class="no-lyrics">
-          <span>{{ $t("other.noLyrics") }}</span>
+          <span>¯\_(ツ)_/¯</span>
         </div>
-      </div>
+      </Motion>
 
-      <!-- 底部 Controls 区域 -->
-      <div
+      <!-- 底部 Controls 区域 - 使用 Motion 处理显隐动画 -->
+      <Motion
         ref="mobileControlsRef"
         class="mobile-controls"
-        :class="{ 'is-hidden': !mobileControlsVisible }"
+        :animate="mobileControlsVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }"
+        :transition="controlsTransition"
+        :style="{ pointerEvents: mobileControlsVisible ? 'auto' : 'none' }"
       >
         <!-- 进度条 -->
         <div class="mobile-progress">
@@ -164,8 +233,14 @@
           <n-icon v-else class="dislike" size="28" :component="ThumbDownRound"
             @click="music.setFmDislike(music.getPersonalFmData.id)" />
           <div class="play-state">
-            <n-icon size="64" :component="music.getPlayState ? IconPause : IconPlay"
-              @click.stop="music.setPlayState(!music.getPlayState)" />
+            <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false"
+              @click.stop="music.setPlayState(!music.getPlayState)">
+              <template #icon>
+                <Transition name="fade" mode="out-in">
+                  <n-icon size="64" :component="music.getPlayState ? IconPause : IconPlay" />
+                </Transition>
+              </template>
+            </n-button>
           </div>
           <n-icon class="next" size="36" :component="IconForward"
             @click.stop="music.setPlaySongIndex('next')" />
@@ -179,7 +254,7 @@
           <vue-slider v-model="persistData.playVolume" :min="0" :max="1" :interval="0.01" :tooltip="'none'" />
           <n-icon size="20" :component="VolumeUpRound" />
         </div>
-      </div>
+      </Motion>
     </template>
 
     <!-- 桌面端布局 -->
@@ -285,6 +360,7 @@ import {
   VolumeMuteRound,
 } from "@vicons/material";
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
+import { Motion, AnimatePresence } from "motion-v";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
@@ -331,6 +407,40 @@ if (typeof setting.appleStyle === 'undefined') {
 
 const { songPicGradient, songPicColor } = storeToRefs(site)
 const { persistData } = storeToRefs(music)
+
+// motion-v 封面布局动画配置 - 使用弹簧物理效果实现 iOS App Store 风格过渡
+const coverLayoutTransition = {
+  layout: {
+    type: 'spring',
+    stiffness: 300,
+    damping: 30,
+    mass: 1
+  }
+}
+
+// motion-v 歌曲信息布局动画配置
+const infoLayoutTransition = {
+  layout: {
+    type: 'spring',
+    stiffness: 280,
+    damping: 28,
+    mass: 0.9
+  }
+}
+
+// motion-v 歌词区域进入/退出动画配置
+const lyricsPresenceTransition = {
+  type: 'spring',
+  stiffness: 260,
+  damping: 25
+}
+
+// motion-v controls 显隐动画配置
+const controlsTransition = {
+  type: 'spring',
+  stiffness: 300,
+  damping: 30
+}
 
 // 创建需要的refs用于GSAP动画
 const bigPlayerRef = ref(null);
@@ -400,32 +510,19 @@ const initMobileElements = () => {
   mobileControlsVisible.value = true;
 
   nextTick(() => {
-    const controls = mobileControlsRef.value;
-    // 初始化 controls 状态
-    if (controls) {
-      gsap.set(controls, { opacity: 1, y: 0 });
-    }
     // 检测名称是否溢出
     checkNameOverflow();
   });
 };
 
-// 切换移动端层级 - 使用 CSS transition 实现动画
+// 切换移动端层级 - motion-v 自动处理动画
 const switchMobileLayer = (targetLayer) => {
   if (targetLayer === mobileLayer.value) return;
-
-  const controls = mobileControlsRef.value;
 
   // 切回 layer 1 时，重置状态
   if (targetLayer === 1) {
     lyricsExpanded.value = false;
     mobileControlsVisible.value = true;
-    if (controls) {
-      gsap.fromTo(controls,
-        { opacity: 0, y: 30 },
-        { opacity: 1, y: 0, duration: 0.4, ease: 'power2.out' }
-      );
-    }
   }
 
   // 切换层
@@ -437,15 +534,8 @@ const handleLyricsScroll = () => {
   if (!isMobile.value || mobileLayer.value !== 2 || lyricsExpanded.value) return;
 
   lyricsExpanded.value = true;
-  const controls = mobileControlsRef.value;
-  if (controls && mobileControlsVisible.value) {
+  if (mobileControlsVisible.value) {
     mobileControlsVisible.value = false;
-    gsap.to(controls, {
-      opacity: 0,
-      y: 30,
-      duration: 0.3,
-      ease: 'power2.in'
-    });
   }
 };
 
@@ -453,17 +543,10 @@ const handleLyricsScroll = () => {
 const handleLyricsAreaClick = () => {
   if (!isMobile.value || mobileLayer.value !== 2) return;
 
-  const controls = mobileControlsRef.value;
-  if (!controls) return;
-
   // 如果 controls 隐藏，则显示；如果已展开歌词则显示 controls
   if (!mobileControlsVisible.value) {
     mobileControlsVisible.value = true;
     lyricsExpanded.value = false;
-    gsap.fromTo(controls,
-      { opacity: 0, y: 30 },
-      { opacity: 1, y: 0, duration: 0.3, ease: 'power2.out' }
-    );
   }
 };
 
@@ -1242,25 +1325,12 @@ watch(
       z-index: 60;
       pointer-events: none;
 
-      /* 封面：绝对定位，直接用 left 定位实现平滑缩放 */
+      /* 封面基础样式 - motion-v 处理布局动画 */
       .mobile-cover {
-        --cover-size: min(70vw, 280px);
         position: absolute;
-        width: var(--cover-size);
-        height: var(--cover-size);
-        left: calc(50% - var(--cover-size) / 2);
-        top: calc(env(safe-area-inset-top) + 80px);
-        border-radius: 12px;
         overflow: hidden;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
         cursor: pointer;
         pointer-events: auto;
-        transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                    height 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                    left 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                    top 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                    border-radius 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                    box-shadow 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 
         img {
           width: 100%;
@@ -1273,32 +1343,35 @@ watch(
         }
       }
 
-      /* Layer 2: 紧凑模式 */
-      &.is-compact {
-        .mobile-cover {
-          width: 56px;
-          height: 56px;
-          left: 16px;
-          top: calc(env(safe-area-inset-top) + 36px);
-          border-radius: 8px;
-          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-        }
+      /* 封面展开状态 - Layer 1 */
+      .mobile-cover-expanded {
+        --cover-size: min(70vw, 280px);
+        width: var(--cover-size);
+        height: var(--cover-size);
+        left: calc(50% - var(--cover-size) / 2);
+        top: calc(env(safe-area-inset-top) + 80px);
+        border-radius: 12px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+      }
+
+      /* 封面紧凑状态 - Layer 2 */
+      .mobile-cover-compact {
+        width: 56px;
+        height: 56px;
+        left: 16px;
+        top: calc(env(safe-area-inset-top) + 36px);
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       }
     }
 
-    /* 歌曲信息行：绝对定位，统一用 top 实现平滑过渡 */
+    /* 歌曲信息行基础样式 - motion-v 处理布局动画 */
     .mobile-song-info-row {
       position: absolute;
-      left: 24px;
-      right: 24px;
-      top: calc(100% - 260px);
       z-index: 55;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      transition: left 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                  right 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-                  top 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 
       .mobile-song-info {
         flex: 1;
@@ -1311,12 +1384,10 @@ watch(
 
           .name {
             display: flex;
-            font-size: 1.2rem;
             font-weight: 600;
             color: var(--main-cover-color);
             margin-bottom: 4px;
             white-space: nowrap;
-            transition: font-size 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 
             .name-inner {
               flex-shrink: 0;
@@ -1330,17 +1401,14 @@ watch(
         }
 
         .artists {
-          font-size: 0.9rem;
           opacity: 0.7;
           color: var(--main-cover-color);
-          transition: font-size 0.5s cubic-bezier(0.4, 0, 0.2, 1);
         }
       }
 
       .mobile-header-actions {
         display: flex;
         align-items: center;
-        gap: 16px;
         margin-left: 12px;
         flex-shrink: 0;
 
@@ -1354,26 +1422,47 @@ watch(
           }
         }
       }
+    }
 
-      /* Layer 2: 紧凑模式 - 移动到封面右侧 */
-      &.is-compact {
-        left: calc(16px + 56px + 12px);
-        right: 16px;
-        top: calc(env(safe-area-inset-top) + 36px);
+    /* 歌曲信息行展开状态 - Layer 1 */
+    .mobile-song-info-expanded {
+      left: 24px;
+      right: 24px;
+      top: calc(100% - 260px);
 
-        .mobile-song-info {
-          .name-wrapper .name {
-            font-size: 0.95rem;
-          }
-
-          .artists {
-            font-size: 0.75rem;
-          }
+      .mobile-song-info {
+        .name-wrapper .name {
+          font-size: 1.2rem;
         }
 
-        .mobile-header-actions {
-          gap: 12px;
+        .artists {
+          font-size: 0.9rem;
         }
+      }
+
+      .mobile-header-actions {
+        gap: 16px;
+      }
+    }
+
+    /* 歌曲信息行紧凑状态 - Layer 2 */
+    .mobile-song-info-compact {
+      left: calc(16px + 56px + 12px);
+      right: 16px;
+      top: calc(env(safe-area-inset-top) + 36px);
+
+      .mobile-song-info {
+        .name-wrapper .name {
+          font-size: 0.95rem;
+        }
+
+        .artists {
+          font-size: 0.75rem;
+        }
+      }
+
+      .mobile-header-actions {
+        gap: 12px;
       }
     }
 
@@ -1386,7 +1475,7 @@ watch(
       }
     }
 
-    /* 歌词区域 - 仅在 Layer 2 显示 */
+    /* 歌词区域 - motion-v 处理进入/退出动画 */
     .mobile-lyrics-area {
       position: absolute;
       top: calc(env(safe-area-inset-top) + 12px + 56px + 12px);
@@ -1394,34 +1483,16 @@ watch(
       right: 0;
       bottom: 220px;
       z-index: 30;
-      opacity: 0;
-      visibility: hidden;
-      transform: translateY(20px);
-      pointer-events: none;
       overflow: visible;
       -ms-overflow-style: none;
       scrollbar-width: none;
       ::-webkit-scrollbar {
         display: none;
       }
-      transition: opacity 0.4s ease,
-                  transform 0.4s ease,
-                  bottom 0.4s ease,
-                  visibility 0s 0.4s;
-
-      &.is-visible {
-        opacity: 1;
-        visibility: visible;
-        transform: translateY(0);
-        pointer-events: auto;
-        transition: opacity 0.4s ease,
-                    transform 0.4s ease,
-                    bottom 0.4s ease,
-                    visibility 0s 0s;
-      }
 
       &.is-expanded {
         bottom: 0;
+        transition: bottom 0.4s ease;
       }
 
       .mobile-lyrics-container {
@@ -1470,7 +1541,7 @@ watch(
       }
     }
 
-    /* 底部 Controls 区域 - 透明简洁风格 */
+    /* 底部 Controls 区域 - motion-v 处理显隐动画 */
     .mobile-controls {
       position: absolute;
       left: 0;
@@ -1479,13 +1550,6 @@ watch(
       z-index: 50;
       padding: 16px 24px;
       padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
-      transition: opacity 0.3s ease, transform 0.3s ease;
-
-      &.is-hidden {
-        opacity: 0;
-        transform: translateY(30px);
-        pointer-events: none;
-      }
 
       .mobile-progress {
         width: 100%;
@@ -1549,6 +1613,19 @@ watch(
           display: flex;
           align-items: center;
           justify-content: center;
+
+          .n-button {
+            --n-width: 64px;
+            --n-height: 64px;
+            --n-color: transparent;
+            --n-color-hover: rgba(255, 255, 255, 0.1);
+            --n-color-pressed: rgba(255, 255, 255, 0.15);
+            --n-text-color: var(--main-cover-color);
+            --n-text-color-hover: var(--main-cover-color);
+            --n-text-color-pressed: var(--main-cover-color);
+            --n-border: none;
+            border: none;
+          }
 
           .n-icon {
             opacity: 1;

@@ -10,6 +10,7 @@ import topLevelAwait from "vite-plugin-top-level-await";
 import { VueMcp } from 'vite-plugin-vue-mcp'
 import vueDevTools from 'vite-plugin-vue-devtools'
 import Components from "unplugin-vue-components/vite";
+import MotionResolver from 'motion-v/resolver'
 
 // https://vitejs.dev/config/
 export default ({ mode }) =>
@@ -37,7 +38,11 @@ export default ({ mode }) =>
         ],
       }),
       Components({
-        resolvers: [NaiveUiResolver()],
+        dts: true,
+        resolvers: [
+          NaiveUiResolver(),
+          MotionResolver()
+        ],
       }),
       // PWA
       VitePWA({
