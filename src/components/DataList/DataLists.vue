@@ -740,6 +740,7 @@ const jumpLink = (id, type) => {
         flex-direction: row;
         .n-text {
           -webkit-line-clamp: 2;
+          line-clamp: 2;
           font-weight: bold;
           transition: all 0.3s;
           &:hover {
@@ -766,6 +767,7 @@ const jumpLink = (id, type) => {
         .artists {
           margin-top: 2px;
           -webkit-line-clamp: 2;
+          line-clamp: 2;
         }
         .alia {
           margin-top: 2px;

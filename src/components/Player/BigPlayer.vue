@@ -130,7 +130,7 @@
           </div>
           <!-- 操作按钮 -->
           <div class="mobile-header-actions">
-            <n-icon size="24" :component="StarBorderRound" @click.stop="
+            <n-icon size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
               music.getPlaySongData && (
                 music.getSongIsLike(music.getPlaySongData.id)
                   ? music.changeLikeList(music.getPlaySongData.id, false)
@@ -163,7 +163,7 @@
           </div>
           <!-- 操作按钮 -->
           <div class="mobile-header-actions">
-            <n-icon size="24" :component="StarBorderRound" @click.stop="
+            <n-icon size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
               music.getPlaySongData && (
                 music.getSongIsLike(music.getPlaySongData.id)
                   ? music.changeLikeList(music.getPlaySongData.id, false)
@@ -354,6 +354,7 @@ import {
   SettingsRound,
   ThumbDownRound,
   StarBorderRound,
+  StarRound,
   MoreVertRound,
   VolumeUpRound,
   VolumeOffRound,
