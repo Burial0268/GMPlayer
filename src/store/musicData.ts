@@ -10,7 +10,7 @@ import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { soundStop, fadePlayOrPause } from "@/utils/AudioContext";
 import getLanguageData from "@/utils/getLanguageData";
-import { preprocessLyrics } from "@/utils/LyricsProcessor";
+import { preprocessLyrics, type SongLyric, type ParsedLrcLine, type ParsedYrcLine, type StoredLyricLine } from "@/utils/LyricsProcessor";
 
 declare const $message: any;
 declare const $player: any;
@@ -39,55 +39,6 @@ interface SongData {
   pc?: any;
   mv?: number;
   [key: string]: any;
-}
-
-interface LyricWord {
-  word: string;
-  startTime: number;
-  endTime: number;
-}
-
-interface LyricLine {
-  time: number;
-  content: string;
-  tran?: string;
-  roma?: string;
-}
-
-interface YrcLine {
-  time: number;
-  endTime: number;
-  content: any[];
-  TextContent: string;
-  tran?: string;
-  roma?: string;
-}
-
-interface AMLLLine {
-  startTime: number;
-  endTime: number;
-  words: LyricWord[];
-  translatedLyric?: string;
-  romanLyric?: string;
-  isBG?: boolean;
-  isDuet?: boolean;
-}
-
-interface SongLyric {
-  hasLrcTran: boolean;
-  hasLrcRoma: boolean;
-  hasYrc: boolean;
-  hasYrcTran: boolean;
-  hasYrcRoma: boolean;
-  hasTTML: boolean;
-  lrc: LyricLine[];
-  yrc: YrcLine[];
-  ttml: any[];
-  lrcAMData: AMLLLine[];
-  yrcAMData: AMLLLine[];
-  formattedLrc: string;
-  processedLyrics: any[];
-  settingsHash: string;
 }
 
 interface PlaySongTime {
@@ -480,7 +431,7 @@ const useMusicDataStore = defineStore("musicData", {
           if (!value.lrc || value.lrc.length === 0) {
             console.log("注意：歌词数据中缺少lrc数组，尝试从yrc创建");
             if (value.yrc && value.yrc.length > 0) {
-              value.lrc = value.yrc.map((yrcLine: YrcLine) => ({
+              value.lrc = value.yrc.map((yrcLine: ParsedYrcLine) => ({
                 time: yrcLine.time,
                 content: yrcLine.TextContent,
               }));
@@ -500,7 +451,7 @@ const useMusicDataStore = defineStore("musicData", {
               value.lrcAMData = [...value.yrcAMData];
             } else {
               console.log("创建基本的lrcAMData数组");
-              value.lrcAMData = value.lrc.map((line: LyricLine) => ({
+              value.lrcAMData = value.lrc.map((line: ParsedLrcLine) => ({
                 startTime: line.time * 1000,
                 endTime: (line.time + 5) * 1000,
                 words: [

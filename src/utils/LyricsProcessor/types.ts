@@ -27,6 +27,17 @@ export interface LyricLine {
   romanLyric?: string;
 }
 
+/** AMLL-compatible lyric line stored in Pinia (matches store structure) */
+export interface StoredLyricLine {
+  startTime: number;
+  endTime: number;
+  words: LyricWord[];
+  translatedLyric?: string;
+  romanLyric?: string;
+  isBG?: boolean;
+  isDuet?: boolean;
+}
+
 // ============== Parsed Output Types ==============
 
 /** Parsed LRC line (time in seconds) */
@@ -109,16 +120,29 @@ export interface ParsedLyricResult {
 
 /** Song lyric data stored in Pinia */
 export interface SongLyric {
-  lrcAMData: AMLLLine[];
-  yrcAMData: AMLLLine[];
-  hasTTML?: boolean;
-  ttml?: AMLLLine[];
+  // Feature flags
+  hasLrcTran: boolean;
+  hasLrcRoma: boolean;
+  hasYrc: boolean;
+  hasYrcTran: boolean;
+  hasYrcRoma: boolean;
+  hasTTML: boolean;
+  // Parsed lyric data
+  lrc: ParsedLrcLine[];
+  yrc: ParsedYrcLine[];
+  ttml: StoredLyricLine[];
+  // AMLL format data (stored with our LyricWord type)
+  lrcAMData: StoredLyricLine[];
+  yrcAMData: StoredLyricLine[];
+  // Other fields
+  formattedLrc?: string;
+  processedLyrics?: StoredLyricLine[];
+  settingsHash?: string;
+  // Optional translation/romaji sources
   tlyric?: { lyric: string };
   romalrc?: { lyric: string };
   translation?: string | { lyric: string };
   romaji?: string | { lyric: string };
-  processedLyrics?: AMLLLine[];
-  settingsHash?: string;
   meta?: LyricMeta;
 }
 

@@ -344,7 +344,8 @@ export const buildAMLLData = (
       resultWords[j] = {
         word: w.word,
         startTime: w.startTime,
-        endTime: w.endTime
+        endTime: w.endTime,
+        romanWord: ''
       };
     }
 
@@ -386,7 +387,8 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
       words[j] = {
         startTime: w.startTime,
         endTime: w.endTime,
-        word: w.word
+        word: w.word,
+        romanWord: ''
       };
     }
 

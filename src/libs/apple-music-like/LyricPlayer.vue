@@ -1,8 +1,6 @@
 <template>
   <div
     class="lyric-player-wrapper"
-    @touchstart.passive="handleTouchStart"
-    @touchend.passive="handleTouchEnd"
   >
     <LyricPlayer
       class="amll-lyric-player"
@@ -31,7 +29,7 @@
 import { ref, computed, watch, watchEffect, toRaw, shallowRef, onMounted, nextTick } from 'vue';
 import { musicStore, settingStore, siteStore } from "../../store";
 import { LyricPlayer, LyricPlayerRef } from "@applemusic-like-lyrics/vue";
-import { preprocessLyrics, getProcessedLyrics, type LyricLine } from "@/utils/LyricsProcessor";
+import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
 import '@applemusic-like-lyrics/core/style.css';
 
 const site = siteStore();
@@ -40,74 +38,11 @@ const setting = settingStore();
 
 // 直接复制 AMLL-Editor 的实现模式
 const playerKey = ref(Symbol());
-const amllLyricLines = shallowRef<LyricLine[]>([]);
+const amllLyricLines = shallowRef<AMLLLine[]>([]);
 const amllPlayerRef = ref<LyricPlayerRef>();
 
 const playState = shallowRef(false);
 const currentTime = shallowRef(0);
-
-// 移动端触摸处理 - 用于检测点击歌词行
-let touchStartTime = 0;
-let touchStartX = 0;
-let touchStartY = 0;
-const TAP_THRESHOLD_TIME = 300; // 点击最大时长 (ms)
-const TAP_THRESHOLD_DISTANCE = 15; // 点击最大移动距离 (px)
-
-const handleTouchStart = (e: TouchEvent) => {
-  touchStartTime = Date.now();
-  touchStartX = e.touches[0].clientX;
-  touchStartY = e.touches[0].clientY;
-  console.log('[LyricPlayer] touchstart', touchStartX, touchStartY);
-};
-
-const handleTouchEnd = (e: TouchEvent) => {
-  const touchEndTime = Date.now();
-  const touchEndX = e.changedTouches[0].clientX;
-  const touchEndY = e.changedTouches[0].clientY;
-
-  const timeDiff = touchEndTime - touchStartTime;
-  const distanceX = Math.abs(touchEndX - touchStartX);
-  const distanceY = Math.abs(touchEndY - touchStartY);
-
-  console.log('[LyricPlayer] touchend', { timeDiff, distanceX, distanceY });
-
-  // 判断是否为点击（短时间、小位移）
-  if (timeDiff < TAP_THRESHOLD_TIME && distanceX < TAP_THRESHOLD_DISTANCE && distanceY < TAP_THRESHOLD_DISTANCE) {
-    console.log('[LyricPlayer] detected tap');
-
-    // 查找点击的歌词行元素
-    const target = document.elementFromPoint(touchEndX, touchEndY) as HTMLElement;
-    console.log('[LyricPlayer] target element', target);
-
-    if (target) {
-      // 向上查找歌词行容器 - AMLL 使用 _lyricMainLine 类名 (CSS modules)
-      const lineEl = target.closest('[class*="lyricMainLine"]') ||
-                     target.closest('[class*="LyricMainLine"]') ||
-                     target.closest('[class*="lyric-main-line"]');
-
-      console.log('[LyricPlayer] found line element', lineEl);
-
-      if (lineEl) {
-        const lyricPlayer = amllPlayerRef.value?.lyricPlayer.value;
-        if (lyricPlayer) {
-          // 获取所有歌词行元素
-          const container = lyricPlayer.getElement();
-          const lineElements = container.querySelectorAll('[class*="lyricMainLine"], [class*="LyricMainLine"]');
-          const lineIndex = Array.from(lineElements).indexOf(lineEl as Element);
-
-          console.log('[LyricPlayer] line index', lineIndex, 'total lines', amllLyricLines.value.length);
-
-          if (lineIndex !== -1 && amllLyricLines.value[lineIndex]) {
-            const targetTime = amllLyricLines.value[lineIndex].startTime;
-            console.log('[LyricPlayer] seeking to', targetTime);
-            lyricPlayer.setCurrentTime(targetTime, true);
-            emit("lrcTextClick", targetTime / 1000);
-          }
-        }
-      }
-    }
-  }
-};
 
 onMounted(() => {
   nextTick(() => {

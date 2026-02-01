@@ -9,7 +9,7 @@
 
 import { toRaw } from 'vue';
 import type { LyricLine as AMLLLine } from '@applemusic-like-lyrics/core';
-import type { SongLyric, ProcessingSettings, InputLyricLine, TimeTextEntry } from './types';
+import type { SongLyric, ProcessingSettings, InputLyricLine, TimeTextEntry, StoredLyricLine } from './types';
 import { parseLrcToEntries } from './entryParser';
 import { isInterludeLine, buildIndexMatching } from './alignment';
 import { convertToAMLL } from './formatParser';
@@ -191,7 +191,7 @@ export function preprocessLyrics(songLyric: SongLyric, settings: ProcessingSetti
     return;
   }
 
-  songLyric.processedLyrics = processLyrics(songLyric, settings);
+  songLyric.processedLyrics = processLyrics(songLyric, settings) as unknown as StoredLyricLine[];
   songLyric.settingsHash = currentHash;
 }
 
@@ -205,15 +205,15 @@ export function preprocessLyrics(songLyric: SongLyric, settings: ProcessingSetti
 export function getProcessedLyrics(songLyric: SongLyric, settings: ProcessingSettings): AMLLLine[] {
   const currentHash = generateSettingsHash(settings);
 
-  // 检查缓存
+  // 检查缓存 - StoredLyricLine 与 AMLLLine 结构兼容
   const cached = songLyric.processedLyrics;
   if (cached && cached.length > 0 && songLyric.settingsHash === currentHash) {
-    return cached;
+    return cached as unknown as AMLLLine[];
   }
 
   // 重新处理并缓存
   const processed = processLyrics(songLyric, settings);
-  songLyric.processedLyrics = processed;
+  songLyric.processedLyrics = processed as unknown as StoredLyricLine[];
   songLyric.settingsHash = currentHash;
 
   return processed;

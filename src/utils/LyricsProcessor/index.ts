@@ -9,6 +9,7 @@ export type {
   LyricWord,
   AMLLLine,
   AMLLWord,
+  StoredLyricLine,
   LyricData,
   LyricMeta,
   SongLyric,
