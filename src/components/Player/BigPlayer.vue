@@ -183,15 +183,16 @@
         :animate="mobileLayer === 2 ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }"
         :transition="lyricsPresenceTransition"
         :style="{ pointerEvents: mobileLayer === 2 ? 'auto' : 'none' }"
-        @click.capture="handleLyricsAreaClick"
+        @touchstart="handleLyricsTouchStart"
+        @touchmove="handleLyricsTouchMove"
+        @touchend="handleLyricsTouchEnd"
+        @wheel="handleLyricsWheel"
       >
         <div
           class="mobile-lyrics-container"
           v-if="music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
             music.getPlaySongLyric.lrc[0] &&
             music.getPlaySongLyric.lrc.length > 4"
-          @scroll="handleLyricsScroll"
-          @touchmove="handleLyricsScroll"
         >
           <RollingLyrics
             @mouseenter="lrcMouseStatus = setting.lrcMousePause ? true : false"
@@ -530,24 +531,61 @@ const switchMobileLayer = (targetLayer) => {
   mobileLayer.value = targetLayer;
 };
 
-// 歌词区域滑动开始，展开歌词并隐藏 controls
-const handleLyricsScroll = () => {
-  if (!isMobile.value || mobileLayer.value !== 2 || lyricsExpanded.value) return;
+// 歌词区域触摸/滚动状态
+const lyricsTouchStartY = ref(0);
+const lyricsScrollDirection = ref(null); // 'up' | 'down' | null
 
-  lyricsExpanded.value = true;
-  if (mobileControlsVisible.value) {
-    mobileControlsVisible.value = false;
-  }
+// 歌词区域触摸开始
+const handleLyricsTouchStart = (e) => {
+  if (!isMobile.value || mobileLayer.value !== 2) return;
+  lyricsTouchStartY.value = e.touches[0].clientY;
+  lyricsScrollDirection.value = null;
 };
 
-// 点击歌词区域，切换 controls 显示状态
-const handleLyricsAreaClick = () => {
+// 歌词区域触摸移动 - 检测滑动方向
+const handleLyricsTouchMove = (e) => {
   if (!isMobile.value || mobileLayer.value !== 2) return;
 
-  // 如果 controls 隐藏，则显示；如果已展开歌词则显示 controls
-  if (!mobileControlsVisible.value) {
+  const currentY = e.touches[0].clientY;
+  const deltaY = currentY - lyricsTouchStartY.value;
+
+  // 需要一定的滑动距离才判定方向（避免误触）
+  if (Math.abs(deltaY) < 10) return;
+
+  lyricsScrollDirection.value = deltaY > 0 ? 'down' : 'up';
+};
+
+// 歌词区域触摸结束 - 根据滑动方向切换 controls
+const handleLyricsTouchEnd = () => {
+  if (!isMobile.value || mobileLayer.value !== 2) return;
+
+  // 向上滑动：显示 controls
+  if (lyricsScrollDirection.value === 'up' && !mobileControlsVisible.value) {
     mobileControlsVisible.value = true;
     lyricsExpanded.value = false;
+  }
+  // 向下滑动：隐藏 controls，展开歌词
+  else if (lyricsScrollDirection.value === 'down' && mobileControlsVisible.value) {
+    mobileControlsVisible.value = false;
+    lyricsExpanded.value = true;
+  }
+
+  lyricsScrollDirection.value = null;
+};
+
+// 兼容鼠标滚轮（桌面端模拟移动端时）
+const handleLyricsWheel = (e) => {
+  if (!isMobile.value || mobileLayer.value !== 2) return;
+
+  // 向上滚动（deltaY < 0）：显示 controls
+  if (e.deltaY < 0 && !mobileControlsVisible.value) {
+    mobileControlsVisible.value = true;
+    lyricsExpanded.value = false;
+  }
+  // 向下滚动（deltaY > 0）：隐藏 controls
+  else if (e.deltaY > 0 && mobileControlsVisible.value) {
+    mobileControlsVisible.value = false;
+    lyricsExpanded.value = true;
   }
 };
 
