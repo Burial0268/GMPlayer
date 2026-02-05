@@ -15,9 +15,7 @@ jobs:
           uses: actions/checkout@v4
           with:
             fetch-depth: 0
-
-        - name: 拉取库依赖
-          run: 'git pull --recurse-submodules'
+            submodules: recursive
 
         - name: 安装 PNPM
           uses: pnpm/action-setup@v4
