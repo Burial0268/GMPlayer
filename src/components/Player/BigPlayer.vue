@@ -1162,12 +1162,12 @@ watch(
     
     .all.apple-layout {
       padding: 0;
-      
+
       .left {
         width: 35%;
         padding-right: 2rem;
         display: flex;
-        justify-content: flex-end;
+        justify-content: center;
         align-items: center;
         
         // 增强封面效果
@@ -1872,10 +1872,10 @@ watch(
       width: 40%;
       display: flex;
       flex-direction: column;
-      align-items: flex-end;
+      align-items: center;
       justify-content: center;
       transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      padding-right: 5rem;
+      padding-right: 2rem;
       box-sizing: border-box;
       will-change: transform, width, padding-right;
     }
