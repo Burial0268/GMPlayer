@@ -5,7 +5,7 @@
 
 import { parseLrc as parseCoreLrc, parseYrc as parseCoreYrc } from "@applemusic-like-lyrics/lyric";
 import { musicStore } from "@/store";
-import { parseLrcLines, parseYrcLines, buildAMLLData } from './formatParser';
+import { parseLrcLines, parseYrcLines, buildAMLLData } from './parser/formatParser';
 import { alignByIndex } from './alignment';
 import type {
   LyricLine,

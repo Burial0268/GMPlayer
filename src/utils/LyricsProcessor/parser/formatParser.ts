@@ -9,7 +9,7 @@ import type {
   ParsedLrcLine,
   ParsedYrcLine,
   InputLyricLine
-} from './types';
+} from '../types';
 import { msToS } from '@/utils/timeTools';
 
 // Pre-compiled regex for interlude detection
@@ -415,3 +415,4 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
 export const parseLrcData = parseLrcLines;
 export const parseYrcData = parseYrcLines;
 export const parseAMData = buildAMLLData;
+

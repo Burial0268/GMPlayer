@@ -41,13 +41,13 @@ export class AudioEffectManager {
   private lowFreqAnalyzer: LowFreqVolumeAnalyzer;
   private options: Required<EffectManagerOptions>;
 
-  // Bandpass filter nodes for spectrum analysis range (80-2000Hz)
+  // Bandpass filter nodes for spectrum analysis range (20-20000Hz)
   private highpassFilter: BiquadFilterNode | null = null;
   private lowpassFilter: BiquadFilterNode | null = null;
 
   // Frequency range constants
   private static readonly FREQ_MIN = 20;
-  private static readonly FREQ_MAX = 2500;
+  private static readonly FREQ_MAX = 20000;
 
   // Reusable buffers to avoid GC pressure
   private _frequencyBuffer: Uint8Array<ArrayBuffer> | null = null;
@@ -83,14 +83,14 @@ export class AudioEffectManager {
       this.analyserNode.fftSize = this.options.fftSize;
       this.analyserNode.smoothingTimeConstant = this.options.smoothingTimeConstant;
 
-      // Create bandpass filter for spectrum analysis range (80-2000Hz)
+      // Create bandpass filter for spectrum analysis range (20-20000Hz)
       // Highpass filter: removes frequencies below 20Hz
       this.highpassFilter = this.audioCtx.createBiquadFilter();
       this.highpassFilter.type = 'highpass';
       this.highpassFilter.frequency.value = AudioEffectManager.FREQ_MIN;
       this.highpassFilter.Q.value = 0.7071; // Butterworth response (flat passband)
 
-      // Lowpass filter: removes frequencies above 2000Hz
+      // Lowpass filter: removes frequencies above 20000Hz
       this.lowpassFilter = this.audioCtx.createBiquadFilter();
       this.lowpassFilter.type = 'lowpass';
       this.lowpassFilter.frequency.value = AudioEffectManager.FREQ_MAX;
@@ -110,7 +110,7 @@ export class AudioEffectManager {
    * Connect input node to spectrum analysis chain (bandpass filtered)
    *
    * IMPORTANT: This creates a parallel analysis branch that does NOT affect audio output.
-   * The bandpass filter (80-2000Hz) only applies to the analyser, not the actual sound.
+   * The bandpass filter (20-20000Hz) only applies to the analyser, not the actual sound.
    *
    * Audio graph structure:
    *                       ┌─→ highpass → lowpass → analyser (spectrum analysis only)

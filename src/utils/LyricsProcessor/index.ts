@@ -28,10 +28,10 @@ export type {
 export { parseLrcTime, formatLrcTime, detectYrcType } from './timeUtils';
 
 // Entry parsing
-export { parseLrcToEntries, buildTimeMap, strictTimeMatch, strictTimeMatchBinary } from './entryParser';
+export { parseLrcToEntries, buildTimeMap, strictTimeMatch, strictTimeMatchBinary } from './parser/entryParser';
 
 // Format parsing
-export { parseLrcLines, parseYrcLines, buildAMLLData, convertToAMLL } from './formatParser';
+export { parseLrcLines, parseYrcLines, buildAMLLData, convertToAMLL } from './parser/formatParser';
 
 // Alignment
 export { alignByIndex, isInterludeLine, buildIndexMatching } from './alignment';
@@ -50,9 +50,9 @@ export { LyricService } from './service';
 
 export { parseLyricData as parseLyric } from './lyricParser';
 export { formatAsLrc as formatToLrc } from './lyricParser';
-export { parseLrcLines as parseLrcData } from './formatParser';
-export { parseYrcLines as parseYrcData } from './formatParser';
-export { buildAMLLData as parseAMData } from './formatParser';
+export { parseLrcLines as parseLrcData } from './parser/formatParser';
+export { parseYrcLines as parseYrcData } from './parser/formatParser';
+export { buildAMLLData as parseAMData } from './parser/formatParser';
 export { alignByIndex as alignLyrics } from './alignment';
 export { createEmptyLyricResult as getDefaultLyricResult } from './lyricParser';
 

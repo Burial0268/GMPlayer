@@ -10,9 +10,9 @@
 import { toRaw } from 'vue';
 import type { LyricLine as AMLLLine } from '@applemusic-like-lyrics/core';
 import type { SongLyric, ProcessingSettings, InputLyricLine, TimeTextEntry, StoredLyricLine } from './types';
-import { parseLrcToEntries } from './entryParser';
+import { parseLrcToEntries } from './parser/entryParser';
 import { isInterludeLine, buildIndexMatching } from './alignment';
-import { convertToAMLL } from './formatParser';
+import { convertToAMLL } from './parser/formatParser';
 
 // Debug flag - disable in production for better performance
 const DEBUG = false;

@@ -7,7 +7,7 @@ import request from "@/utils/request";
 // @ts-ignore
 import { parseLrc, parseQrc, parseYrc, parseTTML, LyricLine } from "@applemusic-like-lyrics/lyric";
 import { preprocessLyrics } from './processor';
-import { parseLrcToEntries } from './entryParser';
+import { parseLrcToEntries } from './parser/entryParser';
 import { detectYrcType } from './timeUtils';
 
 // Re-define LyricData interface based on parseLyric.ts

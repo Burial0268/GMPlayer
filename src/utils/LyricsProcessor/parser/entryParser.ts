@@ -3,8 +3,8 @@
  * LRC 格式解析器 - 严格时间匹配 (优化版)
  */
 
-import type { TimeTextEntry } from './types';
-import { parseLrcTime } from './timeUtils';
+import type { TimeTextEntry } from '../types';
+import { parseLrcTime } from '../timeUtils';
 
 // Pre-compiled regex (avoid recompilation on each call)
 const LRC_LINE_REGEX = /^\[(\d+:\d+(?:\.\d+)?)\](.*)/;
@@ -154,3 +154,4 @@ export function strictTimeMatch(
 
   return bestMatch;
 }
+
