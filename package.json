@@ -7,16 +7,15 @@
   "scripts": {
     "install:deps-amll": "cd deps/apoint-amll && pnpm install",
     "build:deps-amll-core": "cd deps/apoint-amll/packages/core && pnpm build",
-    "build:deps-amll-lyric": "cd deps/apoint-amll/packages/lyric && pnpm build",
     "build:deps-amll-vue": "cd deps/apoint-amll/packages/vue && pnpm build",
-    "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll-core && pnpm build:deps-amll-lyric && pnpm build:deps-amll-vue && pnpm install",
+    "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll-core && pnpm build:deps-amll-vue && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@applemusic-like-lyrics/core": "link:./deps/apoint-amll/packages/core",
-    "@applemusic-like-lyrics/lyric": "link:./deps/apoint-amll/packages/lyric",
+    "@applemusic-like-lyrics/lyric": "^0.3.0",
     "@applemusic-like-lyrics/vue": "link:./deps/apoint-amll/packages/vue",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
@@ -76,5 +75,6 @@
     "vite-plugin-vue-mcp": "^0.3.2",
     "vite-svg-loader": "^5.1.0",
     "vue-tsc": "^2.2.12"
-  }
+  },
+  "packageManager": "pnpm@10.28.2"
 }

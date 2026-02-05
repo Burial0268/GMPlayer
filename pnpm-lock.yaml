@@ -12,8 +12,8 @@ importers:
         specifier: link:./deps/apoint-amll/packages/core
         version: link:deps/apoint-amll/packages/core
       '@applemusic-like-lyrics/lyric':
-        specifier: link:./deps/apoint-amll/packages/lyric
-        version: link:deps/apoint-amll/packages/lyric
+        specifier: ^0.3.0
+        version: 0.3.0
       '@applemusic-like-lyrics/vue':
         specifier: link:./deps/apoint-amll/packages/vue
         version: link:deps/apoint-amll/packages/vue
@@ -200,6 +200,9 @@ packages:
     engines: {node: '>=10'}
     peerDependencies:
       ajv: '>=8'
+
+  '@applemusic-like-lyrics/lyric@0.3.0':
+    resolution: {integrity: sha512-ZGyBheZZfqjQmGnEUciNKCARwkqIP39ONZirJE+NOQjQ47TYlZz4tlLBRH/uRfq5qviYyJ1S9Q+pZxlYoyHWVw==}
 
   '@babel/code-frame@7.28.6':
     resolution: {integrity: sha512-JYgintcMjRiCvS8mMECzaEn+m3PfoQiyqukOMCCVQtoJGYJw8j/8LBJEiqkHLkfwCcs74E3pbAUFNg7d9VNJ+Q==}
@@ -3937,6 +3940,8 @@ snapshots:
       json-schema: 0.4.0
       jsonpointer: 5.0.1
       leven: 3.1.0
+
+  '@applemusic-like-lyrics/lyric@0.3.0': {}
 
   '@babel/code-frame@7.28.6':
     dependencies:
