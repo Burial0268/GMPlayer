@@ -6,15 +6,16 @@
   "github": "https://github.com/Burial0268/SPlayer",
   "scripts": {
     "install:deps-amll-core": "cd deps/apoint-amll/packages/core && pnpm install && pnpm build",
-    "install:deps-amll-bindings": "cd deps/apoint-amll/packages/vue && pnpm install && pnpm build",
-    "install:with-deps": "pnpm install:deps-amll-core && pnpm install:deps-amll-bindings && pnpm install",
+    "install:deps-amll-lyric": "cd deps/apoint-amll/packages/lyric && pnpm install && pnpm build",
+    "install:deps-amll-vue": "cd deps/apoint-amll/packages/vue && pnpm install && pnpm build",
+    "install:with-deps": "pnpm install:deps-amll-core && pnpm install:deps-amll-lyric && pnpm install:deps-amll-vue && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@applemusic-like-lyrics/core": "link:./deps/apoint-amll/packages/core",
-    "@applemusic-like-lyrics/lyric": "^0.2.4",
+    "@applemusic-like-lyrics/lyric": "link:./deps/apoint-amll/packages/lyric",
     "@applemusic-like-lyrics/vue": "link:./deps/apoint-amll/packages/vue",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
