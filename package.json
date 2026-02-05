@@ -5,10 +5,11 @@
   "home": "https://gbclstudio.cn",
   "github": "https://github.com/Burial0268/SPlayer",
   "scripts": {
-    "install:deps-amll-core": "cd deps/apoint-amll/packages/core && pnpm install && pnpm build",
-    "install:deps-amll-lyric": "cd deps/apoint-amll/packages/lyric && pnpm install && pnpm build",
-    "install:deps-amll-vue": "cd deps/apoint-amll/packages/vue && pnpm install && pnpm build",
-    "install:with-deps": "pnpm install:deps-amll-core && pnpm install:deps-amll-lyric && pnpm install:deps-amll-vue && pnpm install",
+    "install:deps-amll": "cd deps/apoint-amll && pnpm install",
+    "build:deps-amll-core": "cd deps/apoint-amll/packages/core && pnpm build",
+    "build:deps-amll-lyric": "cd deps/apoint-amll/packages/lyric && pnpm build",
+    "build:deps-amll-vue": "cd deps/apoint-amll/packages/vue && pnpm build",
+    "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll-core && pnpm build:deps-amll-lyric && pnpm build:deps-amll-vue && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"
