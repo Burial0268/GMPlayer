@@ -16,6 +16,9 @@ jobs:
           with:
             fetch-depth: 0
 
+        - name: 拉取库依赖
+          run: 'git pull --recurse-submodules'
+
         - name: 安装 PNPM
           uses: pnpm/action-setup@v4
           with:
@@ -34,7 +37,10 @@ jobs:
             targets: wasm32-unknown-unknown
 
         - name: 安装依赖
-          run: 'pnpm install:with-deps --frozen-lockfile --ignore-scripts'
+          run: 'pnpm install --frozen-lockfile --ignore-scripts'
+
+        - name: 安装库依赖
+          run: 'pnpm install:with-deps'
 
         - name: 构建项目产物
           run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
