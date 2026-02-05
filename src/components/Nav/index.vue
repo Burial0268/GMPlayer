@@ -1,5 +1,5 @@
 <template>
-  <nav>
+  <nav :class="{ 'tauri-app': isTauri }">
     <div class="left">
       <div class="logo" @click="router.push('/')">
         <img :src="logoUrl" alt="logo" />
@@ -113,6 +113,12 @@ const setting = settingStore();
 const aboutSiteRef = ref(null);
 const timeOut = ref(null);
 const logoUrl = import.meta.env.VITE_SITE_LOGO;
+
+// 检测是否在 Tauri 环境中运行
+const isTauri = ref(false);
+onMounted(() => {
+  isTauri.value = typeof window !== 'undefined' && '__TAURI__' in window;
+});
 
 // 添加动画处理函数
 const onLinkEnter = (event) => {
@@ -461,6 +467,10 @@ nav {
   align-items: center;
   max-width: 1400px;
   margin: 0 auto;
+  // Tauri decorum 窗口控制按钮预留空间
+  &.tauri-app {
+    padding-right: 140px;
+  }
   .fade-enter-active,
   .fade-leave-active {
     transition: opacity 0.5s ease;
