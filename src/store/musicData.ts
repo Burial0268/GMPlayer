@@ -805,6 +805,7 @@ const useMusicDataStore = defineStore("musicData", {
     {
       storage: localStorage,
       pick: ["persistData"],
+      omit: ["preloadedSongIds"],
       afterHydrate: (ctx: any) => {
         ctx.store.preloadedSongIds = new Set();
       },
