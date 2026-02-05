@@ -192,6 +192,32 @@ const useMusicDataStore = defineStore("musicData", {
     },
   },
   actions: {
+    /**
+     * 重置当前歌曲歌词状态：
+     * - 清空上一首歌的歌词与处理缓存
+     * - 将歌词索引置为 -1
+     * 在切换歌曲但新歌词尚未加载完成时调用，避免界面继续显示旧歌词。
+     */
+    resetSongLyricState() {
+      this.songLyric = {
+        lrc: [],
+        yrc: [],
+        lrcAMData: [],
+        yrcAMData: [],
+        hasTTML: false,
+        ttml: [],
+        hasLrcTran: false,
+        hasLrcRoma: false,
+        hasYrc: false,
+        hasYrcTran: false,
+        hasYrcRoma: false,
+        formattedLrc: "",
+        processedLyrics: [],
+        settingsHash: "",
+      } as unknown as SongLyric;
+      this.playSongLyricIndex = -1;
+    },
+
     preloadUpcomingSongs() {
       if (!(this.preloadedSongIds instanceof Set)) {
         console.warn("preloadedSongIds 类型不正确，已重置。");
@@ -342,7 +368,7 @@ const useMusicDataStore = defineStore("musicData", {
     setLikeList() {
       const user = userStore();
       if (user.userLogin) {
-        getLikelist(user.getUserData.id).then((res: any) => {
+        getLikelist(user.userData.id).then((res: any) => {
           this.persistData.likeList = res.ids;
         });
       }
@@ -404,6 +430,8 @@ const useMusicDataStore = defineStore("musicData", {
     setPlaylists(value: SongData[]) {
       this.persistData.playlists = value.slice();
       this.preloadedSongIds.clear();
+      // 切换播放列表时，清空旧歌词，等待新歌曲歌词加载
+      this.resetSongLyricState();
     },
 
     setDailySongs(value: any[]) {
@@ -653,6 +681,8 @@ const useMusicDataStore = defineStore("musicData", {
           if (listLength > 1) {
             soundStop($player);
           }
+          // 已经切换到下一首/上一首歌曲，先清空旧歌词，等待新歌词加载
+          this.resetSongLyricState();
           nextTick().then(() => {
             this.setPlayState(true);
           });
@@ -668,6 +698,8 @@ const useMusicDataStore = defineStore("musicData", {
           console.log("Play a song that is not the same as the last one");
           if (typeof $player !== "undefined") soundStop($player);
           this.isLoadingSong = true;
+          // 将要播放不同歌曲，立即清空旧歌词，等待新歌词加载
+          this.resetSongLyricState();
         }
       } catch (error) {
         console.error("Error:" + error);
@@ -772,8 +804,8 @@ const useMusicDataStore = defineStore("musicData", {
   persist: [
     {
       storage: localStorage,
-      paths: ["persistData"],
-      afterRestore: (ctx: any) => {
+      pick: ["persistData"],
+      afterHydrate: (ctx: any) => {
         ctx.store.preloadedSongIds = new Set();
       },
     },

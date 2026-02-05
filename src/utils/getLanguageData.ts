@@ -22,6 +22,7 @@ interface LanguageTexts {
   loveSongError: string;
   loveSongRepeat: string;
   loveSongRemove: string;
+  loveSongRemoveError: string;
   loveSongNoFound: string;
   getDataError: string;
   getDaraEmpty: string;
@@ -65,6 +66,7 @@ const languageData: LanguageData = {
     loveSongError: "喜欢音乐时发生错误",
     loveSongRepeat: "我喜欢的音乐中已存在该歌曲",
     loveSongRemove: "已从我喜欢的音乐中移除",
+    loveSongRemoveError: "从我喜欢的音乐中移除失败",
     loveSongNoFound: "我喜欢的列表中未找到该歌曲",
     getDataError: "数据获取失败，请刷新后重试",
     getDaraEmpty: "数据为空",
@@ -98,6 +100,7 @@ const languageData: LanguageData = {
     loveSongError: "An error occurred while liking music",
     loveSongRepeat: "The song already exists in my favorite music",
     loveSongRemove: "Removed from my favorite music",
+    loveSongRemoveError: "Failed to remove from my favorite music",
     loveSongNoFound: "The song was not found in my favorite list",
     getDataError: "Data acquisition failed, please refresh and try again",
     getDaraEmpty: "Data is empty",

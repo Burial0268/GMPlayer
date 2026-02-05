@@ -23,7 +23,7 @@ useI18n(app);
 app.mount("#app");
 
 if ("serviceWorker" in navigator) {
-  let pwaMessage = null;
+  let pwaMessage: { destroy: () => void } | null = null;
 
   // 检测到更新提醒
   navigator.serviceWorker.addEventListener("onupdatefound", () => {

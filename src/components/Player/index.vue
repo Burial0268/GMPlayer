@@ -51,27 +51,30 @@
                       :key="'yrc-' + music.getPlaySongLyricIndex"
                       class="lrc text-hidden"
                     >
-                      <n-text v-for="item in music.getPlaySongLyric.yrc[
-                        music.getPlaySongLyricIndex
-                      ].content" :key="item" :depth="3">
+                      <n-text
+                        v-for="item in music.getPlaySongLyric.yrc[music.getPlaySongLyricIndex].content"
+                        :key="item"
+                        :depth="3"
+                      >
                         {{ item.content }}
                       </n-text>
                     </n-text>
                     <n-text
-                      v-else-if="music.getPlaySongLyric?.lrc?.length"
+                      v-else-if="music.getPlaySongLyric?.lrc?.length && music.getPlaySongLyricIndex != -1"
                       :key="'lrc-' + music.getPlaySongLyricIndex"
                       class="lrc text-hidden"
                       :depth="3"
                     >
                       {{
-                        music.getPlaySongLyric.lrc[
-                          music.getPlaySongLyricIndex === -1
-                            ? 0
-                            : music.getPlaySongLyricIndex
-                        ]?.content
+                        music.getPlaySongLyric.lrc[music.getPlaySongLyricIndex]?.content
                       }}
                     </n-text>
-                    <AllArtists v-else key="artists" class="text-hidden" :artistsData="music.getPlaySongData.artist" />
+                    <AllArtists
+                      v-else
+                      key="artists"
+                      class="text-hidden"
+                      :artistsData="music.getPlaySongData.artist"
+                    />
                   </Transition>
                 </template>
                 <template v-else>

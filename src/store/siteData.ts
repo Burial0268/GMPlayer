@@ -21,7 +21,7 @@ const useSiteDataStore = defineStore("siteData", {
   persist: [
     {
       storage: localStorage,
-      paths: [""],
+      pick: ["siteTitle", "songPicColor", "songPicGradient"],
     },
   ],
 });

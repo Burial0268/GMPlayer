@@ -288,7 +288,7 @@ const useUserDataStore = defineStore("userData", {
   persist: [
     {
       storage: localStorage,
-      paths: ["userLogin", "cookie", "userData", "userOtherData"],
+      pick: ["userLogin", "cookie", "userData", "userOtherData"],
     },
   ],
 });
