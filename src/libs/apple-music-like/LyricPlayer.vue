@@ -102,9 +102,20 @@ const handleLineClick = (evt: any) => {
   console.log('[LyricPlayer] line-click event', evt);
   const targetTime = evt.line.getLine().startTime;
   amllPlayerRef.value?.lyricPlayer.value?.setCurrentTime(targetTime, true);
+  amllPlayerRef.value?.lyricPlayer.value?.update();
   emit("lrcTextClick", targetTime / 1000);
   emit("line-click", evt);
 };
+
+// 播放/暂停时更新歌词状态
+watch(
+  () => music.playState,
+  (newVal) => {
+    newVal ? amllPlayerRef.value?.lyricPlayer.value?.resume() : amllPlayerRef.value?.lyricPlayer.value?.pause();
+    amllPlayerRef.value?.lyricPlayer.value?.update();
+  },
+  { immediate: true }
+);
 
 // 更新歌词数据（直接复制 AMLL-Editor 的 watch 模式）
 watch(

@@ -135,7 +135,7 @@
             </template>
           </n-tag>
         </div>
-        <span class="tip">从备用 API 获取歌词 (需要配置 API 地址)</span>
+        <span class="tip">优先从 Lyrics-Atlas API 获取歌词，可获取含对唱、背景行信息的歌词；若获取失败，则会回退</span>
       </div>
       <n-switch v-model:value="useLyricAtlasAPI" :round="false" />
     </n-card>
