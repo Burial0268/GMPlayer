@@ -622,15 +622,14 @@ const playSong = (data, song) => {
     soundStop($player);
     music.setPersonalFmMode(false);
   }
+  music.setPlayState(true);
+  if (router.currentRoute.value.name !== "history") music.setPlaylists(data);
   // 检查是否为云盘歌曲
   if (router.currentRoute.value.name === "user-cloud") {
     music.setPlayListMode("cloud");
   } else {
     music.setPlayListMode("list");
   }
-  // 先设置播放列表，再添加歌曲到列表（会自动设置正确的播放索引并开始播放）
-  // 注意：必须先设置列表再调用 addSongToPlaylists，否则 playSongIndex 可能指向错误的歌曲
-  if (router.currentRoute.value.name !== "history") music.setPlaylists(data);
   music.addSongToPlaylists(song);
 };
 
