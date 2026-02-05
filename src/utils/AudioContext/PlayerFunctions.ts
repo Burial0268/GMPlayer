@@ -9,7 +9,17 @@
 
 import { h } from 'vue';
 import { songScrobble } from '@/api/song';
-import { musicStore, settingStore, siteStore, userStore } from '@/store';
+// Import stores directly to avoid circular dependency through barrel exports
+// (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
+import useMusicDataStore from '@/store/musicData';
+import useSettingDataStore from '@/store/settingData';
+import useSiteDataStore from '@/store/siteData';
+import useUserDataStore from '@/store/userData';
+
+const musicStore = () => useMusicDataStore();
+const settingStore = () => useSettingDataStore();
+const siteStore = () => useSiteDataStore();
+const userStore = () => useUserDataStore();
 import { NIcon } from 'naive-ui';
 import { MusicNoteFilled } from '@vicons/material';
 import getLanguageData from '@/utils/getLanguageData';

@@ -4,7 +4,6 @@
  */
 
 import { parseLrc as parseCoreLrc, parseYrc as parseCoreYrc } from "@applemusic-like-lyrics/lyric";
-import { msToS } from "@/utils/timeTools";
 import { musicStore } from "@/store";
 import { parseLrcLines, parseYrcLines, buildAMLLData } from './formatParser';
 import { alignByIndex } from './alignment';
