@@ -1,4 +1,7 @@
 {
+  "github": {
+    "enabled": false
+  },
   "rewrites": [
     { "source": "/:path", "destination": "/index.html" },
     { "source": "/api/ncm/:path*", "destination": "https://ncm-api.prod.gbclstudio.cn/:path*" },
