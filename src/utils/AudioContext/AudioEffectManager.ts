@@ -46,8 +46,8 @@ export class AudioEffectManager {
   private lowpassFilter: BiquadFilterNode | null = null;
 
   // Frequency range constants
-  private static readonly FREQ_MIN = 80;
-  private static readonly FREQ_MAX = 2000;
+  private static readonly FREQ_MIN = 20;
+  private static readonly FREQ_MAX = 2500;
 
   // Reusable buffers to avoid GC pressure
   private _frequencyBuffer: Uint8Array<ArrayBuffer> | null = null;
