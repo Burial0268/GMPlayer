@@ -334,6 +334,10 @@ export class BufferedSound implements ISound {
     return this._inner?.getFrequencyData() ?? new Uint8Array(0);
   }
 
+  getFFTData(): number[] {
+    return this._inner?.getFFTData() ?? [];
+  }
+
   getLowFrequencyVolume(): number {
     return this._inner?.getLowFrequencyVolume() ?? 0;
   }

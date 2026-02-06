@@ -120,7 +120,7 @@ export class NativeSound implements ISound {
    * Chain: source -> gainNode -> destination (audio output)
    *        source -> effectManager (parallel branch for spectrum analysis only)
    */
-  private _initAudioGraph(): boolean {
+  private async _initAudioGraph(): Promise<boolean> {
     if (this._isAudioGraphInitialized) return true;
 
     try {
@@ -129,6 +129,9 @@ export class NativeSound implements ISound {
         console.warn('NativeSound: AudioContext not available');
         return false;
       }
+
+      // Register PCM capture worklet before creating AudioEffectManager
+      await AudioContextManager.registerWorklet();
 
       // CRITICAL: Only create MediaElementSourceNode once per audio element
       // Attempting to create multiple sources from same element throws DOMException
@@ -140,7 +143,7 @@ export class NativeSound implements ISound {
       this._gainNode = audioCtx.createGain();
       this._gainNode.gain.value = this._volume;
 
-      // Create effect manager (analyser with bandpass filter)
+      // Create effect manager (WASM FFT + AnalyserNode for lowFreqVolume)
       this._effectManager = new AudioEffectManager(audioCtx);
 
       // Connect effect manager for spectrum analysis (parallel branch, doesn't affect audio)
@@ -310,7 +313,7 @@ export class NativeSound implements ISound {
   private async _doPlay(): Promise<void> {
     // Initialize audio graph on first play (requires user interaction)
     if (!this._isAudioGraphInitialized) {
-      const success = this._initAudioGraph();
+      const success = await this._initAudioGraph();
       if (!success) {
         console.error('NativeSound: Failed to initialize audio graph');
         this._emit('playerror');
@@ -418,7 +421,7 @@ export class NativeSound implements ISound {
 
     // Initialize audio graph if needed for GainNode access
     if (!this._isAudioGraphInitialized) {
-      this._initAudioGraph();
+      this._initAudioGraph().catch(() => {});
     }
 
     const audioCtx = AudioContextManager.getContext();
@@ -495,6 +498,14 @@ export class NativeSound implements ISound {
    */
   getFrequencyData(): Uint8Array<ArrayBuffer> {
     return this._effectManager ? this._effectManager.getFrequencyData() : new Uint8Array(0);
+  }
+
+  /**
+   * Get FFT data as number[] from WASM FFTPlayer
+   * @returns number[] of spectrum values (0-255 range)
+   */
+  getFFTData(): number[] {
+    return this._effectManager ? this._effectManager.getFFTData() : [];
   }
 
   /**

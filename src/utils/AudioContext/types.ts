@@ -37,6 +37,7 @@ export interface ISound {
   once(event: SoundEventType, callback: SoundEventCallback): this;
   off(event: SoundEventType, callback?: SoundEventCallback): this;
   getFrequencyData(): Uint8Array<ArrayBuffer>;
+  getFFTData(): number[];
   getLowFrequencyVolume(): number;
   unload(): void;
 }

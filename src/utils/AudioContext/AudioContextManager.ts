@@ -22,6 +22,7 @@ class AudioContextManagerClass {
   private _listeners: Map<keyof AudioContextManagerEvents, Set<Function>> = new Map();
   private _isMobile: boolean;
   private _hasUserInteraction: boolean = false;
+  private _workletRegistered: boolean = false;
   private _boundHandlers: {
     visibilityChange: () => void;
     userInteraction: () => void;
@@ -222,6 +223,42 @@ class AudioContextManagerClass {
         console.error(`AudioContextManager: Error in ${event} listener`, e);
       }
     });
+  }
+
+  /**
+   * Register the PCM capture AudioWorklet processor.
+   * Must be called before creating AudioEffectManager.
+   */
+  async registerWorklet(): Promise<void> {
+    if (this._workletRegistered) return;
+
+    const ctx = this.getContext();
+    if (!ctx) {
+      console.warn('AudioContextManager: Cannot register worklet - no AudioContext');
+      return;
+    }
+
+    try {
+      const { registerPCMCaptureWorklet } = await import('./pcm-capture-worklet');
+      await registerPCMCaptureWorklet(ctx);
+      this._workletRegistered = true;
+    } catch (err) {
+      console.warn('AudioContextManager: Failed to register PCM capture worklet', err);
+    }
+  }
+
+  /**
+   * Check if the PCM capture worklet has been registered.
+   */
+  isWorkletRegistered(): boolean {
+    return this._workletRegistered;
+  }
+
+  /**
+   * Get the AudioContext sample rate.
+   */
+  getSampleRate(): number {
+    return this._ctx?.sampleRate ?? 44100;
   }
 
   /**

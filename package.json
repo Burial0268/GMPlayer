@@ -15,6 +15,7 @@
   "dependencies": {
     "@applemusic-like-lyrics/core": "link:./deps/apoint-amll/packages/core",
     "@applemusic-like-lyrics/lyric": "link:./deps/apoint-amll/packages/lyric",
+    "@applemusic-like-lyrics/fft": "link:./deps/apoint-amll/packages/fft",
     "@applemusic-like-lyrics/vue": "link:./deps/apoint-amll/packages/vue",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",

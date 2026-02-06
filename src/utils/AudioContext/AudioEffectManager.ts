@@ -1,64 +1,58 @@
 /**
- * AudioEffectManager - Optimized spectrum analysis and audio effects
+ * AudioEffectManager - Hybrid analysis: AnalyserNode + WASM FFTPlayer
  *
- * Key optimizations:
- * - Reusable buffer to avoid GC pressure
- * - Mobile-aware FFT size selection
- * - Throttled frequency data retrieval
- * - Integrated LowFreqVolumeAnalyzer
+ * Architecture:
+ *   inputNode → AnalyserNode (Blackman window)    → spectrum display (getFrequencyData)
+ *   inputNode → AudioWorkletNode (PCM capture)    → WASM FFTPlayer (Hamming window)
+ *                                                    → lowFreqVolume (getLowFrequencyVolume)
+ *                                                    → detailed FFT (getFFTData)
+ *
+ * Why hybrid:
+ *   - Spectrum bars: AnalyserNode Blackman window gives sharper peaks, better visual contrast
+ *   - lowFreqVolume: WASM FFTPlayer Hamming window matches AMLL's native FFTPlayer behavior
+ *     (Blackman window cannot reproduce AMLL's official implementation)
  */
 
 import { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
 import { AudioContextManager } from './AudioContextManager';
+import { WasmFFTManager } from './WasmFFTManager';
+import { isPCMWorkletRegistered } from './pcm-capture-worklet';
 
 export interface EffectManagerOptions {
-  /** FFT size (power of 2, 32-32768). Default: 2048 desktop, 1024 mobile */
+  /** FFT size for AnalyserNode (spectrum display). Default: 2048 */
   fftSize?: number;
-  /** AnalyserNode smoothing for inter-block averaging (0-1). Default: 0.8 */
+  /** AnalyserNode smoothing (0-1). Default: 0.85 */
   smoothingTimeConstant?: number;
-  /** Min update interval in ms for getFrequencyData. Default: 16 (~60fps) */
+  /** Min update interval in ms. Default: 16 (~60fps) */
   minUpdateInterval?: number;
+  /** Output size for WASM FFT. Default: 1024 desktop, 512 mobile */
+  fftOutputSize?: number;
+  /** Upper frequency for lowFreqVolume analysis in Hz. Default: 250 */
+  lowFreqEndHz?: number;
 }
 
 const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   fftSize: 2048,
-  smoothingTimeConstant: 0.8,  // inter-block smoothing (simulates AMLL's window overlap)
+  smoothingTimeConstant: 0.85,
   minUpdateInterval: 16,
+  fftOutputSize: 1024,
+  lowFreqEndHz: 250,
 };
 
 const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
-  fftSize: 1024,
-  smoothingTimeConstant: 0.8,
-  minUpdateInterval: 33,  // ~30fps on mobile
+  fftSize: 2048,
+  smoothingTimeConstant: 0.85,
+  minUpdateInterval: 33,
+  fftOutputSize: 512,
+  lowFreqEndHz: 250,
 };
 
-/**
- * Linear interpolation (port of AMLL FFTPlayer's vec_interp / numpy.interp)
- * Resamples src array into dst array of any size using linear interpolation.
- */
-function vecInterp(src: Uint8Array<ArrayBuffer>, dst: Float32Array): void {
-  const srcLen = src.length;
-  const dstLen = dst.length;
-
-  if (srcLen === 0) { dst.fill(0); return; }
-  if (dstLen === 0) return;
-  if (srcLen === dstLen) {
-    for (let i = 0; i < srcLen; i++) dst[i] = src[i];
-    return;
-  }
-
-  const ratio = (srcLen - 1) / (dstLen - 1);
-  for (let i = 0; i < dstLen; i++) {
-    const srcIdx = i * ratio;
-    const lo = srcIdx | 0; // floor
-    const hi = Math.min(lo + 1, srcLen - 1);
-    const frac = srcIdx - lo;
-    dst[i] = src[lo] * (1 - frac) + src[hi] * frac;
-  }
-}
+// WASM FFTPlayer frequency range (matching AMLL default)
+const FREQ_MIN = 80;
+const FREQ_MAX = 2000;
 
 /**
- * AudioEffectManager - Manages spectrum analysis with performance optimizations
+ * AudioEffectManager - Hybrid analysis engine
  */
 export class AudioEffectManager {
   private audioCtx: AudioContext;
@@ -66,25 +60,20 @@ export class AudioEffectManager {
   private lowFreqAnalyzer: LowFreqVolumeAnalyzer;
   private options: Required<EffectManagerOptions>;
 
-  // Bandpass filter nodes for spectrum analysis range (80-2000Hz)
-  private highpassFilter: BiquadFilterNode | null = null;
-  private lowpassFilter: BiquadFilterNode | null = null;
+  // WASM FFT (for lowFreqVolume + getFFTData)
+  private _wasmFFT: WasmFFTManager | null = null;
+  private _workletNode: AudioWorkletNode | null = null;
 
-  // Frequency range constants
-  private static readonly FREQ_MIN = 80;
-  private static readonly FREQ_MAX = 2000;
-
-  // Reusable buffers to avoid GC pressure
+  // AnalyserNode buffers (for spectrum display)
   private _frequencyBuffer: Uint8Array<ArrayBuffer> | null = null;
-  private _tempFrequencyArray: number[] = [];
-  private _interpolatedBuffer: Float32Array | null = null;
-
-  // Per-frame EMA smoothing buffer (AMLL FFTPlayer style: v = (v + new) / 2)
-  private _smoothedBuffer: Float32Array | null = null;
-
-  // Throttling state
-  private _lastUpdateTime: number = 0;
   private _cachedFrequencyData: Uint8Array<ArrayBuffer> | null = null;
+
+  // WASM FFT cached spectrum (shared between getFFTData and getLowFrequencyVolume)
+  private _cachedWasmSpectrum: number[] = [];
+  private _lastWasmReadTime: number = 0;
+
+  // Throttling for AnalyserNode
+  private _lastUpdateTime: number = 0;
 
   // Connection state
   private _isConnected: boolean = false;
@@ -92,78 +81,80 @@ export class AudioEffectManager {
   constructor(audioCtx: AudioContext, options?: EffectManagerOptions) {
     this.audioCtx = audioCtx;
 
-    // Apply mobile-optimized defaults
     const baseOptions = AudioContextManager.isMobile() ? MOBILE_OPTIONS : DEFAULT_OPTIONS;
     this.options = { ...baseOptions, ...options };
 
-    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer();
+    // Calculate lowFreq bin count from WASM FFT frequency range
+    // WASM FFT covers FREQ_MIN-FREQ_MAX with fftOutputSize bins
+    const lowFreqBins = Math.ceil(
+      (this.options.lowFreqEndHz - FREQ_MIN) / (FREQ_MAX - FREQ_MIN) * this.options.fftOutputSize
+    );
+    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer({ binCount: lowFreqBins });
 
     this._initNodes();
   }
 
   private _initNodes(): void {
     try {
+      // AnalyserNode for spectrum display (Blackman window — sharp peaks)
       this.analyserNode = this.audioCtx.createAnalyser();
       this.analyserNode.fftSize = this.options.fftSize;
-      // Inter-block smoothing handles averaging across audio blocks between frames.
-      // Per-frame EMA (in getFrequencyData) adds cross-frame smoothing on top.
       this.analyserNode.smoothingTimeConstant = this.options.smoothingTimeConstant;
 
-      // Create bandpass filter for spectrum analysis range (80-2000Hz)
-      // Highpass filter: removes frequencies below 80Hz
-      this.highpassFilter = this.audioCtx.createBiquadFilter();
-      this.highpassFilter.type = 'highpass';
-      this.highpassFilter.frequency.value = AudioEffectManager.FREQ_MIN;
-      this.highpassFilter.Q.value = 0.7071; // Butterworth response (flat passband)
-
-      // Lowpass filter: removes frequencies above 2000Hz
-      this.lowpassFilter = this.audioCtx.createBiquadFilter();
-      this.lowpassFilter.type = 'lowpass';
-      this.lowpassFilter.frequency.value = AudioEffectManager.FREQ_MAX;
-      this.lowpassFilter.Q.value = 0.7071; // Butterworth response
-
-      // Pre-allocate buffers
       const bufferSize = this.analyserNode.frequencyBinCount;
       this._frequencyBuffer = new Uint8Array(bufferSize);
       this._cachedFrequencyData = new Uint8Array(bufferSize);
-      this._smoothedBuffer = new Float32Array(bufferSize); // persistent EMA state
-      this._tempFrequencyArray = new Array(bufferSize).fill(0);
+
+      // WASM FFTPlayer for lowFreqVolume + detailed analysis (Hamming window — AMLL native)
+      this._wasmFFT = new WasmFFTManager(this.options.fftOutputSize);
+      if (!this._wasmFFT.isReady()) {
+        console.warn('AudioEffectManager: WasmFFTManager failed to initialize');
+      }
+
+      this._cachedWasmSpectrum = new Array(this.options.fftOutputSize).fill(0);
     } catch (err) {
       console.error('AudioEffectManager: Failed to initialize nodes', err);
     }
   }
 
   /**
-   * Connect input node to spectrum analysis chain (bandpass filtered)
+   * Connect input node to analysis chains.
    *
-   * IMPORTANT: This creates a parallel analysis branch that does NOT affect audio output.
-   * The bandpass filter (80-2000Hz) only applies to the analyser, not the actual sound.
+   * Audio graph:
+   *   inputNode → analyserNode (Blackman, spectrum display)
+   *   inputNode → workletNode  (PCM capture → WASM FFTPlayer, lowFreqVolume)
    *
-   * Audio graph structure:
-   *                       ┌─→ highpass → lowpass → analyser (spectrum analysis only)
-   *   inputNode (source) ─┤
-   *                       └─→ (caller connects to gainNode → destination)
-   *
-   * @param inputNode The input audio node (source)
-   * @returns The same inputNode for chaining to audio output
+   * @param inputNode The source audio node
+   * @returns The same inputNode for chaining
    */
   connect(inputNode: AudioNode): AudioNode {
-    if (!this.analyserNode || !this.highpassFilter || !this.lowpassFilter) {
+    if (!this.analyserNode) {
       console.warn('AudioEffectManager: Nodes not initialized');
       return inputNode;
     }
 
     try {
-      // Connect input to bandpass filter chain for spectrum analysis ONLY
-      // This is a parallel branch - does NOT affect audio output
-      inputNode.connect(this.highpassFilter);
-      this.highpassFilter.connect(this.lowpassFilter);
-      this.lowpassFilter.connect(this.analyserNode);
-      // Note: analyserNode is NOT connected to destination - it's analysis only
+      // AnalyserNode for spectrum display
+      inputNode.connect(this.analyserNode);
+
+      // AudioWorklet for PCM capture → WASM FFT (lowFreqVolume + getFFTData)
+      if (isPCMWorkletRegistered() && this._wasmFFT?.isReady()) {
+        try {
+          this._workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-capture-processor');
+
+          this._workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+            if (this._wasmFFT) {
+              this._wasmFFT.pushData(e.data, this.audioCtx.sampleRate, 1);
+            }
+          };
+
+          inputNode.connect(this._workletNode);
+        } catch (err) {
+          console.warn('AudioEffectManager: Failed to create AudioWorkletNode', err);
+        }
+      }
 
       this._isConnected = true;
-
-      // Return the original inputNode so caller can connect it to audio output
       return inputNode;
     } catch (err) {
       console.error('AudioEffectManager: Failed to connect', err);
@@ -179,40 +170,39 @@ export class AudioEffectManager {
   }
 
   /**
-   * Get frequency data for spectrum visualization.
-   * Two-layer smoothing:
-   *   1. AnalyserNode.smoothingTimeConstant handles inter-block averaging
-   *      (compensates for data lost between frames, similar to AMLL's window overlap)
-   *   2. Per-frame EMA: smoothed[i] = (smoothed[i] + raw[i]) / 2
-   *      (matches AMLL FFTPlayer's cross-frame smoothing)
+   * Read WASM FFT spectrum once per frame (dedup within minUpdateInterval).
+   * Shared by getFFTData() and getLowFrequencyVolume().
+   */
+  private _ensureWasmSpectrumFresh(): void {
+    const now = performance.now();
+    if (now - this._lastWasmReadTime < this.options.minUpdateInterval) {
+      return;
+    }
+    this._lastWasmReadTime = now;
+
+    if (this._wasmFFT?.isReady()) {
+      this._cachedWasmSpectrum = this._wasmFFT.readSpectrum();
+    }
+  }
+
+  /**
+   * Get frequency data from AnalyserNode for spectrum bar display.
+   * Uses Blackman window — sharper peaks, better visual contrast for bar visualization.
    * @param force Skip throttling check
-   * @returns Uint8Array containing smoothed frequency data
+   * @returns Uint8Array containing byte frequency data (0-255)
    */
   getFrequencyData(force: boolean = false): Uint8Array<ArrayBuffer> {
-    if (!this.analyserNode || !this._frequencyBuffer || !this._smoothedBuffer) {
+    if (!this.analyserNode || !this._frequencyBuffer) {
       return this._cachedFrequencyData || new Uint8Array(0);
     }
 
     const now = performance.now();
-    const elapsed = now - this._lastUpdateTime;
-
-    // Return cached data if within throttle window (unless forced)
-    if (!force && elapsed < this.options.minUpdateInterval && this._cachedFrequencyData) {
+    if (!force && now - this._lastUpdateTime < this.options.minUpdateInterval && this._cachedFrequencyData) {
       return this._cachedFrequencyData;
     }
 
-    // Fetch raw (unsmoothed) FFT data from AnalyserNode
     this.analyserNode.getByteFrequencyData(this._frequencyBuffer);
 
-    // Apply AMLL-style per-frame EMA: v = (v + new) / 2
-    const smoothed = this._smoothedBuffer;
-    const raw = this._frequencyBuffer;
-    for (let i = 0; i < raw.length; i++) {
-      smoothed[i] = (smoothed[i] + raw[i]) / 2;
-      raw[i] = smoothed[i]; // write back for return
-    }
-
-    // Copy to cached array
     if (this._cachedFrequencyData) {
       this._cachedFrequencyData.set(this._frequencyBuffer);
     }
@@ -222,109 +212,73 @@ export class AudioEffectManager {
   }
 
   /**
-   * Get frequency data interpolated to a target size
-   * Port of AMLL FFTPlayer's vec_interp for flexible output sizing.
-   * @param targetSize Desired output length (default: 2048, matching AMLL result_buf)
-   * @returns Float32Array of interpolated frequency values (0-255 range)
+   * Get FFT data from WASM FFTPlayer (Hamming window, normalized 0-255).
+   * Higher precision, with dynamic peak normalization and configurable freq range.
+   * @returns number[] of spectrum values (0-255 range)
    */
-  getInterpolatedFrequencyData(targetSize: number = 2048): Float32Array {
-    const raw = this.getFrequencyData(true);
-    if (raw.length === 0) {
-      return this._interpolatedBuffer ?? new Float32Array(targetSize);
-    }
-
-    // Reallocate only when target size changes
-    if (!this._interpolatedBuffer || this._interpolatedBuffer.length !== targetSize) {
-      this._interpolatedBuffer = new Float32Array(targetSize);
-    }
-
-    vecInterp(raw, this._interpolatedBuffer);
-    return this._interpolatedBuffer;
+  getFFTData(): number[] {
+    this._ensureWasmSpectrumFresh();
+    return this._cachedWasmSpectrum;
   }
 
   /**
-   * Get time domain data (waveform)
-   * @returns Uint8Array containing time domain data
-   */
-  getTimeDomainData(): Uint8Array<ArrayBuffer> {
-    if (!this.analyserNode) return new Uint8Array(0);
-    const buffer = new Uint8Array(this.analyserNode.frequencyBinCount);
-    this.analyserNode.getByteTimeDomainData(buffer);
-    return buffer;
-  }
-
-  /**
-   * Get low frequency volume for background effects
-   * Uses AMLL-style analysis with boost and floor thresholds.
-   * Uses the smoothed frequency data from the last getFrequencyData() call.
-   * @returns Low-frequency volume (typically 0-3 range, passed to renderer's setLowFreqVolume)
+   * Get low frequency volume for background effects.
+   * Calculated from WASM FFTPlayer (Hamming window — matches AMLL native FFTPlayer).
+   *
+   * Frequency mapping:
+   *   WASM FFT covers 80-2000Hz with fftOutputSize bins.
+   *   lowFreqVolume uses bins [0, N) where N covers 80-250Hz.
+   *   Desktop (1024 bins): N ≈ 91 bins, each ~1.875Hz
+   *   Mobile (512 bins): N ≈ 46 bins, each ~3.75Hz
+   *
+   * @returns Low-frequency volume (0-3 range)
    */
   getLowFrequencyVolume(): number {
-    if (!this._smoothedBuffer) return 0;
-
-    // Use the smoothed buffer directly — already EMA-processed
-    const buf = this._smoothedBuffer;
-    for (let i = 0; i < buf.length; i++) {
-      this._tempFrequencyArray[i] = buf[i];
-    }
-
-    return this.lowFreqAnalyzer.analyze(this._tempFrequencyArray);
+    this._ensureWasmSpectrumFresh();
+    return this.lowFreqAnalyzer.analyze(this._cachedWasmSpectrum);
   }
 
   /**
-   * Get current FFT size
+   * Get current FFT size (AnalyserNode)
    */
   getFFTSize(): number {
-    return this.analyserNode?.fftSize || 0;
+    return this.analyserNode?.fftSize || 2048;
   }
 
   /**
-   * Get frequency bin count (half of FFT size)
+   * Get frequency bin count (AnalyserNode)
    */
   getFrequencyBinCount(): number {
     return this.analyserNode?.frequencyBinCount || 0;
   }
 
   /**
-   * Update FFT size dynamically
-   * Note: This will reallocate buffers
+   * Update FFT size dynamically (affects AnalyserNode spectrum display only)
    */
   setFFTSize(size: number): void {
     if (!this.analyserNode) return;
 
-    // Validate FFT size (must be power of 2, 32-32768)
     const validSize = Math.min(32768, Math.max(32, Math.pow(2, Math.round(Math.log2(size)))));
     this.analyserNode.fftSize = validSize;
     this.options.fftSize = validSize;
 
-    // Reallocate buffers
     const bufferSize = this.analyserNode.frequencyBinCount;
     this._frequencyBuffer = new Uint8Array(bufferSize);
     this._cachedFrequencyData = new Uint8Array(bufferSize);
-    this._smoothedBuffer = new Float32Array(bufferSize);
-    this._tempFrequencyArray = new Array(bufferSize).fill(0);
   }
 
   /**
    * Disconnect all nodes and cleanup
    */
   disconnect(): void {
-    if (this.highpassFilter) {
+    if (this._workletNode) {
       try {
-        this.highpassFilter.disconnect();
+        this._workletNode.port.onmessage = null;
+        this._workletNode.disconnect();
       } catch (e) {
         // May already be disconnected
       }
-      this.highpassFilter = null;
-    }
-
-    if (this.lowpassFilter) {
-      try {
-        this.lowpassFilter.disconnect();
-      } catch (e) {
-        // May already be disconnected
-      }
-      this.lowpassFilter = null;
+      this._workletNode = null;
     }
 
     if (this.analyserNode) {
@@ -336,12 +290,15 @@ export class AudioEffectManager {
       this.analyserNode = null;
     }
 
+    if (this._wasmFFT) {
+      this._wasmFFT.free();
+      this._wasmFFT = null;
+    }
+
     this._isConnected = false;
     this._frequencyBuffer = null;
     this._cachedFrequencyData = null;
-    this._smoothedBuffer = null;
-    this._interpolatedBuffer = null;
-    this._tempFrequencyArray = [];
+    this._cachedWasmSpectrum = [];
     this.lowFreqAnalyzer.reset();
   }
 
@@ -350,12 +307,14 @@ export class AudioEffectManager {
    */
   reset(): void {
     this._lastUpdateTime = 0;
+    this._lastWasmReadTime = 0;
     this.lowFreqAnalyzer.reset();
     if (this._cachedFrequencyData) {
       this._cachedFrequencyData.fill(0);
     }
-    if (this._smoothedBuffer) {
-      this._smoothedBuffer.fill(0);
+    this._cachedWasmSpectrum.fill(0);
+    if (this._wasmFFT) {
+      this._wasmFFT.reset();
     }
   }
 }

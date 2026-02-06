@@ -32,3 +32,4 @@ export { SoundManager } from './SoundManager';
 export { AudioEffectManager } from './AudioEffectManager';
 export { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
 export { AudioContextManager } from './AudioContextManager';
+export { WasmFFTManager } from './WasmFFTManager';
