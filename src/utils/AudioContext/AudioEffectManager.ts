@@ -14,7 +14,7 @@ import { AudioContextManager } from './AudioContextManager';
 export interface EffectManagerOptions {
   /** FFT size (power of 2, 32-32768). Default: 2048 desktop, 1024 mobile */
   fftSize?: number;
-  /** Smoothing time constant (0-1). Default: 0.85 */
+  /** AnalyserNode smoothing for inter-block averaging (0-1). Default: 0.8 */
   smoothingTimeConstant?: number;
   /** Min update interval in ms for getFrequencyData. Default: 16 (~60fps) */
   minUpdateInterval?: number;
@@ -22,15 +22,40 @@ export interface EffectManagerOptions {
 
 const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   fftSize: 2048,
-  smoothingTimeConstant: 0.85,
+  smoothingTimeConstant: 0.8,  // inter-block smoothing (simulates AMLL's window overlap)
   minUpdateInterval: 16,
 };
 
 const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
-  fftSize: 1024,  // Smaller FFT for better performance
-  smoothingTimeConstant: 0.85,  // Match AMLL smoothing
+  fftSize: 1024,
+  smoothingTimeConstant: 0.8,
   minUpdateInterval: 33,  // ~30fps on mobile
 };
+
+/**
+ * Linear interpolation (port of AMLL FFTPlayer's vec_interp / numpy.interp)
+ * Resamples src array into dst array of any size using linear interpolation.
+ */
+function vecInterp(src: Uint8Array<ArrayBuffer>, dst: Float32Array): void {
+  const srcLen = src.length;
+  const dstLen = dst.length;
+
+  if (srcLen === 0) { dst.fill(0); return; }
+  if (dstLen === 0) return;
+  if (srcLen === dstLen) {
+    for (let i = 0; i < srcLen; i++) dst[i] = src[i];
+    return;
+  }
+
+  const ratio = (srcLen - 1) / (dstLen - 1);
+  for (let i = 0; i < dstLen; i++) {
+    const srcIdx = i * ratio;
+    const lo = srcIdx | 0; // floor
+    const hi = Math.min(lo + 1, srcLen - 1);
+    const frac = srcIdx - lo;
+    dst[i] = src[lo] * (1 - frac) + src[hi] * frac;
+  }
+}
 
 /**
  * AudioEffectManager - Manages spectrum analysis with performance optimizations
@@ -52,6 +77,10 @@ export class AudioEffectManager {
   // Reusable buffers to avoid GC pressure
   private _frequencyBuffer: Uint8Array<ArrayBuffer> | null = null;
   private _tempFrequencyArray: number[] = [];
+  private _interpolatedBuffer: Float32Array | null = null;
+
+  // Per-frame EMA smoothing buffer (AMLL FFTPlayer style: v = (v + new) / 2)
+  private _smoothedBuffer: Float32Array | null = null;
 
   // Throttling state
   private _lastUpdateTime: number = 0;
@@ -76,16 +105,18 @@ export class AudioEffectManager {
     try {
       this.analyserNode = this.audioCtx.createAnalyser();
       this.analyserNode.fftSize = this.options.fftSize;
+      // Inter-block smoothing handles averaging across audio blocks between frames.
+      // Per-frame EMA (in getFrequencyData) adds cross-frame smoothing on top.
       this.analyserNode.smoothingTimeConstant = this.options.smoothingTimeConstant;
 
       // Create bandpass filter for spectrum analysis range (80-2000Hz)
-      // Highpass filter: removes frequencies below 20Hz
+      // Highpass filter: removes frequencies below 80Hz
       this.highpassFilter = this.audioCtx.createBiquadFilter();
       this.highpassFilter.type = 'highpass';
       this.highpassFilter.frequency.value = AudioEffectManager.FREQ_MIN;
       this.highpassFilter.Q.value = 0.7071; // Butterworth response (flat passband)
 
-      // Lowpass filter: removes frequencies above 20000Hz
+      // Lowpass filter: removes frequencies above 2000Hz
       this.lowpassFilter = this.audioCtx.createBiquadFilter();
       this.lowpassFilter.type = 'lowpass';
       this.lowpassFilter.frequency.value = AudioEffectManager.FREQ_MAX;
@@ -95,6 +126,7 @@ export class AudioEffectManager {
       const bufferSize = this.analyserNode.frequencyBinCount;
       this._frequencyBuffer = new Uint8Array(bufferSize);
       this._cachedFrequencyData = new Uint8Array(bufferSize);
+      this._smoothedBuffer = new Float32Array(bufferSize); // persistent EMA state
       this._tempFrequencyArray = new Array(bufferSize).fill(0);
     } catch (err) {
       console.error('AudioEffectManager: Failed to initialize nodes', err);
@@ -147,13 +179,17 @@ export class AudioEffectManager {
   }
 
   /**
-   * Get frequency data for spectrum visualization
-   * Uses throttling and buffer reuse for performance
+   * Get frequency data for spectrum visualization.
+   * Two-layer smoothing:
+   *   1. AnalyserNode.smoothingTimeConstant handles inter-block averaging
+   *      (compensates for data lost between frames, similar to AMLL's window overlap)
+   *   2. Per-frame EMA: smoothed[i] = (smoothed[i] + raw[i]) / 2
+   *      (matches AMLL FFTPlayer's cross-frame smoothing)
    * @param force Skip throttling check
-   * @returns Uint8Array containing frequency data
+   * @returns Uint8Array containing smoothed frequency data
    */
   getFrequencyData(force: boolean = false): Uint8Array<ArrayBuffer> {
-    if (!this.analyserNode || !this._frequencyBuffer) {
+    if (!this.analyserNode || !this._frequencyBuffer || !this._smoothedBuffer) {
       return this._cachedFrequencyData || new Uint8Array(0);
     }
 
@@ -165,8 +201,16 @@ export class AudioEffectManager {
       return this._cachedFrequencyData;
     }
 
-    // Update frequency data using reusable buffer
+    // Fetch raw (unsmoothed) FFT data from AnalyserNode
     this.analyserNode.getByteFrequencyData(this._frequencyBuffer);
+
+    // Apply AMLL-style per-frame EMA: v = (v + new) / 2
+    const smoothed = this._smoothedBuffer;
+    const raw = this._frequencyBuffer;
+    for (let i = 0; i < raw.length; i++) {
+      smoothed[i] = (smoothed[i] + raw[i]) / 2;
+      raw[i] = smoothed[i]; // write back for return
+    }
 
     // Copy to cached array
     if (this._cachedFrequencyData) {
@@ -175,6 +219,27 @@ export class AudioEffectManager {
 
     this._lastUpdateTime = now;
     return this._frequencyBuffer;
+  }
+
+  /**
+   * Get frequency data interpolated to a target size
+   * Port of AMLL FFTPlayer's vec_interp for flexible output sizing.
+   * @param targetSize Desired output length (default: 2048, matching AMLL result_buf)
+   * @returns Float32Array of interpolated frequency values (0-255 range)
+   */
+  getInterpolatedFrequencyData(targetSize: number = 2048): Float32Array {
+    const raw = this.getFrequencyData(true);
+    if (raw.length === 0) {
+      return this._interpolatedBuffer ?? new Float32Array(targetSize);
+    }
+
+    // Reallocate only when target size changes
+    if (!this._interpolatedBuffer || this._interpolatedBuffer.length !== targetSize) {
+      this._interpolatedBuffer = new Float32Array(targetSize);
+    }
+
+    vecInterp(raw, this._interpolatedBuffer);
+    return this._interpolatedBuffer;
   }
 
   /**
@@ -190,18 +255,17 @@ export class AudioEffectManager {
 
   /**
    * Get low frequency volume for background effects
-   * Uses AMLL-style analysis with boost and floor thresholds
+   * Uses AMLL-style analysis with boost and floor thresholds.
+   * Uses the smoothed frequency data from the last getFrequencyData() call.
    * @returns Low-frequency volume (typically 0-3 range, passed to renderer's setLowFreqVolume)
    */
   getLowFrequencyVolume(): number {
-    if (!this.analyserNode || !this._frequencyBuffer) return 0;
+    if (!this._smoothedBuffer) return 0;
 
-    // Use the already-fetched frequency data to avoid double computation
-    this.analyserNode.getByteFrequencyData(this._frequencyBuffer);
-
-    // Convert to number array for analyzer (reuse temp array)
-    for (let i = 0; i < this._frequencyBuffer.length; i++) {
-      this._tempFrequencyArray[i] = this._frequencyBuffer[i];
+    // Use the smoothed buffer directly — already EMA-processed
+    const buf = this._smoothedBuffer;
+    for (let i = 0; i < buf.length; i++) {
+      this._tempFrequencyArray[i] = buf[i];
     }
 
     return this.lowFreqAnalyzer.analyze(this._tempFrequencyArray);
@@ -237,6 +301,7 @@ export class AudioEffectManager {
     const bufferSize = this.analyserNode.frequencyBinCount;
     this._frequencyBuffer = new Uint8Array(bufferSize);
     this._cachedFrequencyData = new Uint8Array(bufferSize);
+    this._smoothedBuffer = new Float32Array(bufferSize);
     this._tempFrequencyArray = new Array(bufferSize).fill(0);
   }
 
@@ -274,6 +339,8 @@ export class AudioEffectManager {
     this._isConnected = false;
     this._frequencyBuffer = null;
     this._cachedFrequencyData = null;
+    this._smoothedBuffer = null;
+    this._interpolatedBuffer = null;
     this._tempFrequencyArray = [];
     this.lowFreqAnalyzer.reset();
   }
@@ -286,6 +353,9 @@ export class AudioEffectManager {
     this.lowFreqAnalyzer.reset();
     if (this._cachedFrequencyData) {
       this._cachedFrequencyData.fill(0);
+    }
+    if (this._smoothedBuffer) {
+      this._smoothedBuffer.fill(0);
     }
   }
 }
