@@ -43,16 +43,17 @@ export interface ISound {
 
 /**
  * Options for low frequency analyzer
+ * Based on AMLL (Apple Music-like Lyrics) implementation
  */
 export interface LowFreqAnalyzerOptions {
-  /** Number of low frequency bins to analyze (default: 3, ~0-280Hz at 48kHz/1024 FFT) */
+  /** Number of low frequency bins to analyze (default: 10) */
   binCount?: number;
-  /** EMA smoothing factor, higher = more responsive (default: 0.28) */
-  smoothFactor?: number;
-  /** Threshold below which values are treated as silence (default: 80) */
-  threshold?: number;
-  /** Power exponent for dynamic range expansion (default: 2) */
-  powerExponent?: number;
+  /** Boost multiplier applied to normalized volume (default: 3.0) */
+  boostMultiplier?: number;
+  /** Volume floor: when volume > floorThreshold, clamp to at least this value (default: 0.4) */
+  minimumFloor?: number;
+  /** Threshold above which minimumFloor is applied (default: 0.1) */
+  floorThreshold?: number;
 }
 
 /**

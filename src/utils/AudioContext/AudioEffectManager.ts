@@ -14,7 +14,7 @@ import { AudioContextManager } from './AudioContextManager';
 export interface EffectManagerOptions {
   /** FFT size (power of 2, 32-32768). Default: 2048 desktop, 1024 mobile */
   fftSize?: number;
-  /** Smoothing time constant (0-1). Default: 0.78 */
+  /** Smoothing time constant (0-1). Default: 0.85 */
   smoothingTimeConstant?: number;
   /** Min update interval in ms for getFrequencyData. Default: 16 (~60fps) */
   minUpdateInterval?: number;
@@ -22,13 +22,13 @@ export interface EffectManagerOptions {
 
 const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   fftSize: 2048,
-  smoothingTimeConstant: 0.78,
+  smoothingTimeConstant: 0.85,
   minUpdateInterval: 16,
 };
 
 const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
   fftSize: 1024,  // Smaller FFT for better performance
-  smoothingTimeConstant: 0.8,  // Slightly more smoothing
+  smoothingTimeConstant: 0.85,  // Match AMLL smoothing
   minUpdateInterval: 33,  // ~30fps on mobile
 };
 
@@ -41,13 +41,13 @@ export class AudioEffectManager {
   private lowFreqAnalyzer: LowFreqVolumeAnalyzer;
   private options: Required<EffectManagerOptions>;
 
-  // Bandpass filter nodes for spectrum analysis range (20-20000Hz)
+  // Bandpass filter nodes for spectrum analysis range (80-2000Hz)
   private highpassFilter: BiquadFilterNode | null = null;
   private lowpassFilter: BiquadFilterNode | null = null;
 
   // Frequency range constants
-  private static readonly FREQ_MIN = 20;
-  private static readonly FREQ_MAX = 20000;
+  private static readonly FREQ_MIN = 80;
+  private static readonly FREQ_MAX = 2000;
 
   // Reusable buffers to avoid GC pressure
   private _frequencyBuffer: Uint8Array<ArrayBuffer> | null = null;
@@ -67,12 +67,7 @@ export class AudioEffectManager {
     const baseOptions = AudioContextManager.isMobile() ? MOBILE_OPTIONS : DEFAULT_OPTIONS;
     this.options = { ...baseOptions, ...options };
 
-    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer({
-      binCount: 3,
-      smoothFactor: AudioContextManager.isMobile() ? 0.22 : 0.28,
-      threshold: 80,
-      powerExponent: 2,
-    });
+    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer();
 
     this._initNodes();
   }
@@ -83,7 +78,7 @@ export class AudioEffectManager {
       this.analyserNode.fftSize = this.options.fftSize;
       this.analyserNode.smoothingTimeConstant = this.options.smoothingTimeConstant;
 
-      // Create bandpass filter for spectrum analysis range (20-20000Hz)
+      // Create bandpass filter for spectrum analysis range (80-2000Hz)
       // Highpass filter: removes frequencies below 20Hz
       this.highpassFilter = this.audioCtx.createBiquadFilter();
       this.highpassFilter.type = 'highpass';
@@ -110,7 +105,7 @@ export class AudioEffectManager {
    * Connect input node to spectrum analysis chain (bandpass filtered)
    *
    * IMPORTANT: This creates a parallel analysis branch that does NOT affect audio output.
-   * The bandpass filter (20-20000Hz) only applies to the analyser, not the actual sound.
+   * The bandpass filter (80-2000Hz) only applies to the analyser, not the actual sound.
    *
    * Audio graph structure:
    *                       ┌─→ highpass → lowpass → analyser (spectrum analysis only)
@@ -194,9 +189,9 @@ export class AudioEffectManager {
   }
 
   /**
-   * Get smoothed low frequency volume for background effects
-   * Uses LowFreqVolumeAnalyzer for consistent calculation
-   * @returns number in 0-1 range
+   * Get low frequency volume for background effects
+   * Uses AMLL-style analysis with boost and floor thresholds
+   * @returns Low-frequency volume (typically 0-3 range, passed to renderer's setLowFreqVolume)
    */
   getLowFrequencyVolume(): number {
     if (!this.analyserNode || !this._frequencyBuffer) return 0;
