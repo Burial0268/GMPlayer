@@ -4,5 +4,7 @@
     { "source": "/api/ncm/:path*", "destination": "https://ncm-api.prod.gbclstudio.cn/:path*" },
     { "source": "/api/la/:path*", "destination": "https://lyric-atlas-api.vercel.app/:path*" },
     { "source": "/api/unm/:path*", "destination": "https://unm-api.prod.gbclstudio.cn/:path*" }
-  ]
+  ],
+  "installCommand": "rustup target add wasm32-unknown-unknown && pnpm install:with-deps",
+  "buildCommand": "pnpm build"
 }

@@ -6,20 +6,19 @@
   "github": "https://github.com/Burial0268/SPlayer",
   "scripts": {
     "install:deps-amll": "cd deps/apoint-amll && pnpm install",
-    "build:deps-amll-core": "cd deps/apoint-amll/packages/core && pnpm build",
-    "build:deps-amll-vue": "cd deps/apoint-amll/packages/vue && pnpm build",
-    "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll-core && pnpm build:deps-amll-vue && pnpm install",
+    "build:deps-amll": "cd deps/apoint-amll/packages/vue && pnpm nx run-many -t build --projects=vue,fft,core,lyric",
+    "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
     "@applemusic-like-lyrics/core": "link:./deps/apoint-amll/packages/core",
-    "@applemusic-like-lyrics/lyric": "^0.3.0",
+    "@applemusic-like-lyrics/lyric": "link:./deps/apoint-amll/packages/lyric",
     "@applemusic-like-lyrics/vue": "link:./deps/apoint-amll/packages/vue",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
-    "@material/material-color-utilities": "^0.3.0",
+    "@material/material-color-utilities": "^0.4.0",
     "@pixi/app": "^7.4.3",
     "@pixi/core": "^7.4.3",
     "@pixi/display": "^7.4.3",
@@ -53,8 +52,8 @@
     "vue-i18n": "^11.2.8",
     "vue-router": "^4.6.4",
     "vue-slider-component": "4.1.0-beta.7",
-    "workbox-build": "7.3.0",
-    "workbox-window": "7.3.0"
+    "workbox-build": "7.4.0",
+    "workbox-window": "7.4.0"
   },
   "devDependencies": {
     "@jridgewell/sourcemap-codec": "^1.5.5",
@@ -63,7 +62,7 @@
     "@types/node": "^20.19.30",
     "@types/throttle-debounce": "^5.0.2",
     "@vicons/material": "^0.13.0",
-    "@vitejs/plugin-vue": "^5.2.4",
+    "@vitejs/plugin-vue": "^6.0.4",
     "esbuild": "^0.27.3",
     "naive-ui": "^2.43.2",
     "typescript": "^5.9.3",
@@ -72,7 +71,7 @@
     "vite": "npm:rolldown-vite@latest",
     "vite-plugin-compression": "^0.5.1",
     "vite-plugin-pwa": "^1.2.0",
-    "vite-plugin-vue-devtools": "^7.7.9",
+    "vite-plugin-vue-devtools": "^8.0.6",
     "vite-plugin-vue-mcp": "^0.3.2",
     "vite-svg-loader": "^5.1.0",
     "vue-tsc": "^2.2.12"
@@ -84,7 +83,7 @@
     },
     "onlyBuiltDependencies": [
       "esbuild",
-      "@applemusic-like-lyrics/lyric@0.3.0"
+      "@applemusic-like-lyrics/lyric"
     ]
   }
 }
