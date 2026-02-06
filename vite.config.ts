@@ -3,7 +3,7 @@ import { defineConfig, loadEnv } from "vite";
 import { NaiveUiResolver } from "unplugin-vue-components/resolvers";
 import { VitePWA } from "vite-plugin-pwa";
 import vue from "@vitejs/plugin-vue";
-import viteCompression from "vite-plugin-compression";
+import { compression } from "vite-plugin-compression2";
 import AutoImport from "unplugin-auto-import/vite";
 import wasm from "vite-plugin-wasm";
 import topLevelAwait from "vite-plugin-top-level-await";
@@ -80,7 +80,12 @@ export default defineConfig(({ mode }) => {
           ],
         },
       }),
-      viteCompression(),
+      compression({
+        algorithm: "gzip",
+      }),
+      compression({
+        algorithm: "brotliCompress",
+      }),
     ],
     server: {
       strictPort: true,
@@ -147,10 +152,28 @@ export default defineConfig(({ mode }) => {
                 test: /node_modules[\\/](vue|vue-router|pinia|pinia-plugin-persistedstate|vue-i18n|@vue)[\\/]/,
                 priority: 20,
               },
-              // Naive UI + icons
+              // Naive UI: heavy data components
+              {
+                name: "naive-ui-data",
+                test: /node_modules[\\/]naive-ui[\\/]es[\\/](data-table|date-picker|time-picker|cascader|transfer|tree-select|tree|upload|calendar|log|mention|dynamic-input|auto-complete|color-picker)[\\/]/,
+                priority: 17,
+              },
+              // Naive UI: form & input components
+              {
+                name: "naive-ui-form",
+                test: /node_modules[\\/]naive-ui[\\/]es[\\/](form|input|input-number|select|checkbox|radio|switch|slider|rate|dynamic-tags|popselect|dropdown|menu|tabs|steps|pagination|collapse)[\\/]/,
+                priority: 16,
+              },
+              // Naive UI: rest
               {
                 name: "naive-ui",
-                test: /node_modules[\\/](naive-ui|@vicons)[\\/]/,
+                test: /node_modules[\\/]naive-ui[\\/]/,
+                priority: 15,
+              },
+              // Icons
+              {
+                name: "icons",
+                test: /node_modules[\\/]@vicons[\\/]/,
                 priority: 15,
               },
               // PixiJS rendering
