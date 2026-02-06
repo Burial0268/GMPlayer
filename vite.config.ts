@@ -11,6 +11,8 @@ import { VueMcp } from "vite-plugin-vue-mcp";
 import vueDevTools from "vite-plugin-vue-devtools";
 import Components from "unplugin-vue-components/vite";
 import MotionResolver from "motion-v/resolver";
+import OptimizationPersist from 'vite-plugin-optimize-persist'
+import PkgConfig from 'vite-plugin-package-config'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
@@ -22,6 +24,8 @@ export default defineConfig(({ mode }) => {
       VueMcp(),
       vueDevTools(),
       wasm(),
+      PkgConfig(),
+      OptimizationPersist(),
       topLevelAwait({
         promiseExportName: "__tla",
         promiseImportName: (i: number) => `__tla_${i}`,

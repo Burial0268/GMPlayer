@@ -70,6 +70,8 @@
     "unplugin-vue-components": "^28.8.0",
     "vite": "npm:rolldown-vite@latest",
     "vite-plugin-compression2": "^2.4.0",
+    "vite-plugin-optimize-persist": "^0.1.2",
+    "vite-plugin-package-config": "^0.1.1",
     "vite-plugin-pwa": "^1.2.0",
     "vite-plugin-vue-devtools": "^8.0.6",
     "vite-plugin-vue-mcp": "^0.3.2",
