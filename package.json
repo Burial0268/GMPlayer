@@ -6,7 +6,7 @@
   "github": "https://github.com/Burial0268/SPlayer",
   "scripts": {
     "install:deps-amll": "cd deps/apoint-amll && pnpm install",
-    "build:deps-amll": "cd deps/apoint-amll/packages/vue && pnpm nx run-many -t build --projects=vue,fft,core,lyric",
+    "build:deps-amll": "cd deps/apoint-amll/packages/vue && pnpm nx run-many -t build --projects=vue,fft,core,lyric,ttml-processor",
     "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
@@ -17,6 +17,7 @@
     "@applemusic-like-lyrics/lyric": "link:./deps/apoint-amll/packages/lyric",
     "@applemusic-like-lyrics/fft": "link:./deps/apoint-amll/packages/fft",
     "@applemusic-like-lyrics/vue": "link:./deps/apoint-amll/packages/vue",
+    "@lyrics-helper-rs/ttml-processor": "link:./deps/apoint-amll/packages/ttml-processor",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
     "@material/material-color-utilities": "^0.4.0",

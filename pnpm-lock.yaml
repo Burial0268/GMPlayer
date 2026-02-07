@@ -29,6 +29,9 @@ importers:
       '@ivanv/vue-collapse-transition':
         specifier: ^1.0.2
         version: 1.0.2
+      '@lyrics-helper-rs/ttml-processor':
+        specifier: link:./deps/apoint-amll/packages/ttml-processor
+        version: link:deps/apoint-amll/packages/ttml-processor
       '@material/material-color-utilities':
         specifier: ^0.4.0
         version: 0.4.0

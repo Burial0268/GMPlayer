@@ -5,7 +5,8 @@
 
 import request from "@/utils/request";
 // @ts-ignore
-import { parseLrc, parseQrc, parseYrc, parseTTML, LyricLine } from "@applemusic-like-lyrics/lyric";
+import { parseLrc, parseQrc, parseYrc, LyricLine } from "@applemusic-like-lyrics/lyric";
+import { ensureTTMLLoaded, parseTTML } from "@/utils/parseTTML";
 import { preprocessLyrics } from './processor';
 import { parseLrcToEntries } from './parser/entryParser';
 import { detectYrcType } from './timeUtils';
@@ -299,8 +300,9 @@ class LyricAtlasProvider implements LyricProvider {
           result.lrc = { lyric: "[00:00.00]解析歌词时出错\n[99:99.99]" };
         }
       } else if (response.format === 'ttml') {
-        // 处理 TTML 格式
+        // 处理 TTML 格式 (使用 @lyrics-helper-rs/ttml-processor WASM)
         try {
+          await ensureTTMLLoaded();
           const ttmlLyric = parseTTML(response.content) as TTMLLyric;
 
           // 标记拥有TTML格式歌词
