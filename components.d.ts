@@ -15,6 +15,7 @@ declare module 'vue' {
     Banner: typeof import('./src/components/Banner/index.vue')['default']
     BigPlayer: typeof import('./src/components/Player/BigPlayer.vue')['default']
     BlurBackgroundRender: typeof import('./src/components/Player/BlurBackgroundRender.vue')['default']
+    BouncingSlider: typeof import('./src/components/Player/BouncingSlider.vue')['default']
     CloudMatch: typeof import('./src/components/DataModal/CloudMatch.vue')['default']
     Comment: typeof import('./src/components/Comment/index.vue')['default']
     CountDown: typeof import('./src/components/Player/CountDown.vue')['default']
