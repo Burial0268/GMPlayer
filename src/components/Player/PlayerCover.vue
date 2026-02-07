@@ -43,11 +43,21 @@
             {{ music.getPlaySongData.artist[0].name }}
           </span>
         </div>
+        <div class="action-row">
+          <n-icon class="like-button" size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
+              music.getPlaySongData && (
+                music.getSongIsLike(music.getPlaySongData.id)
+                  ? music.changeLikeList(music.getPlaySongData.id, false)
+                  : music.changeLikeList(music.getPlaySongData.id, true)
+              )
+        " />
         <n-icon
           v-if="music.getPlaySongData"
           class="more-button"
+          size="24"
           :component="MoreHorizRound"
         />
+        </div>
       </div>
       <div class="progress-bar">
         <div class="slider-wrapper">
@@ -143,6 +153,8 @@
 import {
   MoreHorizRound,
   ThumbDownRound,
+  StarBorderRound,
+  StarRound,
   VolumeOffRound,
   VolumeUpRound,
   MessageRound,
@@ -327,6 +339,7 @@ onMounted(() => {
       justify-content: space-between;
       align-items: center;
       color: var(--main-cover-color);
+
       .text {
         display: flex;
         flex-direction: column;
@@ -344,6 +357,18 @@ onMounted(() => {
           }
         }
       }
+      .action-row {
+        display: flex;
+        align-items: center;
+
+        .like-button {
+        font-size: 1.75rem;
+        cursor: pointer;
+        opacity: 0.7;
+        transition: opacity 0.2s ease;
+        
+      }
+
       .more-button {
         font-size: 1.75rem;
         cursor: pointer;
@@ -352,6 +377,7 @@ onMounted(() => {
         &:hover {
           opacity: 1;
         }
+      }
       }
     }
     .progress-bar {
