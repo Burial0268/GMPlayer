@@ -27,24 +27,20 @@ export interface EffectManagerOptions {
   minUpdateInterval?: number;
   /** Output size for WASM FFT. Default: 1024 desktop, 512 mobile */
   fftOutputSize?: number;
-  /** Upper frequency for lowFreqVolume analysis in Hz. Default: 250 */
-  lowFreqEndHz?: number;
 }
 
 const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   fftSize: 2048,
   smoothingTimeConstant: 0.85,
   minUpdateInterval: 16,
-  fftOutputSize: 1024,
-  lowFreqEndHz: 250,
+  fftOutputSize: 2048,
 };
 
 const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
   fftSize: 2048,
   smoothingTimeConstant: 0.85,
   minUpdateInterval: 33,
-  fftOutputSize: 512,
-  lowFreqEndHz: 250,
+  fftOutputSize: 1024,
 };
 
 // WASM FFTPlayer frequency range (matching AMLL default)
@@ -66,11 +62,13 @@ export class AudioEffectManager {
 
   // AnalyserNode buffers (for spectrum display)
   private _frequencyBuffer: Uint8Array<ArrayBuffer> | null = null;
-  private _cachedFrequencyData: Uint8Array<ArrayBuffer> | null = null;
+
+  // Average amplitude (computed during getFrequencyData)
+  private _lastAverage: number = 0;
 
   // WASM FFT cached spectrum (shared between getFFTData and getLowFrequencyVolume)
   private _cachedWasmSpectrum: number[] = [];
-  private _lastWasmReadTime: number = 0;
+  private _wasmDirty: boolean = false;
 
   // Throttling for AnalyserNode
   private _lastUpdateTime: number = 0;
@@ -84,12 +82,7 @@ export class AudioEffectManager {
     const baseOptions = AudioContextManager.isMobile() ? MOBILE_OPTIONS : DEFAULT_OPTIONS;
     this.options = { ...baseOptions, ...options };
 
-    // Calculate lowFreq bin count from WASM FFT frequency range
-    // WASM FFT covers FREQ_MIN-FREQ_MAX with fftOutputSize bins
-    const lowFreqBins = Math.ceil(
-      (this.options.lowFreqEndHz - FREQ_MIN) / (FREQ_MAX - FREQ_MIN) * this.options.fftOutputSize
-    );
-    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer({ binCount: lowFreqBins });
+    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer();
 
     this._initNodes();
   }
@@ -103,7 +96,6 @@ export class AudioEffectManager {
 
       const bufferSize = this.analyserNode.frequencyBinCount;
       this._frequencyBuffer = new Uint8Array(bufferSize);
-      this._cachedFrequencyData = new Uint8Array(bufferSize);
 
       // WASM FFTPlayer for lowFreqVolume + detailed analysis (Hamming window — AMLL native)
       this._wasmFFT = new WasmFFTManager(this.options.fftOutputSize);
@@ -145,6 +137,7 @@ export class AudioEffectManager {
           this._workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
             if (this._wasmFFT) {
               this._wasmFFT.pushData(e.data, this.audioCtx.sampleRate, 1);
+              this._wasmDirty = true;
             }
           };
 
@@ -170,15 +163,12 @@ export class AudioEffectManager {
   }
 
   /**
-   * Read WASM FFT spectrum once per frame (dedup within minUpdateInterval).
+   * Read WASM FFT spectrum once per frame when new data is available.
    * Shared by getFFTData() and getLowFrequencyVolume().
    */
   private _ensureWasmSpectrumFresh(): void {
-    const now = performance.now();
-    if (now - this._lastWasmReadTime < this.options.minUpdateInterval) {
-      return;
-    }
-    this._lastWasmReadTime = now;
+    if (!this._wasmDirty) return;
+    this._wasmDirty = false;
 
     if (this._wasmFFT?.isReady()) {
       this._cachedWasmSpectrum = this._wasmFFT.readSpectrum();
@@ -188,27 +178,39 @@ export class AudioEffectManager {
   /**
    * Get frequency data from AnalyserNode for spectrum bar display.
    * Uses Blackman window — sharper peaks, better visual contrast for bar visualization.
+   * Also computes average amplitude in the same pass.
    * @param force Skip throttling check
    * @returns Uint8Array containing byte frequency data (0-255)
    */
   getFrequencyData(force: boolean = false): Uint8Array<ArrayBuffer> {
     if (!this.analyserNode || !this._frequencyBuffer) {
-      return this._cachedFrequencyData || new Uint8Array(0);
+      return this._frequencyBuffer || new Uint8Array(0);
     }
 
     const now = performance.now();
-    if (!force && now - this._lastUpdateTime < this.options.minUpdateInterval && this._cachedFrequencyData) {
-      return this._cachedFrequencyData;
+    if (!force && now - this._lastUpdateTime < this.options.minUpdateInterval) {
+      return this._frequencyBuffer;
     }
 
     this.analyserNode.getByteFrequencyData(this._frequencyBuffer);
 
-    if (this._cachedFrequencyData) {
-      this._cachedFrequencyData.set(this._frequencyBuffer);
+    // Compute average in same pass
+    let sum = 0;
+    for (let i = 0; i < this._frequencyBuffer.length; i++) {
+      sum += this._frequencyBuffer[i];
     }
+    this._lastAverage = sum / this._frequencyBuffer.length;
 
     this._lastUpdateTime = now;
     return this._frequencyBuffer;
+  }
+
+  /**
+   * Get the average amplitude computed during the last getFrequencyData() call.
+   * @returns Average amplitude value (0-255 range)
+   */
+  getAverageAmplitude(): number {
+    return this._lastAverage;
   }
 
   /**
@@ -223,18 +225,22 @@ export class AudioEffectManager {
 
   /**
    * Get low frequency volume for background effects.
-   * Calculated from WASM FFTPlayer (Hamming window — matches AMLL native FFTPlayer).
+   * Calculated from WASM FFTPlayer raw magnitudes (Hamming window — matches AMLL native).
+   * Uses AMLL FFTToLowPassContext algorithm: log10 amplitude, gradient sliding window,
+   * time-delta smoothing.
    *
-   * Frequency mapping:
-   *   WASM FFT covers 80-2000Hz with fftOutputSize bins.
-   *   lowFreqVolume uses bins [0, N) where N covers 80-250Hz.
-   *   Desktop (1024 bins): N ≈ 91 bins, each ~1.875Hz
-   *   Mobile (512 bins): N ≈ 46 bins, each ~3.75Hz
+   * Raw magnitudes are passed directly (not 0-255 normalized) to match AMLL's native
+   * FFTPlayer output format, producing values in the 0.x-1.0 range.
    *
-   * @returns Low-frequency volume (0-3 range)
+   * @returns Smoothed low-frequency volume
    */
   getLowFrequencyVolume(): number {
     this._ensureWasmSpectrumFresh();
+    // Pass raw (un-normalized) FFT bins to match AMLL's native FFTPlayer output
+    const rawBins = this._wasmFFT?.getRawBins(2);
+    if (rawBins) {
+      return this.lowFreqAnalyzer.analyze(rawBins);
+    }
     return this.lowFreqAnalyzer.analyze(this._cachedWasmSpectrum);
   }
 
@@ -264,7 +270,6 @@ export class AudioEffectManager {
 
     const bufferSize = this.analyserNode.frequencyBinCount;
     this._frequencyBuffer = new Uint8Array(bufferSize);
-    this._cachedFrequencyData = new Uint8Array(bufferSize);
   }
 
   /**
@@ -297,8 +302,8 @@ export class AudioEffectManager {
 
     this._isConnected = false;
     this._frequencyBuffer = null;
-    this._cachedFrequencyData = null;
     this._cachedWasmSpectrum = [];
+    this._lastAverage = 0;
     this.lowFreqAnalyzer.reset();
   }
 
@@ -307,10 +312,11 @@ export class AudioEffectManager {
    */
   reset(): void {
     this._lastUpdateTime = 0;
-    this._lastWasmReadTime = 0;
+    this._wasmDirty = false;
+    this._lastAverage = 0;
     this.lowFreqAnalyzer.reset();
-    if (this._cachedFrequencyData) {
-      this._cachedFrequencyData.fill(0);
+    if (this._frequencyBuffer) {
+      this._frequencyBuffer.fill(0);
     }
     this._cachedWasmSpectrum.fill(0);
     if (this._wasmFFT) {

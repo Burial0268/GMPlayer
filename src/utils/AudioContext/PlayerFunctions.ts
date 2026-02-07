@@ -76,17 +76,12 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
 
     // Skip spectrum computation when page is not visible
     if (isPageVisible) {
-      // 获取频谱数据
+      // 获取频谱数据 (getFrequencyData also computes average internally)
       const frequencyData = sound.getFrequencyData();
-      music.spectrumsData = [...frequencyData];
+      music.spectrumsData = Array.from(frequencyData);
 
-      // 计算平均振幅用于 scale
-      let sum = 0;
-      for (let i = 0; i < frequencyData.length; i++) {
-        sum += frequencyData[i];
-      }
-      const averageAmplitude = sum / frequencyData.length;
-      music.spectrumsScaleData = (averageAmplitude / 255 + 1).toFixed(2);
+      // 使用 AudioEffectManager 内部计算的平均振幅
+      music.spectrumsScaleData = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
 
       // 获取低频音量 (直接从 effectManager 计算，已内置平滑处理)
       music.lowFreqVolume = sound.getLowFrequencyVolume();

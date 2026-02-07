@@ -22,6 +22,11 @@ export class WasmFFTManager {
   // Dynamic peak normalization state
   private _peakValue: number = 0.0001;
 
+  // getRawBins cache
+  private _cachedRawBins: number[] = [0, 0];
+  private _cachedRawBinsCount: number = 2;
+  private _rawBinsDirty: boolean = true;
+
   // Configuration
   private _freqMin: number = 80;
   private _freqMax: number = 2000;
@@ -70,53 +75,112 @@ export class WasmFFTManager {
       return this._outputBuffer;
     }
 
-    // --- Dynamic peak normalization ---
-    const rawBuf = this._readBuffer;
-    const smoothed = this._smoothedBuffer;
-    const outSize = this._outputSize;
+    this._rawBinsDirty = true;
+    this._normalizeAndSmooth();
 
-    // Find frame peak from raw FFT magnitudes
+    return this._outputBuffer;
+  }
+
+  /**
+   * Apply dynamic peak normalization and EMA smoothing to _readBuffer,
+   * writing results into _outputBuffer.
+   * Peak scan is merged into the normalize loop to avoid a separate 2048-element traversal.
+   */
+  private _normalizeAndSmooth(): void {
+    const rawBuf = this._readBuffer!;
+    const smoothed = this._smoothedBuffer!;
+    const outSize = this._outputSize;
+    const EMA_ALPHA = 0.5;
+
     let framePeak = 0;
-    for (let i = 0; i < rawBuf.length; i++) {
-      if (rawBuf[i] > framePeak) framePeak = rawBuf[i];
+
+    if (outSize === rawBuf.length) {
+      // Fast path: 1:1 mapping, no interpolation needed
+      for (let i = 0; i < outSize; i++) {
+        const mag = rawBuf[i];
+        if (mag > framePeak) framePeak = mag;
+        const normalized = Math.sqrt(Math.max(0, mag) / this._peakValue) * 255;
+        const clamped = Math.min(255, normalized);
+        smoothed[i] = smoothed[i] * (1 - EMA_ALPHA) + clamped * EMA_ALPHA;
+        this._outputBuffer[i] = smoothed[i];
+      }
+    } else {
+      // Slow path: interpolation needed
+      const srcLen = rawBuf.length;
+      const ratio = (srcLen - 1) / (outSize - 1);
+
+      // Scan peak from raw buffer in same pass as interpolation
+      // Since we interpolate, we still need to find the true peak from raw data
+      for (let i = 0; i < srcLen; i++) {
+        if (rawBuf[i] > framePeak) framePeak = rawBuf[i];
+      }
+
+      // Update peak before normalizing so we use the latest value
+      if (framePeak > this._peakValue) {
+        this._peakValue = this._peakValue * 0.5 + framePeak * 0.5;
+      } else {
+        this._peakValue *= 0.995;
+      }
+      if (this._peakValue < 0.0001) this._peakValue = 0.0001;
+
+      for (let i = 0; i < outSize; i++) {
+        const srcIdx = i * ratio;
+        const lo = srcIdx | 0;
+        const hi = Math.min(lo + 1, srcLen - 1);
+        const frac = srcIdx - lo;
+        const magnitude = rawBuf[lo] * (1 - frac) + rawBuf[hi] * frac;
+
+        const normalized = Math.sqrt(Math.max(0, magnitude) / this._peakValue) * 255;
+        const clamped = Math.min(255, normalized);
+        smoothed[i] = smoothed[i] * (1 - EMA_ALPHA) + clamped * EMA_ALPHA;
+        this._outputBuffer[i] = smoothed[i];
+      }
+      return; // Peak already updated above
     }
 
     // Asymmetric peak tracking: fast attack, slow release
     if (framePeak > this._peakValue) {
-      // Fast attack: blend toward new peak
       this._peakValue = this._peakValue * 0.5 + framePeak * 0.5;
     } else {
-      // Slow release: gradual decay
       this._peakValue *= 0.995;
     }
-
-    // Floor prevents noise amplification during silence
     if (this._peakValue < 0.0001) this._peakValue = 0.0001;
+  }
 
-    // Interpolate raw 2048 buffer to output size, normalize, and smooth
-    const srcLen = rawBuf.length;
-    const ratio = (srcLen - 1) / (outSize - 1);
-    const EMA_ALPHA = 0.5;
+  /**
+   * Get raw FFT magnitudes aggregated to match AMLL's 128-bin resolution.
+   * Results are cached per frame (dirty flag set by readSpectrum).
+   *
+   * @param count Number of aggregated bins to return
+   * @returns number[] of aggregated raw magnitudes, or null if unavailable
+   */
+  getRawBins(count: number): number[] | null {
+    if (!this._readBuffer) return null;
 
-    for (let i = 0; i < outSize; i++) {
-      // Linear interpolation from 2048 → outputSize
-      const srcIdx = i * ratio;
-      const lo = srcIdx | 0;
-      const hi = Math.min(lo + 1, srcLen - 1);
-      const frac = srcIdx - lo;
-      const magnitude = rawBuf[lo] * (1 - frac) + rawBuf[hi] * frac;
-
-      // Normalize with sqrt compression: sqrt(mag / peak) * 255
-      const normalized = Math.sqrt(Math.max(0, magnitude) / this._peakValue) * 255;
-      const clamped = Math.min(255, normalized);
-
-      // EMA temporal smoothing to reduce jitter
-      smoothed[i] = smoothed[i] * (1 - EMA_ALPHA) + clamped * EMA_ALPHA;
-
-      this._outputBuffer[i] = smoothed[i];
+    if (!this._rawBinsDirty && count === this._cachedRawBinsCount) {
+      return this._cachedRawBins;
     }
 
-    return this._outputBuffer;
+    const rawLen = this._readBuffer.length; // 2048
+    const binsPerGroup = rawLen / 128; // ~16 bins per AMLL-equivalent bin
+
+    if (count !== this._cachedRawBinsCount) {
+      this._cachedRawBins = new Array(count).fill(0);
+      this._cachedRawBinsCount = count;
+    }
+
+    for (let i = 0; i < count; i++) {
+      const start = Math.floor(i * binsPerGroup);
+      const end = Math.floor((i + 1) * binsPerGroup);
+      let sum = 0;
+      for (let j = start; j < end; j++) {
+        sum += this._readBuffer[j];
+      }
+      this._cachedRawBins[i] = sum / (end - start);
+    }
+
+    this._rawBinsDirty = false;
+    return this._cachedRawBins;
   }
 
   /**
@@ -142,6 +206,7 @@ export class WasmFFTManager {
    */
   reset(): void {
     this._peakValue = 0.0001;
+    this._rawBinsDirty = true;
     if (this._smoothedBuffer) this._smoothedBuffer.fill(0);
     this._outputBuffer.fill(0);
   }

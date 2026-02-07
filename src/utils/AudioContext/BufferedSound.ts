@@ -253,7 +253,11 @@ export class BufferedSound implements ISound {
 
   seek(pos?: number): number | this {
     if (this._inner) {
-      return this._inner.seek(pos);
+      if (pos === undefined) {
+        return this._inner.seek() as number;
+      }
+      this._inner.seek(pos);
+      return this;
     }
     // Not loaded yet
     if (pos === undefined) {
@@ -269,7 +273,11 @@ export class BufferedSound implements ISound {
 
   volume(vol?: number): number | this {
     if (this._inner) {
-      return this._inner.volume(vol);
+      if (vol === undefined) {
+        return this._inner.volume() as number;
+      }
+      this._inner.volume(vol);
+      return this;
     }
     if (vol === undefined) {
       return this._volume;
@@ -340,6 +348,10 @@ export class BufferedSound implements ISound {
 
   getLowFrequencyVolume(): number {
     return this._inner?.getLowFrequencyVolume() ?? 0;
+  }
+
+  getAverageAmplitude(): number {
+    return this._inner?.getAverageAmplitude() ?? 0;
   }
 
   /**

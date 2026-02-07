@@ -39,22 +39,8 @@ export interface ISound {
   getFrequencyData(): Uint8Array<ArrayBuffer>;
   getFFTData(): number[];
   getLowFrequencyVolume(): number;
+  getAverageAmplitude(): number;
   unload(): void;
-}
-
-/**
- * Options for low frequency analyzer
- * Based on AMLL (Apple Music-like Lyrics) implementation
- */
-export interface LowFreqAnalyzerOptions {
-  /** Number of low frequency bins to analyze (default: 10) */
-  binCount?: number;
-  /** Boost multiplier applied to normalized volume (default: 3.0) */
-  boostMultiplier?: number;
-  /** Volume floor: when volume > floorThreshold, clamp to at least this value (default: 0.4) */
-  minimumFloor?: number;
-  /** Threshold above which minimumFloor is applied (default: 0.1) */
-  floorThreshold?: number;
 }
 
 /**
@@ -77,10 +63,13 @@ declare global {
       info: (message: string, options?: Record<string, unknown>) => void;
       warning: (message: string, options?: Record<string, unknown>) => void;
       error: (message: string, options?: Record<string, unknown>) => void;
+      loading: (message: string, options?: Record<string, unknown>) => { destroy: () => void };
     };
     $setSiteTitle: () => void;
     $getPlaySongData: (data: unknown) => void;
   }
+  // Allow bare $message usage (without window. prefix)
+  var $message: Window['$message'];
 }
 
 export {};

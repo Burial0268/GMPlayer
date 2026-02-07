@@ -516,6 +516,14 @@ export class NativeSound implements ISound {
     return this._effectManager ? this._effectManager.getLowFrequencyVolume() : 0;
   }
 
+  /**
+   * Get average amplitude from the last getFrequencyData() call
+   * @returns number in 0-255 range
+   */
+  getAverageAmplitude(): number {
+    return this._effectManager ? this._effectManager.getAverageAmplitude() : 0;
+  }
+
   unload(): void {
     if (IS_DEV) {
       console.log('NativeSound: unloading');

@@ -21,7 +21,6 @@ export type {
   SoundEventType,
   SoundEventCallback,
   ISound,
-  LowFreqAnalyzerOptions,
   PlaySongTime,
 } from './types';
 

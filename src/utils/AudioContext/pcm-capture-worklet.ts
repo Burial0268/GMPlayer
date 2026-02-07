@@ -7,10 +7,21 @@
 
 const WORKLET_CODE = `
 class PCMCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._buffer = new Float32Array(512);
+    this._offset = 0;
+  }
   process(inputs) {
     const input = inputs[0];
     if (input && input[0] && input[0].length > 0) {
-      this.port.postMessage(input[0]);
+      this._buffer.set(input[0], this._offset);
+      this._offset += input[0].length;
+      if (this._offset >= 512) {
+        this.port.postMessage(this._buffer);
+        this._buffer = new Float32Array(512);
+        this._offset = 0;
+      }
     }
     return true;
   }
