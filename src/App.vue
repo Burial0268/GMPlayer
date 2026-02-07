@@ -1,6 +1,7 @@
 <template>
   <Provider>
-    <n-layout style="height: 100vh">
+    <div :class="['app-body', music.showBigPlayer ? 'bigplayer-open' : '']">
+    <n-layout class="app-layout" style="height: 100vh">
       <n-layout-header bordered>
         <Nav />
       </n-layout-header>
@@ -29,6 +30,7 @@
         </main>
       </n-layout-content>
     </n-layout>
+    </div>
   </Provider>
 </template>
 
@@ -328,6 +330,46 @@ onMounted(() => {
         }
       }
     }
+  }
+}
+
+// AMLL-style: .app-body is the outer wrapper (no transform → ::after position:fixed works)
+// .app-layout is the inner container that scales down
+.app-body {
+  height: 100vh;
+  overflow: hidden;
+  background-color: #000;
+
+  // Dark overlay — on the non-transformed wrapper so position:fixed covers the full viewport
+  &::after {
+    content: "";
+    display: block;
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100vw;
+    height: 100vh;
+    pointer-events: none;
+    opacity: 0;
+    background-color: #000;
+    transition: opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+    z-index: 1999;
+  }
+
+  &.bigplayer-open::after {
+    opacity: 0.75;
+  }
+}
+
+.app-layout {
+  transition: scale 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+  scale: 1;
+  transform-origin: center center;
+
+  .bigplayer-open & {
+    scale: 0.95;
+    border-radius: 0.75em;
+    overflow: hidden;
   }
 }
 </style>

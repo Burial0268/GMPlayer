@@ -61,14 +61,14 @@
       </div>
       <div class="progress-bar">
         <div class="slider-wrapper">
-          <vue-slider
-            v-model="music.getPlaySongTime.barMoveDistance"
-            @drag-start="music.setPlayState(false)"
-            @drag-end="sliderDragEnd"
-            @click.stop="
-              songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)
-            "
-            :tooltip="'none'"
+          <BouncingSlider
+            :value="music.getPlaySongTime.currentTime || 0"
+            :min="0"
+            :max="music.getPlaySongTime.duration || 1"
+            :is-playing="music.getPlayState"
+            @update:value="handleProgressSeek"
+            @seek-start="music.setPlayState(false)"
+            @seek-end="music.setPlayState(true)"
           />
         </div>
         <div class="time-info">
@@ -129,21 +129,26 @@
         />
       </div>
       <div class="volume-control">
-        <n-icon
-          class="button-icon"
-          :component="VolumeOffRound"
-        />
-        <vue-slider
-          :tooltip="'none'"
+        <BouncingSlider
+          :value="persistData.playVolume"
           :min="0"
           :max="1"
-          :interval="0.001"
-          v-model="persistData.playVolume"
-        />
-        <n-icon
-          class="button-icon"
-          :component="VolumeUpRound"
-        />
+          :change-on-drag="true"
+          @update:value="val => persistData.playVolume = val"
+        >
+          <template #before-icon>
+            <n-icon
+              size="18"
+              :component="VolumeOffRound"
+            />
+          </template>
+          <template #after-icon>
+            <n-icon
+              size="18"
+              :component="VolumeUpRound"
+            />
+          </template>
+        </BouncingSlider>
       </div>
     </div>
   </div>
@@ -170,8 +175,7 @@ import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
-import VueSlider from "vue-slider-component";
-import "vue-slider-component/theme/default.css";
+import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
 
@@ -198,8 +202,7 @@ const qualityText = computed(() => {
 const remainingTime = computed(() => {
   const songTime = music.getPlaySongTime;
   if (!songTime?.duration) return "-0:00";
-  const currentSeconds = (songTime.duration / 100) * songTime.barMoveDistance;
-  const remainingSeconds = Math.max(0, songTime.duration - currentSeconds);
+  const remainingSeconds = Math.max(0, songTime.duration - (songTime.currentTime || 0));
   const minutes = Math.floor(remainingSeconds / 60);
   const seconds = Math.floor(remainingSeconds % 60);
   return `-${minutes}:${seconds.toString().padStart(2, "0")}`;
@@ -226,14 +229,10 @@ const cyclePlayMode = () => {
 };
 
 // 歌曲进度条更新
-const sliderDragEnd = () => {
-  songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance);
-  music.setPlayState(true);
-};
-const songTimeSliderUpdate = (val) => {
+const handleProgressSeek = (val) => {
   if (typeof $player !== "undefined" && music.getPlaySongTime?.duration) {
-    const currentTime = (music.getPlaySongTime.duration / 100) * val;
-    setSeek($player, currentTime);
+    music.persistData.playSongTime.currentTime = val;
+    setSeek($player, val);
   }
 };
 
@@ -297,24 +296,23 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .player-cover-container {
+  --cover-size: min(50vh, 38vw);
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 2rem;
+
+  @media screen and (max-height: 768px) {
+    --cover-size: min(45vh, 38vw);
+    gap: 1.5rem;
+  }
+
   .pic {
     position: relative;
-    width: 50vh;
-    height: 50vh;
-    min-width: 250px;
-    min-height: 250px;
-    max-width: 360px;
-    max-height: 360px;
+    width: var(--cover-size);
+    height: var(--cover-size);
     border-radius: 12px;
     transition: transform 0.5s ease-out, filter 0.5s ease-out;
-    @media (max-width: 870px) {
-      width: 40vh;
-      height: 40vh;
-    }
     &.pause {
       transform: scale(0.95);
     }
@@ -329,8 +327,7 @@ onMounted(() => {
     }
   }
   .controls {
-    width: 100%;
-    max-width: 360px;
+    width: var(--cover-size);
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
@@ -447,34 +444,10 @@ onMounted(() => {
     .volume-control {
       display: flex;
       align-items: center;
-      gap: 1rem;
-      .button-icon {
-        font-size: 1.25rem;
+
+      :deep(.n-icon) {
         color: var(--main-cover-color);
         opacity: 0.7;
-      }
-    }
-    .vue-slider {
-      width: 100% !important;
-      cursor: pointer;
-      :deep(.vue-slider-rail) {
-        height: 5px;
-        background-color: rgba(255, 255, 255, 0.2);
-        border-radius: 2.5px;
-        .vue-slider-process {
-          background-color: var(--main-cover-color);
-        }
-      }
-      :deep(.vue-slider-dot) {
-        opacity: 0;
-        transition: opacity 0.2s ease;
-        .vue-slider-dot-handle {
-          background-color: var(--main-cover-color);
-          box-shadow: none;
-        }
-      }
-      &:hover :deep(.vue-slider-dot) {
-        opacity: 1;
       }
     }
   }

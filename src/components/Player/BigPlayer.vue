@@ -1,12 +1,13 @@
 <template>
+  <Teleport to="body">
   <div
     ref="bigPlayerRef"
-    v-show="music.showBigPlayer"
     :class="[
       'bplayer',
       `bplayer-${setting.backgroundImageShow}`,
       isMobile ? 'mobile-player' : 'desktop-player',
-      setting.appleStyle && !isMobile ? 'apple-style' : ''
+      setting.appleStyle && !isMobile ? 'apple-style' : '',
+      music.showBigPlayer ? 'opened' : ''
     ]"
     :style="[
       `--cover-bg: ${songPicGradient}`,
@@ -21,7 +22,7 @@
             v-if="music.getPlaySongData"
             :fps="music.getPlayState ? setting.fps || 30 : 0"
             :playing="actualPlayingProp"
-            :album="music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:')"
+            :album="coverImageUrl"
             :blurLevel="setting.blurAmount || 30"
             :saturation="setting.contrastAmount || 1.2"
             :renderScale="setting.renderScale || 0.5"
@@ -36,7 +37,7 @@
         :fps="music.getPlayState ? setting.fps : 0"
         :playing="actualPlayingProp"
         :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
-        :album="setting.albumImageUrl === 'none' ? music.getPlaySongData?.album?.picUrl?.replace(/^http:/, 'https:') : setting.albumImageUrl"
+        :album="setting.albumImageUrl === 'none' ? coverImageUrl : setting.albumImageUrl"
         :renderScale="setting.renderScale" 
         :lowFreqVolume="computedLowFreqVolume"
         :staticMode="!music.showBigPlayer"
@@ -84,7 +85,7 @@
             @click="switchMobileLayer(2)"
           >
             <img
-              :src="music.getPlaySongData ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500' : '/images/pic/default.png'"
+              :src="coverImageUrl500"
               alt="cover"
             />
           </Motion>
@@ -98,7 +99,7 @@
             @click="switchMobileLayer(1)"
           >
             <img
-              :src="music.getPlaySongData ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500' : '/images/pic/default.png'"
+              :src="coverImageUrl500"
               alt="cover"
             />
           </Motion>
@@ -118,13 +119,13 @@
           <div class="mobile-song-info">
             <div class="name-wrapper" ref="nameWrapperRef">
               <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
-                <span class="name-inner">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
-                <span class="name-inner" v-if="isNameOverflow">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
+                <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
+                <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
               </div>
             </div>
-            <div class="artists text-hidden" v-if="music.getPlaySongData && music.getPlaySongData.artist">
-              <span v-for="(item, index) in music.getPlaySongData.artist" :key="item">
-                {{ item.name }}<span v-if="index != music.getPlaySongData.artist.length - 1"> / </span>
+            <div class="artists text-hidden" v-if="artistList.length">
+              <span v-for="(item, index) in artistList" :key="item">
+                {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
               </span>
             </div>
           </div>
@@ -151,13 +152,13 @@
           <div class="mobile-song-info">
             <div class="name-wrapper" ref="nameWrapperRef">
               <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
-                <span class="name-inner">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
-                <span class="name-inner" v-if="isNameOverflow">{{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}</span>
+                <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
+                <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
               </div>
             </div>
-            <div class="artists text-hidden" v-if="music.getPlaySongData && music.getPlaySongData.artist">
-              <span v-for="(item, index) in music.getPlaySongData.artist" :key="item">
-                {{ item.name }}<span v-if="index != music.getPlaySongData.artist.length - 1"> / </span>
+            <div class="artists text-hidden" v-if="artistList.length">
+              <span v-for="(item, index) in artistList" :key="item">
+                {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
               </span>
             </div>
           </div>
@@ -180,7 +181,7 @@
         ref="mobileLyricsRef"
         class="mobile-lyrics-area"
         :class="{ 'is-expanded': lyricsExpanded }"
-        :animate="mobileLayer === 2 ? { opacity: 1, y: 0 } : { opacity: 0, y: 20 }"
+        :animate="mobileLayer === 2 ? lyricsAnimateShow : lyricsAnimateHide"
         :transition="lyricsPresenceTransition"
         :style="{ pointerEvents: mobileLayer === 2 ? 'auto' : 'none' }"
         @touchstart="handleLyricsTouchStart"
@@ -210,15 +211,21 @@
       <Motion
         ref="mobileControlsRef"
         class="mobile-controls"
-        :animate="mobileControlsVisible ? { opacity: 1, y: 0 } : { opacity: 0, y: 30 }"
+        :animate="mobileControlsVisible ? controlsAnimateShow : controlsAnimateHide"
         :transition="controlsTransition"
         :style="{ pointerEvents: mobileControlsVisible ? 'auto' : 'none' }"
       >
         <!-- 进度条 -->
         <div class="mobile-progress">
-          <vue-slider v-model="music.getPlaySongTime.barMoveDistance" @drag-start="music.setPlayState(false)"
-            @drag-end="sliderDragEnd" @click.stop="songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)"
-            :tooltip="'none'" />
+          <BouncingSlider
+            :value="music.getPlaySongTime.currentTime || 0"
+            :min="0"
+            :max="music.getPlaySongTime.duration || 1"
+            :is-playing="music.getPlayState"
+            @update:value="handleProgressSeek"
+            @seek-start="music.setPlayState(false)"
+            @seek-end="music.setPlayState(true)"
+          />
           <div class="time-display">
             <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
             <span>-{{ remainingTime }}</span>
@@ -227,7 +234,7 @@
 
         <!-- 控制按钮 -->
         <div class="mobile-control-buttons">
-          <n-icon class="mode-btn" size="24" :component="persistData.playSongMode === 'random' ? ShuffleOne : persistData.playSongMode === 'single' ? PlayOnce : PlayCycle"
+          <n-icon class="mode-btn" size="22" :component="persistData.playSongMode === 'random' ? ShuffleOne : persistData.playSongMode === 'single' ? PlayOnce : PlayCycle"
             @click.stop="music.setPlaySongMode()" />
           <n-icon v-if="!music.getPersonalFmMode" class="prev" size="36" :component="IconRewind"
             @click.stop="music.setPlaySongIndex('prev')" />
@@ -245,15 +252,26 @@
           </div>
           <n-icon class="next" size="36" :component="IconForward"
             @click.stop="music.setPlaySongIndex('next')" />
-          <n-icon class="mode-btn" size="24" :component="PlayCycle"
-            @click.stop="music.setPlaySongMode()" />
+          <n-icon class="mode-btn" size="22" :component="MessageRound"
+            @click.stop="toComment" />
         </div>
 
         <!-- 音量控制 -->
         <div class="mobile-volume">
-          <n-icon size="20" :component="VolumeOffRound" />
-          <vue-slider v-model="persistData.playVolume" :min="0" :max="1" :interval="0.01" :tooltip="'none'" />
-          <n-icon size="20" :component="VolumeUpRound" />
+          <BouncingSlider
+            :value="persistData.playVolume"
+            :min="0"
+            :max="1"
+            :change-on-drag="true"
+            @update:value="val => persistData.playVolume = val"
+          >
+            <template #before-icon>
+              <n-icon size="20" :component="VolumeOffRound" />
+            </template>
+            <template #after-icon>
+              <n-icon size="20" :component="VolumeUpRound" />
+            </template>
+          </BouncingSlider>
         </div>
       </Motion>
     </template>
@@ -281,25 +299,7 @@
           music.getPlaySongLyric.lrc.length > 4 &&
           !music.getLoadingState
         ">
-          <div class="lrcShow">
-            <div class="data" v-show="setting.playerStyle === 'record' || setting.appleStyle">
-              <div class="name text-hidden">
-                <span>{{
-                  music.getPlaySongData
-                    ? music.getPlaySongData.name
-                    : $t("other.noSong")
-                }}</span>
-                <span v-if="music.getPlaySongData && music.getPlaySongData.alia">{{ music.getPlaySongData.alia[0]
-                  }}</span>
-              </div>
-              <div class="artists text-hidden" v-if="music.getPlaySongData && music.getPlaySongData.artist">
-                <span class="artist" v-for="(item, index) in music.getPlaySongData.artist" :key="item">
-                  <span>{{ item.name }}</span>
-                  <span v-if="index != music.getPlaySongData.artist.length - 1">/</span>
-                </span>
-              </div>
-            </div>
-            
+          <div class="lrcShow">   
             <RollingLyrics 
               @mouseenter="lrcMouseStatus = setting.lrcMousePause ? true : false" 
               @mouseleave="lrcAllLeave" 
@@ -311,10 +311,15 @@
               v-show="setting.playerStyle === 'record' || setting.appleStyle">
               <div class="time">
                 <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                <vue-slider v-model="music.getPlaySongTime.barMoveDistance" @drag-start="music.setPlayState(false)"
-                  @drag-end="sliderDragEnd" @click.stop="
-                    songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)
-                    " :tooltip="'none'" />
+                <BouncingSlider
+                  :value="music.getPlaySongTime.currentTime || 0"
+                  :min="0"
+                  :max="music.getPlaySongTime.duration || 1"
+                  :is-playing="music.getPlayState"
+                  @update:value="handleProgressSeek"
+                  @seek-start="music.setPlayState(false)"
+                  @seek-end="music.setPlayState(true)"
+                />
                 <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
               </div>
               <div class="control">
@@ -345,6 +350,7 @@
     <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
     <LyricSetting ref="LyricSettingRef" />
   </div>
+  </Teleport>
 </template>
 
 <script setup>
@@ -357,6 +363,7 @@ import {
   StarBorderRound,
   StarRound,
   MoreVertRound,
+  MessageRound,
   VolumeUpRound,
   VolumeOffRound,
   VolumeMuteRound,
@@ -372,8 +379,7 @@ import RollingLyrics from "./RollingLyrics.vue";
 import Spectrum from "./Spectrum.vue";
 import LyricSetting from "@/components/DataModal/LyricSetting.vue";
 import screenfull from "screenfull";
-import VueSlider from "vue-slider-component";
-import "vue-slider-component/theme/default.css";
+import BouncingSlider from "./BouncingSlider.vue";
 import BackgroundRender from "@/libs/apple-music-like/BackgroundRender.vue";
 import { storeToRefs } from "pinia";
 import gsap from "gsap";
@@ -385,6 +391,7 @@ import {
   shallowRef,
   computed,
   onBeforeUnmount,
+  markRaw,
 } from "vue";
 import BlurBackgroundRender from "./BlurBackgroundRender.vue";
 
@@ -411,38 +418,39 @@ const { songPicGradient, songPicColor } = storeToRefs(site)
 const { persistData } = storeToRefs(music)
 
 // motion-v 封面布局动画配置 - 使用弹簧物理效果实现 iOS App Store 风格过渡
-const coverLayoutTransition = {
+// markRaw: 静态配置对象，无需响应式追踪
+const coverLayoutTransition = markRaw({
   layout: {
     type: 'spring',
     stiffness: 300,
     damping: 30,
     mass: 1
   }
-}
+})
 
 // motion-v 歌曲信息布局动画配置
-const infoLayoutTransition = {
+const infoLayoutTransition = markRaw({
   layout: {
     type: 'spring',
     stiffness: 280,
     damping: 28,
     mass: 0.9
   }
-}
+})
 
 // motion-v 歌词区域进入/退出动画配置
-const lyricsPresenceTransition = {
+const lyricsPresenceTransition = markRaw({
   type: 'spring',
   stiffness: 260,
   damping: 25
-}
+})
 
 // motion-v controls 显隐动画配置
-const controlsTransition = {
+const controlsTransition = markRaw({
   type: 'spring',
   stiffness: 300,
   damping: 30
-}
+})
 
 // 创建需要的refs用于GSAP动画
 const bigPlayerRef = ref(null);
@@ -458,6 +466,7 @@ const mobileLayer = ref(1);
 
 // 移动端元素引用
 const mobileControlsRef = ref(null);
+const mobileLyricsRef = ref(null);
 const nameWrapperRef = ref(null);
 const nameTextRef = ref(null);
 
@@ -485,6 +494,27 @@ const remainingTime = computed(() => {
 const computedLowFreqVolume = computed(() => {
   return setting.dynamicFlowSpeed ? Number((Math.round(music.lowFreqVolume * 100) / 100).toFixed(2)) : 1.0;
 });
+
+// 缓存封面图片 URL，避免模板中多次计算 replace
+const coverImageUrl = computed(() => {
+  if (!music.getPlaySongData?.album?.picUrl) return '/images/pic/default.png';
+  return music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:');
+});
+
+// 缓存 500x500 封面（移动端用）
+const coverImageUrl500 = computed(() => coverImageUrl.value + '?param=500y500');
+
+// 缓存歌手列表
+const artistList = computed(() => music.getPlaySongData?.artist ?? []);
+
+// 缓存歌曲名
+const songName = computed(() => music.getPlaySongData?.name ?? '');
+
+// 缓存 motion-v animate 对象，避免每次渲染创建新对象
+const lyricsAnimateShow = markRaw({ opacity: 1, y: 0 });
+const lyricsAnimateHide = markRaw({ opacity: 0, y: 20 });
+const controlsAnimateShow = markRaw({ opacity: 1, y: 0 });
+const controlsAnimateHide = markRaw({ opacity: 0, y: 30 });
 
 // 检测歌曲名称是否溢出
 const checkNameOverflow = () => {
@@ -531,62 +561,83 @@ const switchMobileLayer = (targetLayer) => {
   mobileLayer.value = targetLayer;
 };
 
-// 歌词区域触摸/滚动状态
+// 歌词区域触摸状态
 const lyricsTouchStartY = ref(0);
-const lyricsScrollDirection = ref(null); // 'up' | 'down' | null
+const lyricsTouchHandled = ref(false);
+
+// 获取歌词内部滚动容器
+const getLyricsScrollEl = () => {
+  const root = mobileLyricsRef.value?.$el;
+  if (!root) return null;
+  return root.querySelector('.mobile-lyrics') || root.querySelector('.mobile-lyrics-container');
+};
 
 // 歌词区域触摸开始
 const handleLyricsTouchStart = (e) => {
   if (!isMobile.value || mobileLayer.value !== 2) return;
   lyricsTouchStartY.value = e.touches[0].clientY;
-  lyricsScrollDirection.value = null;
+  lyricsTouchHandled.value = false;
 };
 
-// 歌词区域触摸移动 - 检测滑动方向
+// 歌词区域触摸移动 - 达到阈值立即切换，无需等 touchend
 const handleLyricsTouchMove = (e) => {
-  if (!isMobile.value || mobileLayer.value !== 2) return;
+  if (!isMobile.value || mobileLayer.value !== 2 || lyricsTouchHandled.value) return;
 
-  const currentY = e.touches[0].clientY;
-  const deltaY = currentY - lyricsTouchStartY.value;
+  const deltaY = e.touches[0].clientY - lyricsTouchStartY.value;
+  if (Math.abs(deltaY) < 30) return;
 
-  // 需要一定的滑动距离才判定方向（避免误触）
-  if (Math.abs(deltaY) < 10) return;
+  const direction = deltaY > 0 ? 'down' : 'up';
 
-  lyricsScrollDirection.value = deltaY > 0 ? 'down' : 'up';
-};
-
-// 歌词区域触摸结束 - 根据滑动方向切换 controls
-const handleLyricsTouchEnd = () => {
-  if (!isMobile.value || mobileLayer.value !== 2) return;
-
-  // 向上滑动：显示 controls
-  if (lyricsScrollDirection.value === 'up' && !mobileControlsVisible.value) {
-    mobileControlsVisible.value = true;
-    lyricsExpanded.value = false;
+  // 歌词未滚动到边界时，让内部正常滚动，不触发 controls 切换
+  const scrollEl = getLyricsScrollEl();
+  if (scrollEl) {
+    const atTop = scrollEl.scrollTop <= 1;
+    const atBottom = scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 1;
+    if (direction === 'down' && !atTop) return;
+    if (direction === 'up' && !atBottom) return;
   }
-  // 向下滑动：隐藏 controls，展开歌词
-  else if (lyricsScrollDirection.value === 'down' && mobileControlsVisible.value) {
+
+  if (direction === 'down' && mobileControlsVisible.value) {
     mobileControlsVisible.value = false;
     lyricsExpanded.value = true;
+    lyricsTouchHandled.value = true;
+  } else if (direction === 'up' && !mobileControlsVisible.value) {
+    mobileControlsVisible.value = true;
+    lyricsExpanded.value = false;
+    lyricsTouchHandled.value = true;
   }
+};
 
-  lyricsScrollDirection.value = null;
+// 歌词区域触摸结束 - 仅重置状态
+const handleLyricsTouchEnd = () => {
+  lyricsTouchHandled.value = false;
 };
 
 // 兼容鼠标滚轮（桌面端模拟移动端时）
+let wheelDebounceTimer = null;
 const handleLyricsWheel = (e) => {
   if (!isMobile.value || mobileLayer.value !== 2) return;
+  // 防抖：避免触控板连续滚动事件导致闪烁
+  if (wheelDebounceTimer) return;
 
-  // 向上滚动（deltaY < 0）：显示 controls
+  // 歌词未滚动到边界时不切换
+  const scrollEl = getLyricsScrollEl();
+  if (scrollEl) {
+    const atTop = scrollEl.scrollTop <= 1;
+    const atBottom = scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 1;
+    if (e.deltaY > 0 && !atTop) return;
+    if (e.deltaY < 0 && !atBottom) return;
+  }
+
   if (e.deltaY < 0 && !mobileControlsVisible.value) {
     mobileControlsVisible.value = true;
     lyricsExpanded.value = false;
-  }
-  // 向下滚动（deltaY > 0）：隐藏 controls
-  else if (e.deltaY > 0 && mobileControlsVisible.value) {
+  } else if (e.deltaY > 0 && mobileControlsVisible.value) {
     mobileControlsVisible.value = false;
     lyricsExpanded.value = true;
   }
+
+  wheelDebounceTimer = setTimeout(() => { wheelDebounceTimer = null; }, 300);
 };
 
 // 检测是否页面上已有标题组件
@@ -627,31 +678,9 @@ const menuShow = ref(false);
 // 歌词设置弹窗
 const LyricSettingRef = ref(null);
 
-// 关闭大播放器
+// 关闭大播放器 (CSS transition handles animation)
 const closeBigPlayer = () => {
-  if (setting.appleStyle && !isMobile.value) {
-    // Apple Music风格的退出动画
-    gsap.to(bigPlayerRef.value, {
-      opacity: 0,
-      scale: 1.05,
-      duration: 0.5,
-      ease: "sine.in",
-      onComplete: () => {
-        music.setBigPlayerState(false);
-      }
-    });
-  } else {
-    // 原来的动画
-    gsap.to(bigPlayerRef.value, {
-      y: window.innerHeight, 
-      opacity: 0,
-      duration: 0.5,
-      ease: "power2.inOut",
-      onComplete: () => {
-        music.setBigPlayerState(false);
-      }
-    });
-  }
+  music.setBigPlayerState(false);
 };
 
 // 歌词文本点击事件
@@ -665,24 +694,11 @@ const lrcTextClick = (time) => {
   lrcMouseStatus.value = false;
 };
 
-// 歌曲进度条更新
-const sliderDragEnd = () => {
-  songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance);
-  music.setPlayState(true);
-  
-  // 添加进度条拖动结束后的动画效果
-  const sliderEl = document.querySelector('.vue-slider-dot');
-  if (sliderEl) {
-    gsap.fromTo(sliderEl, 
-      { scale: 1.3 },
-      { scale: 1, duration: 0.3, ease: "elastic.out(1, 0.3)" }
-    );
-  }
-};
-const songTimeSliderUpdate = (val) => {
+// 歌曲进度条更新 (BouncingSlider - mobile)
+const handleProgressSeek = (val) => {
   if (typeof $player !== "undefined" && music.getPlaySongTime?.duration) {
-    const currentTime = (music.getPlaySongTime.duration / 100) * val;
-    setSeek($player, currentTime);
+    music.persistData.playSongTime.currentTime = val;
+    setSeek($player, val);
   }
 };
 
@@ -842,139 +858,37 @@ const changePwaColor = () => {
   }
 };
 
-// 使用GSAP动画显示播放器，为Apple风格添加特殊处理
+// 使用GSAP动画显示播放器内部元素（主容器动画由CSS transition处理）
 const animatePlayerIn = () => {
   if (!bigPlayerRef.value) return;
-  
-  if (setting.appleStyle && !isMobile.value) {
-    // Apple Music风格的入场动画
-    
-    // 主容器动画
-    gsap.fromTo(bigPlayerRef.value, 
-      { opacity: 0, scale: 1.05 },
-      { 
-        opacity: 1, 
+
+  if (isMobile.value) return;
+
+  // 桌面端：左右内容交错淡入（不使用 x/y 偏移，避免与 flex 布局冲突）
+  if (leftContentRef.value) {
+    gsap.fromTo(leftContentRef.value,
+      { opacity: 0, scale: 0.96 },
+      {
+        opacity: 1,
         scale: 1,
-        duration: 0.8, 
-        ease: "sine.out"
+        duration: 0.5,
+        delay: 0.15,
+        ease: "power2.out",
       }
     );
-    
-    // 左侧专辑封面动画
-    if (leftContentRef.value) {
-      gsap.fromTo(leftContentRef.value,
-        { opacity: 0, x: -60, rotateY: "-40deg" },
-        { 
-          opacity: 1, 
-          x: 0,
-          rotateY: "0deg",
-          duration: 1.2, 
-          delay: 0.1,
-          ease: "elastic.out(1, 0.8)" 
-        }
-      );
-    }
-    
-    // 右侧内容动画 - 歌曲信息
-    const songInfo = document.querySelector('.apple-layout .data');
-    if (songInfo) {
-      gsap.fromTo(songInfo,
-        { opacity: 0, y: -30 },
-        { 
-          opacity: 1, 
-          y: 0,
-          duration: 0.7, 
-          delay: 0.2,
-          ease: "sine.out" 
-        }
-      );
-    }
-    
-    // 右侧内容动画 - 歌词
-    const lyrics = document.querySelector('.apple-lyrics');
-    if (lyrics) {
-      gsap.fromTo(lyrics,
-        { opacity: 0 },
-        { 
-          opacity: 1,
-          duration: 0.7, 
-          delay: 0.3,
-          ease: "sine.out" 
-        }
-      );
-    }
-    
-    // 右侧内容动画 - 控制条
-    const controls = document.querySelector('.apple-controls');
-    if (controls) {
-      gsap.fromTo(controls,
-        { opacity: 0, y: 30 },
-        { 
-          opacity: 1, 
-          y: 0,
-          duration: 0.7, 
-          delay: 0.4,
-          ease: "sine.out" 
-        }
-      );
-    }
-  } else {
-    // 原来的动画
-    // 主容器动画
-    gsap.fromTo(bigPlayerRef.value, 
-      { opacity: 0, y: window.innerHeight },
-      { 
-        opacity: 1, 
-        y: 0, 
-        duration: 0.5, 
-        ease: "cubic-bezier(0.34, 1.56, 0.64, 1)" // 使用贝塞尔曲线
+  }
+
+  if (rightContentRef.value) {
+    gsap.fromTo(rightContentRef.value,
+      { opacity: 0, scale: 0.96 },
+      {
+        opacity: 1,
+        scale: 1,
+        duration: 0.5,
+        delay: 0.25,
+        ease: "power2.out",
       }
     );
-    
-    if (isMobile.value) {
-      // 移动端动画
-      if (rightContentRef.value) {
-        gsap.fromTo(rightContentRef.value,
-          { opacity: 0, y: 50 },
-          { 
-            opacity: 1, 
-            y: 0,
-            duration: 0.6, 
-            delay: 0.2,
-            ease: "power2.out" 
-          }
-        );
-      }
-    } else {
-      // 桌面端动画
-      // 左侧内容动画
-      if (leftContentRef.value) {
-        gsap.fromTo(leftContentRef.value,
-          { opacity: 0, x: -50 },
-          { 
-            opacity: 1, 
-            x: 0, 
-            duration: 0.6, 
-            delay: 0.2,
-            ease: "power2.out" 
-          }
-        );
-      }
-      
-      // 右侧内容动画
-      if (rightContentRef.value) {
-        gsap.fromTo(rightContentRef.value,
-          { opacity: 0, x: 50 },
-          { 
-            opacity: 1, 
-            x: 0,
-            duration: 0.6, 
-            delay: 0.3,
-            ease: "power2.out" 
-          }
-        );
-      }
-    }
   }
 };
 
@@ -1083,6 +997,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearTimeout(timeOut.value);
+  clearTimeout(wheelDebounceTimer);
   window.removeEventListener('resize', updateDeviceStatus);
   // Reset the low-frequency volume analyzer
   lowFreqAnalyzer.reset();
@@ -1164,8 +1079,26 @@ watch(
   background-position: center;
   display: flex;
   justify-content: center;
-  transition: background 0.5s ease;
-  will-change: transform, opacity, background;
+  background-color: #222;
+  will-change: transform;
+
+  // AMLL-style slide-up transition (closed state)
+  pointer-events: none;
+  transform: translateY(100%);
+  border-radius: 1em 1em 0 0;
+  transition:
+    border-radius 0.25s ease,
+    transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+
+  // Opened state
+  &.opened {
+    pointer-events: auto;
+    transform: translateY(0%);
+    border-radius: 0;
+    transition:
+      border-radius 0.25s 0.25s ease,
+      transform 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+  }
 
   /* Apple Music 风格 */
   &.apple-style {
@@ -1328,6 +1261,12 @@ watch(
     display: flex;
     flex-direction: column;
 
+    // Shared viewport-relative variables
+    --safe-top: env(safe-area-inset-top, 0px);
+    --safe-bottom: env(safe-area-inset-bottom, 0px);
+    --mobile-cover-size: min(70vw, 42vh);
+    --mobile-cover-top: calc(var(--safe-top) + 10vh);
+
     /* 抽屉把手 */
     .mobile-drawer-handle {
       position: absolute;
@@ -1384,11 +1323,11 @@ watch(
 
       /* 封面展开状态 - Layer 1 */
       .mobile-cover-expanded {
-        --cover-size: min(70vw, 280px);
+        --cover-size: var(--mobile-cover-size);
         width: var(--cover-size);
         height: var(--cover-size);
         left: calc(50% - var(--cover-size) / 2);
-        top: calc(env(safe-area-inset-top) + 80px);
+        top: var(--mobile-cover-top);
         border-radius: 12px;
         box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
       }
@@ -1411,6 +1350,7 @@ watch(
       display: flex;
       align-items: center;
       justify-content: space-between;
+      mix-blend-mode: plus-lighter;
 
       .mobile-song-info {
         flex: 1;
@@ -1467,7 +1407,7 @@ watch(
     .mobile-song-info-expanded {
       left: 24px;
       right: 24px;
-      top: calc(100% - 260px);
+      bottom: calc(var(--safe-bottom) + 210px);
 
       .mobile-song-info {
         .name-wrapper .name {
@@ -1523,6 +1463,8 @@ watch(
       bottom: 220px;
       z-index: 30;
       overflow: visible;
+      mix-blend-mode: plus-lighter;
+      transition: bottom 0.4s ease;
       -ms-overflow-style: none;
       scrollbar-width: none;
       ::-webkit-scrollbar {
@@ -1531,7 +1473,6 @@ watch(
 
       &.is-expanded {
         bottom: 0;
-        transition: bottom 0.4s ease;
       }
 
       .mobile-lyrics-container {
@@ -1588,32 +1529,18 @@ watch(
       bottom: 0;
       z-index: 50;
       padding: 16px 24px;
+      mix-blend-mode: plus-lighter;
       padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
 
       .mobile-progress {
         width: 100%;
-        margin-bottom: 24px;
-
-        .vue-slider {
-          width: 100% !important;
-          height: 3px !important;
-
-          :deep(.vue-slider-rail) {
-            background-color: rgba(255, 255, 255, 0.2);
-            border-radius: 2px;
-
-            .vue-slider-process {
-              background-color: var(--main-cover-color) !important;
-              border-radius: 2px;
-            }
-          }
-        }
+        margin-bottom: 16px;
 
         .time-display {
           display: flex;
           justify-content: space-between;
           margin-top: 8px;
-          font-size: 0.7rem;
+          font-size: max(1.2vh, 0.7rem);
           opacity: 0.5;
           color: var(--main-cover-color);
         }
@@ -1622,9 +1549,8 @@ watch(
       .mobile-control-buttons {
         display: flex;
         align-items: center;
-        justify-content: center;
+        justify-content: space-evenly;
         width: 100%;
-        gap: 40px;
 
         .n-icon {
           color: var(--main-cover-color);
@@ -1637,7 +1563,11 @@ watch(
         }
 
         .mode-btn {
-          display: none;
+          opacity: 0.6;
+
+          &:active {
+            transform: scale(0.85);
+          }
         }
 
         .prev, .next {
@@ -1654,8 +1584,8 @@ watch(
           justify-content: center;
 
           .n-button {
-            --n-width: 64px;
-            --n-height: 64px;
+            --n-width: min(16vw, 64px);
+            --n-height: min(16vw, 64px);
             --n-color: transparent;
             --n-color-hover: rgba(255, 255, 255, 0.1);
             --n-color-pressed: rgba(255, 255, 255, 0.15);
@@ -1676,38 +1606,12 @@ watch(
         display: flex;
         align-items: center;
         width: 100%;
-        gap: 12px;
-        margin-top: 24px;
+        margin-top: 16px;
 
-        .n-icon {
+        :deep(.n-icon) {
           color: var(--main-cover-color);
           opacity: 0.4;
           flex-shrink: 0;
-        }
-
-        .vue-slider {
-          flex: 1;
-          height: 3px !important;
-
-          :deep(.vue-slider-rail) {
-            background-color: rgba(255, 255, 255, 0.2);
-            border-radius: 2px;
-
-            .vue-slider-process {
-              background-color: var(--main-cover-color) !important;
-              border-radius: 2px;
-            }
-
-            .vue-slider-dot {
-              width: 14px !important;
-              height: 14px !important;
-
-              .vue-slider-dot-handle {
-                background-color: var(--main-cover-color) !important;
-                box-shadow: none;
-              }
-            }
-          }
         }
       }
     }
@@ -1809,6 +1713,7 @@ watch(
     top: 0;
     left: 0;
     display: flex;
+    mix-blend-mode: plus-lighter;
     align-items: center;
     justify-content: space-between;
     z-index: 5; /* 提高层级确保按钮可点击 */
@@ -1868,9 +1773,7 @@ watch(
     height: 100%;
     display: flex;
     flex-direction: row;
-    will-change: transform, padding-right, opacity;
     align-items: center;
-    transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
     position: relative;
 
     &.noLrc {
@@ -1906,23 +1809,19 @@ watch(
     }
 
     .left {
-      transform: translateX(0);
       width: 40%;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
       padding-right: 2rem;
       box-sizing: border-box;
-      will-change: transform, width, padding-right;
     }
 
     .right {
-      transform: translateX(0);
       flex: 1;
       height: 100%;
-      will-change: transform;
+      // considering: mix-blend-mode: plus-lighter;
 
       .lrcShow {
         height: 100%;
@@ -1988,52 +1887,9 @@ watch(
               opacity: 0.8;
             }
 
-            .vue-slider {
+            .bouncing-slider {
               margin: 0 10px;
-              width: 100% !important;
-              transform: translateY(-1px);
-              cursor: pointer;
-
-
-              :deep(.vue-slider-rail) {
-                background-color: #ffffff20;
-                border-radius: 25px;
-
-                .vue-slider-process {
-                  background-color: var(--main-cover-color) !important;
-                  transition: width 0.1s ease;
-                }
-
-                .vue-slider-dot {
-                  width: 12px !important;
-                  height: 12px !important;
-                  box-shadow: none;
-                  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-                  will-change: transform;
-                  
-                  &:hover, &:active {
-                    transform: scale(1.3);
-                  }
-                }
-
-                .vue-slider-dot-handle-focus {
-                  box-shadow: none;
-                }
-
-                .vue-slider-dot-tooltip-inner {
-                  background-color: var(--main-cover-color) !important;
-                  backdrop-filter: blur(2px);
-                  border: none
-                }
-
-                .vue-slider-dot-handle {
-                  background-color: var(--main-cover-color) !important
-                }
-
-                .vue-slider-dot-tooltip-text {
-                  color: black;
-                }
-              }
+              flex: 1;
             }
           }
 
@@ -2152,6 +2008,13 @@ watch(
       opacity: 0.6;
     }
   }
+}
+
+/* 桌面端左侧控制区 plus-lighter — :global 绕过 scoped 组件边界 */
+:global(.bplayer .left .controls),
+:global(.bplayer .left .controls .bouncing-slider),
+:global(.bplayer .left .controls .n-icon) {
+  mix-blend-mode: plus-lighter;
 }
 
 /* 添加自定义动画 */
