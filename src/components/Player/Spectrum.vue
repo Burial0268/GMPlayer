@@ -32,74 +32,66 @@ const { spectrumsData } = storeToRefs(musicStore());
 
 // canvas
 const canvasRef = ref(null);
-const isKeepDrawing = ref(true);
+
+// Cached canvas dimensions — only update on resize, not every frame
+let cachedWidth = 0;
+let cachedHeight = 0;
+
+const updateCanvasSize = () => {
+  const canvas = canvasRef.value;
+  if (!canvas) return;
+  const w = Math.min(1600, document.body.clientWidth);
+  const h = props.height;
+  if (cachedWidth !== w || cachedHeight !== h) {
+    cachedWidth = w;
+    cachedHeight = h;
+    canvas.width = w;
+    canvas.height = h;
+  }
+};
 
 /**
  * 绘制音乐频谱图
  * @param {Array} data - 包含音频频谱数据的数组
  */
  const drawSpectrum = (data) => {
-  // 提前退出条件：如果未提供数据或不需要继续绘制，则直接返回
-  if (!data || !isKeepDrawing.value) return;
+  if (!data || !data.length) return;
 
-  // 获取画布和其2D上下文
   const canvas = canvasRef.value;
+  if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  
-  // 计算画布的宽度，最大为1600或客户端视口宽度的最小值
-  const canvasWidth = Math.min(1600, document.body.clientWidth);
-  // 使用 props 中的高度设置画布高度
-  const canvasHeight = props.height;
-  // 计算需要绘制的柱状图数量 (2048 bins, 取一半显示)
-  const numBars = Math.floor(spectrumsData.value.length / 10);
-  // 计算每个柱状图的宽度
+
+  const canvasWidth = cachedWidth;
+  const canvasHeight = cachedHeight;
+  const numBars = Math.floor(data.length / 10);
   const barWidth = canvasWidth / numBars / 2;
-  // 获取圆角半径，从 props 中获取
   const cornerRadius = props.radius;
 
-  // 设置画布的宽度和高度
-  canvas.width = canvasWidth;
-  canvas.height = canvasHeight;
-
-  // 在绘制前清空画布
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-  // 设置柱状图的填充颜色
   ctx.fillStyle = "#efefef";
 
-  // 遍历数据绘制柱状图
+  // Batch all bars into a single path to reduce draw calls
+  ctx.beginPath();
   for (let i = 0; i < numBars; i++) {
-    // 计算柱状图的高度，从索引10开始跳过低频数据 (1024 FFT)
     const barHeight = (data[i + 10] / 255) * canvasHeight;
-    
-    // 计算柱状图的 x 和 y 坐标
-    const x1 = i * barWidth + canvasWidth / 2; // 右侧柱状图的 x 坐标
-    const x2 = canvasWidth / 2 - (i + 1) * barWidth; // 左侧柱状图的 x 坐标
-    const y = canvasHeight - barHeight; // 柱状图的 y 坐标
-    
-    // 检查柱状图的高度是否大于0，避免绘制不可见的柱状图
-    if (barHeight > 0) {
-      // 绘制圆角矩形
-      roundRect(ctx, x1, y, barWidth - 3, barHeight, cornerRadius);
-      roundRect(ctx, x2, y, barWidth - 3, barHeight, cornerRadius);
-    }
-  }
+    if (barHeight <= 0) continue;
 
-  // 请求下一帧动画，继续绘制
-  requestAnimationFrame(() => drawSpectrum(spectrumsData.value));
+    const x1 = i * barWidth + canvasWidth / 2;
+    const x2 = canvasWidth / 2 - (i + 1) * barWidth;
+    const y = canvasHeight - barHeight;
+    const w = barWidth - 3;
+
+    // Use native roundRect if available, otherwise fallback
+    addRoundRect(ctx, x1, y, w, barHeight, cornerRadius);
+    addRoundRect(ctx, x2, y, w, barHeight, cornerRadius);
+  }
+  ctx.fill();
 };
 
 /**
- * 绘制圆角矩形
- * @param {CanvasRenderingContext2D} ctx - 2D上下文
- * @param {number} x - 矩形左上角 x 坐标
- * @param {number} y - 矩形左上角 y 坐标
- * @param {number} width - 矩形宽度
- * @param {number} height - 矩形高度
- * @param {number} radius - 圆角半径
+ * 添加圆角矩形路径（不立即 fill，批量绘制）
  */
-const roundRect = (ctx, x, y, width, height, radius) => {
-  ctx.beginPath();
+const addRoundRect = (ctx, x, y, width, height, radius) => {
   ctx.moveTo(x + radius, y);
   ctx.lineTo(x + width - radius, y);
   ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
@@ -110,16 +102,47 @@ const roundRect = (ctx, x, y, width, height, radius) => {
   ctx.lineTo(x, y + radius);
   ctx.quadraticCurveTo(x, y, x + radius, y);
   ctx.closePath();
-  ctx.fill();
 };
 
+// Managed RAF loop — reads store data each frame (store mutations bypass proxy)
+let rafId = null;
+
+const startDraw = () => {
+  const loop = () => {
+    drawSpectrum(spectrumsData.value);
+    rafId = requestAnimationFrame(loop);
+  };
+  loop();
+};
+
+const stopDraw = () => {
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+};
+
+// ResizeObserver to track canvas size changes
+let resizeObserver = null;
+
 onMounted(() => {
-  drawSpectrum(spectrumsData.value);
+  updateCanvasSize();
+
+  // Watch for container/window resize
+  if (typeof ResizeObserver !== 'undefined' && canvasRef.value?.parentElement) {
+    resizeObserver = new ResizeObserver(updateCanvasSize);
+    resizeObserver.observe(canvasRef.value.parentElement);
+  }
+
+  startDraw();
 });
 
-
 onBeforeUnmount(() => {
-  isKeepDrawing.value = false;
+  stopDraw();
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
 });
 </script>
 

@@ -529,6 +529,14 @@ export class NativeSound implements ISound {
     return this._effectManager ? this._effectManager.getAverageAmplitude() : 0;
   }
 
+  /**
+   * Get the AudioEffectManager instance for direct configuration.
+   * Allows runtime tuning of freq range, lowFreqVolume parameters, etc.
+   */
+  getEffectManager(): AudioEffectManager | null {
+    return this._effectManager;
+  }
+
   unload(): void {
     if (IS_DEV) {
       console.log('NativeSound: unloading');

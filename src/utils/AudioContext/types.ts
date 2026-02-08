@@ -40,6 +40,7 @@ export interface ISound {
   getFFTData(): number[];
   getLowFrequencyVolume(): number;
   getAverageAmplitude(): number;
+  getEffectManager(): import('./AudioEffectManager').AudioEffectManager | null;
   unload(): void;
 }
 

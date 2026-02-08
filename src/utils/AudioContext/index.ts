@@ -24,6 +24,9 @@ export type {
   PlaySongTime,
 } from './types';
 
+export type { EffectManagerOptions } from './AudioEffectManager';
+export type { LowFreqVolumeOptions } from './LowFreqVolumeAnalyzer';
+
 // Export classes for advanced usage
 export { NativeSound } from './NativeSound';
 export { BufferedSound } from './BufferedSound';

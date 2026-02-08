@@ -14,6 +14,7 @@
  */
 
 import { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
+import type { LowFreqVolumeOptions } from './LowFreqVolumeAnalyzer';
 import { AudioContextManager } from './AudioContextManager';
 import { WasmFFTManager } from './WasmFFTManager';
 import { isPCMWorkletRegisteredFor } from './pcm-capture-worklet';
@@ -27,6 +28,14 @@ export interface EffectManagerOptions {
   minUpdateInterval?: number;
   /** Output size for WASM FFT. Default: 1024 desktop, 512 mobile */
   fftOutputSize?: number;
+  /** WASM FFT min frequency (Hz). Default: 80 */
+  freqMin?: number;
+  /** WASM FFT max frequency (Hz). Default: 2000 */
+  freqMax?: number;
+  /** Number of raw bins to aggregate for lowFreqVolume. Default: 2 */
+  lowFreqBinCount?: number;
+  /** LowFreqVolumeAnalyzer options */
+  lowFreqOptions?: LowFreqVolumeOptions;
 }
 
 const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
@@ -34,6 +43,10 @@ const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   smoothingTimeConstant: 0.85,
   minUpdateInterval: 16,
   fftOutputSize: 2048,
+  freqMin: 80,
+  freqMax: 2000,
+  lowFreqBinCount: 2,
+  lowFreqOptions: {},
 };
 
 const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
@@ -41,11 +54,11 @@ const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
   smoothingTimeConstant: 0.85,
   minUpdateInterval: 33,
   fftOutputSize: 1024,
+  freqMin: 80,
+  freqMax: 2000,
+  lowFreqBinCount: 2,
+  lowFreqOptions: {},
 };
-
-// WASM FFTPlayer frequency range (matching AMLL default)
-const FREQ_MIN = 80;
-const FREQ_MAX = 2000;
 
 /**
  * AudioEffectManager - Hybrid analysis engine
@@ -82,7 +95,10 @@ export class AudioEffectManager {
     const baseOptions = AudioContextManager.isMobile() ? MOBILE_OPTIONS : DEFAULT_OPTIONS;
     this.options = { ...baseOptions, ...options };
 
-    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer();
+    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer({
+      binCount: this.options.lowFreqBinCount,
+      ...this.options.lowFreqOptions,
+    });
 
     this._initNodes();
   }
@@ -99,6 +115,7 @@ export class AudioEffectManager {
 
       // WASM FFTPlayer for lowFreqVolume + detailed analysis (Hamming window — AMLL native)
       this._wasmFFT = new WasmFFTManager(this.options.fftOutputSize);
+      this._wasmFFT.setFreqRange(this.options.freqMin, this.options.freqMax);
       if (!this._wasmFFT.isReady()) {
         console.warn('AudioEffectManager: WasmFFTManager failed to initialize');
       }
@@ -237,7 +254,7 @@ export class AudioEffectManager {
   getLowFrequencyVolume(): number {
     this._ensureWasmSpectrumFresh();
     // Pass raw (un-normalized) FFT bins to match AMLL's native FFTPlayer output
-    const rawBins = this._wasmFFT?.getRawBins(2);
+    const rawBins = this._wasmFFT?.getRawBins(this.options.lowFreqBinCount);
     if (rawBins) {
       return this.lowFreqAnalyzer.analyze(rawBins);
     }
@@ -270,6 +287,39 @@ export class AudioEffectManager {
 
     const bufferSize = this.analyserNode.frequencyBinCount;
     this._frequencyBuffer = new Uint8Array(bufferSize);
+  }
+
+  /**
+   * Update WASM FFT frequency range at runtime.
+   * @param min Min frequency in Hz (e.g. 20 for deeper bass)
+   * @param max Max frequency in Hz (e.g. 300 for kick-only)
+   */
+  setFreqRange(min: number, max: number): void {
+    this.options.freqMin = min;
+    this.options.freqMax = max;
+    this._wasmFFT?.setFreqRange(min, max);
+  }
+
+  /**
+   * Get current WASM FFT frequency range.
+   */
+  getFreqRange(): { min: number; max: number } {
+    return { min: this.options.freqMin, max: this.options.freqMax };
+  }
+
+  /**
+   * Update low frequency volume analyzer options at runtime.
+   */
+  setLowFreqOptions(options: Partial<LowFreqVolumeOptions>): void {
+    if (options.binCount !== undefined) this.options.lowFreqBinCount = options.binCount;
+    this.lowFreqAnalyzer.setOptions(options);
+  }
+
+  /**
+   * Get current low frequency volume analyzer options.
+   */
+  getLowFreqOptions(): Required<LowFreqVolumeOptions> {
+    return this.lowFreqAnalyzer.getOptions();
   }
 
   /**

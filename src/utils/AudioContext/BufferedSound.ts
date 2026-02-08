@@ -354,6 +354,10 @@ export class BufferedSound implements ISound {
     return this._inner?.getAverageAmplitude() ?? 0;
   }
 
+  getEffectManager(): import('./AudioEffectManager').AudioEffectManager | null {
+    return this._inner?.getEffectManager() ?? null;
+  }
+
   /**
    * Get download progress (0-1)
    */
