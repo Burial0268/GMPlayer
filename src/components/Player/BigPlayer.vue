@@ -7,7 +7,8 @@
       `bplayer-${setting.backgroundImageShow}`,
       isMobile ? 'mobile-player' : 'desktop-player',
       setting.appleStyle && !isMobile ? 'apple-style' : '',
-      music.showBigPlayer ? 'opened' : ''
+      music.showBigPlayer ? 'opened' : '',
+      isMobile && mobileLayer === 2 ? 'layer2-active' : '',
     ]"
     :style="[
       `--cover-bg: ${songPicGradient}`,
@@ -62,74 +63,30 @@
       </div>
     </div>
 
-    <!-- 移动端布局 - 重新设计的三层结构 -->
+    <!-- 移动端布局 — 照搬 AMLL verticalLayout 结构 -->
     <template v-if="isMobile">
-      <!-- 抽屉把手：顶部居中横条 -->
-      <div class="mobile-drawer-handle" @click="closeBigPlayer">
+      <!-- AMLL .thumb — 抽屉把手 -->
+      <div class="mobile-thumb" @click="closeBigPlayer">
         <div class="handle-bar"></div>
       </div>
 
-      <!-- 顶部 Header 区域：仅封面 - 使用 motion-v layoutId 实现共享元素动画 -->
-      <div
-        ref="mobileHeaderRef"
-        class="mobile-header"
-      >
-        <!-- 封面 - Layer 1 展开状态 -->
-        <AnimatePresence>
-          <Motion
-            v-if="mobileLayer === 1"
-            layout
-            layoutId="mobile-album-cover"
-            class="mobile-cover mobile-cover-expanded"
-            :transition="coverLayoutTransition"
-            @click="switchMobileLayer(2)"
-          >
-            <img
-              :src="coverImageUrl500"
-              alt="cover"
-            />
-          </Motion>
-          <!-- 封面 - Layer 2 紧凑状态 -->
-          <Motion
-            v-else
-            layout
-            layoutId="mobile-album-cover"
-            class="mobile-cover mobile-cover-compact"
-            :transition="coverLayoutTransition"
-            @click="switchMobileLayer(1)"
-          >
-            <img
-              :src="coverImageUrl500"
-              alt="cover"
-            />
-          </Motion>
-        </AnimatePresence>
-      </div>
-
-      <!-- 歌曲信息行 - 使用 motion-v layoutId 实现位置过渡 -->
-      <!-- Layer 1: 底部展开状态 -->
-      <AnimatePresence>
-        <Motion
-          v-if="mobileLayer === 1"
-          layout
-          layoutId="mobile-song-info"
-          class="mobile-song-info-row mobile-song-info-expanded"
-          :transition="infoLayoutTransition"
-        >
+      <!-- AMLL .lyricLayout — Layer 2: 紧凑封面信息 + 歌词 -->
+      <div class="mobile-lyric-layout">
+        <div class="mobile-phony-small-cover" ref="phonySmallCoverRef" />
+        <div class="mobile-small-controls">
           <div class="mobile-song-info">
-            <div class="name-wrapper" ref="nameWrapperRef">
-              <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
+            <div class="name-wrapper">
+              <div class="name" :class="{ 'is-scrolling': isNameOverflow }">
                 <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
                 <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
               </div>
             </div>
             <div class="artists text-hidden" v-if="artistList.length">
-              <span v-for="(item, index) in artistList" :key="item">
+              <span v-for="(item, index) in artistList" :key="'s' + index">
                 {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
               </span>
             </div>
           </div>
-          <!-- 操作按钮 -->
           <div class="mobile-header-actions">
             <n-icon size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
               music.getPlaySongData && (
@@ -140,57 +97,9 @@
             " />
             <n-icon size="24" :component="MoreVertRound" @click.stop="" />
           </div>
-        </Motion>
-        <!-- Layer 2: 顶部紧凑状态 -->
-        <Motion
-          v-else
-          layout
-          layoutId="mobile-song-info"
-          class="mobile-song-info-row mobile-song-info-compact"
-          :transition="infoLayoutTransition"
-        >
-          <div class="mobile-song-info">
-            <div class="name-wrapper" ref="nameWrapperRef">
-              <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
-                <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
-                <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
-              </div>
-            </div>
-            <div class="artists text-hidden" v-if="artistList.length">
-              <span v-for="(item, index) in artistList" :key="item">
-                {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-              </span>
-            </div>
-          </div>
-          <!-- 操作按钮 -->
-          <div class="mobile-header-actions">
-            <n-icon size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
-              music.getPlaySongData && (
-                music.getSongIsLike(music.getPlaySongData.id)
-                  ? music.changeLikeList(music.getPlaySongData.id, false)
-                  : music.changeLikeList(music.getPlaySongData.id, true)
-              )
-            " />
-            <n-icon size="24" :component="MoreVertRound" @click.stop="" />
-          </div>
-        </Motion>
-      </AnimatePresence>
-
-      <!-- 歌词区域 - 使用 Motion :animate 控制显隐，保持组件挂载 -->
-      <Motion
-        ref="mobileLyricsRef"
-        class="mobile-lyrics-area"
-        :class="{ 'is-expanded': lyricsExpanded }"
-        :animate="mobileLayer === 2 ? lyricsAnimateShow : lyricsAnimateHide"
-        :transition="lyricsPresenceTransition"
-        :style="{ pointerEvents: mobileLayer === 2 ? 'auto' : 'none' }"
-        @touchstart="handleLyricsTouchStart"
-        @touchmove="handleLyricsTouchMove"
-        @touchend="handleLyricsTouchEnd"
-        @wheel="handleLyricsWheel"
-      >
+        </div>
         <div
-          class="mobile-lyrics-container"
+          class="mobile-lyric"
           v-if="music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
             music.getPlaySongLyric.lrc[0] &&
             music.getPlaySongLyric.lrc.length > 4"
@@ -202,78 +111,107 @@
             class="mobile-lyrics"
           ></RollingLyrics>
         </div>
-        <div v-else class="no-lyrics">
-          <span>¯\_(ツ)_/¯</span>
-        </div>
-      </Motion>
+        <div v-else class="no-lyrics"><span>¯\_(ツ)_/¯</span></div>
+      </div>
 
-      <!-- 底部 Controls 区域 - 使用 Motion 处理显隐动画 -->
-      <Motion
-        ref="mobileControlsRef"
-        class="mobile-controls"
-        :animate="mobileControlsVisible ? controlsAnimateShow : controlsAnimateHide"
-        :transition="controlsTransition"
-        :style="{ pointerEvents: mobileControlsVisible ? 'auto' : 'none' }"
-      >
-        <!-- 进度条 -->
-        <div class="mobile-progress">
-          <BouncingSlider
-            :value="music.getPlaySongTime.currentTime || 0"
-            :min="0"
-            :max="music.getPlaySongTime.duration || 1"
-            :is-playing="music.getPlayState"
-            @update:value="handleProgressSeek"
-            @seek-start="music.setPlayState(false)"
-            @seek-end="music.setPlayState(true)"
-          />
-          <div class="time-display">
-            <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-            <span>-{{ remainingTime }}</span>
+      <!-- AMLL .noLyricLayout — Layer 1: 大封面 + 歌曲信息 + controls -->
+      <div class="mobile-cover-layout">
+        <div class="mobile-phony-big-cover" ref="phonyBigCoverRef" />
+        <div class="mobile-big-controls">
+          <!-- 歌曲信息（展开） -->
+          <div class="mobile-song-info-row">
+            <div class="mobile-song-info">
+              <div class="name-wrapper" ref="nameWrapperRef">
+                <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
+                  <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
+                  <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
+                </div>
+              </div>
+              <div class="artists text-hidden" v-if="artistList.length">
+                <span v-for="(item, index) in artistList" :key="'b' + index">
+                  {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                </span>
+              </div>
+            </div>
+            <div class="mobile-header-actions">
+              <n-icon size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
+                music.getPlaySongData && (
+                  music.getSongIsLike(music.getPlaySongData.id)
+                    ? music.changeLikeList(music.getPlaySongData.id, false)
+                    : music.changeLikeList(music.getPlaySongData.id, true)
+                )
+              " />
+              <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+            </div>
           </div>
-        </div>
-
-        <!-- 控制按钮 -->
-        <div class="mobile-control-buttons">
-          <n-icon class="mode-btn" size="22" :component="persistData.playSongMode === 'random' ? ShuffleOne : persistData.playSongMode === 'single' ? PlayOnce : PlayCycle"
-            @click.stop="music.setPlaySongMode()" />
-          <n-icon v-if="!music.getPersonalFmMode" class="prev" size="36" :component="IconRewind"
-            @click.stop="music.setPlaySongIndex('prev')" />
-          <n-icon v-else class="dislike" size="28" :component="ThumbDownRound"
-            @click="music.setFmDislike(music.getPersonalFmData.id)" />
-          <div class="play-state">
-            <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false"
-              @click.stop="music.setPlayState(!music.getPlayState)">
-              <template #icon>
-                <Transition name="fade" mode="out-in">
-                  <n-icon size="64" :component="music.getPlayState ? IconPause : IconPlay" />
-                </Transition>
+          <!-- 进度条 -->
+          <div class="mobile-progress">
+            <BouncingSlider
+              :value="music.getPlaySongTime.currentTime || 0"
+              :min="0"
+              :max="music.getPlaySongTime.duration || 1"
+              :is-playing="music.getPlayState"
+              @update:value="handleProgressSeek"
+              @seek-start="music.setPlayState(false)"
+              @seek-end="music.setPlayState(true)"
+            />
+            <div class="time-display">
+              <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+              <span>-{{ remainingTime }}</span>
+            </div>
+          </div>
+          <!-- 控制按钮 -->
+          <div class="mobile-control-buttons">
+            <n-icon class="mode-btn" size="22" :component="persistData.playSongMode === 'random' ? ShuffleOne : persistData.playSongMode === 'single' ? PlayOnce : PlayCycle"
+              @click.stop="music.setPlaySongMode()" />
+            <n-icon v-if="!music.getPersonalFmMode" class="prev" size="36" :component="IconRewind"
+              @click.stop="music.setPlaySongIndex('prev')" />
+            <n-icon v-else class="dislike" size="28" :component="ThumbDownRound"
+              @click="music.setFmDislike(music.getPersonalFmData.id)" />
+            <div class="play-state">
+              <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false"
+                @click.stop="music.setPlayState(!music.getPlayState)">
+                <template #icon>
+                  <Transition name="fade" mode="out-in">
+                    <n-icon size="64" :component="music.getPlayState ? IconPause : IconPlay" />
+                  </Transition>
+                </template>
+              </n-button>
+            </div>
+            <n-icon class="next" size="36" :component="IconForward"
+              @click.stop="music.setPlaySongIndex('next')" />
+            <n-icon class="mode-btn" size="22" :component="MessageRound"
+              @click.stop="toComment" />
+          </div>
+          <!-- 音量控制 -->
+          <div class="mobile-volume">
+            <BouncingSlider
+              :value="persistData.playVolume"
+              :min="0"
+              :max="1"
+              :change-on-drag="true"
+              @update:value="val => persistData.playVolume = val"
+            >
+              <template #before-icon>
+                <n-icon size="20" :component="VolumeOffRound" />
               </template>
-            </n-button>
+              <template #after-icon>
+                <n-icon size="20" :component="VolumeUpRound" />
+              </template>
+            </BouncingSlider>
           </div>
-          <n-icon class="next" size="36" :component="IconForward"
-            @click.stop="music.setPlaySongIndex('next')" />
-          <n-icon class="mode-btn" size="22" :component="MessageRound"
-            @click.stop="toComment" />
         </div>
+      </div>
 
-        <!-- 音量控制 -->
-        <div class="mobile-volume">
-          <BouncingSlider
-            :value="persistData.playVolume"
-            :min="0"
-            :max="1"
-            :change-on-drag="true"
-            @update:value="val => persistData.playVolume = val"
-          >
-            <template #before-icon>
-              <n-icon size="20" :component="VolumeOffRound" />
-            </template>
-            <template #after-icon>
-              <n-icon size="20" :component="VolumeUpRound" />
-            </template>
-          </BouncingSlider>
-        </div>
-      </Motion>
+      <!-- AMLL .coverFrame — 唯一 spring 动画元素 -->
+      <div
+        v-if="currentCoverStyle"
+        class="mobile-cover-frame"
+        :style="coverFrameStyle"
+        @click="switchMobileLayer(mobileLayer === 1 ? 2 : 1)"
+      >
+        <img :src="coverImageUrl500" alt="cover" />
+      </div>
     </template>
 
     <!-- 桌面端布局 -->
@@ -369,7 +307,7 @@ import {
   VolumeMuteRound,
 } from "@vicons/material";
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
-import { Motion, AnimatePresence } from "motion-v";
+import { Motion } from "motion-v";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
@@ -417,39 +355,17 @@ if (typeof setting.appleStyle === 'undefined') {
 const { songPicGradient, songPicColor } = storeToRefs(site)
 const { persistData } = storeToRefs(music)
 
-// motion-v 封面布局动画配置 - 使用弹簧物理效果实现 iOS App Store 风格过渡
-// markRaw: 静态配置对象，无需响应式追踪
-const coverLayoutTransition = markRaw({
-  layout: {
-    type: 'spring',
-    stiffness: 300,
-    damping: 30,
-    mass: 1
-  }
-})
-
-// motion-v 歌曲信息布局动画配置
-const infoLayoutTransition = markRaw({
-  layout: {
-    type: 'spring',
-    stiffness: 280,
-    damping: 28,
-    mass: 0.9
-  }
-})
-
-// motion-v 歌词区域进入/退出动画配置
-const lyricsPresenceTransition = markRaw({
+// AMLL pattern: spring 物理动画配置 (stiffness: 200, damping: 30)
+const coverSpring = markRaw({
   type: 'spring',
-  stiffness: 260,
-  damping: 25
+  stiffness: 200,
+  damping: 30,
 })
 
-// motion-v controls 显隐动画配置
-const controlsTransition = markRaw({
+const infoSpring = markRaw({
   type: 'spring',
-  stiffness: 300,
-  damping: 30
+  stiffness: 200,
+  damping: 30,
 })
 
 // 创建需要的refs用于GSAP动画
@@ -465,19 +381,68 @@ const isMobile = ref(false);
 const mobileLayer = ref(1);
 
 // 移动端元素引用
-const mobileControlsRef = ref(null);
-const mobileLyricsRef = ref(null);
 const nameWrapperRef = ref(null);
 const nameTextRef = ref(null);
 
-// 移动端 controls 可见状态
-const mobileControlsVisible = ref(true);
+// AMLL pattern: phony 占位元素引用
+const phonyBigCoverRef = ref(null);
+const phonySmallCoverRef = ref(null);
+
+// 封面动画状态
+const currentCoverStyle = ref(null);
 
 // 歌曲名称是否溢出（需要滚动）
 const isNameOverflow = ref(false);
 
-// 歌词是否已展开（用户滑动后）
-const lyricsExpanded = ref(false);
+// AMLL calcCoverLayout: 从 phony 元素测量封面位置 (getBoundingClientRect)
+const calcCoverLayout = (hideLyric = true) => {
+  const root = bigPlayerRef.value;
+  if (!root) return undefined;
+  const targetCover = hideLyric
+    ? phonyBigCoverRef.value
+    : phonySmallCoverRef.value;
+  if (!targetCover) return undefined;
+  let rootEl = root;
+  // AMLL pattern: 跳过 display: contents 的元素
+  while (getComputedStyle(rootEl).display === 'contents') {
+    rootEl = rootEl.parentElement;
+  }
+  const rootB = rootEl.getBoundingClientRect();
+  const targetB = targetCover.getBoundingClientRect();
+  const size = Math.min(targetCover.clientWidth, targetCover.clientHeight);
+  if (size <= 0) return undefined;
+  const result = {
+    width: size,
+    height: size,
+    left: targetB.x - rootB.x + (targetB.width - size) / 2,
+    top: targetB.y - rootB.y + (targetB.height - size) / 2,
+    borderRadius: hideLyric ? 12 : 8,
+  };
+  console.log('[calcCoverLayout]', hideLyric ? 'big' : 'small', result, 'phony size:', targetCover.clientWidth, targetCover.clientHeight);
+  return result;
+};
+
+// 更新封面动画目标
+const updateCoverStyle = () => {
+  const hideLyric = mobileLayer.value === 1;
+  currentCoverStyle.value = calcCoverLayout(hideLyric);
+};
+
+// 封面内联样式（直接应用，无动画调试用 → 后续替换为 spring 动画）
+const coverFrameStyle = computed(() => {
+  const s = currentCoverStyle.value;
+  if (!s) return {};
+  return {
+    width: s.width + 'px',
+    height: s.height + 'px',
+    left: s.left + 'px',
+    top: s.top + 'px',
+    borderRadius: s.borderRadius + 'px',
+  };
+});
+
+// ResizeObserver
+let layoutResizeObserver = null;
 
 // 计算剩余时间 (负数 ETA)
 const remainingTime = computed(() => {
@@ -490,9 +455,11 @@ const remainingTime = computed(() => {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 });
 
-// 计算 lowFreqVolume 的最终值，优化性能
+// 计算 lowFreqVolume 的最终值
 const computedLowFreqVolume = computed(() => {
-  return setting.dynamicFlowSpeed ? Number((Math.round(music.lowFreqVolume * 100) / 100).toFixed(2)) : 1.0;
+  if (!setting.dynamicFlowSpeed) return 1.0;
+  // Round to 2 decimal places to avoid excessive reactivity triggering
+  return Math.round(music.lowFreqVolume * 100) / 100;
 });
 
 // 缓存封面图片 URL，避免模板中多次计算 replace
@@ -509,12 +476,6 @@ const artistList = computed(() => music.getPlaySongData?.artist ?? []);
 
 // 缓存歌曲名
 const songName = computed(() => music.getPlaySongData?.name ?? '');
-
-// 缓存 motion-v animate 对象，避免每次渲染创建新对象
-const lyricsAnimateShow = markRaw({ opacity: 1, y: 0 });
-const lyricsAnimateHide = markRaw({ opacity: 0, y: 20 });
-const controlsAnimateShow = markRaw({ opacity: 1, y: 0 });
-const controlsAnimateHide = markRaw({ opacity: 0, y: 30 });
 
 // 检测歌曲名称是否溢出
 const checkNameOverflow = () => {
@@ -538,8 +499,6 @@ const initMobileElements = () => {
 
   // 重置状态
   mobileLayer.value = 1;
-  lyricsExpanded.value = false;
-  mobileControlsVisible.value = true;
 
   nextTick(() => {
     // 检测名称是否溢出
@@ -547,97 +506,11 @@ const initMobileElements = () => {
   });
 };
 
-// 切换移动端层级 - motion-v 自动处理动画
+// 切换移动端层级
 const switchMobileLayer = (targetLayer) => {
   if (targetLayer === mobileLayer.value) return;
-
-  // 切回 layer 1 时，重置状态
-  if (targetLayer === 1) {
-    lyricsExpanded.value = false;
-    mobileControlsVisible.value = true;
-  }
-
-  // 切换层
   mobileLayer.value = targetLayer;
-};
-
-// 歌词区域触摸状态
-const lyricsTouchStartY = ref(0);
-const lyricsTouchHandled = ref(false);
-
-// 获取歌词内部滚动容器
-const getLyricsScrollEl = () => {
-  const root = mobileLyricsRef.value?.$el;
-  if (!root) return null;
-  return root.querySelector('.mobile-lyrics') || root.querySelector('.mobile-lyrics-container');
-};
-
-// 歌词区域触摸开始
-const handleLyricsTouchStart = (e) => {
-  if (!isMobile.value || mobileLayer.value !== 2) return;
-  lyricsTouchStartY.value = e.touches[0].clientY;
-  lyricsTouchHandled.value = false;
-};
-
-// 歌词区域触摸移动 - 达到阈值立即切换，无需等 touchend
-const handleLyricsTouchMove = (e) => {
-  if (!isMobile.value || mobileLayer.value !== 2 || lyricsTouchHandled.value) return;
-
-  const deltaY = e.touches[0].clientY - lyricsTouchStartY.value;
-  if (Math.abs(deltaY) < 30) return;
-
-  const direction = deltaY > 0 ? 'down' : 'up';
-
-  // 歌词未滚动到边界时，让内部正常滚动，不触发 controls 切换
-  const scrollEl = getLyricsScrollEl();
-  if (scrollEl) {
-    const atTop = scrollEl.scrollTop <= 1;
-    const atBottom = scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 1;
-    if (direction === 'down' && !atTop) return;
-    if (direction === 'up' && !atBottom) return;
-  }
-
-  if (direction === 'down' && mobileControlsVisible.value) {
-    mobileControlsVisible.value = false;
-    lyricsExpanded.value = true;
-    lyricsTouchHandled.value = true;
-  } else if (direction === 'up' && !mobileControlsVisible.value) {
-    mobileControlsVisible.value = true;
-    lyricsExpanded.value = false;
-    lyricsTouchHandled.value = true;
-  }
-};
-
-// 歌词区域触摸结束 - 仅重置状态
-const handleLyricsTouchEnd = () => {
-  lyricsTouchHandled.value = false;
-};
-
-// 兼容鼠标滚轮（桌面端模拟移动端时）
-let wheelDebounceTimer = null;
-const handleLyricsWheel = (e) => {
-  if (!isMobile.value || mobileLayer.value !== 2) return;
-  // 防抖：避免触控板连续滚动事件导致闪烁
-  if (wheelDebounceTimer) return;
-
-  // 歌词未滚动到边界时不切换
-  const scrollEl = getLyricsScrollEl();
-  if (scrollEl) {
-    const atTop = scrollEl.scrollTop <= 1;
-    const atBottom = scrollEl.scrollTop + scrollEl.clientHeight >= scrollEl.scrollHeight - 1;
-    if (e.deltaY > 0 && !atTop) return;
-    if (e.deltaY < 0 && !atBottom) return;
-  }
-
-  if (e.deltaY < 0 && !mobileControlsVisible.value) {
-    mobileControlsVisible.value = true;
-    lyricsExpanded.value = false;
-  } else if (e.deltaY > 0 && mobileControlsVisible.value) {
-    mobileControlsVisible.value = false;
-    lyricsExpanded.value = true;
-  }
-
-  wheelDebounceTimer = setTimeout(() => { wheelDebounceTimer = null; }, 300);
+  updateCoverStyle();
 };
 
 // 检测是否页面上已有标题组件
@@ -910,6 +783,14 @@ onMounted(() => {
 
   // 初始化移动端共享元素位置
   initMobileElements();
+
+  // AMLL pattern: 测量 phony 元素 + ResizeObserver
+  nextTick(() => {
+    updateCoverStyle();
+    layoutResizeObserver = new ResizeObserver(updateCoverStyle);
+    if (phonyBigCoverRef.value) layoutResizeObserver.observe(phonyBigCoverRef.value);
+    if (phonySmallCoverRef.value) layoutResizeObserver.observe(phonySmallCoverRef.value);
+  });
   
   // 使用GSAP创建播放按钮动画效果
   const setupButtonAnimations = () => {
@@ -997,10 +878,8 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearTimeout(timeOut.value);
-  clearTimeout(wheelDebounceTimer);
   window.removeEventListener('resize', updateDeviceStatus);
-  // Reset the low-frequency volume analyzer
-  lowFreqAnalyzer.reset();
+  layoutResizeObserver?.disconnect();
 });
 
 // 监听页面是否打开
@@ -1015,6 +894,7 @@ watch(
       // 初始化移动端共享元素位置
       initMobileElements();
       nextTick().then(() => {
+        updateCoverStyle(); // 重新测量封面位置
         music.showPlayList = false;
         lyricsScroll(music.getPlaySongLyricIndex);
         animatePlayerIn(); // 添加GSAP入场动画
@@ -1027,8 +907,9 @@ watch(
 watch(
   () => isMobile.value,
   () => {
-    // 设备状态变化时，重新计算歌词滚动位置
+    // 设备状态变化时，重新测量封面和计算歌词滚动位置
     nextTick(() => {
+      updateCoverStyle();
       lyricsScroll(music.getPlaySongLyricIndex);
     });
   }
@@ -1256,30 +1137,35 @@ watch(
     }
   }
 
-  /* 移动端样式 - 三层结构 */
+  /* ═══════════════════════════════════════════════════════
+     移动端样式 — 照搬 AMLL verticalLayout 结构
+     ═══════════════════════════════════════════════════════ */
   &.mobile-player {
-    display: flex;
-    flex-direction: column;
+    // AMLL .verticalLayout
+    display: grid;
+    min-height: 0;
+    min-width: 0;
+    // override flex-era justify-content: center (会导致 auto 列居中而非撑满)
+    justify-content: stretch;
+    // overflow: hidden 已在 .bplayer 设置
+    grid-template-rows:
+      [thumb] calc(env(safe-area-inset-top, 0px) + 30px)
+      [main-view] 1fr;
+    grid-template-columns: 1fr;
 
-    // Shared viewport-relative variables
-    --safe-top: env(safe-area-inset-top, 0px);
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --mobile-cover-size: min(70vw, 42vh);
-    --mobile-cover-top: calc(var(--safe-top) + 10vh);
-
-    /* 抽屉把手 */
-    .mobile-drawer-handle {
-      position: absolute;
-      top: calc(env(safe-area-inset-top) + 8px);
-      left: 50%;
-      transform: translateX(-50%);
+    // ── AMLL .thumb ──
+    .mobile-thumb {
+      grid-row: thumb;
+      justify-self: center;
+      align-self: end;
+      z-index: 1;
+      mix-blend-mode: plus-lighter;
+      cursor: pointer;
       width: 60px;
       height: 20px;
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 70;
-      cursor: pointer;
 
       .handle-bar {
         width: 36px;
@@ -1294,63 +1180,54 @@ watch(
       }
     }
 
-    /* 顶部 Header 区域：仅包含封面 */
-    .mobile-header {
-      position: absolute;
-      top: 0;
-      left: 0;
-      right: 0;
-      z-index: 60;
-      pointer-events: none;
-
-      /* 封面基础样式 - motion-v 处理布局动画 */
-      .mobile-cover {
-        position: absolute;
-        overflow: hidden;
-        cursor: pointer;
-        pointer-events: auto;
-
-        img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-
-        &:active {
-          opacity: 0.9;
-        }
-      }
-
-      /* 封面展开状态 - Layer 1 */
-      .mobile-cover-expanded {
-        --cover-size: var(--mobile-cover-size);
-        width: var(--cover-size);
-        height: var(--cover-size);
-        left: calc(50% - var(--cover-size) / 2);
-        top: var(--mobile-cover-top);
-        border-radius: 12px;
-        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
-      }
-
-      /* 封面紧凑状态 - Layer 2 */
-      .mobile-cover-compact {
-        width: 56px;
-        height: 56px;
-        left: 16px;
-        top: calc(env(safe-area-inset-top) + 36px);
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-      }
+    // ── AMLL .lyricLayout — Layer 2: 紧凑封面/信息 + 歌词 ──
+    .mobile-lyric-layout {
+      grid-row: main-view;
+      grid-column: 1 / 2;
+      display: grid;
+      grid-template-rows: 8px [controls] 0fr [lyric-view] 1fr;
+      grid-template-columns: 16px [cover-side] 0fr [info-side] 1fr 16px;
+      mix-blend-mode: plus-lighter;
     }
 
-    /* 歌曲信息行基础样式 - motion-v 处理布局动画 */
-    .mobile-song-info-row {
-      position: absolute;
-      z-index: 55;
+    // ── AMLL .noLyricLayout — Layer 1: 大封面 + controls ──
+    .mobile-cover-layout {
+      grid-row: main-view;
+      grid-column: 1 / 2;
+      overflow-y: hidden;
+      display: grid;
+      grid-template-rows: 1em [cover-view] 1fr [controls-view] 0fr;
+      grid-template-columns: 24px [main-view] 1fr 24px;
+      pointer-events: none;
+    }
+
+    // ── AMLL .phonySmallCover ──
+    .mobile-phony-small-cover {
+      grid-row: controls;
+      grid-column: cover-side;
+      justify-self: center;
+      align-self: center;
+      aspect-ratio: 1 / 1;
+      opacity: 0;
+      pointer-events: none;
+      width: 56px;
+    }
+
+    // ── AMLL .smallControls — 紧凑歌曲信息 ──
+    .mobile-small-controls {
+      grid-row: controls;
+      grid-column: info-side;
+      align-self: center;
+      transition: opacity 0.25s 0.25s;
+      padding-left: 12px;
+      min-width: 0;
+      overflow: visible;
+      height: fit-content;
+      z-index: 1;
+      mix-blend-mode: plus-lighter;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      mix-blend-mode: plus-lighter;
 
       .mobile-song-info {
         flex: 1;
@@ -1360,26 +1237,19 @@ watch(
         .name-wrapper {
           overflow: hidden;
           width: 100%;
-
           .name {
             display: flex;
             font-weight: 600;
+            font-size: 0.95rem;
             color: var(--main-cover-color);
-            margin-bottom: 4px;
+            margin-bottom: 2px;
             white-space: nowrap;
-
-            .name-inner {
-              flex-shrink: 0;
-              padding-right: 3em;
-            }
-
-            &.is-scrolling {
-              animation: marquee-scroll 12s linear infinite;
-            }
+            .name-inner { flex-shrink: 0; padding-right: 3em; }
+            &.is-scrolling { animation: marquee-scroll 12s linear infinite; }
           }
         }
-
         .artists {
+          font-size: 0.75rem;
           opacity: 0.7;
           color: var(--main-cover-color);
         }
@@ -1388,154 +1258,141 @@ watch(
       .mobile-header-actions {
         display: flex;
         align-items: center;
+        gap: 12px;
         margin-left: 12px;
         flex-shrink: 0;
-
         .n-icon {
           color: var(--main-cover-color);
           opacity: 0.8;
           cursor: pointer;
-
-          &:active {
-            opacity: 0.5;
-          }
+          &:active { opacity: 0.5; }
         }
       }
     }
 
-    /* 歌曲信息行展开状态 - Layer 1 */
-    .mobile-song-info-expanded {
-      left: 24px;
-      right: 24px;
-      bottom: calc(var(--safe-bottom) + 210px);
-
-      .mobile-song-info {
-        .name-wrapper .name {
-          font-size: 1.2rem;
-        }
-
-        .artists {
-          font-size: 0.9rem;
-        }
-      }
-
-      .mobile-header-actions {
-        gap: 16px;
-      }
-    }
-
-    /* 歌曲信息行紧凑状态 - Layer 2 */
-    .mobile-song-info-compact {
-      left: calc(16px + 56px + 12px);
-      right: 16px;
-      top: calc(env(safe-area-inset-top) + 36px);
-
-      .mobile-song-info {
-        .name-wrapper .name {
-          font-size: 0.95rem;
-        }
-
-        .artists {
-          font-size: 0.75rem;
-        }
-      }
-
-      .mobile-header-actions {
-        gap: 12px;
-      }
-    }
-
-    @keyframes marquee-scroll {
-      0% {
-        transform: translateX(0);
-      }
-      100% {
-        transform: translateX(-50%);
-      }
-    }
-
-    /* 歌词区域 - motion-v 处理进入/退出动画 */
-    .mobile-lyrics-area {
-      position: absolute;
-      top: calc(env(safe-area-inset-top) + 12px + 56px + 12px);
-      left: 0;
-      right: 0;
-      bottom: 220px;
-      z-index: 30;
-      overflow: visible;
+    // ── AMLL .lyric — 歌词区域 ──
+    .mobile-lyric {
+      grid-row: lyric-view;
+      grid-column: 1 / -1;
+      transition: opacity 0.5s 0.5s;
+      opacity: 1;
       mix-blend-mode: plus-lighter;
-      transition: bottom 0.4s ease;
-      -ms-overflow-style: none;
-      scrollbar-width: none;
-      ::-webkit-scrollbar {
-        display: none;
-      }
+      min-height: 0;
+      mask-image: linear-gradient(transparent 0%, black 8%, black 100%);
 
-      &.is-expanded {
-        bottom: 0;
-      }
-
-      .mobile-lyrics-container {
+      .mobile-lyrics {
         height: 100%;
         overflow-y: auto;
+        padding: 0;
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+        &::-webkit-scrollbar { display: none; }
 
-        .mobile-lyrics {
-          height: 100%;
-          overflow-y: auto;
-          padding: 0;
-
-          :deep(.lrc-content) {
-            padding: 5vh 0 50vh 0;
-          }
-
-          :deep(.lrc-item) {
-            font-size: 1.1rem;
-            line-height: 1.7;
-            margin: 14px 0;
-            padding: 4px 0;
-            color: var(--main-cover-color);
-            opacity: 0.5;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-
-            &.active {
-              font-size: 1.25rem;
-              font-weight: 600;
-              opacity: 1;
-              transform: scale(1.02);
-            }
-          }
-        }
-      }
-
-      .no-lyrics {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        height: 100%;
-
-        span {
-          font-size: 1rem;
+        :deep(.lrc-content) { padding: 5vh 0 50vh 0; }
+        :deep(.lrc-item) {
+          font-size: 1.1rem;
+          line-height: 1.7;
+          margin: 14px 0;
+          padding: 4px 0;
           color: var(--main-cover-color);
           opacity: 0.5;
+          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+          &.active {
+            font-size: 1.25rem;
+            font-weight: 600;
+            opacity: 1;
+            transform: scale(1.02);
+          }
         }
       }
     }
 
-    /* 底部 Controls 区域 - motion-v 处理显隐动画 */
-    .mobile-controls {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 0;
-      z-index: 50;
-      padding: 16px 24px;
+    .no-lyrics {
+      grid-row: lyric-view;
+      grid-column: 1 / -1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: opacity 0.5s 0.5s;
+      opacity: 1;
+      span {
+        font-size: 1rem;
+        color: var(--main-cover-color);
+        opacity: 0.5;
+      }
+    }
+
+    // ── AMLL .phonyBigCover ──
+    .mobile-phony-big-cover {
+      grid-row: cover-view;
+      grid-column: 2 / 3;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    // ── AMLL .bigControls — 完整 controls ──
+    .mobile-big-controls {
+      grid-row: controls-view;
+      grid-column: 2 / 3;
+      transition: opacity 0.5s;
+      opacity: 0;
       mix-blend-mode: plus-lighter;
-      padding-bottom: calc(env(safe-area-inset-bottom) + 24px);
+      min-width: 0;
+      z-index: 2;
+      text-shadow: 0 0 0.3em color-mix(in srgb, currentColor 15%, transparent);
+      padding-bottom: calc(env(safe-area-inset-bottom) + 16px);
+
+      // 歌曲信息（展开）
+      .mobile-song-info-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+
+        .mobile-song-info {
+          flex: 1;
+          min-width: 0;
+          overflow: hidden;
+
+          .name-wrapper {
+            overflow: hidden;
+            width: 100%;
+            .name {
+              display: flex;
+              font-weight: 600;
+              font-size: 1.2rem;
+              color: var(--main-cover-color);
+              margin-bottom: 4px;
+              white-space: nowrap;
+              .name-inner { flex-shrink: 0; padding-right: 3em; }
+              &.is-scrolling { animation: marquee-scroll 12s linear infinite; }
+            }
+          }
+          .artists {
+            font-size: 0.9rem;
+            opacity: 0.7;
+            color: var(--main-cover-color);
+          }
+        }
+
+        .mobile-header-actions {
+          display: flex;
+          align-items: center;
+          gap: 16px;
+          margin-left: 12px;
+          flex-shrink: 0;
+          .n-icon {
+            color: var(--main-cover-color);
+            opacity: 0.8;
+            cursor: pointer;
+            &:active { opacity: 0.5; }
+          }
+        }
+      }
 
       .mobile-progress {
         width: 100%;
         margin-bottom: 16px;
-
         .time-display {
           display: flex;
           justify-content: space-between;
@@ -1556,33 +1413,15 @@ watch(
           color: var(--main-cover-color);
           cursor: pointer;
           transition: transform 0.15s ease, opacity 0.15s ease;
-
-          &:active {
-            transform: scale(0.85);
-          }
+          &:active { transform: scale(0.85); }
         }
-
-        .mode-btn {
-          opacity: 0.6;
-
-          &:active {
-            transform: scale(0.85);
-          }
-        }
-
-        .prev, .next {
-          opacity: 0.9;
-        }
-
-        .dislike {
-          opacity: 0.9;
-        }
-
+        .mode-btn { opacity: 0.6; &:active { transform: scale(0.85); } }
+        .prev, .next { opacity: 0.9; }
+        .dislike { opacity: 0.9; }
         .play-state {
           display: flex;
           align-items: center;
           justify-content: center;
-
           .n-button {
             --n-width: min(16vw, 64px);
             --n-height: min(16vw, 64px);
@@ -1595,10 +1434,7 @@ watch(
             --n-border: none;
             border: none;
           }
-
-          .n-icon {
-            opacity: 1;
-          }
+          .n-icon { opacity: 1; }
         }
       }
 
@@ -1607,12 +1443,81 @@ watch(
         align-items: center;
         width: 100%;
         margin-top: 16px;
-
         :deep(.n-icon) {
           color: var(--main-cover-color);
           opacity: 0.4;
           flex-shrink: 0;
         }
+      }
+    }
+
+    // ── AMLL .coverFrame ──
+    .mobile-cover-frame {
+      position: absolute;
+      width: 0px;
+      height: 0px;
+      overflow: hidden;
+      cursor: pointer;
+      pointer-events: auto;
+      z-index: 60;
+      box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.35);
+      // CSS transition 作为备用（后续替换为 spring 动画）
+      transition: width 0.4s ease, height 0.4s ease, left 0.4s ease, top 0.4s ease, border-radius 0.4s ease;
+
+      img {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      &:active { opacity: 0.9; }
+    }
+
+    @keyframes marquee-scroll {
+      0% { transform: translateX(0); }
+      100% { transform: translateX(-50%); }
+    }
+
+    // ═══ 状态切换 (AMLL .hideLyric 模式反转) ═══
+    // 默认: Layer 1 可见 (= AMLL hideLyric)
+    .mobile-small-controls {
+      opacity: 0;
+      transition: opacity 0.5s;
+      pointer-events: none;
+    }
+    .mobile-cover-layout {
+      pointer-events: auto;
+    }
+    .mobile-lyric, .no-lyrics {
+      opacity: 0;
+      transition: opacity 0.5s;
+      pointer-events: none;
+    }
+    .mobile-big-controls {
+      opacity: 1;
+    }
+
+    // Layer 2 激活 (= AMLL default)
+    &.layer2-active {
+      .mobile-small-controls {
+        opacity: 1;
+        transition: opacity 0.25s 0.25s;
+        pointer-events: auto;
+      }
+      .mobile-cover-layout {
+        pointer-events: none;
+      }
+      .mobile-lyric, .no-lyrics {
+        opacity: 1;
+        transition: opacity 0.5s 0.5s;
+        pointer-events: auto;
+      }
+      .mobile-big-controls {
+        opacity: 0;
+        pointer-events: none;
       }
     }
   }
@@ -1814,14 +1719,15 @@ watch(
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding-right: 2rem;
+      padding-left: 2rem;
       box-sizing: border-box;
     }
 
     .right {
       flex: 1;
       height: 100%;
-      // considering: mix-blend-mode: plus-lighter;
+      mix-blend-mode: plus-lighter;
+      padding-right: 1rem;
 
       .lrcShow {
         height: 100%;
@@ -1832,6 +1738,7 @@ watch(
         .data {
           padding: 0 3vh;
           margin-bottom: 8px;
+          text-shadow: 0 0 0.3em color-mix(in srgb, currentColor 15%, transparent);
 
           .name {
             font-size: 3vh;
@@ -2015,6 +1922,9 @@ watch(
 :global(.bplayer .left .controls .bouncing-slider),
 :global(.bplayer .left .controls .n-icon) {
   mix-blend-mode: plus-lighter;
+}
+:global(.bplayer .left .controls) {
+  text-shadow: 0 0 0.3em color-mix(in srgb, currentColor 15%, transparent);
 }
 
 /* 添加自定义动画 */
