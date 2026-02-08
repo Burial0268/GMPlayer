@@ -17,6 +17,7 @@ import PkgConfig from 'vite-plugin-package-config'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
   const isTauriDebug = !!process.env.TAURI_DEBUG;
+  const isTauri = !!process.env.TAURI_ENV_PLATFORM;
 
   return {
     plugins: [
@@ -47,7 +48,7 @@ export default defineConfig(({ mode }) => {
         dts: true,
         resolvers: [NaiveUiResolver(), MotionResolver()],
       }),
-      VitePWA({
+      !isTauri ? VitePWA({
         registerType: "autoUpdate",
         workbox: {
           clientsClaim: true,
@@ -83,14 +84,14 @@ export default defineConfig(({ mode }) => {
             },
           ],
         },
-      }),
+      }) : null,
       compression({
         algorithm: "gzip",
       }),
       compression({
         algorithm: "brotliCompress",
       }),
-    ],
+    ].filter(Boolean),
     server: {
       strictPort: true,
       port: 25536,

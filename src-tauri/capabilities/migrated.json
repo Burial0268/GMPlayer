@@ -16,6 +16,19 @@
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
-    "decorum:allow-show-snap-overlay"
+    "decorum:allow-show-snap-overlay",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": [
+            "https://unm-api.prod.gbclstudio.cn/*",
+            "https://ncm-api.prod.gbclstudio.cn/*",
+            "https://lyric-atlas-api.prod.gbclstudio.cn/*"
+          ]
+        }
+      ]
+    },
+    "http:default"
   ]
 }

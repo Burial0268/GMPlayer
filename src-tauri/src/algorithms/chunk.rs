@@ -12,8 +12,5 @@ pub fn chunk<T>(input: &[T], size: usize) -> ChunkedArray<T>
 where
     T: Clone,
 {
-    input
-        .chunks(size)
-        .map(|chunk| chunk.to_vec())
-        .collect()
+    input.chunks(size).map(|chunk| chunk.to_vec()).collect()
 }
