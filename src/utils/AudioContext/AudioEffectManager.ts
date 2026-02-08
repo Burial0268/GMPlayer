@@ -30,7 +30,7 @@ export interface EffectManagerOptions {
   fftOutputSize?: number;
   /** WASM FFT min frequency (Hz). Default: 80 */
   freqMin?: number;
-  /** WASM FFT max frequency (Hz). Default: 2000 */
+  /** WASM FFT max frequency (Hz). Default: 2500 */
   freqMax?: number;
   /** Number of raw bins to aggregate for lowFreqVolume. Default: 2 */
   lowFreqBinCount?: number;
@@ -43,8 +43,8 @@ const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   smoothingTimeConstant: 0.85,
   minUpdateInterval: 16,
   fftOutputSize: 2048,
-  freqMin: 80,
-  freqMax: 2000,
+  freqMin: 76,
+  freqMax: 2400,
   lowFreqBinCount: 2,
   lowFreqOptions: {},
 };
@@ -54,8 +54,8 @@ const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
   smoothingTimeConstant: 0.85,
   minUpdateInterval: 33,
   fftOutputSize: 1024,
-  freqMin: 80,
-  freqMax: 2000,
+  freqMin: 76,
+  freqMax: 2400,
   lowFreqBinCount: 2,
   lowFreqOptions: {},
 };
