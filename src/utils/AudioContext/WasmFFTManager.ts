@@ -84,58 +84,49 @@ export class WasmFFTManager {
   /**
    * Apply dynamic peak normalization and EMA smoothing to _readBuffer,
    * writing results into _outputBuffer.
-   * Peak scan is merged into the normalize loop to avoid a separate 2048-element traversal.
+   *
+   * Both paths (1:1 and interpolation) use consistent peak-after-normalize timing:
+   * the PREVIOUS frame's peak normalizes the CURRENT frame, giving smoother visuals.
    */
   private _normalizeAndSmooth(): void {
     const rawBuf = this._readBuffer!;
     const smoothed = this._smoothedBuffer!;
     const outSize = this._outputSize;
-    const EMA_ALPHA = 0.5;
+    const output = this._outputBuffer;
+    const srcLen = rawBuf.length;
+    // Cache peak locally — avoid repeated property access in hot loop
+    const peakValue = this._peakValue;
+    const invPeak = 255 / Math.sqrt(peakValue);
 
     let framePeak = 0;
 
-    if (outSize === rawBuf.length) {
-      // Fast path: 1:1 mapping, no interpolation needed
+    if (outSize === srcLen) {
+      // Fast path: 1:1 mapping, peak scan merged with normalize
       for (let i = 0; i < outSize; i++) {
         const mag = rawBuf[i];
         if (mag > framePeak) framePeak = mag;
-        const normalized = Math.sqrt(Math.max(0, mag) / this._peakValue) * 255;
-        const clamped = Math.min(255, normalized);
-        smoothed[i] = smoothed[i] * (1 - EMA_ALPHA) + clamped * EMA_ALPHA;
-        this._outputBuffer[i] = smoothed[i];
+        const normalized = Math.sqrt(mag > 0 ? mag : 0) * invPeak;
+        smoothed[i] = smoothed[i] * 0.5 + (normalized < 255 ? normalized : 255) * 0.5;
+        output[i] = smoothed[i];
       }
     } else {
-      // Slow path: interpolation needed
-      const srcLen = rawBuf.length;
+      // Interpolation path: peak scan over raw, normalize over output
       const ratio = (srcLen - 1) / (outSize - 1);
 
-      // Scan peak from raw buffer in same pass as interpolation
-      // Since we interpolate, we still need to find the true peak from raw data
       for (let i = 0; i < srcLen; i++) {
         if (rawBuf[i] > framePeak) framePeak = rawBuf[i];
       }
 
-      // Update peak before normalizing so we use the latest value
-      if (framePeak > this._peakValue) {
-        this._peakValue = this._peakValue * 0.5 + framePeak * 0.5;
-      } else {
-        this._peakValue *= 0.995;
-      }
-      if (this._peakValue < 0.0001) this._peakValue = 0.0001;
-
       for (let i = 0; i < outSize; i++) {
         const srcIdx = i * ratio;
         const lo = srcIdx | 0;
-        const hi = Math.min(lo + 1, srcLen - 1);
         const frac = srcIdx - lo;
-        const magnitude = rawBuf[lo] * (1 - frac) + rawBuf[hi] * frac;
-
-        const normalized = Math.sqrt(Math.max(0, magnitude) / this._peakValue) * 255;
-        const clamped = Math.min(255, normalized);
-        smoothed[i] = smoothed[i] * (1 - EMA_ALPHA) + clamped * EMA_ALPHA;
-        this._outputBuffer[i] = smoothed[i];
+        const hi = lo + 1 < srcLen ? lo + 1 : lo;
+        const mag = rawBuf[lo] + (rawBuf[hi] - rawBuf[lo]) * frac;
+        const normalized = Math.sqrt(mag > 0 ? mag : 0) * invPeak;
+        smoothed[i] = smoothed[i] * 0.5 + (normalized < 255 ? normalized : 255) * 0.5;
+        output[i] = smoothed[i];
       }
-      return; // Peak already updated above
     }
 
     // Asymmetric peak tracking: fast attack, slow release
@@ -209,6 +200,29 @@ export class WasmFFTManager {
     this._rawBinsDirty = true;
     if (this._smoothedBuffer) this._smoothedBuffer.fill(0);
     this._outputBuffer.fill(0);
+  }
+
+  /**
+   * Clear FFTPlayer internal state (pcm_queue + result_buf EMA).
+   * Recreates the FFTPlayer instance since clear() is not exposed via wasm_bindgen.
+   * Call on seek to flush stale PCM data from old playback position.
+   */
+  clearQueue(): void {
+    this.reset();
+    if (this._fft) {
+      try {
+        this._fft.free();
+      } catch (e) {
+        // May already be freed
+      }
+      try {
+        this._fft = new FFTPlayer();
+        this._fft.setFreqRange(this._freqMin, this._freqMax);
+      } catch (e) {
+        console.error('WasmFFTManager: Failed to recreate FFTPlayer', e);
+        this._fft = null;
+      }
+    }
   }
 
   /**

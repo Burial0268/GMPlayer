@@ -16,7 +16,7 @@
 import { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
 import { AudioContextManager } from './AudioContextManager';
 import { WasmFFTManager } from './WasmFFTManager';
-import { isPCMWorkletRegistered } from './pcm-capture-worklet';
+import { isPCMWorkletRegisteredFor } from './pcm-capture-worklet';
 
 export interface EffectManagerOptions {
   /** FFT size for AnalyserNode (spectrum display). Default: 2048 */
@@ -130,7 +130,7 @@ export class AudioEffectManager {
       inputNode.connect(this.analyserNode);
 
       // AudioWorklet for PCM capture → WASM FFT (lowFreqVolume + getFFTData)
-      if (isPCMWorkletRegistered() && this._wasmFFT?.isReady()) {
+      if (isPCMWorkletRegisteredFor(this.audioCtx) && this._wasmFFT?.isReady()) {
         try {
           this._workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-capture-processor');
 
@@ -321,6 +321,20 @@ export class AudioEffectManager {
     this._cachedWasmSpectrum.fill(0);
     if (this._wasmFFT) {
       this._wasmFFT.reset();
+    }
+  }
+
+  /**
+   * Clear WASM FFT queue and reset all analysis state.
+   * Call on seek to flush stale PCM data from the old playback position.
+   */
+  clearFFTState(): void {
+    this._wasmDirty = false;
+    this._lastAverage = 0;
+    this.lowFreqAnalyzer.reset();
+    this._cachedWasmSpectrum.fill(0);
+    if (this._wasmFFT) {
+      this._wasmFFT.clearQueue();
     }
   }
 }

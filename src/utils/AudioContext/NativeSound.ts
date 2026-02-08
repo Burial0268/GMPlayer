@@ -392,6 +392,11 @@ export class NativeSound implements ISound {
     }
     try {
       this._audio.currentTime = pos;
+      // Flush stale PCM data from the WASM FFTPlayer queue
+      // so analysis reflects the new playback position
+      if (this._effectManager) {
+        this._effectManager.clearFFTState();
+      }
     } catch (e) {
       console.warn('NativeSound: Failed to seek to', pos, e);
     }

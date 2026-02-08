@@ -8,6 +8,8 @@
  * - Automatic resume on user interaction
  */
 
+import { resetPCMWorkletRegistration } from './pcm-capture-worklet';
+
 type AudioContextState = 'suspended' | 'running' | 'closed' | 'interrupted';
 
 interface AudioContextManagerEvents {
@@ -94,6 +96,11 @@ class AudioContextManagerClass {
     if (this._ctx && this._ctx.state !== 'closed') {
       return this._ctx;
     }
+
+    // Previous context was closed or doesn't exist — reset worklet registration
+    // so the worklet will be re-registered with the new context
+    this._workletRegistered = false;
+    resetPCMWorkletRegistration();
 
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;

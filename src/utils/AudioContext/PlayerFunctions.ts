@@ -41,6 +41,8 @@ let testNumber = 0;
 let spectrumAnimationId: number | null = null;
 // 页面可见性状态
 let isPageVisible = true;
+// Reusable spectrum array to avoid Array.from() allocation every frame
+let spectrumReusableArray: number[] = [];
 
 // Track page visibility for spectrum throttling
 if (typeof document !== 'undefined') {
@@ -78,7 +80,16 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
     if (isPageVisible) {
       // 获取频谱数据 (getFrequencyData also computes average internally)
       const frequencyData = sound.getFrequencyData();
-      music.spectrumsData = Array.from(frequencyData);
+      const len = frequencyData.length;
+
+      // Reuse array to avoid allocating a new one every frame (~60fps)
+      if (spectrumReusableArray.length !== len) {
+        spectrumReusableArray = new Array(len);
+      }
+      for (let i = 0; i < len; i++) {
+        spectrumReusableArray[i] = frequencyData[i];
+      }
+      music.spectrumsData = spectrumReusableArray;
 
       // 使用 AudioEffectManager 内部计算的平均振幅
       music.spectrumsScaleData = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
