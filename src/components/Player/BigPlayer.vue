@@ -1,297 +1,257 @@
 <template>
   <Teleport to="body">
-  <div
-    ref="bigPlayerRef"
+    <div ref="bigPlayerRef"
     :class="[
       'bplayer',
       `bplayer-${setting.backgroundImageShow}`,
       isMobile ? 'mobile-player' : 'desktop-player',
-      setting.appleStyle && !isMobile ? 'apple-style' : '',
       music.showBigPlayer ? 'opened' : '',
-      isMobile && mobileLayer === 2 ? 'layer2-active' : '',
+      isMobile && mobileLayer === 2 ? 'layer2-active' : ''
     ]"
-    :style="[
-      `--cover-bg: ${songPicGradient}`,
-      `--main-cover-color: rgb(${setting.immersivePlayer ? songPicColor : '255,255,255'})`,
-    ]"
-  >
-    <!-- 共用部分: 背景和顶部菜单 -->
-    <Transition name="fade" mode="out-in">
-      <div :key="`bg--${songPicGradient}`" :class="['overlay', setting.backgroundImageShow]">
-        <template v-if="setting.backgroundImageShow === 'blur'">
-          <BlurBackgroundRender
-            v-if="music.getPlaySongData"
-            :fps="music.getPlayState ? setting.fps || 30 : 0"
-            :playing="actualPlayingProp"
-            :album="coverImageUrl"
-            :blurLevel="setting.blurAmount || 30"
-            :saturation="setting.contrastAmount || 1.2"
-            :renderScale="setting.renderScale || 0.5"
-            class="blur-webgl"
-          />
-        </template>
-      </div>
-    </Transition>
-
-    <template v-if="setting.backgroundImageShow == 'eplor'">
-      <BackgroundRender 
-        :fps="music.getPlayState ? setting.fps : 0"
-        :playing="actualPlayingProp"
-        :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
-        :album="setting.albumImageUrl === 'none' ? coverImageUrl : setting.albumImageUrl"
-        :renderScale="setting.renderScale" 
-        :lowFreqVolume="computedLowFreqVolume"
-        :staticMode="!music.showBigPlayer"
-        class="overlay" />
-    </template>
-
-    <div :class="setting.backgroundImageShow === 'blur' ? 'gray blur' : 'gray'" />
-    
-    <div class="icon-menu">
-      <div class="menu-left">
-        <div v-if="setting.showLyricSetting" class="icon">
-          <n-icon class="setting" size="30" :component="SettingsRound" @click="LyricSettingRef.openLyricSetting()" />
+    :style="{
+      '--cover-bg': songPicGradient,
+      '--main-cover-color': `rgb(${setting.immersivePlayer ? songPicColor : '255,255,255'})`
+    }">
+      <!-- 共用部分: 背景和顶部菜单 -->
+      <Transition name="fade" mode="out-in">
+        <div :key="`bg--${songPicGradient}`" :class="['overlay', setting.backgroundImageShow]">
+          <template v-if="setting.backgroundImageShow === 'blur'">
+            <BlurBackgroundRender v-if="music.getPlaySongData" :fps="music.getPlayState ? setting.fps || 30 : 0"
+              :playing="actualPlayingProp" :album="coverImageUrl" :blurLevel="setting.blurAmount || 30"
+              :saturation="setting.contrastAmount || 1.2" :renderScale="setting.renderScale || 0.5"
+              class="blur-webgl" />
+          </template>
         </div>
-      </div>
-      <div class="menu-right">
-        <div class="icon">
-          <n-icon class="screenfull" :component="screenfullIcon" @click="screenfullChange" />
-        </div>
-        <div class="icon">
-          <n-icon class="close" :component="KeyboardArrowDownFilled" @click="closeBigPlayer" />
-        </div>
-      </div>
-    </div>
+      </Transition>
 
-    <!-- 移动端布局 — 照搬 AMLL verticalLayout 结构 -->
-    <template v-if="isMobile">
-      <!-- AMLL .thumb — 抽屉把手 -->
-      <div class="mobile-thumb" @click="closeBigPlayer">
-        <div class="handle-bar"></div>
-      </div>
+      <template v-if="setting.backgroundImageShow == 'eplor'">
+        <BackgroundRender :fps="music.getPlayState ? setting.fps : 0" :playing="actualPlayingProp"
+          :flowSpeed="music.getPlayState ? setting.flowSpeed : 0"
+          :album="setting.albumImageUrl === 'none' ? coverImageUrl : setting.albumImageUrl"
+          :renderScale="setting.renderScale" :lowFreqVolume="computedLowFreqVolume" :staticMode="!music.showBigPlayer"
+          class="overlay" />
+      </template>
 
-      <!-- AMLL .lyricLayout — Layer 2: 紧凑封面信息 + 歌词 -->
-      <div class="mobile-lyric-layout">
-        <div class="mobile-phony-small-cover" ref="phonySmallCoverRef" />
-        <div class="mobile-small-controls">
-          <div class="mobile-song-info">
-            <div class="name-wrapper">
-              <div class="name" :class="{ 'is-scrolling': isNameOverflow }">
-                <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
-                <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
-              </div>
-            </div>
-            <div class="artists text-hidden" v-if="artistList.length">
-              <span v-for="(item, index) in artistList" :key="'s' + index">
-                {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-              </span>
-            </div>
-          </div>
-          <div class="mobile-header-actions">
-            <n-icon size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
-              music.getPlaySongData && (
-                music.getSongIsLike(music.getPlaySongData.id)
-                  ? music.changeLikeList(music.getPlaySongData.id, false)
-                  : music.changeLikeList(music.getPlaySongData.id, true)
-              )
-            " />
-            <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+      <div :class="setting.backgroundImageShow === 'blur' ? 'gray blur' : 'gray'" />
+
+      <div class="icon-menu">
+        <div class="menu-left">
+          <div v-if="setting.showLyricSetting" class="icon">
+            <n-icon class="setting" size="30" :component="SettingsRound" @click="LyricSettingRef.openLyricSetting()" />
           </div>
         </div>
-        <div
-          class="mobile-lyric"
-          v-if="music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
-            music.getPlaySongLyric.lrc[0] &&
-            music.getPlaySongLyric.lrc.length > 4"
-        >
-          <RollingLyrics
-            @mouseenter="lrcMouseStatus = setting.lrcMousePause ? true : false"
-            @mouseleave="lrcAllLeave"
-            @lrcTextClick="lrcTextClick"
-            class="mobile-lyrics"
-          ></RollingLyrics>
+        <div class="menu-right">
+          <div class="icon">
+            <n-icon class="screenfull" :component="screenfullIcon" @click="screenfullChange" />
+          </div>
+          <div class="icon">
+            <n-icon class="close" :component="KeyboardArrowDownFilled" @click="closeBigPlayer" />
+          </div>
         </div>
-        <div v-else class="no-lyrics"><span>¯\_(ツ)_/¯</span></div>
       </div>
 
-      <!-- AMLL .noLyricLayout — Layer 1: 大封面 + 歌曲信息 + controls -->
-      <div class="mobile-cover-layout">
-        <div class="mobile-phony-big-cover" ref="phonyBigCoverRef" />
-        <div class="mobile-big-controls">
-          <!-- 歌曲信息（展开） -->
-          <div class="mobile-song-info-row">
+      <!-- 移动端布局 — 照搬 AMLL verticalLayout 结构 -->
+      <template v-if="isMobile">
+        <!-- AMLL .thumb — 抽屉把手 -->
+        <div class="mobile-thumb" @click="closeBigPlayer">
+          <div class="handle-bar"></div>
+        </div>
+
+        <!-- AMLL .lyricLayout — Layer 2: 紧凑封面信息 + 歌词 -->
+        <div class="mobile-lyric-layout">
+          <div class="mobile-phony-small-cover" ref="phonySmallCoverRef" />
+          <div class="mobile-small-controls">
             <div class="mobile-song-info">
-              <div class="name-wrapper" ref="nameWrapperRef">
-                <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
+              <div class="name-wrapper">
+                <div class="name" :class="{ 'is-scrolling': isNameOverflow }">
                   <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
                   <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
                 </div>
               </div>
               <div class="artists text-hidden" v-if="artistList.length">
-                <span v-for="(item, index) in artistList" :key="'b' + index">
+                <span v-for="(item, index) in artistList" :key="'s' + index">
                   {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
                 </span>
               </div>
             </div>
             <div class="mobile-header-actions">
-              <n-icon size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
-                music.getPlaySongData && (
-                  music.getSongIsLike(music.getPlaySongData.id)
-                    ? music.changeLikeList(music.getPlaySongData.id, false)
-                    : music.changeLikeList(music.getPlaySongData.id, true)
-                )
-              " />
+              <n-icon size="24"
+                :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound"
+                @click.stop="
+                  music.getPlaySongData && (
+                    music.getSongIsLike(music.getPlaySongData.id)
+                      ? music.changeLikeList(music.getPlaySongData.id, false)
+                      : music.changeLikeList(music.getPlaySongData.id, true)
+                  )
+                  " />
               <n-icon size="24" :component="MoreVertRound" @click.stop="" />
             </div>
           </div>
-          <!-- 进度条 -->
-          <div class="mobile-progress">
-            <BouncingSlider
-              :value="music.getPlaySongTime.currentTime || 0"
-              :min="0"
-              :max="music.getPlaySongTime.duration || 1"
-              :is-playing="music.getPlayState"
-              @update:value="handleProgressSeek"
-              @seek-start="music.setPlayState(false)"
-              @seek-end="music.setPlayState(true)"
-            />
-            <div class="time-display">
-              <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-              <span>-{{ remainingTime }}</span>
-            </div>
+          <div class="mobile-lyric" v-if="music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
+            music.getPlaySongLyric.lrc[0] &&
+            music.getPlaySongLyric.lrc.length > 4">
+            <RollingLyrics @mouseenter="lrcMouseStatus = setting.lrcMousePause ? true : false" @mouseleave="lrcAllLeave"
+              @lrcTextClick="lrcTextClick" class="mobile-lyrics"></RollingLyrics>
           </div>
-          <!-- 控制按钮 -->
-          <div class="mobile-control-buttons">
-            <n-icon class="mode-btn" size="22" :component="persistData.playSongMode === 'random' ? ShuffleOne : persistData.playSongMode === 'single' ? PlayOnce : PlayCycle"
-              @click.stop="music.setPlaySongMode()" />
-            <n-icon v-if="!music.getPersonalFmMode" class="prev" size="36" :component="IconRewind"
-              @click.stop="music.setPlaySongIndex('prev')" />
-            <n-icon v-else class="dislike" size="28" :component="ThumbDownRound"
-              @click="music.setFmDislike(music.getPersonalFmData.id)" />
-            <div class="play-state">
-              <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false"
-                @click.stop="music.setPlayState(!music.getPlayState)">
-                <template #icon>
-                  <Transition name="fade" mode="out-in">
-                    <n-icon size="64" :component="music.getPlayState ? IconPause : IconPlay" />
-                  </Transition>
-                </template>
-              </n-button>
-            </div>
-            <n-icon class="next" size="36" :component="IconForward"
-              @click.stop="music.setPlaySongIndex('next')" />
-            <n-icon class="mode-btn" size="22" :component="MessageRound"
-              @click.stop="toComment" />
-          </div>
-          <!-- 音量控制 -->
-          <div class="mobile-volume">
-            <BouncingSlider
-              :value="persistData.playVolume"
-              :min="0"
-              :max="1"
-              :change-on-drag="true"
-              @update:value="val => persistData.playVolume = val"
-            >
-              <template #before-icon>
-                <n-icon size="20" :component="VolumeOffRound" />
-              </template>
-              <template #after-icon>
-                <n-icon size="20" :component="VolumeUpRound" />
-              </template>
-            </BouncingSlider>
-          </div>
-        </div>
-      </div>
-
-      <!-- AMLL .coverFrame — 唯一 spring 动画元素 -->
-      <div
-        v-if="currentCoverStyle"
-        class="mobile-cover-frame"
-        :style="coverFrameStyle"
-        @click="switchMobileLayer(mobileLayer === 1 ? 2 : 1)"
-      >
-        <img :src="coverImageUrl500" alt="cover" />
-      </div>
-    </template>
-
-    <!-- 桌面端布局 -->
-    <template v-else>
-      <div :class="[
-        music.getPlaySongLyric && music.getPlaySongLyric.lrc && music.getPlaySongLyric.lrc[0] && music.getPlaySongLyric.lrc.length > 4 && !music.getLoadingState
-          ? 'all'
-          : 'all noLrc',
-        setting.appleStyle ? 'apple-layout' : ''
-      ]">
-        <div class="tip" ref="tipRef" v-show="lrcMouseStatus">
-          <n-text>{{ $t("other.lrcClicks") }}</n-text>
-        </div>
-        
-        <div class="left" ref="leftContentRef">
-          <PlayerCover v-if="setting.playerStyle === 'cover'" />
-          <PlayerRecord v-else-if="setting.playerStyle === 'record'" />
+          <div v-else class="no-lyrics"><span>¯\_(ツ)_/¯</span></div>
         </div>
 
-        <div class="right" ref="rightContentRef" v-if="
-          music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
-          music.getPlaySongLyric.lrc[0] &&
-          music.getPlaySongLyric.lrc.length > 4 &&
-          !music.getLoadingState
-        ">
-          <div class="lrcShow">   
-            <RollingLyrics 
-              @mouseenter="lrcMouseStatus = setting.lrcMousePause ? true : false" 
-              @mouseleave="lrcAllLeave" 
-              @lrcTextClick="lrcTextClick"
-              :class="setting.appleStyle ? 'apple-lyrics' : ''"
-            ></RollingLyrics>
-            
-            <div :class="[(menuShow || setting.appleStyle) ? 'menu show' : 'menu', setting.appleStyle ? 'apple-controls' : '']" 
-              v-show="setting.playerStyle === 'record' || setting.appleStyle">
-              <div class="time">
-                <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                <BouncingSlider
-                  :value="music.getPlaySongTime.currentTime || 0"
-                  :min="0"
-                  :max="music.getPlaySongTime.duration || 1"
-                  :is-playing="music.getPlayState"
-                  @update:value="handleProgressSeek"
-                  @seek-start="music.setPlayState(false)"
-                  @seek-end="music.setPlayState(true)"
-                />
-                <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
-              </div>
-              <div class="control">
-                <n-icon v-if="!music.getPersonalFmMode" class="prev" size="30" :component="IconRewind"
-                  @click.stop="music.setPlaySongIndex('prev')" />
-                <n-icon v-else class="dislike" :component="ThumbDownRound"
-                  @click="music.setFmDislike(music.getPersonalFmData.id)" />
-                <div class="play-state">
-                  <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false">
-                    <template #icon>
-                      <Transition name="fade" mode="out-in">
-                        <n-icon size="42" :component="music.getPlayState ? IconPause : IconPlay"
-                          @click.stop="music.setPlayState(!music.getPlayState)" />
-                      </Transition>
-                    </template>
-                  </n-button>
+        <!-- AMLL .noLyricLayout — Layer 1: 大封面 + 歌曲信息 + controls -->
+        <div class="mobile-cover-layout">
+          <div class="mobile-phony-big-cover" ref="phonyBigCoverRef" />
+          <div class="mobile-big-controls">
+            <!-- 歌曲信息（展开） -->
+            <div class="mobile-song-info-row">
+              <div class="mobile-song-info">
+                <div class="name-wrapper" ref="nameWrapperRef">
+                  <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
+                    <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
+                    <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
+                  </div>
                 </div>
-                <n-icon class="next" size="30" :component="IconForward"
-                  @click.stop="music.setPlaySongIndex('next')" />
+                <div class="artists text-hidden" v-if="artistList.length">
+                  <span v-for="(item, index) in artistList" :key="'b' + index">
+                    {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                  </span>
+                </div>
+              </div>
+              <div class="mobile-header-actions">
+                <n-icon size="24"
+                  :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound"
+                  @click.stop="
+                    music.getPlaySongData && (
+                      music.getSongIsLike(music.getPlaySongData.id)
+                        ? music.changeLikeList(music.getPlaySongData.id, false)
+                        : music.changeLikeList(music.getPlaySongData.id, true)
+                    )
+                    " />
+                <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+              </div>
+            </div>
+            <!-- 进度条 -->
+            <div class="mobile-progress">
+              <BouncingSlider :value="music.getPlaySongTime.currentTime || 0" :min="0"
+                :max="music.getPlaySongTime.duration || 1" :is-playing="music.getPlayState"
+                @update:value="handleProgressSeek" @seek-start="music.setPlayState(false)"
+                @seek-end="music.setPlayState(true)" />
+              <div class="time-display">
+                <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+                <span>-{{ remainingTime }}</span>
+              </div>
+            </div>
+            <!-- 控制按钮 -->
+            <div class="mobile-control-buttons">
+              <n-icon class="mode-btn" size="22"
+                :component="persistData.playSongMode === 'random' ? ShuffleOne : persistData.playSongMode === 'single' ? PlayOnce : PlayCycle"
+                @click.stop="music.setPlaySongMode()" />
+              <n-icon v-if="!music.getPersonalFmMode" class="prev" size="36" :component="IconRewind"
+                @click.stop="music.setPlaySongIndex('prev')" />
+              <n-icon v-else class="dislike" size="28" :component="ThumbDownRound"
+                @click="music.setFmDislike(music.getPersonalFmData.id)" />
+              <div class="play-state">
+                <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false"
+                  @click.stop="music.setPlayState(!music.getPlayState)">
+                  <template #icon>
+                    <Transition name="fade" mode="out-in">
+                      <n-icon size="64" :component="music.getPlayState ? IconPause : IconPlay" />
+                    </Transition>
+                  </template>
+                </n-button>
+              </div>
+              <n-icon class="next" size="36" :component="IconForward" @click.stop="music.setPlaySongIndex('next')" />
+              <n-icon class="mode-btn" size="22" :component="MessageRound" @click.stop="toComment" />
+            </div>
+            <!-- 音量控制 -->
+            <div class="mobile-volume">
+              <BouncingSlider :value="persistData.playVolume" :min="0" :max="1" :change-on-drag="true"
+                @update:value="val => persistData.playVolume = val">
+                <template #before-icon>
+                  <n-icon size="20" :component="VolumeOffRound" />
+                </template>
+                <template #after-icon>
+                  <n-icon size="20" :component="VolumeUpRound" />
+                </template>
+              </BouncingSlider>
+            </div>
+          </div>
+        </div>
+
+        <!-- AMLL .coverFrame — 唯一 spring 动画元素 -->
+        <div v-if="currentCoverStyle" class="mobile-cover-frame" :style="coverFrameStyle"
+          @click="switchMobileLayer(mobileLayer === 1 ? 2 : 1)">
+          <img :src="coverImageUrl500" alt="cover" />
+        </div>
+      </template>
+
+      <!-- 桌面端布局 -->
+      <template v-else>
+        <div :class="[
+          music.getPlaySongLyric && music.getPlaySongLyric.lrc && music.getPlaySongLyric.lrc[0] && music.getPlaySongLyric.lrc.length > 4 && !music.getLoadingState
+            ? 'all'
+            : 'all noLrc'
+        ]">
+          <div class="tip" ref="tipRef" v-show="lrcMouseStatus">
+            <n-text>{{ $t("other.lrcClicks") }}</n-text>
+          </div>
+
+          <div class="left" ref="leftContentRef">
+            <PlayerCover v-if="setting.playerStyle === 'cover'" />
+            <PlayerRecord v-else-if="setting.playerStyle === 'record'" />
+          </div>
+
+          <div class="right" ref="rightContentRef" v-if="
+            music.getPlaySongLyric && music.getPlaySongLyric.lrc &&
+            music.getPlaySongLyric.lrc[0] &&
+            music.getPlaySongLyric.lrc.length > 4 &&
+            !music.getLoadingState
+          ">
+            <div class="lrcShow">
+              <RollingLyrics @mouseenter="lrcMouseStatus = setting.lrcMousePause ? true : false"
+                @mouseleave="lrcAllLeave" @lrcTextClick="lrcTextClick"></RollingLyrics>
+
+              <div
+                :class="menuShow ? 'menu show' : 'menu'"
+                v-show="setting.playerStyle === 'record'">
+                <div class="time">
+                  <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+                  <BouncingSlider :value="music.getPlaySongTime.currentTime || 0" :min="0"
+                    :max="music.getPlaySongTime.duration || 1" :is-playing="music.getPlayState"
+                    @update:value="handleProgressSeek" @seek-start="music.setPlayState(false)"
+                    @seek-end="music.setPlayState(true)" />
+                  <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
+                </div>
+                <div class="control">
+                  <n-icon v-if="!music.getPersonalFmMode" class="prev" size="30" :component="IconRewind"
+                    @click.stop="music.setPlaySongIndex('prev')" />
+                  <n-icon v-else class="dislike" :component="ThumbDownRound"
+                    @click="music.setFmDislike(music.getPersonalFmData.id)" />
+                  <div class="play-state">
+                    <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false">
+                      <template #icon>
+                        <Transition name="fade" mode="out-in">
+                          <n-icon size="42" :component="music.getPlayState ? IconPause : IconPlay"
+                            @click.stop="music.setPlayState(!music.getPlayState)" />
+                        </Transition>
+                      </template>
+                    </n-button>
+                  </div>
+                  <n-icon class="next" size="30" :component="IconForward"
+                    @click.stop="music.setPlaySongIndex('next')" />
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
-    </template>
-    
-    <!-- 共用组件 -->
-    <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
-    <LyricSetting ref="LyricSettingRef" />
-  </div>
+      </template>
+
+      <!-- 共用组件 -->
+      <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
+      <LyricSetting ref="LyricSettingRef" />
+    </div>
   </Teleport>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import {
   KeyboardArrowDownFilled,
   FullscreenRound,
@@ -328,8 +288,7 @@ import {
   ref,
   shallowRef,
   computed,
-  onBeforeUnmount,
-  markRaw,
+  onBeforeUnmount
 } from "vue";
 import BlurBackgroundRender from "./BlurBackgroundRender.vue";
 
@@ -345,28 +304,11 @@ const music = musicStore();
 const site = siteStore();
 const setting = settingStore();
 
-// 为设置添加Apple Music样式选项
-if (typeof setting.appleStyle === 'undefined') {
-  setting.$patch({
-    appleStyle: true
-  });
-}
-
 const { songPicGradient, songPicColor } = storeToRefs(site)
 const { persistData } = storeToRefs(music)
 
 // AMLL pattern: spring 物理动画配置 (stiffness: 200, damping: 30)
-const coverSpring = markRaw({
-  type: 'spring',
-  stiffness: 200,
-  damping: 30,
-})
 
-const infoSpring = markRaw({
-  type: 'spring',
-  stiffness: 200,
-  damping: 30,
-})
 
 // 创建需要的refs用于GSAP动画
 const bigPlayerRef = ref(null);
@@ -497,9 +439,6 @@ const checkNameOverflow = () => {
 const initMobileElements = () => {
   if (!isMobile.value) return;
 
-  // 重置状态
-  mobileLayer.value = 1;
-
   nextTick(() => {
     // 检测名称是否溢出
     checkNameOverflow();
@@ -507,7 +446,7 @@ const initMobileElements = () => {
 };
 
 // 切换移动端层级
-const switchMobileLayer = (targetLayer) => {
+const switchMobileLayer = (targetLayer: number) => {
   if (targetLayer === mobileLayer.value) return;
   mobileLayer.value = targetLayer;
   updateCoverStyle();
@@ -519,7 +458,8 @@ const hasHeaderComponent = ref(false);
 // 检测视窗尺寸变化，更新移动设备状态
 const updateDeviceStatus = () => {
   isMobile.value = window.innerWidth <= 768;
-  console.log("isMobile", isMobile.value);
+  // 视窗尺寸变化时也更新封面位置
+  nextTick(() => updateCoverStyle());
 };
 
 // 检测页面上是否存在标题组件
@@ -557,21 +497,21 @@ const closeBigPlayer = () => {
 };
 
 // 歌词文本点击事件
-const lrcTextClick = (time) => {
-  if (typeof $player !== "undefined") {
+const lrcTextClick = (time: number) => {
+  if (typeof window.$player !== "undefined") {
     // 防止soundStop被调用
     music.persistData.playSongTime.currentTime = time;
-    $player.seek(time);
+    window.$player.seek(time);
     music.setPlayState(true);
   }
   lrcMouseStatus.value = false;
 };
 
 // 歌曲进度条更新 (BouncingSlider - mobile)
-const handleProgressSeek = (val) => {
-  if (typeof $player !== "undefined" && music.getPlaySongTime?.duration) {
+const handleProgressSeek = (val: number) => {
+  if (typeof window.$player !== "undefined" && music.getPlaySongTime?.duration) {
     music.persistData.playSongTime.currentTime = val;
-    setSeek($player, val);
+    setSeek(window.$player, val);
   }
 };
 
@@ -583,11 +523,11 @@ const lrcAllLeave = () => {
 };
 
 // 使用GSAP动画显示提示文本
-const animateTip = (isVisible) => {
+const animateTip = (isVisible: boolean) => {
   if (!tipRef.value) return;
-  
+
   if (isVisible) {
-    gsap.fromTo(tipRef.value, 
+    gsap.fromTo(tipRef.value,
       { opacity: 0, y: -20 },
       { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }
     );
@@ -608,11 +548,11 @@ const screenfullChange = () => {
   if (screenfull.isEnabled) {
     screenfull.toggle();
     // 添加全屏切换动画
-    gsap.fromTo(bigPlayerRef.value, 
+    gsap.fromTo(bigPlayerRef.value,
       { scale: screenfull.isFullscreen ? 1.05 : 0.95 },
       { scale: 1, duration: 0.4, ease: "elastic.out(1, 0.5)" }
     );
-    
+
     screenfullIcon.value = screenfull.isFullscreen
       ? FullscreenRound
       : FullscreenExitRound;
@@ -636,92 +576,41 @@ const toComment = () => {
 };
 
 // 歌词滚动
-const lyricsScroll = (index) => {
-  const type = setting.lyricsBlock;
-  const lrcType =
-    !music.getPlaySongLyric.hasYrc || !setting.showYrc ? "lrc" : "yrc";
+// 歌词滚动
+const lyricsScroll = (index: number) => {
+  const lrcType = !music.getPlaySongLyric.hasYrc || !setting.showYrc ? "lrc" : "yrc";
   const el = document.getElementById(lrcType + index);
-  
+
   if (!el || lrcMouseStatus.value) return;
-  
+
   // 获取歌词容器元素
   const container = el.parentElement;
   if (!container) return;
-  
+
   const containerHeight = container.clientHeight;
-  
-  // 为移动端和桌面端使用不同的滚动计算方式
-  let scrollDistance;
-  
+
+  // 计算滚动距离
+  let scrollDistance: number;
   if (isMobile.value) {
-    // 移动端滚动位置偏上，使活跃歌词在屏幕中上部显示
     scrollDistance = el.offsetTop - container.offsetTop - containerHeight * 0.35;
-  } else if (setting.appleStyle) {
-    // Apple Music风格的歌词居中显示
-    scrollDistance = el.offsetTop - container.offsetTop - containerHeight / 2 + el.offsetHeight / 2;
   } else {
-    // 统一桌面端与移动端的滚动逻辑，使其滚动到视口约 35% 的位置
     scrollDistance = el.offsetTop - container.offsetTop - containerHeight * 0.35;
   }
-  
-  // 使用GSAP动画滚动
-  gsap.to(container, {
-    scrollTop: scrollDistance,
-    duration: setting.appleStyle ? 0.7 : 0.5,
-    ease: setting.appleStyle ? "circ.out" : "cubic-bezier(0.34, 1.56, 0.64, 1)"
+
+  // 执行滚动 (这里之前缺少了执行代码)
+  container.scrollTo({
+    top: scrollDistance,
+    behavior: "smooth",
   });
-  
-  // 添加当前歌词的强调动画
-  if (setting.appleStyle) {
-    // 重置所有歌词项
-    const allLyrics = container.querySelectorAll('.lrc-item');
-    allLyrics.forEach(item => {
-      if (item !== el) {
-        gsap.to(item, {
-          scale: 1,
-          opacity: 0.7,
-          fontWeight: 400,
-          duration: 0.3,
-          ease: "sine.out"
-        });
-      }
-    });
-    
-    // 激活当前歌词
-    gsap.fromTo(el, 
-      { scale: 0.95, opacity: 0.7 },
-      { 
-        scale: 1.02, 
-        opacity: 1, 
-        fontWeight: 600,
-        duration: 0.5, 
-        ease: "sine.out",
-        onComplete: () => {
-          // 添加脉动效果
-          gsap.to(el, {
-            scale: 1,
-            duration: 1.2,
-            repeat: 1,
-            yoyo: true,
-            ease: "sine.inOut"
-          });
-        }
-      }
-    );
-  } else {
-    // 原来的动画
-    gsap.fromTo(el, 
-      { scale: 0.95, opacity: 0.7 },
-      { scale: 1, opacity: 1, duration: 0.3, ease: "back.out(1.7)" }
-    );
-  }
 };
 
 // 改变 PWA 应用标题栏颜色
 const changePwaColor = () => {
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+  if (!themeColorMeta) return;
+  
   if (music.showBigPlayer) {
-    themeColorMeta.setAttribute("content", songPicColor);
+    themeColorMeta.setAttribute("content", songPicColor.value);
   } else {
     if (setting.getSiteTheme === "light") {
       themeColorMeta.setAttribute("content", "#ffffff");
@@ -731,148 +620,46 @@ const changePwaColor = () => {
   }
 };
 
-// 使用GSAP动画显示播放器内部元素（主容器动画由CSS transition处理）
+// 使用GSAP动画显示播放器内部元素
 const animatePlayerIn = () => {
-  if (!bigPlayerRef.value) return;
+  if (!bigPlayerRef.value || isMobile.value) return;
 
-  if (isMobile.value) return;
-
-  // 桌面端：左右内容交错淡入（不使用 x/y 偏移，避免与 flex 布局冲突）
   if (leftContentRef.value) {
     gsap.fromTo(leftContentRef.value,
       { opacity: 0, scale: 0.96 },
-      {
-        opacity: 1,
-        scale: 1,
-        duration: 0.5,
-        delay: 0.15,
-        ease: "power2.out",
-      }
+      { opacity: 1, scale: 1, duration: 0.5, delay: 0.15, ease: "power2.out" }
     );
   }
 
   if (rightContentRef.value) {
     gsap.fromTo(rightContentRef.value,
       { opacity: 0, scale: 0.96 },
-      {
-        opacity: 1,
-        scale: 1,
-        duration: 0.5,
-        delay: 0.25,
-        ease: "power2.out",
-      }
+      { opacity: 1, scale: 1, duration: 0.5, delay: 0.25, ease: "power2.out" }
     );
   }
 };
 
 onMounted(() => {
-  console.log("BigPlayer onMounted - forcePlaying initially:", forcePlaying.value);
-
-  // 初始化设备检测
   updateDeviceStatus();
   window.addEventListener('resize', updateDeviceStatus);
-
-  // 检测页面上是否已有标题组件
   checkHeaderComponent();
 
-  // 初始化GSAP
   gsap.config({
     force3D: true,
     nullTargetWarn: false
   });
 
-  // 初始化移动端共享元素位置
   initMobileElements();
 
-  // AMLL pattern: 测量 phony 元素 + ResizeObserver
   nextTick(() => {
     updateCoverStyle();
     layoutResizeObserver = new ResizeObserver(updateCoverStyle);
     if (phonyBigCoverRef.value) layoutResizeObserver.observe(phonyBigCoverRef.value);
     if (phonySmallCoverRef.value) layoutResizeObserver.observe(phonySmallCoverRef.value);
-  });
-  
-  // 使用GSAP创建播放按钮动画效果
-  const setupButtonAnimations = () => {
-    const buttons = document.querySelectorAll('.n-icon.prev, .n-icon.next, .play-state');
-    buttons.forEach(button => {
-      button.addEventListener('mouseenter', () => {
-        gsap.to(button, { scale: 1.1, duration: 0.2, ease: "back.out(1.7)" });
-      });
-      button.addEventListener('mouseleave', () => {
-        gsap.to(button, { scale: 1, duration: 0.2, ease: "power1.out" });
-      });
-    });
-    
-    // Apple风格特定动画
-    if (setting.appleStyle && !isMobile.value) {
-      // 为歌曲信息添加呼吸效果
-      const songInfo = document.querySelector('.apple-layout .data');
-      if (songInfo) {
-        gsap.to(songInfo, {
-          opacity: 0.85,
-          duration: 3,
-          repeat: -1,
-          yoyo: true,
-          ease: "sine.inOut"
-        });
-      }
-      
-      // 为活跃歌词添加脉动效果
-      const setLyricPulse = () => {
-        const activeLyric = document.querySelector('.apple-lyrics .lrc-item.active');
-        if (activeLyric) {
-          gsap.to(activeLyric, {
-            scale: 1.02,
-            opacity: 1,
-            duration: 1.2,
-            repeat: -1,
-            yoyo: true,
-            ease: "sine.inOut"
-          });
-        }
-      };
-      
-      // 监听歌词变化以应用动画
-      const observer = new MutationObserver(() => {
-        setLyricPulse();
-      });
-      
-      const lyricContainer = document.querySelector('.apple-lyrics');
-      if (lyricContainer) {
-        observer.observe(lyricContainer, { 
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ['class']
-        });
-        
-        // 初始设置
-        setLyricPulse();
-      }
-    }
-  };
-  
-  nextTick(() => {
-    console.log(
-      "BigPlayer nextTick starts - forcePlaying BEFORE change:",
-      forcePlaying.value
-    );
-    // After the first tick, disable the forcing flag
-    forcePlaying.value = false;
-    console.log(
-      "BigPlayer nextTick ends - forcePlaying AFTER change:",
-      forcePlaying.value
-    );
+    if (bigPlayerRef.value) layoutResizeObserver.observe(bigPlayerRef.value);
 
-    // Existing logic from nextTick
-    if (setting.backgroundImageShow === "eplor") {
-      console.log("Eplor mode active on mount.");
-    }
+    forcePlaying.value = false;
     lyricsScroll(music.getPlaySongLyricIndex);
-    
-    // 添加按钮动画初始化
-    setupButtonAnimations();
   });
 });
 
@@ -882,67 +669,33 @@ onBeforeUnmount(() => {
   layoutResizeObserver?.disconnect();
 });
 
-// 监听页面是否打开
-watch(
-  () => music.showBigPlayer,
-  (val) => {
-    changePwaColor();
-    if (val) {
-      console.log("开启播放器", music.getPlaySongLyricIndex);
-      // 重新检测页面上是否已有标题组件
-      checkHeaderComponent();
-      // 初始化移动端共享元素位置
-      initMobileElements();
-      nextTick().then(() => {
-        updateCoverStyle(); // 重新测量封面位置
-        music.showPlayList = false;
-        lyricsScroll(music.getPlaySongLyricIndex);
-        animatePlayerIn(); // 添加GSAP入场动画
-      });
-    }
-  }
-);
-
-// 监听移动设备状态变化
-watch(
-  () => isMobile.value,
-  () => {
-    // 设备状态变化时，重新测量封面和计算歌词滚动位置
-    nextTick(() => {
+// 监听器 (移出 onMounted 到顶层)
+watch(() => music.showBigPlayer, (val) => {
+  changePwaColor();
+  if (val) {
+    checkHeaderComponent();
+    initMobileElements();
+    nextTick().then(() => {
       updateCoverStyle();
+      music.showPlayList = false;
       lyricsScroll(music.getPlaySongLyricIndex);
+      animatePlayerIn();
     });
   }
-);
+});
 
-// 监听歌词提示状态
-watch(
-  () => lrcMouseStatus.value,
-  (val) => {
-    animateTip(val);
-  }
-);
+watch(() => isMobile.value, () => {
+  nextTick(() => {
+    updateCoverStyle();
+    lyricsScroll(music.getPlaySongLyricIndex);
+  });
+});
 
-// 监听歌词滚动
-watch(
-  () => music.getPlaySongLyricIndex,
-  (val) => lyricsScroll(val)
-);
+watch(() => lrcMouseStatus.value, (val) => animateTip(val));
+watch(() => music.getPlaySongLyricIndex, (val) => lyricsScroll(val));
+watch(() => site.songPicColor, () => changePwaColor());
+watch(() => music.getPlaySongData, () => checkNameOverflow(), { immediate: true });
 
-// 监听主题色改变
-watch(
-  () => site.songPicColor,
-  () => changePwaColor()
-);
-
-// 监听歌曲变化，检测名称是否溢出
-watch(
-  () => music.getPlaySongData,
-  () => {
-    checkNameOverflow();
-  },
-  { immediate: true }
-);
 </script>
 
 <style lang="scss" scoped>
@@ -984,34 +737,34 @@ watch(
   /* Apple Music 风格 */
   &.apple-style {
     font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
-    
+
     .gray {
       background-color: rgba(0, 0, 0, 0.5);
       -webkit-backdrop-filter: saturate(180%) blur(40px);
       backdrop-filter: saturate(180%) blur(40px);
     }
-    
+
     .overlay {
       &.blur .overlay-img {
         filter: blur(120px) contrast(1.2) saturate(1.5);
       }
     }
-    
+
     .icon-menu {
       .icon {
         border-radius: 50%;
         background-color: rgba(255, 255, 255, 0.1);
-        
+
         &:hover {
           background-color: rgba(255, 255, 255, 0.2);
         }
-        
+
         .n-icon {
           color: white;
         }
       }
     }
-    
+
     .all.apple-layout {
       padding: 0;
 
@@ -1021,116 +774,72 @@ watch(
         display: flex;
         justify-content: center;
         align-items: center;
-        
+
         // 增强封面效果
-        :deep(.cover-container), :deep(.record-container) {
+        :deep(.cover-container),
+        :deep(.record-container) {
           border-radius: 8px;
           overflow: hidden;
           box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
           transform: perspective(1000px) rotateY(0deg);
           transition: transform 0.5s ease;
-          
+
           &:hover {
             transform: perspective(1000px) rotateY(-10deg);
           }
-          
+
           img {
             border-radius: 8px;
           }
         }
       }
-      
+
       .right {
         .lrcShow {
           .data {
             margin-bottom: 24px;
-            
+
             .name {
               font-size: 2rem;
               font-weight: 600;
               margin-bottom: 8px;
               letter-spacing: -0.01em;
-              
+
               span:nth-of-type(2) {
                 font-weight: 400;
                 opacity: 0.8;
               }
             }
-            
+
             .artists {
               font-size: 1.25rem;
               opacity: 0.7;
               letter-spacing: -0.01em;
             }
           }
-          
+
           .apple-lyrics {
             height: 40vh;
             overflow-y: auto;
             padding: 10px 0;
             margin-bottom: 20px;
-            
+
             &::-webkit-scrollbar {
               width: 6px;
             }
-            
+
             &::-webkit-scrollbar-track {
               background: transparent;
             }
-            
+
             &::-webkit-scrollbar-thumb {
               background-color: rgba(255, 255, 255, 0.2);
               border-radius: 6px;
             }
-            
+
             &::-webkit-scrollbar-thumb:hover {
               background-color: rgba(255, 255, 255, 0.4);
             }
-            
-            :deep(.lrc-content) {
-              padding: 15vh 0;
-              text-align: left;
-              width: 100%;
-              box-sizing: border-box;
-              margin: 0;
-            }
-            
-            :deep(.lrc-item) {
-              font-size: 1.2rem;
-              line-height: 1.8;
-              margin: 12px 0;
-              padding: 0;
-              letter-spacing: -0.01em;
-              font-weight: 400;
-              opacity: 0.7;
-              transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-              
-              &.active {
-                font-size: 1.5rem;
-                font-weight: 600;
-                opacity: 1;
-                color: white;
-                text-shadow: 0 0 10px rgba(255, 255, 255, 0.2);
-              }
-            }
-          }
-          
-          .apple-controls {
-            position: absolute;
-            bottom: 6vh;
-            left: 17.5%;
-            transform: translateX(-50%);
-            max-width: 340px;
-            width: 90%;
-            margin: 0;
-            padding: 0;
-            background: transparent;
-            box-shadow: none;
-          }
-
-          .apple-controls .time {
-            width: 100%;
-            margin: 0 0 12px 0;
           }
         }
       }
@@ -1149,8 +858,7 @@ watch(
     justify-content: stretch;
     // overflow: hidden 已在 .bplayer 设置
     grid-template-rows:
-      [thumb] calc(env(safe-area-inset-top, 0px) + 30px)
-      [main-view] 1fr;
+      [thumb] calc(env(safe-area-inset-top, 0px) + 30px) [main-view] 1fr;
     grid-template-columns: 1fr;
 
     // ── AMLL .thumb ──
@@ -1237,6 +945,7 @@ watch(
         .name-wrapper {
           overflow: hidden;
           width: 100%;
+
           .name {
             display: flex;
             font-weight: 600;
@@ -1244,10 +953,18 @@ watch(
             color: var(--main-cover-color);
             margin-bottom: 2px;
             white-space: nowrap;
-            .name-inner { flex-shrink: 0; padding-right: 3em; }
-            &.is-scrolling { animation: marquee-scroll 12s linear infinite; }
+
+            .name-inner {
+              flex-shrink: 0;
+              padding-right: 3em;
+            }
+
+            &.is-scrolling {
+              animation: marquee-scroll 12s linear infinite;
+            }
           }
         }
+
         .artists {
           font-size: 0.75rem;
           opacity: 0.7;
@@ -1261,11 +978,15 @@ watch(
         gap: 12px;
         margin-left: 12px;
         flex-shrink: 0;
+
         .n-icon {
           color: var(--main-cover-color);
           opacity: 0.8;
           cursor: pointer;
-          &:active { opacity: 0.5; }
+
+          &:active {
+            opacity: 0.5;
+          }
         }
       }
     }
@@ -1286,23 +1007,9 @@ watch(
         padding: 0;
         -ms-overflow-style: none;
         scrollbar-width: none;
-        &::-webkit-scrollbar { display: none; }
 
-        :deep(.lrc-content) { padding: 5vh 0 50vh 0; }
-        :deep(.lrc-item) {
-          font-size: 1.1rem;
-          line-height: 1.7;
-          margin: 14px 0;
-          padding: 4px 0;
-          color: var(--main-cover-color);
-          opacity: 0.5;
-          transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-          &.active {
-            font-size: 1.25rem;
-            font-weight: 600;
-            opacity: 1;
-            transform: scale(1.02);
-          }
+        &::-webkit-scrollbar {
+          display: none;
         }
       }
     }
@@ -1315,6 +1022,7 @@ watch(
       justify-content: center;
       transition: opacity 0.5s 0.5s;
       opacity: 1;
+
       span {
         font-size: 1rem;
         color: var(--main-cover-color);
@@ -1357,6 +1065,7 @@ watch(
           .name-wrapper {
             overflow: hidden;
             width: 100%;
+
             .name {
               display: flex;
               font-weight: 600;
@@ -1364,10 +1073,18 @@ watch(
               color: var(--main-cover-color);
               margin-bottom: 4px;
               white-space: nowrap;
-              .name-inner { flex-shrink: 0; padding-right: 3em; }
-              &.is-scrolling { animation: marquee-scroll 12s linear infinite; }
+
+              .name-inner {
+                flex-shrink: 0;
+                padding-right: 3em;
+              }
+
+              &.is-scrolling {
+                animation: marquee-scroll 12s linear infinite;
+              }
             }
           }
+
           .artists {
             font-size: 0.9rem;
             opacity: 0.7;
@@ -1381,11 +1098,15 @@ watch(
           gap: 16px;
           margin-left: 12px;
           flex-shrink: 0;
+
           .n-icon {
             color: var(--main-cover-color);
             opacity: 0.8;
             cursor: pointer;
-            &:active { opacity: 0.5; }
+
+            &:active {
+              opacity: 0.5;
+            }
           }
         }
       }
@@ -1393,6 +1114,7 @@ watch(
       .mobile-progress {
         width: 100%;
         margin-bottom: 16px;
+
         .time-display {
           display: flex;
           justify-content: space-between;
@@ -1413,15 +1135,34 @@ watch(
           color: var(--main-cover-color);
           cursor: pointer;
           transition: transform 0.15s ease, opacity 0.15s ease;
-          &:active { transform: scale(0.85); }
+
+          &:active {
+            transform: scale(0.85);
+          }
         }
-        .mode-btn { opacity: 0.6; &:active { transform: scale(0.85); } }
-        .prev, .next { opacity: 0.9; }
-        .dislike { opacity: 0.9; }
+
+        .mode-btn {
+          opacity: 0.6;
+
+          &:active {
+            transform: scale(0.85);
+          }
+        }
+
+        .prev,
+        .next {
+          opacity: 0.9;
+        }
+
+        .dislike {
+          opacity: 0.9;
+        }
+
         .play-state {
           display: flex;
           align-items: center;
           justify-content: center;
+
           .n-button {
             --n-width: min(16vw, 64px);
             --n-height: min(16vw, 64px);
@@ -1434,7 +1175,10 @@ watch(
             --n-border: none;
             border: none;
           }
-          .n-icon { opacity: 1; }
+
+          .n-icon {
+            opacity: 1;
+          }
         }
       }
 
@@ -1443,6 +1187,7 @@ watch(
         align-items: center;
         width: 100%;
         margin-top: 16px;
+
         :deep(.n-icon) {
           color: var(--main-cover-color);
           opacity: 0.4;
@@ -1473,12 +1218,19 @@ watch(
         object-fit: cover;
       }
 
-      &:active { opacity: 0.9; }
+      &:active {
+        opacity: 0.9;
+      }
     }
 
     @keyframes marquee-scroll {
-      0% { transform: translateX(0); }
-      100% { transform: translateX(-50%); }
+      0% {
+        transform: translateX(0);
+      }
+
+      100% {
+        transform: translateX(-50%);
+      }
     }
 
     // ═══ 状态切换 (AMLL .hideLyric 模式反转) ═══
@@ -1488,14 +1240,18 @@ watch(
       transition: opacity 0.5s;
       pointer-events: none;
     }
+
     .mobile-cover-layout {
       pointer-events: auto;
     }
-    .mobile-lyric, .no-lyrics {
+
+    .mobile-lyric,
+    .no-lyrics {
       opacity: 0;
       transition: opacity 0.5s;
       pointer-events: none;
     }
+
     .mobile-big-controls {
       opacity: 1;
     }
@@ -1507,14 +1263,18 @@ watch(
         transition: opacity 0.25s 0.25s;
         pointer-events: auto;
       }
+
       .mobile-cover-layout {
         pointer-events: none;
       }
-      .mobile-lyric, .no-lyrics {
+
+      .mobile-lyric,
+      .no-lyrics {
         opacity: 1;
         transition: opacity 0.5s 0.5s;
         pointer-events: auto;
       }
+
       .mobile-big-controls {
         opacity: 0;
         pointer-events: none;
@@ -1561,7 +1321,7 @@ watch(
         will-change: filter, transform;
         animation: none !important;
       }
-      
+
       .blur-webgl {
         position: absolute;
         width: 100%;
@@ -1599,12 +1359,14 @@ watch(
   &.bplayer-eplor,
   &.bplayer-blur {
     background-color: gray !important;
+
     .gray {
       backdrop-filter: none !important;
       -webkit-backdrop-filter: none !important;
       transition: none !important;
       background-color: transparent !important;
     }
+
     .overlay::after {
       background-color: transparent !important;
     }
@@ -1621,7 +1383,8 @@ watch(
     mix-blend-mode: plus-lighter;
     align-items: center;
     justify-content: space-between;
-    z-index: 5; /* 提高层级确保按钮可点击 */
+    z-index: 5;
+    /* 提高层级确保按钮可点击 */
     box-sizing: border-box;
 
     /* 移动端隐藏，使用专用的 mobile-close-btn */
@@ -1848,7 +1611,7 @@ watch(
               &:active {
                 transform: scale(1);
               }
-              
+
               &:hover .n-icon {
                 transform: scale(1.1);
               }
@@ -1923,15 +1686,14 @@ watch(
 :global(.bplayer .left .controls .n-icon) {
   mix-blend-mode: plus-lighter;
 }
-:global(.bplayer .left .controls) {
-  text-shadow: 0 0 0.3em color-mix(in srgb, currentColor 15%, transparent);
-}
+
 
 /* 添加自定义动画 */
 @keyframes slowRotate {
   0% {
     transform: rotate(0deg);
   }
+
   100% {
     transform: rotate(360deg);
   }
@@ -1948,31 +1710,14 @@ watch(
   opacity: 0;
 }
 
-// 为Apple Music风格添加自定义动画
-@keyframes albumRotate {
-  0% { transform: perspective(1000px) rotateY(0deg); }
-  50% { transform: perspective(1000px) rotateY(-5deg); }
-  100% { transform: perspective(1000px) rotateY(0deg); }
-}
-
-@keyframes coverShadowPulse {
-  0% { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); }
-  50% { box-shadow: 0 15px 40px rgba(0, 0, 0, 0.4); }
-  100% { box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3); }
-}
-
-@keyframes textGlow {
-  0% { text-shadow: 0 0 10px rgba(255, 255, 255, 0.2); }
-  50% { text-shadow: 0 0 15px rgba(255, 255, 255, 0.4); }
-  100% { text-shadow: 0 0 10px rgba(255, 255, 255, 0.2); }
-}
-
 .control {
+
   .prev,
   .next {
     width: 30px;
     height: 30px;
   }
+
   .control-icon {
     width: 42px;
     height: 42px;

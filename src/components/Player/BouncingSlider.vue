@@ -250,10 +250,6 @@ const handleClick = (event: MouseEvent) => {
   transform: translateZ(0);
 }
 
-:global(.bouncing-slider) {
-  mix-blend-mode: plus-lighter;
-}
-
 .inner-wrapper {
   flex: 1;
   width: 100%;

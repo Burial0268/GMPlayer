@@ -159,19 +159,13 @@ watch(
   touch-action: pan-y;
 }
 
-.amll-lyric-player.dom {
-  // Mask gradient brightness (defaults; core JS overrides per-line at runtime)
-  --bright-mask-alpha: 1;
-  --dark-mask-alpha: 0.4;
+.amll-lyric-player {
   // Hover feedback color for lyric lines (core module CSS reads this variable)
   --amll-lp-hover-bg-color: rgba(255, 255, 255, 0.067);
-  // Subtle text glow on all lyrics — inherited by all descendant text
-  // Uses currentColor so it adapts to immersive album-art coloring
-  text-shadow: 0 0 0.3em color-mix(in srgb, currentColor 30%, transparent);
-
+  
   // Fix: emphasize span padding — letters like 'j' clipped
   // Must use :deep() to penetrate scoped boundary into child component DOM
-  :deep(span[class^='_emphasizeWrapper'] span) {
+  &.dom:deep(span[class^='_emphasizeWrapper'] span) {
     padding: 1em;
     margin: -1em;
   }

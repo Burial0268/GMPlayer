@@ -19,7 +19,7 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-decorum = "1.1.1"
-tauri-plugin-http = { version = "2", features = ["charset", "cookies", "http2", "macos-system-configuration", "brotli", "gzip"] }
+tauri-plugin-http = { version = "2.5.7", features = ["charset", "cookies", "http2", "macos-system-configuration", "brotli", "gzip"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
