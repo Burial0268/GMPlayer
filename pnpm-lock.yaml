@@ -12,16 +12,16 @@ importers:
   .:
     dependencies:
       '@applemusic-like-lyrics/core':
-        specifier: link:deps\apoint-amll\packages\core
+        specifier: link:./deps/apoint-amll/packages/core
         version: link:deps/apoint-amll/packages/core
       '@applemusic-like-lyrics/fft':
-        specifier: link:deps\apoint-amll\packages\fft
+        specifier: link:./deps/apoint-amll/packages/fft
         version: link:deps/apoint-amll/packages/fft
       '@applemusic-like-lyrics/lyric':
-        specifier: link:deps\apoint-amll\packages\lyric
+        specifier: link:./deps/apoint-amll/packages/lyric
         version: link:deps/apoint-amll/packages/lyric
       '@applemusic-like-lyrics/vue':
-        specifier: link:deps\apoint-amll\packages\vue
+        specifier: link:./deps/apoint-amll/packages/vue
         version: link:deps/apoint-amll/packages/vue
       '@icon-park/vue-next':
         specifier: ^1.4.2
@@ -30,7 +30,7 @@ importers:
         specifier: ^1.0.2
         version: 1.0.2
       '@lyrics-helper-rs/ttml-processor':
-        specifier: link:deps\apoint-amll\packages\ttml-processor
+        specifier: link:./deps/apoint-amll/packages/ttml-processor
         version: link:deps/apoint-amll/packages/ttml-processor
       '@material/material-color-utilities':
         specifier: ^0.4.0
@@ -181,7 +181,7 @@ importers:
         specifier: ^28.8.0
         version: 28.8.0(@babel/parser@7.29.0)(@nuxt/kit@3.17.5)(vue@3.5.28(typescript@5.9.3))
       vite:
-        specifier: npm:rolldown-vite@^7.3.1
+        specifier: npm:rolldown-vite@latest
         version: rolldown-vite@7.3.1(@types/node@20.19.33)(esbuild@0.27.3)(jiti@2.6.1)(sass@1.97.3)(terser@5.46.0)
       vite-plugin-compression2:
         specifier: ^2.4.0
