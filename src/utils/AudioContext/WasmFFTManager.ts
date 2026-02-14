@@ -198,6 +198,7 @@ export class WasmFFTManager {
   reset(): void {
     this._peakValue = 0.0001;
     this._rawBinsDirty = true;
+    if (this._readBuffer) this._readBuffer.fill(0);
     if (this._smoothedBuffer) this._smoothedBuffer.fill(0);
     this._outputBuffer.fill(0);
   }

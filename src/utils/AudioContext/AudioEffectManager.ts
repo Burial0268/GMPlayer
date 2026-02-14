@@ -86,6 +86,9 @@ export class AudioEffectManager {
   // Throttling for AnalyserNode
   private _lastUpdateTime: number = 0;
 
+  // Seek guard: blocks stale PCM data from AudioWorklet during seek transition
+  private _seekPending: boolean = false;
+
   // Connection state
   private _isConnected: boolean = false;
 
@@ -152,6 +155,7 @@ export class AudioEffectManager {
           this._workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-capture-processor');
 
           this._workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
+            if (this._seekPending) return; // Discard stale PCM during seek
             if (this._wasmFFT) {
               this._wasmFFT.pushData(e.data, this.audioCtx.sampleRate, 1);
               this._wasmDirty = true;
@@ -377,8 +381,10 @@ export class AudioEffectManager {
   /**
    * Clear WASM FFT queue and reset all analysis state.
    * Call on seek to flush stale PCM data from the old playback position.
+   * Sets a guard flag to block incoming PCM until onSeeked() is called.
    */
   clearFFTState(): void {
+    this._seekPending = true;
     this._wasmDirty = false;
     this._lastAverage = 0;
     this.lowFreqAnalyzer.reset();
@@ -386,5 +392,21 @@ export class AudioEffectManager {
     if (this._wasmFFT) {
       this._wasmFFT.clearQueue();
     }
+  }
+
+  /**
+   * Lift the seek guard after HTMLAudioElement's 'seeked' event fires.
+   * Performs a final clear to flush any stale PCM that leaked through
+   * the Web Audio API's internal buffer during the seek transition.
+   */
+  onSeeked(): void {
+    if (!this._seekPending) return;
+    // Final clear: any stale data that was already in the worklet pipeline
+    // before the guard was set may have been pushed to the FFTPlayer
+    if (this._wasmFFT) {
+      this._wasmFFT.clearQueue();
+    }
+    this._cachedWasmSpectrum.fill(0);
+    this._seekPending = false;
   }
 }

@@ -64,6 +64,9 @@ export class NativeSound implements ISound {
   private _lastErrorTime: number = 0;
   private _errorResetDelay: number = 5000; // Reset error count after 5s
 
+  // Seek guard: handler for the current pending 'seeked' event
+  private _seekedHandler: (() => void) | null = null;
+
   // Compatibility structure for legacy spectrum access
   public _sounds: { _node: HTMLAudioElement }[];
 
@@ -391,11 +394,22 @@ export class NativeSound implements ISound {
       return this._audio.currentTime;
     }
     try {
+      // Remove previous seeked handler if rapid-seeking
+      if (this._seekedHandler) {
+        this._audio.removeEventListener('seeked', this._seekedHandler);
+        this._seekedHandler = null;
+      }
+
       this._audio.currentTime = pos;
       // Flush stale PCM data from the WASM FFTPlayer queue
-      // so analysis reflects the new playback position
+      // and gate incoming PCM until the seek actually completes
       if (this._effectManager) {
         this._effectManager.clearFFTState();
+        this._seekedHandler = () => {
+          this._seekedHandler = null;
+          this._effectManager?.onSeeked();
+        };
+        this._audio.addEventListener('seeked', this._seekedHandler, { once: true });
       }
     } catch (e) {
       console.warn('NativeSound: Failed to seek to', pos, e);
@@ -565,6 +579,12 @@ export class NativeSound implements ISound {
       this._audio.removeEventListener('stalled', this._boundHandlers.stalled);
       this._audio.removeEventListener('waiting', this._boundHandlers.waiting);
       this._boundHandlers = null;
+    }
+
+    // Remove pending seeked handler
+    if (this._seekedHandler) {
+      this._audio.removeEventListener('seeked', this._seekedHandler);
+      this._seekedHandler = null;
     }
 
     this._audio.pause();

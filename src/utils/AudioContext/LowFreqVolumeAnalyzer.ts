@@ -156,7 +156,7 @@ export class LowFreqVolumeAnalyzer {
    */
   public reset(): void {
     this._gradient = [];
-    this._curValue = 1;
+    this._curValue = 0;
     this._lastTime = 0;
   }
 }
