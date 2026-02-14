@@ -34,13 +34,14 @@
           <span
             v-if="music.getPlaySongData"
             class="artists text-hidden"
-            @click="
-              routerJump('/artist', {
-                id: music.getPlaySongData.artist[0].id,
-              })
-            "
           >
-            {{ music.getPlaySongData.artist[0].name }}
+            <span
+              v-for="(ar, index) in music.getPlaySongData.artist"
+              :key="ar.id"
+            >
+              <span class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{ ar.name }}</span>
+              <span v-if="index < music.getPlaySongData.artist.length - 1"> / </span>
+            </span>
           </span>
         </div>
         <div class="action-row">
@@ -348,9 +349,11 @@ onMounted(() => {
         .artists {
           font-size: 1rem;
           opacity: 0.7;
-          cursor: pointer;
+          .artist-name {
+            cursor: pointer;
             &:hover {
-            opacity: 1;
+              opacity: 1;
+            }
           }
         }
       }
