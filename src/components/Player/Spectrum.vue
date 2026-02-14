@@ -104,10 +104,11 @@ const addRoundRect = (ctx, x, y, width, height, radius) => {
   ctx.closePath();
 };
 
-// Managed RAF loop — reads store data each frame (store mutations bypass proxy)
+// Managed RAF loop — only runs when BigPlayer is visible (show === true)
 let rafId = null;
 
 const startDraw = () => {
+  if (rafId) return;
   const loop = () => {
     drawSpectrum(spectrumsData.value);
     rafId = requestAnimationFrame(loop);
@@ -125,6 +126,16 @@ const stopDraw = () => {
 // ResizeObserver to track canvas size changes
 let resizeObserver = null;
 
+// Control RAF loop based on visibility
+watch(() => props.show, (visible) => {
+  if (visible) {
+    updateCanvasSize();
+    startDraw();
+  } else {
+    stopDraw();
+  }
+});
+
 onMounted(() => {
   updateCanvasSize();
 
@@ -134,7 +145,10 @@ onMounted(() => {
     resizeObserver.observe(canvasRef.value.parentElement);
   }
 
-  startDraw();
+  // Only start drawing if already visible
+  if (props.show) {
+    startDraw();
+  }
 });
 
 onBeforeUnmount(() => {

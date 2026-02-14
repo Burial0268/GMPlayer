@@ -66,8 +66,7 @@ const emit = defineEmits<{
 
 // 计算当前播放时间
 watchEffect(() => {
-  // 提前 20ms 来解决异步更新延迟问题
-  currentTime.value = (music.persistData.playSongTime.currentTime * 1000) + 20;
+  currentTime.value = (music.persistData.playSongTime.currentTime * 1000);
 });
 
 // 计算对齐方式

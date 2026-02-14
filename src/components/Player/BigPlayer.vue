@@ -360,7 +360,6 @@ const calcCoverLayout = (hideLyric = true) => {
     top: targetB.y - rootB.y + (targetB.height - size) / 2,
     borderRadius: hideLyric ? 12 : 8,
   };
-  console.log('[calcCoverLayout]', hideLyric ? 'big' : 'small', result, 'phony size:', targetCover.clientWidth, targetCover.clientHeight);
   return result;
 };
 
@@ -474,15 +473,7 @@ const forcePlaying = ref(true);
 
 // Computed property to determine the actual value for the :playing prop
 const actualPlayingProp = computed(() => {
-  const isForced = forcePlaying.value;
-  const realState = music.getPlayState;
-  // Calculate the result based on the logic: force true initially, then follow real state
-  const result = isForced || realState;
-  // Log the dependencies and the result for debugging
-  console.log(
-    `-- computed actualPlayingProp -- forcePlaying: ${isForced}, music.getPlayState: ${realState}, result: ${result}`
-  );
-  return result;
+  return forcePlaying.value || music.getPlayState;
 });
 
 // 工具栏显隐
@@ -675,7 +666,8 @@ watch(() => music.showBigPlayer, (val) => {
   if (val) {
     checkHeaderComponent();
     initMobileElements();
-    nextTick().then(() => {
+    // Defer layout calculations to RAF to avoid thrashing during CSS transition
+    requestAnimationFrame(() => {
       updateCoverStyle();
       music.showPlayList = false;
       lyricsScroll(music.getPlaySongLyricIndex);
