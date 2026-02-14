@@ -86,10 +86,7 @@ export default defineConfig(({ mode }) => {
         },
       }) : null,
       compression({
-        algorithm: "gzip",
-      }),
-      compression({
-        algorithm: "brotliCompress",
+        algorithms: ["gzip", "brotliCompress"],
       }),
     ].filter(Boolean),
     server: {

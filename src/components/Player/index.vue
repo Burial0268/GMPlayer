@@ -242,7 +242,7 @@ import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
 import PlayListDrawer from "@/components/DataModal/PlayListDrawer.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
-import BigPlayer from "./BigPlayer.vue";
+import BigPlayer from "./BigPlayer/index.vue";
 import "vue-slider-component/theme/default.css";
 import { watch } from "vue";
 import { parseLyricData as parseLyric, formatAsLrc as formatToLrc } from "@/utils/LyricsProcessor";
