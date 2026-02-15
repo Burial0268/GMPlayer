@@ -134,7 +134,10 @@ export class NativeSound implements ISound {
       }
 
       // Register PCM capture worklet before creating AudioEffectManager
-      await AudioContextManager.registerWorklet();
+      // Skip on mobile: worklet is not used (AnalyserNode fallback for lowFreqVolume)
+      if (!AudioContextManager.isMobile()) {
+        await AudioContextManager.registerWorklet();
+      }
 
       // CRITICAL: Only create MediaElementSourceNode once per audio element
       // Attempting to create multiple sources from same element throws DOMException

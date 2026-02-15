@@ -83,6 +83,9 @@ export class AudioEffectManager {
   private _cachedWasmSpectrum: number[] = [];
   private _wasmDirty: boolean = false;
 
+  // AnalyserNode fallback buffer for mobile lowFreqVolume (avoids WASM overhead)
+  private _analyserLowFreqBins: number[] = [0, 0];
+
   // Throttling for AnalyserNode
   private _lastUpdateTime: number = 0;
 
@@ -117,13 +120,17 @@ export class AudioEffectManager {
       this._frequencyBuffer = new Uint8Array(bufferSize);
 
       // WASM FFTPlayer for lowFreqVolume + detailed analysis (Hamming window — AMLL native)
-      this._wasmFFT = new WasmFFTManager(this.options.fftOutputSize);
-      this._wasmFFT.setFreqRange(this.options.freqMin, this.options.freqMax);
-      if (!this._wasmFFT.isReady()) {
-        console.warn('AudioEffectManager: WasmFFTManager failed to initialize');
+      // Skip on mobile: AudioWorklet + WASM FFT causes audio glitches due to
+      // main-thread congestion (~86 postMessage/s + WASM pushData calls + GC pressure).
+      // Mobile uses AnalyserNode fallback for lowFreqVolume instead.
+      if (!AudioContextManager.isMobile()) {
+        this._wasmFFT = new WasmFFTManager(this.options.fftOutputSize);
+        this._wasmFFT.setFreqRange(this.options.freqMin, this.options.freqMax);
+        if (!this._wasmFFT.isReady()) {
+          console.warn('AudioEffectManager: WasmFFTManager failed to initialize');
+        }
+        this._cachedWasmSpectrum = new Array(this.options.fftOutputSize).fill(0);
       }
-
-      this._cachedWasmSpectrum = new Array(this.options.fftOutputSize).fill(0);
     } catch (err) {
       console.error('AudioEffectManager: Failed to initialize nodes', err);
     }
@@ -150,7 +157,10 @@ export class AudioEffectManager {
       inputNode.connect(this.analyserNode);
 
       // AudioWorklet for PCM capture → WASM FFT (lowFreqVolume + getFFTData)
-      if (isPCMWorkletRegisteredFor(this.audioCtx) && this._wasmFFT?.isReady()) {
+      // Skip on mobile: AnalyserNode fallback is used for lowFreqVolume instead,
+      // avoiding AudioWorklet + WASM overhead that causes audio glitches on mobile
+      // (constant postMessage traffic + WASM calls + GC pressure from Float32Array transfers)
+      if (!AudioContextManager.isMobile() && isPCMWorkletRegisteredFor(this.audioCtx) && this._wasmFFT?.isReady()) {
         try {
           this._workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-capture-processor');
 
@@ -246,16 +256,19 @@ export class AudioEffectManager {
 
   /**
    * Get low frequency volume for background effects.
-   * Calculated from WASM FFTPlayer raw magnitudes (Hamming window — matches AMLL native).
-   * Uses AMLL FFTToLowPassContext algorithm: log10 amplitude, gradient sliding window,
-   * time-delta smoothing.
    *
-   * Raw magnitudes are passed directly (not 0-255 normalized) to match AMLL's native
-   * FFTPlayer output format, producing values in the 0.x-1.0 range.
+   * Two paths:
+   *   Desktop (WASM): raw magnitudes from WASM FFTPlayer (Hamming window — matches AMLL native)
+   *   Mobile (fallback): AnalyserNode byte frequency data scaled to approximate raw magnitude range
    *
    * @returns Smoothed low-frequency volume
    */
   getLowFrequencyVolume(): number {
+    // Mobile or no worklet: use AnalyserNode byte frequency fallback
+    if (!this._workletNode) {
+      return this._getLowFreqFromAnalyser();
+    }
+
     this._ensureWasmSpectrumFresh();
     // Pass raw (un-normalized) FFT bins to match AMLL's native FFTPlayer output
     const rawBins = this._wasmFFT?.getRawBins(this.options.lowFreqBinCount);
@@ -263,6 +276,33 @@ export class AudioEffectManager {
       return this.lowFreqAnalyzer.analyze(rawBins);
     }
     return this.lowFreqAnalyzer.analyze(this._cachedWasmSpectrum);
+  }
+
+  /**
+   * Fallback: compute low-frequency volume from AnalyserNode byte frequency data.
+   * Used on mobile to avoid AudioWorklet + WASM FFT overhead.
+   *
+   * Scales byte values (0-255) to approximate raw FFT magnitude range (~0-5000)
+   * so LowFreqVolumeAnalyzer._amplitudeToLevel produces levels in the 0.3-0.7 range,
+   * matching the expected output range of the WASM path.
+   *
+   * Requires getFrequencyData() to have been called first to populate _frequencyBuffer.
+   */
+  private _getLowFreqFromAnalyser(): number {
+    if (!this._frequencyBuffer || this._frequencyBuffer.length === 0) {
+      return this.lowFreqAnalyzer.analyze(new Uint8Array(0));
+    }
+
+    const binCount = Math.min(this.options.lowFreqBinCount, this._frequencyBuffer.length);
+    if (this._analyserLowFreqBins.length !== binCount) {
+      this._analyserLowFreqBins = new Array(binCount).fill(0);
+    }
+    for (let i = 0; i < binCount; i++) {
+      // Scale 0-255 byte values to approximate raw FFT magnitude range
+      this._analyserLowFreqBins[i] = this._frequencyBuffer[i] * 20;
+    }
+
+    return this.lowFreqAnalyzer.analyze(this._analyserLowFreqBins);
   }
 
   /**

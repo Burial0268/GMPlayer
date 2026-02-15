@@ -64,11 +64,16 @@ const stopSpectrumUpdate = (): void => {
 /**
  * 启动频谱更新
  * Pauses updates when page is not visible (saves CPU in background)
+ * On mobile, skips full spectrum copy when only lowFreqVolume is needed
  * @param sound - 音频对象
  * @param music - pinia store
  */
 const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   stopSpectrumUpdate();
+
+  const settings = settingStore();
+  const needsSpectrum = settings.musicFrequency;
+  const needsLowFreq = settings.dynamicFlowSpeed;
 
   const updateLoop = (): void => {
     if (!sound) {
@@ -78,24 +83,31 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
 
     // Skip spectrum computation when page is not visible
     if (isPageVisible) {
-      // 获取频谱数据 (getFrequencyData also computes average internally)
-      const frequencyData = sound.getFrequencyData();
-      const len = frequencyData.length;
+      if (needsSpectrum) {
+        // Full spectrum path: read AnalyserNode + copy to store
+        const frequencyData = sound.getFrequencyData();
+        const len = frequencyData.length;
 
-      // Reuse array to avoid allocating a new one every frame (~60fps)
-      if (spectrumReusableArray.length !== len) {
-        spectrumReusableArray = new Array(len);
+        // Reuse array to avoid allocating a new one every frame (~60fps)
+        if (spectrumReusableArray.length !== len) {
+          spectrumReusableArray = new Array(len);
+        }
+        for (let i = 0; i < len; i++) {
+          spectrumReusableArray[i] = frequencyData[i];
+        }
+        music.spectrumsData = spectrumReusableArray;
+
+        // 使用 AudioEffectManager 内部计算的平均振幅
+        music.spectrumsScaleData = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
+      } else if (needsLowFreq) {
+        // Only lowFreqVolume needed — populate AnalyserNode buffer for mobile fallback
+        sound.getFrequencyData();
       }
-      for (let i = 0; i < len; i++) {
-        spectrumReusableArray[i] = frequencyData[i];
+
+      if (needsLowFreq) {
+        // 获取低频音量 (直接从 effectManager 计算，已内置平滑处理)
+        music.lowFreqVolume = sound.getLowFrequencyVolume();
       }
-      music.spectrumsData = spectrumReusableArray;
-
-      // 使用 AudioEffectManager 内部计算的平均振幅
-      music.spectrumsScaleData = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
-
-      // 获取低频音量 (直接从 effectManager 计算，已内置平滑处理)
-      music.lowFreqVolume = sound.getLowFrequencyVolume();
     }
 
     spectrumAnimationId = requestAnimationFrame(updateLoop);
