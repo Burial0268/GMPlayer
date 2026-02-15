@@ -56,8 +56,13 @@ const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
   fftOutputSize: 1024,
   freqMin: 76,
   freqMax: 2400,
-  lowFreqBinCount: 2,
-  lowFreqOptions: {},
+  lowFreqBinCount: 4,
+  lowFreqOptions: {
+    // Lower threshold for AnalyserNode fallback: byte frequency data is dB-scaled,
+    // so amplitudeToLevel (another log) compresses the dynamic range.
+    // Default 0.35 almost never triggers; 0.1 restores punchy bass detection.
+    gradientThreshold: 0.1,
+  },
 };
 
 /**
@@ -84,7 +89,7 @@ export class AudioEffectManager {
   private _wasmDirty: boolean = false;
 
   // AnalyserNode fallback buffer for mobile lowFreqVolume (avoids WASM overhead)
-  private _analyserLowFreqBins: number[] = [0, 0];
+  private _analyserLowFreqBins: number[] = [0, 0, 0, 0];
 
   // Throttling for AnalyserNode
   private _lastUpdateTime: number = 0;
@@ -282,9 +287,10 @@ export class AudioEffectManager {
    * Fallback: compute low-frequency volume from AnalyserNode byte frequency data.
    * Used on mobile to avoid AudioWorklet + WASM FFT overhead.
    *
-   * Scales byte values (0-255) to approximate raw FFT magnitude range (~0-5000)
-   * so LowFreqVolumeAnalyzer._amplitudeToLevel produces levels in the 0.3-0.7 range,
-   * matching the expected output range of the WASM path.
+   * AnalyserNode returns dB-scaled bytes (0-255). Since LowFreqVolumeAnalyzer applies
+   * another log10 (amplitudeToLevel), the double-logarithm compresses dynamic range.
+   * Scale factor of 50 compensates, producing levels in the 0.15-0.80 range so the
+   * gradient algorithm (with mobile threshold 0.1) triggers on bass hits.
    *
    * Requires getFrequencyData() to have been called first to populate _frequencyBuffer.
    */
@@ -298,8 +304,9 @@ export class AudioEffectManager {
       this._analyserLowFreqBins = new Array(binCount).fill(0);
     }
     for (let i = 0; i < binCount; i++) {
-      // Scale 0-255 byte values to approximate raw FFT magnitude range
-      this._analyserLowFreqBins[i] = this._frequencyBuffer[i] * 20;
+      // Scale 0-255 dB-compressed bytes to approximate raw FFT magnitude range
+      // 50x compensates for the double-log compression (dB + amplitudeToLevel)
+      this._analyserLowFreqBins[i] = this._frequencyBuffer[i] * 50;
     }
 
     return this.lowFreqAnalyzer.analyze(this._analyserLowFreqBins);
