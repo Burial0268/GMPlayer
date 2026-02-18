@@ -55,26 +55,4 @@ export interface PlaySongTime {
   songTimeDuration?: string;
 }
 
-declare global {
-  interface Window {
-    $player: ISound | undefined;
-    AudioContext: typeof AudioContext;
-    webkitAudioContext: typeof AudioContext;
-    $message: {
-      info: (message: string, options?: Record<string, unknown>) => void;
-      warning: (message: string, options?: Record<string, unknown>) => void;
-      error: (message: string, options?: Record<string, unknown>) => void;
-      success: (message: string, options?: Record<string, unknown>) => void;
-      loading: (message: string, options?: Record<string, unknown>) => { destroy: () => void };
-    };
-    $setSiteTitle: (title: string) => void;
-    $scrollToTop: () => void;
-    $cleanAll: () => void;
-    $signIn: () => void;
-    $getPlaySongData: (data: unknown) => void;
-  }
-  // Allow bare $message usage (without window. prefix)
-  var $message: Window['$message'];
-}
-
-export {};
+// Global Window augmentations are in src/types/globals.d.ts

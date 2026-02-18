@@ -10,14 +10,7 @@ interface CustomInternalAxiosRequestConfig extends InternalAxiosRequestConfig {
   hiddenBar?: boolean;
 }
 
-// Declare global $loadingBar
-declare global {
-  var $loadingBar: {
-    start: () => void;
-    finish: () => void;
-    error: () => void;
-  } | undefined;
-}
+// Global $loadingBar type is declared in src/types/globals.d.ts
 
 let baseURL = "";
 
