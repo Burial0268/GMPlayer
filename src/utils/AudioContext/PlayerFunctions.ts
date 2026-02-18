@@ -27,6 +27,7 @@ import { getCoverColor } from '@/utils/getCoverColor';
 import { BufferedSound } from './BufferedSound';
 import { SoundManager } from './SoundManager';
 import { AudioContextManager } from './AudioContextManager';
+import { getAutoMixEngine } from './AutoMixEngine';
 import type { ISound } from './types';
 
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -80,6 +81,10 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
       spectrumAnimationId = null;
       return;
     }
+
+    // AutoMix: monitor playback position per frame
+    const autoMix = getAutoMixEngine();
+    autoMix.monitorPlayback(sound);
 
     // Skip spectrum computation when page is not visible
     if (isPageVisible) {
@@ -187,6 +192,15 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
  */
 export const createSound = (src: string, autoPlay = true): ISound | undefined => {
   try {
+    // If AutoMix is crossfading, it handles sound creation — skip normal flow
+    const autoMix = getAutoMixEngine();
+    if (autoMix.isCrossfading()) {
+      if (IS_DEV) {
+        console.log('[createSound] AutoMix crossfade active, skipping normal sound creation');
+      }
+      return window.$player;
+    }
+
     SoundManager.unload();
     stopSpectrumUpdate();
 
@@ -263,6 +277,19 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
 
     // 播放事件
     sound?.on('play', () => {
+      // If this sound is no longer the active player (e.g., AutoMix transitioned
+      // to a new sound), don't run the full play handler — avoids duplicate
+      // notifications, wrong time tracking, and wrong spectrum monitoring.
+      if (window.$player && window.$player !== sound) return;
+      // During AutoMix crossfade, this sound is the outgoing one being resumed —
+      // skip to prevent side effects (window.$player may not be updated yet).
+      const autoMixCheck = getAutoMixEngine();
+      if (autoMixCheck.isCrossfading()) {
+        if (IS_DEV) {
+          console.log('[createSound play handler] Skipped during AutoMix crossfade');
+        }
+        return;
+      }
       if (timeupdateInterval) {
         cancelAnimationFrame(timeupdateInterval);
       }
@@ -298,6 +325,12 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
       // 预加载下一首
       music.preloadUpcomingSongs();
 
+      // Notify AutoMix engine that a new track started
+      const songId = music.getPlaySongData?.id;
+      if (songId) {
+        getAutoMixEngine().onTrackStarted(sound, songId);
+      }
+
       // 获取播放器信息
       const timeLoop = (): void => {
         checkAudioTime(sound, music);
@@ -311,14 +344,24 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
       // 播放时页面标题
       window.document.title = `${songName} - ${songArtist} - ${import.meta.env.VITE_SITE_TITLE}`;
 
-      // 启动频谱更新
-      if (settings.musicFrequency || settings.dynamicFlowSpeed) {
+      // 启动频谱更新 (also needed for AutoMix playback monitoring)
+      if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
         startSpectrumUpdate(sound, music);
       }
     });
 
     // 暂停事件
     sound?.on('pause', () => {
+      // If this sound is no longer the active player, ignore
+      if (window.$player && window.$player !== sound) return;
+      // During AutoMix crossfade, outgoing sound pausing is expected — don't change play state
+      const autoMix = getAutoMixEngine();
+      if (autoMix.isCrossfading()) {
+        if (IS_DEV) {
+          console.log('[pause handler] Ignored during AutoMix crossfade');
+        }
+        return;
+      }
       if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
       if (IS_DEV) {
         console.log('音乐暂停');
@@ -329,12 +372,19 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
     });
     // 结束事件
     sound?.on('end', () => {
+      // If this sound is no longer the active player (e.g., AutoMix transitioned
+      // to a new sound), don't cancel the current player's time/spectrum loops
+      if (window.$player && window.$player !== sound) return;
       if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
       stopSpectrumUpdate();
       if (IS_DEV) {
         console.log('歌曲播放结束');
       }
-      music.setPlaySongIndex('next');
+      // If AutoMix handled the transition, don't trigger next song again
+      const autoMixEngine = getAutoMixEngine();
+      if (!autoMixEngine.isCrossfading()) {
+        music.setPlaySongIndex('next');
+      }
     });
     // 错误事件
     sound?.on('loaderror', () => {
@@ -383,6 +433,11 @@ export const setVolume = (sound: ISound | undefined, volume: number): void => {
  */
 export const setSeek = (sound: ISound | undefined, seek: number): void => {
   const music = musicStore();
+  // Cancel AutoMix crossfade on seek
+  const autoMix = getAutoMixEngine();
+  if (autoMix.isCrossfading()) {
+    autoMix.cancelCrossfade();
+  }
   sound?.seek(seek);
   // 直接调用 setPlaySongTime 确保 UI 状态立即更新
   if (sound) {
@@ -438,6 +493,148 @@ export const fadePlayOrPause = (
 export const soundStop = (sound: ISound | undefined): void => {
   sound?.stop();
   setSeek(sound, 0);
+};
+
+/**
+ * Adopt an incoming sound created by AutoMix.
+ * Registers event handlers (pause/end/error), starts time tracking and spectrum updates.
+ * Called after the incoming sound is already playing.
+ * @param incomingSound - The incoming sound instance from AutoMix crossfade
+ */
+export const adoptIncomingSound = (incomingSound: ISound): void => {
+  const music = musicStore();
+  const settings = settingStore();
+
+  // Stop any existing tracking from outgoing sound
+  stopSpectrumUpdate();
+  if (timeupdateInterval) {
+    cancelAnimationFrame(timeupdateInterval);
+    timeupdateInterval = null;
+  }
+
+  // Ensure play state is true (incoming is already playing)
+  music.setPlayState(true);
+  music.isLoadingSong = false;
+
+  // Initialize time from the incoming sound immediately.
+  // The song data watcher no longer resets time during crossfade (to prevent duration=0),
+  // so we must do it here to avoid briefly showing the outgoing song's time.
+  const initDuration = incomingSound.duration();
+  const initTime = (incomingSound.seek() as number) || 0;
+  music.setPlaySongTime({
+    currentTime: initTime,
+    duration: initDuration > 0 ? initDuration : 0,
+  });
+
+  // Update cover color for the new track (AutoMix bypasses createSound, so do it here)
+  const site = siteStore();
+  const coverUrl = music.getPlaySongData?.album?.picUrl;
+  if (coverUrl) {
+    getCoverColor(coverUrl)
+      .then((color) => {
+        site.songPicGradient = color;
+      })
+      .catch((err) => {
+        console.error('取色出错 (AutoMix)', err);
+      });
+  }
+
+  // Start time tracking immediately
+  const timeLoop = (): void => {
+    checkAudioTime(incomingSound, music);
+    timeupdateInterval = requestAnimationFrame(timeLoop);
+  };
+  timeLoop();
+
+  // Start spectrum update (also handles AutoMix monitorPlayback per frame)
+  if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
+    startSpectrumUpdate(incomingSound, music);
+  }
+
+  // Update media session with current song info
+  setMediaSession(music);
+
+  // Write play history & preload next songs (AutoMix bypasses createSound's play handler)
+  const playSongData = music.getPlaySongData;
+  if (playSongData) {
+    music.setPlayHistory(playSongData);
+    // Page title
+    const songName = playSongData.name;
+    const songArtist = playSongData.artist?.[0]?.name;
+    if (songName && songArtist) {
+      window.document.title = `${songName} - ${songArtist} - ${import.meta.env.VITE_SITE_TITLE}`;
+    }
+  }
+  music.preloadUpcomingSongs();
+
+  // Register pause handler with crossfade guard
+  incomingSound.on('pause', () => {
+    // If this sound is no longer the active player, ignore
+    if (window.$player && window.$player !== incomingSound) return;
+    const autoMix = getAutoMixEngine();
+    if (autoMix.isCrossfading()) {
+      if (IS_DEV) {
+        console.log('[adoptIncomingSound pause] Ignored during AutoMix crossfade');
+      }
+      return;
+    }
+    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    if (IS_DEV) {
+      console.log('音乐暂停 (adopted sound)');
+    }
+    music.setPlayState(false);
+    window.$setSiteTitle();
+  });
+
+  // Register play handler to restart time loop + spectrum after pause/resume.
+  // Without this, pausing and resuming after AutoMix crossfade permanently
+  // kills time tracking (pause handler cancels timeupdateInterval but nothing restarts it).
+  incomingSound.on('play', () => {
+    if (timeupdateInterval) {
+      cancelAnimationFrame(timeupdateInterval);
+    }
+
+    music.setPlayState(true);
+
+    // Restart time tracking
+    const tLoop = (): void => {
+      checkAudioTime(incomingSound, music);
+      timeupdateInterval = requestAnimationFrame(tLoop);
+    };
+    tLoop();
+
+    // Restart spectrum + AutoMix monitoring
+    if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
+      startSpectrumUpdate(incomingSound, music);
+    }
+  });
+
+  // Register end handler
+  incomingSound.on('end', () => {
+    // If this sound is no longer the active player, don't cancel current loops
+    if (window.$player && window.$player !== incomingSound) return;
+    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    stopSpectrumUpdate();
+    if (IS_DEV) {
+      console.log('歌曲播放结束 (adopted sound)');
+    }
+    const autoMixEngine = getAutoMixEngine();
+    if (!autoMixEngine.isCrossfading()) {
+      music.setPlaySongIndex('next');
+    }
+  });
+
+  // Register error handlers
+  incomingSound.on('loaderror', () => {
+    music.setPlayState(false);
+  });
+  incomingSound.on('playerror', () => {
+    music.setPlayState(false);
+  });
+
+  if (IS_DEV) {
+    console.log('[adoptIncomingSound] Adopted incoming sound with event handlers');
+  }
 };
 
 /**

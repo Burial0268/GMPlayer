@@ -64,9 +64,13 @@ declare global {
       info: (message: string, options?: Record<string, unknown>) => void;
       warning: (message: string, options?: Record<string, unknown>) => void;
       error: (message: string, options?: Record<string, unknown>) => void;
+      success: (message: string, options?: Record<string, unknown>) => void;
       loading: (message: string, options?: Record<string, unknown>) => { destroy: () => void };
     };
-    $setSiteTitle: () => void;
+    $setSiteTitle: (title: string) => void;
+    $scrollToTop: () => void;
+    $cleanAll: () => void;
+    $signIn: () => void;
     $getPlaySongData: (data: unknown) => void;
   }
   // Allow bare $message usage (without window. prefix)

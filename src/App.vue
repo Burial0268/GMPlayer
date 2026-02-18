@@ -34,7 +34,7 @@
   </Provider>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { musicStore, userStore, settingStore, siteStore } from "@/store";
 import { useRouter } from "vue-router";
 import { getLoginState, refreshLogin } from "@/api/login";

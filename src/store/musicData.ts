@@ -8,7 +8,7 @@ import { getMusicUrl } from "@/api/song";
 import { userStore, settingStore } from "@/store";
 import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
-import { soundStop, fadePlayOrPause } from "@/utils/AudioContext";
+import { soundStop, fadePlayOrPause, getAutoMixEngine } from "@/utils/AudioContext";
 import getLanguageData from "@/utils/getLanguageData";
 import { preprocessLyrics, type SongLyric, type ParsedLrcLine, type ParsedYrcLine, type StoredLyricLine } from "@/utils/LyricsProcessor";
 
@@ -65,6 +65,17 @@ interface PersistData {
   playHistory: SongData[];
 }
 
+interface AutoMixStateData {
+  phase: 'idle' | 'analyzing' | 'waiting' | 'crossfading' | 'finishing';
+  outroType: string | null;
+  outroConfidence: number;
+  crossfadeStartTime: number;
+  crossfadeDuration: number;
+  crossfadeProgress: number;
+  incomingSongName: string | null;
+  incomingSongId: number | null;
+}
+
 interface MusicDataState {
   showBigPlayer: boolean;
   showPlayBar: boolean;
@@ -80,6 +91,7 @@ interface MusicDataState {
   lowFreqVolume: number;
   isLoadingSong: boolean;
   preloadedSongIds: Set<number>;
+  autoMixState: AutoMixStateData;
   persistData: PersistData;
 }
 
@@ -115,6 +127,16 @@ const useMusicDataStore = defineStore("musicData", {
       lowFreqVolume: 0,
       isLoadingSong: false,
       preloadedSongIds: new Set(),
+      autoMixState: {
+        phase: 'idle',
+        outroType: null,
+        outroConfidence: 0,
+        crossfadeStartTime: 0,
+        crossfadeDuration: 0,
+        crossfadeProgress: -1,
+        incomingSongName: null,
+        incomingSongId: null,
+      },
       persistData: {
         searchHistory: [],
         personalFmMode: false,
@@ -651,6 +673,11 @@ const useMusicDataStore = defineStore("musicData", {
 
     setPlaySongIndex(type: "next" | "prev") {
       if (typeof $player === "undefined") return false;
+      // Cancel AutoMix crossfade on manual skip
+      const autoMix = getAutoMixEngine();
+      if (autoMix.isCrossfading()) {
+        autoMix.cancelCrossfade();
+      }
       soundStop($player);
       if (this.persistData.playSongMode !== "single") {
         this.isLoadingSong = true;

@@ -554,6 +554,31 @@ export class NativeSound implements ISound {
     return this._effectManager;
   }
 
+  /**
+   * Get the GainNode for crossfade volume control.
+   * Used by AutoMixEngine/CrossfadeManager.
+   */
+  getGainNode(): GainNode | null {
+    return this._gainNode;
+  }
+
+  /**
+   * Get the MediaElementAudioSourceNode.
+   * Used by AutoMixEngine for audio graph inspection.
+   */
+  getSourceNode(): MediaElementAudioSourceNode | null {
+    return this._sourceNode;
+  }
+
+  /**
+   * Force-initialize the audio graph before playback.
+   * Used by AutoMix to ensure GainNodes are ready for crossfade scheduling.
+   */
+  async ensureAudioGraph(): Promise<boolean> {
+    if (this._isAudioGraphInitialized) return true;
+    return this._initAudioGraph();
+  }
+
   unload(): void {
     if (IS_DEV) {
       console.log('NativeSound: unloading');

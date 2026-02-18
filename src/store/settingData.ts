@@ -64,6 +64,14 @@ interface SettingDataState {
     posY: SpringParams;
     scale: SpringParams;
   };
+  // AutoMix settings
+  autoMixEnabled: boolean;
+  autoMixCrossfadeDuration: number;
+  autoMixBpmMatch: boolean;
+  autoMixBeatAlign: boolean;
+  autoMixVolumeNorm: boolean;
+  autoMixTransitionStyle: "linear" | "equalPower" | "sCurve";
+  autoMixSmartCurve: boolean;
 }
 
 const useSettingDataStore = defineStore("settingData", {
@@ -120,6 +128,14 @@ const useSettingDataStore = defineStore("settingData", {
         posY: { mass: 1, damping: 15, stiffness: 100 },
         scale: { mass: 1, damping: 20, stiffness: 100 },
       },
+      // AutoMix defaults
+      autoMixEnabled: false,
+      autoMixCrossfadeDuration: 8,
+      autoMixBpmMatch: true,
+      autoMixBeatAlign: true,
+      autoMixVolumeNorm: true,
+      autoMixTransitionStyle: "equalPower",
+      autoMixSmartCurve: true,
     };
   },
   getters: {

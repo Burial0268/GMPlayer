@@ -233,6 +233,7 @@ import {
   setVolume,
   setSeek,
   fadePlayOrPause,
+  getAutoMixEngine,
 } from "@/utils/AudioContext";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import { useRouter } from "vue-router";
@@ -270,6 +271,19 @@ const getPlaySongData = (data, level = setting.songLevel) => {
     }
     const { id, fee, pc } = data;
     console.log(`[Player] getPlaySongData called for ID: ${id}, Fee: ${fee}, PC: ${pc}, Level: ${level}`);
+
+    // If AutoMix is crossfading, it already handles sound creation — only fetch lyrics
+    const autoMix = getAutoMixEngine();
+    if (autoMix.isCrossfading()) {
+      console.log("[Player] AutoMix crossfade active, only fetching lyrics");
+      // Sync player ref to the incoming sound set by AutoMix
+      if (window.$player) {
+        player.value = window.$player;
+      }
+      fetchAndParseLyric(id);
+      return;
+    }
+
     // VIP 歌曲或需要购买专辑
     if (
       useUnmServerHas &&
@@ -458,7 +472,13 @@ watch(
   () => (music ? music.getPlaySongData : null),
   (val, oldVal) => {
     if (val !== oldVal) {
-      music.setPlaySongTime({ currentTime: 0, duration: 0 });
+      // During AutoMix crossfade, don't reset time — adoptIncomingSound handles it.
+      // Resetting here causes duration=0 because the incoming sound's play() is async
+      // and checkAudioTime only updates when playing() returns true.
+      const autoMix = getAutoMixEngine();
+      if (!autoMix.isCrossfading()) {
+        music.setPlaySongTime({ currentTime: 0, duration: 0 });
+      }
       songChange(val);
     }
   },
@@ -469,6 +489,10 @@ watch(
 watch(
   () => persistData.value.playVolume,
   (val) => {
+    // Sync player ref if AutoMix changed the underlying sound
+    if (window.$player && player.value !== window.$player) {
+      player.value = window.$player;
+    }
     if (player.value) setVolume(player.value, val);
   }
 )
@@ -479,6 +503,34 @@ watch(
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
     nextTick().then(() => {
+      // During AutoMix crossfade, CrossfadeManager controls gain scheduling.
+      // fadePlayOrPause's fade(0, volume, 300) would cancel CrossfadeManager's
+      // scheduled gain ramp and do a fast 300ms ramp instead, breaking the crossfade.
+      const autoMix = getAutoMixEngine();
+      if (autoMix.isCrossfading()) {
+        if (!val) {
+          const frozen = autoMix.pauseCrossfade();
+          if (frozen) {
+            // Crossfade is frozen — it handles pause directly
+            console.log("[Player] AutoMix crossfade frozen (paused)");
+            return;
+          }
+          // Crossfade was in setup phase and got cancelled.
+          // Fall through to normal fadePlayOrPause below.
+          console.log("[Player] AutoMix crossfade cancelled during setup, falling through to normal pause");
+        } else {
+          autoMix.resumeCrossfade();
+          if (autoMix.isCrossfading()) {
+            console.log("[Player] AutoMix crossfade resumed");
+            return;
+          }
+          // Crossfade no longer active — fall through to normal resume
+        }
+      }
+      // Sync player ref if AutoMix changed the underlying sound
+      if (window.$player && player.value !== window.$player) {
+        player.value = window.$player;
+      }
       if (player.value && !music.isLoadingSong) {
          const hPlayer = player.value; // Assuming player.value is the Howl instance
          if (typeof hPlayer.playing !== 'function') {

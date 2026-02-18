@@ -365,6 +365,40 @@ export class BufferedSound implements ISound {
     return this._downloadProgress;
   }
 
+  /**
+   * Get the Blob URL (if downloaded), or null.
+   * Used by AutoMixEngine for offline analysis.
+   */
+  getBlobUrl(): string | null {
+    return this._blobUrl;
+  }
+
+  /**
+   * Whether the audio has been fully downloaded and inner NativeSound is ready.
+   */
+  isLoaded(): boolean {
+    return this._loaded;
+  }
+
+  /**
+   * Get the inner NativeSound instance, or null if not yet created.
+   * Used by AutoMixEngine to access GainNode for crossfade.
+   */
+  getInnerSound(): NativeSound | null {
+    return this._inner;
+  }
+
+  /**
+   * Force-initialize the inner NativeSound's audio graph.
+   * Used by AutoMix to ensure GainNodes are ready before crossfade.
+   */
+  async ensureAudioGraph(): Promise<boolean> {
+    if (this._inner) {
+      return this._inner.ensureAudioGraph();
+    }
+    return false;
+  }
+
   unload(): void {
     if (IS_DEV) {
       console.log('BufferedSound: unloading');

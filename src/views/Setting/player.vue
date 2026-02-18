@@ -313,6 +313,66 @@
       </div>
       <n-switch v-model:value="musicFrequency" :round="false" />
     </n-card>
+    <!-- AutoMix Settings -->
+    <n-card class="set-item">
+      <div class="name">
+        <div class="dev">
+          {{ $t("setting.autoMixEnabled") }}
+          <n-tag round :bordered="false" size="small" type="warning">
+            {{ $t("setting.dev") }}
+            <template #icon>
+              <n-icon :component="Code" />
+            </template>
+          </n-tag>
+        </div>
+        <span class="tip">{{ $t("setting.autoMixEnabledTip") }}</span>
+      </div>
+      <n-switch v-model:value="autoMixEnabled" :round="false" />
+    </n-card>
+    <template v-if="autoMixEnabled">
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixCrossfadeDuration") }}
+          <span class="tip">{{ $t("setting.autoMixCrossfadeDurationTip") }}</span>
+        </div>
+        <n-input-number class="set" v-model:value="autoMixCrossfadeDuration" :min="3" :max="12" :step="1" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixTransitionStyle") }}
+          <span class="tip">{{ $t("setting.autoMixTransitionStyleTip") }}</span>
+        </div>
+        <n-select class="set" v-model:value="autoMixTransitionStyle" :options="autoMixTransitionStyleOptions" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixSmartCurve") }}
+          <span class="tip">{{ $t("setting.autoMixSmartCurveTip") }}</span>
+        </div>
+        <n-switch v-model:value="autoMixSmartCurve" :round="false" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixVolumeNorm") }}
+          <span class="tip">{{ $t("setting.autoMixVolumeNormTip") }}</span>
+        </div>
+        <n-switch v-model:value="autoMixVolumeNorm" :round="false" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixBpmMatch") }}
+          <span class="tip">{{ $t("setting.autoMixBpmMatchTip") }}</span>
+        </div>
+        <n-switch v-model:value="autoMixBpmMatch" :round="false" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixBeatAlign") }}
+          <span class="tip">{{ $t("setting.autoMixBeatAlignTip") }}</span>
+        </div>
+        <n-switch v-model:value="autoMixBeatAlign" :round="false" :disabled="!autoMixBpmMatch" />
+      </n-card>
+    </template>
   </div>
 </template>
 
@@ -356,6 +416,13 @@ const {
   useLyricAtlasAPI,
   blurAmount,
   contrastAmount,
+  autoMixEnabled,
+  autoMixCrossfadeDuration,
+  autoMixBpmMatch,
+  autoMixBeatAlign,
+  autoMixVolumeNorm,
+  autoMixTransitionStyle,
+  autoMixSmartCurve,
 } = storeToRefs(setting);
 console.log('SETTING', fps)
 const isModalOn = ref(false)
@@ -439,6 +506,22 @@ const backgroundImageShowOptions = [
   {
     label: t("setting.eplor"),
     value: "eplor",
+  },
+];
+
+// AutoMix 过渡曲线类型
+const autoMixTransitionStyleOptions = [
+  {
+    label: t("setting.autoMixEqualPower"),
+    value: "equalPower",
+  },
+  {
+    label: t("setting.autoMixLinear"),
+    value: "linear",
+  },
+  {
+    label: t("setting.autoMixSCurve"),
+    value: "sCurve",
   },
 ];
 </script>

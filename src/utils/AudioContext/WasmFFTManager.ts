@@ -13,6 +13,10 @@
 
 import { FFTPlayer } from '@applemusic-like-lyrics/fft';
 
+// Module-level flag: if FFTPlayer creation ever fails (wee_alloc heap corruption),
+// don't retry — fall back to AnalyserNode permanently for this session.
+let _wasmPermanentlyFailed = false;
+
 export class WasmFFTManager {
   private _fft: FFTPlayer | null = null;
   private _readBuffer: Float32Array | null = null;
@@ -35,6 +39,11 @@ export class WasmFFTManager {
   constructor(outputSize: number = 1024) {
     this._outputSize = outputSize;
 
+    if (_wasmPermanentlyFailed) {
+      this._fft = null;
+      return;
+    }
+
     try {
       this._fft = new FFTPlayer();
       this._fft.setFreqRange(this._freqMin, this._freqMax);
@@ -46,6 +55,8 @@ export class WasmFFTManager {
     } catch (err) {
       console.error('WasmFFTManager: Failed to create FFTPlayer', err);
       this._fft = null;
+      // wee_alloc heap is likely corrupted — prevent all future FFTPlayer creation
+      _wasmPermanentlyFailed = true;
     }
   }
 
@@ -204,24 +215,21 @@ export class WasmFFTManager {
   }
 
   /**
-   * Clear FFTPlayer internal state (pcm_queue + result_buf EMA).
-   * Recreates the FFTPlayer instance since clear() is not exposed via wasm_bindgen.
-   * Call on seek to flush stale PCM data from old playback position.
+   * Clear FFTPlayer internal state by draining the PCM queue.
+   * Reads until the internal buffer is empty, discarding stale data.
+   *
+   * Previous implementation used free()+new FFTPlayer() which triggered
+   * wee_alloc heap corruption ("memory access out of bounds") after
+   * repeated seek cycles. Draining avoids all WASM alloc/free.
    */
   clearQueue(): void {
     this.reset();
-    if (this._fft) {
-      try {
-        this._fft.free();
-      } catch (e) {
-        // May already be freed
-      }
-      try {
-        this._fft = new FFTPlayer();
-        this._fft.setFreqRange(this._freqMin, this._freqMax);
-      } catch (e) {
-        console.error('WasmFFTManager: Failed to recreate FFTPlayer', e);
-        this._fft = null;
+    if (this._fft && this._readBuffer) {
+      // Drain all queued PCM by reading until empty.
+      // Each read() consumes 2048 samples; 100 iterations covers ~4.6s at 44.1kHz.
+      let safety = 100;
+      while (this._fft.read(this._readBuffer) && --safety > 0) {
+        // Discard stale data
       }
     }
   }
@@ -234,7 +242,8 @@ export class WasmFFTManager {
       try {
         this._fft.free();
       } catch (e) {
-        // May already be freed
+        // wee_alloc heap likely corrupted — prevent future FFTPlayer creation
+        _wasmPermanentlyFailed = true;
       }
       this._fft = null;
     }
