@@ -132,22 +132,27 @@ const phoneFormRules = {
   phone: mobileRule,
   captcha: numberRule,
 };
-const captchaTimeOut = ref(null);
+let captchaTimeOut = null;
 const captchaText = ref(t("login.getCode"));
 const captchaDisabled = ref(false);
 
 // 定时器
-const qrCheckInterval = ref(null);
+let qrCheckInterval = null;
 
 // 登陆状态弹窗
 const loginStateMessage = ref(null);
 
+// 是否已卸载
+let isUnmounted = false;
+
 // 储存登录信息
-const saveLoginData = (data) => {
+const saveLoginData = async (data) => {
   data.cookie = data.cookie.replaceAll(" HTTPOnly", "");
   user.setCookie(data.cookie);
   // 验证用户登录信息
-  getLoginState().then((res) => {
+  try {
+    const res = await getLoginState();
+    if (isUnmounted) return;
     if (res.data.profile) {
       user.setUserData(res.data.profile);
       user.userLogin = true;
@@ -155,46 +160,51 @@ const saveLoginData = (data) => {
       $message.success(t("login.loginStatus4"));
       // 自动签到
       if ($signIn) $signIn();
-      clearInterval(qrCheckInterval.value);
+      clearInterval(qrCheckInterval);
       router.push("/user");
     } else {
       user.userLogOut();
       $message.error(t("login.loginStatus5"));
       getQrKeyData();
     }
-  });
+  } catch (err) {
+    console.error(err);
+  }
 };
 
 // 获取二维码登录 key
-const getQrKeyData = () => {
-  // 检测是否登录
-  getLoginState().then((res) => {
-    if (res.data.profile && window.localStorage.getItem("cookie")) {
+const getQrKeyData = async () => {
+  try {
+    // 检测是否登录
+    const stateRes = await getLoginState();
+    if (isUnmounted) return;
+    if (stateRes.data.profile && window.localStorage.getItem("cookie")) {
       $message.info(t("login.loggedIn"));
       user.userLogin = true;
       router.push("/user");
     } else {
       user.userLogOut();
-      clearInterval(qrCheckInterval.value);
-      getQrKey().then((res) => {
-        if (res.code == 200) {
-          console.log(res.data.unikey);
-          qrImg.value = `https://music.163.com/login?codekey=${res.data.unikey}`;
-          checkQrState(res.data.unikey);
-        } else {
-          $message.error(t("login.loginStatus6"));
-        }
-      });
+      clearInterval(qrCheckInterval);
+      const qrRes = await getQrKey();
+      if (isUnmounted) return;
+      if (qrRes.code == 200) {
+        qrImg.value = `https://music.163.com/login?codekey=${qrRes.data.unikey}`;
+        checkQrState(qrRes.data.unikey);
+      } else {
+        $message.error(t("login.loginStatus6"));
+      }
     }
-  });
+  } catch (err) {
+    console.error(err);
+  }
 };
 
 // 检测二维码登陆状态
 const checkQrState = (key) => {
-  qrCheckInterval.value = setInterval(() => {
-    if (!key) return false;
+  qrCheckInterval = setInterval(() => {
+    if (!key || isUnmounted) return false;
     checkQr(key).then((res) => {
-      console.log(res);
+      if (isUnmounted) return;
       if (res.code == 800) {
         getQrKeyData();
         loginStateMessage.value = null;
@@ -219,24 +229,22 @@ const checkQrState = (key) => {
 
 // 获取验证码
 const getCaptcha = (data) => {
-  clearInterval(captchaTimeOut.value);
+  clearInterval(captchaTimeOut);
   phoneFormRef.value?.validate(
     (errors) => {
       if (errors) {
       $message.error(t("general.message.needCheck"));
       } else {
-        console.log(data + "发送验证码");
         sentCaptcha(data).then((res) => {
-          console.log(res);
           if (res.code == 200) {
             $message.success(t("login.codeSuccess"));
             let countDown = 60;
             captchaDisabled.value = true;
-            captchaTimeOut.value = setInterval(() => {
+            captchaTimeOut = setInterval(() => {
               countDown--;
               captchaText.value = countDown + "s";
               if (countDown === 0) {
-                clearInterval(captchaTimeOut.value);
+                clearInterval(captchaTimeOut);
                 captchaText.value = t("login.getCodeAgain");
                 captchaDisabled.value = false;
               }
@@ -254,41 +262,35 @@ const getCaptcha = (data) => {
 };
 
 // 手机号登录
-const phoneLogin = (e) => {
+const phoneLogin = async (e) => {
   e.preventDefault();
-  phoneFormRef.value?.validate((errors) => {
+  phoneFormRef.value?.validate(async (errors) => {
     if (!errors) {
-      console.log("通过");
-      verifyCaptcha(phoneFormData._value.phone, phoneFormData._value.captcha)
-        .then((res) => {
-          console.log(res);
-          if (res.code == 200) {
-            toLogin(
-              phoneFormData._value.phone,
-              phoneFormData._value.captcha
-            ).then((res) => {
-              console.log(res);
-              if (res.profile) {
-                saveLoginData(res);
-                user.setUserData(res.profile);
-                user.userLogin = true;
-                $message.success(t("login.loginStatus4"));
-                // 自动签到
-                if ($signIn) $signIn();
-                router.push("/user");
-              } else {
-                user.userLogOut();
-                $message.error(t("login.loginStatus5"));
-                phoneFormData.value.captcha = null;
-              }
-            });
+      try {
+        const verifyRes = await verifyCaptcha(phoneFormData.value.phone, phoneFormData.value.captcha);
+        if (isUnmounted) return;
+        if (verifyRes.code == 200) {
+          const loginRes = await toLogin(phoneFormData.value.phone, phoneFormData.value.captcha);
+          if (isUnmounted) return;
+          if (loginRes.profile) {
+            saveLoginData(loginRes);
+            user.setUserData(loginRes.profile);
+            user.userLogin = true;
+            $message.success(t("login.loginStatus4"));
+            // 自动签到
+            if ($signIn) $signIn();
+            router.push("/user");
+          } else {
+            user.userLogOut();
+            $message.error(t("login.loginStatus5"));
+            phoneFormData.value.captcha = null;
           }
-        })
-        .catch((err) => {
-          console.error(err);
-          $loadingBar.error();
-          $message.error(t("login.loginStatus5"));
-        });
+        }
+      } catch (err) {
+        console.error(err);
+        $loadingBar.error();
+        $message.error(t("login.loginStatus5"));
+      }
     } else {
       $loadingBar.error();
       $message.error(t("general.message.needCheck"));
@@ -298,11 +300,10 @@ const phoneLogin = (e) => {
 
 // Tab 切换
 const tabChange = (val) => {
-  console.log(val);
   if (val == "qr") {
     getQrKeyData();
   } else {
-    clearInterval(qrCheckInterval.value);
+    clearInterval(qrCheckInterval);
   }
 };
 
@@ -315,11 +316,12 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  isUnmounted = true;
   // 恢复控制条
   music.setPlayBarState(true);
   // 清除定时器
-  clearInterval(qrCheckInterval.value);
-  clearInterval(captchaTimeOut.value);
+  clearInterval(qrCheckInterval);
+  clearInterval(captchaTimeOut);
 });
 </script>
 

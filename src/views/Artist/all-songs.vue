@@ -35,10 +35,9 @@
 
 <script setup>
 import { getArtistDetail, getArtistAllSongs } from "@/api/artist";
-import { getMusicDetail } from "@/api/song";
 import { useRouter } from "vue-router";
-import { getSongTime } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
+import { transformSongData } from "@/utils/transformSongData";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
 
@@ -69,7 +68,6 @@ const getArtistAllSongsData = (id, limit = 30, offset = 0, order = "hot") => {
   if (!id) return false;
   getArtistAllSongs(id, limit, offset, order)
     .then((res) => {
-      console.log(res);
       // 获取歌手名称
       getArtistDetailData(id);
       // 全部歌曲数据
@@ -77,24 +75,8 @@ const getArtistAllSongsData = (id, limit = 30, offset = 0, order = "hot") => {
         // 数据总数
         totalCount.value = res.total;
         // 列表数据
-        const ids = res.songs.map((obj) => obj.id);
-        getMusicDetail(ids.join(",")).then((res) => {
-          console.log(res);
-          artistData.value = [];
-          res.songs.forEach((v, i) => {
-            artistData.value.push({
-              id: v.id,
-              num: i + 1 + (pageNumber.value - 1) * pagelimit.value,
-              name: v.name,
-              artist: v.ar,
-              album: v.al,
-              alia: v.alia,
-              time: getSongTime(v.dt),
-              fee: v.fee,
-              pc: v.pc ? v.pc : null,
-              mv: v.mv ? v.mv : null,
-            });
-          });
+        artistData.value = transformSongData(res.songs, {
+          offset: (pageNumber.value - 1) * pagelimit.value,
         });
       } else {
         $message.error(t("general.message.acquisitionFailed"));
@@ -127,9 +109,8 @@ watch(
 
 // 每页个数数据变化
 const pageSizeChange = (val) => {
-  console.log(val);
   pagelimit.value = val;
-  getSearchDataList(
+  getArtistAllSongsData(
     artistId.value,
     val,
     (pageNumber.value - 1) * pagelimit.value

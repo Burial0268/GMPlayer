@@ -19,9 +19,7 @@
 <script setup>
 import { getArtistSongs } from "@/api/artist";
 import { useRouter } from "vue-router";
-import { getAlbum } from '@/api/album'
-import { getSongTime } from "@/utils/timeTools";
-import { ref, toRaw } from 'vue';
+import { transformSongData } from "@/utils/transformSongData";
 import DataLists from "@/components/DataList/DataLists.vue";
 const router = useRouter();
 
@@ -30,43 +28,10 @@ const artistId = ref(router.currentRoute.value.query.id);
 const artistData = ref([]);
 
 // 获取歌手热门歌曲
-const getArtistSongsData = (id) => {
-  getArtistSongs(id).then((res) => {
-    console.log(res);
-    artistData.value = [];
-
-    res.hotSongs.forEach((v, i) => {
-
-      const songId = v.al.id
-      const album = ref([])
-      
-      // 此处获取到的歌曲均无 album.picUrl 参数，需要手动获取整个 album 数据替换
-      getAlbum(songId).then((res) => {
-        res = res.album
-        album.value.push({
-          id: res.id,
-          pic: res.pic,
-          name: res.name,
-          picUrl: res.picUrl,
-          pic_str: res.picId_str
-        });
-        
-        artistData.value.push({
-          id: v.id,
-          num: i + 1,
-          name: v.name,
-          artist: v.ar,
-          album: toRaw(album.value.reverse())[0],
-          alia: v.alia,
-          time: getSongTime(v.dt),
-          fee: v.fee,
-          pc: v.pc ? v.pc : null,
-          mv: v.mv ? v.mv : null,
-        });
-      })
-      // console.log(artistData)
-    });
-  });
+const getArtistSongsData = async (id) => {
+  const res = await getArtistSongs(id);
+  // transformSongData 内部自动从 al.pic_str 推算 picUrl，无需额外请求
+  artistData.value = res.hotSongs?.length ? transformSongData(res.hotSongs) : [];
 };
 
 onMounted(() => {

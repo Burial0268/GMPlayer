@@ -153,7 +153,11 @@ import {
 } from "@/api/playlist";
 import { useRouter } from "vue-router";
 import { userStore, musicStore, settingStore } from "@/store";
-import { getSongTime, getLongTime } from "@/utils/timeTools";
+import { getLongTime } from "@/utils/timeTools";
+import { transformSongData } from "@/utils/transformSongData";
+import { renderIcon } from "@/utils/renderIcon";
+import { buildLikeMessage } from "@/utils/buildLikeMessage";
+import { usePlayAllSong } from "@/composables/usePlayAllSong";
 import {
   MusicList,
   LinkTwo,
@@ -169,13 +173,13 @@ import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
 import getCoverUrl from "@/utils/getCoverUrl";
-// import SpecialPlayLists from "./SpecialPlayLists.json";
 
 const { t } = useI18n();
 const router = useRouter();
 const user = userStore();
 const music = musicStore();
 const setting = settingStore();
+const { playAllSong: playAll } = usePlayAllSong();
 
 // 歌单数据
 const playListId = ref(router.currentRoute.value.query.id);
@@ -190,19 +194,6 @@ const pageNumber = ref(
     : 1
 );
 const totalCount = ref(0);
-
-// 图标渲染
-const renderIcon = (icon) => {
-  return () => {
-    return h(
-      NIcon,
-      { style: { transform: "translateX(2px)" } },
-      {
-        default: () => icon,
-      }
-    );
-  };
-};
 
 // 判断收藏还是取消
 const isLikeOrDislike = (id) => {
@@ -284,7 +275,6 @@ const setDropdownOptions = () => {
 const getPlayListDetailData = (id) => {
   getPlayListDetail(id)
     .then((res) => {
-      console.log(res);
       // 歌单总数
       totalCount.value = res.playlist.trackCount;
       // 歌单信息
@@ -294,10 +284,7 @@ const getPlayListDetailData = (id) => {
     .catch((err) => {
       $setSiteTitle(t("general.name.playlist"));
       loadingState.value = false;
-      console.error(
-        $message.error(t("general.message.acquisitionFailed")),
-        err
-      );
+      console.error(t("general.message.acquisitionFailed"), err);
       $message.error(t("general.message.acquisitionFailed"));
     });
 };
@@ -305,23 +292,10 @@ const getPlayListDetailData = (id) => {
 // 获取歌单所有歌曲
 const getAllPlayListData = (id, limit = 30, offset = 0) => {
   getAllPlayList(id, limit, offset).then((res) => {
-    console.log(res);
     if (res.songs) {
-      playListData.value = [];
-      res.songs.forEach((v, i) => {
-        playListData.value.push({
-          id: v.id,
-          num: i + 1 + (pageNumber.value - 1) * pagelimit.value,
-          name: v.name,
-          artist: v.ar,
-          album: v.al,
-          alia: v.alia,
-          time: getSongTime(v.dt),
-          fee: v.fee,
-          sourceId: id,
-          pc: v.pc ? v.pc : null,
-          mv: v.mv ? v.mv : null,
-        });
+      playListData.value = transformSongData(res.songs, {
+        offset: (pageNumber.value - 1) * pagelimit.value,
+        sourceId: id,
       });
     } else {
       $message.error(t("general.message.acquisitionFailed"));
@@ -333,38 +307,7 @@ const getAllPlayListData = (id, limit = 30, offset = 0) => {
 
 // 播放歌单所有歌曲
 const playAllSong = () => {
-  try {
-    // 获取元素
-    const songDom = document.getElementById("datalists").firstElementChild;
-    const allSongDom = document.querySelectorAll("#datalists > *");
-    // 是否有元素存在 play
-    let isHasPlay = false;
-    // 遍历
-    allSongDom.forEach((child) => {
-      if (child.classList.contains("play")) {
-        isHasPlay = true;
-      }
-    });
-    if (!isHasPlay) {
-      // 双击操作
-      const event = new MouseEvent("dblclick", {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-      });
-      // 双击或单击
-      if (setting.listClickMode === "dblclick") {
-        songDom.dispatchEvent(event);
-      } else if (setting.listClickMode === "click") {
-        songDom.click();
-      }
-    } else {
-      music.setPlayState(true);
-    }
-  } catch (err) {
-    console.error($message.error(t("general.message.operationFailed")), err);
-    $message.error($message.error(t("general.message.operationFailed")));
-  }
+  playAll(playListData.value);
 };
 
 // 删除歌单
@@ -397,45 +340,19 @@ const toDelPlayList = (data) => {
 const toChangeLike = async (id) => {
   const type = isLikeOrDislike(id) ? 1 : 2;
   const likeMsg = t("general.name.playlist");
-  const isThereASpace = setting.language === "zh-CN" ? "" : " ";
   try {
     const res = await likePlaylist(type, id);
     if (res.code === 200) {
-      $message.success(
-        `${likeMsg + isThereASpace}${
-          type == 1
-            ? t("menu.collection", { name: t("general.dialog.success") })
-            : t("menu.cancelCollection", { name: t("general.dialog.success") })
-        }`
-      );
+      $message.success(buildLikeMessage(t, likeMsg, type, "success", setting.language));
       user.setUserPlayLists(() => {
         setDropdownOptions();
       });
     } else {
-      $message.error(
-        `${likeMsg + isThereASpace}${
-          type == 1
-            ? t("menu.collection", { name: t("general.dialog.failed") })
-            : t("menu.cancelCollection", { name: t("general.dialog.failed") })
-        }`
-      );
+      $message.error(buildLikeMessage(t, likeMsg, type, "failed", setting.language));
     }
   } catch (err) {
-    $message.error(
-      `${likeMsg + isThereASpace}${
-        type == 1
-          ? t("menu.collection", { name: t("general.dialog.failed") })
-          : t("menu.cancelCollection", { name: t("general.dialog.failed") })
-      }`
-    );
-    console.error(
-      `${likeMsg + isThereASpace}${
-        type == 1
-          ? t("menu.collection", { name: t("general.dialog.failed") })
-          : t("menu.cancelCollection", { name: t("general.dialog.failed") })
-      }`,
-      err
-    );
+    console.error(buildLikeMessage(t, likeMsg, type, "failed", setting.language), err);
+    $message.error(buildLikeMessage(t, likeMsg, type, "failed", setting.language));
   }
 };
 
@@ -463,7 +380,6 @@ onMounted(() => {
 
 // 每页个数数据变化
 const pageSizeChange = (val) => {
-  console.log(val);
   pagelimit.value = val;
   getAllPlayListData(
     playListId.value,

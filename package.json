@@ -49,6 +49,7 @@
     "screenfull": "^6.0.2",
     "swiper": "^11.2.10",
     "throttle-debounce": "^5.0.2",
+    "ts-md5": "^2.0.1",
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.5.0",
     "vue": "^3.5.28",
