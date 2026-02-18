@@ -42,7 +42,7 @@ function encryptId(idStr: string): string {
         "name": "Everything Goes On",
         "pic_str": "109951171796454922",
         "pic": 109951171796454930
-      },
+      }
  */
 export function ncmImageUrl(picStr?: string, pic?: number): string | undefined {
   const id = picStr ?? (pic != null ? String(pic) : "");
