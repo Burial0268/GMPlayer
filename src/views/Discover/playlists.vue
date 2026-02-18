@@ -56,7 +56,7 @@
                     class="tag"
                     size="large"
                     v-for="item in music.catList.sub.filter(
-                      (v) => v.category == key
+                      (v: { category: string | number; }) => v.category == key
                     )"
                     :key="item"
                     :bordered="false"
@@ -83,7 +83,7 @@
       </n-modal>
       <!-- 精品歌单开关 -->
       <n-space
-        v-if="getHaveHqPlaylists(music.highqualityCatList, catName)"
+        v-if="getHaveHqPlaylists(music.highqualityCatList, catName.toString())"
         align="center"
       >
         <n-text>{{ $t("general.name.bestPlaylist") }}</n-text>
@@ -114,7 +114,7 @@
         @click="
           () => {
             loading = true;
-            getHqPlaylistData(catName);
+            getHqPlaylistData(catName.toString());
           }
         "
       >
@@ -124,7 +124,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { ChevronRightRound, LocalFireDepartmentRound } from "@vicons/material";
 import { useRouter } from "vue-router";
 import { musicStore } from "@/store";
@@ -168,24 +168,24 @@ const hasMore = ref(true);
 const loading = ref(false);
 
 // 获取是否有精品歌单
-const getHaveHqPlaylists = (array, name) => {
+const getHaveHqPlaylists = (array: any[], name: string) => {
   if (name == "全部歌单") {
     return true;
   } else {
-    return array.some((item) => {
+    return array.some((item: { name: any; }) => {
       return item.name == name;
     });
   }
 };
 
 // 精品歌单状态变化
-const hqPLayListChange = (val) => {
+const hqPLayListChange = (val: any) => {
   playlistsData.value = [];
   router.push({
     path: "/discover/playlists",
     query: {
       cat: catName.value,
-      hq: val ? true : false,
+      hq: val ? "true" : "false",
       page: 1,
     },
   });
@@ -194,21 +194,17 @@ const hqPLayListChange = (val) => {
 // 获取歌单数据
 const getPlaylistData = (cat = "全部歌单", limit = 30, offset = 0) => {
   getTopPlaylist(cat, limit, offset).then((res) => {
-    console.log(res);
     // 数据总数
     totalCount.value = res.total;
     // 列表数据
-    playlistsData.value = [];
     if (res.playlists[0]) {
-      res.playlists.forEach((v) => {
-        playlistsData.value.push({
-          id: v.id,
-          cover: v.coverImgUrl,
-          name: v.name,
-          artist: v.creator,
-          playCount: formatNumber(v.playCount),
-        });
-      });
+      playlistsData.value = res.playlists.map((v: any) => ({
+        id: v.id,
+        cover: v.coverImgUrl,
+        name: v.name,
+        artist: v.creator,
+        playCount: formatNumber(v.playCount),
+      }));
     } else {
       $message.error(t("general.message.acquisitionFailed"));
     }
@@ -225,23 +221,21 @@ const getHqPlaylistData = (cat = "全部歌单", limit = 30) => {
     : null;
   // 获取数据
   getHighqualityPlaylist(cat, limit, before).then((res) => {
-    console.log(res);
     // 列表数据
     if (res.playlists[0]) {
       // 是否还有更多
-      res.more ? (hasMore.value = true) : (hasMore.value = false);
+      hasMore.value = !!res.more;
       loading.value = false;
-      // 遍历数据
-      res.playlists.forEach((v) => {
-        playlistsData.value.push({
-          id: v.id,
-          cover: v.coverImgUrl,
-          name: v.name,
-          artist: v.creator,
-          playCount: formatNumber(v.playCount),
-          updateTime: v.updateTime,
-        });
-      });
+      // 追加数据
+      const newItems = res.playlists.map((v: any) => ({
+        id: v.id,
+        cover: v.coverImgUrl,
+        name: v.name,
+        artist: v.creator,
+        playCount: formatNumber(v.playCount),
+        updateTime: v.updateTime,
+      }));
+      playlistsData.value.push(...newItems);
     } else {
       hasMore.value = false;
       $message.error(t("general.message.acquisitionFailed"));
@@ -250,7 +244,7 @@ const getHqPlaylistData = (cat = "全部歌单", limit = 30) => {
 };
 
 // 更换标签名
-const changeTagName = (name) => {
+const changeTagName = (name: any) => {
   playlistsData.value = [];
   router.push({
     path: "/discover/playlists",
@@ -262,27 +256,14 @@ const changeTagName = (name) => {
   catModalShow.value = false;
 };
 
-// 排序方式变化
-const listOrderChange = (order) => {
-  console.log(order);
-  router.push({
-    path: "/discover/playlists",
-    query: {
-      cat: catName.value,
-      page: 1,
-    },
-  });
-};
-
 // 每页个数数据变化
-const pageSizeChange = (val) => {
-  console.log(val);
+const pageSizeChange = (val: number) => {
   pagelimit.value = val;
-  getPlaylistData(catName.value, val, (pageNumber.value - 1) * pagelimit.value);
+  getPlaylistData(catName.value.toString(), val, (pageNumber.value - 1) * pagelimit.value);
 };
 
 // 当前页数数据变化
-const pageNumberChange = (val) => {
+const pageNumberChange = (val: number) => {
   router.push({
     path: "/discover/playlists",
     query: {
@@ -305,11 +286,11 @@ watch(
     if (val.name == "dsc-playlists") {
       if (hqPLayListOpen.value) {
         playlistsData.value = [];
-        getHqPlaylistData(catName.value);
+        getHqPlaylistData(catName.value.toString());
       } else {
         pageNumber.value = val.query.page ? Number(val.query.page) : 1;
         getPlaylistData(
-          catName.value,
+          catName.value.toString(),
           pagelimit.value,
           (pageNumber.value - 1) * pagelimit.value
         );
@@ -325,10 +306,10 @@ onMounted(() => {
     music.setCatList(true);
   // 获取歌单数据
   if (hqPLayListOpen.value) {
-    getHqPlaylistData(catName.value);
+    getHqPlaylistData(catName.value.toString());
   } else {
     getPlaylistData(
-      catName.value,
+      catName.value.toString(),
       pagelimit.value,
       (pageNumber.value - 1) * pagelimit.value
     );

@@ -74,7 +74,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useRouter } from "vue-router";
 import { musicStore, settingStore } from "@/store";
 import { getVideoDetail, getVideoUrl, getSimiVideo } from "@/api/video";
@@ -92,6 +92,7 @@ import Comment from "@/components/Comment/index.vue";
 import Pagination from "@/components/Pagination/index.vue";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
+import type { CommentResourceType } from "@/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -199,7 +200,7 @@ const getVideoData = (id) => {
 };
 
 // 获取评论数据
-const getCommentData = (id, offset = 0, type = "mv") => {
+const getCommentData = (id, offset = 0, type: CommentResourceType = "mv") => {
   // 获取 before
   let before = null;
   if (commentData.allComments[0] && offset >= 5000) {

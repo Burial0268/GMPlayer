@@ -36,7 +36,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { settingStore } from "@/store";
 import Banner from "@/components/Banner/index.vue";
 import PaPlayLists from "@/components/Personalized/PaPlayLists.vue";
@@ -46,7 +46,6 @@ import PaDailySongs from "@/components/Personalized/PaDailySongs.vue";
 import PaPersonalFm from "@/components/Personalized/PaPersonalFm.vue";
 import PaRadar from "@/components/Personalized/PaRadar.vue";
 import PaLikeSongs from "@/components/Personalized/PaLikeSongs.vue";
-import BackgroundRender from "../../libs/apple-music-like/BackgroundRender.vue";
 import gsap from 'gsap';
 import { onMounted } from 'vue';
 

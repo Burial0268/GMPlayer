@@ -30,7 +30,7 @@
       >
         <n-grid-item
           v-for="item in themeColorData"
-          :key="item"
+          :key="item.label"
           :style="{ '--color': item.primaryColor }"
           :class="item.label === themeType ? 'item check' : 'item'"
           @click="changeThemeColor(item)"
@@ -211,7 +211,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { storeToRefs } from "pinia";
 import { settingStore, userStore } from "@/store";
 import { useI18n } from "vue-i18n";

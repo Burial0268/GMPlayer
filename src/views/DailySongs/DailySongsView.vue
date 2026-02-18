@@ -18,7 +18,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getDailySongs } from "@/api/home";
 import { musicStore } from "@/store";
 import { CalendarTodayFilled } from "@vicons/material";

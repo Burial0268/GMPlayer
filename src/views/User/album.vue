@@ -4,7 +4,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { userStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import CoverLists from "@/components/DataList/CoverLists.vue";

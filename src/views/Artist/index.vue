@@ -112,7 +112,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useRouter } from "vue-router";
 import { userStore } from "@/store";
 import { getArtistDetail, likeArtist } from "@/api/artist";
@@ -139,9 +139,9 @@ const artistLikeBtn = ref(false);
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
 
 // 获取歌手数据
-const getArtistDetailData = (id) => {
+const getArtistDetailData = (id: string | number | string[]) => {
   if (id) {
-    getArtistDetail(id)
+    getArtistDetail(Number(id))
       .then((res) => {
         console.log(res);
         artistData.value = {
@@ -167,7 +167,7 @@ const getArtistDetailData = (id) => {
 };
 
 // Tab 选项卡变化
-const tabChange = (value) => {
+const tabChange = (value: any) => {
   console.log(value);
   router.push({
     path: `/artist/${value}`,
@@ -179,7 +179,7 @@ const tabChange = (value) => {
 };
 
 // 判断收藏还是取消
-const isLikeOrDislike = (id) => {
+const isLikeOrDislike = (id: string | string[]) => {
   if (user.getUserArtistLists.list[0]) {
     const index = user.getUserArtistLists.list.findIndex(
       (item) => item.id === Number(id)
@@ -194,8 +194,8 @@ const isLikeOrDislike = (id) => {
 };
 
 // 收藏/取消收藏歌手
-const toLikeArtist = (data) => {
-  const type = isLikeOrDislike(data.id) ? 1 : 2;
+const toLikeArtist = (data: { id: number; name: any; }) => {
+  const type = isLikeOrDislike(data.id.toString()) ? 1 : 2;
   likeArtist(type, data.id).then((res) => {
     if (res.code === 200) {
       $message.success(
@@ -337,6 +337,7 @@ watch(
       .desc {
         margin-top: 12px;
         -webkit-line-clamp: 2;
+        line-clamp: 2;
         cursor: pointer;
         transition: all 0.3s;
         &:hover {

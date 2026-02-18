@@ -40,7 +40,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { userStore } from "@/store";
 import { useRouter } from "vue-router";
 

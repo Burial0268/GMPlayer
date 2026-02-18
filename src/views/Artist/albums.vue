@@ -10,7 +10,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getArtistAblums } from "@/api/artist";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";
@@ -30,15 +30,15 @@ const pageNumber = ref(
 const totalCount = ref(0);
 
 // 获取歌手专辑
-const getArtistAblumsData = (id, limit = 30, offset = 0) => {
-  getArtistAblums(id, limit, offset).then((res) => {
+const getArtistAblumsData = (id: string | number | string[], limit = 30, offset = 0) => {
+  getArtistAblums(Number(id), limit, offset).then((res) => {
     console.log(res);
     // 数据总数
     totalCount.value = res.artist.albumSize;
     // 列表数据
     artistData.value = [];
     if (res.hotAlbums) {
-      res.hotAlbums.forEach((v) => {
+      res.hotAlbums.forEach((v: { id: number; picUrl: string; name: string; artists: any; publishTime: string | number; }) => {
         artistData.value.push({
           id: v.id,
           cover: v.picUrl,
@@ -56,7 +56,7 @@ const getArtistAblumsData = (id, limit = 30, offset = 0) => {
 };
 
 // 当前页数数据变化
-const pageNumberChange = (val) => {
+const pageNumberChange = (val: number) => {
   router.push({
     path: "/artist/albums",
     query: {
@@ -67,7 +67,7 @@ const pageNumberChange = (val) => {
 };
 
 // 每页个数数据变化
-const pageSizeChange = (val) => {
+const pageSizeChange = (val: number) => {
   console.log(val);
   pagelimit.value = val;
   getArtistAblumsData(

@@ -137,12 +137,12 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getSimiPlayList, getMusicDetail } from "@/api/song";
 import { getComment } from "@/api/comment";
 import { useRouter } from "vue-router";
 import { musicStore } from "@/store";
-import { getLongTime } from "@/utils/timeTools";
+import { getLongTime, getSongTime } from "@/utils/timeTools";
 import {
   PlayOne,
   Comments,
@@ -240,6 +240,7 @@ const addSong = (data) => {
     fee: data.fee,
     id: data.id,
     name: data.name,
+    time: getSongTime(data.dt),
   };
   console.log(song);
   music.setPersonalFmMode(false);

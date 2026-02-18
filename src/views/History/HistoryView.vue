@@ -27,7 +27,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { musicStore } from "@/store";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";

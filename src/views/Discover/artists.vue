@@ -2,56 +2,34 @@
   <div class="artists">
     <div class="menu">
       <n-space class="initial">
-        <n-tag
-          class="tag"
-          round
-          v-for="item in artistInitials"
-          :key="item"
-          :bordered="false"
-          :type="item.key == artistInitialChoose ? 'primary' : 'default'"
-          @click="artistInitialChange(item.key)"
-        >
+        <n-tag class="tag" round v-for="item in artistInitials" :key="item.key" :bordered="false"
+          :type="item.key == artistInitialChoose ? 'primary' : 'default'" @click="artistInitialChange(item.key)">
           {{ item.value }}
         </n-tag>
       </n-space>
       <n-space class="category">
-        <n-tag
-          class="tag"
-          round
-          :class="item.length > 2 ? 'hidden' : 'show'"
-          v-for="(item, index) in artistTypeNames"
-          :key="item"
-          :bordered="false"
-          :type="index == artistTypeNamesChoose ? 'primary' : 'default'"
-          @click="artistTypeChange(index)"
-        >
+        <n-tag class="tag" round :class="item.length > 2 ? 'hidden' : 'show'" v-for="(item, index) in artistTypeNames"
+          :key="item" :bordered="false" :type="index == artistTypeNamesChoose ? 'primary' : 'default'"
+          @click="artistTypeChange(index)">
           {{ item }}
         </n-tag>
       </n-space>
     </div>
     <ArtistLists :listData="artistsData" :loadingNum="30" />
     <n-space justify="center">
-      <n-button
-        v-if="hasMore"
-        class="more"
-        size="large"
-        strong
-        secondary
-        round
-        :loading="loading"
-        @click="loadingMore"
-      >
+      <n-button v-if="hasMore" class="more" size="large" strong secondary round :loading="loading" @click="loadingMore">
         {{ $t("general.name.loadMore") }}
       </n-button>
     </n-space>
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { getArtistList } from "@/api/artist";
 import ArtistLists from "@/components/DataList/ArtistLists.vue";
+import { ArtistArea, ArtistType } from "@/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -112,8 +90,8 @@ const loading = ref(false);
 
 // 获取歌手数据
 const getArtistListData = (
-  type = -1,
-  area = -1,
+  type = -1 as ArtistType,
+  area = -1 as ArtistArea,
   limit = 30,
   offset = 0,
   initial = -1
@@ -124,14 +102,13 @@ const getArtistListData = (
       res.more ? (hasMore.value = true) : (hasMore.value = false);
       loading.value = false;
       // 遍历数据
-      res.artists.forEach((v) => {
-        artistsData.value.push({
-          id: v.id,
-          name: v.name,
-          cover: v.img1v1Url,
-          size: v.musicSize,
-        });
-      });
+      const newItems = res.artists.map((v: any) => ({
+        id: v.id,
+        name: v.name,
+        cover: v.img1v1Url,
+        size: v.musicSize,
+      }));
+      artistsData.value.push(...newItems);
     } else {
       hasMore.value = false;
       $message.error(t("general.message.acquisitionFailed"));
@@ -170,11 +147,11 @@ const loadingMore = () => {
   loading.value = true;
   artistsOffset.value += 30;
   getArtistListData(
-    artistType[artistTypeNamesChoose.value],
-    artistArea[artistTypeNamesChoose.value],
+    artistType[artistTypeNamesChoose.value] as ArtistType,
+    artistArea[artistTypeNamesChoose.value] as ArtistArea,
     30,
     artistsOffset.value,
-    artistInitialChoose.value
+    Number(artistInitialChoose.value)
   );
 };
 
@@ -190,11 +167,11 @@ watch(
     if (val.name == "dsc-artists") {
       artistsData.value = [];
       getArtistListData(
-        artistType[artistTypeNamesChoose.value],
-        artistArea[artistTypeNamesChoose.value],
+        artistType[artistTypeNamesChoose.value] as ArtistType,
+        artistArea[artistTypeNamesChoose.value] as ArtistArea,
         30,
         0,
-        artistInitialChoose.value
+        Number(artistInitialChoose.value)
       );
     }
   }
@@ -204,11 +181,11 @@ onMounted(() => {
   $setSiteTitle(t("nav.discover") + " - " + t("nav.discoverChildren.artists"));
   // 获取歌手数据
   getArtistListData(
-    artistType[artistTypeNamesChoose.value],
-    artistArea[artistTypeNamesChoose.value],
+    artistType[artistTypeNamesChoose.value] as ArtistType,
+    artistArea[artistTypeNamesChoose.value] as ArtistArea,
     30,
     0,
-    artistInitialChoose.value
+    Number(artistInitialChoose.value)
   );
 });
 </script>
@@ -217,58 +194,71 @@ onMounted(() => {
 .artists {
   .menu {
     margin-bottom: 16px;
+
     @media (max-width: 768px) {
       .initial {
         display: none !important;
       }
     }
+
     @media (max-width: 480px) {
       .category {
         gap: initial !important;
+
         .hidden {
           display: none !important;
         }
+
         .show {
           margin-right: 12px;
           margin-bottom: 8px;
         }
       }
     }
+
     .tag {
       font-size: 13px;
       padding: 0 16px;
       line-height: 0;
       cursor: pointer;
       transition: all 0.3s;
+
       &:hover {
         background-color: var(--main-second-color);
         color: var(--main-color);
       }
+
       &:active {
         transform: scale(0.9);
       }
     }
+
     .category {
       margin-top: 18px;
     }
   }
+
   .artistlists {
     @media (max-width: 480px) {
       padding-top: 12px;
     }
   }
+
   .more {
     margin-top: 40px;
     width: 140px;
     font-size: 16px;
     transition: all 0.3s;
+
     &:hover {
       background-color: var(--main-second-color);
       color: var(--main-color);
     }
+
     &:active {
       transform: scale(0.95);
     }
+
     :deep(.n-button__icon) {
       margin-right: 12px;
     }

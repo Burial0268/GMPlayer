@@ -3,7 +3,7 @@
  */
 
 import request from "@/utils/request";
-import type { ArtistType, ArtistArea } from "./types";
+import type { ArtistType, ArtistArea, ArtistSongsSortOrder } from "./types";
 
 export const artist = {
   /**
@@ -45,7 +45,7 @@ export const artist = {
   /**
    * 获取歌手全部歌曲
    */
-  getAllSongs: (id: number, limit = 30, offset = 0, order: "hot" | "time" = "hot") =>
+  getAllSongs: (id: number, limit = 30, offset = 0, order: ArtistSongsSortOrder = "hot") =>
     request<any>({
       method: "GET",
       url: "/artist/songs",

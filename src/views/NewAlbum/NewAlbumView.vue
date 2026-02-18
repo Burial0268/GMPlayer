@@ -8,7 +8,7 @@
         class="tag"
         round
         v-for="item in albumArea"
-        :key="item"
+        :key="item.label"
         :bordered="false"
         :type="item.value == albumAreaChoose ? 'primary' : 'default'"
         @click="changeArea(item.value)"
@@ -27,7 +27,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getAlbumNew } from "@/api/album";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";

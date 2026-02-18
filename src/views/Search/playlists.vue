@@ -11,13 +11,14 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getSearchData } from "@/api/search";
 import { useRouter } from "vue-router";
 import { formatNumber } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
+import type { SearchType } from "@/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -34,7 +35,7 @@ const pageNumber = ref(
 );
 
 // 获取搜索数据
-const getSearchDataList = (keywords, limit = 30, offset = 0, type = 1000) => {
+const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 1000) => {
   getSearchData(keywords, limit, offset, type).then((res) => {
     console.log(res);
     // 数据总数

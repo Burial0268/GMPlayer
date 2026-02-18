@@ -33,13 +33,14 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getArtistDetail, getArtistAllSongs } from "@/api/artist";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { transformSongData } from "@/utils/transformSongData";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
+import { ArtistSongsSortOrder } from "@/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -57,19 +58,19 @@ const pageNumber = ref(
 );
 
 // 获取歌手名称
-const getArtistDetailData = (id) => {
+const getArtistDetailData = (id: number) => {
   getArtistDetail(id).then((res) => {
     artistName.value = res.data.artist.name;
   });
 };
 
 // 获取歌手信息
-const getArtistAllSongsData = (id, limit = 30, offset = 0, order = "hot") => {
+const getArtistAllSongsData = (id: string | number | string[], limit = 30, offset = 0, order: ArtistSongsSortOrder = "hot") => {
   if (!id) return false;
-  getArtistAllSongs(id, limit, offset, order)
+  getArtistAllSongs(Number(id), limit, offset, order)
     .then((res) => {
       // 获取歌手名称
-      getArtistDetailData(id);
+      getArtistDetailData(Number(id));
       // 全部歌曲数据
       if (res.songs[0]) {
         // 数据总数
@@ -108,7 +109,7 @@ watch(
 );
 
 // 每页个数数据变化
-const pageSizeChange = (val) => {
+const pageSizeChange = (val: number) => {
   pagelimit.value = val;
   getArtistAllSongsData(
     artistId.value,
@@ -118,7 +119,7 @@ const pageSizeChange = (val) => {
 };
 
 // 当前页数数据变化
-const pageNumberChange = (val) => {
+const pageNumberChange = (val: number) => {
   router.push({
     path: "/all-songs",
     query: {

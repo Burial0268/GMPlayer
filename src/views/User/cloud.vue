@@ -85,7 +85,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getCloud, upCloudSong } from "@/api/user";
 import { useRouter } from "vue-router";
 import { settingStore } from "@/store";
@@ -94,6 +94,7 @@ import { BackupRound } from "@vicons/material";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
+import type { ProgressStatus } from "naive-ui";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -112,7 +113,7 @@ const totalCount = ref(0);
 
 // 上传歌曲数据
 const upSongRef = ref(null);
-const upSongType = ref("success");
+const upSongType = ref<ProgressStatus>("success");
 const upSongModal = ref(false);
 const upSongCompleted = ref(0);
 

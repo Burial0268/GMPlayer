@@ -94,7 +94,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { userStore, musicStore, settingStore } from "@/store";
 import {
   getLoginState,
@@ -109,6 +109,7 @@ import { PhoneAndroidRound, PasswordRound } from "@vicons/material";
 import { formRules } from "@/utils/formRules";
 import { useI18n } from "vue-i18n";
 import QrcodeVue from "qrcode.vue";
+import type { FormRules } from "naive-ui";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -128,7 +129,7 @@ const phoneFormData = ref({
   phone: null,
   captcha: null,
 });
-const phoneFormRules = {
+const phoneFormRules: FormRules = {
   phone: mobileRule,
   captcha: numberRule,
 };

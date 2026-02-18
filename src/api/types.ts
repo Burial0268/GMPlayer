@@ -19,6 +19,8 @@ export type ArtistType = -1 | 1 | 2 | 3; // -1:全部 1:男歌手 2:女歌手 3:
 /** 歌手区域 */
 export type ArtistArea = -1 | 0 | 7 | 8 | 16 | 96; // -1:全部 7:华语 96:欧美 8:日本 16:韩国 0:其他
 
+export type ArtistSongsSortOrder = "time" | "hot";
+
 /** 搜索类型 */
 export type SearchType =
   | 1      // 单曲

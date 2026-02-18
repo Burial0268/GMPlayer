@@ -376,7 +376,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { storeToRefs } from "pinia";
 import { settingStore } from "@/store";
 import { useI18n } from "vue-i18n";

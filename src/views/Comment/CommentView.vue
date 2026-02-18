@@ -2,7 +2,7 @@
   <div class="comment">
     <Transition name="up">
       <n-card
-        v-if="music.getPlaySongData && music.getPlaySongData.id != songId"
+        v-if="music.getPlaySongData && music.getPlaySongData.id != Number(songId)"
         class="goback"
         @click="router.push(`/comment?id=${music.getPlaySongData.id}&page=1`)"
         content-style="padding: 6px"
@@ -13,7 +13,7 @@
     <div class="title" v-if="songId">
       <span class="key">{{ $t("general.name.allComments") }}</span>
       <n-card class="song">
-        <SmallSongData :getDataByID="songId" />
+        <SmallSongData :getDataByID="songId.toString()" />
       </n-card>
     </div>
     <div class="title" v-else>
@@ -70,7 +70,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { musicStore } from "@/store";
 import { useRouter } from "vue-router";
 import { getComment } from "@/api/comment";
@@ -101,13 +101,13 @@ const commentData = reactive({
 const commentsCount = ref(0);
 
 // 获取评论数据
-const getCommentData = (id, offset = 0) => {
+const getCommentData = (id: string | number | string[], offset = 0) => {
   // 获取 before
   let before = null;
   if (commentData.allComments[0] && offset >= 5000) {
     before = commentData.allComments[commentData.allComments.length - 1].time;
   }
-  getComment(id, offset, before).then((res) => {
+  getComment(Number(id), offset, before).then((res) => {
     // 写入数据
     if (res.comments && res.comments[0]) {
       if (res.hotComments) {
@@ -127,7 +127,7 @@ const getCommentData = (id, offset = 0) => {
 };
 
 // 当前页数数据变化
-const pageNumberChange = (val) => {
+const pageNumberChange = (val: number) => {
   router.push({
     path: "/comment",
     query: {

@@ -368,7 +368,7 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
       }
       music.setPlayState(false);
       // 更改页面标题
-      window.$setSiteTitle();
+      window.$setSiteTitle("");
     });
     // 结束事件
     sound?.on('end', () => {
@@ -583,7 +583,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
       console.log('音乐暂停 (adopted sound)');
     }
     music.setPlayState(false);
-    window.$setSiteTitle();
+    window.$setSiteTitle("");
   });
 
   // Register play handler to restart time loop + spectrum after pause/resume.

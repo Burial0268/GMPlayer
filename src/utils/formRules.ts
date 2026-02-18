@@ -1,18 +1,11 @@
-// 定义表单规则类型
-interface Rule {
-  type?: string;
-  required?: boolean;
-  message?: string;
-  trigger?: string | string[];
-  validator?: (rule: any, value: any) => boolean | Error;
-  key?: string;
-}
+import type { FormItemRule } from "naive-ui";
 
+// 定义表单规则类型
 interface FormRules {
-  textRule: Rule;
-  numberRule: Rule;
-  emailRule: Rule;
-  mobileRule: Rule;
+  textRule: FormItemRule;
+  numberRule: FormItemRule;
+  emailRule: FormItemRule;
+  mobileRule: FormItemRule;
 }
 
 // 表单规则
@@ -26,7 +19,7 @@ const formRules = (): FormRules => {
     },
     // 数字验证
     numberRule: {
-      type: "number",
+      type: "number" as const,
       required: true,
       message: "请填写必要信息",
       trigger: "blur",

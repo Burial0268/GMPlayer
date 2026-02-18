@@ -23,7 +23,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { useRouter } from "vue-router";
 
 const router = useRouter();
@@ -32,11 +32,9 @@ const router = useRouter();
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
 
 // Tab 选项卡变化
-const tabChange = (value) => {
-  console.log(value);
+const tabChange = (value: string) => {
   router.push({
     path: `/discover/${value}`,
-    page: 1,
   });
 };
 

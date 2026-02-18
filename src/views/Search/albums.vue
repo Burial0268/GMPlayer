@@ -11,13 +11,14 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getSearchData } from "@/api/search";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
+import { SearchType } from "@/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -34,15 +35,15 @@ const pageNumber = ref(
 );
 
 // 获取搜索数据
-const getSearchDataList = (keywords, limit = 30, offset = 0, type = 10) => {
-  getSearchData(keywords, limit, offset, type).then((res) => {
+const getSearchDataList = (keywords: string | string[], limit = 30, offset = 0, type = 10) => {
+  getSearchData(keywords.toString(), limit, offset, type as SearchType).then((res) => {
     console.log(res);
     // 数据总数
     totalCount.value = res.result.albumCount;
     // 列表数据
     searchData.value = [];
     if (res.result.albums) {
-      res.result.albums.forEach((v) => {
+      res.result.albums.forEach((v: { id: number; picUrl: string; name: string; artists: any; publishTime: string | number; }) => {
         searchData.value.push({
           id: v.id,
           cover: v.picUrl,
@@ -76,7 +77,7 @@ watch(
 );
 
 // 每页个数数据变化
-const pageSizeChange = (val) => {
+const pageSizeChange = (val: number) => {
   console.log(val);
   pagelimit.value = val;
   getSearchDataList(
@@ -87,7 +88,7 @@ const pageSizeChange = (val) => {
 };
 
 // 当前页数数据变化
-const pageNumberChange = (val) => {
+const pageNumberChange = (val: number) => {
   router.push({
     path: "/search/albums",
     query: {

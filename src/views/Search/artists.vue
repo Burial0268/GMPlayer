@@ -4,11 +4,12 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getSearchData } from "@/api/search";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import ArtistLists from "@/components/DataList/ArtistLists.vue";
+import type { SearchType } from "@/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -21,7 +22,7 @@ const pageNumber = ref(1);
 const totalCount = ref(0);
 
 // 获取搜索数据
-const getSearchDataList = (keywords, limit = 30, offset = 0, type = 100) => {
+const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 100) => {
   getSearchData(keywords, limit, offset, type).then((res) => {
     console.log(res);
     // 数据总数

@@ -11,7 +11,7 @@
   </div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 import { getSearchData } from "@/api/search";
 // import { getMusicDetail } from "@/api/song";
 import { useRouter } from "vue-router";
@@ -19,6 +19,7 @@ import { transformSongData } from "@/utils/transformSongData";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
+import type { SearchType } from "@/api";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -35,7 +36,7 @@ const pageNumber = ref(
 );
 
 // 获取搜索数据
-const getSearchDataList = (keywords, limit = 30, offset = 0, type = 1) => {
+const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 1) => {
   getSearchData(keywords, limit, offset, type).then((res) => {
     // 列表数据
     if (res.result.songs) {

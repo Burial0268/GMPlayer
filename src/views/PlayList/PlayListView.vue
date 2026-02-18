@@ -143,8 +143,8 @@
   </div>
 </template>
 
-<script setup>
-import { NIcon, NAvatar, NText } from "naive-ui";
+<script setup lang="ts">
+import { NIcon, NText } from "naive-ui";
 import {
   getPlayListDetail,
   getAllPlayList,
@@ -195,8 +195,11 @@ const pageNumber = ref(
 );
 const totalCount = ref(0);
 
+const normalizePlaylistId = (id: string | number | string[]) =>
+  Number(Array.isArray(id) ? id[0] : id);
+
 // 判断收藏还是取消
-const isLikeOrDislike = (id) => {
+const isLikeOrDislike = (id: string | string[]) => {
   const playlists = user.getUserPlayLists.like;
   if (playlists.length) {
     return !playlists.some((item) => item.id === Number(id));
@@ -205,7 +208,7 @@ const isLikeOrDislike = (id) => {
 };
 
 // 判断是否可删除
-const isCanDelete = (id) => {
+const isCanDelete = (id: string | string[]) => {
   const playlists = user.getUserPlayLists.own;
   if (playlists.length) {
     return playlists.some((item) => item.id === Number(id));
@@ -272,8 +275,8 @@ const setDropdownOptions = () => {
 };
 
 // 获取歌单信息
-const getPlayListDetailData = (id) => {
-  getPlayListDetail(id)
+const getPlayListDetailData = (id: string | number | string[]) => {
+  getPlayListDetail(normalizePlaylistId(id))
     .then((res) => {
       // 歌单总数
       totalCount.value = res.playlist.trackCount;
@@ -290,12 +293,13 @@ const getPlayListDetailData = (id) => {
 };
 
 // 获取歌单所有歌曲
-const getAllPlayListData = (id, limit = 30, offset = 0) => {
-  getAllPlayList(id, limit, offset).then((res) => {
+const getAllPlayListData = (id: string | number | string[], limit = 30, offset = 0) => {
+  const sourceId = normalizePlaylistId(id);
+  getAllPlayList(sourceId, limit, offset).then((res) => {
     if (res.songs) {
       playListData.value = transformSongData(res.songs, {
         offset: (pageNumber.value - 1) * pagelimit.value,
-        sourceId: id,
+        sourceId,
       });
     } else {
       $message.error(t("general.message.acquisitionFailed"));
@@ -311,7 +315,7 @@ const playAllSong = () => {
 };
 
 // 删除歌单
-const toDelPlayList = (data) => {
+const toDelPlayList = (data: { id: number; name: any; }) => {
   if (data.id === user.getUserPlayLists?.own[0].id) {
     $message.warning(t("menu.unableToDelete"));
     return false;
@@ -337,11 +341,11 @@ const toDelPlayList = (data) => {
 };
 
 // 收藏/取消收藏
-const toChangeLike = async (id) => {
-  const type = isLikeOrDislike(id) ? 1 : 2;
+const toChangeLike = async (id: string | number | string[]) => {
+  const type = isLikeOrDislike(id.toString()) ? 1 : 2;
   const likeMsg = t("general.name.playlist");
   try {
-    const res = await likePlaylist(type, id);
+    const res = await likePlaylist(normalizePlaylistId(id), type);
     if (res.code === 200) {
       $message.success(buildLikeMessage(t, likeMsg, type, "success", setting.language));
       user.setUserPlayLists(() => {
@@ -379,7 +383,7 @@ onMounted(() => {
 });
 
 // 每页个数数据变化
-const pageSizeChange = (val) => {
+const pageSizeChange = (val: number) => {
   pagelimit.value = val;
   getAllPlayListData(
     playListId.value,
@@ -389,7 +393,7 @@ const pageSizeChange = (val) => {
 };
 
 // 当前页数数据变化
-const pageNumberChange = (val) => {
+const pageNumberChange = (val: number) => {
   router.push({
     path: "/playlist",
     query: {
@@ -494,6 +498,7 @@ watch(
           font-size: 28px;
           font-weight: bold;
           -webkit-line-clamp: 2;
+          line-clamp: 2;
         }
         .creator {
           margin-top: 6px;
@@ -516,6 +521,7 @@ watch(
         }
         .desc {
           -webkit-line-clamp: 4;
+          line-clamp: 4;
           line-height: 26px;
           margin-bottom: 16px;
         }
@@ -634,6 +640,7 @@ watch(
           }
           .desc {
             -webkit-line-clamp: 2;
+            line-clamp: 2;
             margin-bottom: 0;
           }
         }
@@ -696,6 +703,7 @@ watch(
         .title {
           .name {
             -webkit-line-clamp: 3;
+            line-clamp: 3;
           }
         }
         .control {
