@@ -424,6 +424,17 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
  */
 export const setVolume = (sound: ISound | undefined, volume: number): void => {
   sound?.volume(volume);
+
+  // When AutoMix normalization is active, apply the persistent gain adjustment
+  // to the GainNode so that manual volume changes maintain LUFS normalization.
+  const autoMix = getAutoMixEngine();
+  const gainAdj = autoMix.getActiveGainAdjustment();
+  if (gainAdj !== 1 && sound) {
+    const gainNode = (sound as any).getGainNode?.();
+    if (gainNode) {
+      gainNode.gain.value = volume * gainAdj;
+    }
+  }
 };
 
 /**

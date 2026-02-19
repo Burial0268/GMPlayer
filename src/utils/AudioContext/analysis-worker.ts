@@ -434,19 +434,24 @@ function computeFingerprint(data: Float32Array, sampleRate: number): SpectralFin
   const windowSize = 2048;
   const windowCount = Math.min(8, Math.floor(length / windowSize));
 
-  // 24 bark-band edge frequencies
-  const barkEdges = [
-    20, 100, 200, 300, 400, 510, 630, 770, 920, 1080,
-    1270, 1480, 1720, 2000, 2320, 2700, 3150, 3700, 4400,
-    5300, 6400, 7700, 9500, 12000, 15500,
+  // 8 perceptual frequency bands
+  const bandEdges: [number, number][] = [
+    [20, 150],      // sub-bass
+    [150, 400],     // bass
+    [400, 800],     // low-mid
+    [800, 1500],    // mid
+    [1500, 3000],   // upper-mid
+    [3000, 6000],   // presence
+    [6000, 10000],  // brilliance
+    [10000, Math.min(16000, sampleRate / 2 - 100)], // air
   ];
 
-  const bands = new Array<number>(24).fill(0);
+  const bandCount = bandEdges.length;
+  const bands = new Array<number>(bandCount).fill(0);
 
   if (windowCount === 0) return { bands };
 
   const step = Math.floor(length / windowCount);
-  const freqRes = sampleRate / windowSize;
 
   for (let w = 0; w < windowCount; w++) {
     const offset = w * step;
@@ -454,28 +459,39 @@ function computeFingerprint(data: Float32Array, sampleRate: number): SpectralFin
     const wLen = end - offset;
     if (wLen < windowSize / 2) continue;
 
-    // Compute total energy in this window (fast)
-    let totalEnergy = 0;
-    for (let i = offset; i < end; i++) {
-      totalEnergy += data[i] * data[i];
-    }
+    // Create fresh IIR filter states for each window (independent measurements)
+    for (let b = 0; b < bandCount; b++) {
+      const [fLow, fHigh] = bandEdges[b];
+      // Skip bands above Nyquist
+      if (fLow >= sampleRate / 2) continue;
+      const clampedHigh = Math.min(fHigh, sampleRate / 2 - 100);
+      if (clampedHigh <= fLow) continue;
 
-    // Approximate band energies by distributing total energy
-    // weighted by expected spectral distribution
-    // This is a rough but O(1)-per-band approximation
-    for (let b = 0; b < 24; b++) {
-      const binRange = Math.max(1, Math.floor(barkEdges[b + 1] / freqRes) - Math.floor(barkEdges[b] / freqRes));
-      bands[b] += (totalEnergy / wLen) * (1 / (1 + b * 0.3)) / binRange;
+      const state = createIIRState(designBiquadBandpass(fLow, clampedHigh, sampleRate));
+
+      // Warm up filter with first 64 samples (avoids transient)
+      const warmupEnd = Math.min(offset + 64, end);
+      for (let i = offset; i < warmupEnd; i++) {
+        iirProcessSample(state, data[i]);
+      }
+
+      // Measure RMS energy in this band for this window
+      let sumSq = 0;
+      for (let i = offset; i < end; i++) {
+        const filtered = iirProcessSample(state, data[i]);
+        sumSq += filtered * filtered;
+      }
+      bands[b] += Math.sqrt(sumSq / wLen);
     }
   }
 
-  // Average and normalize
+  // Average across windows and normalize to 0-1
   let maxB = 0.0001;
-  for (let b = 0; b < 24; b++) {
+  for (let b = 0; b < bandCount; b++) {
     bands[b] /= windowCount;
     if (bands[b] > maxB) maxB = bands[b];
   }
-  for (let b = 0; b < 24; b++) {
+  for (let b = 0; b < bandCount; b++) {
     bands[b] /= maxB;
   }
 

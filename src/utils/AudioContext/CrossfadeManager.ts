@@ -31,10 +31,11 @@ export interface CrossfadeParams {
   inShape?: number;
   /** Exponent for outgoing volume curve. <1 = fast drop, >1 = slow drop. Default 1.0 */
   outShape?: number;
-  /** Loudness compensation factor for mid-crossfade balance (1.0 = no compensation).
-   *  Applied as bell-shaped envelope: comp(t) = 1 + (factor-1) × sin(πt),
-   *  peaks at midpoint, 1.0 at both ends — no boundary discontinuity. */
-  loudnessCompensation?: number;
+  /** Persistent gain adjustment for the incoming track (1.0 = no adjustment).
+   *  Derived from LUFS normalization: targets -14 LUFS across tracks.
+   *  Applied as a flat multiplier on the incoming gain throughout the crossfade
+   *  and persisted after completion — no mid-crossfade bumps. */
+  incomingGainAdjustment?: number;
 }
 
 export interface CrossfadeProfile {
@@ -149,7 +150,7 @@ export class CrossfadeManager {
   private _fadeInOnly: boolean = false;
   private _inShape: number = 1;
   private _outShape: number = 1;
-  private _loudnessCompensation: number = 1;
+  private _incomingGainAdjustment: number = 1;
   private _isPaused: boolean = false;
   private _pausedAt: number = 0;
 
@@ -172,12 +173,12 @@ export class CrossfadeManager {
     this._incomingGain = incomingGain;
     this._duration = params.duration;
     this._curve = params.curve;
-    this._incomingTargetGain = params.incomingGain;
     this._onComplete = onComplete ?? null;
     this._fadeInOnly = params.fadeInOnly ?? false;
     this._inShape = params.inShape ?? 1;
     this._outShape = params.outShape ?? 1;
-    this._loudnessCompensation = params.loudnessCompensation ?? 1;
+    this._incomingGainAdjustment = params.incomingGainAdjustment ?? 1;
+    this._incomingTargetGain = params.incomingGain * this._incomingGainAdjustment;
     this._isActive = true;
 
     const audioCtx = AudioContextManager.getContext();
@@ -253,14 +254,8 @@ export class CrossfadeManager {
         this._outgoingGain.gain.value = outVol * this._outgoingTargetGain;
       }
 
-      // Loudness compensation: bell-shaped envelope peaking at midpoint.
-      // comp(t) = 1 + (factor-1) * sin(πt): full compensation at t=0.5, 1.0 at boundaries.
-      const comp = this._loudnessCompensation !== 1
-        ? 1 + (this._loudnessCompensation - 1) * Math.sin(Math.PI * progress)
-        : 1;
-
       if (this._incomingGain) {
-        this._incomingGain.gain.value = inVol * this._incomingTargetGain * comp;
+        this._incomingGain.gain.value = inVol * this._incomingTargetGain;
       }
 
       if (progress >= 1) {
@@ -458,5 +453,13 @@ export class CrossfadeManager {
     if (!audioCtx) return -1;
     const elapsed = audioCtx.currentTime - this._startTime;
     return Math.min(elapsed / this._duration, 1);
+  }
+
+  /**
+   * Get the incoming gain adjustment factor used in the current/last crossfade.
+   * Returns 1.0 if no adjustment was applied.
+   */
+  getIncomingGainAdjustment(): number {
+    return this._incomingGainAdjustment;
   }
 }
