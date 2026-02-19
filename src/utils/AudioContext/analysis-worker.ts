@@ -178,15 +178,16 @@ function analyzeEnergy(data: Float32Array, sampleRate: number, duration: number)
   }
 
   // ── Normalize energy to 0-1 (for outro/intro detection) ──
-  // Exclude trailing silence seconds from normalization to avoid skewing
+  // Exclude trailing silence seconds from normalization to avoid skewing.
+  // Use 95th percentile instead of max to prevent a single loud transient
+  // from compressing the entire energy curve.
   const contentSeconds = Math.max(1, secondCount - Math.floor(trailingSilence));
 
-  let maxE = 0.001;
-  for (let i = 0; i < contentSeconds; i++) {
-    if (energyPerSecond[i] > maxE) maxE = energyPerSecond[i];
-  }
+  const sorted = energyPerSecond.slice(0, contentSeconds).sort((a, b) => a - b);
+  const p95idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+  const normFactor = Math.max(0.001, sorted[p95idx]);
   for (let i = 0; i < secondCount; i++) {
-    energyPerSecond[i] /= maxE;
+    energyPerSecond[i] = Math.min(1, energyPerSecond[i] / normFactor);
   }
 
   // Average energy (content portion only)
@@ -877,115 +878,131 @@ function classifyOutro(
   const fluxSorted = flux.slice().sort((a, b) => a - b);
   const medianFlux = fluxSorted[Math.floor(fluxSorted.length / 2)];
 
-  // ── Priority 1: Silence ──
+  // ── Priority 1: Silence ── (unchanged — works well)
   if (trailingSilence >= duration * 0.5) {
     const musicalEndOffset = trailingSilence;
     return {
       outroType: 'silence',
       outroConfidence: 0.95,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('silence', musicalEndOffset, duration, trailingSilence),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('silence', musicalEndOffset, duration, trailingSilence, 0.95),
     };
   }
-  // All windows below absolute threshold
   const allSilent = totalEnergy.every(e => e < 0.001);
   if (allSilent) {
     return {
       outroType: 'silence',
       outroConfidence: 0.9,
       musicalEndOffset: analysisDuration,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('silence', analysisDuration, duration, trailingSilence),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('silence', analysisDuration, duration, trailingSilence, 0.9),
     };
   }
 
-  // ── Priority 2: Noise ending (applause/crowd) ──
-  // Last 20% of windows: high flux (> median) while total energy is low (< 30% avg),
-  // and high band is disproportionally strong
+  // ── Priority 2: Noise ending (applause/crowd) ── Tightened thresholds
   const tailStart = Math.floor(windowCount * 0.8);
   let noiseCount = 0;
   let highDominantCount = 0;
   for (let i = tailStart; i < windowCount; i++) {
-    if (flux[i] > medianFlux && totalEnergy[i] < avgEnergy * 0.3) {
+    // Require flux > 2× median (was 1×) and low energy
+    if (flux[i] > medianFlux * 2 && totalEnergy[i] < avgEnergy * 0.3) {
       noiseCount++;
     }
-    if (bands.high[i] > bands.mid[i] * 0.8 && bands.high[i] > bands.low[i]) {
+    // Require high > 1.2× mid (was 0.8×) — much stricter high-dominant check
+    if (bands.high[i] > bands.mid[i] * 1.2 && bands.high[i] > bands.low[i]) {
       highDominantCount++;
     }
   }
   const tailLen = windowCount - tailStart;
-  if (noiseCount > tailLen * 0.5 && highDominantCount > tailLen * 0.4) {
+  // Require 60% match (was 50%) and 50% high-dominant (was 40%)
+  if (noiseCount > tailLen * 0.6 && highDominantCount > tailLen * 0.5) {
+    const conf = Math.min(0.9, noiseCount / tailLen);
     const musicalEndOffset = computeMusicalEndOffset('noiseEnd', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
     return {
       outroType: 'noiseEnd',
-      outroConfidence: Math.min(0.9, noiseCount / tailLen),
+      outroConfidence: conf,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('noiseEnd', musicalEndOffset, duration, trailingSilence),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('noiseEnd', musicalEndOffset, duration, trailingSilence, conf),
     };
   }
 
-  // ── Priority 3: Loop fade (repeating pattern with energy decrease) ──
-  // Autocorrelation of totalEnergy in last 30s (120 windows at 250ms)
+  // ── Priority 3: Loop fade ── Much stricter
   const loopScanWindows = Math.min(120, windowCount);
   const loopScanStart = windowCount - loopScanWindows;
   const { period: loopPeriodIdx, confidence: loopConf } = detectRepetitionPeriod(
     totalEnergy, loopScanStart, windowCount
   );
-  if (loopConf > 0.65 && loopPeriodIdx >= 2 && loopPeriodIdx <= 32) {
-    // Check near-monotonic energy decrease across the looped region
-    let decreasingCount = 0;
+  // Require autocorrelation > 0.75 (was 0.65), period 2-32 windows (1-8s)
+  if (loopConf > 0.75 && loopPeriodIdx >= 2 && loopPeriodIdx <= 32) {
     const checkWindows = Math.floor(loopScanWindows / loopPeriodIdx);
-    for (let p = 1; p < checkWindows; p++) {
-      const prevStart = loopScanStart + (p - 1) * loopPeriodIdx;
-      const currStart = loopScanStart + p * loopPeriodIdx;
-      let prevAvg = 0, currAvg = 0;
-      for (let j = 0; j < loopPeriodIdx && prevStart + j < windowCount && currStart + j < windowCount; j++) {
-        prevAvg += totalEnergy[prevStart + j];
-        currAvg += totalEnergy[currStart + j];
-      }
-      if (currAvg <= prevAvg * 1.02) decreasingCount++;
-    }
-    if (checkWindows > 1 && decreasingCount / (checkWindows - 1) > 0.7) {
-      // Spectral stability gate: reject if band ratios change > 2x between halves
-      // (indicates a structural transition, not a genuine loop fade)
-      const loopHalf = Math.floor(loopScanWindows / 2);
-      const firstHalfRatio = computeLocalBandRatio(bands, loopScanStart, loopScanStart + loopHalf);
-      const secondHalfRatio = computeLocalBandRatio(bands, loopScanStart + loopHalf, windowCount);
-      let spectralStable = true;
-      for (let b = 0; b < 3; b++) {
-        if (firstHalfRatio[b] > 0.01 && secondHalfRatio[b] / firstHalfRatio[b] > 2) spectralStable = false;
-        if (secondHalfRatio[b] > 0.01 && firstHalfRatio[b] / secondHalfRatio[b] > 2) spectralStable = false;
+    // Require at least 3 complete loop periods (was effectively 2)
+    if (checkWindows >= 3) {
+      // Check per-period decrease
+      let decreasingCount = 0;
+      for (let p = 1; p < checkWindows; p++) {
+        const prevStart = loopScanStart + (p - 1) * loopPeriodIdx;
+        const currStart = loopScanStart + p * loopPeriodIdx;
+        let prevAvg = 0, currAvg = 0;
+        for (let j = 0; j < loopPeriodIdx && prevStart + j < windowCount && currStart + j < windowCount; j++) {
+          prevAvg += totalEnergy[prevStart + j];
+          currAvg += totalEnergy[currStart + j];
+        }
+        if (currAvg <= prevAvg * 1.02) decreasingCount++;
       }
 
-      if (spectralStable) {
-        const loopPeriodSec = loopPeriodIdx * windowDuration;
-        const musicalEndOffset = computeMusicalEndOffset('loopFade', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
-        return {
-          outroType: 'loopFade',
-          outroConfidence: Math.min(0.9, loopConf),
-          musicalEndOffset,
-          suggestedCrossfadeStart: computeSuggestedCrossfadeStart('loopFade', musicalEndOffset, duration, trailingSilence),
-          loopPeriod: loopPeriodSec,
-        };
+      // Require overall energy decrease > 40% (first period vs last period)
+      const firstPeriodStart = loopScanStart;
+      const lastPeriodStart = loopScanStart + (checkWindows - 1) * loopPeriodIdx;
+      let firstPeriodAvg = 0, lastPeriodAvg = 0;
+      for (let j = 0; j < loopPeriodIdx && firstPeriodStart + j < windowCount && lastPeriodStart + j < windowCount; j++) {
+        firstPeriodAvg += totalEnergy[firstPeriodStart + j];
+        lastPeriodAvg += totalEnergy[lastPeriodStart + j];
+      }
+      const overallDecrease = firstPeriodAvg > 0.0001 ? 1 - lastPeriodAvg / firstPeriodAvg : 0;
+
+      if (decreasingCount / (checkWindows - 1) > 0.7 && overallDecrease > 0.4) {
+        // Spectral stability gate
+        const loopHalf = Math.floor(loopScanWindows / 2);
+        const firstHalfRatio = computeLocalBandRatio(bands, loopScanStart, loopScanStart + loopHalf);
+        const secondHalfRatio = computeLocalBandRatio(bands, loopScanStart + loopHalf, windowCount);
+        let spectralStable = true;
+        for (let b = 0; b < 3; b++) {
+          if (firstHalfRatio[b] > 0.01 && secondHalfRatio[b] / firstHalfRatio[b] > 2) spectralStable = false;
+          if (secondHalfRatio[b] > 0.01 && firstHalfRatio[b] / secondHalfRatio[b] > 2) spectralStable = false;
+        }
+
+        if (spectralStable) {
+          const loopPeriodSec = loopPeriodIdx * windowDuration;
+          const conf = Math.min(0.9, loopConf);
+          const musicalEndOffset = computeMusicalEndOffset('loopFade', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+          return {
+            outroType: 'loopFade',
+            outroConfidence: conf,
+            musicalEndOffset,
+            suggestedCrossfadeStart: computeSuggestedCrossfadeStart('loopFade', musicalEndOffset, duration, trailingSilence, conf),
+            loopPeriod: loopPeriodSec,
+          };
+        }
       }
     }
   }
 
-  // ── Priority 4: Fade-out ──
-  // All 3 bands decrease near-monotonically over >= 12 windows (3s),
-  // spectral shape preserved, flux low
-  const minFadeWindows = 12; // 3s
+  // ── Priority 4: Fade-out ── Stricter requirements
+  const minFadeWindows = 20; // 5s (was 12/3s)
   let fadeDetected = false;
   let fadeStartIdx = -1;
   let fadeConfidence = 0;
 
-  // Scan from end, find longest near-monotonic decrease
   for (let start = Math.max(0, windowCount - 60); start < windowCount - minFadeWindows; start++) {
-    let decreasing = true;
-    let increaseCount = 0;
-    const maxIncreases = Math.floor((windowCount - start) * 0.15); // allow 15% non-monotonic
+    const fadeLen = windowCount - start;
+    // Fade must extend to the last 4 windows of the analysis region
+    if (windowCount - (start + fadeLen) > 4) continue;
 
+    let increaseCount = 0;
+    const maxIncreases = Math.floor(fadeLen * 0.10); // 10% (was 15%)
+
+    let decreasing = true;
     for (let i = start + 1; i < windowCount; i++) {
-      if (totalEnergy[i] > totalEnergy[i - 1] * 1.05) { // 5% tolerance
+      if (totalEnergy[i] > totalEnergy[i - 1] * 1.05) {
         increaseCount++;
         if (increaseCount > maxIncreases) {
           decreasing = false;
@@ -994,31 +1011,39 @@ function classifyOutro(
       }
     }
 
-    if (decreasing && (windowCount - start) >= minFadeWindows) {
-      // Check spectral shape preservation: band ratios should stay within 2x
-      const startLow = bands.low[start] || 0.0001;
-      const startMid = bands.mid[start] || 0.0001;
-      const midpoint = Math.floor((start + windowCount) / 2);
-      const midLow = bands.low[midpoint] || 0.0001;
-      const midMid = bands.mid[midpoint] || 0.0001;
+    if (!decreasing) continue;
 
-      const ratioStart = startLow / startMid;
-      const ratioMid = midLow / midMid;
-      const ratioChange = ratioStart > 0 ? Math.abs(ratioMid / ratioStart - 1) : 1;
+    // Energy ratio test: end energy must be < 15% of start energy (was just monotonicity)
+    const startEnergy = totalEnergy[start];
+    const endEnergy = totalEnergy[windowCount - 1];
+    if (startEnergy < 0.01 || endEnergy / startEnergy >= 0.15) continue;
 
-      // Check flux is low during fade
-      let avgFlux = 0;
-      for (let i = start; i < windowCount; i++) avgFlux += flux[i];
-      avgFlux /= (windowCount - start);
-      const fluxIsLow = avgFlux < medianFlux * 1.5;
+    // Linear regression R² check (verify it's actually linear, not random)
+    const fadeR2 = linearRegressionR2(totalEnergy, start, windowCount);
+    if (fadeR2 < 0.5) continue;
 
-      if (ratioChange < 1.0 && fluxIsLow) {
-        fadeDetected = true;
-        fadeStartIdx = start;
-        const fadeLength = windowCount - start;
-        fadeConfidence = Math.min(0.95, 0.5 + (fadeLength / 40) * 0.3 + (1 - ratioChange) * 0.2);
-        break; // take earliest qualifying fade start
-      }
+    // Check spectral shape preservation
+    const startLow = bands.low[start] || 0.0001;
+    const startMid = bands.mid[start] || 0.0001;
+    const midpoint = Math.floor((start + windowCount) / 2);
+    const midLow = bands.low[midpoint] || 0.0001;
+    const midMid = bands.mid[midpoint] || 0.0001;
+
+    const ratioStart = startLow / startMid;
+    const ratioMid = midLow / midMid;
+    const ratioChange = ratioStart > 0 ? Math.abs(ratioMid / ratioStart - 1) : 1;
+
+    // Check flux is low during fade
+    let avgFlux = 0;
+    for (let i = start; i < windowCount; i++) avgFlux += flux[i];
+    avgFlux /= fadeLen;
+    const fluxIsLow = avgFlux < medianFlux * 1.5;
+
+    if (ratioChange < 1.0 && fluxIsLow) {
+      fadeDetected = true;
+      fadeStartIdx = start;
+      fadeConfidence = Math.min(0.95, 0.5 + (fadeLen / 40) * 0.3 + fadeR2 * 0.15);
+      break;
     }
   }
 
@@ -1028,29 +1053,29 @@ function classifyOutro(
       outroType: 'fadeOut',
       outroConfidence: fadeConfidence,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('fadeOut', musicalEndOffset, duration, trailingSilence),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('fadeOut', musicalEndOffset, duration, trailingSilence, fadeConfidence),
     };
   }
 
-  // ── Priority 5: SlowDown (tempo deceleration) ──
-  // Detect increasing inter-onset intervals in last 15s (60 windows)
+  // ── Priority 5: SlowDown (tempo deceleration) ── Stricter
   const slowDownWindows = Math.min(60, windowCount);
   const slowDownStart = windowCount - slowDownWindows;
   const slowDownResult = detectSlowDown(flux, slowDownStart, windowCount, medianFlux);
-  if (slowDownResult.detected) {
+  // Require r2 > 0.5 (was 0.3 in detectSlowDown) and at least 8 onset peaks (was 6)
+  if (slowDownResult.detected && slowDownResult.r2 > 0.5) {
+    const conf = Math.min(0.75, 0.5 + slowDownResult.r2 * 0.25); // cap at 0.75 (was 0.85)
     const musicalEndOffset = computeMusicalEndOffset('slowDown', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
     const decelerationStartSec = duration - analysisDuration + slowDownStart * windowDuration;
     return {
       outroType: 'slowDown',
-      outroConfidence: Math.min(0.85, 0.5 + slowDownResult.r2 * 0.35),
+      outroConfidence: conf,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('slowDown', musicalEndOffset, duration, trailingSilence),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('slowDown', musicalEndOffset, duration, trailingSilence, conf),
       decelerationStart: Math.max(0, decelerationStartSec),
     };
   }
 
-  // ── Priority 6: Sustained (held note/chord) ──
-  // Last 20s (80 windows): very low spectral flux + slow energy decay + stable band ratios
+  // ── Priority 6: Sustained (held note/chord) ── Stricter placement
   const sustainWindows = Math.min(80, windowCount);
   const sustainStart = windowCount - sustainWindows;
   const sustainFluxThreshold = medianFlux * 0.3;
@@ -1070,117 +1095,122 @@ function classifyOutro(
     }
   }
 
-  if (maxConsecutiveLowFlux >= 32) { // >= 8s of low flux
-    // Check slow energy decay (slope between -0.05 and 0)
-    const energySlope = linearDecayRate(totalEnergy, sustainBlockStart, windowCount);
-    const lowDecay = linearDecayRate(bands.low, sustainBlockStart, windowCount);
-    const midDecay = linearDecayRate(bands.mid, sustainBlockStart, windowCount);
-    const highDecay = linearDecayRate(bands.high, sustainBlockStart, windowCount);
+  // Require 48 windows / 12s (was 32 / 8s)
+  if (maxConsecutiveLowFlux >= 48) {
+    const sustainBlockEnd = sustainBlockStart + maxConsecutiveLowFlux;
+    // Must extend to within 8 windows (2s) of track end — prevents mid-track detection
+    if (windowCount - sustainBlockEnd <= 8) {
+      // Stricter energy slope: -0.001 to 0 (was -0.05 to 0)
+      const energySlope = linearDecayRate(totalEnergy, sustainBlockStart, windowCount);
+      const lowDecay = linearDecayRate(bands.low, sustainBlockStart, windowCount);
+      const midDecay = linearDecayRate(bands.mid, sustainBlockStart, windowCount);
+      const highDecay = linearDecayRate(bands.high, sustainBlockStart, windowCount);
 
-    // Must NOT have mid+high decaying faster than low (that would be reverbTail)
-    const midHighAvg = (midDecay + highDecay) / 2;
-    const isNotReverbLike = lowDecay === 0 || midHighAvg >= lowDecay * 1.5;
+      const midHighAvg = (midDecay + highDecay) / 2;
+      const isNotReverbLike = lowDecay === 0 || midHighAvg >= lowDecay * 1.5;
 
-    // Band ratio stability: check ratio doesn't change more than 1.5x
-    const ratioStart2 = computeLocalBandRatio(bands, sustainBlockStart, sustainBlockStart + 8);
-    const ratioEnd2 = computeLocalBandRatio(bands, windowCount - 8, windowCount);
-    let ratioStable = true;
-    for (let b = 0; b < 3; b++) {
-      if (ratioStart2[b] > 0.01 && ratioEnd2[b] / ratioStart2[b] > 1.5) ratioStable = false;
-      if (ratioEnd2[b] > 0.01 && ratioStart2[b] / ratioEnd2[b] > 1.5) ratioStable = false;
-    }
+      const ratioStart2 = computeLocalBandRatio(bands, sustainBlockStart, sustainBlockStart + 8);
+      const ratioEnd2 = computeLocalBandRatio(bands, windowCount - 8, windowCount);
+      let ratioStable = true;
+      for (let b = 0; b < 3; b++) {
+        if (ratioStart2[b] > 0.01 && ratioEnd2[b] / ratioStart2[b] > 1.5) ratioStable = false;
+        if (ratioEnd2[b] > 0.01 && ratioStart2[b] / ratioEnd2[b] > 1.5) ratioStable = false;
+      }
 
-    if (energySlope > -0.05 && energySlope <= 0 && isNotReverbLike && ratioStable) {
-      const musicalEndOffset = computeMusicalEndOffset('sustained', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
-      const sustainOnsetSec = duration - analysisDuration + sustainBlockStart * windowDuration;
-      return {
-        outroType: 'sustained',
-        outroConfidence: Math.min(0.85, 0.5 + (maxConsecutiveLowFlux / 80) * 0.35),
-        musicalEndOffset,
-        suggestedCrossfadeStart: computeSuggestedCrossfadeStart('sustained', musicalEndOffset, duration, trailingSilence),
-        sustainOnset: Math.max(0, sustainOnsetSec),
-      };
+      if (energySlope > -0.001 && energySlope <= 0 && isNotReverbLike && ratioStable) {
+        const conf = Math.min(0.75, 0.5 + (maxConsecutiveLowFlux / 80) * 0.25); // cap at 0.75 (was 0.85)
+        const musicalEndOffset = computeMusicalEndOffset('sustained', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+        const sustainOnsetSec = duration - analysisDuration + sustainBlockStart * windowDuration;
+        return {
+          outroType: 'sustained',
+          outroConfidence: conf,
+          musicalEndOffset,
+          suggestedCrossfadeStart: computeSuggestedCrossfadeStart('sustained', musicalEndOffset, duration, trailingSilence, conf),
+          sustainOnset: Math.max(0, sustainOnsetSec),
+        };
+      }
     }
   }
 
-  // ── Priority 7: Musical outro (distinct spectral change) ──
-  // Compare spectral shape of last 15s vs middle 30s
-  const outroWindows = Math.min(60, Math.floor(windowCount * 0.25)); // last 15s
+  // ── Priority 7: Musical outro (distinct spectral change) ── Much stricter
+  const outroWindows = Math.min(60, Math.floor(windowCount * 0.25));
   const outroRegionStart = windowCount - outroWindows;
   const midStart = Math.floor(windowCount * 0.25);
-  const midEnd = Math.min(midStart + 120, outroRegionStart); // middle 30s
+  const midEnd = Math.min(midStart + 120, outroRegionStart);
 
-  if (midEnd > midStart + 8 && outroWindows >= 8) {
+  // Require at least 20 windows (5s) in the outro region (was 8)
+  if (midEnd > midStart + 8 && outroWindows >= 20) {
     const midRatio = computeLocalBandRatio(bands, midStart, midEnd);
     const outroRatio = computeLocalBandRatio(bands, outroRegionStart, windowCount);
     const similarity = cosineSimilarity3(midRatio, outroRatio);
 
-    // Check energy is still significant (> 0.3 * avg)
     let outroAvgEnergy = 0;
     for (let i = outroRegionStart; i < windowCount; i++) outroAvgEnergy += totalEnergy[i];
     outroAvgEnergy /= outroWindows;
     const hasEnergy = outroAvgEnergy > avgEnergy * 0.3;
 
-    if (similarity < 0.7 && hasEnergy) {
+    // Require energy is declining in the outro region
+    const outroEnergySlope = linearDecayRate(totalEnergy, outroRegionStart, windowCount);
+    const isDeclining = outroEnergySlope < 0;
+
+    // Similarity threshold: < 0.5 (was < 0.7)
+    if (similarity < 0.5 && hasEnergy && isDeclining) {
+      const conf = Math.min(0.7, 0.4 + (0.5 - similarity) * 0.6); // cap at 0.7 (was 0.85)
       const musicalEndOffset = computeMusicalEndOffset('musicalOutro', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
       const outroSectionStartSec = duration - analysisDuration + outroRegionStart * windowDuration;
       return {
         outroType: 'musicalOutro',
-        outroConfidence: Math.min(0.85, 0.5 + (0.7 - similarity) * 0.5),
+        outroConfidence: conf,
         musicalEndOffset,
-        suggestedCrossfadeStart: computeSuggestedCrossfadeStart('musicalOutro', musicalEndOffset, duration, trailingSilence),
+        suggestedCrossfadeStart: computeSuggestedCrossfadeStart('musicalOutro', musicalEndOffset, duration, trailingSilence, conf),
         outroSectionStart: Math.max(0, outroSectionStartSec),
       };
     }
   }
 
-  // ── Priority 8: Reverb tail ──
-  const reverbMinWindows = 8;  // 2s
-  const reverbMaxWindows = 32; // 8s
+  // ── Priority 8: Reverb tail ── Stricter
+  const reverbMinWindows = 12;  // 3s (was 8 / 2s)
+  const reverbMaxWindows = 32;  // 8s
 
-  // Scan last 32 windows for reverb pattern
   const reverbScanStart = Math.max(0, windowCount - reverbMaxWindows);
-  let reverbDetected = false;
 
-  // Find where decay starts (first consistent decline in mid+high)
   for (let start = reverbScanStart; start < windowCount - reverbMinWindows; start++) {
     const tailLen2 = windowCount - start;
     if (tailLen2 < reverbMinWindows || tailLen2 > reverbMaxWindows) continue;
 
-    // Measure decay rates: linear regression slope
     const lowDecay = linearDecayRate(bands.low, start, windowCount);
     const midDecay = linearDecayRate(bands.mid, start, windowCount);
     const highDecay = linearDecayRate(bands.high, start, windowCount);
+    const totalDecay = linearDecayRate(totalEnergy, start, windowCount);
 
-    // Mid+High should decay faster (more negative) than Low
+    // Mid+High must decay at least 3× faster than Low (was 2×)
     const midHighAvgDecay = (midDecay + highDecay) / 2;
-    if (midHighAvgDecay < 0 && lowDecay < 0 && midHighAvgDecay < lowDecay * 2) {
-      // Flux should be decreasing but non-zero
-      let fluxDecreasing = true;
+    // Total energy must be declining
+    if (midHighAvgDecay < 0 && lowDecay < 0 && totalDecay < 0 && midHighAvgDecay < lowDecay * 3) {
       let fluxNonZero = false;
       for (let i = start + 1; i < windowCount; i++) {
         if (flux[i] > 0.0001) fluxNonZero = true;
       }
       const fluxEndAvg = (flux[windowCount - 1] + flux[Math.max(0, windowCount - 2)]) / 2;
       const fluxStartAvg = (flux[start] + flux[Math.min(windowCount - 1, start + 1)]) / 2;
-      if (fluxStartAvg > 0 && fluxEndAvg > fluxStartAvg) fluxDecreasing = false;
+      const fluxDecreasing = !(fluxStartAvg > 0 && fluxEndAvg > fluxStartAvg);
 
       if (fluxNonZero && fluxDecreasing) {
-        reverbDetected = true;
+        const conf = Math.min(0.85, 0.5 + Math.abs(midHighAvgDecay / lowDecay - 3) * 0.1);
         const musicalEndOffset = computeMusicalEndOffset('reverbTail', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
         return {
           outroType: 'reverbTail',
-          outroConfidence: Math.min(0.85, 0.5 + Math.abs(midHighAvgDecay / lowDecay - 2) * 0.15),
+          outroConfidence: conf,
           musicalEndOffset,
-          suggestedCrossfadeStart: computeSuggestedCrossfadeStart('reverbTail', musicalEndOffset, duration, trailingSilence),
+          suggestedCrossfadeStart: computeSuggestedCrossfadeStart('reverbTail', musicalEndOffset, duration, trailingSilence, conf),
         };
       }
     }
   }
 
-  // ── Priority 9: Hard ending (default) ──
-  // Energy drops > 80% within 4 windows (1s)
-  let hardConfidence = 0.5; // default fallback confidence
+  // ── Priority 9: Hard ending (default) ── Lower fallback confidence
+  // Only give high confidence (0.85) when an actual energy cliff is detected
+  let hardConfidence = 0.3; // lowered from 0.5 — prevents AutoMixEngine from trusting uncertain classifications
   for (let i = Math.max(0, windowCount - 8); i < windowCount - 1; i++) {
     if (totalEnergy[i] > avgEnergy * 0.3 && totalEnergy[i + 1] < totalEnergy[i] * 0.2) {
       hardConfidence = 0.85;
@@ -1193,8 +1223,39 @@ function classifyOutro(
     outroType: 'hard',
     outroConfidence: hardConfidence,
     musicalEndOffset,
-    suggestedCrossfadeStart: computeSuggestedCrossfadeStart('hard', musicalEndOffset, duration, trailingSilence),
+    suggestedCrossfadeStart: computeSuggestedCrossfadeStart('hard', musicalEndOffset, duration, trailingSilence, hardConfidence),
   };
+}
+
+/**
+ * Compute R² (coefficient of determination) for a linear regression over a range.
+ * Used to verify that a fade is actually linear, not just "trending down".
+ */
+function linearRegressionR2(arr: number[], start: number, end: number): number {
+  const n = end - start;
+  if (n < 3) return 0;
+  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  for (let i = start; i < end; i++) {
+    const x = i - start;
+    const y = arr[i];
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumX2 += x * x;
+  }
+  const denom = n * sumX2 - sumX * sumX;
+  if (denom === 0) return 0;
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  const meanY = sumY / n;
+  let ssTot = 0, ssRes = 0;
+  for (let i = start; i < end; i++) {
+    const x = i - start;
+    const predicted = intercept + slope * x;
+    ssRes += (arr[i] - predicted) ** 2;
+    ssTot += (arr[i] - meanY) ** 2;
+  }
+  return ssTot > 0 ? 1 - ssRes / ssTot : 0;
 }
 
 /**
@@ -1233,14 +1294,20 @@ function computeMusicalEndOffset(
 
   switch (outroType) {
     case 'fadeOut': {
-      // Where mid-band drops below 50% of pre-fade average
-      const preFadeCount = Math.max(1, Math.floor(windowCount * 0.3));
-      let preFadeAvg = 0;
-      for (let i = 0; i < preFadeCount; i++) preFadeAvg += bands.mid[i];
-      preFadeAvg /= preFadeCount;
+      // Use the actual fade start point, not the beginning of the analysis region.
+      // Find where mid-band starts declining consistently.
+      const midLen = bands.mid.length;
+      let fadeStartMid = Math.floor(midLen * 0.5);
+      for (let i = Math.floor(midLen * 0.5); i < midLen - 4; i++) {
+        if (bands.mid[i] > bands.mid[i + 2] && bands.mid[i + 2] > bands.mid[i + 4]) {
+          fadeStartMid = i;
+          break;
+        }
+      }
+      const preFadeAvg = bands.mid[fadeStartMid] || 0.001;
       const threshold = preFadeAvg * 0.5;
 
-      for (let i = preFadeCount; i < windowCount; i++) {
+      for (let i = fadeStartMid; i < windowCount; i++) {
         if (bands.mid[i] < threshold) {
           const offsetFromAnalysisEnd = (windowCount - i) * windowDuration;
           return offsetFromAnalysisEnd + trailingSilence;
@@ -1378,24 +1445,28 @@ function computeMusicalEndOffset(
 
 /**
  * Compute suggested crossfade start (seconds from track start).
+ * Uses proportional logic instead of hardcoded offsets.
  */
 function computeSuggestedCrossfadeStart(
   outroType: OutroType,
   musicalEndOffset: number,
   duration: number,
-  trailingSilence: number
+  trailingSilence: number,
+  outroConfidence: number
 ): number {
   let start: number;
 
+  // More confident → tighter timing, less confident → more buffer
+  const confidenceBuffer = (1 - outroConfidence) * 4; // 0-4s extra buffer for low confidence
+
   switch (outroType) {
     case 'fadeOut':
-      // Start when mid-band is at ~70% — before fade gets too deep
-      // musicalEndOffset is where mid drops below 50%, so start earlier
-      start = duration - musicalEndOffset - 4;
+      // Start 30% before the 50% fade point (proportional to musicalEndOffset)
+      start = duration - musicalEndOffset * 1.3;
       break;
 
     case 'reverbTail':
-      // Start 1s before tail begins (pre-buffer eliminates load delay)
+      // Start 1s before tail begins
       start = duration - musicalEndOffset - 1;
       break;
 
@@ -1405,41 +1476,41 @@ function computeSuggestedCrossfadeStart(
       break;
 
     case 'hard':
-      // Buffer before cliff (tighter with pre-buffering)
-      start = duration - musicalEndOffset - 3;
+      // Buffer before cliff, proportional + confidence-scaled
+      start = duration - musicalEndOffset - Math.min(4, musicalEndOffset * 0.5) - confidenceBuffer;
       break;
 
     case 'slowDown':
-      // Start at ~70% of the remaining deceleration region (tighter with pre-buffering)
-      start = duration - musicalEndOffset - 3;
+      // Start at ~70% of the remaining deceleration region
+      start = duration - musicalEndOffset - Math.min(4, musicalEndOffset * 0.3) - confidenceBuffer;
       break;
 
     case 'sustained':
-      // Start at musicalEndOffset + 1.5s buffer (tighter with pre-buffering)
-      start = duration - musicalEndOffset - 1.5;
+      // Start at musicalEndOffset + proportional buffer
+      start = duration - musicalEndOffset - Math.min(2, musicalEndOffset * 0.2) - confidenceBuffer;
       break;
 
     case 'musicalOutro':
       // Start at ~60% into the outro section
-      start = duration - musicalEndOffset * 0.6;
+      start = duration - musicalEndOffset * 0.6 - confidenceBuffer;
       break;
 
     case 'loopFade':
-      // Start early, like fadeOut — tighter with pre-buffering
-      start = duration - musicalEndOffset - 3;
+      // Start early, proportional to musicalEndOffset
+      start = duration - musicalEndOffset * 1.2;
       break;
 
     case 'silence':
-      // Before silence starts
-      start = duration - trailingSilence - 8;
+      // Before silence starts, proportional to silence length
+      start = duration - trailingSilence - Math.min(8, trailingSilence * 0.3);
       break;
 
     default:
       start = duration - 12;
   }
 
-  // Clamp: never start before 30s into the track or after duration - 3s
-  return Math.max(30, Math.min(start, duration - 3));
+  // Lower minimum: allow crossfade on shorter tracks (was 30, now 15)
+  return Math.max(15, Math.min(start, duration - 2));
 }
 
 // ─── Intro Analysis ─────────────────────────────────────────────────

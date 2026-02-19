@@ -29,7 +29,7 @@ interface CachedAnalysis {
 }
 
 /** Seconds before expected crossfade to start pre-analysis */
-const PREPARE_AHEAD = 15;
+const PREPARE_AHEAD = 13;
 
 /** Minimum crossfade duration in seconds */
 const MIN_CROSSFADE_DURATION = 2;
@@ -365,9 +365,9 @@ export class AutoMixEngine {
       this._outroType = outro.outroType;
 
       // Only trust the analysis-suggested crossfade start when confidence is high.
-      // Low-confidence classifications (e.g. default 'hard' fallback at 0.5)
+      // Low-confidence classifications (e.g. default 'hard' fallback at 0.3)
       // should use conservative timing to avoid cutting into active content.
-      if (outro.outroConfidence >= 0.7) {
+      if (outro.outroConfidence >= 0.75) {
         this._crossfadeStartTime = outro.suggestedCrossfadeStart;
       } else {
         this._crossfadeStartTime = effectiveEnd - this._crossfadeDuration;
@@ -383,7 +383,7 @@ export class AutoMixEngine {
             Math.min(3, this._getEffectiveCrossfadeDuration(effectiveEnd))
           );
           // For low-confidence, recalculate start to align with the shorter duration
-          if (outro.outroConfidence < 0.7) {
+          if (outro.outroConfidence < 0.75) {
             this._crossfadeStartTime = effectiveEnd - this._crossfadeDuration;
           }
           break;
@@ -726,7 +726,7 @@ export class AutoMixEngine {
     let effectiveOutShape = 1;
 
     const outroConfidence = this._currentAnalysis?.analysis.outro?.outroConfidence ?? 0;
-    if (this._settingsSmartCurve && this._outroType && outroConfidence >= 0.7) {
+    if (this._settingsSmartCurve && this._outroType && outroConfidence >= 0.75) {
       const profile = getOutroTypeCrossfadeProfile(this._outroType);
       effectiveCurve = profile.curve;
       effectiveFadeInOnly = profile.fadeInOnly;
@@ -777,17 +777,7 @@ export class AutoMixEngine {
     // ── Energy contrast: handle large volume differences ──
     const energyContrast = this._computeEnergyContrast();
 
-    if (energyContrast > 3) {
-      // Incoming is much louder than outgoing → extend duration, slow incoming ramp
-      crossfadeDuration = Math.min(crossfadeDuration * 1.3, this._settingsCrossfadeDuration);
-      effectiveInShape = Math.min(2.0, effectiveInShape + 0.4);
-      if (IS_DEV) {
-        console.log(
-          `AutoMixEngine: High energy contrast (${energyContrast.toFixed(1)}:1), ` +
-          `extending + slowing incoming ramp`
-        );
-      }
-    } else if (energyContrast > 6) {
+    if (energyContrast > 6) {
       // Extreme contrast → fast outgoing fade to minimize clash
       effectiveOutShape = Math.max(0.5, effectiveOutShape - 0.3);
       crossfadeDuration = Math.min(crossfadeDuration * 1.5, this._settingsCrossfadeDuration);
@@ -795,6 +785,16 @@ export class AutoMixEngine {
         console.log(
           `AutoMixEngine: Extreme energy contrast (${energyContrast.toFixed(1)}:1), ` +
           `fast outgoing + extended duration`
+        );
+      }
+    } else if (energyContrast > 3) {
+      // Incoming is much louder than outgoing → extend duration, slow incoming ramp
+      crossfadeDuration = Math.min(crossfadeDuration * 1.3, this._settingsCrossfadeDuration);
+      effectiveInShape = Math.min(2.0, effectiveInShape + 0.4);
+      if (IS_DEV) {
+        console.log(
+          `AutoMixEngine: High energy contrast (${energyContrast.toFixed(1)}:1), ` +
+          `extending + slowing incoming ramp`
         );
       }
     } else if (energyContrast < 0.33) {
