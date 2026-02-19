@@ -9,6 +9,20 @@
   opacity: 0;
 }
 
+// fade-scale (main route transitions)
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+  transition:
+    opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1),
+    transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.fade-scale-enter-from,
+.fade-scale-leave-to {
+  opacity: 0;
+  transform: scale(0.98);
+}
+
 // fadeDown
 .fadeDown-enter-active,
 .fadeDown-leave-active {
@@ -74,6 +88,36 @@
 .left-enter-from,
 .left-leave-to {
   transform: translateX(-100%);
+}
+
+// Direction-aware slide transitions for tab sub-routes
+.slide-left-enter-active,
+.slide-left-leave-active,
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition:
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+// Slide left (navigating to a tab on the right)
+.slide-left-enter-from {
+  transform: translateX(30px);
+  opacity: 0;
+}
+.slide-left-leave-to {
+  transform: translateX(-30px);
+  opacity: 0;
+}
+
+// Slide right (navigating to a tab on the left)
+.slide-right-enter-from {
+  transform: translateX(-30px);
+  opacity: 0;
+}
+.slide-right-leave-to {
+  transform: translateX(30px);
+  opacity: 0;
 }
 
 @keyframes skeleton-loading {

@@ -13,11 +13,11 @@
     </n-tabs>
     <main class="content">
       <router-view v-slot="{ Component }">
-        <keep-alive>
-          <Transition name="move" mode="out-in">
+        <Transition :name="transitionName" mode="out-in">
+          <keep-alive>
             <component :is="Component" />
-          </Transition>
-        </keep-alive>
+          </keep-alive>
+        </Transition>
       </router-view>
     </main>
   </div>
@@ -25,14 +25,18 @@
 
 <script setup lang="ts">
 import { useRouter } from "vue-router";
+import { useTabTransition } from "@/composables/useTabTransition";
 
 const router = useRouter();
+const { transitionName, updateDirection, syncIndex } = useTabTransition(["playlists", "toplists", "artists"]);
 
 // Tab 默认选中
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+syncIndex(tabValue.value);
 
 // Tab 选项卡变化
 const tabChange = (value: string) => {
+  updateDirection(value);
   router.push({
     path: `/discover/${value}`,
   });
@@ -43,6 +47,7 @@ watch(
   () => router.currentRoute.value,
   (val) => {
     tabValue.value = val.path.split("/")[2];
+    syncIndex(tabValue.value);
   }
 );
 </script>
@@ -56,18 +61,9 @@ watch(
     font-weight: bold;
   }
   .content {
+    position: relative;
+    overflow: hidden;
     margin-top: 20px;
   }
-}
-// 路由跳转动画
-.move-enter-active,
-.move-leave-active {
-  transition: all 0.2s ease;
-}
-
-.move-enter-from,
-.move-leave-to {
-  opacity: 0;
-  transform: translateX(10px);
 }
 </style>

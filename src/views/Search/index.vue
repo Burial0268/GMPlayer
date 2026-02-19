@@ -31,11 +31,11 @@
     </n-tabs>
     <main class="content" v-if="searchKeywords">
       <router-view v-slot="{ Component }">
-        <keep-alive>
-          <Transition name="move" mode="out-in">
+        <Transition :name="transitionName" mode="out-in">
+          <keep-alive>
             <component :is="Component" />
-          </Transition>
-        </keep-alive>
+          </keep-alive>
+        </Transition>
       </router-view>
     </main>
   </div>
@@ -44,15 +44,18 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { useTabTransition } from "@/composables/useTabTransition";
 
 const { t } = useI18n();
 const router = useRouter();
+const { transitionName, updateDirection, syncIndex } = useTabTransition(["songs", "artists", "albums", "videos", "playlists"]);
 
 // 搜索关键词
 const searchKeywords = ref(router.currentRoute.value.query.keywords);
 
 // Tab 默认选中
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+syncIndex(tabValue.value);
 
 // 监听路由参数变化
 watch(
@@ -61,12 +64,13 @@ watch(
     $setSiteTitle(val.query.keywords + "的搜索结果");
     searchKeywords.value = val.query.keywords;
     tabValue.value = val.path.split("/")[2];
+    syncIndex(tabValue.value);
   }
 );
 
 // Tab 选项卡变化
 const tabChange = (value) => {
-  console.log(value);
+  updateDirection(value);
   router.push({
     path: `/search/${value}`,
     query: {
@@ -95,19 +99,9 @@ onMounted(() => {
     }
   }
   .content {
+    position: relative;
+    overflow: hidden;
     margin-top: 20px;
   }
-}
-
-// 路由跳转动画
-.move-enter-active,
-.move-leave-active {
-  transition: all 0.2s ease;
-}
-
-.move-enter-from,
-.move-leave-to {
-  opacity: 0;
-  transform: translateX(10px);
 }
 </style>

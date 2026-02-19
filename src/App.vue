@@ -14,17 +14,14 @@
           <n-back-top :bottom="music.getPlaylists[0] && music.showPlayBar ? 100 : 40"
             style="transition: all 0.3s; z-index: 999" />
           <router-view v-slot="{ Component, route }">
-            <keep-alive>
-              <transition
-                name="fade"
-                mode="out-in"
-                @enter="onEnter"
-                @leave="onLeave"
-                :css="false"
-              >
-                <component :is="Component" :key="route.path" />
-              </transition>
-            </keep-alive>
+            <transition
+              name="fade-scale"
+              mode="out-in"
+            >
+              <keep-alive>
+                <component :is="Component" :key="route.matched[0]?.path ?? route.path" />
+              </keep-alive>
+            </transition>
           </router-view>
           <Player />
         </main>
@@ -44,7 +41,6 @@ import Provider from "@/components/Provider/index.vue";
 import Nav from "@/components/Nav/index.vue";
 import Player from "@/components/Player/index.vue";
 import packageJson from "@/../package.json";
-import gsap from 'gsap';
 import { ref, watch } from 'vue';
 
 const { t } = useI18n();
@@ -54,20 +50,6 @@ const setting = settingStore();
 const site = siteStore();
 const router = useRouter();
 const mainContent = ref(null);
-
-// 添加 GSAP 过渡钩子
-const onEnter = (el, done) => {
-  gsap.fromTo(el, 
-    { opacity: 0 }, 
-    { opacity: 1, duration: 0.4, ease: 'cubic-bezier(0.65, 0, 0.35, 1)', onComplete: done }
-  );
-};
-
-const onLeave = (el, done) => {
-  gsap.to(el, 
-    { opacity: 0, duration: 0.4, ease: 'cubic-bezier(0.65, 0, 0.35, 1)', onComplete: done }
-  );
-};
 
 // 公告数据
 const annShow =

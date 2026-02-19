@@ -102,11 +102,11 @@
         v-slot="{ Component }"
         :mvSize="artistData ? artistData.mvSize : null"
       >
-        <keep-alive>
-          <Transition name="move" mode="out-in">
+        <Transition :name="transitionName" mode="out-in">
+          <keep-alive>
             <component :is="Component" />
-          </Transition>
-        </keep-alive>
+          </keep-alive>
+        </Transition>
       </router-view>
     </main>
   </div>
@@ -124,10 +124,12 @@ import {
   PersonRemoveAlt1Round,
 } from "@vicons/material";
 import { useI18n } from "vue-i18n";
+import { useTabTransition } from "@/composables/useTabTransition";
 
 const { t } = useI18n();
 const router = useRouter();
 const user = userStore();
+const { transitionName, updateDirection, syncIndex } = useTabTransition(["songs", "albums", "videos"]);
 
 // 歌手数据
 const artistId = ref(router.currentRoute.value.query.id);
@@ -137,6 +139,7 @@ const artistLikeBtn = ref(false);
 
 // Tab 默认选中
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+syncIndex(tabValue.value);
 
 // 获取歌手数据
 const getArtistDetailData = (id: string | number | string[]) => {
@@ -168,7 +171,7 @@ const getArtistDetailData = (id: string | number | string[]) => {
 
 // Tab 选项卡变化
 const tabChange = (value: any) => {
-  console.log(value);
+  updateDirection(value);
   router.push({
     path: `/artist/${value}`,
     query: {
@@ -241,6 +244,7 @@ watch(
   (val) => {
     artistId.value = val.query.id;
     tabValue.value = val.path.split("/")[2];
+    syncIndex(tabValue.value);
     artistLikeBtn.value = isLikeOrDislike(artistId.value);
     if (val.path.split("/")[1] == "artist") {
       getArtistDetailData(artistId.value);
@@ -350,18 +354,9 @@ watch(
     }
   }
   .content {
+    position: relative;
+    overflow: hidden;
     margin-top: 20px;
   }
-}
-// 路由跳转动画
-.move-enter-active,
-.move-leave-active {
-  transition: all 0.2s ease;
-}
-
-.move-enter-from,
-.move-leave-to {
-  opacity: 0;
-  transform: translateX(10px);
 }
 </style>

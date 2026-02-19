@@ -11,11 +11,13 @@
       <n-tab name="player">{{ $t("setting.player") }}</n-tab>
       <n-tab name="other">{{ $t("general.type.other") }}</n-tab>
     </n-tabs>
-    <main class="content" style="position: relative; overflow: hidden;">
-      <router-view v-slot="{ Component, route }">
-        <keep-alive>
-          <component :is="Component" :key="route.path" />
-        </keep-alive>
+    <main class="content">
+      <router-view v-slot="{ Component }">
+        <Transition :name="transitionName" mode="out-in">
+          <keep-alive>
+            <component :is="Component" />
+          </keep-alive>
+        </Transition>
       </router-view>
     </main>
   </div>
@@ -24,16 +26,19 @@
 <script setup lang="ts">
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { useTabTransition } from "@/composables/useTabTransition";
 
 const { t } = useI18n();
 const router = useRouter();
+const { transitionName, updateDirection, syncIndex } = useTabTransition(["main", "player", "other"]);
 
 // Tab 默认选中
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+syncIndex(tabValue.value);
 
 // Tab 选项卡变化
 const tabChange = (value) => {
-  console.log(value);
+  updateDirection(value);
   router.push({
     path: `/setting/${value}`,
   });
@@ -44,6 +49,7 @@ watch(
   () => router.currentRoute.value,
   (val) => {
     tabValue.value = val.path.split("/")[2];
+    syncIndex(tabValue.value);
   }
 );
 
