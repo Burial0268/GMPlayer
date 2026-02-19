@@ -273,6 +273,7 @@
         { label: 'PingFang SC', value: 'PingFang SC' },
         { label: 'Microsoft YaHei', value: 'Microsoft YaHei' },
         { label: 'Noto Sans SC', value: 'Noto Sans SC' },
+        { label: 'SF Pro Display', value: 'SF Pro Display'}
       ]" />
     </n-card>
     <n-card class="set-item">
