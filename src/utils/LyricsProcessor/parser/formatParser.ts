@@ -15,6 +15,9 @@ import { msToS } from '@/utils/timeTools';
 // Pre-compiled regex for interlude detection
 const INTERLUDE_CHARS_REGEX = /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～]/g;
 
+// Pre-compiled regex for splitting roma text
+const ROMA_SPLIT_REGEX = /\s+/;
+
 // Debug flag - set to false in production for better performance
 const DEBUG = false;
 
@@ -25,6 +28,42 @@ function isInterludeContent(content: string): boolean {
   if (!content) return true;
   const stripped = content.replace(INTERLUDE_CHARS_REGEX, '');
   return stripped.length === 0;
+}
+
+/**
+ * 将行级音译文本拆分为逐字音译
+ * @param words 该行的单词数组
+ * @param romaText 该行的完整音译文本（空格分隔）
+ * @returns 逐字音译数组（与 words 等长），匹配失败时返回 null
+ */
+export function splitRomaToWords(
+  words: readonly { word: string }[],
+  romaText: string
+): string[] | null {
+  if (!romaText || words.length === 0) return null;
+
+  const segments = romaText.trim().split(ROMA_SPLIT_REGEX);
+  if (segments.length === 0) return null;
+
+  // Collect indices of content words (non-empty after trim)
+  const contentIndices: number[] = [];
+  for (let i = 0; i < words.length; i++) {
+    if (words[i].word.trim()) {
+      contentIndices.push(i);
+    }
+  }
+
+  // Must match 1:1
+  if (contentIndices.length === 0 || segments.length !== contentIndices.length) {
+    return null;
+  }
+
+  const result = new Array<string>(words.length).fill('');
+  for (let i = 0; i < contentIndices.length; i++) {
+    result[contentIndices[i]] = segments[i];
+  }
+
+  return result;
 }
 
 /**
@@ -345,19 +384,45 @@ export const buildAMLLData = (
         word: w.word,
         startTime: w.startTime,
         endTime: w.endTime,
-        romanWord: ''
+        romanWord: w.romanWord || ''
       };
     }
+
+    const romaText = romaMap.get(i) || '';
 
     result[i] = {
       words: resultWords,
       startTime,
       endTime,
       translatedLyric: tranMap.get(i) || '',
-      romanLyric: romaMap.get(i) || '',
+      romanLyric: romaText,
       isBG: line.isBG ?? false,
       isDuet: line.isDuet ?? false
     };
+
+    // 逐字音译：优先使用源数据（TTML）中的 romanWord
+    // 若无逐字音译但有行级音译，尝试拆分为逐字
+    let hasPerWordRoma = false;
+    for (let j = 0; j < wordsLen; j++) {
+      if (resultWords[j].romanWord) {
+        hasPerWordRoma = true;
+        break;
+      }
+    }
+
+    if (hasPerWordRoma) {
+      // 有逐字音译时清除行级音译，避免重复显示
+      result[i].romanLyric = '';
+    } else if (romaText) {
+      // 尝试将行级音译拆分为逐字
+      const perWord = splitRomaToWords(resultWords, romaText);
+      if (perWord) {
+        for (let j = 0; j < wordsLen; j++) {
+          resultWords[j].romanWord = perWord[j] || '';
+        }
+        result[i].romanLyric = ''; // 避免重复显示
+      }
+    }
   }
 
   return result;
@@ -388,7 +453,7 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
         startTime: w.startTime,
         endTime: w.endTime,
         word: w.word,
-        romanWord: ''
+        romanWord: w.romanWord || ''
       };
     }
 
@@ -397,10 +462,19 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
     const startTime = l.startTime ?? firstWord?.startTime ?? 0;
     const endTime = l.endTime ?? lastWord?.endTime ?? startTime;
 
+    // 有逐字音译时清除行级音译，避免重复显示
+    let hasPerWordRoma = false;
+    for (let j = 0; j < wordsLen; j++) {
+      if (words[j].romanWord) {
+        hasPerWordRoma = true;
+        break;
+      }
+    }
+
     result[i] = {
       words,
       translatedLyric: l.translatedLyric ?? '',
-      romanLyric: l.romanLyric ?? '',
+      romanLyric: hasPerWordRoma ? '' : (l.romanLyric ?? ''),
       isBG: l.isBG ?? false,
       isDuet: l.isDuet ?? false,
       startTime,

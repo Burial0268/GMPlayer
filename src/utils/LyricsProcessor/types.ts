@@ -14,6 +14,7 @@ export interface LyricWord {
   word: string;
   startTime: number;
   endTime: number;
+  romanWord?: string;
 }
 
 // Backward compatibility alias

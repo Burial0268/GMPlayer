@@ -12,7 +12,7 @@ import type { LyricLine as AMLLLine } from '@applemusic-like-lyrics/core';
 import type { SongLyric, ProcessingSettings, InputLyricLine, TimeTextEntry, StoredLyricLine } from './types';
 import { parseLrcToEntries } from './parser/entryParser';
 import { isInterludeLine, buildIndexMatching } from './alignment';
-import { convertToAMLL } from './parser/formatParser';
+import { convertToAMLL, splitRomaToWords } from './parser/formatParser';
 
 // Debug flag - disable in production for better performance
 const DEBUG = false;
@@ -110,6 +110,24 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
   }
   validLines.length = validCount;
 
+  // 根据设置清除源数据中的音译/翻译（TTML等格式可能自带这些数据）
+  if (!settings.showRoma) {
+    for (let i = 0; i < validCount; i++) {
+      const line = validLines[i];
+      line.romanLyric = '';
+      const words = line.words;
+      for (let j = 0; j < words.length; j++) {
+        words[j].romanWord = '';
+      }
+    }
+  }
+
+  if (!settings.showTransl) {
+    for (let i = 0; i < validCount; i++) {
+      validLines[i].translatedLyric = '';
+    }
+  }
+
   // 早期返回：如果不需要翻译和音译
   if (!settings.showTransl && !settings.showRoma) {
     return validLines;
@@ -165,6 +183,44 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
         const matched = romajiMatchMap.get(i);
         if (matched) {
           line.romanLyric = matched;
+          // 尝试将匹配到的行级音译拆分为逐字
+          const perWord = splitRomaToWords(line.words, matched);
+          if (perWord) {
+            for (let j = 0; j < line.words.length; j++) {
+              line.words[j].romanWord = perWord[j] || '';
+            }
+            line.romanLyric = ''; // 避免与逐字音译重复
+          }
+        }
+      }
+    }
+  }
+
+  // 逐字音译去重：若逐字音译已存在（来自 TTML 等），清除行级音译
+  if (settings.showRoma) {
+    for (let i = 0; i < validCount; i++) {
+      const line = validLines[i];
+      if (!line.romanLyric || line.words.length === 0) continue;
+
+      // 检查是否已有逐字音译
+      let hasPerWordRoma = false;
+      for (let j = 0; j < line.words.length; j++) {
+        if (line.words[j].romanWord) {
+          hasPerWordRoma = true;
+          break;
+        }
+      }
+
+      if (hasPerWordRoma) {
+        line.romanLyric = ''; // 避免重复
+      } else {
+        // 尝试将行级音译拆分为逐字
+        const perWord = splitRomaToWords(line.words, line.romanLyric);
+        if (perWord) {
+          for (let j = 0; j < line.words.length; j++) {
+            line.words[j].romanWord = perWord[j] || '';
+          }
+          line.romanLyric = '';
         }
       }
     }
