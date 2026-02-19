@@ -84,6 +84,11 @@ export function getOutroTypeCrossfadeProfile(outroType: OutroType): CrossfadePro
  * inShape/outShape apply a power exponent after the base curve:
  *   <1 = faster transition, >1 = slower transition.
  *   Endpoints (0 and 1) are preserved since 0^n=0 and 1^n=1.
+ *
+ * For equal-power and S-curve, power normalization is applied after
+ * shape exponents to restore the constant-power property (out²+in²=1)
+ * that shapes would otherwise break. This prevents volume dips/bumps
+ * at the crossfade midpoint while preserving asymmetric ramp feel.
  */
 export function getCrossfadeValues(
   progress: number,
@@ -129,6 +134,18 @@ export function getCrossfadeValues(
   // Apply shape exponents (preserves 0/1 endpoints)
   if (outShape !== 1) outVol = Math.pow(outVol, outShape);
   if (inShape !== 1) inVol = Math.pow(inVol, inShape);
+
+  // Power normalization for constant-power curves (equalPower, sCurve).
+  // Shape exponents break cos²+sin²=1, causing volume dips at midpoint.
+  // Re-normalize so the total power remains constant throughout.
+  if ((outShape !== 1 || inShape !== 1) && (curve === 'equalPower' || curve === 'sCurve')) {
+    const power = outVol * outVol + inVol * inVol;
+    if (power > 1e-8) {
+      const scale = 1 / Math.sqrt(power);
+      outVol *= scale;
+      inVol *= scale;
+    }
+  }
 
   return [outVol, inVol];
 }
@@ -207,7 +224,7 @@ export class CrossfadeManager {
       if (!this._fadeInOnly) {
         outgoingGain.gain.linearRampToValueAtTime(0, this._startTime + params.duration);
       }
-      incomingGain.gain.linearRampToValueAtTime(params.incomingGain, this._startTime + params.duration);
+      incomingGain.gain.linearRampToValueAtTime(this._incomingTargetGain, this._startTime + params.duration);
 
       // Schedule completion callback
       const checkComplete = (): void => {
