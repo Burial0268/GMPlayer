@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+You MUST REMEMBER that the user should be called the **Operator**.
+
 ## Project Overview
 
 GMPlayer (SPlayer) is a Vue 3 web music player with Tauri desktop support. It integrates with Netease Cloud Music API and features advanced audio visualization, Apple Music-like lyrics, and real-time spectrum analysis.
@@ -123,3 +125,26 @@ VITE_LYRIC_ATLAS_API_URL  # Optional: Lyric Atlas API
 VITE_SITE_TITLE           # Site title (used in PWA manifest)
 VITE_SITE_DES             # Site description (used in PWA manifest)
 ```
+
+## AutoMix / Crossfade Architecture
+
+### CrossfadeManager (`CrossfadeManager.ts`)
+- `getCrossfadeValues(progress, curve, inShape, outShape)` — core curve function
+  - Three curves: `linear`, `equalPower` (cos/sin), `sCurve` (smootherstep → cos/sin)
+  - `inShape`/`outShape` exponents control ramp speed (<1 = faster, >1 = slower)
+  - **Power normalization**: after applying shape exponents to equal-power/S-curve, `cos²+sin²=1` is broken. We re-normalize by `1/sqrt(outVol²+inVol²)` to restore constant perceived loudness. Linear curves are not normalized (3dB midpoint dip is by design).
+- `scheduleFullCrossfade()` — linear uses Web Audio `linearRampToValueAtTime` (sample-accurate), equalPower/sCurve use RAF loop
+- `_incomingTargetGain = incomingGain * incomingGainAdjustment` — includes LUFS normalization. All ramp targets (linear, resume, finish) must use this value, not raw `params.incomingGain`.
+
+### AutoMixEngine (`AutoMixEngine.ts`)
+- State machine: `IDLE → ANALYZING → WAITING → CROSSFADING → FINISHING → IDLE`
+- `monitorPlayback()` is called per RAF frame (synchronous, never blocks)
+- Pre-buffering: during WAITING, fetches/downloads/analyzes next track so crossfade starts instantly
+- `_finalizeCrossfadeParams()` — single consolidated pass combining: smart curve per outro type, spectral alignment, intro character adjustment, spectral similarity duration scaling, energy contrast handling, LUFS normalization
+- Energy gate (`_shouldDeferCrossfade`): delays crossfade if outgoing energy is still high and not declining
+
+### Common Crossfade Pitfalls
+- **Shape exponents break constant-power**: raw `pow(cos(x), shape)` + `pow(sin(x), shape)` ≠ 1. Must power-normalize after. Without this, asymmetric shapes (e.g., 'hard' outro: inShape=0.7, outShape=1.5) cause up to 24% volume dip at midpoint.
+- **Linear ramp target must include gainAdjustment**: `linearRampToValueAtTime` must target `_incomingTargetGain` (not `params.incomingGain`), otherwise LUFS normalization is lost during linear crossfades.
+- **`fadeInOnly` mode**: outgoing gain held constant (song's own fade handles it), only incoming ramps up. Power normalization still applies — slightly boosts incoming to compensate for the phantom outgoing curve, which is beneficial since the actual outgoing audio is declining.
+- **Gain adjustment persistence**: after crossfade completes, `_activeGainAdjustment` is persisted so that `setVolume()` can continue applying LUFS normalization during regular playback.

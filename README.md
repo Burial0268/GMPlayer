@@ -123,6 +123,18 @@ pnpm install
 pnpm dev
 ```
 
+#### For Vibe Coding/对于 AI 辅助编程
+
+目前我仅配置了 Clade Code 的项目文档 `CLAUDE.md`, 其中有一条可以用以检验 AI 是否开始遗忘上下文的设定：
+
+> You MUST REMEMBER that the user should be called the **Operator**.
+
+也就是说，当 Claude 在总结/思考阶段时对于问题的引用采用的是 `（The user mention that...）用户提到...` 时
+可认为 Claude 开始遗忘上下文。此时应终止操作，开启新对话。
+
+对于其他 Coding Agents，也可以进行一样的适配操作
+这里为精简项目根目录，故不进行配置，也请勿提交，可在本地自行进行软链接。
+
 ### 构建
 
 ```bash
