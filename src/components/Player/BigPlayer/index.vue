@@ -265,11 +265,9 @@ watch(() => music.getPlaySongData, () => checkNameOverflow(), { immediate: true 
   overflow: hidden;
   color: var(--main-cover-color);
   background-repeat: no-repeat;
-  background-size: 150% 150%;
   background-position: center;
   display: flex;
   justify-content: center;
-  background-color: #222;
   will-change: transform;
 
   // AMLL-style slide-up transition (closed state)
@@ -355,35 +353,6 @@ watch(() => music.getPlaySongData, () => checkNameOverflow(), { immediate: true 
   &.bplayer-eplor,
   &.bplayer-blur {
     background-color: gray !important;
-  }
-
-  .canvas {
-    display: flex;
-    justify-content: center;
-    align-items: flex-end;
-    max-width: 1600px;
-    z-index: -1;
-    position: absolute;
-    bottom: 0;
-    -webkit-mask: linear-gradient(to right,
-        hsla(0deg, 0%, 100%, 0) 0,
-        hsla(0deg, 0%, 100%, 0.6) 15%,
-        #fff 30%,
-        #fff 70%,
-        hsla(0deg, 0%, 100%, 0.6) 85%,
-        hsla(0deg, 0%, 100%, 0));
-    mask: linear-gradient(to right,
-        hsla(0deg, 0%, 100%, 0) 0,
-        hsla(0deg, 0%, 100%, 0.6) 15%,
-        #fff 30%,
-        #fff 70%,
-        hsla(0deg, 0%, 100%, 0.6) 85%,
-        hsla(0deg, 0%, 100%, 0));
-
-    .avBars {
-      max-width: 1600px;
-      opacity: 0.6;
-    }
   }
 }
 
