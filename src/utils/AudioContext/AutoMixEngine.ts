@@ -12,7 +12,7 @@
  *   - Never creates new AudioContexts — uses the global one
  */
 
-import { CrossfadeManager, getOutroTypeCrossfadeProfile, type CrossfadeCurve, type CrossfadeParams } from './CrossfadeManager';
+import { CrossfadeManager, getOutroTypeCrossfadeProfile, type CrossfadeCurve, type CrossfadeParams, type SpectralCrossfadeData } from './CrossfadeManager';
 import { analyzeTrack, spectralSimilarity, type TrackAnalysis, type OutroType } from './TrackAnalyzer';
 import { findNearestBeat, type BPMResult } from './BPMDetector';
 import { BufferedSound } from './BufferedSound';
@@ -50,6 +50,7 @@ export class AutoMixEngine {
   private _nextAnalysis: CachedAnalysis | null = null;
   private _crossfadeStartTime: number = 0;
   private _crossfadeDuration: number = 8;
+  private _effectiveEnd: number = 0;
   private _outroType: OutroType | null = null;
 
   // Incoming sound during crossfade
@@ -87,6 +88,12 @@ export class AutoMixEngine {
   private _softwareFadeTimerId: ReturnType<typeof setTimeout> | null = null;
   private _softwareFadeStartedAt: number = 0;
   private _softwareFadeRemaining: number = 0;
+
+  // Delayed finishing→idle transition timer.
+  // Keeps isCrossfading() true for 800ms after crossfade audio completes,
+  // so the 500ms debounced songChange watcher in Player/index.vue still sees
+  // the crossfade as active and skips createSound().
+  private _finishingTimerId: ReturnType<typeof setTimeout> | null = null;
 
   // Store references (loaded once lazily)
   private _musicStoreRef: any = null;
@@ -202,7 +209,19 @@ export class AutoMixEngine {
       return;
     }
 
-    if (!currentSound || !currentSound.playing()) return;
+    if (!currentSound || !currentSound.playing()) {
+      // If the song ended while in WAITING or ANALYZING state, the normal
+      // 'end' handler in PlayerFunctions will fire (since isCrossfading() is
+      // false for these states). Clean up our state to prevent orphaned
+      // pre-buffered sounds and stale analysis data.
+      if (this._state === 'waiting' || this._state === 'analyzing') {
+        if (IS_DEV) {
+          console.log(`AutoMixEngine: Song ended during ${this._state} state, cleaning up`);
+        }
+        this.cancelCrossfade();
+      }
+      return;
+    }
 
     const currentTime = currentSound.seek() as number;
     const duration = currentSound.duration();
@@ -356,6 +375,7 @@ export class AutoMixEngine {
     const duration = currentSound.duration();
     const trailingSilence = this._currentAnalysis?.analysis.energy.trailingSilence ?? 0;
     const effectiveEnd = duration - trailingSilence;
+    this._effectiveEnd = effectiveEnd;
 
     this._crossfadeDuration = this._getEffectiveCrossfadeDuration(effectiveEnd);
 
@@ -490,158 +510,6 @@ export class AutoMixEngine {
     }
   }
 
-  // ─── Spectral similarity alignment ─────────────────────────────
-
-  /**
-   * Refine crossfade start time by finding the point in the outgoing outro
-   * that best matches the incoming intro's spectral character.
-   *
-   * Uses a sliding-window approach:
-   *  1. Compute incoming intro's spectral signature (band ratio of first 2s)
-   *  2. Scan outgoing outro windows within ±5s of planned start
-   *  3. At each candidate, compute spectral similarity + energy compatibility
-   *  4. Pick the position with highest combined score
-   *
-   * Adjusts _crossfadeStartTime if a significantly better match is found.
-   */
-  private _refineTransitionAlignment(): void {
-    const outroData = this._currentAnalysis?.analysis.outro;
-    const introData = this._nextAnalysis?.analysis.intro;
-
-    if (!outroData?.multibandEnergy || !introData?.multibandEnergy) return;
-
-    const outroMB = outroData.multibandEnergy;
-    const introMB = introData.multibandEnergy;
-
-    // Step 1: Compute incoming intro signature (first 2s = 8 windows at 250ms)
-    const introSigWindows = Math.min(8, introMB.low.length);
-    if (introSigWindows < 2) return;
-
-    const introSig = this._computeBandRatio(introMB, 0, introSigWindows);
-
-    // Step 2: Map planned crossfade start to outro window index
-    // Outro multiband covers last `outroMB.low.length * 0.25` seconds of content
-    const outroWindowCount = outroMB.low.length;
-    const outroDurationSec = outroWindowCount * 0.25;
-    const trailingSilence = this._currentAnalysis!.analysis.energy.trailingSilence;
-    const songDuration = this._currentAnalysis!.analysis.duration;
-
-    // outroAnalysisStart = absolute time where outro multiband region begins
-    const outroAnalysisStart = songDuration - trailingSilence - outroDurationSec;
-    const plannedWindowIdx = Math.round((this._crossfadeStartTime - outroAnalysisStart) / 0.25);
-
-    // Step 3: Scan ±20 windows (±5s) around planned start
-    const searchRange = 20;
-    const sigWindowCount = introSigWindows;
-    let bestScore = -1;
-    let bestWindowIdx = plannedWindowIdx;
-
-    for (let w = plannedWindowIdx - searchRange; w <= plannedWindowIdx + searchRange; w++) {
-      if (w < 0 || w + sigWindowCount > outroWindowCount) continue;
-
-      const candidateSig = this._computeBandRatio(outroMB, w, w + sigWindowCount);
-      const similarity = this._cosineSim3(candidateSig, introSig);
-
-      // Energy compatibility: how close are the energy levels?
-      let outroE = 0, introE = 0;
-      for (let i = 0; i < sigWindowCount; i++) {
-        outroE += outroMB.low[w + i] + outroMB.mid[w + i] + outroMB.high[w + i];
-        introE += introMB.low[i] + introMB.mid[i] + introMB.high[i];
-      }
-      outroE /= sigWindowCount;
-      introE /= sigWindowCount;
-      const energyRatio = (outroE > 0.0001 && introE > 0.0001)
-        ? 1 - Math.min(1, Math.abs(Math.log(outroE / introE)))
-        : 0;
-
-      const score = 0.7 * similarity + 0.3 * energyRatio;
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestWindowIdx = w;
-      }
-    }
-
-    // Step 4: Apply adjustment if significantly better match found
-    const newStartTime = outroAnalysisStart + bestWindowIdx * 0.25;
-
-    // Compute original position's score for comparison
-    const originalScore = this._computeMatchScore(
-      outroMB, introMB, plannedWindowIdx, introSigWindows
-    );
-
-    if (bestScore - originalScore > 0.05 && Math.abs(newStartTime - this._crossfadeStartTime) > 0.25) {
-      // Clamp: don't adjust beyond ±5s from original
-      const clampedStart = Math.max(
-        this._crossfadeStartTime - 5,
-        Math.min(this._crossfadeStartTime + 5, newStartTime)
-      );
-
-      if (IS_DEV) {
-        console.log(
-          `AutoMixEngine: Spectral alignment adjusted crossfade start ` +
-          `${this._crossfadeStartTime.toFixed(1)}→${clampedStart.toFixed(1)}s ` +
-          `(score ${originalScore.toFixed(2)}→${bestScore.toFixed(2)}, ` +
-          `shift=${(clampedStart - this._crossfadeStartTime).toFixed(1)}s)`
-        );
-      }
-
-      this._crossfadeStartTime = clampedStart;
-    }
-  }
-
-  private _computeBandRatio(
-    mb: { low: number[]; mid: number[]; high: number[] },
-    start: number,
-    end: number
-  ): [number, number, number] {
-    let sumLow = 0, sumMid = 0, sumHigh = 0;
-    for (let i = start; i < end; i++) {
-      sumLow += mb.low[i];
-      sumMid += mb.mid[i];
-      sumHigh += mb.high[i];
-    }
-    const total = sumLow + sumMid + sumHigh;
-    if (total < 1e-10) return [0.33, 0.33, 0.33];
-    return [sumLow / total, sumMid / total, sumHigh / total];
-  }
-
-  private _cosineSim3(a: [number, number, number], b: [number, number, number]): number {
-    let dot = 0, n1 = 0, n2 = 0;
-    for (let i = 0; i < 3; i++) {
-      dot += a[i] * b[i];
-      n1 += a[i] * a[i];
-      n2 += b[i] * b[i];
-    }
-    const d = Math.sqrt(n1) * Math.sqrt(n2);
-    return d === 0 ? 0 : dot / d;
-  }
-
-  private _computeMatchScore(
-    outroMB: { low: number[]; mid: number[]; high: number[] },
-    introMB: { low: number[]; mid: number[]; high: number[] },
-    windowIdx: number,
-    sigLen: number
-  ): number {
-    if (windowIdx < 0 || windowIdx + sigLen > outroMB.low.length) return 0;
-    const candidateSig = this._computeBandRatio(outroMB, windowIdx, windowIdx + sigLen);
-    const introSig = this._computeBandRatio(introMB, 0, sigLen);
-    const similarity = this._cosineSim3(candidateSig, introSig);
-
-    let outroE = 0, introE = 0;
-    for (let i = 0; i < sigLen; i++) {
-      outroE += outroMB.low[windowIdx + i] + outroMB.mid[windowIdx + i] + outroMB.high[windowIdx + i];
-      introE += introMB.low[i] + introMB.mid[i] + introMB.high[i];
-    }
-    outroE /= sigLen;
-    introE /= sigLen;
-    const energyRatio = (outroE > 0.0001 && introE > 0.0001)
-      ? 1 - Math.min(1, Math.abs(Math.log(outroE / introE)))
-      : 0;
-
-    return 0.7 * similarity + 0.3 * energyRatio;
-  }
-
   // ─── Energy contrast computation ────────────────────────────────
 
   /**
@@ -701,19 +569,108 @@ export class AutoMixEngine {
     return inAvg / outAvg;
   }
 
+  // ─── Spectral crossfade data computation ─────────────────────────
+
+  /**
+   * Compute per-band dB adjustments for spectral crossfade EQ.
+   * Compares multiband energy between outgoing outro and incoming intro.
+   *
+   * For each band (low/mid/high), computes the dB difference between
+   * the incoming intro energy and outgoing outro energy. The crossfade
+   * EQ then reshapes both tracks' spectra toward each other:
+   *   - Outgoing: EQ ramps from 0dB → outTargetDb (moves toward incoming's balance)
+   *   - Incoming: EQ starts at -diffDb → ramps to 0dB (starts matching outgoing)
+   *
+   * Returns false if insufficient data or all bands differ by < 1.5dB.
+   */
+  private _computeSpectralCrossfadeData(): SpectralCrossfadeData | false {
+    const outroMB = this._currentAnalysis?.analysis.outro?.multibandEnergy;
+    const introMB = this._nextAnalysis?.analysis.intro?.multibandEnergy;
+
+    if (!outroMB || !introMB) return false;
+
+    const bands = ['low', 'mid', 'high'] as const;
+    const outroAvg = [0, 0, 0];
+    const introAvg = [0, 0, 0];
+
+    const outroWindows = Math.min(8, outroMB.low.length);
+    const introWindows = Math.min(8, introMB.low.length);
+
+    if (outroWindows < 2 || introWindows < 2) return false;
+
+    // Average last N windows of outro and first N windows of intro
+    for (let b = 0; b < 3; b++) {
+      const band = bands[b];
+      const outroData = outroMB[band];
+      const introData = introMB[band];
+
+      let outSum = 0;
+      for (let i = outroData.length - outroWindows; i < outroData.length; i++) {
+        outSum += outroData[i];
+      }
+      outroAvg[b] = outSum / outroWindows;
+
+      let inSum = 0;
+      for (let i = 0; i < introWindows; i++) {
+        inSum += introData[i];
+      }
+      introAvg[b] = inSum / introWindows;
+    }
+
+    // Compute per-band dB differences
+    const diffDb: [number, number, number] = [0, 0, 0];
+    let maxAbsDiff = 0;
+
+    for (let b = 0; b < 3; b++) {
+      if (outroAvg[b] < 0.0001 && introAvg[b] < 0.0001) {
+        diffDb[b] = 0;
+        continue;
+      }
+      if (outroAvg[b] < 0.0001) {
+        diffDb[b] = 6; // incoming much louder in this band
+      } else if (introAvg[b] < 0.0001) {
+        diffDb[b] = -6; // outgoing much louder in this band
+      } else {
+        diffDb[b] = 10 * Math.log10(introAvg[b] / outroAvg[b]);
+      }
+      // Clamp to ±6dB
+      diffDb[b] = Math.max(-6, Math.min(6, diffDb[b]));
+      maxAbsDiff = Math.max(maxAbsDiff, Math.abs(diffDb[b]));
+    }
+
+    // Only enable if any band differs by more than 1.5dB
+    if (maxAbsDiff < 1.5) return false;
+
+    // Outgoing: ramp from 0dB → diffDb (push spectrum toward incoming's balance)
+    // Incoming: ramp from -diffDb → 0dB (start matching outgoing, reveal natural)
+    const outTargetDb: [number, number, number] = [diffDb[0], diffDb[1], diffDb[2]];
+    const inInitialDb: [number, number, number] = [-diffDb[0], -diffDb[1], -diffDb[2]];
+
+    if (IS_DEV) {
+      console.log(
+        `AutoMixEngine: Spectral crossfade — ` +
+        `outTarget=[${outTargetDb.map(d => d.toFixed(1)).join(', ')}]dB, ` +
+        `inInitial=[${inInitialDb.map(d => d.toFixed(1)).join(', ')}]dB`
+      );
+    }
+
+    return { outTargetDb, inInitialDb };
+  }
+
   // ─── Consolidated crossfade parameter finalization ──────────────
 
   /**
    * Single consolidated pass to finalize all crossfade parameters.
-   * Replaces the scattered adjustments that were in _computeCrossfadeParams(),
-   * _refineTransitionAlignment(), and _doCrossfade().
+   * Shape exponents come ONLY from the outro type profile — no runtime
+   * stacking. Duration is adjusted by spectral similarity and energy contrast.
    *
    * Called once in _doCrossfade() after both analyses are available.
+   * Receives the outgoing sound explicitly (SoundManager.getCurrentSound()
+   * returns the incoming after beginTransition).
    * Returns the finalized CrossfadeParams for CrossfadeManager.
    */
-  private _finalizeCrossfadeParams(volume: number): CrossfadeParams {
-    const currentSound = SoundManager.getCurrentSound();
-    const duration = currentSound?.duration() ?? 0;
+  private _finalizeCrossfadeParams(volume: number, outgoingSound: ISound): CrossfadeParams {
+    const duration = outgoingSound.duration();
     const trailingSilence = this._currentAnalysis?.analysis.energy.trailingSilence ?? 0;
     const effectiveEnd = duration - trailingSilence;
 
@@ -734,9 +691,6 @@ export class AutoMixEngine {
       effectiveOutShape = profile.outShape ?? 1;
     }
 
-    // ── Spectral alignment: refine crossfade start time ──
-    this._refineTransitionAlignment();
-
     // ── Incoming intro adjustments ──
     const incomingIntro = this._nextAnalysis?.analysis.intro;
     if (incomingIntro) {
@@ -745,12 +699,6 @@ export class AutoMixEngine {
           incomingIntro.quietIntroDuration,
           this._settingsCrossfadeDuration
         );
-      }
-      // Adjust incoming ramp shape based on intro character
-      if (incomingIntro.introEnergyRatio < 0.3) {
-        effectiveInShape = Math.max(0.5, effectiveInShape - 0.3);
-      } else if (incomingIntro.introEnergyRatio > 0.8) {
-        effectiveInShape = Math.min(2.0, effectiveInShape + 0.3);
       }
     }
 
@@ -761,9 +709,10 @@ export class AutoMixEngine {
         this._currentAnalysis.analysis.fingerprint,
         this._nextAnalysis.analysis.fingerprint
       );
-      // similarity ≈ 1: very similar → shorter crossfade (factor ≈ 0.8)
-      // similarity ≈ 0: very different → longer crossfade (factor ≈ 1.3)
-      const factor = 0.8 + (1 - similarity) * 0.5;
+      // similarity ≈ 1: very similar → shorter crossfade (factor ≈ 0.9)
+      // similarity ≈ 0: very different → longer crossfade (factor ≈ 1.1)
+      // Conservative range to avoid over-adjusting duration.
+      const factor = 0.9 + (1 - similarity) * 0.2;
       crossfadeDuration *= factor;
 
       if (IS_DEV) {
@@ -775,36 +724,35 @@ export class AutoMixEngine {
     }
 
     // ── Energy contrast: handle large volume differences ──
+    // Only adjust crossfade duration — shape exponents come solely from
+    // the outro type profile to avoid compounding adjustments.
     const energyContrast = this._computeEnergyContrast();
 
     if (energyContrast > 6) {
-      // Extreme contrast → fast outgoing fade to minimize clash
-      effectiveOutShape = Math.max(0.5, effectiveOutShape - 0.3);
-      crossfadeDuration = Math.min(crossfadeDuration * 1.5, this._settingsCrossfadeDuration);
+      // Extreme contrast → extend duration
+      crossfadeDuration = Math.min(crossfadeDuration * 1.3, this._settingsCrossfadeDuration);
       if (IS_DEV) {
         console.log(
           `AutoMixEngine: Extreme energy contrast (${energyContrast.toFixed(1)}:1), ` +
-          `fast outgoing + extended duration`
+          `extended duration`
         );
       }
     } else if (energyContrast > 3) {
-      // Incoming is much louder than outgoing → extend duration, slow incoming ramp
-      crossfadeDuration = Math.min(crossfadeDuration * 1.3, this._settingsCrossfadeDuration);
-      effectiveInShape = Math.min(2.0, effectiveInShape + 0.4);
+      // Incoming is much louder than outgoing → extend duration
+      crossfadeDuration = Math.min(crossfadeDuration * 1.2, this._settingsCrossfadeDuration);
       if (IS_DEV) {
         console.log(
           `AutoMixEngine: High energy contrast (${energyContrast.toFixed(1)}:1), ` +
-          `extending + slowing incoming ramp`
+          `extending duration`
         );
       }
     } else if (energyContrast < 0.33) {
-      // Incoming is much quieter → also extend and slow to avoid abrupt quiet
-      crossfadeDuration = Math.min(crossfadeDuration * 1.2, this._settingsCrossfadeDuration);
-      effectiveInShape = Math.max(0.5, effectiveInShape - 0.2);
+      // Incoming is much quieter → extend duration
+      crossfadeDuration = Math.min(crossfadeDuration * 1.15, this._settingsCrossfadeDuration);
       if (IS_DEV) {
         console.log(
           `AutoMixEngine: Low energy contrast (${energyContrast.toFixed(1)}:1), ` +
-          `extending + faster incoming ramp`
+          `extending duration`
         );
       }
     }
@@ -815,6 +763,24 @@ export class AutoMixEngine {
       Math.min(crossfadeDuration, this._getEffectiveCrossfadeDuration(effectiveEnd))
     );
 
+    // ── Safety clamp: account for async delay ──
+    // The initial duration was set in _handleWaiting() at the moment the crossfade
+    // was triggered. But _doCrossfade() then did async work (URL fetch, download,
+    // analysis, audio graph init) that consumed real playback time. By now the
+    // outgoing track has played further — clamp to what's actually left.
+    const outgoingNow = outgoingSound.seek() as number;
+    const remainingContent = Math.max(0, effectiveEnd - outgoingNow);
+    if (crossfadeDuration > remainingContent) {
+      if (IS_DEV) {
+        console.log(
+          `AutoMixEngine: Safety-clamped crossfade ${crossfadeDuration.toFixed(1)}s → ` +
+          `${Math.max(0.5, remainingContent).toFixed(1)}s ` +
+          `(remaining content after async setup delay)`
+        );
+      }
+      crossfadeDuration = Math.max(0.5, remainingContent);
+    }
+
     // ── Compute persistent gain adjustment for incoming track ──
     let incomingGainAdjustment = 1;
     if (this._settingsVolumeNorm) {
@@ -823,13 +789,20 @@ export class AutoMixEngine {
       incomingGainAdjustment = Math.max(0.5, Math.min(2.0, inAdj));
     }
 
+    // ── Spectral crossfade: data-driven 3-band EQ from multiband energy analysis ──
+    let spectralCrossfade: SpectralCrossfadeData | false = false;
+    if (this._settingsSmartCurve && !effectiveFadeInOnly) {
+      spectralCrossfade = this._computeSpectralCrossfadeData();
+    }
+
     if (IS_DEV) {
       console.log(
         `AutoMixEngine: Finalized params — duration=${crossfadeDuration.toFixed(1)}s, ` +
         `curve=${effectiveCurve}, inShape=${effectiveInShape.toFixed(2)}, ` +
         `outShape=${effectiveOutShape.toFixed(2)}, ` +
         `gainAdj=${incomingGainAdjustment.toFixed(3)}, ` +
-        `energyContrast=${energyContrast.toFixed(2)}`
+        `energyContrast=${energyContrast.toFixed(2)}, ` +
+        `spectral=${spectralCrossfade !== false}`
       );
     }
 
@@ -843,6 +816,7 @@ export class AutoMixEngine {
       inShape: effectiveInShape,
       outShape: effectiveOutShape,
       incomingGainAdjustment,
+      spectralCrossfade,
     };
   }
 
@@ -857,6 +831,22 @@ export class AutoMixEngine {
       if (this._shouldDeferCrossfade(currentTime)) {
         return;
       }
+
+      // After energy gate deferral, the remaining content time may be less than
+      // the planned crossfade duration. Clamp to avoid the crossfade outlasting
+      // the outgoing track's audio, which would cause an abrupt cut when the
+      // source runs out while incoming hasn't reached full volume.
+      const remaining = this._effectiveEnd - currentTime;
+      if (remaining < this._crossfadeDuration && remaining >= 1) {
+        this._crossfadeDuration = remaining;
+        if (IS_DEV) {
+          console.log(
+            `AutoMixEngine: Clamped crossfade duration to ${remaining.toFixed(1)}s ` +
+            `(remaining content time after energy gate deferral)`
+          );
+        }
+      }
+
       this._initiateCrossfade(); // fire-and-forget async
     }
   }
@@ -884,13 +874,12 @@ export class AutoMixEngine {
     if (!energy) return false;
 
     // Cap deferral: never defer past the point where a meaningful crossfade
-    // can still happen. Without this, maxDefer can exceed the remaining song
-    // time when crossfadeStartTime is close to the song end (e.g. Tier 2 hard
-    // with small outroStartOffset), causing the gate to never release.
+    // can still happen. Uses effectiveEnd (content end, excluding trailing
+    // silence) rather than songDuration, because the outgoing audio is
+    // effectively silent after effectiveEnd — deferring into silence means
+    // the crossfade outlasts the audible content, causing an abrupt cut.
     const maxDefer = Math.min(this._crossfadeDuration * 0.5, 5);
-    const sound = SoundManager.getCurrentSound();
-    const songDuration = sound?.duration() ?? 0;
-    const maxDeferByRemaining = Math.max(0, songDuration - this._crossfadeStartTime - MIN_CROSSFADE_DURATION);
+    const maxDeferByRemaining = Math.max(0, this._effectiveEnd - this._crossfadeStartTime - MIN_CROSSFADE_DURATION);
     if (currentTime >= this._crossfadeStartTime + Math.min(maxDefer, maxDeferByRemaining)) return false;
 
     const sec = Math.floor(currentTime);
@@ -1175,6 +1164,29 @@ export class AutoMixEngine {
     const outgoingSound = SoundManager.getCurrentSound();
     if (!outgoingSound) throw new Error('No outgoing sound');
 
+    // Register the outgoing 'end' safety net EARLY — before beginTransition
+    // and async scheduling. If the outgoing track ends during async setup
+    // (URL fetch, download, etc.), the event must not be missed. Without this,
+    // the crossfade would run against silence (perceived as a hard cut).
+    let outgoingEndedEarly = false;
+    outgoingSound.once('end', () => {
+      if (this._state === 'crossfading') {
+        if (this._crossfadeManager.isActive()) {
+          if (IS_DEV) {
+            console.log('AutoMixEngine: Outgoing song ended during crossfade, force-completing');
+          }
+          this._crossfadeManager.forceComplete();
+        } else {
+          // CrossfadeManager not yet active — outgoing ended during async setup.
+          // Flag it so we use a minimal crossfade duration when scheduling.
+          outgoingEndedEarly = true;
+          if (IS_DEV) {
+            console.log('AutoMixEngine: Outgoing song ended before crossfade scheduled');
+          }
+        }
+      }
+    });
+
     // Move current → outgoing, incoming → current
     SoundManager.beginTransition(incomingSound);
 
@@ -1183,8 +1195,17 @@ export class AutoMixEngine {
 
     const volume = music.persistData.playVolume;
 
-    // Consolidate all crossfade parameters in a single pass
-    const params = this._finalizeCrossfadeParams(volume);
+    // Consolidate all crossfade parameters in a single pass.
+    // Pass outgoingSound explicitly — after beginTransition,
+    // SoundManager.getCurrentSound() returns the incoming.
+    const params = this._finalizeCrossfadeParams(volume, outgoingSound);
+
+    // If the outgoing track ended during async setup, use a minimal
+    // crossfade — we're just fading in the incoming at this point.
+    if (outgoingEndedEarly) {
+      params.duration = 0.5;
+      params.fadeInOnly = true;
+    }
 
     // Get GainNodes for Web Audio API crossfade
     const outgoingGain = this._getGainNode(outgoingSound);
@@ -1218,14 +1239,18 @@ export class AutoMixEngine {
     // On failure (autoplay blocked, AbortError), retry once as a recovery attempt.
     await this._waitForPlayStart(incomingSound);
 
-    // Bail if cancelled during play wait
-    if (this._state !== 'crossfading') return;
+    // Bail if cancelled during play wait.
+    // Allow 'finishing' state: the crossfade audio may have completed early
+    // (short duration after energy gate clamping), but we still need to update
+    // the store and adopt the incoming sound. Only bail on actual cancellation
+    // (state reverted to idle/waiting/analyzing by cancelCrossfade).
+    if (this._state !== 'crossfading' && this._state !== 'finishing') return;
 
     // If paused during setup, wait for resume before updating store.
     // Without this, the async flow continues and changes playSongIndex while paused.
     if (this._isPaused) {
       await this._waitForUnpause();
-      if (this._state !== 'crossfading') return;
+      if (this._state !== 'crossfading' && this._state !== 'finishing') return;
     }
 
     // Update store state (triggers song data watcher which fetches lyrics)
@@ -1348,13 +1373,18 @@ export class AutoMixEngine {
     this._state = 'finishing';
     this._updateStoreState();
 
-    // Unload outgoing
+    // Unload outgoing with a brief delay to ensure the audio rendering thread
+    // has processed the gain=0 from CrossfadeManager._finish() before the
+    // HTMLAudioElement is stopped. Without this, the stop() can race ahead of
+    // the gain change, producing a brief pop at the outgoing track's last level.
     const outgoing = SoundManager.getOutgoingSound();
-    if (outgoing) {
-      outgoing.stop();
-      outgoing.unload();
-    }
     SoundManager.unloadOutgoing();
+    if (outgoing) {
+      setTimeout(() => {
+        outgoing.stop();
+        outgoing.unload();
+      }, 50);
+    }
 
     // Sync the incoming sound's internal _volume field to the user's playVolume.
     // During crossfade, CrossfadeManager manipulated the GainNode directly,
@@ -1387,11 +1417,31 @@ export class AutoMixEngine {
     this._incomingSound = null;
     this._evictCache();
 
-    this._state = 'idle';
-    this._updateStoreState();
+    // Delay the finishing→idle transition by 800ms.
+    // Player/index.vue has a 500ms debounced songChange watcher that calls
+    // getPlaySongData(), which checks isCrossfading() to decide whether to
+    // call createSound(). If we transition to idle immediately, short crossfades
+    // (clamped after energy gate deferral) or slow play starts can cause the
+    // debounce to fire AFTER we're idle — creating a duplicate sound that
+    // destroys the crossfade's incoming sound.
+    // Keeping state as 'finishing' for 800ms ensures the debounce fires while
+    // isCrossfading() still returns true.
+    if (this._finishingTimerId !== null) {
+      clearTimeout(this._finishingTimerId);
+    }
+    this._finishingTimerId = setTimeout(() => {
+      this._finishingTimerId = null;
+      if (this._state === 'finishing') {
+        this._state = 'idle';
+        this._updateStoreState();
+        if (IS_DEV) {
+          console.log('AutoMixEngine: Finishing → idle (delayed transition)');
+        }
+      }
+    }, 800);
 
     if (IS_DEV) {
-      console.log('AutoMixEngine: Crossfade complete, back to idle');
+      console.log('AutoMixEngine: Crossfade complete, entering finishing hold (800ms)');
     }
   }
 
@@ -1426,6 +1476,12 @@ export class AutoMixEngine {
       this._softwareFadeTimerId = null;
     }
     this._softwareFadeRemaining = 0;
+
+    // Clear delayed finishing→idle timer
+    if (this._finishingTimerId !== null) {
+      clearTimeout(this._finishingTimerId);
+      this._finishingTimerId = null;
+    }
 
     // Cleanup pre-buffer state
     this._cleanupPreBuffer();
@@ -1676,6 +1732,10 @@ export class AutoMixEngine {
 
   destroy(): void {
     this.cancelCrossfade();
+    if (this._finishingTimerId !== null) {
+      clearTimeout(this._finishingTimerId);
+      this._finishingTimerId = null;
+    }
     this._analysisCache.clear();
   }
 }
