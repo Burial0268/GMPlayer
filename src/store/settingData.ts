@@ -21,7 +21,7 @@ interface SettingDataState {
   bannerShow: boolean;
   autoSignIn: boolean;
   listClickMode: "click" | "dblclick";
-  useLyricAtlasAPI: boolean;
+  useTTMLRepo: boolean;
   playerStyle: string;
   bottomLyricShow: boolean;
   showYrc: boolean;
@@ -85,7 +85,7 @@ const useSettingDataStore = defineStore("settingData", {
       bannerShow: true,
       autoSignIn: true,
       listClickMode: "dblclick",
-      useLyricAtlasAPI: false,
+      useTTMLRepo: false,
       playerStyle: "cover",
       bottomLyricShow: true,
       showYrc: true,
@@ -162,6 +162,19 @@ const useSettingDataStore = defineStore("settingData", {
   persist: [
     {
       storage: localStorage,
+      afterHydrate(ctx: { store: any; }) {
+        // Migrate old useLyricAtlasAPI → useTTMLRepo
+        const store = ctx.store;
+        const raw = localStorage.getItem('settingData');
+        if (raw) {
+          try {
+            const parsed = JSON.parse(raw);
+            if ('useLyricAtlasAPI' in parsed && !('useTTMLRepo' in parsed)) {
+              store.useTTMLRepo = parsed.useLyricAtlasAPI;
+            }
+          } catch (_) { /* ignore */ }
+        }
+      },
     },
   ],
 });

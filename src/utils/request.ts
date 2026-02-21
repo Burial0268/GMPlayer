@@ -29,34 +29,18 @@ axios.defaults.withCredentials = true;
 // 请求拦截
 axios.interceptors.request.use(
   (request: CustomInternalAxiosRequestConfig) => {
-    // 检查是否为 Lyric Atlas API 的请求
-    const isLyricAtlasRequest = request.url && request.url.startsWith('/api/la');
-
     // Ensure headers object exists
     if (!request.headers) {
       request.headers = new AxiosHeaders();
     }
 
-    if (isLyricAtlasRequest) {
-      // 对 Lyric Atlas API：
-      // 1. 禁用凭据
-      request.withCredentials = false;
-      // 2. 移除 X-Requested-With 请求头
-      request.headers.delete('X-Requested-With');
-      // 3. 覆盖默认的 baseURL，确保请求根路径正确
-      request.baseURL = '/';
-      console.log('[Axios Interceptor] Lyric Atlas request - Overrode baseURL, removed X-Requested-With, set withCredentials=false');
-    } else {
-      // 对其他请求：
-      // 1. 确保使用默认的 baseURL
-      request.baseURL = baseURL;
-      // 2. 确保凭据设置为 true
-      request.withCredentials = true;
-      // 3. 确保 X-Requested-With 请求头存在
-      if (!request.headers.has('X-Requested-With')) {
-        request.headers.set('X-Requested-With', 'XMLHttpRequest');
-      }
-      console.log('[Axios Interceptor] Other request - Ensured baseURL, X-Requested-With, set withCredentials=true');
+    // 确保使用默认的 baseURL
+    request.baseURL = baseURL;
+    // 确保凭据设置为 true
+    request.withCredentials = true;
+    // 确保 X-Requested-With 请求头存在
+    if (!request.headers.has('X-Requested-With')) {
+      request.headers.set('X-Requested-With', 'XMLHttpRequest');
     }
 
     if (!request.hiddenBar && typeof $loadingBar !== "undefined")

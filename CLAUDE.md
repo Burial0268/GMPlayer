@@ -74,7 +74,6 @@ src/
 ### API Proxies (vite.config.js)
 - `/api/ncm` → `VITE_MUSIC_API` (Netease Cloud Music API, required)
 - `/api/unm` → `VITE_UNM_API` (UnblockNeteaseMusic, optional)
-- `/api/la` → `VITE_LYRIC_ATLAS_API_URL` (Lyric Atlas API, optional)
 
 ### Audio Pipeline
 
@@ -121,7 +120,6 @@ Several globals are used (declared in `AudioContext/types.ts`):
 ```env
 VITE_MUSIC_API            # Required: Netease Cloud Music API endpoint
 VITE_UNM_API              # Optional: UnblockNeteaseMusic API
-VITE_LYRIC_ATLAS_API_URL  # Optional: Lyric Atlas API
 VITE_SITE_TITLE           # Site title (used in PWA manifest)
 VITE_SITE_DES             # Site description (used in PWA manifest)
 ```

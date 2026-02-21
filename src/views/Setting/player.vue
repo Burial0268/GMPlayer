@@ -127,7 +127,7 @@
     <n-card class="set-item">
       <div class="name">
         <div class="dev">
-           使用 Lyric Atlas API
+           使用 AMLL TTML 歌词仓库
           <n-tag round :bordered="false" size="small" type="warning">
             {{ $t("setting.dev") }}
             <template #icon>
@@ -135,9 +135,9 @@
             </template>
           </n-tag>
         </div>
-        <span class="tip">优先从 Lyrics-Atlas API 获取歌词，可获取含对唱、背景行信息的歌词；若获取失败，则会回退</span>
+        <span class="tip">优先从 AMLL TTML 歌词仓库获取高精度逐字歌词（含对唱、背景行信息）；若获取失败，则回退到网易云歌词</span>
       </div>
-      <n-switch v-model:value="useLyricAtlasAPI" :round="false" />
+      <n-switch v-model:value="useTTMLRepo" :round="false" />
     </n-card>
     <n-card class="set-item">
       <div class="name">
@@ -414,7 +414,7 @@ const {
   lyricFontWeight,
   lyricLetterSpacing,
   lyricLineHeight,
-  useLyricAtlasAPI,
+  useTTMLRepo,
   blurAmount,
   contrastAmount,
   autoMixEnabled,
@@ -429,9 +429,9 @@ console.log('SETTING', fps)
 const isModalOn = ref(false)
 const isBlurModalOn = ref(false)
 
-// 监听 Lyric Atlas API 设置变化
-watch(useLyricAtlasAPI, (newValue, oldValue) => {
-  console.log(`[Setting] useLyricAtlasAPI changed from ${oldValue} to ${newValue}`);
+// 监听 TTML 仓库歌词设置变化
+watch(useTTMLRepo, (newValue, oldValue) => {
+  console.log(`[Setting] useTTMLRepo changed from ${oldValue} to ${newValue}`);
 });
 
 // 歌词位置

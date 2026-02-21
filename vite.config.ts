@@ -110,11 +110,6 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (path: string) => path.replace(/^\/api\/unm/, ""),
         },
-        "/api/la": {
-          target: env.VITE_LYRIC_ATLAS_API_URL,
-          changeOrigin: true,
-          rewrite: (path: string) => path.replace(/^\/api\/la/, ""),
-        },
       },
     },
     envPrefix: [
@@ -235,11 +230,6 @@ export default defineConfig(({ mode }) => {
           target: env.VITE_UNM_API,
           changeOrigin: true,
           rewrite: (path: string) => path.replace(/^\/api\/unm/, ""),
-        },
-        "/api/la": {
-          target: "https://lyric-atlas-api.vercel.app",
-          changeOrigin: true,
-          rewrite: (path: string) => path.replace(/^\/api\/la/, ""),
         },
       },
     },

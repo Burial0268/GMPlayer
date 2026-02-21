@@ -8,7 +8,6 @@ import request from "@/utils/request";
 import { parseLrc, parseQrc, parseYrc, LyricLine } from "@applemusic-like-lyrics/lyric";
 import { ensureTTMLLoaded, parseTTML } from "@/utils/parseTTML";
 import { preprocessLyrics } from './processor';
-import { parseLrcToEntries } from './parser/entryParser';
 import { detectYrcType } from './timeUtils';
 
 // Re-define LyricData interface based on parseLyric.ts
@@ -38,18 +37,6 @@ interface LyricData {
 // Interface for the raw response from Netease /lyric/new endpoint (assumed structure)
 interface NeteaseRawLyricResponse extends LyricData {
   // Potentially other fields like klyric, etc.
-}
-
-// Updated interface for the *actual* Lyric Atlas API response structure based on logs
-interface LyricAtlasDirectResponse {
-  found: boolean;
-  id: string; // API returns string ID
-  format?: 'lrc' | 'qrc' | 'ttml' | string;
-  source?: string;
-  content?: string; // Raw lyric string
-  translation?: string; // 翻译歌词内容 (新版LAAPI)
-  romaji?: string; // 音译歌词内容 (新版LAAPI)
-  // API might return other fields, add if necessary
 }
 
 // 新增: 定义歌词元数据接口
@@ -112,384 +99,112 @@ class NeteaseLyricProvider implements LyricProvider {
   }
 }
 
-// Implementation for the Lyric-Atlas API - ADJUSTED FOR ACTUAL RESPONSE
-class LyricAtlasProvider implements LyricProvider {
-  async getLyric(id: number, fast?: boolean): Promise<LyricData | null> {
-    try {
-      // 首先尝试获取元数据，检查是否有歌词和可用的格式
-      const meta = await this.checkLyricMeta(id);
+// TTML mirror URLs for fetching high-quality word-by-word lyrics from the AMLL TTML DB
+const TTML_MIRROR_URLS = [
+  'https://amll-ttml-db.gbclstudio.cn/ncm-lyrics/{id}.ttml',
+  'https://amlldb.bikonoo.com/ncm-lyrics/{id}.ttml',
+  'https://raw.githubusercontent.com/amll-dev/amll-ttml-db/refs/heads/main/ncm-lyrics/{id}.ttml',
+  'https://amll.mirror.dimeta.top/api/db/ncm-lyrics/{id}.ttml',
+];
 
-      // 如果未找到歌词，直接返回null
-      if (!meta || !meta.found) {
-        console.warn(`[LyricAtlasProvider] No lyrics found for id: ${id} based on meta check`);
-        return null;
-      }
+// Implementation for TTML Repository - fetches .ttml files directly from GitHub repo mirrors
+class TTMLRepoProvider implements LyricProvider {
+  /**
+   * Try each mirror URL sequentially until one returns a valid TTML file.
+   * @param id Song ID
+   * @returns TTML text content or null if all mirrors fail
+   */
+  private async fetchTTMLFromMirrors(id: number): Promise<string | null> {
+    for (const urlTemplate of TTML_MIRROR_URLS) {
+      const url = urlTemplate.replace('{id}', String(id));
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-      // Expecting the direct response structure now
-      const params: Record<string, any> = { id };
-      if (fast) {
-        params.fast = null; // flag-style param: &fast (no value)
-      }
-      const response: LyricAtlasDirectResponse = await request({
-        method: 'GET',
-        hiddenBar: true,
-        url: `/api/la/api/search`,
-        params,
-      });
+        const response = await fetch(url, { signal: controller.signal });
+        clearTimeout(timeoutId);
 
-      // Log the raw response from Lyric Atlas API
-      console.log(`[LyricAtlasProvider] Raw API response for id ${id}:`, JSON.stringify(response));
-
-      // Check the actual response structure
-      if (!response || !response.found || !response.content || !response.format) {
-        console.warn(`No valid lyric content found in Lyric Atlas direct response for id: ${id}`, response);
-        return null;
-      }
-
-      console.log(`[LyricAtlasProvider] Received direct response for ${id}: format=${response.format}, source=${response.source}`);
-
-      const result: LyricData = {
-        code: 200, // Assume success if found=true and content exists
-        lrc: { lyric: "[00:00.00]加载歌词中...\n[99:99.99]" }, // 默认提供一个占位lrc，确保UI不会出错
-        tlyric: null,
-        romalrc: null,
-        yrc: null,
-        ytlrc: null,
-        yromalrc: null,
-        hasTTML: false, // 默认不是TTML格式
-        ttml: null, // 默认无TTML数据
-        romaji: "",
-        translation: "",
-        // 添加元数据信息
-        meta: meta
-      };
-
-      // 处理翻译歌词 (新版LAAPI)
-      if (response.translation) {
-        console.log(`[LyricAtlasProvider] Found translation lyrics for id: ${id}`);
-        // 将字符串版本的translation转换为对象格式，以匹配现有接口
-        result.tlyric = { lyric: response.translation };
-        // 同时保留原始字符串格式，以便processLyrics可以处理
-        result.translation = response.translation;
-      }
-
-      // 处理音译歌词 (新版LAAPI)
-      if (response.romaji) {
-        console.log(`[LyricAtlasProvider] Found romaji lyrics for id: ${id}`);
-        // 将字符串版本的romaji转换为对象格式，以匹配现有接口
-        result.romalrc = { lyric: response.romaji };
-        // 同时保留原始字符串格式，以便processLyrics可以处理
-        result.romaji = response.romaji;
-      }
-
-      // Map content based on format
-      if (response.format === 'lrc') {
-        // 对于LRC格式，直接使用内容
-        result.lrc = { lyric: response.content };
-      } else if (response.format === 'qrc' || response.format === 'yrc') {
-        // 将qrc或yrc格式映射到yrc字段
-        result.yrc = { lyric: response.content }; // Map qrc/yrc to yrc
-
-        // 从qrc/yrc解析并创建lrc格式
-        try {
-          // 根据格式选择正确的解析器
-          let parsedLyric: any[];
-
-          // 如果接口已明确返回格式，优先使用返回的格式
-          if (response.format === 'qrc') {
-            // 使用QRC解析器
-            parsedLyric = parseQrc(response.content);
-            console.log(`[LyricAtlasProvider] Using QRC parser for id: ${id}`);
-          } else if (response.format === 'yrc') {
-            // 使用YRC解析器
-            parsedLyric = parseYrc(response.content);
-            console.log(`[LyricAtlasProvider] Using YRC parser for id: ${id}`);
-          } else {
-            // 尝试通过内容检测格式
-            const contentType = detectYrcType(response.content);
-            if (contentType === 'yrc') {
-              parsedLyric = parseYrc(response.content);
-              console.log(`[LyricAtlasProvider] Detected YRC format for id: ${id}`);
-            } else {
-              parsedLyric = parseQrc(response.content);
-              console.log(`[LyricAtlasProvider] Detected QRC format for id: ${id}`);
-            }
+        if (response.ok) {
+          const text = await response.text();
+          if (text && text.includes('<tt') ) {
+            console.log(`[TTMLRepoProvider] Successfully fetched TTML for id ${id} from ${url}`);
+            return text;
           }
-
-          if (parsedLyric && parsedLyric.length > 0) {
-            // 创建LRC文本
-            let lrcText = '';
-            parsedLyric.forEach(line => {
-              if (line.words && line.words.length > 0) {
-                const timeMs = line.words[0].startTime;
-                const minutes = Math.floor(timeMs / 60000);
-                const seconds = ((timeMs % 60000) / 1000).toFixed(2);
-                const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.padStart(5, '0')}`;
-                const content = line.words.map(w => w.word).join('');
-                lrcText += `[${timeStr}]${content}\n`;
-              }
-            });
-
-            // 如果生成的lrc文本为空，回退到默认值
-            if (!lrcText.trim()) {
-              lrcText = "[00:00.00]无法生成歌词\n[99:99.99]";
-            }
-
-            result.lrc = { lyric: lrcText };
-            console.log(`[LyricAtlasProvider] Successfully created LRC from ${response.format} for id: ${id}`);
-
-            // 对于YRC/QRC格式，直接处理翻译和音译数据
-            if (response.translation || response.romaji) {
-              console.log(`[LyricAtlasProvider] 为YRC/QRC格式预处理翻译和音译数据`);
-
-              // 收集有效歌词行（有内容的行）
-              const validLineIndices: number[] = [];
-              parsedLyric.forEach((line, idx) => {
-                if (line.words && line.words.length > 0) {
-                  const text = line.words.map(w => w.word).join('').trim();
-                  // 过滤间奏行（只有符号的行）
-                  const stripped = text.replace(/[\s♪♩♫♬🎵🎶🎼·…\-_—─]/g, '');
-                  if (stripped.length > 0) {
-                    validLineIndices.push(idx);
-                  }
-                }
-              });
-
-              // 预处理翻译 - 使用行索引匹配
-              if (response.translation && validLineIndices.length > 0) {
-                try {
-                  const transEntries = parseLrcToEntries(response.translation);
-                  // 按索引一一对应
-                  const matchCount = Math.min(transEntries.length, validLineIndices.length);
-                  for (let i = 0; i < matchCount; i++) {
-                    const lineIdx = validLineIndices[i];
-                    parsedLyric[lineIdx].translatedLyric = transEntries[i].text;
-                  }
-                  console.log(`[LyricAtlasProvider] 成功为YRC/QRC预处理翻译数据: ${matchCount} 行`);
-                } catch (error) {
-                  console.error(`[LyricAtlasProvider] 预处理YRC/QRC翻译数据出错:`, error);
-                }
-              }
-
-              // 预处理音译 - 使用行索引匹配
-              if (response.romaji && validLineIndices.length > 0) {
-                try {
-                  const romaEntries = parseLrcToEntries(response.romaji);
-                  // 按索引一一对应
-                  const matchCount = Math.min(romaEntries.length, validLineIndices.length);
-                  for (let i = 0; i < matchCount; i++) {
-                    const lineIdx = validLineIndices[i];
-                    parsedLyric[lineIdx].romanLyric = romaEntries[i].text;
-                  }
-                  console.log(`[LyricAtlasProvider] 成功为YRC/QRC预处理音译数据: ${matchCount} 行`);
-                } catch (error) {
-                  console.error(`[LyricAtlasProvider] 预处理YRC/QRC音译数据出错:`, error);
-                }
-              }
-
-              console.log(`[LyricAtlasProvider] YRC/QRC预处理完成，已包含翻译和音译数据`);
-            }
-          } else {
-            // 解析结果为空，使用默认lrc
-            result.lrc = { lyric: "[00:00.00]无法解析歌词内容\n[99:99.99]" };
-            console.warn(`[LyricAtlasProvider] ${response.format} parsing resulted in empty lines for id: ${id}`);
-          }
-        } catch (error) {
-          console.warn(`[LyricAtlasProvider] Could not extract LRC from ${response.format} for id: ${id}:`, error);
-          // 如果无法提取，创建一个占位LRC，确保UI不会出错
-          result.lrc = { lyric: "[00:00.00]解析歌词时出错\n[99:99.99]" };
         }
-      } else if (response.format === 'ttml') {
-        // 处理 TTML 格式 (使用 @lyrics-helper-rs/ttml-processor WASM)
-        try {
-          await ensureTTMLLoaded();
-          const ttmlLyric = parseTTML(response.content) as TTMLLyric;
-
-          // 标记拥有TTML格式歌词
-          result.hasTTML = true;
-          // 存储解析后的TTML数据
-          result.ttml = ttmlLyric.lines;
-
-          // 为TTML准备数据
-          if (ttmlLyric && ttmlLyric.lines && ttmlLyric.lines.length > 0) {
-            // 对于TTML格式，直接处理翻译和音译数据
-            if (response.translation || response.romaji) {
-              console.log(`[LyricAtlasProvider] 为TTML格式预处理翻译和音译数据`);
-
-              // 收集有效歌词行（有内容的行）
-              const validLineIndices: number[] = [];
-              ttmlLyric.lines.forEach((line, idx) => {
-                if (line.words && line.words.length > 0) {
-                  const text = line.words.map(w => w.word).join('').trim();
-                  // 过滤间奏行（只有符号的行）
-                  const stripped = text.replace(/[\s♪♩♫♬🎵🎶🎼·…\-_—─]/g, '');
-                  if (stripped.length > 0) {
-                    validLineIndices.push(idx);
-                  }
-                }
-              });
-
-              // 预处理翻译 - 使用行索引匹配
-              if (response.translation && validLineIndices.length > 0) {
-                try {
-                  const transEntries = parseLrcToEntries(response.translation);
-                  // 按索引一一对应
-                  const matchCount = Math.min(transEntries.length, validLineIndices.length);
-                  for (let i = 0; i < matchCount; i++) {
-                    const lineIdx = validLineIndices[i];
-                    ttmlLyric.lines[lineIdx].translatedLyric = transEntries[i].text;
-                  }
-                  console.log(`[LyricAtlasProvider] 成功为TTML预处理翻译数据: ${matchCount} 行`);
-                } catch (error) {
-                  console.error(`[LyricAtlasProvider] 预处理TTML翻译数据出错:`, error);
-                }
-              }
-
-              // 预处理音译 - 使用行索引匹配
-              if (response.romaji && validLineIndices.length > 0) {
-                try {
-                  const romaEntries = parseLrcToEntries(response.romaji);
-                  // 按索引一一对应
-                  const matchCount = Math.min(romaEntries.length, validLineIndices.length);
-                  for (let i = 0; i < matchCount; i++) {
-                    const lineIdx = validLineIndices[i];
-                    ttmlLyric.lines[lineIdx].romanLyric = romaEntries[i].text;
-                  }
-                  console.log(`[LyricAtlasProvider] 成功为TTML预处理音译数据: ${matchCount} 行`);
-                } catch (error) {
-                  console.error(`[LyricAtlasProvider] 预处理TTML音译数据出错:`, error);
-                }
-              }
-            }
-
-            // 创建一个包含特殊标记的字符串，表示这是已解析的LyricLine[]
-            const serializedYrc = `___PARSED_LYRIC_LINES___${JSON.stringify(ttmlLyric.lines)}`;
-            result.yrc = { lyric: serializedYrc };
-            console.log(`[LyricAtlasProvider] Successfully parsed TTML for id: ${id}, lines: ${ttmlLyric.lines.length}`);
-
-            // 同时创建LRC格式的歌词，确保lrc数组有内容
-            let lrcText = '';
-            ttmlLyric.lines.forEach(line => {
-              if (line.words && line.words.length > 0) {
-                const timeMs = line.words[0].startTime;
-                const minutes = Math.floor(timeMs / 60000);
-                const seconds = ((timeMs % 60000) / 1000).toFixed(2);
-                const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.padStart(5, '0')}`;
-                const content = line.words.map(w => w.word).join('');
-                lrcText += `[${timeStr}]${content}\n`;
-              }
-            });
-
-            // 如果生成的lrc文本为空，回退到默认值
-            if (!lrcText.trim()) {
-              lrcText = "[00:00.00]无法生成歌词\n[99:99.99]";
-            }
-
-            result.lrc = { lyric: lrcText };
-            console.log(`[LyricAtlasProvider] Created compatible LRC format from TTML for id: ${id}`);
-          } else {
-            console.warn(`[LyricAtlasProvider] TTML parsing resulted in empty lines for id: ${id}`);
-            result.lrc = { lyric: "[00:00.00]TTML解析结果为空\n[99:99.99]" };
-            result.hasTTML = false; // 解析结果为空，置回false
-            result.ttml = null;
-          }
-        } catch (error) {
-          console.error(`[LyricAtlasProvider] Error parsing TTML for id: ${id}:`, error);
-          result.lrc = { lyric: "[00:00.00]TTML解析出错\n[99:99.99]" };
-          result.hasTTML = false; // 解析出错，置回false
-          result.ttml = null;
-        }
-      } else {
-        // 处理未知格式
-        console.warn(`[LyricAtlasProvider] Trying to handle unknown format '${response.format}' for id: ${id}`);
-
-        // 检查内容是否看起来像LRC
-        if (typeof response.content === 'string' && response.content.includes('[') && response.content.includes(']')) {
-          // 尝试作为LRC格式处理
-          try {
-            result.lrc = { lyric: response.content };
-            console.log(`[LyricAtlasProvider] Content looks like LRC, using as-is for id: ${id}`);
-          } catch (e) {
-            console.error(`[LyricAtlasProvider] Error treating content as LRC:`, e);
-            result.lrc = { lyric: `[00:00.00]解析${response.format}格式失败\n[99:99.99]` };
-          }
+        console.log(`[TTMLRepoProvider] Mirror returned ${response.status} for id ${id}: ${url}`);
+      } catch (error: any) {
+        if (error.name === 'AbortError') {
+          console.log(`[TTMLRepoProvider] Timeout fetching id ${id} from ${url}`);
         } else {
-          // 尝试从纯文本提取内容生成简单LRC
-          try {
-            let lines = response.content.split(/\r?\n/);
-            let lrcText = '';
-
-            // 为每行添加时间标记，简单地按顺序分配时间
-            lines.forEach((line, index) => {
-              if (line.trim()) {
-                const minutes = Math.floor(index / 6); // 每行大约10秒
-                const seconds = (index % 6) * 10;
-                const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.00`;
-                lrcText += `[${timeStr}]${line.trim()}\n`;
-              }
-            });
-
-            if (lrcText.trim()) {
-              result.lrc = { lyric: lrcText };
-              console.log(`[LyricAtlasProvider] Created simple LRC from text content for id: ${id}`);
-            } else {
-              result.lrc = { lyric: `[00:00.00]未能从${response.format}提取文本\n[99:99.99]` };
-            }
-          } catch (e) {
-            console.error(`[LyricAtlasProvider] Error extracting text from content:`, e);
-            result.lrc = { lyric: `[00:00.00]不支持的歌词格式: ${response.format}\n[99:99.99]` };
-          }
+          console.log(`[TTMLRepoProvider] Error fetching id ${id} from ${url}:`, error.message);
         }
       }
-
-      return result;
-
-    } catch (error) {
-      console.error("Failed to fetch or process lyrics from Lyric Atlas:", error);
-      return null;
     }
+    return null;
   }
 
-  /**
-   * 检查歌词元数据，例如支持的格式和翻译/音译的可用性
-   * @param id 歌曲ID
-   * @param fast 是否仅获取仓库结果
-   * @returns 包含元数据信息的LyricMeta对象，如果请求失败则返回null
-   */
-  async checkLyricMeta(id: number, fast?: boolean): Promise<LyricMeta | null> {
+  async getLyric(id: number, _fast?: boolean): Promise<LyricData | null> {
     try {
-      // 使用新的元数据API端点
-      const params: Record<string, any> = { id };
-      if (fast) {
-        params.fast = null; // flag-style param: &fast (no value)
-      }
-      const response = await request({
-        method: 'GET',
-        hiddenBar: true,
-        url: `/api/la/api/lyrics/meta`,
-        params,
-      });
+      const ttmlContent = await this.fetchTTMLFromMirrors(id);
 
-      // 检查响应是否有效
-      if (!response || response.found === undefined) {
-        console.warn(`[LyricAtlasProvider] Invalid meta response for id: ${id}`, response);
+      if (!ttmlContent) {
+        console.log(`[TTMLRepoProvider] No TTML found for id ${id} in any mirror`);
         return null;
       }
 
-      // 提取并返回元数据
-      const meta: LyricMeta = {
-        found: response.found,
-        id: response.id,
-        availableFormats: response.availableFormats || [],
-        hasTranslation: response.hasTranslation || false,
-        hasRomaji: response.hasRomaji || false,
-        source: response.source
+      // Parse TTML using existing WASM parser
+      await ensureTTMLLoaded();
+      const ttmlLyric = parseTTML(ttmlContent) as TTMLLyric;
+
+      if (!ttmlLyric || !ttmlLyric.lines || ttmlLyric.lines.length === 0) {
+        console.warn(`[TTMLRepoProvider] TTML parsing resulted in empty lines for id: ${id}`);
+        return null;
+      }
+
+      console.log(`[TTMLRepoProvider] Parsed TTML for id ${id}: ${ttmlLyric.lines.length} lines`);
+
+      // Build serialized YRC from parsed TTML lines
+      const serializedYrc = `___PARSED_LYRIC_LINES___${JSON.stringify(ttmlLyric.lines)}`;
+
+      // Build fallback LRC text from TTML lines
+      let lrcText = '';
+      ttmlLyric.lines.forEach(line => {
+        if (line.words && line.words.length > 0) {
+          const timeMs = line.words[0].startTime;
+          const minutes = Math.floor(timeMs / 60000);
+          const seconds = ((timeMs % 60000) / 1000).toFixed(2);
+          const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.padStart(5, '0')}`;
+          const content = line.words.map((w: any) => w.word).join('');
+          lrcText += `[${timeStr}]${content}\n`;
+        }
+      });
+
+      if (!lrcText.trim()) {
+        lrcText = "[00:00.00]无法生成歌词\n[99:99.99]";
+      }
+
+      const result: LyricData = {
+        code: 200,
+        lrc: { lyric: lrcText },
+        tlyric: null,
+        romalrc: null,
+        yrc: { lyric: serializedYrc },
+        ytlrc: null,
+        yromalrc: null,
+        hasTTML: true,
+        ttml: ttmlLyric.lines,
+        romaji: "",
+        translation: "",
+        meta: {
+          found: true,
+          id: String(id),
+          source: 'repository',
+        },
       };
 
-      console.log(`[LyricAtlasProvider] Lyric meta for id ${id}:`, meta);
-      return meta;
+      return result;
     } catch (error) {
-      console.error(`[LyricAtlasProvider] Failed to fetch lyric meta for id ${id}:`, error);
+      console.error(`[TTMLRepoProvider] Error processing TTML for id ${id}:`, error);
       return null;
     }
   }
@@ -505,18 +220,17 @@ export class LyricService {
   };
   // 添加NCM提供者实例，用于回退
   private ncmProvider: NeteaseLyricProvider;
-  // 添加Lyric Atlas提供者实例，用于元数据检查
-  private laProvider: LyricAtlasProvider | null = null;
+  // TTML仓库提供者实例
+  private ttmlProvider: TTMLRepoProvider | null = null;
 
-  constructor(useLyricAtlas: boolean = false) {
+  constructor(useTTMLRepo: boolean = false) {
     // 始终初始化网易云提供者，用于回退
     this.ncmProvider = new NeteaseLyricProvider();
 
-    // The presence of the provider is now controlled by the setting alone.
-    if (useLyricAtlas) {
-      console.log("Using Lyric Atlas provider.");
-      this.laProvider = new LyricAtlasProvider();
-      this.provider = this.laProvider;
+    if (useTTMLRepo) {
+      console.log("Using TTML Repository provider.");
+      this.ttmlProvider = new TTMLRepoProvider();
+      this.provider = this.ttmlProvider;
     } else {
       console.log("Using Netease lyric provider.");
       this.provider = this.ncmProvider;
@@ -543,22 +257,12 @@ export class LyricService {
 
       let result: LyricData | null = null;
 
-      if (this.laProvider) {
-        const meta = await this.laProvider.checkLyricMeta(id);
-
-        if (meta && meta.found) {
-          console.log(`[LyricService] 元数据检查成功，使用Lyric Atlas获取歌词，ID: ${id}`);
-          result = await this.laProvider.getLyric(id); // This should already have meta
-        } else {
-          console.log(`[LyricService] Lyric Atlas没有歌词数据，回退到网易云API，ID: ${id}`);
+      if (this.ttmlProvider) {
+        // Try TTML repository first, fall back to Netease
+        result = await this.ttmlProvider.getLyric(id);
+        if (!result) {
+          console.log(`[LyricService] TTML仓库无歌词数据，回退到网易云API，ID: ${id}`);
           result = await this.ncmProvider.getLyric(id);
-          if (result && meta) { // If NCM gave lyrics, and we had LA meta initially (though found=false)
-            result.meta = { ...meta, foundNCM: true }; // Augment meta
-          } else if (result && !meta && this.laProvider) {
-            // If NCM gave lyrics and we never had LA meta, try to get LA meta just for source info etc.
-            const freshMeta = await this.laProvider.checkLyricMeta(id);
-            if (freshMeta) result.meta = freshMeta;
-          }
         }
       } else {
         console.log(`[LyricService] 使用默认提供者获取歌词，ID: ${id}`);

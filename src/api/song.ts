@@ -46,8 +46,8 @@ export const song = {
   /**
    * 获取歌词（统一接口）
    */
-  getLyric: async (id: number, useLyricAtlas = false) => {
-    const lyricService = new LyricService(useLyricAtlas);
+  getLyric: async (id: number, useTTMLRepo = false) => {
+    const lyricService = new LyricService(useTTMLRepo);
     try {
       return await lyricService.fetchLyric(id);
     } catch (error) {
@@ -59,8 +59,8 @@ export const song = {
   /**
    * 检查歌词元数据
    */
-  checkLyricMeta: async (id: number, useLyricAtlas = true) => {
-    const lyricService = new LyricService(useLyricAtlas);
+  checkLyricMeta: async (id: number, useTTMLRepo = true) => {
+    const lyricService = new LyricService(useTTMLRepo);
     try {
       return await lyricService.checkLyricMeta(id);
     } catch (error) {

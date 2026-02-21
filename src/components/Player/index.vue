@@ -557,10 +557,10 @@ watch(
 );
 
 const fetchAndParseLyric = (id) => {
-  const useAtlas = setting.useLyricAtlasAPI;
+  const useTTMLRepo = setting.useTTMLRepo;
 
-  getUnifiedLyric(id, useAtlas).then(lyricData => {
-    console.log(`[Player] Unified Lyric data received for ${id} (using Atlas: ${useAtlas})`);
+  getUnifiedLyric(id, useTTMLRepo).then(lyricData => {
+    console.log(`[Player] Unified Lyric data received for ${id} (using TTML repo: ${useTTMLRepo})`);
 
     const parsedResult = parseLyric(lyricData);
     console.log(`[Player] Parsed lyric result for ${id}`);
