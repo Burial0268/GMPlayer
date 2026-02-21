@@ -646,15 +646,23 @@ export class AutoMixEngine {
     const outTargetDb: [number, number, number] = [diffDb[0], diffDb[1], diffDb[2]];
     const inInitialDb: [number, number, number] = [-diffDb[0], -diffDb[1], -diffDb[2]];
 
+    // Bass swap: use stepped midpoint handoff for low band when both tracks have
+    // significant bass energy and the difference is noticeable. Linear ramps cause
+    // bass from both tracks to overlap for the entire duration, creating muddiness.
+    // The bass-swap curve holds each track's bass steady, then does a quick handoff
+    // at the midpoint — like a DJ-style bass cut.
+    const bassSwapLow = outroAvg[0] > 0.01 && introAvg[0] > 0.01 && Math.abs(diffDb[0]) >= 2.0;
+
     if (IS_DEV) {
       console.log(
         `AutoMixEngine: Spectral crossfade — ` +
         `outTarget=[${outTargetDb.map(d => d.toFixed(1)).join(', ')}]dB, ` +
-        `inInitial=[${inInitialDb.map(d => d.toFixed(1)).join(', ')}]dB`
+        `inInitial=[${inInitialDb.map(d => d.toFixed(1)).join(', ')}]dB` +
+        (bassSwapLow ? ', bassSwap=on' : '')
       );
     }
 
-    return { outTargetDb, inInitialDb };
+    return { outTargetDb, inInitialDb, bassSwapLow };
   }
 
   // ─── Consolidated crossfade parameter finalization ──────────────
