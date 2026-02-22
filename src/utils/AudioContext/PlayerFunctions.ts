@@ -45,11 +45,49 @@ let spectrumAnimationId: number | null = null;
 let isPageVisible = true;
 // Reusable spectrum array to avoid Array.from() allocation every frame
 let spectrumReusableArray: number[] = [];
+// Background monitor interval ID (setInterval fallback when RAF is paused)
+let backgroundMonitorId: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Start a setInterval(1000) fallback for when the page is hidden.
+ * RAF is paused in background tabs, but setInterval still fires (~1/sec).
+ * This keeps AutoMix state machine and time tracking alive.
+ */
+const startBackgroundMonitor = (): void => {
+  if (backgroundMonitorId !== null) return;
+  backgroundMonitorId = setInterval(() => {
+    const sound = SoundManager.getCurrentSound();
+    if (!sound) {
+      stopBackgroundMonitor();
+      return;
+    }
+    const autoMix = getAutoMixEngine();
+    autoMix.monitorPlayback(sound);
+    checkAudioTime(sound, musicStore());
+  }, 1000);
+};
+
+/**
+ * Stop the background monitor interval.
+ */
+const stopBackgroundMonitor = (): void => {
+  if (backgroundMonitorId !== null) {
+    clearInterval(backgroundMonitorId);
+    backgroundMonitorId = null;
+  }
+};
 
 // Track page visibility for spectrum throttling
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {
     isPageVisible = document.visibilityState === 'visible';
+    if (!isPageVisible && spectrumAnimationId !== null) {
+      // Page hidden while spectrum loop is active — start background fallback
+      startBackgroundMonitor();
+    } else if (isPageVisible) {
+      // Page visible again — RAF loop resumes naturally, stop interval
+      stopBackgroundMonitor();
+    }
   });
 }
 
@@ -61,6 +99,7 @@ const stopSpectrumUpdate = (): void => {
     cancelAnimationFrame(spectrumAnimationId);
     spectrumAnimationId = null;
   }
+  stopBackgroundMonitor();
 };
 
 /**
@@ -72,6 +111,11 @@ const stopSpectrumUpdate = (): void => {
  */
 const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   stopSpectrumUpdate();
+
+  // If page is already hidden, start background monitor immediately
+  if (!isPageVisible) {
+    startBackgroundMonitor();
+  }
 
   const settings = settingStore();
   const needsSpectrum = settings.musicFrequency;
@@ -412,12 +456,14 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
           closable: true,
           duration: 0,
         });
+        music.isLoadingSong = false;
       }
     });
     sound?.on('playerror', () => {
       window.$message.error(getLanguageData('songPlayError'));
       console.error(getLanguageData('songPlayError'));
       music.setPlayState(false);
+      music.isLoadingSong = false;
     });
 
     // 返回音频对象

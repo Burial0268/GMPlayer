@@ -43,6 +43,7 @@ export class CrossfadeScheduler {
   private _incomingGainAdjustment: number = 1;
   private _isPaused: boolean = false;
   private _pausedProgress: number = 0;
+  private _completionTimerId: ReturnType<typeof setTimeout> | null = null;
 
   // Spectral crossfade EQ
   private _spectralEQ: SpectralEQ = new SpectralEQ();
@@ -155,10 +156,33 @@ export class CrossfadeScheduler {
   }
 
   /**
+   * Clear the setTimeout backup for completion.
+   */
+  private _clearCompletionTimer(): void {
+    if (this._completionTimerId !== null) {
+      clearTimeout(this._completionTimerId);
+      this._completionTimerId = null;
+    }
+  }
+
+  /**
    * Lightweight RAF loop that ONLY checks timing for the completion callback.
    * No gain manipulation — all gain is handled by setValueCurveAtTime().
+   * Also schedules a setTimeout backup so completion fires even in background tabs.
    */
   private _startCompletionWatch(): void {
+    this._clearCompletionTimer();
+
+    // setTimeout backup: fires even in background tabs (throttled to ~1/sec but still works)
+    const ctx = AudioContextManager.getContext();
+    if (ctx) {
+      const remaining = (this._startTime + this._duration) - ctx.currentTime;
+      this._completionTimerId = setTimeout(() => {
+        this._completionTimerId = null;
+        if (this._isActive && !this._isPaused) this._finish();
+      }, (Math.max(remaining, 0) + 0.5) * 1000);
+    }
+
     const check = (): void => {
       if (!this._isActive || this._isPaused) return;
       const ctx = AudioContextManager.getContext();
@@ -182,6 +206,7 @@ export class CrossfadeScheduler {
     if (!this._isActive) return;
     this._isActive = false;
     this._isPaused = false;
+    this._clearCompletionTimer();
 
     if (this._rafId !== null) {
       cancelAnimationFrame(this._rafId);
@@ -224,6 +249,7 @@ export class CrossfadeScheduler {
   pauseCrossfade(): void {
     if (!this._isActive || this._isPaused) return;
     this._isPaused = true;
+    this._clearCompletionTimer();
 
     // Stop completion watch
     if (this._rafId !== null) {
@@ -312,6 +338,7 @@ export class CrossfadeScheduler {
    */
   forceComplete(): void {
     if (!this._isActive) return;
+    this._clearCompletionTimer();
 
     if (this._rafId !== null) {
       cancelAnimationFrame(this._rafId);
@@ -354,6 +381,12 @@ export class CrossfadeScheduler {
     };
     this._rafId = requestAnimationFrame(waitForRamp);
 
+    // setTimeout backup in case RAF is paused (background tab)
+    this._completionTimerId = setTimeout(() => {
+      this._completionTimerId = null;
+      if (this._isActive) this._finish();
+    }, 100);
+
     if (IS_DEV) {
       console.log('CrossfadeScheduler: Force-completing with 50ms ramp');
     }
@@ -365,6 +398,7 @@ export class CrossfadeScheduler {
    */
   cancel(): void {
     if (!this._isActive) return;
+    this._clearCompletionTimer();
 
     if (this._rafId !== null) {
       cancelAnimationFrame(this._rafId);
