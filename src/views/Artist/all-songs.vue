@@ -96,9 +96,9 @@ const getArtistAllSongsData = (id: string | number | string[], limit = 30, offse
 watch(
   () => router.currentRoute.value,
   (val) => {
-    artistId.value = val.query.id;
-    pageNumber.value = Number(val.query.page ? val.query.page : 1);
     if (val.name == "all-songs") {
+      artistId.value = val.query.id;
+      pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getArtistAllSongsData(
         artistId.value,
         pagelimit.value,

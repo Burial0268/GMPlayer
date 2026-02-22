@@ -277,13 +277,13 @@ const pageNumberChange = (val: number) => {
 watch(
   () => router.currentRoute.value,
   (val) => {
-    catName.value = val.query.cat ? val.query.cat : "全部歌单";
-    hqPLayListOpen.value = val.query.hq
-      ? val.query.hq == "true"
-        ? true
-        : false
-      : false;
     if (val.name == "dsc-playlists") {
+      catName.value = val.query.cat ? val.query.cat : "全部歌单";
+      hqPLayListOpen.value = val.query.hq
+        ? val.query.hq == "true"
+          ? true
+          : false
+        : false;
       if (hqPLayListOpen.value) {
         playlistsData.value = [];
         getHqPlaylistData(catName.value.toString());

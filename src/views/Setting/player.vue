@@ -373,6 +373,20 @@
         </div>
         <n-switch v-model:value="autoMixBeatAlign" :round="false" :disabled="!autoMixBpmMatch" />
       </n-card>
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixTransitionEffects") }}
+          <span class="tip">{{ $t("setting.autoMixTransitionEffectsTip") }}</span>
+        </div>
+        <n-switch v-model:value="autoMixTransitionEffects" :round="false" />
+      </n-card>
+      <n-card class="set-item">
+        <div class="name">
+          {{ $t("setting.autoMixVocalGuard") }}
+          <span class="tip">{{ $t("setting.autoMixVocalGuardTip") }}</span>
+        </div>
+        <n-switch v-model:value="autoMixVocalGuard" :round="false" />
+      </n-card>
     </template>
   </div>
 </template>
@@ -424,6 +438,8 @@ const {
   autoMixVolumeNorm,
   autoMixTransitionStyle,
   autoMixSmartCurve,
+  autoMixTransitionEffects,
+  autoMixVocalGuard,
 } = storeToRefs(setting);
 console.log('SETTING', fps)
 const isModalOn = ref(false)

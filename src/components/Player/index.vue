@@ -234,6 +234,7 @@ import {
   setSeek,
   fadePlayOrPause,
   getAutoMixEngine,
+  getAudioPreloader,
 } from "@/utils/AudioContext";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import { useRouter } from "vue-router";
@@ -280,6 +281,16 @@ const getPlaySongData = (data, level = setting.songLevel) => {
       if (window.$player) {
         player.value = window.$player;
       }
+      fetchAndParseLyric(id);
+      return;
+    }
+
+    // Check audio preloader — if the next song was preloaded, use it directly
+    const preloader = getAudioPreloader();
+    const preloadedSound = preloader.consume(id);
+    if (preloadedSound) {
+      console.log(`[Player] Using preloaded audio for: ${id}`);
+      player.value = createSound("", true, preloadedSound);
       fetchAndParseLyric(id);
       return;
     }

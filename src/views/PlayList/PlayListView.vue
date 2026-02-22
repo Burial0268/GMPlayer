@@ -407,10 +407,10 @@ const pageNumberChange = (val: number) => {
 watch(
   () => router.currentRoute.value,
   (val, oldVal) => {
-    playListId.value = val.query.id;
-    pageNumber.value = Number(val.query.page ? val.query.page : 1);
     if (val.name == "playlist") {
-      if (val.query.id != oldVal.query.id) {
+      playListId.value = val.query.id;
+      pageNumber.value = Number(val.query.page ? val.query.page : 1);
+      if (val.query.id != oldVal?.query?.id) {
         getPlayListDetailData(playListId.value);
         getAllPlayListData(
           playListId.value,

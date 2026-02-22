@@ -105,9 +105,9 @@ const getAlbumNewData = (area, limit = 30, offset = 0) => {
 watch(
   () => router.currentRoute.value,
   (val) => {
-    albumAreaChoose.value = val.query.area ? val.query.area : "ALL";
-    pageNumber.value = Number(val.query.page ? val.query.page : 1);
     if (val.name == "new-album") {
+      albumAreaChoose.value = val.query.area ? val.query.area : "ALL";
+      pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getAlbumNewData(
         albumAreaChoose.value,
         pagelimit.value,
