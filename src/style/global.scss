@@ -91,9 +91,41 @@ body,
   }
 }
 
+// Message — 毛玻璃浮动卡片
+.n-message-container {
+  .n-message-wrapper {
+    margin-bottom: 8px;
+  }
+  .n-message {
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    background: var(--message-bg, rgba(255, 255, 255, 0.72)) !important;
+    border: 1px solid var(--message-border, rgba(0, 0, 0, 0.06));
+    box-shadow:
+      0 4px 12px rgba(0, 0, 0, 0.08),
+      0 1px 3px rgba(0, 0, 0, 0.06);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    backdrop-filter: blur(12px) saturate(180%);
+    transition: transform 0.4s ease, opacity 0.4s ease, box-shadow 0.2s ease;
+    .n-message__icon {
+      margin-right: 8px;
+    }
+    .n-message__content {
+      font-size: 13px;
+    }
+    .n-message__close {
+      margin-left: 6px;
+    }
+  }
+}
+
 // Notification
 .n-notification {
   border-radius: 8px !important;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
 // Nalert
