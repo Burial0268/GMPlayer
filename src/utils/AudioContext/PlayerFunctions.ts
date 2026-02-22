@@ -27,7 +27,8 @@ import { getCoverColor } from '@/utils/getCoverColor';
 import { BufferedSound } from './BufferedSound';
 import { SoundManager } from './SoundManager';
 import { AudioContextManager } from './AudioContextManager';
-import { getAutoMixEngine } from './AutoMixEngine';
+import { getAutoMixEngine } from './AutoMix';
+import { getAudioPreloader } from './AudioPreloader';
 import type { ISound } from './types';
 
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -190,7 +191,7 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
  * @param autoPlay - 是否自动播放（默认为 true）
  * @return 音频对象
  */
-export const createSound = (src: string, autoPlay = true): ISound | undefined => {
+export const createSound = (src: string, autoPlay = true, preloadedSound?: BufferedSound): ISound | undefined => {
   try {
     // If AutoMix is crossfading, it handles sound creation — skip normal flow
     const autoMix = getAutoMixEngine();
@@ -204,17 +205,26 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
     SoundManager.unload();
     stopSpectrumUpdate();
 
+    // If not using a preloaded sound, clean up any orphaned preload
+    if (!preloadedSound) {
+      getAudioPreloader().cleanup();
+    }
+
     const music = musicStore();
     const site = siteStore();
     const settings = settingStore();
     const user = userStore();
 
-    // Use BufferedSound for full audio buffering (prevents interruption on tab switch)
-    const sound = new BufferedSound({
+    // Use preloaded sound or create a new BufferedSound
+    const sound = preloadedSound ?? new BufferedSound({
       src: [src],
       preload: true,
       volume: music.persistData.playVolume,
     });
+    if (preloadedSound) {
+      // Preloaded sound was created with volume=0 — restore actual volume
+      sound.volume(music.persistData.playVolume);
+    }
     SoundManager.setCurrentSound(sound);
 
     // 更新取色
@@ -323,6 +333,7 @@ export const createSound = (src: string, autoPlay = true): ISound | undefined =>
       setMediaSession(music);
 
       // 预加载下一首
+      getAudioPreloader().preloadNext();
       music.preloadUpcomingSongs();
 
       // Notify AutoMix engine that a new track started
@@ -576,6 +587,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
       window.document.title = `${songName} - ${songArtist} - ${import.meta.env.VITE_SITE_TITLE}`;
     }
   }
+  getAudioPreloader().preloadNext();
   music.preloadUpcomingSongs();
 
   // Register pause handler with crossfade guard

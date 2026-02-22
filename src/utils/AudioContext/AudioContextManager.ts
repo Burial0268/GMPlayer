@@ -8,7 +8,7 @@
  * - Automatic resume on user interaction
  */
 
-import { resetPCMWorkletRegistration } from './pcm-capture-worklet';
+import { resetPCMWorkletRegistration, registerPCMCaptureWorklet } from './pcm-capture-worklet';
 
 type AudioContextState = 'suspended' | 'running' | 'closed' | 'interrupted';
 
@@ -246,7 +246,6 @@ class AudioContextManagerClass {
     }
 
     try {
-      const { registerPCMCaptureWorklet } = await import('./pcm-capture-worklet');
       await registerPCMCaptureWorklet(ctx);
       this._workletRegistered = true;
     } catch (err) {

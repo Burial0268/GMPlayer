@@ -11,7 +11,7 @@
  * Public API unchanged — `analyzeTrack()` and `spectralSimilarity()`.
  */
 
-import { AudioContextManager } from './AudioContextManager';
+import { AudioContextManager } from '../AudioContextManager';
 import type { BPMResult } from './BPMDetector';
 
 const IS_DEV = import.meta.env?.DEV ?? false;

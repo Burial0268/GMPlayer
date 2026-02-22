@@ -28,10 +28,12 @@ export type {
 
 export type { EffectManagerOptions } from './AudioEffectManager';
 export type { LowFreqVolumeOptions } from './LowFreqVolumeAnalyzer';
-export type { CrossfadeCurve, CrossfadeParams } from './CrossfadeManager';
-export type { TrackAnalysis, VolumeAnalysis, EnergyAnalysis, SpectralFingerprint, AnalyzeOptions, OutroType, OutroAnalysis } from './TrackAnalyzer';
-export type { BPMResult } from './BPMDetector';
-export type { AutoMixState } from './AutoMixEngine';
+
+// AutoMix types (from new AutoMix sub-module)
+export type { CrossfadeCurve, CrossfadeParams } from './AutoMix';
+export type { TrackAnalysis, VolumeAnalysis, EnergyAnalysis, SpectralFingerprint, AnalyzeOptions, OutroType, OutroAnalysis } from './AutoMix';
+export type { BPMResult } from './AutoMix';
+export type { AutoMixState } from './AutoMix';
 
 // Export classes for advanced usage
 export { NativeSound } from './NativeSound';
@@ -42,8 +44,11 @@ export { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
 export { AudioContextManager } from './AudioContextManager';
 export { WasmFFTManager } from './WasmFFTManager';
 
-// AutoMix exports
-export { CrossfadeManager } from './CrossfadeManager';
-export { AutoMixEngine, getAutoMixEngine } from './AutoMixEngine';
-export { analyzeTrack, spectralSimilarity, terminateAnalysisWorker } from './TrackAnalyzer';
-export { findNearestBeat } from './BPMDetector';
+// AudioPreloader
+export { AudioPreloader, getAudioPreloader } from './AudioPreloader';
+
+// AutoMix exports (backward-compatible aliases)
+export { CrossfadeScheduler as CrossfadeManager } from './AutoMix';
+export { AutoMixEngine, getAutoMixEngine } from './AutoMix';
+export { analyzeTrack, spectralSimilarity, terminateAnalysisWorker } from './AutoMix';
+export { findNearestBeat } from './AutoMix';

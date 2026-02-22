@@ -72,6 +72,8 @@ interface SettingDataState {
   autoMixVolumeNorm: boolean;
   autoMixTransitionStyle: "linear" | "equalPower" | "sCurve";
   autoMixSmartCurve: boolean;
+  autoMixTransitionEffects: boolean;
+  autoMixVocalGuard: boolean;
 }
 
 const useSettingDataStore = defineStore("settingData", {
@@ -136,6 +138,8 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixVolumeNorm: true,
       autoMixTransitionStyle: "equalPower",
       autoMixSmartCurve: true,
+      autoMixTransitionEffects: true,
+      autoMixVocalGuard: true,
     };
   },
   getters: {

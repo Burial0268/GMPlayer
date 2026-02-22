@@ -8,7 +8,7 @@ import { getMusicUrl } from "@/api/song";
 import { userStore, settingStore } from "@/store";
 import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
-import { soundStop, fadePlayOrPause, getAutoMixEngine } from "@/utils/AudioContext";
+import { soundStop, fadePlayOrPause, getAutoMixEngine, getAudioPreloader } from "@/utils/AudioContext";
 import getLanguageData from "@/utils/getLanguageData";
 import { preprocessLyrics, type SongLyric, type ParsedLrcLine, type ParsedYrcLine, type StoredLyricLine } from "@/utils/LyricsProcessor";
 
@@ -452,6 +452,7 @@ const useMusicDataStore = defineStore("musicData", {
     setPlaylists(value: SongData[]) {
       this.persistData.playlists = value.slice();
       this.preloadedSongIds.clear();
+      getAudioPreloader().cleanup();
       // 切换播放列表时，清空旧歌词，等待新歌曲歌词加载
       this.resetSongLyricState();
     },
@@ -663,6 +664,10 @@ const useMusicDataStore = defineStore("musicData", {
             break;
         }
       }
+      // Clean up preloader when mode is not normal (can't predict next song)
+      if (this.persistData.playSongMode !== 'normal') {
+        getAudioPreloader().cleanup();
+      }
       $message.info(getLanguageData(value!), {
         icon: () =>
           h(NIcon, null, {
@@ -767,6 +772,8 @@ const useMusicDataStore = defineStore("musicData", {
       $message.success(name + " " + getLanguageData("removeSong"));
       this.persistData.playlists.splice(index, 1);
       this.preloadedSongIds.delete(songId);
+      // Next index may have changed after removal
+      getAudioPreloader().cleanup();
       if (this.persistData.playSongIndex >= this.persistData.playlists.length) {
         this.persistData.playSongIndex = 0;
         soundStop($player);
