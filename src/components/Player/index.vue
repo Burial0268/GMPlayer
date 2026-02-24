@@ -263,8 +263,14 @@ const useUnmServerHas = import.meta.env.VITE_UNM_API ? true : false;
 // 音频标签
 const player = ref(null);
 
+// Async generation tracker — each getPlaySongData call increments this.
+// Stale async callbacks (URL fetches, availability checks) compare their captured
+// generation against the current value and bail out if a newer request superseded them.
+let _songLoadGeneration = 0;
+
 // 获取歌曲播放数据
 const getPlaySongData = (data, level = setting.songLevel) => {
+  const generation = ++_songLoadGeneration;
   try {
     if (!data || !data.id) {
       console.error("[Player] getPlaySongData called with invalid data:", data);
@@ -291,6 +297,9 @@ const getPlaySongData = (data, level = setting.songLevel) => {
     if (preloadedSound) {
       console.log(`[Player] Using preloaded audio for: ${id}`);
       player.value = createSound("", true, preloadedSound);
+      // Preloaded sound is already loaded — 'load' event won't fire again,
+      // so clear loading state immediately to avoid stuck spinner.
+      music.isLoadingSong = false;
       fetchAndParseLyric(id);
       return;
     }
@@ -303,11 +312,12 @@ const getPlaySongData = (data, level = setting.songLevel) => {
       (fee === 1 || fee === 4)
     ) {
       console.log("[Player] Attempting UNM server for VIP/paid song.");
-      getMusicNumUrlData(id);
+      getMusicNumUrlData(id, generation);
     }
     // 免费或无版权
     else {
       checkMusicCanUse(id).then((res) => {
+        if (generation !== _songLoadGeneration) return;
         console.log(`[Player] checkMusicCanUse response for ${id}:`, res);
         if (res.success) {
           console.log("[Player] Song is usable via official API.");
@@ -315,6 +325,7 @@ const getPlaySongData = (data, level = setting.songLevel) => {
             $message.info(t("general.message.vipTip"));
           // 获取音乐地址
           getMusicUrl(id, level).then((res) => {
+            if (generation !== _songLoadGeneration) return;
             console.log(`[Player] getMusicUrl response for ${id}:`, res);
             if (res.data && res.data[0] && res.data[0].url) {
               const url = res.data[0].url.replace(/^http:/, "https:");
@@ -325,18 +336,19 @@ const getPlaySongData = (data, level = setting.songLevel) => {
               // Fallback to UNM if available? Or just error out? Let's try UNM.
               if (useUnmServerHas && setting.useUnmServer) {
                  console.warn(`[Player] Official URL invalid for ${id}, falling back to UNM.`);
-                 getMusicNumUrlData(id);
+                 getMusicNumUrlData(id, generation);
               } else {
                 $message.warning(t("general.message.playError"));
                 music.setPlaySongIndex("next");
               }
             }
           }).catch(err => {
+              if (generation !== _songLoadGeneration) return;
               console.error(`[Player] Error fetching official Music URL for ${id}:`, err);
               // Fallback to UNM if available?
               if (useUnmServerHas && setting.useUnmServer) {
                  console.warn(`[Player] Official URL fetch failed for ${id}, falling back to UNM.`);
-                 getMusicNumUrlData(id);
+                 getMusicNumUrlData(id, generation);
               } else {
                 $message.warning(t("general.message.playError"));
                 music.setPlaySongIndex("next");
@@ -346,13 +358,14 @@ const getPlaySongData = (data, level = setting.songLevel) => {
           console.warn(`[Player] Song ${id} not usable via official API.`);
           if (useUnmServerHas && setting.useUnmServer) {
             console.log(`[Player] Official check failed for ${id}, falling back to UNM.`);
-            getMusicNumUrlData(id);
+            getMusicNumUrlData(id, generation);
           } else {
             $message.warning(t("general.message.playError"));
             music.setPlaySongIndex("next");
           }
         }
       }).catch(err => {
+          if (generation !== _songLoadGeneration) return;
           console.error(`[Player] Error calling checkMusicCanUse for ${id}:`, err);
           $message.warning(t("general.message.playError"));
           music.setPlaySongIndex("next");
@@ -383,10 +396,11 @@ const renderIcon = (icon) => {
 };
 
 // 网易云解灰
-const getMusicNumUrlData = (id) => {
+const getMusicNumUrlData = (id, generation) => {
   console.log(`[Player] getMusicNumUrlData called for ID: ${id}`);
   getMusicNumUrl(id)
     .then((res) => {
+      if (generation !== _songLoadGeneration) return;
       console.log(`[Player] getMusicNumUrl response for ${id}:`, res);
       if (res.code === 200 && res.data && res.data.url) {
         const songUrl = res.data.url.replace(/^http:/, "");
@@ -407,6 +421,7 @@ const getMusicNumUrlData = (id) => {
       }
     })
     .catch((err) => {
+      if (generation !== _songLoadGeneration) return;
       console.error(`[Player] Error in getMusicNumUrl request for ${id}:`, err);
       $message.warning(t("general.message.playError"));
       music.setPlaySongIndex("next");

@@ -13,20 +13,31 @@ export function useFullscreen(
   const screenfullIcon = shallowRef(FullscreenRound);
   let timeOut: ReturnType<typeof setTimeout> | null = null;
 
+  // Sync icon with actual fullscreen state (handles Escape key, programmatic exit, etc.)
+  const onFullscreenChange = () => {
+    screenfullIcon.value = screenfull.isFullscreen
+      ? FullscreenExitRound
+      : FullscreenRound;
+  };
+
+  if (screenfull.isEnabled) {
+    screenfull.on("change", onFullscreenChange);
+  }
+
   const screenfullChange = () => {
     if (!screenfull.isEnabled) return;
 
+    // Read state before toggle for GSAP animation direction
+    const wasFullscreen = screenfull.isFullscreen;
     screenfull.toggle();
 
     gsap.fromTo(
       bigPlayerRef.value,
-      { scale: screenfull.isFullscreen ? 1.05 : 0.95 },
-      { scale: 1, duration: 0.4, ease: "elastic.out(1, 0.5)" }
+      { scale: wasFullscreen ? 1.05 : 0.95 },
+      { scale: 1, duration: 0.4, ease: "elastic.out(1, 0.5)", clearProps: "transform" }
     );
 
-    screenfullIcon.value = screenfull.isFullscreen
-      ? FullscreenRound
-      : FullscreenExitRound;
+    // Icon will be updated by the fullscreenchange event listener
 
     timeOut = setTimeout(() => {
       onAfterToggle?.();
@@ -35,6 +46,9 @@ export function useFullscreen(
 
   const cleanup = () => {
     if (timeOut !== null) clearTimeout(timeOut);
+    if (screenfull.isEnabled) {
+      screenfull.off("change", onFullscreenChange);
+    }
   };
 
   return { screenfullIcon, screenfullChange, cleanupFullscreen: cleanup };
