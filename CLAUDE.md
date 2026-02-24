@@ -14,9 +14,13 @@ GMPlayer (SPlayer) is a Vue 3 web music player with Tauri desktop support. It in
 ## Development Commands
 
 ```bash
-pnpm dev      # Start dev server (port 25536, opens browser)
-pnpm build    # Production build (output to dist/)
-pnpm preview  # Preview production build
+pnpm dev        # Start dev server (port 25536, opens browser)
+pnpm build      # Production build (output to dist/)
+pnpm preview    # Preview production build
+pnpm lint       # Run oxlint on src/
+pnpm lint:fix   # Run oxlint with auto-fix on src/
+pnpm fmt        # Format src/ with oxfmt
+pnpm fmt:check  # Check formatting without writing
 ```
 
 **Requirements:**
@@ -114,6 +118,15 @@ Several globals are used (declared in `AudioContext/types.ts`):
 - SCSS styling with CSS variables for theming
 - All Pinia stores use `persist` plugin with localStorage
 - WASM support enabled via `vite-plugin-wasm` + `vite-plugin-top-level-await`
+
+## Linting & Formatting
+
+- **Linter:** [oxlint](https://oxc.rs/) — config in `.oxlintrc.json`
+- **Formatter:** [oxfmt](https://oxc.rs/) (Prettier-compatible) — config in `.oxfmtrc.jsonc`
+- Style: 2-space indent, semicolons, double quotes, trailing commas, printWidth 100
+- Both tools ignore `dist/`, `node_modules/`, `deps/`, and `*.d.ts`
+- Run `pnpm fmt` before committing to keep formatting consistent
+- Run `pnpm lint` to check for code quality issues
 
 ## Environment Variables
 
