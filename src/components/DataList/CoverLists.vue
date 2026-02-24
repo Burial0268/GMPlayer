@@ -9,6 +9,7 @@
         :collapsed="gridCollapsed"
         :collapsed-rows="gridCollapsedRows"
         v-if="listData[0]"
+        key="data"
       >
         <n-gi
           class="item"
@@ -65,8 +66,10 @@
           </div>
         </n-gi>
       </n-grid>
+      <n-empty v-else-if="loading === false" key="empty" class="empty" />
       <n-grid
         v-else
+        key="loading"
         class="loading"
         x-gap="20"
         y-gap="26"
@@ -118,7 +121,7 @@ import { musicStore, userStore, settingStore } from "@/store";
 import { useRouter } from "vue-router";
 import AllArtists from "./AllArtists.vue";
 import PlaylistUpdate from "@/components/DataModal/PlaylistUpdate.vue";
-import getCoverUrl from "@/utils/getCoverUrl";
+import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -155,6 +158,11 @@ const props = defineProps({
   loadingNum: {
     type: Number,
     default: 30,
+  },
+  // 加载状态（null=旧行为，false=加载完成可显示空状态）
+  loading: {
+    type: Boolean,
+    default: null,
   },
 });
 const playlistUpdateRef = ref(null);
@@ -589,6 +597,9 @@ onMounted(() => {
       border-radius: 8px !important;
       margin-bottom: 12px;
     }
+  }
+  .empty {
+    margin: 40px 0;
   }
   @media (max-width: 450px) {
     :deep(.n-grid) {

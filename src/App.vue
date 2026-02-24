@@ -18,8 +18,8 @@
               name="fade-scale"
               mode="out-in"
             >
-              <keep-alive>
-                <component :is="Component" :key="route.matched[0]?.path ?? route.path" />
+              <keep-alive :max="15">
+                <component :is="Component" :key="(route.matched[0]?.path ?? route.path) + (route.query.id ? `_${route.query.id}` : '')" />
               </keep-alive>
             </transition>
           </router-view>

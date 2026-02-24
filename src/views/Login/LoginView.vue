@@ -106,7 +106,7 @@ import {
 } from "@/api/login";
 import { useRouter } from "vue-router";
 import { PhoneAndroidRound, PasswordRound } from "@vicons/material";
-import { formRules } from "@/utils/formRules";
+import { formRules } from "@/utils/ui/formRules";
 import { useI18n } from "vue-i18n";
 import QrcodeVue from "qrcode.vue";
 import type { FormRules } from "naive-ui";

@@ -19,7 +19,7 @@
 <script setup lang="ts">
 import { getArtistSongs } from "@/api/artist";
 import { useRouter } from "vue-router";
-import { transformSongData } from "@/utils/transformSongData";
+import { transformSongData } from "@/utils/ncm/transformSongData";
 import DataLists from "@/components/DataList/DataLists.vue";
 const router = useRouter();
 

@@ -9,6 +9,7 @@
         :collapsed="gridCollapsed"
         :collapsed-rows="gridCollapsedRows"
         v-if="listData[0]"
+        key="data"
       >
         <n-gi
           class="item"
@@ -50,8 +51,10 @@
           </n-text>
         </n-gi>
       </n-grid>
+      <n-empty v-else-if="loading === false" key="empty" class="empty" />
       <n-grid
         v-else
+        key="loading"
         class="loading"
         x-gap="20"
         y-gap="26"
@@ -114,6 +117,11 @@ const props = defineProps({
   loadingNum: {
     type: Number,
     default: 6,
+  },
+  // 加载状态（null=旧行为，false=加载完成可显示空状态）
+  loading: {
+    type: Boolean,
+    default: null,
   },
 });
 
@@ -344,6 +352,9 @@ onMounted(() => {
       border-radius: 50% !important;
       margin-bottom: 20px;
     }
+  }
+  .empty {
+    margin: 40px 0;
   }
 }
 </style>

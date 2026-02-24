@@ -1,6 +1,6 @@
 <template>
   <div class="songs">
-    <DataLists :listData="searchData" />
+    <DataLists :listData="searchData" :loading="loading" />
     <Pagination
       v-if="searchData[0]"
       :pageNumber="pageNumber"
@@ -15,7 +15,7 @@
 import { getSearchData } from "@/api/search";
 // import { getMusicDetail } from "@/api/song";
 import { useRouter } from "vue-router";
-import { transformSongData } from "@/utils/transformSongData";
+import { transformSongData } from "@/utils/ncm/transformSongData";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
@@ -27,6 +27,7 @@ const router = useRouter();
 // 搜索数据
 const searchKeywords = ref(router.currentRoute.value.query.keywords);
 const searchData = ref([]);
+const loading = ref(true);
 const totalCount = ref(0);
 const pagelimit = ref(30);
 const pageNumber = ref(
@@ -37,6 +38,7 @@ const pageNumber = ref(
 
 // 获取搜索数据
 const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 1) => {
+  loading.value = true;
   getSearchData(keywords, limit, offset, type).then((res) => {
     // 列表数据
     if (res.result.songs) {
@@ -46,8 +48,11 @@ const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 
         offset: (pageNumber.value - 1) * pagelimit.value,
       });
     } else {
-      $message.error(t("general.message.acquisitionFailed"));
+      searchData.value = [];
+      totalCount.value = 0;
+      $message.info(t("nav.search.noSuggestions"));
     }
+    loading.value = false;
     // 请求后回顶
     if (typeof $scrollToTop !== "undefined") $scrollToTop();
   });

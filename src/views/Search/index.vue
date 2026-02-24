@@ -61,6 +61,7 @@ syncIndex(tabValue.value);
 watch(
   () => router.currentRoute.value,
   (val) => {
+    if (!val.path.startsWith("/search")) return;
     $setSiteTitle(val.query.keywords + "的搜索结果");
     searchKeywords.value = val.query.keywords;
     tabValue.value = val.path.split("/")[2];

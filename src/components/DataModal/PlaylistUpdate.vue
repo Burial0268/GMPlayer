@@ -55,7 +55,7 @@
 
 <script setup>
 import { playlistUpdate } from "@/api/playlist";
-import { formRules } from "@/utils/formRules";
+import { formRules } from "@/utils/ui/formRules";
 import { musicStore, userStore } from "@/store";
 import { useI18n } from "vue-i18n";
 

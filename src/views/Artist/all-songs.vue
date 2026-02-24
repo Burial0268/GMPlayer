@@ -37,7 +37,7 @@
 import { getArtistDetail, getArtistAllSongs } from "@/api/artist";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { transformSongData } from "@/utils/transformSongData";
+import { transformSongData } from "@/utils/ncm/transformSongData";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
 import { ArtistSongsSortOrder } from "@/api";

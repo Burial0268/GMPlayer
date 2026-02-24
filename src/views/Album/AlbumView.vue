@@ -138,9 +138,9 @@ import { NIcon, NText } from "naive-ui";
 import { getAlbum, likeAlbum } from "@/api/album";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";
-import { transformSongData } from "@/utils/transformSongData";
-import { renderIcon } from "@/utils/renderIcon";
-import { buildLikeMessage } from "@/utils/buildLikeMessage";
+import { transformSongData } from "@/utils/ncm/transformSongData";
+import { renderIcon } from "@/utils/ui/renderIcon";
+import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
 import {
   MusicList,
@@ -155,7 +155,7 @@ import {
 import { userStore, musicStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
-import getCoverUrl from "@/utils/getCoverUrl";
+import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
 const { t } = useI18n();
 const router = useRouter();

@@ -8,6 +8,7 @@
         cols="2 s:3 m:4 l:5"
         responsive="screen"
         v-if="listData[0]"
+        key="data"
       >
         <n-gi
           class="item"
@@ -46,8 +47,10 @@
           </div>
         </n-gi>
       </n-grid>
+      <n-empty v-else-if="loading === false" key="empty" class="empty" />
       <n-grid
         v-else
+        key="loading"
         class="loading"
         x-gap="20"
         y-gap="26"
@@ -75,6 +78,11 @@ const props = defineProps({
   listData: {
     type: Array,
     default: [],
+  },
+  // 加载状态（null=旧行为，false=加载完成可显示空状态）
+  loading: {
+    type: Boolean,
+    default: null,
   },
 });
 </script>
@@ -201,6 +209,9 @@ const props = defineProps({
       border-radius: 8px !important;
       margin-bottom: 12px;
     }
+  }
+  .empty {
+    margin: 40px 0;
   }
 }
 </style>

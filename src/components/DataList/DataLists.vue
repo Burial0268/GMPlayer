@@ -331,6 +331,7 @@
       <!-- 歌曲下载 -->
       <DownloadSong ref="downloadSongRef" />
     </div>
+    <n-empty v-else-if="loading === false" class="empty" />
     <n-spin class="loading" size="small" v-else />
   </Transition>
 </template>
@@ -383,6 +384,11 @@ const props = defineProps({
   hideAlbum: {
     type: Boolean,
     default: false,
+  },
+  // 加载状态（null=旧行为，false=加载完成可显示空状态）
+  loading: {
+    type: Boolean,
+    default: null,
   },
 });
 
@@ -834,6 +840,9 @@ const jumpLink = (id, type) => {
   flex-direction: row;
   justify-content: center;
   align-items: center;
+}
+.empty {
+  margin: 40px 0;
 }
 .drawer {
   .menu {

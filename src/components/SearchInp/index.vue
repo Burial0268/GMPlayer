@@ -239,6 +239,10 @@ const getSearchSuggestData = (keywords) => {
 
 // 点击搜索结果
 const toSearch = (val, type) => {
+  // 非直接搜索时关闭搜索面板
+  if (type !== 0) {
+    site.searchInputActive = false;
+  }
   switch (type) {
     case 0:
       // 直接搜索
@@ -267,7 +271,10 @@ const toSearch = (val, type) => {
       break;
     case 1000:
       // 歌单页
-      router.push(`/playlist?id=${val}`);
+      router.push({
+        path: "/playlist",
+        query: { id: val, page: 1 },
+      });
       break;
     default:
       break;

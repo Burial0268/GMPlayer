@@ -158,7 +158,7 @@ import AllArtists from "@/components/DataList/AllArtists.vue";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
 import Comment from "@/components/Comment/index.vue";
-import getCoverUrl from "@/utils/getCoverUrl";
+import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
 const { t } = useI18n();
 const router = useRouter();

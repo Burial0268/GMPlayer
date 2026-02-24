@@ -1,6 +1,6 @@
 <template>
   <div class="playlists">
-    <CoverLists :listData="searchData" />
+    <CoverLists :listData="searchData" :loading="loading" />
     <Pagination
       v-if="searchData[0]"
       :pageNumber="pageNumber"
@@ -26,6 +26,7 @@ const router = useRouter();
 // 搜索数据
 const searchKeywords = ref(router.currentRoute.value.query.keywords);
 const searchData = ref([]);
+const loading = ref(true);
 const totalCount = ref(0);
 const pagelimit = ref(30);
 const pageNumber = ref(
@@ -36,6 +37,7 @@ const pageNumber = ref(
 
 // 获取搜索数据
 const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 1000) => {
+  loading.value = true;
   getSearchData(keywords, limit, offset, type).then((res) => {
     console.log(res);
     // 数据总数
@@ -53,8 +55,9 @@ const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 
         });
       });
     } else {
-      $message.error(t("general.message.acquisitionFailed"));
+      $message.info(t("nav.search.noSuggestions"));
     }
+    loading.value = false;
     // 请求后回顶
     if (typeof $scrollToTop !== "undefined") $scrollToTop();
   });
