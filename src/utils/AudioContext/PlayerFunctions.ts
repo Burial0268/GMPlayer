@@ -23,7 +23,7 @@ const userStore = () => useUserDataStore();
 import { NIcon } from 'naive-ui';
 import { MusicNoteFilled } from '@vicons/material';
 import getLanguageData from '@/utils/getLanguageData';
-import { getCoverColor } from '@/utils/getCoverColor';
+import { getCoverColor } from '@/utils/ncm/getCoverColor';
 import { BufferedSound } from './BufferedSound';
 import { SoundManager } from './SoundManager';
 import { AudioContextManager } from './AudioContextManager';

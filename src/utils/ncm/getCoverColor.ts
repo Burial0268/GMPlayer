@@ -6,7 +6,7 @@ import {
   Score,
 } from "@material/material-color-utilities";
 import { settingStore, siteStore } from '@/store'
-import { chunk } from "./chunk";
+import { chunk } from "../chunk";
 
 type RGB = [number, number, number];
 type HSL = [number, number, number];

@@ -1,5 +1,5 @@
 import { getSongTime } from "@/utils/timeTools";
-import { ncmImageUrl } from "@/utils/ncmImageUrl";
+import { ncmImageUrl } from "./ncmImageUrl";
 
 interface TransformOptions {
   offset?: number;

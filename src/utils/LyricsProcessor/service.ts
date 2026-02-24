@@ -6,7 +6,7 @@
 import request from "@/utils/request";
 // @ts-ignore
 import { parseLrc, parseQrc, parseYrc, LyricLine } from "@applemusic-like-lyrics/lyric";
-import { ensureTTMLLoaded, parseTTML } from "@/utils/parseTTML";
+import { ensureTTMLLoaded, parseTTML } from "./parseTTML";
 import { preprocessLyrics } from './processor';
 import { detectYrcType } from './timeUtils';
 
