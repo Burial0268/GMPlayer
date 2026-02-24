@@ -3,19 +3,14 @@
     <Transition name="fade" mode="out-in">
       <div
         :key="`cover_pic--${music.getPlaySongData?.album?.pic ?? defaultCover}`"
-        :class="[
-          'pic',
-          !music.getPlayState ? 'pause' : '',
-          music.getLoadingState ? 'loading' : '',
-        ]"
+        :class="['pic', !music.getPlayState ? 'pause' : '', music.getLoadingState ? 'loading' : '']"
       >
         <img
           class="album"
           :src="
             music.getPlaySongData && music.getPlaySongData.album
-          ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
-          '?param=1024y1024'
-          : '/images/pic/default.png'
+              ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=1024y1024'
+              : '/images/pic/default.png'
           "
           alt="cover"
         />
@@ -25,39 +20,39 @@
       <div class="song-info">
         <div class="text">
           <span class="name text-hidden">
-            {{
-              music.getPlaySongData
-                ? music.getPlaySongData.name
-                : $t("other.noSong")
-            }}
+            {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
           </span>
-          <span
-            v-if="music.getPlaySongData"
-            class="artists text-hidden"
-          >
-            <span
-              v-for="(ar, index) in music.getPlaySongData.artist"
-              :key="ar.id"
-            >
-              <span class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{ ar.name }}</span>
+          <span v-if="music.getPlaySongData" class="artists text-hidden">
+            <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
+              <span class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{
+                ar.name
+              }}</span>
               <span v-if="index < music.getPlaySongData.artist.length - 1"> / </span>
             </span>
           </span>
         </div>
         <div class="action-row">
-          <n-icon class="like-button" size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
-              music.getPlaySongData && (
-                music.getSongIsLike(music.getPlaySongData.id)
-                  ? music.changeLikeList(music.getPlaySongData.id, false)
-                  : music.changeLikeList(music.getPlaySongData.id, true)
-              )
-        " />
-        <n-icon
-          v-if="music.getPlaySongData"
-          class="more-button"
-          size="24"
-          :component="MoreHorizRound"
-        />
+          <n-icon
+            class="like-button"
+            size="24"
+            :component="
+              music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
+                ? StarRound
+                : StarBorderRound
+            "
+            @click.stop="
+              music.getPlaySongData &&
+              (music.getSongIsLike(music.getPlaySongData.id)
+                ? music.changeLikeList(music.getPlaySongData.id, false)
+                : music.changeLikeList(music.getPlaySongData.id, true))
+            "
+          />
+          <n-icon
+            v-if="music.getPlaySongData"
+            class="more-button"
+            size="24"
+            :component="MoreHorizRound"
+          />
         </div>
       </div>
       <div class="progress-bar">
@@ -73,9 +68,7 @@
           />
         </div>
         <div class="time-info">
-          <span class="time-text">{{
-            music.getPlaySongTime.songTimePlayed
-          }}</span>
+          <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
           <div v-if="qualityText" class="quality-badge">
             <n-icon :component="IconLossless" />
             {{ qualityText }}
@@ -85,11 +78,7 @@
       </div>
       <div class="buttons">
         <n-icon
-          :style="
-            music.getPersonalFmMode
-          ? 'opacity: 0.2;pointer-events: none;'
-          : null
-          "
+          :style="music.getPersonalFmMode ? 'opacity: 0.2;pointer-events: none;' : null"
           class="button-icon"
           :class="{ active: music.getPlaySongMode !== 'normal' }"
           :component="playModeIcon"
@@ -123,11 +112,7 @@
           :component="IconForward"
           @click.stop="music.setPlaySongIndex('next')"
         />
-        <n-icon
-          class="button-icon"
-          :component="MessageRound"
-          @click="goToComment"
-        />
+        <n-icon class="button-icon" :component="MessageRound" @click="goToComment" />
       </div>
       <div class="volume-control">
         <BouncingSlider
@@ -135,19 +120,13 @@
           :min="0"
           :max="1"
           :change-on-drag="true"
-          @update:value="val => persistData.playVolume = val"
+          @update:value="(val) => (persistData.playVolume = val)"
         >
           <template #before-icon>
-            <n-icon
-              size="18"
-              :component="VolumeOffRound"
-            />
+            <n-icon size="18" :component="VolumeOffRound" />
           </template>
           <template #after-icon>
-            <n-icon
-              size="18"
-              :component="VolumeUpRound"
-            />
+            <n-icon size="18" :component="VolumeUpRound" />
           </template>
         </BouncingSlider>
       </div>
@@ -313,7 +292,9 @@ onMounted(() => {
     width: var(--cover-size);
     height: var(--cover-size);
     border-radius: 12px;
-    transition: transform 0.5s ease-out, filter 0.5s ease-out;
+    transition:
+      transform 0.5s ease-out,
+      filter 0.5s ease-out;
     &.pause {
       transform: scale(0.95);
     }
@@ -362,22 +343,21 @@ onMounted(() => {
         align-items: center;
 
         .like-button {
-        font-size: 1.75rem;
-        cursor: pointer;
-        opacity: 0.7;
-        transition: opacity 0.2s ease;
-        
-      }
-
-      .more-button {
-        font-size: 1.75rem;
-        cursor: pointer;
-        opacity: 0.7;
-        transition: opacity 0.2s ease;
-        &:hover {
-          opacity: 1;
+          font-size: 1.75rem;
+          cursor: pointer;
+          opacity: 0.7;
+          transition: opacity 0.2s ease;
         }
-      }
+
+        .more-button {
+          font-size: 1.75rem;
+          cursor: pointer;
+          opacity: 0.7;
+          transition: opacity 0.2s ease;
+          &:hover {
+            opacity: 1;
+          }
+        }
       }
     }
     .progress-bar {
@@ -434,7 +414,9 @@ onMounted(() => {
         color: var(--main-cover-color);
         opacity: 0.8;
         cursor: pointer;
-        transition: opacity 0.2s ease, transform 0.1s ease-out;
+        transition:
+          opacity 0.2s ease,
+          transform 0.1s ease-out;
         &:hover {
           opacity: 1;
         }

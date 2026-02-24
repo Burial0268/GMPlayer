@@ -12,22 +12,11 @@
           {{ $t("setting.themeType") }}
           <span class="tip">{{ $t("setting.themeTypeTip") }}</span>
         </div>
-        <n-button
-          v-if="themeType !== 'red'"
-          strong
-          secondary
-          @click="changeThemeColor(null, true)"
-        >
+        <n-button v-if="themeType !== 'red'" strong secondary @click="changeThemeColor(null, true)">
           {{ $t("general.name.restore") }}
         </n-button>
       </div>
-      <n-grid
-        class="color-selete"
-        :x-gap="16"
-        :y-gap="16"
-        responsive="screen"
-        cols="3 s:4 m:5 l:6"
-      >
+      <n-grid class="color-selete" :x-gap="16" :y-gap="16" responsive="screen" cols="3 s:4 m:5 l:6">
         <n-grid-item
           v-for="item in themeColorData"
           :key="item.label"
@@ -66,11 +55,7 @@
     </n-card>
     <n-card class="set-item">
       <div class="name">{{ $t("setting.themeAuto") }}</div>
-      <n-switch
-        v-model:value="themeAuto"
-        :round="false"
-        @update:value="themeAutoOpen"
-      />
+      <n-switch v-model:value="themeAuto" :round="false" @update:value="themeAutoOpen" />
     </n-card>
     <n-card class="set-item">
       <div class="name">
@@ -88,11 +73,7 @@
         {{ $t("setting.listClickMode") }}
         <span class="tip">{{ $t("setting.listClickModeTip") }}</span>
       </div>
-      <n-select
-        class="set"
-        v-model:value="listClickMode"
-        :options="listClickModeOptions"
-      />
+      <n-select class="set" v-model:value="listClickMode" :options="listClickModeOptions" />
     </n-card>
     <n-card class="set-item">
       <div class="name">{{ $t("setting.searchHistory") }}</div>
@@ -122,9 +103,7 @@
     <n-card class="set-item">
       <div class="name">
         {{ $t("setting.memoryLastPlaybackPosition") }}
-        <span class="tip">{{
-          $t("setting.memoryLastPlaybackPositionTip")
-        }}</span>
+        <span class="tip">{{ $t("setting.memoryLastPlaybackPositionTip") }}</span>
       </div>
       <n-switch v-model:value="memoryLastPlaybackPosition" :round="false" />
     </n-card>
@@ -133,11 +112,7 @@
         {{ $t("setting.songLevel") }}
         <span class="tip">{{ $t("setting.songLevelTip") }}</span>
       </div>
-      <n-select
-        class="set"
-        v-model:value="songLevel"
-        :options="songLevelOptions"
-      />
+      <n-select class="set" v-model:value="songLevel" :options="songLevelOptions" />
     </n-card>
     <n-card class="set-item">
       <div class="name">
@@ -150,11 +125,7 @@
           }}
         </span>
       </div>
-      <n-switch
-        v-model:value="useUnmServer"
-        :round="false"
-        :disabled="!useUnmServerShow"
-      />
+      <n-switch v-model:value="useUnmServer" :round="false" :disabled="!useUnmServerShow" />
     </n-card>
     <n-card class="set-item">
       <div class="name">
@@ -172,22 +143,13 @@
       :bordered="false"
     >
       <n-form class="color-custom" :model="customColorData">
-        <n-form-item
-          :label="$t('general.name.primaryColor')"
-          path="primaryColor"
-        >
+        <n-form-item :label="$t('general.name.primaryColor')" path="primaryColor">
           <n-color-picker v-model:value="customColorData.primaryColor" />
         </n-form-item>
-        <n-form-item
-          :label="$t('general.name.primaryColor') + ' Hover'"
-          path="primaryColorHover"
-        >
+        <n-form-item :label="$t('general.name.primaryColor') + ' Hover'" path="primaryColorHover">
           <n-color-picker v-model:value="customColorData.primaryColorHover" />
         </n-form-item>
-        <n-form-item
-          :label="$t('general.name.primaryColor') + ' Suppl'"
-          path="primaryColorSuppl"
-        >
+        <n-form-item :label="$t('general.name.primaryColor') + ' Suppl'" path="primaryColorSuppl">
           <n-color-picker v-model:value="customColorData.primaryColorSuppl" />
         </n-form-item>
         <n-form-item

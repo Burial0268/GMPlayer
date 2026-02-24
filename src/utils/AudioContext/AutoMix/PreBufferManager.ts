@@ -6,10 +6,10 @@
  * state so the crossfade can begin instantly when triggered.
  */
 
-import { BufferedSound } from '../BufferedSound';
-import { analyzeTrack, type TrackAnalysis } from './TrackAnalyzer';
-import { getMusicUrl } from '@/api/song';
-import type { CachedAnalysis } from './types';
+import { BufferedSound } from "../BufferedSound";
+import { analyzeTrack, type TrackAnalysis } from "./TrackAnalyzer";
+import { getMusicUrl } from "@/api/song";
+import type { CachedAnalysis } from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -34,7 +34,7 @@ export class PreBufferManager {
     musicStore: any,
     analysisCache: Map<number, CachedAnalysis>,
     settings: { volumeNorm: boolean; bpmMatch: boolean },
-    stateGetter: () => string
+    stateGetter: () => string,
   ): void {
     if (this._isBuffering || this._preBuffered) return;
 
@@ -44,7 +44,7 @@ export class PreBufferManager {
 
     // Determine next song index (same logic as _doCrossfade)
     let nextIndex: number;
-    if (musicStore.persistData.playSongMode === 'random') {
+    if (musicStore.persistData.playSongMode === "random") {
       nextIndex = Math.floor(Math.random() * listLength);
     } else {
       nextIndex = (currentIndex + 1) % listLength;
@@ -58,12 +58,12 @@ export class PreBufferManager {
     const doPreBuffer = async () => {
       // Step 1: Fetch music URL
       const res = await getMusicUrl(nextSong.id);
-      if (!res?.data?.[0]?.url) throw new Error('Failed to get music URL');
+      if (!res?.data?.[0]?.url) throw new Error("Failed to get music URL");
 
       // Bail if state changed
-      if (stateGetter() !== 'waiting') return;
+      if (stateGetter() !== "waiting") return;
 
-      const url = res.data[0].url.replace(/^http:/, 'https:');
+      const url = res.data[0].url.replace(/^http:/, "https:");
 
       // Step 2: Create BufferedSound (starts silent, begins download)
       const sound = new BufferedSound({
@@ -74,13 +74,19 @@ export class PreBufferManager {
 
       // Step 3: Wait for load
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Pre-buffer load timeout')), 30000);
-        sound.once('load', () => { clearTimeout(timeout); resolve(); });
-        sound.once('loaderror', () => { clearTimeout(timeout); reject(new Error('Pre-buffer load error')); });
+        const timeout = setTimeout(() => reject(new Error("Pre-buffer load timeout")), 30000);
+        sound.once("load", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        sound.once("loaderror", () => {
+          clearTimeout(timeout);
+          reject(new Error("Pre-buffer load error"));
+        });
       });
 
       // Bail if state changed during load
-      if (stateGetter() !== 'waiting') {
+      if (stateGetter() !== "waiting") {
         sound.stop();
         sound.unload();
         return;
@@ -100,13 +106,13 @@ export class PreBufferManager {
               preBufferedAnalysis = { songId: nextSong.id, analysis };
             }
           } catch (err) {
-            if (IS_DEV) console.warn('PreBufferManager: Analysis failed', err);
+            if (IS_DEV) console.warn("PreBufferManager: Analysis failed", err);
           }
         }
       }
 
       // Bail if state changed during analysis
-      if (stateGetter() !== 'waiting') {
+      if (stateGetter() !== "waiting") {
         sound.stop();
         sound.unload();
         return;
@@ -116,7 +122,7 @@ export class PreBufferManager {
       await sound.ensureAudioGraph();
 
       // Final bail check
-      if (stateGetter() !== 'waiting') {
+      if (stateGetter() !== "waiting") {
         sound.stop();
         sound.unload();
         return;
@@ -130,17 +136,21 @@ export class PreBufferManager {
       };
 
       if (IS_DEV) {
-        console.log(`PreBufferManager: Pre-buffered next track "${nextSong.name}" (index=${nextIndex})`);
+        console.log(
+          `PreBufferManager: Pre-buffered next track "${nextSong.name}" (index=${nextIndex})`,
+        );
       }
     };
 
-    doPreBuffer().catch((err) => {
-      if (IS_DEV) {
-        console.warn('PreBufferManager: Pre-buffer failed, will use slow path', err);
-      }
-    }).finally(() => {
-      this._isBuffering = false;
-    });
+    doPreBuffer()
+      .catch((err) => {
+        if (IS_DEV) {
+          console.warn("PreBufferManager: Pre-buffer failed, will use slow path", err);
+        }
+      })
+      .finally(() => {
+        this._isBuffering = false;
+      });
   }
 
   /**

@@ -14,7 +14,6 @@ const user = userStore();
 
 onMounted(() => {
   $setSiteTitle(t("nav.user") + " - " + t("nav.userChildren.like"));
-  if (!user.getUserPlayLists.has && !user.getUserPlayLists.isLoading)
-    user.setUserPlayLists();
+  if (!user.getUserPlayLists.has && !user.getUserPlayLists.isLoading) user.setUserPlayLists();
 });
 </script>

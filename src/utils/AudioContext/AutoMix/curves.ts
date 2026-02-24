@@ -5,7 +5,7 @@
  * All functions are stateless and can be called from any context.
  */
 
-import type { CrossfadeCurve } from './types';
+import type { CrossfadeCurve } from "./types";
 
 /**
  * Generate crossfade curve values at a given progress point (0-1).
@@ -24,7 +24,7 @@ export function getCrossfadeValues(
   progress: number,
   curve: CrossfadeCurve,
   inShape: number = 1,
-  outShape: number = 1
+  outShape: number = 1,
 ): [number, number] {
   const t = Math.max(0, Math.min(1, progress));
 
@@ -32,26 +32,26 @@ export function getCrossfadeValues(
   let inVol: number;
 
   switch (curve) {
-    case 'linear':
+    case "linear":
       outVol = 1 - t;
       inVol = t;
       break;
 
-    case 'equalPower': {
+    case "equalPower": {
       // Equal-power: constant perceived loudness during crossfade
       outVol = Math.cos(t * Math.PI * 0.5);
       inVol = Math.sin(t * Math.PI * 0.5);
       break;
     }
 
-    case 'sCurve': {
+    case "sCurve": {
       // Smootherstep (6th-order, C2-continuous) → equal-power angle.
       // C2 continuity eliminates the velocity "kink" at t=0/1 that
       // smoothstep has, which matters when automation lanes are dense.
       const s = t * t * t * (t * (t * 6 - 15) + 10);
       const angle = s * Math.PI * 0.5;
       outVol = Math.cos(angle);
-      inVol  = Math.sin(angle);
+      inVol = Math.sin(angle);
       break;
     }
 
@@ -68,7 +68,7 @@ export function getCrossfadeValues(
   // Power normalization for constant-power curves (equalPower, sCurve).
   // Shape exponents break cos²+sin²=1, causing volume dips at midpoint.
   // Re-normalize so the total power remains constant throughout.
-  if ((outShape !== 1 || inShape !== 1) && (curve === 'equalPower' || curve === 'sCurve')) {
+  if ((outShape !== 1 || inShape !== 1) && (curve === "equalPower" || curve === "sCurve")) {
     const power = outVol * outVol + inVol * inVol;
     if (power > 1e-8) {
       const scale = 1 / Math.sqrt(power);
@@ -92,14 +92,14 @@ export function buildCurveArray(
   inShape: number,
   outShape: number,
   targetGain: number,
-  channel: 'outgoing' | 'incoming'
+  channel: "outgoing" | "incoming",
 ): Float32Array {
   const arr = new Float32Array(resolution);
   const range = endProgress - startProgress;
   for (let i = 0; i < resolution; i++) {
     const progress = startProgress + (i / (resolution - 1)) * range;
     const [outVol, inVol] = getCrossfadeValues(progress, curve, inShape, outShape);
-    arr[i] = (channel === 'outgoing' ? outVol : inVol) * targetGain;
+    arr[i] = (channel === "outgoing" ? outVol : inVol) * targetGain;
   }
   return arr;
 }
@@ -111,7 +111,7 @@ export function buildCurveArray(
 export function buildLinearCurve(
   resolution: number,
   startValue: number,
-  endValue: number
+  endValue: number,
 ): Float32Array {
   const arr = new Float32Array(resolution);
   for (let i = 0; i < resolution; i++) {
@@ -131,7 +131,7 @@ export function buildLinearCurve(
 export function buildBassSwapCurve(
   resolution: number,
   startValue: number,
-  endValue: number
+  endValue: number,
 ): Float32Array {
   const arr = new Float32Array(resolution);
   for (let i = 0; i < resolution; i++) {

@@ -14,7 +14,6 @@ const user = userStore();
 
 onMounted(() => {
   $setSiteTitle(t("nav.user") + " - " + t("nav.userChildren.album"));
-  if (!user.getUserAlbumLists.has && !user.getUserAlbumLists.isLoading)
-    user.setUserAlbumLists();
+  if (!user.getUserAlbumLists.has && !user.getUserAlbumLists.isLoading) user.setUserAlbumLists();
 });
 </script>

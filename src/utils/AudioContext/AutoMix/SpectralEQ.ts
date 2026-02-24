@@ -11,13 +11,13 @@
  *   highshelf@4000Hz — high band (4000-16000Hz)
  */
 
-import { AudioContextManager } from '../AudioContextManager';
-import { buildLinearCurve, buildBassSwapCurve, bassSwapValueAt } from './curves';
-import type { SpectralCrossfadeData } from './types';
+import { AudioContextManager } from "../AudioContextManager";
+import { buildLinearCurve, buildBassSwapCurve, bassSwapValueAt } from "./curves";
+import type { SpectralCrossfadeData } from "./types";
 
 /** EQ band center frequencies matching TrackAnalyzer boundaries */
 const EQ_FREQUENCIES = [300, 1100, 4000] as const;
-const EQ_TYPES: BiquadFilterType[] = ['lowshelf', 'peaking', 'highshelf'];
+const EQ_TYPES: BiquadFilterType[] = ["lowshelf", "peaking", "highshelf"];
 
 export class SpectralEQ {
   private _outgoingFilters: BiquadFilterNode[] = [];
@@ -36,7 +36,7 @@ export class SpectralEQ {
     data: SpectralCrossfadeData,
     startTime: number,
     duration: number,
-    fadeInOnly: boolean
+    fadeInOnly: boolean,
   ): void {
     this._spectralData = data;
     const resolution = Math.max(64, Math.ceil(duration * 48));
@@ -49,9 +49,10 @@ export class SpectralEQ {
         const f = this._outgoingFilters[i];
         f.gain.setValueAtTime(0, startTime);
         // Low band (i=0): use bass-swap curve for clean midpoint handoff
-        const curve = (i === 0 && useBassSwap)
-          ? buildBassSwapCurve(resolution, 0, data.outTargetDb[i])
-          : buildLinearCurve(resolution, 0, data.outTargetDb[i]);
+        const curve =
+          i === 0 && useBassSwap
+            ? buildBassSwapCurve(resolution, 0, data.outTargetDb[i])
+            : buildLinearCurve(resolution, 0, data.outTargetDb[i]);
         f.gain.setValueCurveAtTime(curve, startTime, duration);
       }
       this._insertFilterChain(outgoingGain, this._outgoingFilters, ctx);
@@ -63,9 +64,10 @@ export class SpectralEQ {
       const f = this._incomingFilters[i];
       f.gain.setValueAtTime(data.inInitialDb[i], startTime);
       // Low band (i=0): use bass-swap curve for clean midpoint handoff
-      const curve = (i === 0 && useBassSwap)
-        ? buildBassSwapCurve(resolution, data.inInitialDb[i], 0)
-        : buildLinearCurve(resolution, data.inInitialDb[i], 0);
+      const curve =
+        i === 0 && useBassSwap
+          ? buildBassSwapCurve(resolution, data.inInitialDb[i], 0)
+          : buildLinearCurve(resolution, data.inInitialDb[i], 0);
       f.gain.setValueCurveAtTime(curve, startTime, duration);
     }
     this._insertFilterChain(incomingGain, this._incomingFilters, ctx);
@@ -82,17 +84,19 @@ export class SpectralEQ {
     for (let i = 0; i < this._outgoingFilters.length; i++) {
       const f = this._outgoingFilters[i];
       f.gain.cancelScheduledValues(now);
-      const currentDb = (i === 0 && useBassSwap)
-        ? bassSwapValueAt(progress, 0, this._spectralData.outTargetDb[i])
-        : this._spectralData.outTargetDb[i] * progress;
+      const currentDb =
+        i === 0 && useBassSwap
+          ? bassSwapValueAt(progress, 0, this._spectralData.outTargetDb[i])
+          : this._spectralData.outTargetDb[i] * progress;
       f.gain.setValueAtTime(currentDb, now);
     }
     for (let i = 0; i < this._incomingFilters.length; i++) {
       const f = this._incomingFilters[i];
       f.gain.cancelScheduledValues(now);
-      const currentDb = (i === 0 && useBassSwap)
-        ? bassSwapValueAt(progress, this._spectralData.inInitialDb[i], 0)
-        : this._spectralData.inInitialDb[i] * (1 - progress);
+      const currentDb =
+        i === 0 && useBassSwap
+          ? bassSwapValueAt(progress, this._spectralData.inInitialDb[i], 0)
+          : this._spectralData.inInitialDb[i] * (1 - progress);
       f.gain.setValueAtTime(currentDb, now);
     }
   }
@@ -107,24 +111,28 @@ export class SpectralEQ {
 
     for (let i = 0; i < this._outgoingFilters.length; i++) {
       const f = this._outgoingFilters[i];
-      const currentDb = (i === 0 && useBassSwap)
-        ? bassSwapValueAt(progress, 0, this._spectralData.outTargetDb[i])
-        : this._spectralData.outTargetDb[i] * progress;
+      const currentDb =
+        i === 0 && useBassSwap
+          ? bassSwapValueAt(progress, 0, this._spectralData.outTargetDb[i])
+          : this._spectralData.outTargetDb[i] * progress;
       const endDb = this._spectralData.outTargetDb[i];
       // For bass-swap low band, build the remaining portion of the stepped curve
-      const curve = (i === 0 && useBassSwap)
-        ? buildBassSwapCurve(eqResolution, currentDb, endDb)
-        : buildLinearCurve(eqResolution, currentDb, endDb);
+      const curve =
+        i === 0 && useBassSwap
+          ? buildBassSwapCurve(eqResolution, currentDb, endDb)
+          : buildLinearCurve(eqResolution, currentDb, endDb);
       f.gain.setValueCurveAtTime(curve, now, remainingDuration);
     }
     for (let i = 0; i < this._incomingFilters.length; i++) {
       const f = this._incomingFilters[i];
-      const currentDb = (i === 0 && useBassSwap)
-        ? bassSwapValueAt(progress, this._spectralData.inInitialDb[i], 0)
-        : this._spectralData.inInitialDb[i] * (1 - progress);
-      const curve = (i === 0 && useBassSwap)
-        ? buildBassSwapCurve(eqResolution, currentDb, 0)
-        : buildLinearCurve(eqResolution, currentDb, 0);
+      const currentDb =
+        i === 0 && useBassSwap
+          ? bassSwapValueAt(progress, this._spectralData.inInitialDb[i], 0)
+          : this._spectralData.inInitialDb[i] * (1 - progress);
+      const curve =
+        i === 0 && useBassSwap
+          ? buildBassSwapCurve(eqResolution, currentDb, 0)
+          : buildLinearCurve(eqResolution, currentDb, 0);
       f.gain.setValueCurveAtTime(curve, now, remainingDuration);
     }
   }
@@ -170,13 +178,21 @@ export class SpectralEQ {
       // Need the gain node that's connected to the first filter
       // Cleanup must be done externally if gain node reference is needed
       for (const f of this._outgoingFilters) {
-        try { f.disconnect(); } catch { /* already disconnected */ }
+        try {
+          f.disconnect();
+        } catch {
+          /* already disconnected */
+        }
       }
       this._outgoingFilters = [];
     }
     if (this._incomingFilters.length > 0) {
       for (const f of this._incomingFilters) {
-        try { f.disconnect(); } catch { /* already disconnected */ }
+        try {
+          f.disconnect();
+        } catch {
+          /* already disconnected */
+        }
       }
       this._incomingFilters = [];
     }
@@ -216,7 +232,7 @@ export class SpectralEQ {
       const f = audioCtx.createBiquadFilter();
       f.type = type;
       f.frequency.value = EQ_FREQUENCIES[i];
-      if (type === 'peaking') f.Q.value = 0.7;
+      if (type === "peaking") f.Q.value = 0.7;
       f.gain.value = 0;
       return f;
     });
@@ -226,7 +242,11 @@ export class SpectralEQ {
    * Insert a chain of BiquadFilterNodes between a GainNode and the destination.
    * Chain: gainNode → filter[0] → filter[1] → filter[2] → destination
    */
-  private _insertFilterChain(gainNode: GainNode, filters: BiquadFilterNode[], ctx: AudioContext): void {
+  private _insertFilterChain(
+    gainNode: GainNode,
+    filters: BiquadFilterNode[],
+    ctx: AudioContext,
+  ): void {
     gainNode.disconnect();
     gainNode.connect(filters[0]);
     for (let i = 0; i < filters.length - 1; i++) {
@@ -238,10 +258,22 @@ export class SpectralEQ {
   /**
    * Remove a filter chain, restoring direct gainNode → destination.
    */
-  private _removeFilterChain(gainNode: GainNode, filters: BiquadFilterNode[], ctx: AudioContext): void {
-    try { gainNode.disconnect(); } catch { /* already disconnected */ }
+  private _removeFilterChain(
+    gainNode: GainNode,
+    filters: BiquadFilterNode[],
+    ctx: AudioContext,
+  ): void {
+    try {
+      gainNode.disconnect();
+    } catch {
+      /* already disconnected */
+    }
     for (const f of filters) {
-      try { f.disconnect(); } catch { /* already disconnected */ }
+      try {
+        f.disconnect();
+      } catch {
+        /* already disconnected */
+      }
     }
     gainNode.connect(ctx.destination);
   }

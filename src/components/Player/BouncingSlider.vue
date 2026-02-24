@@ -11,16 +11,8 @@
   >
     <slot name="before-icon" />
     <div ref="innerRef" class="inner-wrapper">
-      <Motion
-        tag="div"
-        class="inner"
-        :style="{ clipPath }"
-      >
-        <Motion
-          tag="div"
-          class="thumb"
-          :style="{ scaleX, originX: 0 }"
-        />
+      <Motion tag="div" class="inner" :style="{ clipPath }">
+        <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
       </Motion>
     </div>
     <slot name="after-icon" />
@@ -50,7 +42,7 @@ const props = withDefaults(
   {
     isPlaying: false,
     changeOnDrag: false,
-  }
+  },
 );
 
 const emit = defineEmits<{
@@ -95,7 +87,9 @@ const animateProgressTo = (p: number) => {
     type: "tween",
     ease: SEEK_EASING,
     duration: SEEK_DURATION,
-    onComplete: () => { seekAnimControl = null; },
+    onComplete: () => {
+      seekAnimControl = null;
+    },
   });
 };
 
@@ -123,7 +117,7 @@ watch(
       }
     }
   },
-  { immediate: true }
+  { immediate: true },
 );
 
 // Frame-interpolated progress while playing

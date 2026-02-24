@@ -6,9 +6,7 @@
     :description="$t('state.errorDesc')"
   >
     <template #footer>
-      <n-button type="primary" @click="router.push('/')">{{
-        $t("general.name.reload")
-      }}</n-button>
+      <n-button type="primary" @click="router.push('/')">{{ $t("general.name.reload") }}</n-button>
     </template>
   </n-result>
 </template>

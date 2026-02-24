@@ -7,12 +7,18 @@
  * 3. 缓存处理结果
  */
 
-import { toRaw } from 'vue';
-import type { LyricLine as AMLLLine } from '@applemusic-like-lyrics/core';
-import type { SongLyric, ProcessingSettings, InputLyricLine, TimeTextEntry, StoredLyricLine } from './types';
-import { parseLrcToEntries } from './parser/entryParser';
-import { isInterludeLine, buildIndexMatching } from './alignment';
-import { convertToAMLL, splitRomaToWords } from './parser/formatParser';
+import { toRaw } from "vue";
+import type { LyricLine as AMLLLine } from "@applemusic-like-lyrics/core";
+import type {
+  SongLyric,
+  ProcessingSettings,
+  InputLyricLine,
+  TimeTextEntry,
+  StoredLyricLine,
+} from "./types";
+import { parseLrcToEntries } from "./parser/entryParser";
+import { isInterludeLine, buildIndexMatching } from "./alignment";
+import { convertToAMLL, splitRomaToWords } from "./parser/formatParser";
 
 // Debug flag - disable in production for better performance
 const DEBUG = false;
@@ -22,7 +28,8 @@ const DEBUG = false;
  */
 function generateSettingsHash(settings: ProcessingSettings): string {
   // Use bit flags for faster comparison (3 booleans = 3 bits)
-  const flags = (settings.showYrc ? 4 : 0) | (settings.showRoma ? 2 : 0) | (settings.showTransl ? 1 : 0);
+  const flags =
+    (settings.showYrc ? 4 : 0) | (settings.showRoma ? 2 : 0) | (settings.showTransl ? 1 : 0);
   return String(flags);
 }
 
@@ -34,8 +41,8 @@ function extractTranslationText(songLyric: SongLyric): string | undefined {
   if (tlyric?.lyric) return tlyric.lyric;
 
   const translation = songLyric.translation;
-  if (typeof translation === 'string') return translation;
-  if (translation && typeof translation === 'object' && 'lyric' in translation) {
+  if (typeof translation === "string") return translation;
+  if (translation && typeof translation === "object" && "lyric" in translation) {
     return translation.lyric;
   }
   return undefined;
@@ -49,8 +56,8 @@ function extractRomajiText(songLyric: SongLyric): string | undefined {
   if (romalrc?.lyric) return romalrc.lyric;
 
   const romaji = songLyric.romaji;
-  if (typeof romaji === 'string') return romaji;
-  if (romaji && typeof romaji === 'object' && 'lyric' in romaji) {
+  if (typeof romaji === "string") return romaji;
+  if (romaji && typeof romaji === "object" && "lyric" in romaji) {
     return romaji.lyric;
   }
   return undefined;
@@ -114,17 +121,17 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
   if (!settings.showRoma) {
     for (let i = 0; i < validCount; i++) {
       const line = validLines[i];
-      line.romanLyric = '';
+      line.romanLyric = "";
       const words = line.words;
       for (let j = 0; j < words.length; j++) {
-        words[j].romanWord = '';
+        words[j].romanWord = "";
       }
     }
   }
 
   if (!settings.showTransl) {
     for (let i = 0; i < validCount; i++) {
-      validLines[i].translatedLyric = '';
+      validLines[i].translatedLyric = "";
     }
   }
 
@@ -187,9 +194,9 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
           const perWord = splitRomaToWords(line.words, matched);
           if (perWord) {
             for (let j = 0; j < line.words.length; j++) {
-              line.words[j].romanWord = perWord[j] || '';
+              line.words[j].romanWord = perWord[j] || "";
             }
-            line.romanLyric = ''; // 避免与逐字音译重复
+            line.romanLyric = ""; // 避免与逐字音译重复
           }
         }
       }
@@ -212,15 +219,15 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
       }
 
       if (hasPerWordRoma) {
-        line.romanLyric = ''; // 避免重复
+        line.romanLyric = ""; // 避免重复
       } else {
         // 尝试将行级音译拆分为逐字
         const perWord = splitRomaToWords(line.words, line.romanLyric);
         if (perWord) {
           for (let j = 0; j < line.words.length; j++) {
-            line.words[j].romanWord = perWord[j] || '';
+            line.words[j].romanWord = perWord[j] || "";
           }
-          line.romanLyric = '';
+          line.romanLyric = "";
         }
       }
     }

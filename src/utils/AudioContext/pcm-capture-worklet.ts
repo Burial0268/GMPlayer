@@ -56,7 +56,7 @@ export async function registerPCMCaptureWorklet(ctx: AudioContext): Promise<void
   // Already registered with this exact context
   if (registeredCtx === ctx) return;
 
-  const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+  const blob = new Blob([WORKLET_CODE], { type: "application/javascript" });
   const url = URL.createObjectURL(blob);
   try {
     await ctx.audioWorklet.addModule(url);
@@ -64,7 +64,7 @@ export async function registerPCMCaptureWorklet(ctx: AudioContext): Promise<void
     // Processor name already registered in this context (e.g., HMR re-evaluation
     // resets the module-level registeredCtx while the AudioContext persists).
     // The processor IS available — just can't be double-registered.
-    if (err instanceof DOMException && err.name === 'NotSupportedError') {
+    if (err instanceof DOMException && err.name === "NotSupportedError") {
       // fall through to set registeredCtx
     } else {
       throw err;

@@ -12,7 +12,9 @@
         <div class="name-wrapper">
           <div class="name" :class="{ 'is-scrolling': isNameOverflow }">
             <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
-            <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
+            <span class="name-inner" v-if="isNameOverflow">{{
+              songName || $t("other.noSong")
+            }}</span>
           </div>
         </div>
         <div class="artists text-hidden" v-if="artistList.length">
@@ -22,21 +24,30 @@
         </div>
       </div>
       <div class="mobile-header-actions">
-        <n-icon size="24"
-          :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound"
+        <n-icon
+          size="24"
+          :component="
+            music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
+              ? StarRound
+              : StarBorderRound
+          "
           @click.stop="
-            music.getPlaySongData && (
-              music.getSongIsLike(music.getPlaySongData.id)
-                ? music.changeLikeList(music.getPlaySongData.id, false)
-                : music.changeLikeList(music.getPlaySongData.id, true)
-            )
-            " />
+            music.getPlaySongData &&
+            (music.getSongIsLike(music.getPlaySongData.id)
+              ? music.changeLikeList(music.getPlaySongData.id, false)
+              : music.changeLikeList(music.getPlaySongData.id, true))
+          "
+        />
         <n-icon size="24" :component="MoreVertRound" @click.stop="" />
       </div>
     </div>
     <div class="mobile-lyric" v-if="hasLyrics">
-      <RollingLyrics @mouseenter="$emit('lrcMouseEnter')" @mouseleave="$emit('lrcAllLeave')"
-        @lrcTextClick="$emit('lrcTextClick', $event)" class="mobile-lyrics" />
+      <RollingLyrics
+        @mouseenter="$emit('lrcMouseEnter')"
+        @mouseleave="$emit('lrcAllLeave')"
+        @lrcTextClick="$emit('lrcTextClick', $event)"
+        class="mobile-lyrics"
+      />
     </div>
     <div v-else class="no-lyrics"><span>¯\_(ツ)_/¯</span></div>
   </div>
@@ -51,7 +62,9 @@
           <div class="name-wrapper" ref="nameWrapperRef">
             <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
               <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
-              <span class="name-inner" v-if="isNameOverflow">{{ songName || $t("other.noSong") }}</span>
+              <span class="name-inner" v-if="isNameOverflow">{{
+                songName || $t("other.noSong")
+              }}</span>
             </div>
           </div>
           <div class="artists text-hidden" v-if="artistList.length">
@@ -61,24 +74,34 @@
           </div>
         </div>
         <div class="mobile-header-actions">
-          <n-icon size="24"
-            :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound"
+          <n-icon
+            size="24"
+            :component="
+              music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
+                ? StarRound
+                : StarBorderRound
+            "
             @click.stop="
-              music.getPlaySongData && (
-                music.getSongIsLike(music.getPlaySongData.id)
-                  ? music.changeLikeList(music.getPlaySongData.id, false)
-                  : music.changeLikeList(music.getPlaySongData.id, true)
-              )
-              " />
+              music.getPlaySongData &&
+              (music.getSongIsLike(music.getPlaySongData.id)
+                ? music.changeLikeList(music.getPlaySongData.id, false)
+                : music.changeLikeList(music.getPlaySongData.id, true))
+            "
+          />
           <n-icon size="24" :component="MoreVertRound" @click.stop="" />
         </div>
       </div>
       <!-- 进度条 -->
       <div class="mobile-progress">
-        <BouncingSlider :value="music.getPlaySongTime.currentTime || 0" :min="0"
-          :max="music.getPlaySongTime.duration || 1" :is-playing="music.getPlayState"
-          @update:value="handleProgressSeek" @seek-start="music.setPlayState(false)"
-          @seek-end="music.setPlayState(true)" />
+        <BouncingSlider
+          :value="music.getPlaySongTime.currentTime || 0"
+          :min="0"
+          :max="music.getPlaySongTime.duration || 1"
+          :is-playing="music.getPlayState"
+          @update:value="handleProgressSeek"
+          @seek-start="music.setPlayState(false)"
+          @seek-end="music.setPlayState(true)"
+        />
         <div class="time-display">
           <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
           <span>-{{ remainingTime }}</span>
@@ -99,11 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  StarBorderRound,
-  StarRound,
-  MoreVertRound,
-} from "@vicons/material";
+import { StarBorderRound, StarRound, MoreVertRound } from "@vicons/material";
 import { ref } from "vue";
 import { musicStore } from "@/store";
 import RollingLyrics from "../RollingLyrics.vue";

@@ -1,48 +1,71 @@
 <template>
-  <n-drawer class="playlist-drawer" v-model:show="playListShow" :z-index="1" :width="400" :trap-focus="false"
-    :block-scroll="false" :style="{
+  <n-drawer
+    class="playlist-drawer"
+    v-model:show="playListShow"
+    :z-index="1"
+    :width="400"
+    :trap-focus="false"
+    :block-scroll="false"
+    :style="{
       '--cover-main-color': `rgb(${site.songPicColor})` || '#efefef',
       '--cover-second-color': `rgba(${site.songPicColor}, 0.14)` || '#efefef14',
-    }" placement="right" to="#mainContent" @after-leave="music.showPlayList = false"
-    @mask-click="music.showPlayList = false">
+    }"
+    placement="right"
+    to="#mainContent"
+    @after-leave="music.showPlayList = false"
+    @mask-click="music.showPlayList = false"
+  >
     <n-drawer-content :native-scrollbar="false" closable>
       <template #header>
         <div class="text">
           <n-text class="name">{{ $t("general.name.playlists") }}</n-text>
           <n-text class="num" :depth="3" v-if="music.getPlaylists.length > 0">
-            {{
-              $t("general.name.songSize", { size: music.getPlaylists.length })
-            }}
+            {{ $t("general.name.songSize", { size: music.getPlaylists.length }) }}
           </n-text>
         </div>
       </template>
       <Transition mode="out-in">
         <div v-if="music.getPlaylists[0]">
-          <n-card hoverable :class="index === music.persistData.playSongIndex ? 'songs play' : 'songs'
-            " :id="'playlist' + index" :content-style="{
+          <n-card
+            hoverable
+            :class="index === music.persistData.playSongIndex ? 'songs play' : 'songs'"
+            :id="'playlist' + index"
+            :content-style="{
               padding: '8px',
               display: 'flex',
               flexDirection: 'row',
               alignItems: 'center',
-            }" v-for="(item, index) in music.getPlaylists" :key="item" @click="changeIndex(index)">
+            }"
+            v-for="(item, index) in music.getPlaylists"
+            :key="item"
+            @click="changeIndex(index)"
+          >
             <div class="left">
               <n-text v-if="index !== music.persistData.playSongIndex" :depth="3" class="num">
                 {{ index + 1 }}
               </n-text>
               <div v-else class="bar">
-                <div v-for="item in 3" :key="item" class="line" :style="{
-                  animationDelay: `0.${item * item}s`,
-                  animationPlayState: music.getPlayState
-                    ? 'running'
-                    : 'paused',
-                  height: `${Math.floor(Math.random() * 7) + 10}px`,
-                }" />
+                <div
+                  v-for="item in 3"
+                  :key="item"
+                  class="line"
+                  :style="{
+                    animationDelay: `0.${item * item}s`,
+                    animationPlayState: music.getPlayState ? 'running' : 'paused',
+                    height: `${Math.floor(Math.random() * 7) + 10}px`,
+                  }"
+                />
               </div>
             </div>
             <div class="right">
               <div class="name text-hidden">{{ item.name }}</div>
               <AllArtists class="text-hidden" :artistsData="item.artist" />
-              <n-icon class="remove" size="18" :component="DeleteFour" @click.stop="music.removeSong(index)" />
+              <n-icon
+                class="remove"
+                size="18"
+                :component="DeleteFour"
+                @click.stop="music.removeSong(index)"
+              />
             </div>
           </n-card>
         </div>
@@ -61,7 +84,7 @@ import AllArtists from "@/components/DataList/AllArtists.vue";
 
 const { t } = useI18n();
 const music = musicStore();
-const site = siteStore()
+const site = siteStore();
 
 // 播放列表显隐
 const playListShow = ref(false);
@@ -89,9 +112,7 @@ watch(
     playListShow.value = val;
     nextTick().then(() => {
       if (val && music.getPlaylists[0]) {
-        const el = document.getElementById(
-          `playlist${music.persistData.playSongIndex}`
-        );
+        const el = document.getElementById(`playlist${music.persistData.playSongIndex}`);
         if (el) {
           timeOut.value = setTimeout(() => {
             el.scrollIntoView({
@@ -104,7 +125,7 @@ watch(
         clearTimeout(timeOut.value);
       }
     });
-  }
+  },
 );
 
 onMounted(() => {
@@ -147,7 +168,6 @@ onBeforeUnmount(() => {
       border-bottom: none;
 
       .pl-name {
-
         a,
         span,
         .n-icon {
@@ -170,7 +190,6 @@ onBeforeUnmount(() => {
 
 <style lang="scss" scoped>
 .playlist-drawer {
-
   .v-enter-active,
   .v-leave-active {
     transition: opacity 0.3s ease;

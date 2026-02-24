@@ -27,11 +27,7 @@
             $t("general.name.desc", { name: $t("general.name.playlist") })
           }}</span>
           <span class="desc text-hidden">
-            {{
-              playListDetail.description
-                ? playListDetail.description
-                : $t("other.noDesc")
-            }}
+            {{ playListDetail.description ? playListDetail.description : $t("other.noDesc") }}
           </span>
           <n-button
             class="all-desc"
@@ -121,9 +117,7 @@
   </div>
   <div class="title" v-else-if="!playListId || !loadingState">
     <span class="key">{{
-      loadingState
-        ? $t("general.name.noKeywords")
-        : $t("general.message.acquisitionFailed")
+      loadingState ? $t("general.name.noKeywords") : $t("general.message.acquisitionFailed")
     }}</span>
     <br />
     <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
@@ -145,12 +139,7 @@
 
 <script setup lang="ts">
 import { NIcon, NText } from "naive-ui";
-import {
-  getPlayListDetail,
-  getAllPlayList,
-  delPlayList,
-  likePlaylist,
-} from "@/api/playlist";
+import { getPlayListDetail, getAllPlayList, delPlayList, likePlaylist } from "@/api/playlist";
 import { useRouter } from "vue-router";
 import { userStore, musicStore, settingStore } from "@/store";
 import { getLongTime } from "@/utils/timeTools";
@@ -189,9 +178,7 @@ const playListDescShow = ref(false);
 const pagelimit = ref(30);
 const loadingState = ref(true);
 const pageNumber = ref(
-  router.currentRoute.value.query.page
-    ? Number(router.currentRoute.value.query.page)
-    : 1
+  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 const totalCount = ref(0);
 
@@ -233,7 +220,7 @@ const setDropdownOptions = () => {
           if (navigator.clipboard) {
             try {
               navigator.clipboard.writeText(
-                `https://music.163.com/#/playlist?id=${playListId.value}`
+                `https://music.163.com/#/playlist?id=${playListId.value}`,
               );
               $message.success(t("general.message.copySuccess"));
             } catch (err) {
@@ -315,7 +302,7 @@ const playAllSong = () => {
 };
 
 // 删除歌单
-const toDelPlayList = (data: { id: number; name: any; }) => {
+const toDelPlayList = (data: { id: number; name: any }) => {
   if (data.id === user.getUserPlayLists?.own[0].id) {
     $message.warning(t("menu.unableToDelete"));
     return false;
@@ -363,16 +350,8 @@ const toChangeLike = async (id: string | number | string[]) => {
 onMounted(() => {
   if (playListId.value) {
     getPlayListDetailData(playListId.value);
-    getAllPlayListData(
-      playListId.value,
-      pagelimit.value,
-      (pageNumber.value - 1) * pagelimit.value
-    );
-    if (
-      user.userLogin &&
-      !user.getUserPlayLists.has &&
-      !user.getUserPlayLists.isLoading
-    ) {
+    getAllPlayListData(playListId.value, pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
+    if (user.userLogin && !user.getUserPlayLists.has && !user.getUserPlayLists.isLoading) {
       user.setUserPlayLists(() => {
         setDropdownOptions();
       });
@@ -385,11 +364,7 @@ onMounted(() => {
 // 每页个数数据变化
 const pageSizeChange = (val: number) => {
   pagelimit.value = val;
-  getAllPlayListData(
-    playListId.value,
-    val,
-    (pageNumber.value - 1) * pagelimit.value
-  );
+  getAllPlayListData(playListId.value, val, (pageNumber.value - 1) * pagelimit.value);
 };
 
 // 当前页数数据变化
@@ -415,17 +390,17 @@ watch(
         getAllPlayListData(
           playListId.value,
           pagelimit.value,
-          (pageNumber.value - 1) * pagelimit.value
+          (pageNumber.value - 1) * pagelimit.value,
         );
       } else {
         getAllPlayListData(
           playListId.value,
           pagelimit.value,
-          (pageNumber.value - 1) * pagelimit.value
+          (pageNumber.value - 1) * pagelimit.value,
         );
       }
     }
-  }
+  },
 );
 </script>
 

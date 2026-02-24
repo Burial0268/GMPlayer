@@ -9,7 +9,12 @@ export const comment = {
   /**
    * 获取评论
    */
-  get: (id: number, offset = 0, before: number | null = null, type: CommentResourceType = "music") =>
+  get: (
+    id: number,
+    offset = 0,
+    before: number | null = null,
+    type: CommentResourceType = "music",
+  ) =>
     request<any>({
       method: "GET",
       url: `/comment/${type}`,

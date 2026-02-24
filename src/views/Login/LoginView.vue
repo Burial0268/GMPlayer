@@ -19,12 +19,7 @@
     >
       <n-tab-pane name="qr" :tab="$t('login.qr')">
         <n-card class="qr-img">
-          <n-skeleton
-            v-if="!qrImg"
-            style="min-width: 180px"
-            height="180px"
-            width="180px"
-          />
+          <n-skeleton v-if="!qrImg" style="min-width: 180px" height="180px" width="180px" />
           <QrcodeVue
             v-else
             class="qr"
@@ -46,10 +41,7 @@
           :show-label="false"
         >
           <n-form-item path="phone">
-            <n-input
-              placeholder="请输入手机号"
-              v-model:value="phoneFormData.phone"
-            >
+            <n-input placeholder="请输入手机号" v-model:value="phoneFormData.phone">
               <template #prefix>
                 <n-icon :component="PhoneAndroidRound" />
               </template>
@@ -83,10 +75,7 @@
         </n-form>
       </n-tab-pane>
       <n-tab-pane name="email" :tab="$t('login.email')">
-        <n-alert
-          style="width: 100%; margin-top: -20px; margin-bottom: 12px"
-          type="warning"
-        >
+        <n-alert style="width: 100%; margin-top: -20px; margin-bottom: 12px" type="warning">
           {{ $t("login.canNotUse") }}
         </n-alert>
       </n-tab-pane>
@@ -96,14 +85,7 @@
 
 <script setup lang="ts">
 import { userStore, musicStore, settingStore } from "@/store";
-import {
-  getLoginState,
-  getQrKey,
-  checkQr,
-  toLogin,
-  sentCaptcha,
-  verifyCaptcha,
-} from "@/api/login";
+import { getLoginState, getQrKey, checkQr, toLogin, sentCaptcha, verifyCaptcha } from "@/api/login";
 import { useRouter } from "vue-router";
 import { PhoneAndroidRound, PasswordRound } from "@vicons/material";
 import { formRules } from "@/utils/ui/formRules";
@@ -234,7 +216,7 @@ const getCaptcha = (data) => {
   phoneFormRef.value?.validate(
     (errors) => {
       if (errors) {
-      $message.error(t("general.message.needCheck"));
+        $message.error(t("general.message.needCheck"));
       } else {
         sentCaptcha(data).then((res) => {
           if (res.code == 200) {
@@ -258,7 +240,7 @@ const getCaptcha = (data) => {
     },
     (rule) => {
       return rule?.key === "phone";
-    }
+    },
   );
 };
 
@@ -268,7 +250,10 @@ const phoneLogin = async (e) => {
   phoneFormRef.value?.validate(async (errors) => {
     if (!errors) {
       try {
-        const verifyRes = await verifyCaptcha(phoneFormData.value.phone, phoneFormData.value.captcha);
+        const verifyRes = await verifyCaptcha(
+          phoneFormData.value.phone,
+          phoneFormData.value.captcha,
+        );
         if (isUnmounted) return;
         if (verifyRes.code == 200) {
           const loginRes = await toLogin(phoneFormData.value.phone, phoneFormData.value.captcha);

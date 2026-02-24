@@ -106,8 +106,7 @@ export default {
     comment: "Comment",
     mv: "Watch MV",
     delete: "Remove from cloud drive",
-    deleteQuestion:
-      "Confirm to delete song {name} from Cloud Drive? This action cannot be undone!",
+    deleteQuestion: "Confirm to delete song {name} from Cloud Drive? This action cannot be undone!",
     match: "Song Information Match",
     search: "Search for same name",
     copy: "Copy {name} {other}",
@@ -235,8 +234,7 @@ export default {
       needVip: "This operation requires a member account",
       needCheck: "Please check your input",
       isLoading: "Data loading",
-      vipTip:
-        "The current song is exclusive for VIP and can be listened to only",
+      vipTip: "The current song is exclusive for VIP and can be listened to only",
       playError: "Current song failed to play, skip to next song",
       signInSuccess: "Sign In Success",
       signInSuccessDesc: "Daily sign-in and Yunbei sign-in success",
@@ -264,8 +262,7 @@ export default {
     matchError: "Unusual song ID, can't match",
     newPlaylistName: "Please enter a new playlist title",
     setPrivacy: "Set as private playlist",
-    cloudTip:
-      "Currently for the cloud disk songs, downloaded files are the highest sound quality",
+    cloudTip: "Currently for the cloud disk songs, downloaded files are the highest sound quality",
     playlistEmpty: "There is no song, please go to the playlist to add",
     plName: "Playlist Name",
     plNameTip: "Please enter the playlist name",
@@ -299,23 +296,18 @@ export default {
     autoSignInTip: "Automatically perform daily check-in",
     bannerShow: "Show Banner Image",
     listClickMode: "List Click Mode",
-    listClickModeTip:
-      "This setting is ineffective on mobile, both click modes will be in effect",
+    listClickModeTip: "This setting is ineffective on mobile, both click modes will be in effect",
     dblclick: "Double-click to play",
     click: "Single-click to play",
     searchHistory: "Display Search History",
     bottomLyricShow: "Display Bottom Lyrics",
-    bottomLyricShowTip:
-      "Whether to display lyrics at the bottom of the screen while playing",
+    bottomLyricShowTip: "Whether to display lyrics at the bottom of the screen while playing",
     songVolumeFade: "Song Volume Fade",
-    songVolumeFadeTip:
-      "Gradually fade in/out volume when stopping/starting playback",
+    songVolumeFadeTip: "Gradually fade in/out volume when stopping/starting playback",
     memoryLastPlaybackPosition: "Remember Playback Position",
-    memoryLastPlaybackPositionTip:
-      "Resume last playback progress after refreshing the page",
+    memoryLastPlaybackPositionTip: "Resume last playback progress after refreshing the page",
     songLevel: "Song Quality",
-    songLevelTip:
-      "Lossless quality and above require a Black Vinyl Club membership",
+    songLevelTip: "Lossless quality and above require a Black Vinyl Club membership",
     standard: "Standard",
     higher: "Higher",
     exhigh: "Extreme",
@@ -325,13 +317,11 @@ export default {
     jymaster: "Whale Cloud Master",
     useUnmServerShow: "Use UNM to play blocked songs",
     useUnmServerShowTip1: "Whether to use UNM to replace blocked song links",
-    useUnmServerShowTip2:
-      "Please configure UNM-Server before using unblocking feature",
+    useUnmServerShowTip2: "Please configure UNM-Server before using unblocking feature",
     showLyricSetting: "Play Page Shortcut Settings",
     showLyricSettingTip: "Show shortcut settings on the play page",
     resetApp: "Reset the program",
-    resetAppTip:
-      "Try this if the program displays abnormally or if there is a problem",
+    resetAppTip: "Try this if the program displays abnormally or if there is a problem",
     resetAppWarning:
       "Confirming reset to default? Your login status and custom settings will be lost!",
     playerStyle: "Player Style",
@@ -344,7 +334,8 @@ export default {
     eplor: "Explor",
     backgroundImageShowTip_blur: "Blur the album art",
     backgroundImageShowTip_solid: "Extract the album main color as the background color",
-    backgroundImageShowTip_eplor: "Apple-Music-Like, Extract the main color of the album and use it as the background in the form of dynamic color blocks",
+    backgroundImageShowTip_eplor:
+      "Apple-Music-Like, Extract the main color of the album and use it as the background in the form of dynamic color blocks",
     showTransl: "Show Lyric Translation",
     showTranslTip: "Whether to display lyric translation when available",
     showRoma: "Show Lyric Transliteration",
@@ -357,11 +348,9 @@ export default {
     showYrcAnimationTip:
       "Whether to display verbatim lyrics step - by - step animation, more cost performance",
     showYrcTransform: "Word for word lyrics come up",
-    showYrcTransformTip:
-      "Whether to display verbatim lyrics text floating animation",
+    showYrcTransformTip: "Whether to display verbatim lyrics text floating animation",
     lrcMousePause: "Intelligent Scroll Pause",
-    lrcMousePauseTip:
-      "Whether to pause scrolling when the mouse is over the lyrics area",
+    lrcMousePauseTip: "Whether to pause scrolling when the mouse is over the lyrics area",
     lyricsBlock: "Lyric Scrolling Position",
     lyricsBlockTip: "The position where the lyrics are highlighted",
     blockStart: "Near the Top",
@@ -374,8 +363,7 @@ export default {
     positionLeft: "Left",
     positionCenter: "Centered",
     lyricsBlur: "Lyric Blur",
-    lyricsBlurTip:
-      "Blur lyrics other than the currently playing ones, experimental feature",
+    lyricsBlurTip: "Blur lyrics other than the currently playing ones, experimental feature",
     bottomClick: "Bottomclick to expand Player ",
     bottomClickTip: "It may cause mistouch, please open with caution ",
     autoMixEnabled: "AutoMix Smart Crossfade",
@@ -394,11 +382,14 @@ export default {
     autoMixEqualPower: "Equal Power",
     autoMixSCurve: "S-Curve",
     autoMixSmartCurve: "Smart Curve Override",
-    autoMixSmartCurveTip: "Automatically select the best crossfade curve based on detected song ending type",
+    autoMixSmartCurveTip:
+      "Automatically select the best crossfade curve based on detected song ending type",
     autoMixTransitionEffects: "Transition Effects",
-    autoMixTransitionEffectsTip: "Add reverb tail and noise riser effects during transitions for smoother crossfades",
+    autoMixTransitionEffectsTip:
+      "Add reverb tail and noise riser effects during transitions for smoother crossfades",
     autoMixVocalGuard: "Vocal Guard",
-    autoMixVocalGuardTip: "Delay transition when vocal activity is detected to avoid cutting into singing",
+    autoMixVocalGuardTip:
+      "Delay transition when vocal activity is detected to avoid cutting into singing",
     autoMixAnalyzing: "Analyzing...",
     autoMixWaiting: "Waiting",
     autoMixCrossfading: "Crossfading",

@@ -7,29 +7,29 @@
  * - Improved error handling
  */
 
-import { h } from 'vue';
-import { songScrobble } from '@/api/song';
+import { h } from "vue";
+import { songScrobble } from "@/api/song";
 // Import stores directly to avoid circular dependency through barrel exports
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
-import useMusicDataStore from '@/store/musicData';
-import useSettingDataStore from '@/store/settingData';
-import useSiteDataStore from '@/store/siteData';
-import useUserDataStore from '@/store/userData';
+import useMusicDataStore from "@/store/musicData";
+import useSettingDataStore from "@/store/settingData";
+import useSiteDataStore from "@/store/siteData";
+import useUserDataStore from "@/store/userData";
 
 const musicStore = () => useMusicDataStore();
 const settingStore = () => useSettingDataStore();
 const siteStore = () => useSiteDataStore();
 const userStore = () => useUserDataStore();
-import { NIcon } from 'naive-ui';
-import { MusicNoteFilled } from '@vicons/material';
-import getLanguageData from '@/utils/getLanguageData';
-import { getCoverColor } from '@/utils/ncm/getCoverColor';
-import { BufferedSound } from './BufferedSound';
-import { SoundManager } from './SoundManager';
-import { AudioContextManager } from './AudioContextManager';
-import { getAutoMixEngine } from './AutoMix';
-import { getAudioPreloader } from './AudioPreloader';
-import type { ISound } from './types';
+import { NIcon } from "naive-ui";
+import { MusicNoteFilled } from "@vicons/material";
+import getLanguageData from "@/utils/getLanguageData";
+import { getCoverColor } from "@/utils/ncm/getCoverColor";
+import { BufferedSound } from "./BufferedSound";
+import { SoundManager } from "./SoundManager";
+import { AudioContextManager } from "./AudioContextManager";
+import { getAutoMixEngine } from "./AutoMix";
+import { getAudioPreloader } from "./AudioPreloader";
+import type { ISound } from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -78,9 +78,9 @@ const stopBackgroundMonitor = (): void => {
 };
 
 // Track page visibility for spectrum throttling
-if (typeof document !== 'undefined') {
-  document.addEventListener('visibilitychange', () => {
-    isPageVisible = document.visibilityState === 'visible';
+if (typeof document !== "undefined") {
+  document.addEventListener("visibilitychange", () => {
+    isPageVisible = document.visibilityState === "visible";
     if (!isPageVisible && spectrumAnimationId !== null) {
       // Page hidden while spectrum loop is active — start background fallback
       startBackgroundMonitor();
@@ -184,40 +184,40 @@ const checkAudioTime = (sound: ISound, music: ReturnType<typeof musicStore>): vo
  * @param music - pinia
  */
 const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
-  if ('mediaSession' in navigator && Object.keys(music.getPlaySongData).length) {
+  if ("mediaSession" in navigator && Object.keys(music.getPlaySongData).length) {
     const artists = music.getPlaySongData.artist.map((a: { name: string }) => a.name);
     const picUrl = music.getPlaySongData.album?.picUrl;
     const artwork = picUrl
       ? [
-          { src: picUrl.replace(/^http:/, 'https:') + '?param=96y96', sizes: '96x96' },
-          { src: picUrl.replace(/^http:/, 'https:') + '?param=128y128', sizes: '128x128' },
-          { src: picUrl.replace(/^http:/, 'https:') + '?param=512x512', sizes: '512x512' },
+          { src: picUrl.replace(/^http:/, "https:") + "?param=96y96", sizes: "96x96" },
+          { src: picUrl.replace(/^http:/, "https:") + "?param=128y128", sizes: "128x128" },
+          { src: picUrl.replace(/^http:/, "https:") + "?param=512x512", sizes: "512x512" },
         ]
       : [];
 
     navigator.mediaSession.metadata = new MediaMetadata({
       title: music.getPlaySongData.name,
-      artist: artists.join(' & '),
-      album: music.getPlaySongData.album?.name || '',
+      artist: artists.join(" & "),
+      album: music.getPlaySongData.album?.name || "",
       artwork,
     });
-    navigator.mediaSession.setActionHandler('nexttrack', () => {
-      music.setPlaySongIndex('next');
+    navigator.mediaSession.setActionHandler("nexttrack", () => {
+      music.setPlaySongIndex("next");
     });
-    navigator.mediaSession.setActionHandler('previoustrack', () => {
-      music.setPlaySongIndex('prev');
+    navigator.mediaSession.setActionHandler("previoustrack", () => {
+      music.setPlaySongIndex("prev");
     });
-    navigator.mediaSession.setActionHandler('play', () => {
+    navigator.mediaSession.setActionHandler("play", () => {
       music.setPlayState(true);
     });
-    navigator.mediaSession.setActionHandler('pause', () => {
+    navigator.mediaSession.setActionHandler("pause", () => {
       music.setPlayState(false);
     });
 
     // Mobile-specific: seekto support
     if (AudioContextManager.isMobile()) {
       try {
-        navigator.mediaSession.setActionHandler('seekto', (details) => {
+        navigator.mediaSession.setActionHandler("seekto", (details) => {
           if (details.seekTime !== undefined && window.$player) {
             setSeek(window.$player, details.seekTime);
           }
@@ -235,13 +235,17 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
  * @param autoPlay - 是否自动播放（默认为 true）
  * @return 音频对象
  */
-export const createSound = (src: string, autoPlay = true, preloadedSound?: BufferedSound): ISound | undefined => {
+export const createSound = (
+  src: string,
+  autoPlay = true,
+  preloadedSound?: BufferedSound,
+): ISound | undefined => {
   try {
     // If AutoMix is crossfading, it handles sound creation — skip normal flow
     const autoMix = getAutoMixEngine();
     if (autoMix.isCrossfading()) {
       if (IS_DEV) {
-        console.log('[createSound] AutoMix crossfade active, skipping normal sound creation');
+        console.log("[createSound] AutoMix crossfade active, skipping normal sound creation");
       }
       return window.$player;
     }
@@ -260,11 +264,13 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
     const user = userStore();
 
     // Use preloaded sound or create a new BufferedSound
-    const sound = preloadedSound ?? new BufferedSound({
-      src: [src],
-      preload: true,
-      volume: music.persistData.playVolume,
-    });
+    const sound =
+      preloadedSound ??
+      new BufferedSound({
+        src: [src],
+        preload: true,
+        volume: music.persistData.playVolume,
+      });
     if (preloadedSound) {
       // Preloaded sound was created with volume=0 — restore actual volume
       sound.volume(music.persistData.playVolume);
@@ -277,26 +283,26 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
         site.songPicGradient = color;
       })
       .catch((err) => {
-        console.error('取色出错', err);
+        console.error("取色出错", err);
       });
 
     if (IS_DEV) {
-      console.log('[createSound] autoPlay:', autoPlay, 'getPlayState:', music.getPlayState);
+      console.log("[createSound] autoPlay:", autoPlay, "getPlayState:", music.getPlayState);
     }
 
     if (autoPlay) {
-      fadePlayOrPause(sound, 'play', music.persistData.playVolume);
+      fadePlayOrPause(sound, "play", music.persistData.playVolume);
     }
 
     // 首次加载事件
-    sound?.once('load', () => {
+    sound?.once("load", () => {
       const songId = music.getPlaySongData?.id;
       const sourceId = music.getPlaySongData?.sourceId ? music.getPlaySongData.sourceId : 0;
       const isLogin = user.userLogin;
       const isMemory = settings.memoryLastPlaybackPosition;
 
       if (IS_DEV) {
-        console.log('首次缓冲完成：' + songId + ' / 来源：' + sourceId);
+        console.log("首次缓冲完成：" + songId + " / 来源：" + sourceId);
       }
 
       if (isMemory) {
@@ -306,8 +312,8 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
           currentTime: 0,
           duration: 0,
           barMoveDistance: 0,
-          songTimePlayed: '00:00',
-          songTimeDuration: '00:00',
+          songTimePlayed: "00:00",
+          songTimeDuration: "00:00",
         };
       }
       // 取消加载状态
@@ -319,18 +325,18 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
           songScrobble(songId, sourceId)
             .then((res) => {
               if (IS_DEV) {
-                console.log('歌曲打卡完成', res);
+                console.log("歌曲打卡完成", res);
               }
             })
             .catch((err) => {
-              console.error('歌曲打卡失败：' + err);
+              console.error("歌曲打卡失败：" + err);
             });
         }, 3000);
       }
     });
 
     // 播放事件
-    sound?.on('play', () => {
+    sound?.on("play", () => {
       // If this sound is no longer the active player (e.g., AutoMix transitioned
       // to a new sound), don't run the full play handler — avoids duplicate
       // notifications, wrong time tracking, and wrong spectrum monitoring.
@@ -340,7 +346,7 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
       const autoMixCheck = getAutoMixEngine();
       if (autoMixCheck.isCrossfading()) {
         if (IS_DEV) {
-          console.log('[createSound play handler] Skipped during AutoMix crossfade');
+          console.log("[createSound play handler] Skipped during AutoMix crossfade");
         }
         return;
       }
@@ -349,7 +355,7 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
       }
       const playSongData = music.getPlaySongData;
       if (!Object.keys(playSongData).length) {
-        window.$message.error(getLanguageData('songLoadError'));
+        window.$message.error(getLanguageData("songLoadError"));
         return;
       }
 
@@ -360,7 +366,7 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
       music.setPlayState(true);
 
       // 播放通知
-      if (typeof window.$message !== 'undefined' && songArtist !== null) {
+      if (typeof window.$message !== "undefined" && songArtist !== null) {
         window.$message.info(`${songName} - ${songArtist}`, {
           icon: () =>
             h(NIcon, null, {
@@ -368,7 +374,7 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
             }),
         });
       } else {
-        window.$message.warning(getLanguageData('songNotDetails'));
+        window.$message.warning(getLanguageData("songNotDetails"));
       }
 
       if (IS_DEV) {
@@ -406,62 +412,62 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
     });
 
     // 暂停事件
-    sound?.on('pause', () => {
+    sound?.on("pause", () => {
       // If this sound is no longer the active player, ignore
       if (window.$player && window.$player !== sound) return;
       // During AutoMix crossfade, outgoing sound pausing is expected — don't change play state
       const autoMix = getAutoMixEngine();
       if (autoMix.isCrossfading()) {
         if (IS_DEV) {
-          console.log('[pause handler] Ignored during AutoMix crossfade');
+          console.log("[pause handler] Ignored during AutoMix crossfade");
         }
         return;
       }
       if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
       if (IS_DEV) {
-        console.log('音乐暂停');
+        console.log("音乐暂停");
       }
       music.setPlayState(false);
       // 更改页面标题
       window.$setSiteTitle("");
     });
     // 结束事件
-    sound?.on('end', () => {
+    sound?.on("end", () => {
       // If this sound is no longer the active player (e.g., AutoMix transitioned
       // to a new sound), don't cancel the current player's time/spectrum loops
       if (window.$player && window.$player !== sound) return;
       if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
       stopSpectrumUpdate();
       if (IS_DEV) {
-        console.log('歌曲播放结束');
+        console.log("歌曲播放结束");
       }
       // If AutoMix handled the transition, don't trigger next song again
       const autoMixEngine = getAutoMixEngine();
       if (!autoMixEngine.isCrossfading()) {
-        music.setPlaySongIndex('next');
+        music.setPlaySongIndex("next");
       }
     });
     // 错误事件
-    sound?.on('loaderror', () => {
+    sound?.on("loaderror", () => {
       if (testNumber > 2) {
-        window.$message.error(getLanguageData('songPlayError'));
-        console.error(getLanguageData('songPlayError'));
+        window.$message.error(getLanguageData("songPlayError"));
+        console.error(getLanguageData("songPlayError"));
         music.setPlayState(false);
       }
       if (testNumber < 4) {
         if (music.getPlaylists[0]) window.$getPlaySongData(music.getPlaySongData);
         testNumber++;
       } else {
-        window.$message.error(getLanguageData('songLoadTest'), {
+        window.$message.error(getLanguageData("songLoadTest"), {
           closable: true,
           duration: 0,
         });
         music.isLoadingSong = false;
       }
     });
-    sound?.on('playerror', () => {
-      window.$message.error(getLanguageData('songPlayError'));
-      console.error(getLanguageData('songPlayError'));
+    sound?.on("playerror", () => {
+      window.$message.error(getLanguageData("songPlayError"));
+      console.error(getLanguageData("songPlayError"));
       music.setPlayState(false);
       music.isLoadingSong = false;
     });
@@ -469,8 +475,8 @@ export const createSound = (src: string, autoPlay = true, preloadedSound?: Buffe
     // 返回音频对象
     return (window.$player = sound);
   } catch (err) {
-    window.$message.error(getLanguageData('songLoadError'));
-    console.error(getLanguageData('songLoadError'), err);
+    window.$message.error(getLanguageData("songLoadError"));
+    console.error(getLanguageData("songLoadError"), err);
   }
 };
 
@@ -525,32 +531,32 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
  */
 export const fadePlayOrPause = (
   sound: ISound | undefined,
-  type: 'play' | 'pause',
+  type: "play" | "pause",
   volume: number,
-  duration = 300
+  duration = 300,
 ): void => {
   if (IS_DEV) {
-    console.log('[fadePlayOrPause] type:', type, 'sound:', !!sound, 'playing:', sound?.playing());
+    console.log("[fadePlayOrPause] type:", type, "sound:", !!sound, "playing:", sound?.playing());
   }
-  const settingData = JSON.parse(localStorage.getItem('settingData') || '{}');
+  const settingData = JSON.parse(localStorage.getItem("settingData") || "{}");
   const isFade = settingData.songVolumeFade ?? true;
   if (isFade) {
-    if (type === 'play') {
+    if (type === "play") {
       if (sound?.playing()) {
         return;
       }
       sound?.play();
-      sound?.once('play', () => {
+      sound?.once("play", () => {
         sound?.fade(0, volume, duration);
       });
-    } else if (type === 'pause') {
+    } else if (type === "pause") {
       sound?.fade(volume, 0, duration);
-      sound?.once('fade', () => {
+      sound?.once("fade", () => {
         sound?.pause();
       });
     }
   } else {
-    type === 'play' ? sound?.play() : sound?.pause();
+    type === "play" ? sound?.play() : sound?.pause();
   }
 };
 
@@ -603,7 +609,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
         site.songPicGradient = color;
       })
       .catch((err) => {
-        console.error('取色出错 (AutoMix)', err);
+        console.error("取色出错 (AutoMix)", err);
       });
   }
 
@@ -637,19 +643,19 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   music.preloadUpcomingSongs();
 
   // Register pause handler with crossfade guard
-  incomingSound.on('pause', () => {
+  incomingSound.on("pause", () => {
     // If this sound is no longer the active player, ignore
     if (window.$player && window.$player !== incomingSound) return;
     const autoMix = getAutoMixEngine();
     if (autoMix.isCrossfading()) {
       if (IS_DEV) {
-        console.log('[adoptIncomingSound pause] Ignored during AutoMix crossfade');
+        console.log("[adoptIncomingSound pause] Ignored during AutoMix crossfade");
       }
       return;
     }
     if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
     if (IS_DEV) {
-      console.log('音乐暂停 (adopted sound)');
+      console.log("音乐暂停 (adopted sound)");
     }
     music.setPlayState(false);
     window.$setSiteTitle("");
@@ -658,7 +664,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   // Register play handler to restart time loop + spectrum after pause/resume.
   // Without this, pausing and resuming after AutoMix crossfade permanently
   // kills time tracking (pause handler cancels timeupdateInterval but nothing restarts it).
-  incomingSound.on('play', () => {
+  incomingSound.on("play", () => {
     if (timeupdateInterval) {
       cancelAnimationFrame(timeupdateInterval);
     }
@@ -679,30 +685,30 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   });
 
   // Register end handler
-  incomingSound.on('end', () => {
+  incomingSound.on("end", () => {
     // If this sound is no longer the active player, don't cancel current loops
     if (window.$player && window.$player !== incomingSound) return;
     if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
     stopSpectrumUpdate();
     if (IS_DEV) {
-      console.log('歌曲播放结束 (adopted sound)');
+      console.log("歌曲播放结束 (adopted sound)");
     }
     const autoMixEngine = getAutoMixEngine();
     if (!autoMixEngine.isCrossfading()) {
-      music.setPlaySongIndex('next');
+      music.setPlaySongIndex("next");
     }
   });
 
   // Register error handlers
-  incomingSound.on('loaderror', () => {
+  incomingSound.on("loaderror", () => {
     music.setPlayState(false);
   });
-  incomingSound.on('playerror', () => {
+  incomingSound.on("playerror", () => {
     music.setPlayState(false);
   });
 
   if (IS_DEV) {
-    console.log('[adoptIncomingSound] Adopted incoming sound with event handlers');
+    console.log("[adoptIncomingSound] Adopted incoming sound with event handlers");
   }
 };
 
@@ -714,6 +720,6 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
 export const processSpectrum = (sound: ISound | undefined): void => {
   // No longer needed - spectrum is handled internally by NativeSound
   if (IS_DEV) {
-    console.log('processSpectrum called - now handled internally by NativeSound');
+    console.log("processSpectrum called - now handled internally by NativeSound");
   }
 };

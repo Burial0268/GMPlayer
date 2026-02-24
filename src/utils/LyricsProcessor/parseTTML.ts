@@ -15,23 +15,23 @@ let initPromise: Promise<void> | null = null;
  * 首次调用时初始化，后续调用直接返回
  */
 export async function ensureTTMLLoaded(): Promise<void> {
-	if (isLoaded) return;
-	if (initPromise) return initPromise;
+  if (isLoaded) return;
+  if (initPromise) return initPromise;
 
-	initPromise = (async () => {
-		try {
-			init();
-			isLoaded = true;
-			console.log("[parseTTML] WASM ttml-processor 初始化成功");
-		} catch (error) {
-			console.error("[parseTTML] WASM ttml-processor 初始化失败", error);
-			isLoaded = false;
-			initPromise = null;
-			throw error;
-		}
-	})();
+  initPromise = (async () => {
+    try {
+      init();
+      isLoaded = true;
+      console.log("[parseTTML] WASM ttml-processor 初始化成功");
+    } catch (error) {
+      console.error("[parseTTML] WASM ttml-processor 初始化失败", error);
+      isLoaded = false;
+      initPromise = null;
+      throw error;
+    }
+  })();
 
-	return initPromise;
+  return initPromise;
 }
 
 /**
@@ -43,9 +43,9 @@ export async function ensureTTMLLoaded(): Promise<void> {
  * @returns 解析后的歌词数据，包含 lines 和 metadata
  */
 export function parseTTML(ttmlContent: string): any {
-	if (!isLoaded) {
-		throw new Error("[parseTTML] WASM not loaded, call ensureTTMLLoaded() first");
-	}
+  if (!isLoaded) {
+    throw new Error("[parseTTML] WASM not loaded, call ensureTTMLLoaded() first");
+  }
 
-	return parse_ttml(ttmlContent);
+  return parse_ttml(ttmlContent);
 }

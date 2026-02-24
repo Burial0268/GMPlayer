@@ -6,12 +6,7 @@
         {{ $t("home.title.more") }}
       </span>
     </n-h3>
-    <CoverLists
-      listType="album"
-      :listData="newAlbumData"
-      :loadingNum="12"
-      :gridCollapsed="true"
-    />
+    <CoverLists listType="album" :listData="newAlbumData" :loadingNum="12" :gridCollapsed="true" />
   </div>
 </template>
 

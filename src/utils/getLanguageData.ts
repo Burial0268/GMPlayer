@@ -131,4 +131,4 @@ const getLanguageData = (type: keyof LanguageTexts): string | null => {
   }
 };
 
-export default getLanguageData; 
+export default getLanguageData;

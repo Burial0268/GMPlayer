@@ -27,7 +27,7 @@ const useSiteDataStore = defineStore("siteData", {
 });
 
 if (import.meta.hot) {
-  import.meta.hot.accept(acceptHMRUpdate(useSiteDataStore, import.meta.hot))
+  import.meta.hot.accept(acceptHMRUpdate(useSiteDataStore, import.meta.hot));
 }
 
 export default useSiteDataStore;

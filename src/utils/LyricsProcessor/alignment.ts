@@ -3,10 +3,11 @@
  * 歌词对齐工具函数 (优化版)
  */
 
-import type { AMLLLine, ParsedLrcLine, ParsedYrcLine } from './types';
+import type { AMLLLine, ParsedLrcLine, ParsedYrcLine } from "./types";
 
 // Pre-compiled regex for interlude detection (avoid recompilation)
-const INTERLUDE_CHARS_REGEX = /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～\u200B\u00A0]/g;
+const INTERLUDE_CHARS_REGEX =
+  /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～\u200B\u00A0]/g;
 const INTERLUDE_CHARS_SIMPLE = /[\s♪♩♫♬🎵🎶🎼·…\-_—─]/g;
 
 /**
@@ -23,7 +24,7 @@ export function isInterludeLine(line: AMLLLine): boolean {
     const word = words[i].word;
     if (word) {
       // Check if word has non-interlude characters
-      const stripped = word.replace(INTERLUDE_CHARS_REGEX, '');
+      const stripped = word.replace(INTERLUDE_CHARS_REGEX, "");
       if (stripped.length > 0) {
         hasContent = true;
         break;
@@ -39,7 +40,7 @@ export function isInterludeLine(line: AMLLLine): boolean {
  */
 function isInterludeText(content: string): boolean {
   if (!content) return true;
-  const stripped = content.replace(INTERLUDE_CHARS_SIMPLE, '');
+  const stripped = content.replace(INTERLUDE_CHARS_SIMPLE, "");
   return stripped.length === 0;
 }
 
@@ -53,7 +54,7 @@ function isInterludeText(content: string): boolean {
 export const alignByIndex = <T extends ParsedLrcLine | ParsedYrcLine>(
   lyrics: T[],
   otherLyrics: ParsedLrcLine[],
-  key: 'tran' | 'roma'
+  key: "tran" | "roma",
 ): T[] => {
   const lyricsLen = lyrics.length;
   const otherLen = otherLyrics.length;
@@ -69,8 +70,9 @@ export const alignByIndex = <T extends ParsedLrcLine | ParsedYrcLine>(
 
   for (let i = 0; i < lyricsLen; i++) {
     const line = lyrics[i];
-    const content = 'TextContent' in line ? (line as ParsedYrcLine).TextContent : (line as ParsedLrcLine).content;
-    if (!isInterludeText(content || '')) {
+    const content =
+      "TextContent" in line ? (line as ParsedYrcLine).TextContent : (line as ParsedLrcLine).content;
+    if (!isInterludeText(content || "")) {
       validMainIndices[mainCount++] = i;
     }
   }
@@ -83,7 +85,7 @@ export const alignByIndex = <T extends ParsedLrcLine | ParsedYrcLine>(
 
   for (let i = 0; i < otherLen; i++) {
     const line = otherLyrics[i];
-    if (!isInterludeText(line.content || '')) {
+    if (!isInterludeText(line.content || "")) {
       validOtherLines[otherCount++] = line;
     }
   }
@@ -97,9 +99,9 @@ export const alignByIndex = <T extends ParsedLrcLine | ParsedYrcLine>(
   } else {
     // Time-based matching with binary search for better performance
     // Sort valid main indices by time for binary search
-    const mainWithTime = validMainIndices.map(idx => ({
+    const mainWithTime = validMainIndices.map((idx) => ({
       idx,
-      time: lyrics[idx].time
+      time: lyrics[idx].time,
     }));
     mainWithTime.sort((a, b) => a.time - b.time);
 
@@ -147,7 +149,7 @@ export const alignByIndex = <T extends ParsedLrcLine | ParsedYrcLine>(
  */
 export function buildIndexMatching(
   validLines: AMLLLine[],
-  entries: { timeMs: number; text: string }[]
+  entries: { timeMs: number; text: string }[],
 ): Map<number, string> {
   const result = new Map<number, string>();
   const entriesLen = entries.length;
@@ -174,9 +176,9 @@ export function buildIndexMatching(
   } else {
     // Time-based matching with binary search
     // Pre-compute line times for binary search
-    const lineTimes: { idx: number; time: number }[] = contentLineIndices.map(idx => ({
+    const lineTimes: { idx: number; time: number }[] = contentLineIndices.map((idx) => ({
       idx,
-      time: validLines[idx].startTime ?? 0
+      time: validLines[idx].startTime ?? 0,
     }));
     lineTimes.sort((a, b) => a.time - b.time);
 

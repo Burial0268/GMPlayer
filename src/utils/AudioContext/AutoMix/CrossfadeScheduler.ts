@@ -11,10 +11,10 @@
  * to smoothly transition spectral energy balance between tracks.
  */
 
-import { AudioContextManager } from '../AudioContextManager';
-import { getCrossfadeValues, buildCurveArray } from './curves';
-import { SpectralEQ } from './SpectralEQ';
-import type { CrossfadeCurve, CrossfadeParams, SpectralCrossfadeData } from './types';
+import { AudioContextManager } from "../AudioContextManager";
+import { getCrossfadeValues, buildCurveArray } from "./curves";
+import { SpectralEQ } from "./SpectralEQ";
+import type { CrossfadeCurve, CrossfadeParams, SpectralCrossfadeData } from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -32,7 +32,7 @@ export class CrossfadeScheduler {
   private _isActive: boolean = false;
   private _startTime: number = 0;
   private _duration: number = 0;
-  private _curve: CrossfadeCurve = 'equalPower';
+  private _curve: CrossfadeCurve = "equalPower";
   private _incomingTargetGain: number = 1;
   private _outgoingTargetGain: number = 1;
   private _rafId: number | null = null;
@@ -60,7 +60,7 @@ export class CrossfadeScheduler {
     outgoingGain: GainNode,
     incomingGain: GainNode,
     params: CrossfadeParams,
-    onComplete?: () => void
+    onComplete?: () => void,
   ): void {
     this.cancel();
 
@@ -79,7 +79,7 @@ export class CrossfadeScheduler {
 
     const audioCtx = AudioContextManager.getContext();
     if (!audioCtx) {
-      console.warn('CrossfadeScheduler: No AudioContext available');
+      console.warn("CrossfadeScheduler: No AudioContext available");
       this._isActive = false;
       return;
     }
@@ -100,8 +100,13 @@ export class CrossfadeScheduler {
     // Set up spectral crossfade EQ if data provided
     if (this._spectralData) {
       this._spectralEQ.setup(
-        audioCtx, outgoingGain, incomingGain,
-        this._spectralData, now, params.duration, this._fadeInOnly
+        audioCtx,
+        outgoingGain,
+        incomingGain,
+        this._spectralData,
+        now,
+        params.duration,
+        this._fadeInOnly,
       );
     }
 
@@ -114,7 +119,7 @@ export class CrossfadeScheduler {
     if (IS_DEV) {
       console.log(
         `CrossfadeScheduler: Started ${params.curve} crossfade, duration=${params.duration}s` +
-        (this._spectralData ? ', spectral=on' : '')
+          (this._spectralData ? ", spectral=on" : ""),
       );
     }
   }
@@ -127,7 +132,7 @@ export class CrossfadeScheduler {
     audioCtx: AudioContext,
     startTime: number,
     startProgress: number = 0,
-    endProgress: number = 1
+    endProgress: number = 1,
   ): void {
     const effectiveDuration = this._duration * (endProgress - startProgress);
     if (effectiveDuration <= 0) return;
@@ -138,18 +143,28 @@ export class CrossfadeScheduler {
 
     // Schedule incoming curve (always)
     const inCurve = buildCurveArray(
-      resolution, startProgress, endProgress,
-      this._curve, this._inShape, this._outShape,
-      this._incomingTargetGain, 'incoming'
+      resolution,
+      startProgress,
+      endProgress,
+      this._curve,
+      this._inShape,
+      this._outShape,
+      this._incomingTargetGain,
+      "incoming",
     );
     this._incomingGain!.gain.setValueCurveAtTime(inCurve, startTime, effectiveDuration);
 
     // Schedule outgoing curve (unless fadeInOnly)
     if (!this._fadeInOnly && this._outgoingGain) {
       const outCurve = buildCurveArray(
-        resolution, startProgress, endProgress,
-        this._curve, this._inShape, this._outShape,
-        this._outgoingTargetGain, 'outgoing'
+        resolution,
+        startProgress,
+        endProgress,
+        this._curve,
+        this._inShape,
+        this._outShape,
+        this._outgoingTargetGain,
+        "outgoing",
       );
       this._outgoingGain.gain.setValueCurveAtTime(outCurve, startTime, effectiveDuration);
     }
@@ -176,11 +191,14 @@ export class CrossfadeScheduler {
     // setTimeout backup: fires even in background tabs (throttled to ~1/sec but still works)
     const ctx = AudioContextManager.getContext();
     if (ctx) {
-      const remaining = (this._startTime + this._duration) - ctx.currentTime;
-      this._completionTimerId = setTimeout(() => {
-        this._completionTimerId = null;
-        if (this._isActive && !this._isPaused) this._finish();
-      }, (Math.max(remaining, 0) + 0.5) * 1000);
+      const remaining = this._startTime + this._duration - ctx.currentTime;
+      this._completionTimerId = setTimeout(
+        () => {
+          this._completionTimerId = null;
+          if (this._isActive && !this._isPaused) this._finish();
+        },
+        (Math.max(remaining, 0) + 0.5) * 1000,
+      );
     }
 
     const check = (): void => {
@@ -234,7 +252,7 @@ export class CrossfadeScheduler {
     this._spectralEQ.cleanupWithReconnect(this._outgoingGain, this._incomingGain);
 
     if (IS_DEV) {
-      console.log('CrossfadeScheduler: Crossfade complete');
+      console.log("CrossfadeScheduler: Crossfade complete");
     }
 
     const cb = this._onComplete;
@@ -263,7 +281,12 @@ export class CrossfadeScheduler {
     // Compute current progress and expected gain values from the curve function
     const elapsed = audioCtx.currentTime - this._startTime;
     this._pausedProgress = Math.min(elapsed / this._duration, 1);
-    const [outVol, inVol] = getCrossfadeValues(this._pausedProgress, this._curve, this._inShape, this._outShape);
+    const [outVol, inVol] = getCrossfadeValues(
+      this._pausedProgress,
+      this._curve,
+      this._inShape,
+      this._outShape,
+    );
 
     const now = audioCtx.currentTime;
 
@@ -281,7 +304,9 @@ export class CrossfadeScheduler {
     this._spectralEQ.pauseAt(this._pausedProgress, now);
 
     if (IS_DEV) {
-      console.log(`CrossfadeScheduler: Crossfade paused at progress=${this._pausedProgress.toFixed(3)}`);
+      console.log(
+        `CrossfadeScheduler: Crossfade paused at progress=${this._pausedProgress.toFixed(3)}`,
+      );
     }
   }
 
@@ -320,7 +345,7 @@ export class CrossfadeScheduler {
     if (IS_DEV) {
       console.log(
         `CrossfadeScheduler: Crossfade resumed from progress=${this._pausedProgress.toFixed(3)}, ` +
-        `remaining=${remainingDuration.toFixed(2)}s`
+          `remaining=${remainingDuration.toFixed(2)}s`,
       );
     }
   }
@@ -388,7 +413,7 @@ export class CrossfadeScheduler {
     }, 100);
 
     if (IS_DEV) {
-      console.log('CrossfadeScheduler: Force-completing with 50ms ramp');
+      console.log("CrossfadeScheduler: Force-completing with 50ms ramp");
     }
   }
 
@@ -411,7 +436,12 @@ export class CrossfadeScheduler {
       const now = audioCtx.currentTime;
       const elapsed = now - this._startTime;
       const progress = Math.min(elapsed / this._duration, 1);
-      const [outVol, inVol] = getCrossfadeValues(progress, this._curve, this._inShape, this._outShape);
+      const [outVol, inVol] = getCrossfadeValues(
+        progress,
+        this._curve,
+        this._inShape,
+        this._outShape,
+      );
 
       // Fast fade using computed values as starting points
       if (this._outgoingGain) {
@@ -437,7 +467,7 @@ export class CrossfadeScheduler {
     this._onComplete = null;
 
     if (IS_DEV) {
-      console.log('CrossfadeScheduler: Crossfade cancelled');
+      console.log("CrossfadeScheduler: Crossfade cancelled");
     }
   }
 

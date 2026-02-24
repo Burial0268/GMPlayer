@@ -31,9 +31,7 @@ const artistId = ref(router.currentRoute.value.query.id);
 const artistData = ref([]);
 const pagelimit = ref(30);
 const pageNumber = ref(
-  router.currentRoute.value.query.page
-    ? Number(router.currentRoute.value.query.page)
-    : 1
+  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 const totalCount = ref(0);
 
@@ -46,16 +44,25 @@ const getArtistVideosData = (id: string | number | string[], limit = 30, offset 
     // 列表数据
     artistData.value = [];
     if (res.mvs) {
-      res.mvs.forEach((v: { id: number; imgurl16v9: string; name: string; artist: any; playCount: string | number; duration: number; }) => {
-        artistData.value.push({
-          id: v.id,
-          cover: v.imgurl16v9,
-          name: v.name,
-          artist: [v.artist],
-          playCount: formatNumber(v.playCount),
-          duration: getSongTime(v.duration),
-        });
-      });
+      res.mvs.forEach(
+        (v: {
+          id: number;
+          imgurl16v9: string;
+          name: string;
+          artist: any;
+          playCount: string | number;
+          duration: number;
+        }) => {
+          artistData.value.push({
+            id: v.id,
+            cover: v.imgurl16v9,
+            name: v.name,
+            artist: [v.artist],
+            playCount: formatNumber(v.playCount),
+            duration: getSongTime(v.duration),
+          });
+        },
+      );
     } else {
       $message.error("搜索内容为空");
     }
@@ -79,19 +86,11 @@ const pageNumberChange = (val: number) => {
 const pageSizeChange = (val: number) => {
   console.log(val);
   pagelimit.value = val;
-  getArtistVideosData(
-    artistId.value,
-    val,
-    (pageNumber.value - 1) * pagelimit.value
-  );
+  getArtistVideosData(artistId.value, val, (pageNumber.value - 1) * pagelimit.value);
 };
 
 onMounted(() => {
-  getArtistVideosData(
-    artistId.value,
-    pagelimit.value,
-    (pageNumber.value - 1) * pagelimit.value
-  );
+  getArtistVideosData(artistId.value, pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
 });
 
 // 监听路由参数变化
@@ -104,9 +103,9 @@ watch(
       getArtistVideosData(
         artistId.value,
         pagelimit.value,
-        (pageNumber.value - 1) * pagelimit.value
+        (pageNumber.value - 1) * pagelimit.value,
       );
     }
-  }
+  },
 );
 </script>

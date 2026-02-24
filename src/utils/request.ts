@@ -1,4 +1,10 @@
-import axios, { AxiosRequestConfig, AxiosResponse, AxiosError, InternalAxiosRequestConfig, AxiosHeaders } from "axios";
+import axios, {
+  AxiosRequestConfig,
+  AxiosResponse,
+  AxiosError,
+  InternalAxiosRequestConfig,
+  AxiosHeaders,
+} from "axios";
 
 // Extend AxiosRequestConfig to include custom hiddenBar property
 export interface CustomAxiosRequestConfig extends AxiosRequestConfig {
@@ -39,19 +45,18 @@ axios.interceptors.request.use(
     // 确保凭据设置为 true
     request.withCredentials = true;
     // 确保 X-Requested-With 请求头存在
-    if (!request.headers.has('X-Requested-With')) {
-      request.headers.set('X-Requested-With', 'XMLHttpRequest');
+    if (!request.headers.has("X-Requested-With")) {
+      request.headers.set("X-Requested-With", "XMLHttpRequest");
     }
 
-    if (!request.hiddenBar && typeof $loadingBar !== "undefined")
-      $loadingBar.start();
+    if (!request.hiddenBar && typeof $loadingBar !== "undefined") $loadingBar.start();
     return request;
   },
   (error: AxiosError) => {
     if (typeof $loadingBar !== "undefined") $loadingBar.error();
     console.error("请求失败，请稍后重试");
     return Promise.reject(error);
-  }
+  },
 );
 
 // 响应拦截
@@ -85,7 +90,7 @@ axios.interceptors.response.use(
       console.error("请求失败，请稍后重试");
     }
     return Promise.reject(error);
-  }
+  },
 );
 
 // Create a typed request function

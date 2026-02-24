@@ -22,39 +22,44 @@ export type {
   ParsedYrcLine,
   RawLyricData,
   ParsedLyricResult,
-} from './types';
+} from "./types";
 
 // Time utilities
-export { parseLrcTime, formatLrcTime, detectYrcType } from './timeUtils';
+export { parseLrcTime, formatLrcTime, detectYrcType } from "./timeUtils";
 
 // Entry parsing
-export { parseLrcToEntries, buildTimeMap, strictTimeMatch, strictTimeMatchBinary } from './parser/entryParser';
+export {
+  parseLrcToEntries,
+  buildTimeMap,
+  strictTimeMatch,
+  strictTimeMatchBinary,
+} from "./parser/entryParser";
 
 // Format parsing
-export { parseLrcLines, parseYrcLines, buildAMLLData, convertToAMLL } from './parser/formatParser';
+export { parseLrcLines, parseYrcLines, buildAMLLData, convertToAMLL } from "./parser/formatParser";
 
 // Alignment
-export { alignByIndex, isInterludeLine, buildIndexMatching } from './alignment';
+export { alignByIndex, isInterludeLine, buildIndexMatching } from "./alignment";
 
 // Main parser
-export { parseLyricData, formatAsLrc, createEmptyLyricResult, resetSongLyric } from './lyricParser';
+export { parseLyricData, formatAsLrc, createEmptyLyricResult, resetSongLyric } from "./lyricParser";
 
 // Processing
-export { processLyrics, preprocessLyrics, getProcessedLyrics } from './processor';
+export { processLyrics, preprocessLyrics, getProcessedLyrics } from "./processor";
 
 // Service
-export { LyricService } from './service';
+export { LyricService } from "./service";
 
 // === Backward compatibility aliases ===
 // These allow old import names to keep working
 
-export { parseLyricData as parseLyric } from './lyricParser';
-export { formatAsLrc as formatToLrc } from './lyricParser';
-export { parseLrcLines as parseLrcData } from './parser/formatParser';
-export { parseYrcLines as parseYrcData } from './parser/formatParser';
-export { buildAMLLData as parseAMData } from './parser/formatParser';
-export { alignByIndex as alignLyrics } from './alignment';
-export { createEmptyLyricResult as getDefaultLyricResult } from './lyricParser';
+export { parseLyricData as parseLyric } from "./lyricParser";
+export { formatAsLrc as formatToLrc } from "./lyricParser";
+export { parseLrcLines as parseLrcData } from "./parser/formatParser";
+export { parseYrcLines as parseYrcData } from "./parser/formatParser";
+export { buildAMLLData as parseAMData } from "./parser/formatParser";
+export { alignByIndex as alignLyrics } from "./alignment";
+export { createEmptyLyricResult as getDefaultLyricResult } from "./lyricParser";
 
 // Default export for backward compatibility
-export { parseLyricData as default } from './lyricParser';
+export { parseLyricData as default } from "./lyricParser";

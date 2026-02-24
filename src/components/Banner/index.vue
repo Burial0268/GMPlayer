@@ -22,9 +22,7 @@
         :key="item"
       >
         <img
-          :src="
-            item.imageUrl.replace(/^http:/, 'https:') + '?imageView&quality=89'
-          "
+          :src="item.imageUrl.replace(/^http:/, 'https:') + '?imageView&quality=89'"
           alt="banner"
           @click="bannerJump(item.targetType, item.targetId, item.url)"
         />
@@ -51,7 +49,7 @@ const bannerData = ref([]);
 // 请求轮播图数据
 const getBannerData = () => {
   getBanner().then((res) => {
-    console.log('轮播图数据',res);
+    console.log("轮播图数据", res);
     bannerData.value = res.banners;
   });
 };

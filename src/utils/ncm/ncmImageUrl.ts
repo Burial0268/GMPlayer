@@ -26,8 +26,7 @@ function encryptId(idStr: string): string {
   const bytes = new Uint8Array((_md5.end(true) as Int32Array).buffer);
 
   // 一次展开避免循环拼接
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/[/+]/g, (c) => (c === "/" ? "_" : "-"));
+  return btoa(String.fromCharCode(...bytes)).replace(/[/+]/g, (c) => (c === "/" ? "_" : "-"));
 }
 
 /**

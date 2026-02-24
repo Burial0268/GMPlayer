@@ -54,7 +54,7 @@ const updateCanvasSize = () => {
  * 绘制音乐频谱图
  * @param {Array} data - 包含音频频谱数据的数组
  */
- const drawSpectrum = (data) => {
+const drawSpectrum = (data) => {
   if (!data || !data.length) return;
 
   const canvas = canvasRef.value;
@@ -127,20 +127,23 @@ const stopDraw = () => {
 let resizeObserver = null;
 
 // Control RAF loop based on visibility
-watch(() => props.show, (visible) => {
-  if (visible) {
-    updateCanvasSize();
-    startDraw();
-  } else {
-    stopDraw();
-  }
-});
+watch(
+  () => props.show,
+  (visible) => {
+    if (visible) {
+      updateCanvasSize();
+      startDraw();
+    } else {
+      stopDraw();
+    }
+  },
+);
 
 onMounted(() => {
   updateCanvasSize();
 
   // Watch for container/window resize
-  if (typeof ResizeObserver !== 'undefined' && canvasRef.value?.parentElement) {
+  if (typeof ResizeObserver !== "undefined" && canvasRef.value?.parentElement) {
     resizeObserver = new ResizeObserver(updateCanvasSize);
     resizeObserver.observe(canvasRef.value.parentElement);
   }
@@ -173,36 +176,44 @@ onBeforeUnmount(() => {
   opacity: 0.6;
   pointer-events: none;
   transition: opacity 0.3s;
-  mask: linear-gradient(90deg,
-      hsla(0, 0%, 100%, 0) 0,
-      hsla(0, 0%, 100%, 0.6) 10%,
-      #fff 15%,
-      #fff 85%,
-      hsla(0, 0%, 100%, 0.6) 90%,
-      hsla(0, 0%, 100%, 0));
-  -webkit-mask: linear-gradient(90deg,
-      hsla(0, 0%, 100%, 0) 0,
-      hsla(0, 0%, 100%, 0.6) 10%,
-      #fff 15%,
-      #fff 85%,
-      hsla(0, 0%, 100%, 0.6) 90%,
-      hsla(0, 0%, 100%, 0));
+  mask: linear-gradient(
+    90deg,
+    hsla(0, 0%, 100%, 0) 0,
+    hsla(0, 0%, 100%, 0.6) 10%,
+    #fff 15%,
+    #fff 85%,
+    hsla(0, 0%, 100%, 0.6) 90%,
+    hsla(0, 0%, 100%, 0)
+  );
+  -webkit-mask: linear-gradient(
+    90deg,
+    hsla(0, 0%, 100%, 0) 0,
+    hsla(0, 0%, 100%, 0.6) 10%,
+    #fff 15%,
+    #fff 85%,
+    hsla(0, 0%, 100%, 0.6) 90%,
+    hsla(0, 0%, 100%, 0)
+  );
 
   .spectrum-line {
-    mask: linear-gradient(90deg,
-        hsla(0, 0%, 100%, 0) 0,
-        hsla(0, 0%, 100%, 0.6) 5%,
-        #fff 10%,
-        #fff 90%,
-        hsla(0, 0%, 100%, 0.6) 95%,
-        hsla(0, 0%, 100%, 0));
-    -webkit-mask: linear-gradient(90deg,
-        hsla(0, 0%, 100%, 0) 0,
-        hsla(0, 0%, 100%, 0.6) 5%,
-        #fff 10%,
-        #fff 90%,
-        hsla(0, 0%, 100%, 0.6) 95%,
-        hsla(0, 0%, 100%, 0));
+    mask: linear-gradient(
+      90deg,
+      hsla(0, 0%, 100%, 0) 0,
+      hsla(0, 0%, 100%, 0.6) 5%,
+      #fff 10%,
+      #fff 90%,
+      hsla(0, 0%, 100%, 0.6) 95%,
+      hsla(0, 0%, 100%, 0)
+    );
+    -webkit-mask: linear-gradient(
+      90deg,
+      hsla(0, 0%, 100%, 0) 0,
+      hsla(0, 0%, 100%, 0.6) 5%,
+      #fff 10%,
+      #fff 90%,
+      hsla(0, 0%, 100%, 0.6) 95%,
+      hsla(0, 0%, 100%, 0)
+    );
   }
 }
 </style>

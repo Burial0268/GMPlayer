@@ -6,7 +6,7 @@
  * - Proper cleanup of global references
  */
 
-import type { ISound } from './types';
+import type { ISound } from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -21,14 +21,14 @@ class SoundManagerClass {
   unload(): void {
     if (this._outgoingSound) {
       if (IS_DEV) {
-        console.log('SoundManager: unloading outgoing sound');
+        console.log("SoundManager: unloading outgoing sound");
       }
       this._outgoingSound.unload();
       this._outgoingSound = null;
     }
     if (this._currentSound) {
       if (IS_DEV) {
-        console.log('SoundManager: unloading current sound');
+        console.log("SoundManager: unloading current sound");
       }
       this._currentSound.unload();
       this._currentSound = null;
@@ -53,7 +53,7 @@ class SoundManagerClass {
    */
   beginTransition(newSound: ISound): void {
     if (IS_DEV) {
-      console.log('SoundManager: beginTransition — current → outgoing');
+      console.log("SoundManager: beginTransition — current → outgoing");
     }
     // If there's already an outgoing sound, unload it first
     if (this._outgoingSound) {
@@ -69,7 +69,7 @@ class SoundManagerClass {
   unloadOutgoing(): void {
     if (this._outgoingSound) {
       if (IS_DEV) {
-        console.log('SoundManager: unloading outgoing sound');
+        console.log("SoundManager: unloading outgoing sound");
       }
       this._outgoingSound.unload();
       this._outgoingSound = null;
@@ -84,7 +84,7 @@ class SoundManagerClass {
   revertTransition(): void {
     if (!this._outgoingSound) return;
     if (IS_DEV) {
-      console.log('SoundManager: revertTransition — incoming → unloaded, outgoing → current');
+      console.log("SoundManager: revertTransition — incoming → unloaded, outgoing → current");
     }
     if (this._currentSound) {
       this._currentSound.stop();

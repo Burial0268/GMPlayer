@@ -43,10 +43,7 @@
         <n-scrollbar>
           <div class="all-cat" v-if="music.catList?.sub[0]">
             <n-list>
-              <n-list-item
-                v-for="(cat, key) in music.catList.categories"
-                :key="cat"
-              >
+              <n-list-item v-for="(cat, key) in music.catList.categories" :key="cat">
                 <template #prefix>
                   <n-text class="type"> {{ cat }} </n-text>
                 </template>
@@ -56,7 +53,7 @@
                     class="tag"
                     size="large"
                     v-for="item in music.catList.sub.filter(
-                      (v: { category: string | number; }) => v.category == key
+                      (v: { category: string | number }) => v.category == key,
                     )"
                     :key="item"
                     :bordered="false"
@@ -65,11 +62,7 @@
                   >
                     {{ item.name }}
                     <template #icon>
-                      <n-icon
-                        class="icon"
-                        v-if="item.hot"
-                        :component="LocalFireDepartmentRound"
-                      />
+                      <n-icon class="icon" v-if="item.hot" :component="LocalFireDepartmentRound" />
                     </template>
                   </n-tag>
                 </n-space>
@@ -87,11 +80,7 @@
         align="center"
       >
         <n-text>{{ $t("general.name.bestPlaylist") }}</n-text>
-        <n-switch
-          v-model:value="hqPLayListOpen"
-          @update:value="hqPLayListChange"
-          :round="false"
-        />
+        <n-switch v-model:value="hqPLayListOpen" @update:value="hqPLayListChange" :round="false" />
       </n-space>
     </div>
     <CoverLists :listData="playlistsData" />
@@ -141,9 +130,7 @@ const music = musicStore();
 // 分类数据
 const catModalShow = ref(false);
 const catName = ref(
-  router.currentRoute.value.query.cat
-    ? router.currentRoute.value.query.cat
-    : "全部歌单"
+  router.currentRoute.value.query.cat ? router.currentRoute.value.query.cat : "全部歌单",
 );
 
 // 歌单数据
@@ -151,9 +138,7 @@ const playlistsData = ref([]);
 const totalCount = ref(0);
 const pagelimit = ref(30);
 const pageNumber = ref(
-  router.currentRoute.value.query.page
-    ? Number(router.currentRoute.value.query.page)
-    : 1
+  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 
 // 精品歌单数据
@@ -162,7 +147,7 @@ const hqPLayListOpen = ref(
     ? router.currentRoute.value.query.hq == "true"
       ? true
       : false
-    : false
+    : false,
 );
 const hasMore = ref(true);
 const loading = ref(false);
@@ -172,7 +157,7 @@ const getHaveHqPlaylists = (array: any[], name: string) => {
   if (name == "全部歌单") {
     return true;
   } else {
-    return array.some((item: { name: any; }) => {
+    return array.some((item: { name: any }) => {
       return item.name == name;
     });
   }
@@ -279,11 +264,7 @@ watch(
   (val) => {
     if (val.name == "dsc-playlists") {
       catName.value = val.query.cat ? val.query.cat : "全部歌单";
-      hqPLayListOpen.value = val.query.hq
-        ? val.query.hq == "true"
-          ? true
-          : false
-        : false;
+      hqPLayListOpen.value = val.query.hq ? (val.query.hq == "true" ? true : false) : false;
       if (hqPLayListOpen.value) {
         playlistsData.value = [];
         getHqPlaylistData(catName.value.toString());
@@ -292,18 +273,17 @@ watch(
         getPlaylistData(
           catName.value.toString(),
           pagelimit.value,
-          (pageNumber.value - 1) * pagelimit.value
+          (pageNumber.value - 1) * pagelimit.value,
         );
       }
     }
-  }
+  },
 );
 
 onMounted(() => {
   $setSiteTitle(t("nav.discover") + " - " + t("general.name.playlist"));
   // 获取歌单分类
-  if (!music.catList.sub || !music.highqualityCatList[0])
-    music.setCatList(true);
+  if (!music.catList.sub || !music.highqualityCatList[0]) music.setCatList(true);
   // 获取歌单数据
   if (hqPLayListOpen.value) {
     getHqPlaylistData(catName.value.toString());
@@ -311,7 +291,7 @@ onMounted(() => {
     getPlaylistData(
       catName.value.toString(),
       pagelimit.value,
-      (pageNumber.value - 1) * pagelimit.value
+      (pageNumber.value - 1) * pagelimit.value,
     );
   }
 });

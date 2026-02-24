@@ -13,7 +13,7 @@
 // ─── Protocol types ────────────────────────────────────────────────
 
 interface AnalysisRequest {
-  type: 'analyze';
+  type: "analyze";
   id: number;
   /** Mono PCM samples (Transferable) */
   monoData: Float32Array;
@@ -52,7 +52,16 @@ interface SpectralFingerprint {
   bands: number[];
 }
 
-type OutroType = 'hard' | 'fadeOut' | 'reverbTail' | 'silence' | 'noiseEnd' | 'slowDown' | 'sustained' | 'musicalOutro' | 'loopFade';
+type OutroType =
+  | "hard"
+  | "fadeOut"
+  | "reverbTail"
+  | "silence"
+  | "noiseEnd"
+  | "slowDown"
+  | "sustained"
+  | "musicalOutro"
+  | "loopFade";
 
 interface OutroAnalysis {
   outroType: OutroType;
@@ -75,7 +84,7 @@ interface OutroAnalysis {
 }
 
 interface AnalysisResponse {
-  type: 'result';
+  type: "result";
   id: number;
   volume: VolumeAnalysis;
   energy: EnergyAnalysis;
@@ -87,7 +96,7 @@ interface AnalysisResponse {
 }
 
 interface ErrorResponse {
-  type: 'error';
+  type: "error";
   id: number;
   error: string;
 }
@@ -98,7 +107,7 @@ const TARGET_LUFS = -14;
 const REFERENCE_RMS = 0.707;
 
 const BPM_ANALYSIS_DURATION = 30; // seconds
-const BPM_ANALYSIS_RATE = 11025;  // downsample target
+const BPM_ANALYSIS_RATE = 11025; // downsample target
 const MIN_BPM = 60;
 const MAX_BPM = 200;
 
@@ -116,9 +125,7 @@ function analyzeVolume(data: Float32Array): VolumeAnalysis {
   }
 
   const rms = Math.sqrt(sumSquares / length);
-  const estimatedLUFS = rms > 0
-    ? 20 * Math.log10(rms / REFERENCE_RMS) - 0.691
-    : -70;
+  const estimatedLUFS = rms > 0 ? 20 * Math.log10(rms / REFERENCE_RMS) - 0.691 : -70;
 
   const lufsOffset = TARGET_LUFS - estimatedLUFS;
   const rawGain = Math.pow(10, lufsOffset / 20);
@@ -141,7 +148,10 @@ function analyzeEnergy(data: Float32Array, sampleRate: number, duration: number)
     const start = (sec * sampleRate) | 0;
     const end = Math.min(((sec + 1) * sampleRate) | 0, length);
     const count = end - start;
-    if (count <= 0) { energyPerSecond[sec] = 0; continue; }
+    if (count <= 0) {
+      energyPerSecond[sec] = 0;
+      continue;
+    }
 
     let sumSq = 0;
     for (let i = start; i < end; i++) {
@@ -248,7 +258,14 @@ function analyzeEnergy(data: Float32Array, sampleRate: number, duration: number)
     }
   }
 
-  return { energyPerSecond, outroStartOffset, introEndOffset, averageEnergy, trailingSilence, isFadeOut };
+  return {
+    energyPerSecond,
+    outroStartOffset,
+    introEndOffset,
+    averageEnergy,
+    trailingSilence,
+    isFadeOut,
+  };
 }
 
 // ─── BPM Detection (efficient time-domain approach) ────────────────
@@ -270,7 +287,11 @@ function downsample(data: Float32Array, srcRate: number, dstRate: number): Float
 /**
  * Extract a time window from the middle of the track.
  */
-function extractWindow(data: Float32Array, sampleRate: number, windowSec: number): { samples: Float32Array; offsetSec: number } {
+function extractWindow(
+  data: Float32Array,
+  sampleRate: number,
+  windowSec: number,
+): { samples: Float32Array; offsetSec: number } {
   const totalSamples = data.length;
   const windowSamples = Math.min((windowSec * sampleRate) | 0, totalSamples);
   const start = Math.max(0, ((totalSamples - windowSamples) / 2) | 0);
@@ -285,7 +306,11 @@ function extractWindow(data: Float32Array, sampleRate: number, windowSec: number
  * O(N) — simply computes RMS per hop and takes the half-wave rectified difference.
  * This replaces the O(N²) spectral flux DFT from the original implementation.
  */
-function computeOnsetEnvelope(samples: Float32Array, hopSize: number, frameSize: number): Float32Array {
+function computeOnsetEnvelope(
+  samples: Float32Array,
+  hopSize: number,
+  frameSize: number,
+): Float32Array {
   const frameCount = Math.floor((samples.length - frameSize) / hopSize);
   if (frameCount <= 1) return new Float32Array(0);
 
@@ -317,7 +342,7 @@ function computeOnsetEnvelope(samples: Float32Array, hopSize: number, frameSize:
  */
 function detectBPMFromEnvelope(
   envelope: Float32Array,
-  hopsPerSecond: number
+  hopsPerSecond: number,
 ): { bpm: number; confidence: number } {
   if (envelope.length < 2) return { bpm: 120, confidence: 0 };
 
@@ -333,8 +358,8 @@ function detectBPMFromEnvelope(
   }
 
   // Lag range corresponding to BPM range
-  const minLag = Math.max(1, Math.floor(hopsPerSecond * 60 / MAX_BPM));
-  const maxLag = Math.min(len - 1, Math.floor(hopsPerSecond * 60 / MIN_BPM));
+  const minLag = Math.max(1, Math.floor((hopsPerSecond * 60) / MAX_BPM));
+  const maxLag = Math.min(len - 1, Math.floor((hopsPerSecond * 60) / MIN_BPM));
   const correlations = new Float32Array(maxLag + 1);
 
   // Zero-lag autocorrelation (for confidence normalization)
@@ -364,8 +389,8 @@ function detectBPMFromEnvelope(
     bestLag,
     Math.round(bestLag / 2),
     bestLag * 2,
-    Math.round(bestLag * 2 / 3),
-    Math.round(bestLag * 3 / 2),
+    Math.round((bestLag * 2) / 3),
+    Math.round((bestLag * 3) / 2),
   ];
 
   let refinedLag = bestLag;
@@ -389,7 +414,7 @@ function detectBPMFromEnvelope(
     }
   }
 
-  const bpm = Math.round((hopsPerSecond * 60 / refinedLag) * 10) / 10;
+  const bpm = Math.round(((hopsPerSecond * 60) / refinedLag) * 10) / 10;
   const confidence = zeroCorr > 0 ? Math.min(1, Math.max(0, maxCorr / zeroCorr)) : 0;
 
   return { bpm, confidence };
@@ -404,14 +429,22 @@ function generateBeatGrid(bpm: number, durationSec: number): number[] {
   return beats;
 }
 
-function runBPMDetection(data: Float32Array, sampleRate: number, duration: number): BPMResult | null {
+function runBPMDetection(
+  data: Float32Array,
+  sampleRate: number,
+  duration: number,
+): BPMResult | null {
   if (duration < 5) return null;
 
   // Downsample to analysis rate
   const downsampled = downsample(data, sampleRate, BPM_ANALYSIS_RATE);
 
   // Extract 30s window from middle
-  const { samples, offsetSec } = extractWindow(downsampled, BPM_ANALYSIS_RATE, BPM_ANALYSIS_DURATION);
+  const { samples, offsetSec } = extractWindow(
+    downsampled,
+    BPM_ANALYSIS_RATE,
+    BPM_ANALYSIS_DURATION,
+  );
 
   // Onset envelope (efficient time-domain approach)
   const hopSize = 256;
@@ -437,13 +470,13 @@ function computeFingerprint(data: Float32Array, sampleRate: number): SpectralFin
 
   // 8 perceptual frequency bands
   const bandEdges: [number, number][] = [
-    [20, 150],      // sub-bass
-    [150, 400],     // bass
-    [400, 800],     // low-mid
-    [800, 1500],    // mid
-    [1500, 3000],   // upper-mid
-    [3000, 6000],   // presence
-    [6000, 10000],  // brilliance
+    [20, 150], // sub-bass
+    [150, 400], // bass
+    [400, 800], // low-mid
+    [800, 1500], // mid
+    [1500, 3000], // upper-mid
+    [3000, 6000], // presence
+    [6000, 10000], // brilliance
     [10000, Math.min(16000, sampleRate / 2 - 100)], // air
   ];
 
@@ -502,8 +535,11 @@ function computeFingerprint(data: Float32Array, sampleRate: number): SpectralFin
 // ─── IIR Filter Infrastructure ─────────────────────────────────────
 
 interface BiquadCoeffs {
-  b0: number; b1: number; b2: number;
-  a1: number; a2: number;
+  b0: number;
+  b1: number;
+  b2: number;
+  a1: number;
+  a2: number;
 }
 
 /**
@@ -513,7 +549,7 @@ interface BiquadCoeffs {
 function designBiquadBandpass(fLow: number, fHigh: number, sampleRate: number): BiquadCoeffs {
   const center = Math.sqrt(fLow * fHigh);
   const bandwidth = fHigh - fLow;
-  const w0 = 2 * Math.PI * center / sampleRate;
+  const w0 = (2 * Math.PI * center) / sampleRate;
   const Q = center / bandwidth;
   const alpha = Math.sin(w0) / (2 * Q);
 
@@ -534,17 +570,17 @@ function designBiquadBandpass(fLow: number, fHigh: number, sampleRate: number): 
 function designKWeightShelf(sampleRate: number): BiquadCoeffs {
   const f0 = 2000;
   const gainDB = 4;
-  const w0 = 2 * Math.PI * f0 / sampleRate;
+  const w0 = (2 * Math.PI * f0) / sampleRate;
   const A = Math.pow(10, gainDB / 40);
   const alpha = Math.sin(w0) / (2 * 0.707); // Q = 0.707 (Butterworth)
 
-  const a0 = (A + 1) - (A - 1) * Math.cos(w0) + 2 * Math.sqrt(A) * alpha;
+  const a0 = A + 1 - (A - 1) * Math.cos(w0) + 2 * Math.sqrt(A) * alpha;
   return {
-    b0: (A * ((A + 1) + (A - 1) * Math.cos(w0) + 2 * Math.sqrt(A) * alpha)) / a0,
-    b1: (-2 * A * ((A - 1) + (A + 1) * Math.cos(w0))) / a0,
-    b2: (A * ((A + 1) + (A - 1) * Math.cos(w0) - 2 * Math.sqrt(A) * alpha)) / a0,
-    a1: (2 * ((A - 1) - (A + 1) * Math.cos(w0))) / a0,
-    a2: ((A + 1) - (A - 1) * Math.cos(w0) - 2 * Math.sqrt(A) * alpha) / a0,
+    b0: (A * (A + 1 + (A - 1) * Math.cos(w0) + 2 * Math.sqrt(A) * alpha)) / a0,
+    b1: (-2 * A * (A - 1 + (A + 1) * Math.cos(w0))) / a0,
+    b2: (A * (A + 1 + (A - 1) * Math.cos(w0) - 2 * Math.sqrt(A) * alpha)) / a0,
+    a1: (2 * (A - 1 - (A + 1) * Math.cos(w0))) / a0,
+    a2: (A + 1 - (A - 1) * Math.cos(w0) - 2 * Math.sqrt(A) * alpha) / a0,
   };
 }
 
@@ -584,25 +620,30 @@ function analyzeOutroMultiband(
   data: Float32Array,
   sampleRate: number,
   duration: number,
-  trailingSilence: number
+  trailingSilence: number,
 ): OutroAnalysis | null {
   const contentDuration = duration - trailingSilence;
   if (contentDuration < 10) return null; // too short for meaningful analysis
 
   const analysisDuration = Math.min(OUTRO_ANALYSIS_SECONDS, contentDuration);
-  const windowSamples = Math.floor(sampleRate * OUTRO_WINDOW_MS / 1000);
-  const totalWindows = Math.floor(analysisDuration * 1000 / OUTRO_WINDOW_MS);
+  const windowSamples = Math.floor((sampleRate * OUTRO_WINDOW_MS) / 1000);
+  const totalWindows = Math.floor((analysisDuration * 1000) / OUTRO_WINDOW_MS);
 
   if (totalWindows < 4 || windowSamples < 1) return null;
 
   // Compute sample range: last `analysisDuration` seconds of content
   const contentEndSample = Math.floor((duration - trailingSilence) * sampleRate);
-  const analysisStartSample = Math.max(0, contentEndSample - Math.floor(analysisDuration * sampleRate));
+  const analysisStartSample = Math.max(
+    0,
+    contentEndSample - Math.floor(analysisDuration * sampleRate),
+  );
 
   // Design filters
   const lowState = createIIRState(designBiquadBandpass(20, 300, sampleRate));
   const midState = createIIRState(designBiquadBandpass(300, 4000, sampleRate));
-  const highState = createIIRState(designBiquadBandpass(4000, Math.min(16000, sampleRate / 2 - 100), sampleRate));
+  const highState = createIIRState(
+    designBiquadBandpass(4000, Math.min(16000, sampleRate / 2 - 100), sampleRate),
+  );
   const kState = createIIRState(designKWeightShelf(sampleRate));
 
   // Warm up filters: run 200 samples before analysis region
@@ -622,10 +663,15 @@ function analyzeOutroMultiband(
   const loudness: number[] = new Array(totalWindows);
   const flux: number[] = new Array(totalWindows);
 
-  let accumLow = 0, accumMid = 0, accumHigh = 0, accumK = 0;
+  let accumLow = 0,
+    accumMid = 0,
+    accumHigh = 0,
+    accumK = 0;
   let sampleInWindow = 0;
   let windowIdx = 0;
-  let prevLow = 0, prevMid = 0, prevHigh = 0;
+  let prevLow = 0,
+    prevMid = 0,
+    prevHigh = 0;
 
   const endSample = Math.min(analysisStartSample + totalWindows * windowSamples, data.length);
 
@@ -667,7 +713,10 @@ function analyzeOutroMultiband(
       prevMid = rmsMid;
       prevHigh = rmsHigh;
 
-      accumLow = 0; accumMid = 0; accumHigh = 0; accumK = 0;
+      accumLow = 0;
+      accumMid = 0;
+      accumHigh = 0;
+      accumK = 0;
       sampleInWindow = 0;
       windowIdx++;
     }
@@ -690,7 +739,7 @@ function analyzeOutroMultiband(
     duration,
     trailingSilence,
     analysisDuration,
-    actualWindows
+    actualWindows,
   );
 
   return {
@@ -710,7 +759,7 @@ function analyzeOutroMultiband(
 function detectRepetitionPeriod(
   arr: number[],
   start: number,
-  end: number
+  end: number,
 ): { period: number; confidence: number } {
   const len = end - start;
   if (len < 8) return { period: 0, confidence: 0 };
@@ -756,7 +805,7 @@ function detectSlowDown(
   flux: number[],
   start: number,
   end: number,
-  medianFlux: number
+  medianFlux: number,
 ): { detected: boolean; slope: number; r2: number } {
   // Find onset peaks: flux values > 1.5× median
   const threshold = medianFlux * 1.5;
@@ -777,7 +826,10 @@ function detectSlowDown(
 
   // Linear regression: intervals[i] = a + b*i
   const n = intervals.length;
-  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  let sumX = 0,
+    sumY = 0,
+    sumXY = 0,
+    sumX2 = 0;
   for (let i = 0; i < n; i++) {
     sumX += i;
     sumY += intervals[i];
@@ -792,7 +844,8 @@ function detectSlowDown(
   const meanY = sumY / n;
 
   // R² calculation
-  let ssTot = 0, ssRes = 0;
+  let ssTot = 0,
+    ssRes = 0;
   for (let i = 0; i < n; i++) {
     const predicted = intercept + slope * i;
     ssRes += (intervals[i] - predicted) ** 2;
@@ -814,9 +867,11 @@ function detectSlowDown(
 function computeLocalBandRatio(
   bands: { low: number[]; mid: number[]; high: number[] },
   start: number,
-  end: number
+  end: number,
 ): [number, number, number] {
-  let sumLow = 0, sumMid = 0, sumHigh = 0;
+  let sumLow = 0,
+    sumMid = 0,
+    sumHigh = 0;
   for (let i = start; i < end; i++) {
     sumLow += bands.low[i];
     sumMid += bands.mid[i];
@@ -831,7 +886,9 @@ function computeLocalBandRatio(
  * Cosine similarity between two 3-element vectors.
  */
 function cosineSimilarity3(a: [number, number, number], b: [number, number, number]): number {
-  let dot = 0, n1 = 0, n2 = 0;
+  let dot = 0,
+    n1 = 0,
+    n2 = 0;
   for (let i = 0; i < 3; i++) {
     dot += a[i] * b[i];
     n1 += a[i] * a[i];
@@ -861,7 +918,7 @@ function classifyOutro(
   duration: number,
   trailingSilence: number,
   analysisDuration: number,
-  windowCount: number
+  windowCount: number,
 ): ClassificationResult {
   const windowDuration = OUTRO_WINDOW_MS / 1000; // 0.25s
 
@@ -882,19 +939,31 @@ function classifyOutro(
   if (trailingSilence >= duration * 0.5) {
     const musicalEndOffset = trailingSilence;
     return {
-      outroType: 'silence',
+      outroType: "silence",
       outroConfidence: 0.95,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('silence', musicalEndOffset, duration, trailingSilence, 0.95),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+        "silence",
+        musicalEndOffset,
+        duration,
+        trailingSilence,
+        0.95,
+      ),
     };
   }
-  const allSilent = totalEnergy.every(e => e < 0.001);
+  const allSilent = totalEnergy.every((e) => e < 0.001);
   if (allSilent) {
     return {
-      outroType: 'silence',
+      outroType: "silence",
       outroConfidence: 0.9,
       musicalEndOffset: analysisDuration,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('silence', analysisDuration, duration, trailingSilence, 0.9),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+        "silence",
+        analysisDuration,
+        duration,
+        trailingSilence,
+        0.9,
+      ),
     };
   }
 
@@ -916,12 +985,26 @@ function classifyOutro(
   // Require 60% match (was 50%) and 50% high-dominant (was 40%)
   if (noiseCount > tailLen * 0.6 && highDominantCount > tailLen * 0.5) {
     const conf = Math.min(0.9, noiseCount / tailLen);
-    const musicalEndOffset = computeMusicalEndOffset('noiseEnd', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+    const musicalEndOffset = computeMusicalEndOffset(
+      "noiseEnd",
+      bands,
+      flux,
+      duration,
+      trailingSilence,
+      analysisDuration,
+      windowCount,
+    );
     return {
-      outroType: 'noiseEnd',
+      outroType: "noiseEnd",
       outroConfidence: conf,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('noiseEnd', musicalEndOffset, duration, trailingSilence, conf),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+        "noiseEnd",
+        musicalEndOffset,
+        duration,
+        trailingSilence,
+        conf,
+      ),
     };
   }
 
@@ -929,7 +1012,9 @@ function classifyOutro(
   const loopScanWindows = Math.min(120, windowCount);
   const loopScanStart = windowCount - loopScanWindows;
   const { period: loopPeriodIdx, confidence: loopConf } = detectRepetitionPeriod(
-    totalEnergy, loopScanStart, windowCount
+    totalEnergy,
+    loopScanStart,
+    windowCount,
   );
   // Require autocorrelation > 0.75 (was 0.65), period 2-32 windows (1-8s)
   if (loopConf > 0.75 && loopPeriodIdx >= 2 && loopPeriodIdx <= 32) {
@@ -941,8 +1026,13 @@ function classifyOutro(
       for (let p = 1; p < checkWindows; p++) {
         const prevStart = loopScanStart + (p - 1) * loopPeriodIdx;
         const currStart = loopScanStart + p * loopPeriodIdx;
-        let prevAvg = 0, currAvg = 0;
-        for (let j = 0; j < loopPeriodIdx && prevStart + j < windowCount && currStart + j < windowCount; j++) {
+        let prevAvg = 0,
+          currAvg = 0;
+        for (
+          let j = 0;
+          j < loopPeriodIdx && prevStart + j < windowCount && currStart + j < windowCount;
+          j++
+        ) {
           prevAvg += totalEnergy[prevStart + j];
           currAvg += totalEnergy[currStart + j];
         }
@@ -952,8 +1042,15 @@ function classifyOutro(
       // Require overall energy decrease > 40% (first period vs last period)
       const firstPeriodStart = loopScanStart;
       const lastPeriodStart = loopScanStart + (checkWindows - 1) * loopPeriodIdx;
-      let firstPeriodAvg = 0, lastPeriodAvg = 0;
-      for (let j = 0; j < loopPeriodIdx && firstPeriodStart + j < windowCount && lastPeriodStart + j < windowCount; j++) {
+      let firstPeriodAvg = 0,
+        lastPeriodAvg = 0;
+      for (
+        let j = 0;
+        j < loopPeriodIdx &&
+        firstPeriodStart + j < windowCount &&
+        lastPeriodStart + j < windowCount;
+        j++
+      ) {
         firstPeriodAvg += totalEnergy[firstPeriodStart + j];
         lastPeriodAvg += totalEnergy[lastPeriodStart + j];
       }
@@ -962,23 +1059,43 @@ function classifyOutro(
       if (decreasingCount / (checkWindows - 1) > 0.7 && overallDecrease > 0.4) {
         // Spectral stability gate
         const loopHalf = Math.floor(loopScanWindows / 2);
-        const firstHalfRatio = computeLocalBandRatio(bands, loopScanStart, loopScanStart + loopHalf);
+        const firstHalfRatio = computeLocalBandRatio(
+          bands,
+          loopScanStart,
+          loopScanStart + loopHalf,
+        );
         const secondHalfRatio = computeLocalBandRatio(bands, loopScanStart + loopHalf, windowCount);
         let spectralStable = true;
         for (let b = 0; b < 3; b++) {
-          if (firstHalfRatio[b] > 0.01 && secondHalfRatio[b] / firstHalfRatio[b] > 2) spectralStable = false;
-          if (secondHalfRatio[b] > 0.01 && firstHalfRatio[b] / secondHalfRatio[b] > 2) spectralStable = false;
+          if (firstHalfRatio[b] > 0.01 && secondHalfRatio[b] / firstHalfRatio[b] > 2)
+            spectralStable = false;
+          if (secondHalfRatio[b] > 0.01 && firstHalfRatio[b] / secondHalfRatio[b] > 2)
+            spectralStable = false;
         }
 
         if (spectralStable) {
           const loopPeriodSec = loopPeriodIdx * windowDuration;
           const conf = Math.min(0.9, loopConf);
-          const musicalEndOffset = computeMusicalEndOffset('loopFade', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+          const musicalEndOffset = computeMusicalEndOffset(
+            "loopFade",
+            bands,
+            flux,
+            duration,
+            trailingSilence,
+            analysisDuration,
+            windowCount,
+          );
           return {
-            outroType: 'loopFade',
+            outroType: "loopFade",
             outroConfidence: conf,
             musicalEndOffset,
-            suggestedCrossfadeStart: computeSuggestedCrossfadeStart('loopFade', musicalEndOffset, duration, trailingSilence, conf),
+            suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+              "loopFade",
+              musicalEndOffset,
+              duration,
+              trailingSilence,
+              conf,
+            ),
             loopPeriod: loopPeriodSec,
           };
         }
@@ -998,7 +1115,7 @@ function classifyOutro(
     if (windowCount - (start + fadeLen) > 4) continue;
 
     let increaseCount = 0;
-    const maxIncreases = Math.floor(fadeLen * 0.10); // 10% (was 15%)
+    const maxIncreases = Math.floor(fadeLen * 0.1); // 10% (was 15%)
 
     let decreasing = true;
     for (let i = start + 1; i < windowCount; i++) {
@@ -1048,12 +1165,26 @@ function classifyOutro(
   }
 
   if (fadeDetected && fadeStartIdx >= 0) {
-    const musicalEndOffset = computeMusicalEndOffset('fadeOut', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+    const musicalEndOffset = computeMusicalEndOffset(
+      "fadeOut",
+      bands,
+      flux,
+      duration,
+      trailingSilence,
+      analysisDuration,
+      windowCount,
+    );
     return {
-      outroType: 'fadeOut',
+      outroType: "fadeOut",
       outroConfidence: fadeConfidence,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('fadeOut', musicalEndOffset, duration, trailingSilence, fadeConfidence),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+        "fadeOut",
+        musicalEndOffset,
+        duration,
+        trailingSilence,
+        fadeConfidence,
+      ),
     };
   }
 
@@ -1064,13 +1195,27 @@ function classifyOutro(
   // Require r2 > 0.5 (was 0.3 in detectSlowDown) and at least 8 onset peaks (was 6)
   if (slowDownResult.detected && slowDownResult.r2 > 0.5) {
     const conf = Math.min(0.75, 0.5 + slowDownResult.r2 * 0.25); // cap at 0.75 (was 0.85)
-    const musicalEndOffset = computeMusicalEndOffset('slowDown', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+    const musicalEndOffset = computeMusicalEndOffset(
+      "slowDown",
+      bands,
+      flux,
+      duration,
+      trailingSilence,
+      analysisDuration,
+      windowCount,
+    );
     const decelerationStartSec = duration - analysisDuration + slowDownStart * windowDuration;
     return {
-      outroType: 'slowDown',
+      outroType: "slowDown",
       outroConfidence: conf,
       musicalEndOffset,
-      suggestedCrossfadeStart: computeSuggestedCrossfadeStart('slowDown', musicalEndOffset, duration, trailingSilence, conf),
+      suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+        "slowDown",
+        musicalEndOffset,
+        duration,
+        trailingSilence,
+        conf,
+      ),
       decelerationStart: Math.max(0, decelerationStartSec),
     };
   }
@@ -1119,13 +1264,27 @@ function classifyOutro(
 
       if (energySlope > -0.001 && energySlope <= 0 && isNotReverbLike && ratioStable) {
         const conf = Math.min(0.75, 0.5 + (maxConsecutiveLowFlux / 80) * 0.25); // cap at 0.75 (was 0.85)
-        const musicalEndOffset = computeMusicalEndOffset('sustained', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+        const musicalEndOffset = computeMusicalEndOffset(
+          "sustained",
+          bands,
+          flux,
+          duration,
+          trailingSilence,
+          analysisDuration,
+          windowCount,
+        );
         const sustainOnsetSec = duration - analysisDuration + sustainBlockStart * windowDuration;
         return {
-          outroType: 'sustained',
+          outroType: "sustained",
           outroConfidence: conf,
           musicalEndOffset,
-          suggestedCrossfadeStart: computeSuggestedCrossfadeStart('sustained', musicalEndOffset, duration, trailingSilence, conf),
+          suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+            "sustained",
+            musicalEndOffset,
+            duration,
+            trailingSilence,
+            conf,
+          ),
           sustainOnset: Math.max(0, sustainOnsetSec),
         };
       }
@@ -1156,21 +1315,35 @@ function classifyOutro(
     // Similarity threshold: < 0.5 (was < 0.7)
     if (similarity < 0.5 && hasEnergy && isDeclining) {
       const conf = Math.min(0.7, 0.4 + (0.5 - similarity) * 0.6); // cap at 0.7 (was 0.85)
-      const musicalEndOffset = computeMusicalEndOffset('musicalOutro', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+      const musicalEndOffset = computeMusicalEndOffset(
+        "musicalOutro",
+        bands,
+        flux,
+        duration,
+        trailingSilence,
+        analysisDuration,
+        windowCount,
+      );
       const outroSectionStartSec = duration - analysisDuration + outroRegionStart * windowDuration;
       return {
-        outroType: 'musicalOutro',
+        outroType: "musicalOutro",
         outroConfidence: conf,
         musicalEndOffset,
-        suggestedCrossfadeStart: computeSuggestedCrossfadeStart('musicalOutro', musicalEndOffset, duration, trailingSilence, conf),
+        suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+          "musicalOutro",
+          musicalEndOffset,
+          duration,
+          trailingSilence,
+          conf,
+        ),
         outroSectionStart: Math.max(0, outroSectionStartSec),
       };
     }
   }
 
   // ── Priority 8: Reverb tail ── Stricter
-  const reverbMinWindows = 12;  // 3s (was 8 / 2s)
-  const reverbMaxWindows = 32;  // 8s
+  const reverbMinWindows = 12; // 3s (was 8 / 2s)
+  const reverbMaxWindows = 32; // 8s
 
   const reverbScanStart = Math.max(0, windowCount - reverbMaxWindows);
 
@@ -1197,12 +1370,26 @@ function classifyOutro(
 
       if (fluxNonZero && fluxDecreasing) {
         const conf = Math.min(0.85, 0.5 + Math.abs(midHighAvgDecay / lowDecay - 3) * 0.1);
-        const musicalEndOffset = computeMusicalEndOffset('reverbTail', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+        const musicalEndOffset = computeMusicalEndOffset(
+          "reverbTail",
+          bands,
+          flux,
+          duration,
+          trailingSilence,
+          analysisDuration,
+          windowCount,
+        );
         return {
-          outroType: 'reverbTail',
+          outroType: "reverbTail",
           outroConfidence: conf,
           musicalEndOffset,
-          suggestedCrossfadeStart: computeSuggestedCrossfadeStart('reverbTail', musicalEndOffset, duration, trailingSilence, conf),
+          suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+            "reverbTail",
+            musicalEndOffset,
+            duration,
+            trailingSilence,
+            conf,
+          ),
         };
       }
     }
@@ -1218,12 +1405,26 @@ function classifyOutro(
     }
   }
 
-  const musicalEndOffset = computeMusicalEndOffset('hard', bands, flux, duration, trailingSilence, analysisDuration, windowCount);
+  const musicalEndOffset = computeMusicalEndOffset(
+    "hard",
+    bands,
+    flux,
+    duration,
+    trailingSilence,
+    analysisDuration,
+    windowCount,
+  );
   return {
-    outroType: 'hard',
+    outroType: "hard",
     outroConfidence: hardConfidence,
     musicalEndOffset,
-    suggestedCrossfadeStart: computeSuggestedCrossfadeStart('hard', musicalEndOffset, duration, trailingSilence, hardConfidence),
+    suggestedCrossfadeStart: computeSuggestedCrossfadeStart(
+      "hard",
+      musicalEndOffset,
+      duration,
+      trailingSilence,
+      hardConfidence,
+    ),
   };
 }
 
@@ -1234,7 +1435,10 @@ function classifyOutro(
 function linearRegressionR2(arr: number[], start: number, end: number): number {
   const n = end - start;
   if (n < 3) return 0;
-  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  let sumX = 0,
+    sumY = 0,
+    sumXY = 0,
+    sumX2 = 0;
   for (let i = start; i < end; i++) {
     const x = i - start;
     const y = arr[i];
@@ -1248,7 +1452,8 @@ function linearRegressionR2(arr: number[], start: number, end: number): number {
   const slope = (n * sumXY - sumX * sumY) / denom;
   const intercept = (sumY - slope * sumX) / n;
   const meanY = sumY / n;
-  let ssTot = 0, ssRes = 0;
+  let ssTot = 0,
+    ssRes = 0;
   for (let i = start; i < end; i++) {
     const x = i - start;
     const predicted = intercept + slope * x;
@@ -1265,7 +1470,10 @@ function linearRegressionR2(arr: number[], start: number, end: number): number {
 function linearDecayRate(arr: number[], start: number, end: number): number {
   const n = end - start;
   if (n < 2) return 0;
-  let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+  let sumX = 0,
+    sumY = 0,
+    sumXY = 0,
+    sumX2 = 0;
   for (let i = start; i < end; i++) {
     const x = i - start;
     const y = arr[i];
@@ -1288,12 +1496,12 @@ function computeMusicalEndOffset(
   duration: number,
   trailingSilence: number,
   analysisDuration: number,
-  windowCount: number
+  windowCount: number,
 ): number {
   const windowDuration = OUTRO_WINDOW_MS / 1000;
 
   switch (outroType) {
-    case 'fadeOut': {
+    case "fadeOut": {
       // Use the actual fade start point, not the beginning of the analysis region.
       // Find where mid-band starts declining consistently.
       const midLen = bands.mid.length;
@@ -1316,12 +1524,12 @@ function computeMusicalEndOffset(
       return trailingSilence + 2; // fallback
     }
 
-    case 'reverbTail': {
+    case "reverbTail": {
       // Last point where flux > 2× tail-region average
       const tailRegionStart = Math.floor(windowCount * 0.7);
       let tailAvg = 0;
       for (let i = tailRegionStart; i < windowCount; i++) tailAvg += flux[i];
-      tailAvg /= (windowCount - tailRegionStart);
+      tailAvg /= windowCount - tailRegionStart;
 
       for (let i = windowCount - 1; i >= tailRegionStart; i--) {
         if (flux[i] > tailAvg * 2) {
@@ -1332,7 +1540,7 @@ function computeMusicalEndOffset(
       return (windowCount - tailRegionStart) * windowDuration + trailingSilence;
     }
 
-    case 'noiseEnd': {
+    case "noiseEnd": {
       // Where flux pattern changes (music → noise): find max first-derivative of flux
       let maxDerivChange = 0;
       let changeIdx = Math.floor(windowCount * 0.5);
@@ -1350,7 +1558,7 @@ function computeMusicalEndOffset(
       return offsetFromAnalysisEnd + trailingSilence;
     }
 
-    case 'hard': {
+    case "hard": {
       // Where energy last exceeds 10% of average
       let avgE = 0;
       for (let i = 0; i < windowCount; i++) {
@@ -1369,7 +1577,7 @@ function computeMusicalEndOffset(
       return trailingSilence;
     }
 
-    case 'slowDown': {
+    case "slowDown": {
       // Last point where flux has significant onsets
       for (let i = windowCount - 1; i >= Math.floor(windowCount * 0.5); i--) {
         const e = bands.low[i] + bands.mid[i] + bands.high[i];
@@ -1381,12 +1589,12 @@ function computeMusicalEndOffset(
       return trailingSilence + 2;
     }
 
-    case 'sustained': {
+    case "sustained": {
       // Where flux drops to sustained-level low values
       const tailRegionStart3 = Math.floor(windowCount * 0.6);
       let tailAvg3 = 0;
       for (let i = tailRegionStart3; i < windowCount; i++) tailAvg3 += flux[i];
-      tailAvg3 /= (windowCount - tailRegionStart3);
+      tailAvg3 /= windowCount - tailRegionStart3;
 
       for (let i = windowCount - 1; i >= tailRegionStart3; i--) {
         if (flux[i] > tailAvg3 * 3) {
@@ -1397,7 +1605,7 @@ function computeMusicalEndOffset(
       return (windowCount - tailRegionStart3) * windowDuration + trailingSilence;
     }
 
-    case 'musicalOutro': {
+    case "musicalOutro": {
       // Where spectral shape diverges from the main body
       // Use energy threshold: last point where energy exceeds 20% of average
       let avgE2 = 0;
@@ -1416,14 +1624,14 @@ function computeMusicalEndOffset(
       return trailingSilence;
     }
 
-    case 'loopFade': {
+    case "loopFade": {
       // Where energy drops below 30% of the looped region average
       const loopRegionStart = Math.floor(windowCount * 0.5);
       let loopAvg = 0;
       for (let i = loopRegionStart; i < windowCount; i++) {
         loopAvg += bands.low[i] + bands.mid[i] + bands.high[i];
       }
-      loopAvg /= (windowCount - loopRegionStart);
+      loopAvg /= windowCount - loopRegionStart;
 
       for (let i = windowCount - 1; i >= loopRegionStart; i--) {
         const e = bands.low[i] + bands.mid[i] + bands.high[i];
@@ -1435,7 +1643,7 @@ function computeMusicalEndOffset(
       return trailingSilence + 2;
     }
 
-    case 'silence':
+    case "silence":
       return trailingSilence;
 
     default:
@@ -1452,7 +1660,7 @@ function computeSuggestedCrossfadeStart(
   musicalEndOffset: number,
   duration: number,
   trailingSilence: number,
-  outroConfidence: number
+  outroConfidence: number,
 ): number {
   let start: number;
 
@@ -1460,47 +1668,47 @@ function computeSuggestedCrossfadeStart(
   const confidenceBuffer = (1 - outroConfidence) * 4; // 0-4s extra buffer for low confidence
 
   switch (outroType) {
-    case 'fadeOut':
+    case "fadeOut":
       // Start 30% before the 50% fade point (proportional to musicalEndOffset)
       start = duration - musicalEndOffset * 1.3;
       break;
 
-    case 'reverbTail':
+    case "reverbTail":
       // Start 1s before tail begins
       start = duration - musicalEndOffset - 1;
       break;
 
-    case 'noiseEnd':
+    case "noiseEnd":
       // At musicalEndOffset (before applause/noise)
       start = duration - musicalEndOffset;
       break;
 
-    case 'hard':
+    case "hard":
       // Buffer before cliff, proportional + confidence-scaled
       start = duration - musicalEndOffset - Math.min(4, musicalEndOffset * 0.5) - confidenceBuffer;
       break;
 
-    case 'slowDown':
+    case "slowDown":
       // Start at ~70% of the remaining deceleration region
       start = duration - musicalEndOffset - Math.min(4, musicalEndOffset * 0.3) - confidenceBuffer;
       break;
 
-    case 'sustained':
+    case "sustained":
       // Start at musicalEndOffset + proportional buffer
       start = duration - musicalEndOffset - Math.min(2, musicalEndOffset * 0.2) - confidenceBuffer;
       break;
 
-    case 'musicalOutro':
+    case "musicalOutro":
       // Start at ~60% into the outro section
       start = duration - musicalEndOffset * 0.6 - confidenceBuffer;
       break;
 
-    case 'loopFade':
+    case "loopFade":
       // Start early, proportional to musicalEndOffset
       start = duration - musicalEndOffset * 1.2;
       break;
 
-    case 'silence':
+    case "silence":
       // Before silence starts, proportional to silence length
       start = duration - trailingSilence - Math.min(8, trailingSilence * 0.3);
       break;
@@ -1540,26 +1748,30 @@ const INTRO_ANALYSIS_SECONDS = 20;
 function analyzeIntroMultiband(
   data: Float32Array,
   sampleRate: number,
-  duration: number
+  duration: number,
 ): { low: number[]; mid: number[]; high: number[] } | null {
   if (duration < 5) return null;
 
   const analysisDuration = Math.min(INTRO_ANALYSIS_SECONDS, duration);
-  const windowSamples = Math.floor(sampleRate * OUTRO_WINDOW_MS / 1000);
-  const totalWindows = Math.floor(analysisDuration * 1000 / OUTRO_WINDOW_MS);
+  const windowSamples = Math.floor((sampleRate * OUTRO_WINDOW_MS) / 1000);
+  const totalWindows = Math.floor((analysisDuration * 1000) / OUTRO_WINDOW_MS);
 
   if (totalWindows < 4 || windowSamples < 1) return null;
 
   // Design same filters as outro analysis
   const lowState = createIIRState(designBiquadBandpass(20, 300, sampleRate));
   const midState = createIIRState(designBiquadBandpass(300, 4000, sampleRate));
-  const highState = createIIRState(designBiquadBandpass(4000, Math.min(16000, sampleRate / 2 - 100), sampleRate));
+  const highState = createIIRState(
+    designBiquadBandpass(4000, Math.min(16000, sampleRate / 2 - 100), sampleRate),
+  );
 
   const low: number[] = new Array(totalWindows);
   const mid: number[] = new Array(totalWindows);
   const high: number[] = new Array(totalWindows);
 
-  let accumLow = 0, accumMid = 0, accumHigh = 0;
+  let accumLow = 0,
+    accumMid = 0,
+    accumHigh = 0;
   let sampleInWindow = 0;
   let windowIdx = 0;
 
@@ -1581,7 +1793,9 @@ function analyzeIntroMultiband(
       mid[windowIdx] = Math.sqrt(accumMid / sampleInWindow);
       high[windowIdx] = Math.sqrt(accumHigh / sampleInWindow);
 
-      accumLow = 0; accumMid = 0; accumHigh = 0;
+      accumLow = 0;
+      accumMid = 0;
+      accumHigh = 0;
       sampleInWindow = 0;
       windowIdx++;
     }
@@ -1605,7 +1819,7 @@ function analyzeIntro(
   averageEnergy: number,
   data: Float32Array,
   sampleRate: number,
-  duration: number
+  duration: number,
 ): IntroAnalysis | null {
   const scanLen = Math.min(INTRO_SCAN_SECONDS, energyPerSecond.length);
   if (scanLen < 4) return null;
@@ -1637,7 +1851,7 @@ function analyzeIntro(
   // Average energy of first 20s relative to track average
   let sum = 0;
   for (let i = 0; i < scanLen; i++) sum += energyPerSecond[i];
-  const introEnergyRatio = averageEnergy > 0.001 ? (sum / scanLen) / averageEnergy : 1;
+  const introEnergyRatio = averageEnergy > 0.001 ? sum / scanLen / averageEnergy : 1;
 
   const multibandEnergy = analyzeIntroMultiband(data, sampleRate, duration);
 
@@ -1654,7 +1868,7 @@ function analyzeIntro(
 self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
   const { type, id, monoData, sampleRate, duration, analyzeBPM } = e.data;
 
-  if (type !== 'analyze') return;
+  if (type !== "analyze") return;
 
   try {
     const volume = analyzeVolume(monoData);
@@ -1662,10 +1876,16 @@ self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
     const bpm = analyzeBPM ? runBPMDetection(monoData, sampleRate, duration) : null;
     const fingerprint = computeFingerprint(monoData, sampleRate);
     const outro = analyzeOutroMultiband(monoData, sampleRate, duration, energy.trailingSilence);
-    const intro = analyzeIntro(energy.energyPerSecond, energy.averageEnergy, monoData, sampleRate, duration);
+    const intro = analyzeIntro(
+      energy.energyPerSecond,
+      energy.averageEnergy,
+      monoData,
+      sampleRate,
+      duration,
+    );
 
     const response: AnalysisResponse = {
-      type: 'result',
+      type: "result",
       id,
       volume,
       energy,
@@ -1679,7 +1899,7 @@ self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
     (self as unknown as Worker).postMessage(response);
   } catch (err) {
     const response: ErrorResponse = {
-      type: 'error',
+      type: "error",
       id,
       error: err instanceof Error ? err.message : String(err),
     };

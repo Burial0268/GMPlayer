@@ -1,23 +1,17 @@
 <template>
   <Transition mode="out-in">
-    <div
-      v-if="music.getPersonalFmData?.id"
-      class="papersonalfm"
-    >
+    <div v-if="music.getPersonalFmData?.id" class="papersonalfm">
       <div
         class="papersonalfm-bg"
         :style="`background-image: url(${music.getPersonalFmData.album.picUrl.replace(
           /^http:/,
-          'https:'
+          'https:',
         )}?param=300y300)`"
       />
       <div class="gray" />
       <img
         class="pic"
-        :src="
-          music.getPersonalFmData.album.picUrl.replace(/^http:/, 'https:') +
-          '?param=300y300'
-        "
+        :src="music.getPersonalFmData.album.picUrl.replace(/^http:/, 'https:') + '?param=300y300'"
         alt="pic"
       />
       <div class="data">
@@ -28,10 +22,7 @@
           >
             {{ music.getPersonalFmData.name }}
           </span>
-          <AllArtists
-            class="text-hidden"
-            :artistsData="music.getPersonalFmData.artist"
-          />
+          <AllArtists class="text-hidden" :artistsData="music.getPersonalFmData.artist" />
         </div>
         <div class="controls">
           <n-icon
@@ -46,12 +37,7 @@
             "
             @click="fmPlayOrPause"
           />
-          <n-icon
-            class="next"
-            size="30"
-            :component="SkipNextRound"
-            @click="fmNext"
-          />
+          <n-icon class="next" size="30" :component="SkipNextRound" @click="fmNext" />
           <n-icon
             class="dislike"
             size="20"

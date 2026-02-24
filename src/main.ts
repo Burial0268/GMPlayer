@@ -8,14 +8,12 @@ import router from "@/router";
 
 // 全局样式
 import "@/style/global.scss";
-import '@/style/animate.scss'
+import "@/style/animate.scss";
 
 const pinia = createPinia();
 pinia.use(piniaPluginPersistedstate);
 
-const app = createApp(App)
-  .use(pinia)
-  .use(router);
+const app = createApp(App).use(pinia).use(router);
 
 // 国际化
 useI18n(app);

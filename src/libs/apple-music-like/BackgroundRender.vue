@@ -21,7 +21,7 @@ interface BackgroundRenderProps {
   lowFreqVolume?: number;
   renderScale?: number;
   staticMode?: boolean;
-  renderer?: { new(canvas: HTMLCanvasElement): BaseRenderer };
+  renderer?: { new (canvas: HTMLCanvasElement): BaseRenderer };
 }
 
 const props = withDefaults(defineProps<BackgroundRenderProps>(), {
@@ -66,41 +66,65 @@ onUnmounted(() => {
   coreBGRenderRef.value?.dispose();
 });
 
-watch(() => props.album, (newValue) => {
-  if (newValue) coreBGRenderRef.value?.setAlbum(newValue);
-});
+watch(
+  () => props.album,
+  (newValue) => {
+    if (newValue) coreBGRenderRef.value?.setAlbum(newValue);
+  },
+);
 
-watch(() => props.fps, (newValue) => {
-  if (typeof newValue !== 'undefined') coreBGRenderRef.value?.setFPS(newValue);
-});
+watch(
+  () => props.fps,
+  (newValue) => {
+    if (typeof newValue !== "undefined") coreBGRenderRef.value?.setFPS(newValue);
+  },
+);
 
-watch(() => props.playing, (newValue) => {
-  if (newValue) {
-    coreBGRenderRef.value?.resume();
-  } else {
-    coreBGRenderRef.value?.pause();
-  }
-});
+watch(
+  () => props.playing,
+  (newValue) => {
+    if (newValue) {
+      coreBGRenderRef.value?.resume();
+    } else {
+      coreBGRenderRef.value?.pause();
+    }
+  },
+);
 
-watch(() => props.flowSpeed, (newValue) => {
-  if (typeof newValue !== 'undefined') coreBGRenderRef.value?.setFlowSpeed(newValue);
-});
+watch(
+  () => props.flowSpeed,
+  (newValue) => {
+    if (typeof newValue !== "undefined") coreBGRenderRef.value?.setFlowSpeed(newValue);
+  },
+);
 
-watch(() => props.staticMode, (newValue) => {
-  coreBGRenderRef.value?.setStaticMode(newValue);
-});
+watch(
+  () => props.staticMode,
+  (newValue) => {
+    coreBGRenderRef.value?.setStaticMode(newValue);
+  },
+);
 
-watch(() => props.renderScale, (newValue) => {
-  if (newValue) coreBGRenderRef.value?.setRenderScale(newValue);
-});
+watch(
+  () => props.renderScale,
+  (newValue) => {
+    if (newValue) coreBGRenderRef.value?.setRenderScale(newValue);
+  },
+);
 
-watch(() => props.lowFreqVolume, (newValue) => {
-  if (typeof newValue !== 'undefined') coreBGRenderRef.value?.setLowFreqVolume(newValue);
-});
+watch(
+  () => props.lowFreqVolume,
+  (newValue) => {
+    if (typeof newValue !== "undefined") coreBGRenderRef.value?.setLowFreqVolume(newValue);
+  },
+);
 
-watch(() => props.hasLyric, (newValue) => {
-  if (newValue !== undefined) coreBGRenderRef.value?.setHasLyric(newValue);
-});
+watch(
+  () => props.hasLyric,
+  (newValue) => {
+    if (newValue !== undefined) coreBGRenderRef.value?.setHasLyric(newValue);
+  },
+);
 
 defineExpose({
   wrapperEl: wrapperRef,

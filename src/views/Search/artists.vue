@@ -57,10 +57,10 @@ watch(
       getSearchDataList(
         searchKeywords.value,
         pagelimit.value,
-        (pageNumber.value - 1) * pagelimit.value
+        (pageNumber.value - 1) * pagelimit.value,
       );
     }
-  }
+  },
 );
 
 onMounted(() => {

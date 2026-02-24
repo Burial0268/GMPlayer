@@ -6,9 +6,7 @@
     :description="$t('state.prohibitionDesc')"
   >
     <template #footer>
-      <n-button type="primary" @click="router.go(-1)">{{
-        $t("general.name.goBack")
-      }}</n-button>
+      <n-button type="primary" @click="router.go(-1)">{{ $t("general.name.goBack") }}</n-button>
     </template>
   </n-result>
 </template>

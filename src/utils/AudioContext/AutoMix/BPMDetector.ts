@@ -26,7 +26,7 @@ export interface BPMResult {
 export function findNearestBeat(
   beatGrid: number[],
   targetTime: number,
-  analysisOffset: number
+  analysisOffset: number,
 ): number {
   if (beatGrid.length === 0) return targetTime;
 

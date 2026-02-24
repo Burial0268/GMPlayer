@@ -5,7 +5,7 @@ import {
   Hct,
   Score,
 } from "@material/material-color-utilities";
-import { settingStore, siteStore } from '@/store'
+import { settingStore, siteStore } from "@/store";
 import { chunk } from "../chunk";
 
 type RGB = [number, number, number];
@@ -359,7 +359,7 @@ export const getCoverColor = (coverSrc: string): Promise<string> => {
  * @param dom - 包含图像的 DOM 元素
  */
 const calcAccentColor = (dom: HTMLImageElement): void => {
-  const settings = settingStore()
+  const settings = settingStore();
   const site = siteStore();
   let caccentColor: string;
   // 创建一个用于提取颜色的 canvas
@@ -393,7 +393,7 @@ const calcAccentColor = (dom: HTMLImageElement): void => {
 
   caccentColor = getAccentColor(
     Hct.from(theme.palettes[variant].hue, theme.palettes[variant].chroma, 90).toInt(),
-  )
+  );
 
   site.songPicColor = caccentColor;
 };
@@ -401,7 +401,7 @@ const calcAccentColor = (dom: HTMLImageElement): void => {
 /**
  * 使用灰色强调色
  */
-const useGreyAccentColor = (): string => getAccentColor(rgb2Argb(20, 20, 20))
+const useGreyAccentColor = (): string => getAccentColor(rgb2Argb(20, 20, 20));
 
 /**
  * 主色以 RGB 格式返回

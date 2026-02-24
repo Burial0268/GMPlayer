@@ -11,7 +11,7 @@
  *   - JS-side temporal smoothing (EMA α≈0.35) reduces jitter
  */
 
-import { FFTPlayer } from '@applemusic-like-lyrics/fft';
+import { FFTPlayer } from "@applemusic-like-lyrics/fft";
 
 // Module-level flag: if FFTPlayer creation ever fails (wee_alloc heap corruption),
 // don't retry — fall back to AnalyserNode permanently for this session.
@@ -53,7 +53,7 @@ export class WasmFFTManager {
       this._smoothedBuffer = new Float32Array(this._outputSize);
       this._outputBuffer = new Array(this._outputSize).fill(0);
     } catch (err) {
-      console.error('WasmFFTManager: Failed to create FFTPlayer', err);
+      console.error("WasmFFTManager: Failed to create FFTPlayer", err);
       this._fft = null;
       // wee_alloc heap is likely corrupted — prevent all future FFTPlayer creation
       _wasmPermanentlyFailed = true;

@@ -21,10 +21,7 @@
         />
         <n-popover trigger="hover" :keep-alive-on-hover="false">
           <template #trigger>
-            <n-button
-              style="margin-left: 12px"
-              @click="toSearch(cloudMatchBeforeData.name)"
-            >
+            <n-button style="margin-left: 12px" @click="toSearch(cloudMatchBeforeData.name)">
               <template #icon>
                 <n-icon :component="Search" />
               </template>
@@ -41,17 +38,8 @@
         </n-button>
       </n-form-item>
     </n-form>
-    <n-card
-      v-if="cloudMatchId"
-      content-style="padding: 16px"
-      :bordered="false"
-      embedded
-    >
-      <SmallSongData
-        ref="smallSongDataRef"
-        :getDataByID="cloudMatchId"
-        notJump
-      />
+    <n-card v-if="cloudMatchId" content-style="padding: 16px" :bordered="false" embedded>
+      <SmallSongData ref="smallSongDataRef" :getDataByID="cloudMatchId" notJump />
     </n-card>
     <template #footer>
       <n-space justify="end">

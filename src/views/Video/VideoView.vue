@@ -36,11 +36,7 @@
             <n-skeleton text style="width: 60%" />
           </div>
           <div class="content">
-            <Comment
-              v-for="item in commentData.hotComments"
-              :key="item"
-              :commentData="item"
-            />
+            <Comment v-for="item in commentData.hotComments" :key="item" :commentData="item" />
           </div>
         </div>
         <div class="allComments" ref="allCommentsRef">
@@ -53,11 +49,7 @@
             <n-skeleton text style="width: 60%" />
           </div>
           <div class="content">
-            <Comment
-              v-for="item in commentData.allComments"
-              :key="item"
-              :commentData="item"
-            />
+            <Comment v-for="item in commentData.allComments" :key="item" :commentData="item" />
           </div>
         </div>
         <Pagination
@@ -80,11 +72,7 @@ import { musicStore, settingStore } from "@/store";
 import { getVideoDetail, getVideoUrl, getSimiVideo } from "@/api/video";
 import { getComment } from "@/api/comment";
 import { formatNumber, getSongTime } from "@/utils/timeTools";
-import {
-  OndemandVideoFilled,
-  ShareFilled,
-  MessageOutlined,
-} from "@vicons/material";
+import { OndemandVideoFilled, ShareFilled, MessageOutlined } from "@vicons/material";
 import { useI18n } from "vue-i18n";
 import VideoLists from "@/components/DataList/VideoLists.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
@@ -150,11 +138,7 @@ const getVideoData = (id) => {
   getVideoDetail(id).then((res) => {
     videoData.value = res.data;
     $setSiteTitle(
-      res.data.name +
-        " - " +
-        res.data.artists[0].name +
-        " - " +
-        t("general.name.videos")
+      res.data.name + " - " + res.data.artists[0].name + " - " + t("general.name.videos"),
     );
     const requests = res.data.brs.map((v) => {
       return getVideoUrl(id, v.br);
@@ -254,7 +238,7 @@ watch(
       getVideoData(val.query.id);
       getCommentData(val.query.id);
     }
-  }
+  },
 );
 </script>
 

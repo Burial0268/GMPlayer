@@ -1,12 +1,7 @@
 <template>
   <div class="setting">
     <div class="title">{{ $t("nav.avatar.setting") }}</div>
-    <n-tabs
-      class="main-tab"
-      type="segment"
-      @update:value="tabChange"
-      v-model:value="tabValue"
-    >
+    <n-tabs class="main-tab" type="segment" @update:value="tabChange" v-model:value="tabValue">
       <n-tab name="main">{{ $t("setting.main") }}</n-tab>
       <n-tab name="player">{{ $t("setting.player") }}</n-tab>
       <n-tab name="other">{{ $t("general.type.other") }}</n-tab>
@@ -30,7 +25,11 @@ import { useTabTransition } from "@/composables/useTabTransition";
 
 const { t } = useI18n();
 const router = useRouter();
-const { transitionName, updateDirection, syncIndex } = useTabTransition(["main", "player", "other"]);
+const { transitionName, updateDirection, syncIndex } = useTabTransition([
+  "main",
+  "player",
+  "other",
+]);
 
 // Tab 默认选中
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
@@ -50,7 +49,7 @@ watch(
   (val) => {
     tabValue.value = val.path.split("/")[2];
     syncIndex(tabValue.value);
-  }
+  },
 );
 
 onMounted(() => {

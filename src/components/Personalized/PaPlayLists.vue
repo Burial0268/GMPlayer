@@ -6,11 +6,7 @@
         {{ $t("home.title.more") }}
       </span>
     </n-h3>
-    <CoverLists
-      :listData="personalizedData"
-      :loadingNum="12"
-      :gridCollapsed="true"
-    />
+    <CoverLists :listData="personalizedData" :loadingNum="12" :gridCollapsed="true" />
   </div>
 </template>
 

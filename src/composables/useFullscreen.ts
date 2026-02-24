@@ -1,23 +1,15 @@
 import { shallowRef, type Ref } from "vue";
-import {
-  FullscreenRound,
-  FullscreenExitRound,
-} from "@vicons/material";
+import { FullscreenRound, FullscreenExitRound } from "@vicons/material";
 import screenfull from "screenfull";
 import gsap from "gsap";
 
-export function useFullscreen(
-  bigPlayerRef: Ref<HTMLElement | null>,
-  onAfterToggle?: () => void
-) {
+export function useFullscreen(bigPlayerRef: Ref<HTMLElement | null>, onAfterToggle?: () => void) {
   const screenfullIcon = shallowRef(FullscreenRound);
   let timeOut: ReturnType<typeof setTimeout> | null = null;
 
   // Sync icon with actual fullscreen state (handles Escape key, programmatic exit, etc.)
   const onFullscreenChange = () => {
-    screenfullIcon.value = screenfull.isFullscreen
-      ? FullscreenExitRound
-      : FullscreenRound;
+    screenfullIcon.value = screenfull.isFullscreen ? FullscreenExitRound : FullscreenRound;
   };
 
   if (screenfull.isEnabled) {
@@ -34,7 +26,7 @@ export function useFullscreen(
     gsap.fromTo(
       bigPlayerRef.value,
       { scale: wasFullscreen ? 1.05 : 0.95 },
-      { scale: 1, duration: 0.4, ease: "elastic.out(1, 0.5)", clearProps: "transform" }
+      { scale: 1, duration: 0.4, ease: "elastic.out(1, 0.5)", clearProps: "transform" },
     );
 
     // Icon will be updated by the fullscreenchange event listener

@@ -16,12 +16,7 @@
         <n-text class="tip" v-html="$t('nav.userChildren.results')" />
       </div>
     </div>
-    <n-tabs
-      class="main-tab"
-      type="line"
-      @update:value="tabChange"
-      v-model:value="tabValue"
-    >
+    <n-tabs class="main-tab" type="line" @update:value="tabChange" v-model:value="tabValue">
       <n-tab name="playlists">{{ $t("nav.userChildren.playlist") }}</n-tab>
       <n-tab name="like">{{ $t("nav.userChildren.like") }}</n-tab>
       <n-tab name="album">{{ $t("nav.userChildren.album") }}</n-tab>
@@ -47,7 +42,13 @@ import { useTabTransition } from "@/composables/useTabTransition";
 
 const router = useRouter();
 const user = userStore();
-const { transitionName, updateDirection, syncIndex } = useTabTransition(["playlists", "like", "album", "artists", "cloud"]);
+const { transitionName, updateDirection, syncIndex } = useTabTransition([
+  "playlists",
+  "like",
+  "album",
+  "artists",
+  "cloud",
+]);
 
 // Tab 默认选中
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
@@ -67,7 +68,7 @@ watch(
   (val) => {
     tabValue.value = val.path.split("/")[2];
     syncIndex(tabValue.value);
-  }
+  },
 );
 </script>
 

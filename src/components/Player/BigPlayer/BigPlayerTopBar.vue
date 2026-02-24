@@ -2,7 +2,12 @@
   <div class="icon-menu">
     <div class="menu-left">
       <div v-if="showLyricSetting" class="icon">
-        <n-icon class="setting" size="30" :component="SettingsRound" @click="$emit('openSettings')" />
+        <n-icon
+          class="setting"
+          size="30"
+          :component="SettingsRound"
+          @click="$emit('openSettings')"
+        />
       </div>
     </div>
     <div class="menu-right">
@@ -17,10 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  KeyboardArrowDownFilled,
-  SettingsRound,
-} from "@vicons/material";
+import { KeyboardArrowDownFilled, SettingsRound } from "@vicons/material";
 import type { Component } from "vue";
 
 defineProps<{

@@ -13,26 +13,36 @@
  *               CompatibilityScorer, TransitionEffects
  */
 
-import { CrossfadeScheduler } from './CrossfadeScheduler';
-import { PreBufferManager } from './PreBufferManager';
-import { VocalActivityGuard } from './VocalActivityGuard';
-import { CompatibilityScorer } from './CompatibilityScorer';
-import { TransitionEffects } from './TransitionEffects';
-import { getOutroTypeCrossfadeProfile } from './types';
-import { analyzeTrack, spectralSimilarity, type TrackAnalysis, type OutroType } from './TrackAnalyzer';
-import { findNearestBeat } from './BPMDetector';
-import { AudioContextManager } from '../AudioContextManager';
-import { BufferedSound } from '../BufferedSound';
-import { SoundManager } from '../SoundManager';
-import { adoptIncomingSound } from '../PlayerFunctions';
-import { getMusicUrl } from '@/api/song';
-import useMusicDataStore from '@/store/musicData';
-import useSettingDataStore from '@/store/settingData';
-import type { ISound } from '../types';
+import { CrossfadeScheduler } from "./CrossfadeScheduler";
+import { PreBufferManager } from "./PreBufferManager";
+import { VocalActivityGuard } from "./VocalActivityGuard";
+import { CompatibilityScorer } from "./CompatibilityScorer";
+import { TransitionEffects } from "./TransitionEffects";
+import { getOutroTypeCrossfadeProfile } from "./types";
+import {
+  analyzeTrack,
+  spectralSimilarity,
+  type TrackAnalysis,
+  type OutroType,
+} from "./TrackAnalyzer";
+import { findNearestBeat } from "./BPMDetector";
+import { AudioContextManager } from "../AudioContextManager";
+import { BufferedSound } from "../BufferedSound";
+import { SoundManager } from "../SoundManager";
+import { adoptIncomingSound } from "../PlayerFunctions";
+import { getMusicUrl } from "@/api/song";
+import useMusicDataStore from "@/store/musicData";
+import useSettingDataStore from "@/store/settingData";
+import type { ISound } from "../types";
 import type {
-  AutoMixState, CachedAnalysis, CrossfadeCurve,
-  CrossfadeParams, SpectralCrossfadeData, CompatibilityScore, TransitionStrategy,
-} from './types';
+  AutoMixState,
+  CachedAnalysis,
+  CrossfadeCurve,
+  CrossfadeParams,
+  SpectralCrossfadeData,
+  CompatibilityScore,
+  TransitionStrategy,
+} from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -46,7 +56,7 @@ const MIN_CROSSFADE_DURATION = 2;
 const MAX_CACHE_SIZE = 10;
 
 export class TransitionStateMachine {
-  private _state: AutoMixState = 'idle';
+  private _state: AutoMixState = "idle";
 
   // Injected dependencies
   private _crossfadeScheduler: CrossfadeScheduler;
@@ -72,7 +82,7 @@ export class TransitionStateMachine {
   // Settings cache (refreshed from store)
   private _enabled: boolean = false;
   private _settingsCrossfadeDuration: number = 8;
-  private _settingsCurve: CrossfadeCurve = 'equalPower';
+  private _settingsCurve: CrossfadeCurve = "equalPower";
   private _settingsBpmMatch: boolean = true;
   private _settingsBeatAlign: boolean = true;
   private _settingsVolumeNorm: boolean = true;
@@ -120,7 +130,7 @@ export class TransitionStateMachine {
     preBufferManager: PreBufferManager,
     vocalGuard: VocalActivityGuard,
     compatScorer: CompatibilityScorer,
-    transitionEffects: TransitionEffects
+    transitionEffects: TransitionEffects,
   ) {
     this._crossfadeScheduler = crossfadeScheduler;
     this._preBufferManager = preBufferManager;
@@ -129,7 +139,7 @@ export class TransitionStateMachine {
     this._transitionEffects = transitionEffects;
 
     if (IS_DEV) {
-      console.log('TransitionStateMachine: Created');
+      console.log("TransitionStateMachine: Created");
     }
   }
 
@@ -140,7 +150,7 @@ export class TransitionStateMachine {
   }
 
   isCrossfading(): boolean {
-    return this._state === 'crossfading' || this._state === 'finishing';
+    return this._state === "crossfading" || this._state === "finishing";
   }
 
   getCrossfadeProgress(): number {
@@ -160,10 +170,10 @@ export class TransitionStateMachine {
       this._settingStoreRef = useSettingDataStore();
       this._storesReady = true;
       if (IS_DEV) {
-        console.log('TransitionStateMachine: Stores loaded');
+        console.log("TransitionStateMachine: Stores loaded");
       }
     } catch (err) {
-      console.error('TransitionStateMachine: Failed to load stores', err);
+      console.error("TransitionStateMachine: Failed to load stores", err);
     }
   }
 
@@ -171,7 +181,7 @@ export class TransitionStateMachine {
     if (!this._settingStoreRef) return;
     this._enabled = this._settingStoreRef.autoMixEnabled ?? false;
     this._settingsCrossfadeDuration = this._settingStoreRef.autoMixCrossfadeDuration ?? 8;
-    this._settingsCurve = this._settingStoreRef.autoMixTransitionStyle ?? 'equalPower';
+    this._settingsCurve = this._settingStoreRef.autoMixTransitionStyle ?? "equalPower";
     this._settingsBpmMatch = this._settingStoreRef.autoMixBpmMatch ?? true;
     this._settingsBeatAlign = this._settingStoreRef.autoMixBeatAlign ?? true;
     this._settingsVolumeNorm = this._settingStoreRef.autoMixVolumeNorm ?? true;
@@ -185,7 +195,7 @@ export class TransitionStateMachine {
     if (!this._musicStoreRef) return false;
 
     const music = this._musicStoreRef;
-    if (music.persistData.playSongMode === 'single') return false;
+    if (music.persistData.playSongMode === "single") return false;
     if (music.persistData.personalFmMode) return false;
     if (music.persistData.playlists.length < 2) return false;
 
@@ -203,16 +213,18 @@ export class TransitionStateMachine {
     this._refreshSettings();
 
     if (!this._shouldBeActive()) {
-      if (this._state !== 'idle') {
+      if (this._state !== "idle") {
         this.cancelCrossfade();
       }
       return;
     }
 
     if (!currentSound || !currentSound.playing()) {
-      if (this._state === 'waiting' || this._state === 'analyzing') {
+      if (this._state === "waiting" || this._state === "analyzing") {
         if (IS_DEV) {
-          console.log(`TransitionStateMachine: Song ended during ${this._state} state, cleaning up`);
+          console.log(
+            `TransitionStateMachine: Song ended during ${this._state} state, cleaning up`,
+          );
         }
         this.cancelCrossfade();
       }
@@ -224,16 +236,16 @@ export class TransitionStateMachine {
     if (!duration || duration <= 0) return;
 
     switch (this._state) {
-      case 'idle':
+      case "idle":
         this._handleIdle(currentTime, duration);
         break;
-      case 'analyzing':
+      case "analyzing":
         break;
-      case 'waiting':
+      case "waiting":
         this._handleWaiting(currentTime);
         break;
-      case 'crossfading':
-      case 'finishing':
+      case "crossfading":
+      case "finishing":
         break;
     }
   }
@@ -255,10 +267,7 @@ export class TransitionStateMachine {
 
   private _getEffectiveCrossfadeDuration(songDuration: number): number {
     const maxDuration = songDuration / 4;
-    return Math.max(
-      MIN_CROSSFADE_DURATION,
-      Math.min(this._settingsCrossfadeDuration, maxDuration)
-    );
+    return Math.max(MIN_CROSSFADE_DURATION, Math.min(this._settingsCrossfadeDuration, maxDuration));
   }
 
   // ─── State: ANALYZING ──────────────────────────────────────────
@@ -266,26 +275,29 @@ export class TransitionStateMachine {
   private _startAnalysis(): void {
     if (this._analyzingInFlight) return;
 
-    this._state = 'analyzing';
+    this._state = "analyzing";
     this._analyzingInFlight = true;
     this._updateStoreState();
 
     this._doAnalysis()
       .then(() => {
-        if (this._state === 'analyzing') {
-          this._state = 'waiting';
+        if (this._state === "analyzing") {
+          this._state = "waiting";
           this._updateStoreState();
         }
       })
       .catch((err) => {
         if (IS_DEV) {
-          console.warn('TransitionStateMachine: Analysis failed, falling back to time-based transition', err);
+          console.warn(
+            "TransitionStateMachine: Analysis failed, falling back to time-based transition",
+            err,
+          );
         }
-        if (this._state === 'analyzing') {
+        if (this._state === "analyzing") {
           this._currentAnalysis = null;
           this._nextAnalysis = null;
           this._computeCrossfadeParams();
-          this._state = 'waiting';
+          this._state = "waiting";
           this._updateStoreState();
         }
       })
@@ -313,7 +325,7 @@ export class TransitionStateMachine {
           this._currentAnalysis = { songId: currentSong.id, analysis };
           this._addToCache(this._currentAnalysis);
         } catch (err) {
-          if (IS_DEV) console.warn('TransitionStateMachine: Current track analysis failed', err);
+          if (IS_DEV) console.warn("TransitionStateMachine: Current track analysis failed", err);
         }
       }
     } else if (currentSong && this._analysisCache.has(currentSong.id)) {
@@ -321,9 +333,8 @@ export class TransitionStateMachine {
     }
 
     // Check cache for the next track
-    const nextIndex = music.persistData.playSongMode === 'random'
-      ? -1
-      : (currentIndex + 1) % playlist.length;
+    const nextIndex =
+      music.persistData.playSongMode === "random" ? -1 : (currentIndex + 1) % playlist.length;
     if (nextIndex >= 0) {
       const nextSong = playlist[nextIndex];
       if (nextSong && this._analysisCache.has(nextSong.id)) {
@@ -367,56 +378,56 @@ export class TransitionStateMachine {
 
       const remainingTime = duration - this._crossfadeStartTime;
       switch (outro.outroType) {
-        case 'hard':
+        case "hard":
           this._crossfadeDuration = Math.max(
             MIN_CROSSFADE_DURATION,
-            Math.min(3, this._getEffectiveCrossfadeDuration(effectiveEnd))
+            Math.min(3, this._getEffectiveCrossfadeDuration(effectiveEnd)),
           );
           if (outro.outroConfidence < 0.75) {
             this._crossfadeStartTime = effectiveEnd - this._crossfadeDuration;
           }
           break;
-        case 'fadeOut':
+        case "fadeOut":
           this._crossfadeDuration = Math.max(
             MIN_CROSSFADE_DURATION,
-            Math.min(remainingTime * 0.8, this._getEffectiveCrossfadeDuration(effectiveEnd))
+            Math.min(remainingTime * 0.8, this._getEffectiveCrossfadeDuration(effectiveEnd)),
           );
           break;
-        case 'reverbTail':
+        case "reverbTail":
           this._crossfadeDuration = Math.max(
             MIN_CROSSFADE_DURATION,
-            Math.min(outro.musicalEndOffset, this._getEffectiveCrossfadeDuration(effectiveEnd))
+            Math.min(outro.musicalEndOffset, this._getEffectiveCrossfadeDuration(effectiveEnd)),
           );
           break;
-        case 'slowDown':
+        case "slowDown":
           this._crossfadeDuration = Math.max(
             MIN_CROSSFADE_DURATION,
-            Math.min(remainingTime * 0.7, this._getEffectiveCrossfadeDuration(effectiveEnd))
+            Math.min(remainingTime * 0.7, this._getEffectiveCrossfadeDuration(effectiveEnd)),
           );
           break;
-        case 'sustained':
+        case "sustained":
           this._crossfadeDuration = Math.max(
             MIN_CROSSFADE_DURATION,
-            Math.min(outro.musicalEndOffset + 2, this._getEffectiveCrossfadeDuration(effectiveEnd))
+            Math.min(outro.musicalEndOffset + 2, this._getEffectiveCrossfadeDuration(effectiveEnd)),
           );
           break;
-        case 'musicalOutro':
+        case "musicalOutro":
           this._crossfadeDuration = Math.max(
             MIN_CROSSFADE_DURATION,
-            Math.min(remainingTime * 0.6, this._getEffectiveCrossfadeDuration(effectiveEnd))
+            Math.min(remainingTime * 0.6, this._getEffectiveCrossfadeDuration(effectiveEnd)),
           );
           break;
-        case 'loopFade':
+        case "loopFade":
           this._crossfadeDuration = Math.max(
             MIN_CROSSFADE_DURATION,
-            Math.min(remainingTime * 0.8, this._getEffectiveCrossfadeDuration(effectiveEnd))
+            Math.min(remainingTime * 0.8, this._getEffectiveCrossfadeDuration(effectiveEnd)),
           );
           break;
       }
     } else if (this._currentAnalysis?.analysis.energy) {
       const energy = this._currentAnalysis.analysis.energy;
       const isFadeOut = energy.isFadeOut;
-      this._outroType = isFadeOut ? 'fadeOut' : 'hard';
+      this._outroType = isFadeOut ? "fadeOut" : "hard";
 
       const outroOffset = energy.outroStartOffset;
       if (isFadeOut) {
@@ -432,16 +443,17 @@ export class TransitionStateMachine {
     }
 
     // Beat-align
-    const skipBeatAlign = this._outroType === 'fadeOut'
-      || this._outroType === 'reverbTail'
-      || this._outroType === 'sustained'
-      || this._outroType === 'loopFade';
+    const skipBeatAlign =
+      this._outroType === "fadeOut" ||
+      this._outroType === "reverbTail" ||
+      this._outroType === "sustained" ||
+      this._outroType === "loopFade";
     if (this._settingsBeatAlign && !skipBeatAlign && this._currentAnalysis?.analysis.bpm) {
       const bpmResult = this._currentAnalysis.analysis.bpm;
       this._crossfadeStartTime = findNearestBeat(
         bpmResult.beatGrid,
         this._crossfadeStartTime,
-        bpmResult.analysisOffset
+        bpmResult.analysisOffset,
       );
     }
 
@@ -455,10 +467,10 @@ export class TransitionStateMachine {
     if (IS_DEV) {
       console.log(
         `TransitionStateMachine: Crossfade params — start=${this._crossfadeStartTime.toFixed(1)}s, ` +
-        `duration=${this._crossfadeDuration.toFixed(1)}s` +
-        (trailingSilence > 0 ? `, trailingSilence=${trailingSilence.toFixed(1)}s` : '') +
-        (this._outroType ? `, outroType=${this._outroType}` : '') +
-        (outro ? `, confidence=${outro.outroConfidence.toFixed(2)}` : '')
+          `duration=${this._crossfadeDuration.toFixed(1)}s` +
+          (trailingSilence > 0 ? `, trailingSilence=${trailingSilence.toFixed(1)}s` : "") +
+          (this._outroType ? `, outroType=${this._outroType}` : "") +
+          (outro ? `, confidence=${outro.outroConfidence.toFixed(2)}` : ""),
       );
     }
   }
@@ -501,7 +513,7 @@ export class TransitionStateMachine {
     const outStart = Math.max(0, outLen - 5);
     let outAvg = 0;
     for (let i = outStart; i < outLen; i++) outAvg += outEps[i];
-    outAvg /= (outLen - outStart) || 1;
+    outAvg /= outLen - outStart || 1;
 
     const inEps = inEnergy.energyPerSecond;
     const inEnd = Math.min(5, inEps.length);
@@ -521,7 +533,7 @@ export class TransitionStateMachine {
 
     if (!outroMB || !introMB) return false;
 
-    const bands = ['low', 'mid', 'high'] as const;
+    const bands = ["low", "mid", "high"] as const;
     const outroAvg = [0, 0, 0];
     const introAvg = [0, 0, 0];
 
@@ -576,9 +588,9 @@ export class TransitionStateMachine {
     if (IS_DEV) {
       console.log(
         `TransitionStateMachine: Spectral crossfade — ` +
-        `outTarget=[${outTargetDb.map(d => d.toFixed(1)).join(', ')}]dB, ` +
-        `inInitial=[${inInitialDb.map(d => d.toFixed(1)).join(', ')}]dB` +
-        (bassSwapLow ? ', bassSwap=on' : '')
+          `outTarget=[${outTargetDb.map((d) => d.toFixed(1)).join(", ")}]dB, ` +
+          `inInitial=[${inInitialDb.map((d) => d.toFixed(1)).join(", ")}]dB` +
+          (bassSwapLow ? ", bassSwap=on" : ""),
       );
     }
 
@@ -595,7 +607,7 @@ export class TransitionStateMachine {
     let crossfadeDuration = this._crossfadeDuration;
 
     let effectiveCurve: CrossfadeCurve = this._settingsCurve;
-    let effectiveFadeInOnly = this._outroType === 'fadeOut' || this._outroType === 'loopFade';
+    let effectiveFadeInOnly = this._outroType === "fadeOut" || this._outroType === "loopFade";
     let effectiveInShape = 1;
     let effectiveOutShape = 1;
 
@@ -614,7 +626,7 @@ export class TransitionStateMachine {
       if (incomingIntro.quietIntroDuration > crossfadeDuration) {
         crossfadeDuration = Math.min(
           incomingIntro.quietIntroDuration,
-          this._settingsCrossfadeDuration
+          this._settingsCrossfadeDuration,
         );
       }
     }
@@ -622,7 +634,7 @@ export class TransitionStateMachine {
     // Use CompatibilityScorer for unified scoring
     const compatScore = this._compatScorer.computeOverall(
       this._currentAnalysis?.analysis ?? null,
-      this._nextAnalysis?.analysis ?? null
+      this._nextAnalysis?.analysis ?? null,
     );
     const strategy = this._compatScorer.computeTransitionStrategy(compatScore, this._outroType);
 
@@ -645,7 +657,7 @@ export class TransitionStateMachine {
     // Clamp final duration
     crossfadeDuration = Math.max(
       MIN_CROSSFADE_DURATION,
-      Math.min(crossfadeDuration, this._getEffectiveCrossfadeDuration(effectiveEnd))
+      Math.min(crossfadeDuration, this._getEffectiveCrossfadeDuration(effectiveEnd)),
     );
 
     // Safety clamp: account for async delay
@@ -655,7 +667,7 @@ export class TransitionStateMachine {
       if (IS_DEV) {
         console.log(
           `TransitionStateMachine: Safety-clamped crossfade ${crossfadeDuration.toFixed(1)}s → ` +
-          `${Math.max(0.5, remainingContent).toFixed(1)}s`
+            `${Math.max(0.5, remainingContent).toFixed(1)}s`,
         );
       }
       crossfadeDuration = Math.max(0.5, remainingContent);
@@ -697,11 +709,11 @@ export class TransitionStateMachine {
     if (IS_DEV) {
       console.log(
         `TransitionStateMachine: Finalized params — duration=${crossfadeDuration.toFixed(1)}s, ` +
-        `curve=${effectiveCurve}, inShape=${effectiveInShape.toFixed(2)}, ` +
-        `outShape=${effectiveOutShape.toFixed(2)}, ` +
-        `gainAdj=${incomingGainAdjustment.toFixed(3)}, ` +
-        `compat=${compatScore.overall.toFixed(2)}, ` +
-        `spectral=${spectralCrossfade !== false}`
+          `curve=${effectiveCurve}, inShape=${effectiveInShape.toFixed(2)}, ` +
+          `outShape=${effectiveOutShape.toFixed(2)}, ` +
+          `gainAdj=${incomingGainAdjustment.toFixed(3)}, ` +
+          `compat=${compatScore.overall.toFixed(2)}, ` +
+          `spectral=${spectralCrossfade !== false}`,
       );
     }
 
@@ -727,7 +739,7 @@ export class TransitionStateMachine {
         this._musicStoreRef,
         this._analysisCache,
         { volumeNorm: this._settingsVolumeNorm, bpmMatch: this._settingsBpmMatch },
-        () => this._state
+        () => this._state,
       );
       // Store pre-buffered analysis for _finalizeCrossfadeParams()
       if (this._preBufferManager.preBufferedAnalysis) {
@@ -751,7 +763,7 @@ export class TransitionStateMachine {
         if (IS_DEV) {
           console.log(
             `TransitionStateMachine: Clamped crossfade duration to ${remaining.toFixed(1)}s ` +
-            `(remaining content time after energy gate deferral)`
+              `(remaining content time after energy gate deferral)`,
           );
         }
       }
@@ -765,23 +777,28 @@ export class TransitionStateMachine {
    */
   private _shouldDeferCrossfade(currentTime: number): boolean {
     // Skip the gate for types where the audio IS already declining
-    if (this._outroType === 'fadeOut'
-      || this._outroType === 'silence'
-      || this._outroType === 'reverbTail'
-      || this._outroType === 'loopFade') {
+    if (
+      this._outroType === "fadeOut" ||
+      this._outroType === "silence" ||
+      this._outroType === "reverbTail" ||
+      this._outroType === "loopFade"
+    ) {
       return false;
     }
 
     // ── Vocal activity guard ──
     if (this._settingsVocalGuard && this._outroType) {
       const outroMB = this._currentAnalysis?.analysis.outro?.multibandEnergy;
-      if (outroMB && this._vocalGuard.shouldDeferForVocals(
-        currentTime,
-        this._crossfadeStartTime,
-        this._effectiveEnd,
-        outroMB,
-        this._crossfadeDuration
-      )) {
+      if (
+        outroMB &&
+        this._vocalGuard.shouldDeferForVocals(
+          currentTime,
+          this._crossfadeStartTime,
+          this._effectiveEnd,
+          outroMB,
+          this._crossfadeDuration,
+        )
+      ) {
         return true;
       }
     }
@@ -791,8 +808,12 @@ export class TransitionStateMachine {
     if (!energy) return false;
 
     const maxDefer = Math.min(this._crossfadeDuration * 0.5, 5);
-    const maxDeferByRemaining = Math.max(0, this._effectiveEnd - this._crossfadeStartTime - MIN_CROSSFADE_DURATION);
-    if (currentTime >= this._crossfadeStartTime + Math.min(maxDefer, maxDeferByRemaining)) return false;
+    const maxDeferByRemaining = Math.max(
+      0,
+      this._effectiveEnd - this._crossfadeStartTime - MIN_CROSSFADE_DURATION,
+    );
+    if (currentTime >= this._crossfadeStartTime + Math.min(maxDefer, maxDeferByRemaining))
+      return false;
 
     const sec = Math.floor(currentTime);
     if (sec < 3 || sec >= energy.energyPerSecond.length) return false;
@@ -808,8 +829,8 @@ export class TransitionStateMachine {
     if (IS_DEV) {
       console.log(
         `TransitionStateMachine: Energy gate deferred crossfade ` +
-        `(e=${eNow.toFixed(2)}, avg=${energy.averageEnergy.toFixed(2)}, ` +
-        `e3sAgo=${e3sAgo.toFixed(2)}, maxDefer=${Math.min(maxDefer, maxDeferByRemaining).toFixed(1)}s)`
+          `(e=${eNow.toFixed(2)}, avg=${energy.averageEnergy.toFixed(2)}, ` +
+          `e3sAgo=${e3sAgo.toFixed(2)}, maxDefer=${Math.min(maxDefer, maxDeferByRemaining).toFixed(1)}s)`,
       );
     }
     return true;
@@ -818,11 +839,14 @@ export class TransitionStateMachine {
   // ─── State: CROSSFADING ────────────────────────────────────────
 
   private _initiateCrossfade(): void {
-    this._state = 'crossfading';
+    this._state = "crossfading";
     this._updateStoreState();
 
     this._doCrossfade().catch((err) => {
-      console.error('TransitionStateMachine: Crossfade failed, falling back to normal transition', err);
+      console.error(
+        "TransitionStateMachine: Crossfade failed, falling back to normal transition",
+        err,
+      );
       this._lastFailureTime = Date.now();
 
       const currentSound = SoundManager.getCurrentSound();
@@ -832,30 +856,32 @@ export class TransitionStateMachine {
 
       if (songAlreadyEnded && this._musicStoreRef) {
         if (IS_DEV) {
-          console.log('TransitionStateMachine: Song ended during failed crossfade, triggering normal transition');
+          console.log(
+            "TransitionStateMachine: Song ended during failed crossfade, triggering normal transition",
+          );
         }
-        this._musicStoreRef.setPlaySongIndex('next');
+        this._musicStoreRef.setPlaySongIndex("next");
       }
     });
   }
 
   private async _doCrossfade(): Promise<void> {
     const music = this._musicStoreRef;
-    if (!music) throw new Error('No music store');
+    if (!music) throw new Error("No music store");
 
     const playlist = music.persistData.playlists;
     const currentIndex = music.persistData.playSongIndex;
     const listLength = playlist.length;
 
     let nextIndex: number;
-    if (music.persistData.playSongMode === 'random') {
+    if (music.persistData.playSongMode === "random") {
       nextIndex = Math.floor(Math.random() * listLength);
     } else {
       nextIndex = (currentIndex + 1) % listLength;
     }
 
     const nextSong = playlist[nextIndex];
-    if (!nextSong) throw new Error('No next song');
+    if (!nextSong) throw new Error("No next song");
 
     let incomingSound: BufferedSound;
 
@@ -873,11 +899,11 @@ export class TransitionStateMachine {
       this._preBufferManager.cleanup();
 
       const res = await getMusicUrl(nextSong.id);
-      if (!res?.data?.[0]?.url) throw new Error('Failed to get music URL');
+      if (!res?.data?.[0]?.url) throw new Error("Failed to get music URL");
 
-      if (this._state !== 'crossfading') return;
+      if (this._state !== "crossfading") return;
 
-      const url = res.data[0].url.replace(/^http:/, 'https:');
+      const url = res.data[0].url.replace(/^http:/, "https:");
 
       incomingSound = new BufferedSound({
         src: [url],
@@ -886,12 +912,18 @@ export class TransitionStateMachine {
       });
 
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('Load timeout')), 30000);
-        incomingSound.once('load', () => { clearTimeout(timeout); resolve(); });
-        incomingSound.once('loaderror', () => { clearTimeout(timeout); reject(new Error('Load error')); });
+        const timeout = setTimeout(() => reject(new Error("Load timeout")), 30000);
+        incomingSound.once("load", () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        incomingSound.once("loaderror", () => {
+          clearTimeout(timeout);
+          reject(new Error("Load error"));
+        });
       });
 
-      if (this._state !== 'crossfading') return;
+      if (this._state !== "crossfading") return;
 
       if (this._settingsVolumeNorm) {
         const nextSongId = nextSong.id;
@@ -907,22 +939,22 @@ export class TransitionStateMachine {
               this._addToCache(this._nextAnalysis);
             }
           } catch (err) {
-            if (IS_DEV) console.warn('TransitionStateMachine: Incoming track analysis failed', err);
+            if (IS_DEV) console.warn("TransitionStateMachine: Incoming track analysis failed", err);
           }
         }
       }
 
-      if (this._state !== 'crossfading') return;
+      if (this._state !== "crossfading") return;
 
       await incomingSound.ensureAudioGraph();
 
-      if (this._state !== 'crossfading') return;
+      if (this._state !== "crossfading") return;
     }
 
     this._incomingSound = incomingSound;
 
     const outgoingSound = SoundManager.getCurrentSound();
-    if (!outgoingSound) throw new Error('No outgoing sound');
+    if (!outgoingSound) throw new Error("No outgoing sound");
 
     // Store pending index early — used as fallback by _onCrossfadeComplete
     // if _waitForPlayStart is delayed (background tab throttling).
@@ -930,17 +962,19 @@ export class TransitionStateMachine {
 
     // Register the outgoing 'end' safety net EARLY
     let outgoingEndedEarly = false;
-    outgoingSound.once('end', () => {
-      if (this._state === 'crossfading') {
+    outgoingSound.once("end", () => {
+      if (this._state === "crossfading") {
         if (this._crossfadeScheduler.isActive()) {
           if (IS_DEV) {
-            console.log('TransitionStateMachine: Outgoing song ended during crossfade, force-completing');
+            console.log(
+              "TransitionStateMachine: Outgoing song ended during crossfade, force-completing",
+            );
           }
           this._crossfadeScheduler.forceComplete();
         } else {
           outgoingEndedEarly = true;
           if (IS_DEV) {
-            console.log('TransitionStateMachine: Outgoing song ended before crossfade scheduled');
+            console.log("TransitionStateMachine: Outgoing song ended before crossfade scheduled");
           }
         }
       }
@@ -961,11 +995,8 @@ export class TransitionStateMachine {
     const incomingGain = this._getGainNode(incomingSound);
 
     if (outgoingGain && incomingGain) {
-      this._crossfadeScheduler.scheduleFullCrossfade(
-        outgoingGain,
-        incomingGain,
-        params,
-        () => this._onCrossfadeComplete()
+      this._crossfadeScheduler.scheduleFullCrossfade(outgoingGain, incomingGain, params, () =>
+        this._onCrossfadeComplete(),
       );
 
       // ── Transition effects ──
@@ -979,33 +1010,40 @@ export class TransitionStateMachine {
           // Filter sweep (replaces spectral EQ for low-compat transitions)
           if (strategy.useFilterSweep && outgoingGain && incomingGain) {
             this._transitionEffects.createFilterSweep(
-              audioCtx, outgoingGain, incomingGain,
-              strategy.filterSweepIntensity, now, params.duration, params.fadeInOnly ?? false
+              audioCtx,
+              outgoingGain,
+              incomingGain,
+              strategy.filterSweepIntensity,
+              now,
+              params.duration,
+              params.fadeInOnly ?? false,
             );
           }
 
           // Reverb tail (with enhanced gain for low compat when filter sweep is active)
           if (strategy.useReverbTail && outgoingGain) {
-            const decayTime = this._outroType === 'hard' ? 1.5 : 2.5;
+            const decayTime = this._outroType === "hard" ? 1.5 : 2.5;
             this._transitionEffects.createReverbTail(
-              audioCtx, outgoingGain, decayTime, now, params.duration
+              audioCtx,
+              outgoingGain,
+              decayTime,
+              now,
+              params.duration,
             );
           }
 
           // Noise riser (with enhanced duration for low compat)
           if (strategy.useNoiseRiser) {
             const bpm = this._currentAnalysis?.analysis.bpm?.bpm;
-            const maxRiser = 1.5 + (strategy.filterSweepIntensity * 1.0);
+            const maxRiser = 1.5 + strategy.filterSweepIntensity * 1.0;
             const riserDuration = Math.min(maxRiser, params.duration * 0.25);
-            this._transitionEffects.createNoiseRiser(
-              audioCtx, riserDuration, now, bpm
-            );
+            this._transitionEffects.createNoiseRiser(audioCtx, riserDuration, now, bpm);
           }
         }
       }
     } else {
       // Fallback: software fade
-      if (this._outroType !== 'fadeOut' && this._outroType !== 'loopFade') {
+      if (this._outroType !== "fadeOut" && this._outroType !== "loopFade") {
         outgoingSound.fade(volume, 0, params.duration * 1000);
       }
       incomingSound.fade(0, volume * (params.incomingGainAdjustment ?? 1), params.duration * 1000);
@@ -1019,15 +1057,15 @@ export class TransitionStateMachine {
 
     await this._waitForPlayStart(incomingSound);
 
-    if (this._state !== 'crossfading' && this._state !== 'finishing') return;
+    if (this._state !== "crossfading" && this._state !== "finishing") return;
 
     if (this._isPaused) {
       await this._waitForUnpause();
-      if (this._state !== 'crossfading' && this._state !== 'finishing') return;
+      if (this._state !== "crossfading" && this._state !== "finishing") return;
     }
 
     music.persistData.playSongIndex = nextIndex;
-    if (typeof music.resetSongLyricState === 'function') {
+    if (typeof music.resetSongLyricState === "function") {
       music.resetSongLyricState();
     }
 
@@ -1057,12 +1095,12 @@ export class TransitionStateMachine {
         resolve();
       };
 
-      sound.once('play', done);
+      sound.once("play", done);
 
       const retryTimer = setTimeout(() => {
         if (!resolved && !sound.playing() && !this._isPaused) {
           if (IS_DEV) {
-            console.warn('TransitionStateMachine: Play not started after 2s, retrying');
+            console.warn("TransitionStateMachine: Play not started after 2s, retrying");
           }
           sound.play();
         }
@@ -1072,7 +1110,7 @@ export class TransitionStateMachine {
         clearTimeout(retryTimer);
         if (!resolved) {
           if (IS_DEV) {
-            console.warn('TransitionStateMachine: Play confirmation timeout, proceeding anyway');
+            console.warn("TransitionStateMachine: Play confirmation timeout, proceeding anyway");
           }
           done();
         }
@@ -1084,8 +1122,8 @@ export class TransitionStateMachine {
         clearTimeout(deadline);
         origDone();
       };
-      sound.off('play', done);
-      sound.once('play', cleanDone);
+      sound.off("play", done);
+      sound.once("play", cleanDone);
     });
   }
 
@@ -1103,7 +1141,7 @@ export class TransitionStateMachine {
         return inner.getGainNode();
       }
     }
-    if ('getGainNode' in sound && typeof (sound as any).getGainNode === 'function') {
+    if ("getGainNode" in sound && typeof (sound as any).getGainNode === "function") {
       return (sound as any).getGainNode();
     }
     return null;
@@ -1119,7 +1157,7 @@ export class TransitionStateMachine {
     this._softwareFadeRemaining = 0;
     this._isPaused = false;
 
-    this._state = 'finishing';
+    this._state = "finishing";
     this._updateStoreState();
 
     // Clean up transition effects
@@ -1157,11 +1195,11 @@ export class TransitionStateMachine {
       const music = this._musicStoreRef;
       if (music.persistData.playSongIndex !== this._pendingNextIndex) {
         music.persistData.playSongIndex = this._pendingNextIndex;
-        if (typeof music.resetSongLyricState === 'function') {
+        if (typeof music.resetSongLyricState === "function") {
           music.resetSongLyricState();
         }
         if (IS_DEV) {
-          console.log('TransitionStateMachine: Applied pending playSongIndex (bg tab fallback)');
+          console.log("TransitionStateMachine: Applied pending playSongIndex (bg tab fallback)");
         }
       }
       if (currentSound && window.$player !== currentSound) {
@@ -1182,27 +1220,27 @@ export class TransitionStateMachine {
     }
     this._finishingTimerId = setTimeout(() => {
       this._finishingTimerId = null;
-      if (this._state === 'finishing') {
-        this._state = 'idle';
+      if (this._state === "finishing") {
+        this._state = "idle";
         this._updateStoreState();
         if (IS_DEV) {
-          console.log('TransitionStateMachine: Finishing → idle (delayed transition)');
+          console.log("TransitionStateMachine: Finishing → idle (delayed transition)");
         }
       }
     }, 800);
 
     if (IS_DEV) {
-      console.log('TransitionStateMachine: Crossfade complete, entering finishing hold (800ms)');
+      console.log("TransitionStateMachine: Crossfade complete, entering finishing hold (800ms)");
     }
   }
 
   // ─── Cancel ────────────────────────────────────────────────────
 
   cancelCrossfade(): void {
-    if (this._state === 'idle') return;
+    if (this._state === "idle") return;
 
     if (IS_DEV) {
-      console.log('TransitionStateMachine: Cancelling crossfade');
+      console.log("TransitionStateMachine: Cancelling crossfade");
     }
 
     this._crossfadeScheduler.cancel();
@@ -1247,7 +1285,7 @@ export class TransitionStateMachine {
     this._pendingNextIndex = -1;
     this._isPaused = false;
     this._activeGainAdjustment = 1;
-    this._state = 'idle';
+    this._state = "idle";
     this._updateStoreState();
 
     if (this._unpauseResolve) {
@@ -1257,7 +1295,7 @@ export class TransitionStateMachine {
   }
 
   pauseCrossfade(): boolean {
-    if (this._state !== 'crossfading' || this._isPaused) return false;
+    if (this._state !== "crossfading" || this._isPaused) return false;
 
     if (this._crossfadeScheduler.isActive()) {
       this._isPaused = true;
@@ -1280,12 +1318,12 @@ export class TransitionStateMachine {
       SoundManager.getOutgoingSound()?.pause();
 
       if (IS_DEV) {
-        console.log('TransitionStateMachine: Crossfade paused (frozen)');
+        console.log("TransitionStateMachine: Crossfade paused (frozen)");
       }
       return true;
     } else {
       if (IS_DEV) {
-        console.log('TransitionStateMachine: Crossfade paused during setup — cancelling');
+        console.log("TransitionStateMachine: Crossfade paused during setup — cancelling");
       }
       this.cancelCrossfade();
       return false;
@@ -1293,7 +1331,7 @@ export class TransitionStateMachine {
   }
 
   resumeCrossfade(): void {
-    if (this._state !== 'crossfading' || !this._isPaused) return;
+    if (this._state !== "crossfading" || !this._isPaused) return;
     this._isPaused = false;
 
     SoundManager.getOutgoingSound()?.play();
@@ -1321,19 +1359,19 @@ export class TransitionStateMachine {
     }
 
     if (IS_DEV) {
-      console.log('TransitionStateMachine: Crossfade resumed');
+      console.log("TransitionStateMachine: Crossfade resumed");
     }
   }
 
   // ─── Track lifecycle hooks ─────────────────────────────────────
 
   onTrackStarted(sound: ISound, songId: number): void {
-    if (this._state === 'crossfading' || this._state === 'finishing') return;
+    if (this._state === "crossfading" || this._state === "finishing") return;
 
     this._activeGainAdjustment = 1;
     this._preBufferManager.cleanup();
 
-    this._state = 'idle';
+    this._state = "idle";
     this._lastFailureTime = 0;
     this._updateStoreState();
 
@@ -1349,7 +1387,7 @@ export class TransitionStateMachine {
       let blobUrl = sound.getBlobUrl();
       if (!blobUrl) {
         await new Promise<void>((resolve) => {
-          sound.once('load', resolve);
+          sound.once("load", resolve);
           setTimeout(resolve, 30000);
         });
         blobUrl = sound.getBlobUrl();
@@ -1395,19 +1433,21 @@ export class TransitionStateMachine {
     if (!this._musicStoreRef) return;
 
     const outro = this._currentAnalysis?.analysis.outro;
-    const progress = (this._state === 'crossfading' || this._state === 'finishing')
-      ? this._crossfadeScheduler.getProgress()
-      : -1;
+    const progress =
+      this._state === "crossfading" || this._state === "finishing"
+        ? this._crossfadeScheduler.getProgress()
+        : -1;
 
     let incomingSongName: string | null = null;
     let incomingSongId: number | null = null;
-    if (this._state === 'crossfading' || this._state === 'waiting') {
+    if (this._state === "crossfading" || this._state === "waiting") {
       const playlist = this._musicStoreRef.persistData?.playlists;
       const currentIndex = this._musicStoreRef.persistData?.playSongIndex;
       if (playlist && currentIndex != null) {
-        const nextIndex = this._musicStoreRef.persistData.playSongMode === 'random'
-          ? -1
-          : (currentIndex + 1) % playlist.length;
+        const nextIndex =
+          this._musicStoreRef.persistData.playSongMode === "random"
+            ? -1
+            : (currentIndex + 1) % playlist.length;
         if (nextIndex >= 0 && playlist[nextIndex]) {
           incomingSongName = playlist[nextIndex].name;
           incomingSongId = playlist[nextIndex].id;

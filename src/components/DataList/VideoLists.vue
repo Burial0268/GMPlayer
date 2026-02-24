@@ -39,11 +39,7 @@
           </div>
           <div class="title">
             <span class="name text-hidden">{{ item.name }}</span>
-            <AllArtists
-              class="text-hidden"
-              :artistsData="item.artist"
-              v-if="item.artist"
-            />
+            <AllArtists class="text-hidden" :artistsData="item.artist" v-if="item.artist" />
           </div>
         </n-gi>
       </n-grid>

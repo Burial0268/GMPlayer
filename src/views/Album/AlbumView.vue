@@ -15,10 +15,7 @@
       <div class="meta">
         <div class="title">
           <n-text class="name">{{ albumDetail.name }}</n-text>
-          <n-text
-            class="creator"
-            @click="router.push(`/artist/songs?id=${albumDetail.artist.id}`)"
-          >
+          <n-text class="creator" @click="router.push(`/artist/songs?id=${albumDetail.artist.id}`)">
             {{ albumDetail.artist.name }}
           </n-text>
         </div>
@@ -27,11 +24,7 @@
             $t("general.name.desc", { name: $t("general.name.album") })
           }}</span>
           <span class="desc text-hidden">
-            {{
-              albumDetail.description
-                ? albumDetail.description
-                : $t("other.noDesc")
-            }}
+            {{ albumDetail.description ? albumDetail.description : $t("other.noDesc") }}
           </span>
           <n-button
             class="all-desc"
@@ -45,13 +38,7 @@
           </n-button>
         </div>
         <n-space class="tag" v-if="albumDetail.tags">
-          <n-tag
-            class="tags"
-            round
-            :bordered="false"
-            v-for="item in albumDetail.tags"
-            :key="item"
-          >
+          <n-tag class="tags" round :bordered="false" v-for="item in albumDetail.tags" :key="item">
             {{ item }}
           </n-tag>
         </n-space>
@@ -80,10 +67,7 @@
     <div class="right">
       <div class="meta">
         <n-text class="name">{{ albumDetail.name }}</n-text>
-        <n-text
-          class="creator"
-          @click="router.push(`/artist/songs?id=${albumDetail.artist.id}`)"
-        >
+        <n-text class="creator" @click="router.push(`/artist/songs?id=${albumDetail.artist.id}`)">
           <n-icon :depth="3" :component="People" />
           {{ albumDetail.artist.name }}
         </n-text>
@@ -142,16 +126,7 @@ import { transformSongData } from "@/utils/ncm/transformSongData";
 import { renderIcon } from "@/utils/ui/renderIcon";
 import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
-import {
-  MusicList,
-  LinkTwo,
-  More,
-  Like,
-  Unlike,
-  People,
-  Time,
-  City,
-} from "@icon-park/vue-next";
+import { MusicList, LinkTwo, More, Like, Unlike, People, Time, City } from "@icon-park/vue-next";
 import { userStore, musicStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
@@ -195,9 +170,7 @@ const setDropdownOptions = () => {
         onClick: () => {
           if (navigator.clipboard) {
             try {
-              navigator.clipboard.writeText(
-                `https://music.163.com/#/album?id=${albumId.value}`
-              );
+              navigator.clipboard.writeText(`https://music.163.com/#/album?id=${albumId.value}`);
               $message.success(t("general.message.copySuccess"));
             } catch (err) {
               console.error(t("general.message.copyFailure"), err);
@@ -276,11 +249,7 @@ const toChangeLike = async (id) => {
 onMounted(() => {
   if (albumId.value) {
     getAlbumData(albumId.value);
-    if (
-      user.userLogin &&
-      !user.getUserAlbumLists.has &&
-      !user.getUserAlbumLists.isLoading
-    ) {
+    if (user.userLogin && !user.getUserAlbumLists.has && !user.getUserAlbumLists.isLoading) {
       user.setUserAlbumLists(() => {
         setDropdownOptions();
       });
@@ -298,7 +267,7 @@ watch(
     if (val.name == "album") {
       getAlbumData(albumId.value);
     }
-  }
+  },
 );
 </script>
 

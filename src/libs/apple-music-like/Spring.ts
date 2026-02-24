@@ -27,14 +27,14 @@ export class Spring {
   private getV2: (t: seconds) => number;
   private queueParams:
     | (Partial<SpringParams> & {
-      time: number;
-    })
+        time: number;
+      })
     | undefined;
   private queuePosition:
     | {
-      time: number;
-      position: number;
-    }
+        time: number;
+        position: number;
+      }
     | undefined;
   constructor(currentPosition = 0) {
     this.targetPosition = currentPosition;
@@ -149,17 +149,12 @@ function solveSpring(
     };
   }
   const damping_frequency = Math.sqrt(4.0 * mass * stiffness - damping ** 2.0);
-  const leftover =
-    (damping * delta - 2.0 * mass * velocity) / damping_frequency;
+  const leftover = (damping * delta - 2.0 * mass * velocity) / damping_frequency;
   const dfm = (0.5 * damping_frequency) / mass;
   const dm = -(0.5 * damping) / mass;
   return (t: seconds) => {
     t -= delay;
     if (t < 0) return from;
-    return (
-      to -
-      (Math.cos(t * dfm) * delta + Math.sin(t * dfm) * leftover) *
-      Math.E ** (t * dm)
-    );
+    return to - (Math.cos(t * dfm) * delta + Math.sin(t * dfm) * leftover) * Math.E ** (t * dm);
   };
 }

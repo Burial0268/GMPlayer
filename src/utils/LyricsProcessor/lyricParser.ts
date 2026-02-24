@@ -5,8 +5,8 @@
 
 import { parseLrc as parseCoreLrc, parseYrc as parseCoreYrc } from "@applemusic-like-lyrics/lyric";
 import { musicStore } from "@/store";
-import { parseLrcLines, parseYrcLines, buildAMLLData } from './parser/formatParser';
-import { alignByIndex } from './alignment';
+import { parseLrcLines, parseYrcLines, buildAMLLData } from "./parser/formatParser";
+import { alignByIndex } from "./alignment";
 import type {
   LyricLine,
   RawLyricData,
@@ -14,7 +14,7 @@ import type {
   ParsedYrcLine,
   ParsedLyricResult,
   AMLLLine,
-} from './types';
+} from "./types";
 
 // Debug flag - disable in production
 const DEBUG = false;
@@ -35,7 +35,7 @@ export const createEmptyLyricResult = (): ParsedLyricResult => ({
   ttml: [],
   lrcAMData: [],
   yrcAMData: [],
-  formattedLrc: ""
+  formattedLrc: "",
 });
 
 // 恢复默认
@@ -66,15 +66,15 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
       romalrc: romalrc?.lyric || null,
       yrc: yrc?.lyric || null,
       ytlrc: ytlrc?.lyric || null,
-      yromalrc: yromalrc?.lyric || null
+      yromalrc: yromalrc?.lyric || null,
     };
 
     // --- LAAPI data parsing ---
     let laapiTranslationLyricLines: LyricLine[] | null = null;
     const laapiTranslation = (data as any).translation;
-    if (laapiTranslation && typeof laapiTranslation === 'string' && laapiTranslation.trim()) {
+    if (laapiTranslation && typeof laapiTranslation === "string" && laapiTranslation.trim()) {
       try {
-        const laapiTranslationText = laapiTranslation.replace(/\\n/g, '\n').replace(/\r/g, '');
+        const laapiTranslationText = laapiTranslation.replace(/\\n/g, "\n").replace(/\r/g, "");
         const parsedLines = parseCoreLrc(laapiTranslationText);
         if (parsedLines && parsedLines.length > 0) {
           laapiTranslationLyricLines = parsedLines;
@@ -86,9 +86,9 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
 
     let laapiRomajiLyricLines: LyricLine[] | null = null;
     const laapiRomaji = (data as any).romaji;
-    if (laapiRomaji && typeof laapiRomaji === 'string' && laapiRomaji.trim()) {
+    if (laapiRomaji && typeof laapiRomaji === "string" && laapiRomaji.trim()) {
       try {
-        const laapiRomajiText = laapiRomaji.replace(/\\n/g, '\n').replace(/\r/g, '');
+        const laapiRomajiText = laapiRomaji.replace(/\\n/g, "\n").replace(/\r/g, "");
         laapiRomajiLyricLines = parseCoreLrc(laapiRomajiText);
       } catch (e) {
         // Silently fail for LAAPI parsing
@@ -151,11 +151,15 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
           result.lrc = alignByIndex(result.lrc, parseLrcLines(effectiveLrcRomaSource), "roma");
         }
 
-        result.lrcAMData = buildAMLLData(lrcParsedRaw, effectiveLrcTranSource, effectiveLrcRomaSource);
+        result.lrcAMData = buildAMLLData(
+          lrcParsedRaw,
+          effectiveLrcTranSource,
+          effectiveLrcRomaSource,
+        );
       } catch (error) {
         result.lrc = [
           { time: 0, content: "LRC解析出错" },
-          { time: 999, content: "Error parsing LRC" }
+          { time: 999, content: "Error parsing LRC" },
         ];
       }
     }
@@ -163,7 +167,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
     // Parse YRC lyrics or handle pre-parsed TTML lyrics
     if (lrcData.yrc) {
       let yrcParsedRawLines: LyricLine[] = [];
-      const TTML_PREFIX = '___PARSED_LYRIC_LINES___';
+      const TTML_PREFIX = "___PARSED_LYRIC_LINES___";
 
       if (lrcData.yrc.startsWith(TTML_PREFIX)) {
         try {
@@ -210,18 +214,21 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
         }
       }
 
-      result.yrcAMData = buildAMLLData(yrcParsedRawLines, effectiveYrcTranSource, effectiveYrcRomaSource);
+      result.yrcAMData = buildAMLLData(
+        yrcParsedRawLines,
+        effectiveYrcTranSource,
+        effectiveYrcRomaSource,
+      );
     }
-
   } catch (error) {
     return createEmptyLyricResult();
   }
 
   // Final check: create basic lrc from yrc if needed
   if ((!result.lrc || result.lrc.length === 0) && result.yrc && result.yrc.length > 0) {
-    result.lrc = result.yrc.map(yrcLine => ({
+    result.lrc = result.yrc.map((yrcLine) => ({
       time: yrcLine.time,
-      content: yrcLine.TextContent
+      content: yrcLine.TextContent,
     }));
   }
 
@@ -229,7 +236,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
   if (!result.lrc || result.lrc.length === 0) {
     result.lrc = [
       { time: 0, content: "暂无歌词" },
-      { time: 999, content: "No Lyrics Available" }
+      { time: 999, content: "No Lyrics Available" },
     ];
   }
 
@@ -244,7 +251,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
 export const formatAsLrc = (parsedLyric: ParsedLyricResult): string => {
   const lrc = parsedLyric?.lrc;
   if (!lrc || lrc.length === 0) {
-    return '';
+    return "";
   }
 
   const parts: string[] = [];
@@ -256,7 +263,7 @@ export const formatAsLrc = (parsedLyric: ParsedLyricResult): string => {
     const time = line.time;
     const minutes = (time / 60) | 0;
     const seconds = time % 60;
-    const timeStr = `${minutes < 10 ? '0' : ''}${minutes}:${seconds < 10 ? '0' : ''}${seconds.toFixed(2).padStart(5, '0')}`;
+    const timeStr = `${minutes < 10 ? "0" : ""}${minutes}:${seconds < 10 ? "0" : ""}${seconds.toFixed(2).padStart(5, "0")}`;
 
     parts[count++] = `[${timeStr}]${line.content}\n`;
 
@@ -270,7 +277,7 @@ export const formatAsLrc = (parsedLyric: ParsedLyricResult): string => {
   }
 
   parts.length = count;
-  return parts.join('');
+  return parts.join("");
 };
 
 // Backward compatibility aliases

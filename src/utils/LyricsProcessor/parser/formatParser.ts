@@ -3,14 +3,8 @@
  * 歌词格式解析器 - LRC/YRC/AM格式转换 (优化版)
  */
 
-import type {
-  LyricLine,
-  AMLLLine,
-  ParsedLrcLine,
-  ParsedYrcLine,
-  InputLyricLine
-} from '../types';
-import { msToS } from '@/utils/timeTools';
+import type { LyricLine, AMLLLine, ParsedLrcLine, ParsedYrcLine, InputLyricLine } from "../types";
+import { msToS } from "@/utils/timeTools";
 
 // Pre-compiled regex for interlude detection
 const INTERLUDE_CHARS_REGEX = /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～]/g;
@@ -26,7 +20,7 @@ const DEBUG = false;
  */
 function isInterludeContent(content: string): boolean {
   if (!content) return true;
-  const stripped = content.replace(INTERLUDE_CHARS_REGEX, '');
+  const stripped = content.replace(INTERLUDE_CHARS_REGEX, "");
   return stripped.length === 0;
 }
 
@@ -38,7 +32,7 @@ function isInterludeContent(content: string): boolean {
  */
 export function splitRomaToWords(
   words: readonly { word: string }[],
-  romaText: string
+  romaText: string,
 ): string[] | null {
   if (!romaText || words.length === 0) return null;
 
@@ -58,7 +52,7 @@ export function splitRomaToWords(
     return null;
   }
 
-  const result = new Array<string>(words.length).fill('');
+  const result = new Array<string>(words.length).fill("");
   for (let i = 0; i < contentIndices.length; i++) {
     result[contentIndices[i]] = segments[i];
   }
@@ -89,9 +83,9 @@ export const parseLrcLines = (lrcData: LyricLine[]): ParsedLrcLine[] => {
 
     // Get start time and build content in one pass
     const startTime = words[0].startTime;
-    let content = '';
+    let content = "";
     for (let j = 0; j < words.length; j++) {
-      content += words[j].word || '';
+      content += words[j].word || "";
     }
 
     const trimmed = content.trim();
@@ -99,7 +93,7 @@ export const parseLrcLines = (lrcData: LyricLine[]): ParsedLrcLine[] => {
 
     result[count++] = {
       time: msToS(startTime),
-      content: trimmed
+      content: trimmed,
     };
   }
 
@@ -134,14 +128,14 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
     const endTime = msToS(lastWord.endTime);
 
     // Build content array and string in one pass
-    const content: ParsedYrcLine['content'] = [];
+    const content: ParsedYrcLine["content"] = [];
     content.length = wordsLen;
-    let textContent = '';
+    let textContent = "";
 
     for (let j = 0; j < wordsLen; j++) {
       const word = words[j];
       const wordText = word.word;
-      const endsWithSpace = wordText.endsWith(' ');
+      const endsWithSpace = wordText.endsWith(" ");
       const processedWord = endsWithSpace ? wordText : wordText.trim();
 
       content[j] = {
@@ -149,7 +143,7 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
         endTime: msToS(word.endTime),
         duration: msToS(word.endTime - word.startTime),
         content: processedWord,
-        endsWithSpace
+        endsWithSpace,
       };
 
       textContent += processedWord;
@@ -161,7 +155,7 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
       time,
       endTime,
       content,
-      TextContent: textContent
+      TextContent: textContent,
     };
   }
 
@@ -179,7 +173,7 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
 export const buildAMLLData = (
   lrcData: LyricLine[],
   tranData: LyricLine[] = [],
-  romaData: LyricLine[] = []
+  romaData: LyricLine[] = [],
 ): AMLLLine[] => {
   const lrcLen = lrcData.length;
   if (lrcLen === 0) return [];
@@ -192,7 +186,7 @@ export const buildAMLLData = (
     for (let i = 0; i < tranData.length; i++) {
       const words = tranData[i].words;
       if (words && words.length > 0) {
-        let content = '';
+        let content = "";
         for (let j = 0; j < words.length; j++) {
           content += words[j].word;
         }
@@ -207,7 +201,7 @@ export const buildAMLLData = (
     for (let i = 0; i < romaData.length; i++) {
       const words = romaData[i].words;
       if (words && words.length > 0) {
-        let content = '';
+        let content = "";
         for (let j = 0; j < words.length; j++) {
           content += words[j].word;
         }
@@ -226,7 +220,7 @@ export const buildAMLLData = (
   for (let i = 0; i < lrcLen; i++) {
     const words = lrcData[i].words;
     if (words && words.length > 0) {
-      let content = '';
+      let content = "";
       for (let j = 0; j < words.length; j++) {
         content += words[j].word;
       }
@@ -259,7 +253,7 @@ export const buildAMLLData = (
     for (let i = 0; i < tranData.length && tranIdx < tranContents.length; i++) {
       const words = tranData[i].words;
       if (words && words.length > 0) {
-        let content = '';
+        let content = "";
         for (let j = 0; j < words.length; j++) {
           content += words[j].word;
         }
@@ -267,8 +261,10 @@ export const buildAMLLData = (
           const tranTime = words[0].startTime;
 
           // Binary search
-          let left = 0, right = mainTimes.length - 1;
-          let bestIdx = -1, bestDiff = Infinity;
+          let left = 0,
+            right = mainTimes.length - 1;
+          let bestIdx = -1,
+            bestDiff = Infinity;
 
           while (left <= right) {
             const mid = (left + right) >> 1;
@@ -310,7 +306,7 @@ export const buildAMLLData = (
     for (let i = 0; i < romaData.length && romaIdx < romaContents.length; i++) {
       const words = romaData[i].words;
       if (words && words.length > 0) {
-        let content = '';
+        let content = "";
         for (let j = 0; j < words.length; j++) {
           content += words[j].word;
         }
@@ -318,8 +314,10 @@ export const buildAMLLData = (
           const romaTime = words[0].startTime;
 
           // Binary search
-          let left = 0, right = mainTimes.length - 1;
-          let bestIdx = -1, bestDiff = Infinity;
+          let left = 0,
+            right = mainTimes.length - 1;
+          let bestIdx = -1,
+            bestDiff = Infinity;
 
           while (left <= right) {
             const mid = (left + right) >> 1;
@@ -375,7 +373,7 @@ export const buildAMLLData = (
     }
 
     // Build words array efficiently
-    const resultWords: AMLLLine['words'] = [];
+    const resultWords: AMLLLine["words"] = [];
     resultWords.length = wordsLen;
 
     for (let j = 0; j < wordsLen; j++) {
@@ -384,20 +382,20 @@ export const buildAMLLData = (
         word: w.word,
         startTime: w.startTime,
         endTime: w.endTime,
-        romanWord: w.romanWord || ''
+        romanWord: w.romanWord || "",
       };
     }
 
-    const romaText = romaMap.get(i) || '';
+    const romaText = romaMap.get(i) || "";
 
     result[i] = {
       words: resultWords,
       startTime,
       endTime,
-      translatedLyric: tranMap.get(i) || '',
+      translatedLyric: tranMap.get(i) || "",
       romanLyric: romaText,
       isBG: line.isBG ?? false,
-      isDuet: line.isDuet ?? false
+      isDuet: line.isDuet ?? false,
     };
 
     // 逐字音译：优先使用源数据（TTML）中的 romanWord
@@ -412,15 +410,15 @@ export const buildAMLLData = (
 
     if (hasPerWordRoma) {
       // 有逐字音译时清除行级音译，避免重复显示
-      result[i].romanLyric = '';
+      result[i].romanLyric = "";
     } else if (romaText) {
       // 尝试将行级音译拆分为逐字
       const perWord = splitRomaToWords(resultWords, romaText);
       if (perWord) {
         for (let j = 0; j < wordsLen; j++) {
-          resultWords[j].romanWord = perWord[j] || '';
+          resultWords[j].romanWord = perWord[j] || "";
         }
-        result[i].romanLyric = ''; // 避免重复显示
+        result[i].romanLyric = ""; // 避免重复显示
       }
     }
   }
@@ -444,7 +442,7 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
     const wordsLen = sourceWords.length;
 
     // Build words array
-    const words: AMLLLine['words'] = [];
+    const words: AMLLLine["words"] = [];
     words.length = wordsLen;
 
     for (let j = 0; j < wordsLen; j++) {
@@ -453,7 +451,7 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
         startTime: w.startTime,
         endTime: w.endTime,
         word: w.word,
-        romanWord: w.romanWord || ''
+        romanWord: w.romanWord || "",
       };
     }
 
@@ -473,12 +471,12 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
 
     result[i] = {
       words,
-      translatedLyric: l.translatedLyric ?? '',
-      romanLyric: hasPerWordRoma ? '' : (l.romanLyric ?? ''),
+      translatedLyric: l.translatedLyric ?? "",
+      romanLyric: hasPerWordRoma ? "" : (l.romanLyric ?? ""),
       isBG: l.isBG ?? false,
       isDuet: l.isDuet ?? false,
       startTime,
-      endTime
+      endTime,
     };
   }
 
@@ -489,4 +487,3 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
 export const parseLrcData = parseLrcLines;
 export const parseYrcData = parseYrcLines;
 export const parseAMData = buildAMLLData;
-

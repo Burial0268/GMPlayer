@@ -2,22 +2,45 @@
   <div class="artists">
     <div class="menu">
       <n-space class="initial">
-        <n-tag class="tag" round v-for="item in artistInitials" :key="item.key" :bordered="false"
-          :type="item.key == artistInitialChoose ? 'primary' : 'default'" @click="artistInitialChange(item.key)">
+        <n-tag
+          class="tag"
+          round
+          v-for="item in artistInitials"
+          :key="item.key"
+          :bordered="false"
+          :type="item.key == artistInitialChoose ? 'primary' : 'default'"
+          @click="artistInitialChange(item.key)"
+        >
           {{ item.value }}
         </n-tag>
       </n-space>
       <n-space class="category">
-        <n-tag class="tag" round :class="item.length > 2 ? 'hidden' : 'show'" v-for="(item, index) in artistTypeNames"
-          :key="item" :bordered="false" :type="index == artistTypeNamesChoose ? 'primary' : 'default'"
-          @click="artistTypeChange(index)">
+        <n-tag
+          class="tag"
+          round
+          :class="item.length > 2 ? 'hidden' : 'show'"
+          v-for="(item, index) in artistTypeNames"
+          :key="item"
+          :bordered="false"
+          :type="index == artistTypeNamesChoose ? 'primary' : 'default'"
+          @click="artistTypeChange(index)"
+        >
           {{ item }}
         </n-tag>
       </n-space>
     </div>
     <ArtistLists :listData="artistsData" :loadingNum="30" />
     <n-space justify="center">
-      <n-button v-if="hasMore" class="more" size="large" strong secondary round :loading="loading" @click="loadingMore">
+      <n-button
+        v-if="hasMore"
+        class="more"
+        size="large"
+        strong
+        secondary
+        round
+        :loading="loading"
+        @click="loadingMore"
+      >
         {{ $t("general.name.loadMore") }}
       </n-button>
     </n-space>
@@ -37,18 +60,16 @@ const router = useRouter();
 // 歌手标签数据
 const artistInitials = [
   { key: "-1", value: t("general.type.hot") },
-  ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(i + 65)).map(
-    (v) => ({
-      key: v,
-      value: v,
-    })
-  ),
+  ...Array.from({ length: 26 }, (_, i) => String.fromCharCode(i + 65)).map((v) => ({
+    key: v,
+    value: v,
+  })),
   { key: "0", value: "#" },
 ];
 const artistInitialChoose = ref(
   router.currentRoute.value.query.initial
     ? router.currentRoute.value.query.initial
-    : artistInitials[0].key
+    : artistInitials[0].key,
 );
 
 // 歌手分类数据
@@ -73,13 +94,9 @@ const artistTypeNames = [
   t("general.type.other"),
 ];
 const artistType = [-1, -1, 1, 2, 3, -1, 1, 2, 3, -1, 1, 2, 3, -1, 1, 2, 3, -1];
-const artistArea = [
-  -1, 7, 7, 7, 7, 96, 96, 96, 96, 8, 8, 8, 8, 16, 16, 16, 16, 0,
-];
+const artistArea = [-1, 7, 7, 7, 7, 96, 96, 96, 96, 8, 8, 8, 8, 16, 16, 16, 16, 0];
 const artistTypeNamesChoose = ref(
-  router.currentRoute.value.query.type
-    ? Number(router.currentRoute.value.query.type)
-    : 0
+  router.currentRoute.value.query.type ? Number(router.currentRoute.value.query.type) : 0,
 );
 
 // 歌手数据
@@ -94,7 +111,7 @@ const getArtistListData = (
   area = -1 as ArtistArea,
   limit = 30,
   offset = 0,
-  initial = -1
+  initial = -1,
 ) => {
   getArtistList(type, area, limit, offset, initial).then((res) => {
     if (res.artists[0]) {
@@ -151,7 +168,7 @@ const loadingMore = () => {
     artistArea[artistTypeNamesChoose.value] as ArtistArea,
     30,
     artistsOffset.value,
-    Number(artistInitialChoose.value)
+    Number(artistInitialChoose.value),
   );
 };
 
@@ -160,9 +177,7 @@ watch(
   () => router.currentRoute.value,
   (val) => {
     artistTypeNamesChoose.value = Number(val.query.type ? val.query.type : 0);
-    artistInitialChoose.value = val.query.initial
-      ? val.query.initial
-      : artistInitials[0].key;
+    artistInitialChoose.value = val.query.initial ? val.query.initial : artistInitials[0].key;
     artistsOffset.value = 0;
     if (val.name == "dsc-artists") {
       artistsData.value = [];
@@ -171,10 +186,10 @@ watch(
         artistArea[artistTypeNamesChoose.value] as ArtistArea,
         30,
         0,
-        Number(artistInitialChoose.value)
+        Number(artistInitialChoose.value),
       );
     }
-  }
+  },
 );
 
 onMounted(() => {
@@ -185,7 +200,7 @@ onMounted(() => {
     artistArea[artistTypeNamesChoose.value] as ArtistArea,
     30,
     0,
-    Number(artistInitialChoose.value)
+    Number(artistInitialChoose.value),
   );
 });
 </script>

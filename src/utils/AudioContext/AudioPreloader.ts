@@ -10,12 +10,12 @@
  * - Coexists with AutoMix (skips preload when AutoMix is active)
  */
 
-import { BufferedSound } from './BufferedSound';
-import { getMusicUrl } from '@/api/song';
-import { getAutoMixEngine } from './AutoMix';
+import { BufferedSound } from "./BufferedSound";
+import { getMusicUrl } from "@/api/song";
+import { getAutoMixEngine } from "./AutoMix";
 // Import stores directly to avoid circular dependency through barrel exports
-import useMusicDataStore from '@/store/musicData';
-import useSettingDataStore from '@/store/settingData';
+import useMusicDataStore from "@/store/musicData";
+import useSettingDataStore from "@/store/settingData";
 
 // Lazy store access (called at runtime, not import time)
 const musicStore = () => useMusicDataStore();
@@ -42,14 +42,19 @@ export class AudioPreloader {
 
     // Guard: only normal mode, not FM, list >= 2, not already preloading
     if (music.persistData.personalFmMode) return;
-    if (music.persistData.playSongMode !== 'normal') return;
+    if (music.persistData.playSongMode !== "normal") return;
     if (music.persistData.playlists.length < 2) return;
     if (this._isPreloading) return;
 
     // Guard: AutoMix active — let it handle transitions
     const autoMix = getAutoMixEngine();
     const state = autoMix.getState();
-    if (state === 'analyzing' || state === 'waiting' || state === 'crossfading' || state === 'finishing') {
+    if (
+      state === "analyzing" ||
+      state === "waiting" ||
+      state === "crossfading" ||
+      state === "finishing"
+    ) {
       return;
     }
 
@@ -67,7 +72,12 @@ export class AudioPreloader {
 
     // Guard: VIP song with UNM enabled — UNM uses different source
     const useUnmServerHas = !!import.meta.env.VITE_UNM_API;
-    if (useUnmServerHas && setting.useUnmServer && !nextSong.pc && (nextSong.fee === 1 || nextSong.fee === 4)) {
+    if (
+      useUnmServerHas &&
+      setting.useUnmServer &&
+      !nextSong.pc &&
+      (nextSong.fee === 1 || nextSong.fee === 4)
+    ) {
       if (IS_DEV) {
         console.log(`[AudioPreloader] Skipping VIP song with UNM: ${nextSong.name}`);
       }
@@ -82,10 +92,12 @@ export class AudioPreloader {
     const abortSignal = this._abortController.signal;
 
     if (IS_DEV) {
-      console.log(`[AudioPreloader] Starting preload: "${nextSong.name}" (id: ${nextSong.id}, index: ${nextIndex})`);
+      console.log(
+        `[AudioPreloader] Starting preload: "${nextSong.name}" (id: ${nextSong.id}, index: ${nextIndex})`,
+      );
     }
 
-    const level = setting.songLevel || 'exhigh';
+    const level = setting.songLevel || "exhigh";
 
     getMusicUrl(nextSong.id, level)
       .then((res: any) => {
@@ -99,7 +111,7 @@ export class AudioPreloader {
           return;
         }
 
-        const url = res.data[0].url.replace(/^http:/, 'https:');
+        const url = res.data[0].url.replace(/^http:/, "https:");
 
         // Create BufferedSound with volume=0 (will be set to real volume on consume)
         const sound = new BufferedSound({
@@ -126,7 +138,7 @@ export class AudioPreloader {
           }
         }, 30000);
 
-        sound.once('load', () => {
+        sound.once("load", () => {
           clearTimeout(timeoutId);
           if (abortSignal.aborted || this._entry !== entry) return;
           entry.ready = true;
@@ -136,7 +148,7 @@ export class AudioPreloader {
           }
         });
 
-        sound.once('loaderror', () => {
+        sound.once("loaderror", () => {
           clearTimeout(timeoutId);
           if (this._entry === entry) {
             if (IS_DEV) {
@@ -149,7 +161,7 @@ export class AudioPreloader {
       .catch((err: any) => {
         if (abortSignal.aborted) return;
         if (IS_DEV) {
-          console.warn('[AudioPreloader] getMusicUrl failed:', err);
+          console.warn("[AudioPreloader] getMusicUrl failed:", err);
         }
         this._isPreloading = false;
       });

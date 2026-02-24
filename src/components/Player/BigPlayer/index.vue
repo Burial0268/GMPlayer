@@ -1,17 +1,19 @@
 <template>
   <Teleport to="body">
-    <div ref="bigPlayerRef"
-    :class="[
-      'bplayer',
-      `bplayer-${setting.backgroundImageShow}`,
-      isMobile ? 'mobile-player' : 'desktop-player',
-      music.showBigPlayer ? 'opened' : '',
-      isMobile && mobileLayer === 2 ? 'layer2-active' : ''
-    ]"
-    :style="{
-      '--cover-bg': songPicGradient,
-      '--main-cover-color': `rgb(${setting.immersivePlayer ? songPicColor : '255,255,255'})`
-    }">
+    <div
+      ref="bigPlayerRef"
+      :class="[
+        'bplayer',
+        `bplayer-${setting.backgroundImageShow}`,
+        isMobile ? 'mobile-player' : 'desktop-player',
+        music.showBigPlayer ? 'opened' : '',
+        isMobile && mobileLayer === 2 ? 'layer2-active' : '',
+      ]"
+      :style="{
+        '--cover-bg': songPicGradient,
+        '--main-cover-color': `rgb(${setting.immersivePlayer ? songPicColor : '255,255,255'})`,
+      }"
+    >
       <!-- 共用部分: 背景和顶部菜单 -->
       <BigPlayerBackground
         :songPicGradient="songPicGradient"
@@ -39,7 +41,9 @@
       />
 
       <!-- 移动端布局 -->
-      <MobilePlayerLayout v-if="isMobile" ref="mobileLayoutRef"
+      <MobilePlayerLayout
+        v-if="isMobile"
+        ref="mobileLayoutRef"
         :songName="songName"
         :artistList="artistList"
         :isNameOverflow="isNameOverflow"
@@ -58,7 +62,9 @@
       />
 
       <!-- 桌面端布局 -->
-      <DesktopPlayerLayout v-else ref="desktopLayoutRef"
+      <DesktopPlayerLayout
+        v-else
+        ref="desktopLayoutRef"
         :lrcMouseStatus="lrcMouseStatus"
         :menuShow="menuShow"
         :hasLyrics="hasLyrics"
@@ -81,14 +87,7 @@ import Spectrum from "../Spectrum.vue";
 import LyricSetting from "@/components/DataModal/LyricSetting.vue";
 import { storeToRefs } from "pinia";
 import gsap from "gsap";
-import {
-  onMounted,
-  nextTick,
-  watch,
-  ref,
-  computed,
-  onBeforeUnmount
-} from "vue";
+import { onMounted, nextTick, watch, ref, computed, onBeforeUnmount } from "vue";
 import "../icons/icon-animations.css";
 
 // 导入 composables
@@ -143,19 +142,21 @@ const phonyBigCoverRef = computed(() => mobileLayoutRef.value?.phonyBigCoverRef 
 const phonySmallCoverRef = computed(() => mobileLayoutRef.value?.phonySmallCoverRef ?? null);
 
 // 全屏切换
-const { screenfullIcon, screenfullChange, cleanupFullscreen } = useFullscreen(
-  bigPlayerRef,
-  () => {
-    lrcMouseStatus.value = false;
-    lyricsScroll(music.getPlaySongLyricIndex);
-  }
-);
+const { screenfullIcon, screenfullChange, cleanupFullscreen } = useFullscreen(bigPlayerRef, () => {
+  lrcMouseStatus.value = false;
+  lyricsScroll(music.getPlaySongLyricIndex);
+});
 
 // 移动端层级 & 封面帧
 const mobileLayer = ref(1);
 
-const { currentCoverStyle, coverFrameStyle, updateCoverStyle, setupResizeObserver, cleanupResizeObserver } =
-  useMobileCoverFrame(bigPlayerRef, phonyBigCoverRef, phonySmallCoverRef, mobileLayer);
+const {
+  currentCoverStyle,
+  coverFrameStyle,
+  updateCoverStyle,
+  setupResizeObserver,
+  cleanupResizeObserver,
+} = useMobileCoverFrame(bigPlayerRef, phonyBigCoverRef, phonySmallCoverRef, mobileLayer);
 
 // --- 仅本组件需要的局部状态 ---
 const forcePlaying = ref(true);
@@ -179,13 +180,17 @@ const animateTip = (isVisible: boolean) => {
   const tipEl = desktopLayoutRef.value?.tipRef;
   if (!tipEl) return;
   if (isVisible) {
-    gsap.fromTo(tipEl,
+    gsap.fromTo(
+      tipEl,
       { opacity: 0, y: -20 },
-      { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" }
+      { opacity: 1, y: 0, duration: 0.3, ease: "power2.out" },
     );
   } else {
     gsap.to(tipEl, {
-      opacity: 0, y: -20, duration: 0.3, ease: "power2.in"
+      opacity: 0,
+      y: -20,
+      duration: 0.3,
+      ease: "power2.in",
     });
   }
 };
@@ -196,15 +201,17 @@ const animatePlayerIn = () => {
   const leftEl = desktopLayoutRef.value?.leftContentRef;
   const rightEl = desktopLayoutRef.value?.rightContentRef;
   if (leftEl) {
-    gsap.fromTo(leftEl,
+    gsap.fromTo(
+      leftEl,
       { opacity: 0, scale: 0.96 },
-      { opacity: 1, scale: 1, duration: 0.5, delay: 0.15, ease: "power2.out" }
+      { opacity: 1, scale: 1, duration: 0.5, delay: 0.15, ease: "power2.out" },
     );
   }
   if (rightEl) {
-    gsap.fromTo(rightEl,
+    gsap.fromTo(
+      rightEl,
       { opacity: 0, scale: 0.96 },
-      { opacity: 1, scale: 1, duration: 0.5, delay: 0.25, ease: "power2.out" }
+      { opacity: 1, scale: 1, duration: 0.5, delay: 0.25, ease: "power2.out" },
     );
   }
 };
@@ -227,31 +234,46 @@ onBeforeUnmount(() => {
 });
 
 // --- Watchers ---
-watch(() => music.showBigPlayer, (val) => {
-  changePwaColor();
-  if (val) {
-    initMobileElements();
-    requestAnimationFrame(() => {
+watch(
+  () => music.showBigPlayer,
+  (val) => {
+    changePwaColor();
+    if (val) {
+      initMobileElements();
+      requestAnimationFrame(() => {
+        updateCoverStyle();
+        music.showPlayList = false;
+        lyricsScroll(music.getPlaySongLyricIndex);
+        animatePlayerIn();
+      });
+    }
+  },
+);
+
+watch(
+  () => isMobile.value,
+  () => {
+    nextTick(() => {
+      setupResizeObserver();
       updateCoverStyle();
-      music.showPlayList = false;
       lyricsScroll(music.getPlaySongLyricIndex);
-      animatePlayerIn();
     });
-  }
-});
+  },
+);
 
-watch(() => isMobile.value, () => {
-  nextTick(() => {
-    setupResizeObserver();
-    updateCoverStyle();
-    lyricsScroll(music.getPlaySongLyricIndex);
-  });
-});
-
-watch(() => lrcMouseStatus.value, (val) => animateTip(val));
-watch(() => music.getPlaySongLyricIndex, (val) => lyricsScroll(val));
-watch(() => music.getPlaySongData, () => checkNameOverflow(), { immediate: true });
-
+watch(
+  () => lrcMouseStatus.value,
+  (val) => animateTip(val),
+);
+watch(
+  () => music.getPlaySongLyricIndex,
+  (val) => lyricsScroll(val),
+);
+watch(
+  () => music.getPlaySongData,
+  () => checkNameOverflow(),
+  { immediate: true },
+);
 </script>
 
 <style lang="scss" scoped>
@@ -297,8 +319,7 @@ watch(() => music.getPlaySongData, () => checkNameOverflow(), { immediate: true 
     min-height: 0;
     min-width: 0;
     justify-content: stretch;
-    grid-template-rows:
-      [thumb] calc(env(safe-area-inset-top, 0px) + 30px) [main-view] 1fr;
+    grid-template-rows: [thumb] calc(env(safe-area-inset-top, 0px) + 30px) [main-view] 1fr;
     grid-template-columns: 1fr;
 
     // ═══ 状态切换 (AMLL .hideLyric 模式反转) ═══

@@ -1,12 +1,12 @@
 <template>
   <div class="lrcShow">
-    <RollingLyrics @mouseenter="onMouseEnter" @mouseleave="$emit('lrcAllLeave')"
-      @lrcTextClick="$emit('lrcTextClick', $event)" />
-
-    <DesktopRecordMenu
-      :menuShow="menuShow"
-      :handleProgressSeek="handleProgressSeek"
+    <RollingLyrics
+      @mouseenter="onMouseEnter"
+      @mouseleave="$emit('lrcAllLeave')"
+      @lrcTextClick="$emit('lrcTextClick', $event)"
     />
+
+    <DesktopRecordMenu :menuShow="menuShow" :handleProgressSeek="handleProgressSeek" />
   </div>
 </template>
 
@@ -29,7 +29,7 @@ const emit = defineEmits<{
 }>();
 
 const onMouseEnter = () => {
-  emit('lrcMouseEnter');
+  emit("lrcMouseEnter");
 };
 </script>
 

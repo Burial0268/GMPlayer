@@ -13,8 +13,8 @@
  * - No network dependency after initial download (tab switch safe)
  */
 
-import { NativeSound } from './NativeSound';
-import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from './types';
+import { NativeSound } from "./NativeSound";
+import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from "./types";
 
 // Development mode detection
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -58,7 +58,7 @@ export class BufferedSound implements ISound {
     this._sounds = [{ _node: new Audio() }];
 
     if (IS_DEV) {
-      console.log('BufferedSound created:', this._src);
+      console.log("BufferedSound created:", this._src);
     }
 
     if (preload) {
@@ -75,20 +75,20 @@ export class BufferedSound implements ISound {
       this._abortController = new AbortController();
 
       if (IS_DEV) {
-        console.log('BufferedSound: Starting download:', this._src);
+        console.log("BufferedSound: Starting download:", this._src);
       }
 
       const response = await fetch(this._src, {
         signal: this._abortController.signal,
-        credentials: 'omit',
+        credentials: "omit",
       });
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
-      const contentType = response.headers.get('content-type') || 'audio/mpeg';
-      const contentLength = response.headers.get('content-length');
+      const contentType = response.headers.get("content-type") || "audio/mpeg";
+      const contentLength = response.headers.get("content-length");
       const total = contentLength ? parseInt(contentLength, 10) : 0;
 
       let arrayBuffer: ArrayBuffer;
@@ -97,7 +97,7 @@ export class BufferedSound implements ISound {
         // Fallback: no streaming, just read all at once
         arrayBuffer = await response.arrayBuffer();
         this._downloadProgress = 1;
-        this._emitPre('progress', 1);
+        this._emitPre("progress", 1);
       } else {
         // Stream download with progress tracking
         const reader = response.body.getReader();
@@ -113,7 +113,7 @@ export class BufferedSound implements ISound {
 
           if (total > 0) {
             this._downloadProgress = received / total;
-            this._emitPre('progress', this._downloadProgress);
+            this._emitPre("progress", this._downloadProgress);
           }
         }
 
@@ -134,21 +134,21 @@ export class BufferedSound implements ISound {
       this._blobUrl = URL.createObjectURL(blob);
 
       if (IS_DEV) {
-        console.log('BufferedSound: Download complete, Blob URL created');
+        console.log("BufferedSound: Download complete, Blob URL created");
       }
 
       // Create NativeSound with Blob URL (fully in-memory, no network needed)
       this._createInnerSound();
     } catch (err: any) {
-      if (err.name === 'AbortError') {
+      if (err.name === "AbortError") {
         if (IS_DEV) {
-          console.log('BufferedSound: Download aborted');
+          console.log("BufferedSound: Download aborted");
         }
         return;
       }
 
-      console.error('BufferedSound: Failed to download audio:', err);
-      this._emitPre('loaderror');
+      console.error("BufferedSound: Failed to download audio:", err);
+      this._emitPre("loaderror");
     }
   }
 
@@ -200,7 +200,9 @@ export class BufferedSound implements ISound {
     const listeners = this._preListeners.get(event);
     if (listeners) {
       for (const cb of listeners) {
-        try { cb(...args); } catch (e) {
+        try {
+          cb(...args);
+        } catch (e) {
           console.error(`BufferedSound: Error in pre-load ${event} listener:`, e);
         }
       }
@@ -208,7 +210,9 @@ export class BufferedSound implements ISound {
     const onceListeners = this._preOnceListeners.get(event);
     if (onceListeners) {
       for (const cb of onceListeners) {
-        try { cb(...args); } catch (e) {
+        try {
+          cb(...args);
+        } catch (e) {
           console.error(`BufferedSound: Error in pre-load once ${event} listener:`, e);
         }
       }
@@ -354,7 +358,7 @@ export class BufferedSound implements ISound {
     return this._inner?.getAverageAmplitude() ?? 0;
   }
 
-  getEffectManager(): import('./AudioEffectManager').AudioEffectManager | null {
+  getEffectManager(): import("./AudioEffectManager").AudioEffectManager | null {
     return this._inner?.getEffectManager() ?? null;
   }
 
@@ -401,7 +405,7 @@ export class BufferedSound implements ISound {
 
   unload(): void {
     if (IS_DEV) {
-      console.log('BufferedSound: unloading');
+      console.log("BufferedSound: unloading");
     }
     this._unloading = true;
 

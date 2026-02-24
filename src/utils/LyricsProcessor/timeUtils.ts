@@ -44,7 +44,7 @@ export function formatLrcTime(timeMs: number): string {
   const sec = (totalSec % 60) | 0;
   const cs = ((timeMs % 1000) / 10) | 0;
 
-  return `${min < 10 ? '0' : ''}${min}:${sec < 10 ? '0' : ''}${sec}.${cs < 10 ? '0' : ''}${cs}`;
+  return `${min < 10 ? "0" : ""}${min}:${sec < 10 ? "0" : ""}${sec}.${cs < 10 ? "0" : ""}${cs}`;
 }
 
 /**
@@ -52,14 +52,14 @@ export function formatLrcTime(timeMs: number): string {
  * @param content 歌词内容
  * @returns 'yrc' 或 'qrc'
  */
-export function detectYrcType(content: string): 'yrc' | 'qrc' {
+export function detectYrcType(content: string): "yrc" | "qrc" {
   // Check for YRC markers first (more specific)
-  if (content.includes('[x-trans') || content.includes('[merge]')) {
-    return 'yrc';
+  if (content.includes("[x-trans") || content.includes("[merge]")) {
+    return "yrc";
   }
   // QRC uses < > delimiters with comma-separated values
-  if (content.indexOf('<') !== -1 && content.indexOf(',') !== -1 && content.indexOf('>') !== -1) {
-    return 'qrc';
+  if (content.indexOf("<") !== -1 && content.indexOf(",") !== -1 && content.indexOf(">") !== -1) {
+    return "qrc";
   }
-  return 'qrc';
+  return "qrc";
 }

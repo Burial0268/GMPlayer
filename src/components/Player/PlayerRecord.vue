@@ -15,8 +15,7 @@
         class="album"
         :src="
           music.getPlaySongData
-            ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
-              '?param=500y500'
+            ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500'
             : '/images/pic/default.png'
         "
         alt="cover"
@@ -26,33 +25,33 @@
       <div class="song-info">
         <div class="text">
           <span class="name text-hidden">
-            {{
-              music.getPlaySongData
-                ? music.getPlaySongData.name
-                : $t("other.noSong")
-            }}
+            {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
           </span>
-          <span
-            v-if="music.getPlaySongData"
-            class="artists text-hidden"
-          >
-            <span
-              v-for="(ar, index) in music.getPlaySongData.artist"
-              :key="ar.id"
-            >
-              <span class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{ ar.name }}</span>
+          <span v-if="music.getPlaySongData" class="artists text-hidden">
+            <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
+              <span class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{
+                ar.name
+              }}</span>
               <span v-if="index < music.getPlaySongData.artist.length - 1"> / </span>
             </span>
           </span>
         </div>
         <div class="action-row">
-          <n-icon class="like-button" size="24" :component="music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id) ? StarRound : StarBorderRound" @click.stop="
-              music.getPlaySongData && (
-                music.getSongIsLike(music.getPlaySongData.id)
-                  ? music.changeLikeList(music.getPlaySongData.id, false)
-                  : music.changeLikeList(music.getPlaySongData.id, true)
-              )
-          " />
+          <n-icon
+            class="like-button"
+            size="24"
+            :component="
+              music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
+                ? StarRound
+                : StarBorderRound
+            "
+            @click.stop="
+              music.getPlaySongData &&
+              (music.getSongIsLike(music.getPlaySongData.id)
+                ? music.changeLikeList(music.getPlaySongData.id, false)
+                : music.changeLikeList(music.getPlaySongData.id, true))
+            "
+          />
         </div>
       </div>
       <div class="progress-bar">
@@ -68,19 +67,13 @@
           />
         </div>
         <div class="time-info">
-          <span class="time-text">{{
-            music.getPlaySongTime.songTimePlayed
-          }}</span>
+          <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
           <span class="time-text">{{ remainingTime }}</span>
         </div>
       </div>
       <div class="buttons">
         <n-icon
-          :style="
-            music.getPersonalFmMode
-          ? 'opacity: 0.2;pointer-events: none;'
-          : null
-          "
+          :style="music.getPersonalFmMode ? 'opacity: 0.2;pointer-events: none;' : null"
           class="button-icon"
           :class="{ active: music.getPlaySongMode !== 'normal' }"
           :component="playModeIcon"
@@ -114,11 +107,7 @@
           :component="IconForward"
           @click.stop="music.setPlaySongIndex('next')"
         />
-        <n-icon
-          class="button-icon"
-          :component="MessageRound"
-          @click="goToComment"
-        />
+        <n-icon class="button-icon" :component="MessageRound" @click="goToComment" />
       </div>
       <div class="volume-control">
         <BouncingSlider
@@ -126,7 +115,7 @@
           :min="0"
           :max="1"
           :change-on-drag="true"
-          @update:value="val => persistData.playVolume = val"
+          @update:value="(val) => (persistData.playVolume = val)"
         >
           <template #before-icon>
             <n-icon size="18" :component="VolumeOffRound" />
@@ -259,7 +248,8 @@ const goToComment = () => {
     animation: rotate 18s linear infinite;
     border-radius: 50%;
     border: calc(var(--cover-size) * 0.025) solid #ffffff30;
-    background: linear-gradient(black 0%, transparent, black 98%),
+    background:
+      linear-gradient(black 0%, transparent, black 98%),
       radial-gradient(
         #000 52%,
         #555,
@@ -406,7 +396,9 @@ const goToComment = () => {
         color: var(--main-cover-color);
         opacity: 0.8;
         cursor: pointer;
-        transition: opacity 0.2s ease, transform 0.1s ease-out;
+        transition:
+          opacity 0.2s ease,
+          transform 0.1s ease-out;
         &:hover {
           opacity: 1;
         }

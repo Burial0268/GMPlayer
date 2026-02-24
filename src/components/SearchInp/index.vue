@@ -13,28 +13,19 @@
       @click.stop
     >
       <template #prefix>
-        <n-icon
-          size="16"
-          :class="site.searchInputActive ? 'active' : ''"
-          :component="Search"
-        />
+        <n-icon size="16" :class="site.searchInputActive ? 'active' : ''" :component="Search" />
       </template>
     </n-input>
     <CollapseTransition easing="ease-in-out">
       <n-card
         class="list"
         v-show="
-          site.searchInputActive &&
-          !inputValue &&
-          (music.getSearchHistory[0] || searchData.hot[0])
+          site.searchInputActive && !inputValue && (music.getSearchHistory[0] || searchData.hot[0])
         "
         content-style="padding: 0"
       >
         <n-scrollbar>
-          <div
-            class="history-list"
-            v-if="music.getSearchHistory[0] && setting.searchHistory"
-          >
+          <div class="history-list" v-if="music.getSearchHistory[0] && setting.searchHistory">
             <div class="list-title">
               <n-icon size="16" :component="History" />
               <n-text>{{ $t("nav.search.history") }}</n-text>
@@ -74,13 +65,7 @@
                 <span class="name">
                   {{ item.searchWord }}
                   <!-- <img :src="item.iconUrl" alt="icon" /> -->
-                  <n-tag
-                    v-if="item.iconUrl"
-                    class="tag"
-                    round
-                    :bordered="false"
-                    size="small"
-                  >
+                  <n-tag v-if="item.iconUrl" class="tag" round :bordered="false" size="small">
                     {{ item.iconType == 1 ? "HOT" : "UP" }}
                   </n-tag>
                 </span>
@@ -98,10 +83,7 @@
         content-style="padding: 0"
       >
         <n-scrollbar>
-          <div
-            class="suggest-tip"
-            v-if="Object.keys(searchData.suggest).length === 0"
-          >
+          <div class="suggest-tip" v-if="Object.keys(searchData.suggest).length === 0">
             <n-icon size="16" :component="Find" />
             <span>{{ $t("nav.search.noSuggestions") }}</span>
           </div>
@@ -340,7 +322,7 @@ watch(
         getSearchSuggestData(value.trim());
       }, 500);
     }
-  }
+  },
 );
 
 // 监听播放列表显隐
@@ -351,7 +333,7 @@ watch(
       searchInpRef.value?.blur();
       site.searchInputActive = false;
     }
-  }
+  },
 );
 </script>
 

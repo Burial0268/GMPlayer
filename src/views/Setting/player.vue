@@ -10,26 +10,31 @@
     <n-card class="set-item">
       <div class="name">
         {{ $t("setting.backgroundImageShow") }}
-        <span class="tip">{{
-          $t(`setting.backgroundImageShowTip_${backgroundImageShow}`)
-          }}</span>
+        <span class="tip">{{ $t(`setting.backgroundImageShowTip_${backgroundImageShow}`) }}</span>
       </div>
-      <n-select class="set" v-model:value="backgroundImageShow" :options="backgroundImageShowOptions" />
+      <n-select
+        class="set"
+        v-model:value="backgroundImageShow"
+        :options="backgroundImageShowOptions"
+      />
     </n-card>
     <n-card v-if="backgroundImageShow === 'eplor'" class="set-item">
       <div class="name">
         {{ $t("setting.eploryBackgroundConfig") }}
-        <span class="tip">{{
-          $t(`setting.eploryBackgroundConfigTip`)
-          }}</span>
+        <span class="tip">{{ $t(`setting.eploryBackgroundConfigTip`) }}</span>
       </div>
       <n-button class="set" @click="isModalOn = true">配置</n-button>
-      <n-modal class="s-modal" preset="dialog" :title="t('setting.eploryBackgroundConfig')" v-model:show="isModalOn">
-        <n-form style="margin-top: 1rem;">
+      <n-modal
+        class="s-modal"
+        preset="dialog"
+        :title="t('setting.eploryBackgroundConfig')"
+        v-model:show="isModalOn"
+      >
+        <n-form style="margin-top: 1rem">
           <n-form-item :label="t('setting.eplorySetting.fps.title')">
             <n-input-number :min="0.1" v-model:value="fps" />
             <template #feedback>
-              {{ t('setting.eplorySetting.fps.tip') }}
+              {{ t("setting.eplorySetting.fps.tip") }}
             </template>
           </n-form-item>
           <br />
@@ -43,30 +48,35 @@
           </n-form-item>
           <br />
           <n-form-item label="动态流速倍率">
-            <n-input-number :min="0.1" v-model:value="dynamicFlowSpeedScale" :disabled="!dynamicFlowSpeed" />
+            <n-input-number
+              :min="0.1"
+              v-model:value="dynamicFlowSpeedScale"
+              :disabled="!dynamicFlowSpeed"
+            />
             <template #feedback>
-              调节动态流速的乘算倍率，倍率越高，随音频烈度的而产生的流速变化会越明显，性能消耗也会越大，默认为 2。
+              调节动态流速的乘算倍率，倍率越高，随音频烈度的而产生的流速变化会越明显，性能消耗也会越大，默认为
+              2。
             </template>
           </n-form-item>
           <br />
           <n-form-item :label="t('setting.eplorySetting.flowSpeed.title')">
             <n-input-number :min="0.1" v-model:value="flowSpeed" :disabled="dynamicFlowSpeed" />
             <template #feedback>
-              {{ t('setting.eplorySetting.flowSpeed.tip') }}
+              {{ t("setting.eplorySetting.flowSpeed.tip") }}
             </template>
           </n-form-item>
           <br />
           <n-form-item :label="t('setting.eplorySetting.renderScale.title')">
             <n-input-number :min="0.1" v-model:value="renderScale" />
             <template #feedback>
-              {{ t('setting.eplorySetting.renderScale.tip') }}
+              {{ t("setting.eplorySetting.renderScale.tip") }}
             </template>
           </n-form-item>
           <br />
           <n-form-item :label="t('setting.eplorySetting.albumImageUrl.title')">
             <n-input v-model:value="albumImageUrl" />
             <template #feedback>
-              {{ t('setting.eplorySetting.albumImageUrl.tip') }}
+              {{ t("setting.eplorySetting.albumImageUrl.tip") }}
             </template>
           </n-form-item>
         </n-form>
@@ -78,34 +88,31 @@
         <span class="tip">使用 WebGL 渲染的高性能模糊效果，降低设备性能消耗</span>
       </div>
       <n-button class="set" @click="isBlurModalOn = true">配置</n-button>
-      <n-modal class="s-modal" preset="dialog" title="WebGL 模糊效果设置" v-model:show="isBlurModalOn">
-        <n-form style="margin-top: 1rem;">
+      <n-modal
+        class="s-modal"
+        preset="dialog"
+        title="WebGL 模糊效果设置"
+        v-model:show="isBlurModalOn"
+      >
+        <n-form style="margin-top: 1rem">
           <n-form-item label="FPS">
             <n-input-number :min="1" :max="60" v-model:value="fps" />
-            <template #feedback>
-              设置渲染帧率，值越低性能消耗越小，但动画可能不够流畅
-            </template>
+            <template #feedback> 设置渲染帧率，值越低性能消耗越小，但动画可能不够流畅 </template>
           </n-form-item>
           <br />
           <n-form-item label="模糊程度">
             <n-input-number :min="1" :max="100" v-model:value="blurAmount" />
-            <template #feedback>
-              设置背景模糊的强度，值越大模糊效果越强
-            </template>
+            <template #feedback> 设置背景模糊的强度，值越大模糊效果越强 </template>
           </n-form-item>
           <br />
           <n-form-item label="对比度">
             <n-input-number :min="0.1" :max="3" :step="0.1" v-model:value="contrastAmount" />
-            <template #feedback>
-              设置背景的对比度，提高对比度可以使色彩更加鲜明
-            </template>
+            <template #feedback> 设置背景的对比度，提高对比度可以使色彩更加鲜明 </template>
           </n-form-item>
           <br />
           <n-form-item label="渲染比例">
             <n-input-number :min="0.1" :max="1" :step="0.1" v-model:value="renderScale" />
-            <template #feedback>
-              设置渲染的画布比例，值越低性能消耗越小，但画质可能降低
-            </template>
+            <template #feedback> 设置渲染的画布比例，值越低性能消耗越小，但画质可能降低 </template>
           </n-form-item>
         </n-form>
       </n-modal>
@@ -127,7 +134,7 @@
     <n-card class="set-item">
       <div class="name">
         <div class="dev">
-           使用 AMLL TTML 歌词仓库
+          使用 AMLL TTML 歌词仓库
           <n-tag round :bordered="false" size="small" type="warning">
             {{ $t("setting.dev") }}
             <template #icon>
@@ -135,7 +142,10 @@
             </template>
           </n-tag>
         </div>
-        <span class="tip">优先从 AMLL TTML 歌词仓库获取高精度逐字歌词（含对唱、背景行信息）；若获取失败，则回退到网易云歌词</span>
+        <span class="tip"
+          >优先从 AMLL TTML
+          歌词仓库获取高精度逐字歌词（含对唱、背景行信息）；若获取失败，则回退到网易云歌词</span
+        >
       </div>
       <n-switch v-model:value="useTTMLRepo" :round="false" />
     </n-card>
@@ -253,44 +263,71 @@
         </div>
         <span class="tip">调节取色所使用的类型</span>
       </div>
-      <n-select class="set" v-model:value="colorType" :options="colorTypeOptions" :disabled="!immersivePlayer" />
+      <n-select
+        class="set"
+        v-model:value="colorType"
+        :options="colorTypeOptions"
+        :disabled="!immersivePlayer"
+      />
     </n-card>
-    <n-card class="set-item" :content-style="{
-      flexDirection: 'column',
-      alignItems: 'flex-start',
-    }">
+    <n-card
+      class="set-item"
+      :content-style="{
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+      }"
+    >
       <div class="name">{{ $t("setting.lyricsFontSize") }}</div>
-      <n-slider v-model:value="lyricsFontSize" :tooltip="false" :max="4" :min="3" :step="0.01" :marks="{
-        3: t('setting.lyrics1'),
-        3.6: t('setting.lyrics2'),
-        4: t('setting.lyrics3'),
-      }" />
+      <n-slider
+        v-model:value="lyricsFontSize"
+        :tooltip="false"
+        :max="4"
+        :min="3"
+        :step="0.01"
+        :marks="{
+          3: t('setting.lyrics1'),
+          3.6: t('setting.lyrics2'),
+          4: t('setting.lyrics3'),
+        }"
+      />
     </n-card>
     <n-card class="set-item">
       <div class="name">歌词字体</div>
-      <n-select class="set" v-model:value="lyricFont" :options="[
-        { label: 'HarmonyOS Sans SC', value: 'HarmonyOS Sans SC' },
-        { label: 'PingFang SC', value: 'PingFang SC' },
-        { label: 'Microsoft YaHei', value: 'Microsoft YaHei' },
-        { label: 'Noto Sans SC', value: 'Noto Sans SC' },
-        { label: 'SF Pro Display', value: 'SF Pro Display'}
-      ]" />
+      <n-select
+        class="set"
+        v-model:value="lyricFont"
+        :options="[
+          { label: 'HarmonyOS Sans SC', value: 'HarmonyOS Sans SC' },
+          { label: 'PingFang SC', value: 'PingFang SC' },
+          { label: 'Microsoft YaHei', value: 'Microsoft YaHei' },
+          { label: 'Noto Sans SC', value: 'Noto Sans SC' },
+          { label: 'SF Pro Display', value: 'SF Pro Display' },
+        ]"
+      />
     </n-card>
     <n-card class="set-item">
       <div class="name">歌词字重</div>
-      <n-select class="set" v-model:value="lyricFontWeight" :options="[
-        { label: '常规', value: 'normal' },
-        { label: '中等', value: '500' },
-        { label: '粗体', value: 'bold' },
-      ]" />
+      <n-select
+        class="set"
+        v-model:value="lyricFontWeight"
+        :options="[
+          { label: '常规', value: 'normal' },
+          { label: '中等', value: '500' },
+          { label: '粗体', value: 'bold' },
+        ]"
+      />
     </n-card>
     <n-card class="set-item">
       <div class="name">歌词字间距</div>
-      <n-select class="set" v-model:value="lyricLetterSpacing" :options="[
-        { label: '正常', value: 'normal' },
-        { label: '紧凑', value: '-0.05em' },
-        { label: '宽松', value: '0.05em' },
-      ]" />
+      <n-select
+        class="set"
+        v-model:value="lyricLetterSpacing"
+        :options="[
+          { label: '正常', value: 'normal' },
+          { label: '紧凑', value: '-0.05em' },
+          { label: '宽松', value: '0.05em' },
+        ]"
+      />
     </n-card>
     <n-card class="set-item">
       <div class="name">歌词行高</div>
@@ -336,14 +373,24 @@
           {{ $t("setting.autoMixCrossfadeDuration") }}
           <span class="tip">{{ $t("setting.autoMixCrossfadeDurationTip") }}</span>
         </div>
-        <n-input-number class="set" v-model:value="autoMixCrossfadeDuration" :min="3" :max="12" :step="1" />
+        <n-input-number
+          class="set"
+          v-model:value="autoMixCrossfadeDuration"
+          :min="3"
+          :max="12"
+          :step="1"
+        />
       </n-card>
       <n-card class="set-item">
         <div class="name">
           {{ $t("setting.autoMixTransitionStyle") }}
           <span class="tip">{{ $t("setting.autoMixTransitionStyleTip") }}</span>
         </div>
-        <n-select class="set" v-model:value="autoMixTransitionStyle" :options="autoMixTransitionStyleOptions" />
+        <n-select
+          class="set"
+          v-model:value="autoMixTransitionStyle"
+          :options="autoMixTransitionStyleOptions"
+        />
       </n-card>
       <n-card class="set-item">
         <div class="name">
@@ -441,9 +488,9 @@ const {
   autoMixTransitionEffects,
   autoMixVocalGuard,
 } = storeToRefs(setting);
-console.log('SETTING', fps)
-const isModalOn = ref(false)
-const isBlurModalOn = ref(false)
+console.log("SETTING", fps);
+const isModalOn = ref(false);
+const isBlurModalOn = ref(false);
 
 // 监听 TTML 仓库歌词设置变化
 watch(useTTMLRepo, (newValue, oldValue) => {
@@ -477,26 +524,26 @@ const lyricsBlockOptions = [
 // 取色类别
 const colorTypeOptions = [
   {
-    label: '中性',
-    value: 'neutral',
+    label: "中性",
+    value: "neutral",
   },
   {
-    label: '中性变体',
-    value: 'neutralVariant',
+    label: "中性变体",
+    value: "neutralVariant",
   },
   {
-    label: '主要',
-    value: 'primary',
+    label: "主要",
+    value: "primary",
   },
   {
-    label: '次要',
-    value: 'secondary',
+    label: "次要",
+    value: "secondary",
   },
   {
-    label: '次次要',
-    value: 'tertiary',
+    label: "次次要",
+    value: "tertiary",
   },
-]
+];
 
 // 播放器样式
 const playerStyleOptions = [

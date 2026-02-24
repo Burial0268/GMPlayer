@@ -1,12 +1,6 @@
 <template>
-  <div
-    class="padailysongs"
-    @click="router.push('/dailySongs')"
-  >
-    <div
-      class="padailysongs-bg"
-      :style="`background-image: url(${cardImage})`"
-    />
+  <div class="padailysongs" @click="router.push('/dailySongs')">
+    <div class="padailysongs-bg" :style="`background-image: url(${cardImage})`" />
     <div class="gray" />
     <div class="text">
       <div class="date">
@@ -19,17 +13,8 @@
       </div>
     </div>
     <div class="control">
-      <n-avatar
-        class="cover"
-        :src="cardImage"
-        fallback-src="/images/pic/default.png"
-      />
-      <n-icon
-        class="play"
-        :component="PlayCircleFilled"
-        size="50"
-        @click.stop="playThisSong"
-      />
+      <n-avatar class="cover" :src="cardImage" fallback-src="/images/pic/default.png" />
+      <n-icon class="play" :component="PlayCircleFilled" size="50" @click.stop="playThisSong" />
     </div>
   </div>
 </template>
@@ -54,10 +39,8 @@ const randomNumber = Math.floor(Math.random() * music.getDailySongs.length);
 const getCardImage = () => {
   if (user.userLogin && music.getDailySongs[0]) {
     cardImage.value =
-      music.getDailySongs[randomNumber]?.album.picUrl.replace(
-        /^http:/,
-        "https:"
-      ) + "?param=100y100";
+      music.getDailySongs[randomNumber]?.album.picUrl.replace(/^http:/, "https:") +
+      "?param=100y100";
   } else {
     cardImage.value = "/images/pic/pic.jpg";
   }

@@ -62,7 +62,8 @@ export class LowFreqVolumeAnalyzer {
   setOptions(options: Partial<LowFreqVolumeOptions>): void {
     if (options.binCount !== undefined) this._binCount = options.binCount;
     if (options.windowSize !== undefined) this._windowSize = options.windowSize;
-    if (options.gradientThreshold !== undefined) this._gradientThreshold = options.gradientThreshold;
+    if (options.gradientThreshold !== undefined)
+      this._gradientThreshold = options.gradientThreshold;
     if (options.smoothingFactor !== undefined) this._smoothingFactor = options.smoothingFactor;
   }
 

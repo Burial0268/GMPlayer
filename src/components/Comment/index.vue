@@ -5,37 +5,21 @@
         <div class="avatar">
           <img
             class="avatarImg"
-            :src="
-              commentData.user.avatarUrl.replace(/^http:/, 'https:') +
-              '?param=50y50'
-            "
+            :src="commentData.user.avatarUrl.replace(/^http:/, 'https:') + '?param=50y50'"
             alt="avatar"
           />
           <img
             class="musicPackage"
             v-if="commentData.user.vipRights?.redVipAnnualCount > 0"
-            :src="
-              commentData.user.vipRights.musicPackage.iconUrl.replace(
-                /^http:/,
-                'https:'
-              )
-            "
+            :src="commentData.user.vipRights.musicPackage.iconUrl.replace(/^http:/, 'https:')"
             alt="redVipAnnualCount"
             title="网易音乐人"
           />
         </div>
-        <div
-          class="associator"
-          v-if="commentData.user.vipRights?.redVipLevel > 0"
-        >
+        <div class="associator" v-if="commentData.user.vipRights?.redVipLevel > 0">
           <img
             v-if="commentData.user.vipRights.associator"
-            :src="
-              commentData.user.vipRights.associator.iconUrl.replace(
-                /^http:/,
-                'https:'
-              )
-            "
+            :src="commentData.user.vipRights.associator.iconUrl.replace(/^http:/, 'https:')"
             alt="associator"
             title="黑胶会员"
           />
@@ -47,9 +31,7 @@
           <n-text class="text" v-html="commentData.content" />
         </div>
         <div class="beReplied" v-if="commentData.beReplied[0]">
-          <n-text class="name">
-            @{{ commentData.beReplied[0].user.nickname }}：
-          </n-text>
+          <n-text class="name"> @{{ commentData.beReplied[0].user.nickname }}： </n-text>
           <n-text class="text">{{ commentData.beReplied[0].content }}</n-text>
         </div>
         <div class="thing">
@@ -61,10 +43,7 @@
             <n-icon size="14" :depth="3" :component="Local" />
             <n-text :depth="3" v-html="commentData.ipLocation.location" />
           </div>
-          <div
-            :class="commentData.liked ? 'like liked' : 'like'"
-            @click="toLikeComment"
-          >
+          <div :class="commentData.liked ? 'like liked' : 'like'" @click="toLikeComment">
             <n-icon>
               <ThumbsUp :theme="commentData.liked ? 'filled' : 'outline'" />
             </n-icon>
@@ -100,18 +79,16 @@ const props = defineProps({
 const toLikeComment = () => {
   if (user.userLogin) {
     const type = props.commentData.liked ? 0 : 1;
-    likeComment(
-      router.currentRoute.value.query.id,
-      props.commentData.commentId,
-      type
-    ).then((res) => {
-      if (res.code === 200) {
-        props.commentData.liked = !props.commentData.liked;
-        props.commentData.likedCount += type ? 1 : -1;
-      } else {
-        $message.error(t("general.message.operationFailed"));
-      }
-    });
+    likeComment(router.currentRoute.value.query.id, props.commentData.commentId, type).then(
+      (res) => {
+        if (res.code === 200) {
+          props.commentData.liked = !props.commentData.liked;
+          props.commentData.likedCount += type ? 1 : -1;
+        } else {
+          $message.error(t("general.message.operationFailed"));
+        }
+      },
+    );
   } else {
     $message.error(t("general.message.needLogin"));
   }

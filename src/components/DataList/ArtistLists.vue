@@ -139,7 +139,7 @@ const renderIcon = (icon) => {
       { style: { transform: "translateX(2px)" } },
       {
         default: () => icon,
-      }
+      },
     );
   };
 };
@@ -174,9 +174,7 @@ const openRightMenu = (e, data) => {
           onClick: () => {
             if (navigator.clipboard) {
               try {
-                navigator.clipboard.writeText(
-                  `https://music.163.com/#/artist?id=${data.id}`
-                );
+                navigator.clipboard.writeText(`https://music.163.com/#/artist?id=${data.id}`);
                 $message.success(t("general.message.copySuccess"));
               } catch (err) {
                 console.error(t("general.message.copyFailure"), err);
@@ -211,7 +209,7 @@ const toLikeArtist = (data) => {
           type == 1
             ? t("menu.collection", { name: t("general.dialog.success") })
             : t("menu.cancelCollection", { name: t("general.dialog.success") })
-        }`
+        }`,
       );
       user.setUserArtistLists();
     } else {
@@ -220,7 +218,7 @@ const toLikeArtist = (data) => {
           type == 1
             ? t("menu.collection", { name: t("general.dialog.failed") })
             : t("menu.cancelCollection", { name: t("general.dialog.failed") })
-        }`
+        }`,
       );
     }
   });
@@ -235,11 +233,7 @@ const isLikeOrDislike = (id) => {
 };
 
 onMounted(() => {
-  if (
-    user.userLogin &&
-    !user.getUserArtistLists.has &&
-    !user.getUserArtistLists.isLoading
-  )
+  if (user.userLogin && !user.getUserArtistLists.has && !user.getUserArtistLists.isLoading)
     user.setUserArtistLists();
 });
 </script>

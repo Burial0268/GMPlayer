@@ -27,7 +27,7 @@ export class VocalActivityGuard {
    */
   isVocalActive(
     multibandEnergy: { low: number[]; mid: number[]; high: number[] },
-    windowIndex: number
+    windowIndex: number,
   ): boolean {
     if (windowIndex < 0 || windowIndex >= multibandEnergy.mid.length) return false;
 
@@ -38,7 +38,7 @@ export class VocalActivityGuard {
 
     if (total < 0.001) return false; // silence
 
-    return (mid / total) > VOCAL_RATIO_THRESHOLD;
+    return mid / total > VOCAL_RATIO_THRESHOLD;
   }
 
   /**
@@ -52,7 +52,7 @@ export class VocalActivityGuard {
     multibandEnergy: { low: number[]; mid: number[]; high: number[] },
     startWindow: number,
     endWindow: number,
-    maxDeferWindows: number = 20 // 5s at 250ms windows
+    maxDeferWindows: number = 20, // 5s at 250ms windows
   ): number {
     const searchEnd = Math.min(endWindow, startWindow + maxDeferWindows);
     let consecutiveQuiet = 0;
@@ -88,7 +88,7 @@ export class VocalActivityGuard {
     crossfadeStartTime: number,
     effectiveEnd: number,
     outroMultibandEnergy: { low: number[]; mid: number[]; high: number[] } | undefined,
-    crossfadeDuration: number
+    crossfadeDuration: number,
   ): boolean {
     if (!outroMultibandEnergy) return false;
 
@@ -96,7 +96,7 @@ export class VocalActivityGuard {
     // Outro multiband energy is analyzed from the last ~60s of content at 250ms windows.
     const windowDuration = 0.25; // 250ms per window
     const totalWindows = outroMultibandEnergy.mid.length;
-    const outroStartTime = effectiveEnd - (totalWindows * windowDuration);
+    const outroStartTime = effectiveEnd - totalWindows * windowDuration;
 
     // If crossfade start is before outro data, can't check
     if (crossfadeStartTime < outroStartTime) return false;
@@ -118,7 +118,7 @@ export class VocalActivityGuard {
     if (IS_DEV) {
       console.log(
         `VocalActivityGuard: Deferring crossfade — vocal activity detected at window ${startWindowIdx}, ` +
-        `budget=${actualMaxDefer.toFixed(1)}s`
+          `budget=${actualMaxDefer.toFixed(1)}s`,
       );
     }
 

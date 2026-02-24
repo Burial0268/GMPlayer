@@ -4,13 +4,7 @@
       {{ $t("nav.officialList") }}
     </n-divider>
     <Transition mode="out-in">
-      <n-grid
-        class="official"
-        x-gap="20"
-        y-gap="20"
-        :cols="2"
-        v-if="toplistData.officialList[0]"
-      >
+      <n-grid class="official" x-gap="20" y-gap="20" :cols="2" v-if="toplistData.officialList[0]">
         <n-gi v-for="item in toplistData.officialList" :key="item">
           <n-card
             class="item"
@@ -26,10 +20,7 @@
             <div class="cover">
               <n-avatar
                 class="coverImg"
-                :src="
-                  item.coverImgUrl.replace(/^http:/, 'https:') +
-                  '?param=300y300'
-                "
+                :src="item.coverImgUrl.replace(/^http:/, 'https:') + '?param=300y300'"
                 fallback-src="/images/pic/default.png"
               />
               <n-text class="update" v-html="item.updateFrequency" />
@@ -37,11 +28,7 @@
             <div class="data">
               <n-text class="title" v-html="item.name" />
               <div class="desc">
-                <div
-                  class="song text-hidden"
-                  v-for="(song, index) in item.tracks"
-                  :key="song"
-                >
+                <div class="song text-hidden" v-for="(song, index) in item.tracks" :key="song">
                   <n-text>{{ Number(index) + 1 }}. {{ song.first }} - </n-text>
                   <n-text depth="3">{{ song.second }}</n-text>
                 </div>

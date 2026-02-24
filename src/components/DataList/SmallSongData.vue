@@ -84,13 +84,13 @@ watch(
   () => props.getDataByID,
   (val) => {
     getMusicDetailData(val);
-  }
+  },
 );
 watch(
   () => props.songData,
   (val) => {
     songDetail.value = val;
-  }
+  },
 );
 
 onMounted(() => {

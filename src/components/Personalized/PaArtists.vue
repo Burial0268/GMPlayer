@@ -2,12 +2,7 @@
   <div class="paartists">
     <n-h3 class="title" prefix="bar">
       {{ $t("home.title.artists") }}
-      <n-tabs
-        class="tab"
-        :default-value="-1"
-        size="small"
-        @update:value="tabChange"
-      >
+      <n-tabs class="tab" :default-value="-1" size="small" @update:value="tabChange">
         <n-tab :name="-1"> {{ $t("general.type.all") }} </n-tab>
         <n-tab :name="7"> {{ $t("general.type.china") }} </n-tab>
         <n-tab :name="96"> {{ $t("general.type.western") }} </n-tab>

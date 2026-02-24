@@ -12,7 +12,7 @@
  *   - Plays 1-2s before incoming track, beat-synced if BPM available
  */
 
-import { AudioContextManager } from '../AudioContextManager';
+import { AudioContextManager } from "../AudioContextManager";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -53,7 +53,7 @@ export class TransitionEffects {
     outgoingGain: GainNode,
     decayTime: number,
     startTime: number,
-    crossfadeDuration: number
+    crossfadeDuration: number,
   ): void {
     // Clamp decay time
     decayTime = Math.max(1.5, Math.min(3.0, decayTime));
@@ -66,7 +66,7 @@ export class TransitionEffects {
       const channelData = irBuffer.getChannelData(channel);
       for (let i = 0; i < irLength; i++) {
         const t = i / ctx.sampleRate;
-        const envelope = Math.exp(-3 * t / decayTime); // -3 for ~95% decay at decayTime
+        const envelope = Math.exp((-3 * t) / decayTime); // -3 for ~95% decay at decayTime
         channelData[i] = (Math.random() * 2 - 1) * envelope;
       }
     }
@@ -95,7 +95,7 @@ export class TransitionEffects {
     if (IS_DEV) {
       console.log(
         `TransitionEffects: Reverb tail created — decay=${decayTime.toFixed(1)}s, ` +
-        `duration=${crossfadeDuration.toFixed(1)}s`
+          `duration=${crossfadeDuration.toFixed(1)}s`,
       );
     }
   }
@@ -123,26 +123,50 @@ export class TransitionEffects {
     intensity: number,
     startTime: number,
     duration: number,
-    fadeInOnly: boolean
+    fadeInOnly: boolean,
   ): void {
     // Guard: clean up any previous filter sweep nodes to prevent orphaned graph nodes
     if (this._outSweepFilter || this._inSweepFilter) {
       if (IS_DEV) {
-        console.warn('TransitionEffects: Previous filter sweep still active, cleaning up first');
+        console.warn("TransitionEffects: Previous filter sweep still active, cleaning up first");
       }
       if (this._outSweepFilter) {
-        try { this._outSweepFilter.disconnect(); } catch { /* ok */ }
+        try {
+          this._outSweepFilter.disconnect();
+        } catch {
+          /* ok */
+        }
         if (this._outSweepGainRef) {
-          try { this._outSweepGainRef.disconnect(this._outSweepFilter); } catch { /* ok */ }
-          try { this._outSweepGainRef.connect(ctx.destination); } catch { /* ok */ }
+          try {
+            this._outSweepGainRef.disconnect(this._outSweepFilter);
+          } catch {
+            /* ok */
+          }
+          try {
+            this._outSweepGainRef.connect(ctx.destination);
+          } catch {
+            /* ok */
+          }
         }
         this._outSweepFilter = null;
       }
       if (this._inSweepFilter) {
-        try { this._inSweepFilter.disconnect(); } catch { /* ok */ }
+        try {
+          this._inSweepFilter.disconnect();
+        } catch {
+          /* ok */
+        }
         if (this._inSweepGainRef) {
-          try { this._inSweepGainRef.disconnect(this._inSweepFilter); } catch { /* ok */ }
-          try { this._inSweepGainRef.connect(ctx.destination); } catch { /* ok */ }
+          try {
+            this._inSweepGainRef.disconnect(this._inSweepFilter);
+          } catch {
+            /* ok */
+          }
+          try {
+            this._inSweepGainRef.connect(ctx.destination);
+          } catch {
+            /* ok */
+          }
         }
         this._inSweepFilter = null;
       }
@@ -158,7 +182,7 @@ export class TransitionEffects {
     const outCutoff = 2000 - outIntensity * 1600; // lerp(2000, 400, outIntensity)
 
     this._outSweepFilter = ctx.createBiquadFilter();
-    this._outSweepFilter.type = 'lowpass';
+    this._outSweepFilter.type = "lowpass";
     this._outSweepFilter.Q.value = 0.707; // Butterworth: flat passband
     this._outSweepFilter.frequency.setValueAtTime(20000, startTime);
     this._outSweepFilter.frequency.exponentialRampToValueAtTime(outCutoff, startTime + duration);
@@ -167,7 +191,11 @@ export class TransitionEffects {
     // Note: outgoingGain already connects to destination via CrossfadeScheduler.
     // We insert by connecting outgoingGain → LPF → destination and disconnecting
     // outgoingGain's direct connection to destination.
-    try { outgoingGain.disconnect(ctx.destination); } catch { /* may not be directly connected */ }
+    try {
+      outgoingGain.disconnect(ctx.destination);
+    } catch {
+      /* may not be directly connected */
+    }
     outgoingGain.connect(this._outSweepFilter);
     this._outSweepFilter.connect(ctx.destination);
     this._outSweepGainRef = outgoingGain;
@@ -177,13 +205,17 @@ export class TransitionEffects {
     const inStart = 300 + intensity * 900; // lerp(300, 1200, intensity)
 
     this._inSweepFilter = ctx.createBiquadFilter();
-    this._inSweepFilter.type = 'highpass';
+    this._inSweepFilter.type = "highpass";
     this._inSweepFilter.Q.value = 0.707;
     this._inSweepFilter.frequency.setValueAtTime(inStart, startTime);
     this._inSweepFilter.frequency.exponentialRampToValueAtTime(20, startTime + duration);
 
     // Insert HPF inline: incomingGain → HPF → destination
-    try { incomingGain.disconnect(ctx.destination); } catch { /* may not be directly connected */ }
+    try {
+      incomingGain.disconnect(ctx.destination);
+    } catch {
+      /* may not be directly connected */
+    }
     incomingGain.connect(this._inSweepFilter);
     this._inSweepFilter.connect(ctx.destination);
     this._inSweepGainRef = incomingGain;
@@ -196,11 +228,11 @@ export class TransitionEffects {
     if (IS_DEV) {
       console.log(
         `TransitionEffects: Filter sweep created — ` +
-        `outLPF: 20kHz→${outCutoff.toFixed(0)}Hz, ` +
-        `inHPF: ${inStart.toFixed(0)}Hz→20Hz, ` +
-        `intensity=${intensity.toFixed(2)}, ` +
-        `duration=${duration.toFixed(1)}s` +
-        (fadeInOnly ? ' (fadeInOnly, halved out intensity)' : '')
+          `outLPF: 20kHz→${outCutoff.toFixed(0)}Hz, ` +
+          `inHPF: ${inStart.toFixed(0)}Hz→20Hz, ` +
+          `intensity=${intensity.toFixed(2)}, ` +
+          `duration=${duration.toFixed(1)}s` +
+          (fadeInOnly ? " (fadeInOnly, halved out intensity)" : ""),
       );
     }
   }
@@ -220,7 +252,7 @@ export class TransitionEffects {
     duration: number,
     startTime: number,
     bpm?: number,
-    targetFreq: number = 2000
+    targetFreq: number = 2000,
   ): void {
     // Beat-sync duration if BPM available
     if (bpm && bpm > 0) {
@@ -244,7 +276,7 @@ export class TransitionEffects {
 
     // Create bandpass filter with frequency sweep
     this._noiseFilter = ctx.createBiquadFilter();
-    this._noiseFilter.type = 'bandpass';
+    this._noiseFilter.type = "bandpass";
     this._noiseFilter.Q.value = 2; // moderate resonance
     this._noiseFilter.frequency.setValueAtTime(200, startTime);
     this._noiseFilter.frequency.exponentialRampToValueAtTime(targetFreq, startTime + duration);
@@ -252,7 +284,7 @@ export class TransitionEffects {
     // Create gain envelope: -24dB → -12dB
     this._riserGain = ctx.createGain();
     const startGain = Math.pow(10, -24 / 20); // ~0.063
-    const endGain = Math.pow(10, -12 / 20);   // ~0.25
+    const endGain = Math.pow(10, -12 / 20); // ~0.25
     this._riserGain.gain.setValueAtTime(startGain, startTime);
     this._riserGain.gain.exponentialRampToValueAtTime(endGain, startTime + duration * 0.9);
     this._riserGain.gain.linearRampToValueAtTime(0, startTime + duration);
@@ -271,8 +303,8 @@ export class TransitionEffects {
     if (IS_DEV) {
       console.log(
         `TransitionEffects: Noise riser created — duration=${duration.toFixed(1)}s, ` +
-        `sweep=200→${targetFreq}Hz` +
-        (bpm ? `, beat-synced to ${bpm} BPM` : '')
+          `sweep=200→${targetFreq}Hz` +
+          (bpm ? `, beat-synced to ${bpm} BPM` : ""),
       );
     }
   }
@@ -327,13 +359,12 @@ export class TransitionEffects {
       const remainDuration = this._sweepTargets.duration * 0.5; // approximate remaining
       if (this._outSweepFilter) {
         this._outSweepFilter.frequency.exponentialRampToValueAtTime(
-          this._sweepTargets.outCutoff, now + remainDuration
+          this._sweepTargets.outCutoff,
+          now + remainDuration,
         );
       }
       if (this._inSweepFilter) {
-        this._inSweepFilter.frequency.exponentialRampToValueAtTime(
-          20, now + remainDuration
-        );
+        this._inSweepFilter.frequency.exponentialRampToValueAtTime(20, now + remainDuration);
       }
     }
   }
@@ -346,11 +377,19 @@ export class TransitionEffects {
     const ctx = AudioContextManager.getContext();
 
     if (this._convolver) {
-      try { this._convolver.disconnect(); } catch { /* ok */ }
+      try {
+        this._convolver.disconnect();
+      } catch {
+        /* ok */
+      }
       this._convolver = null;
     }
     if (this._reverbGain) {
-      try { this._reverbGain.disconnect(); } catch { /* ok */ }
+      try {
+        this._reverbGain.disconnect();
+      } catch {
+        /* ok */
+      }
       this._reverbGain = null;
     }
     // Disconnect reverb parallel connection from outgoing gain
@@ -358,16 +397,32 @@ export class TransitionEffects {
     this._reverbConnectedTo = null;
 
     if (this._noiseSource) {
-      try { this._noiseSource.stop(); } catch { /* already stopped */ }
-      try { this._noiseSource.disconnect(); } catch { /* ok */ }
+      try {
+        this._noiseSource.stop();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        this._noiseSource.disconnect();
+      } catch {
+        /* ok */
+      }
       this._noiseSource = null;
     }
     if (this._noiseFilter) {
-      try { this._noiseFilter.disconnect(); } catch { /* ok */ }
+      try {
+        this._noiseFilter.disconnect();
+      } catch {
+        /* ok */
+      }
       this._noiseFilter = null;
     }
     if (this._riserGain) {
-      try { this._riserGain.disconnect(); } catch { /* ok */ }
+      try {
+        this._riserGain.disconnect();
+      } catch {
+        /* ok */
+      }
       this._riserGain = null;
     }
 
@@ -375,9 +430,17 @@ export class TransitionEffects {
     // Note: outgoing gain is NOT reconnected — it's about to be stopped/unloaded
     // by _onCrossfadeComplete. Only the incoming gain needs reconnection.
     if (this._outSweepFilter) {
-      try { this._outSweepFilter.disconnect(); } catch { /* ok */ }
+      try {
+        this._outSweepFilter.disconnect();
+      } catch {
+        /* ok */
+      }
       if (this._outSweepGainRef) {
-        try { this._outSweepGainRef.disconnect(this._outSweepFilter); } catch { /* ok */ }
+        try {
+          this._outSweepGainRef.disconnect(this._outSweepFilter);
+        } catch {
+          /* ok */
+        }
         // Don't reconnect outgoing to destination — sound is being destroyed
       }
       this._outSweepFilter = null;
@@ -385,10 +448,22 @@ export class TransitionEffects {
     this._outSweepGainRef = null;
 
     if (this._inSweepFilter) {
-      try { this._inSweepFilter.disconnect(); } catch { /* ok */ }
+      try {
+        this._inSweepFilter.disconnect();
+      } catch {
+        /* ok */
+      }
       if (this._inSweepGainRef && ctx) {
-        try { this._inSweepGainRef.disconnect(this._inSweepFilter); } catch { /* ok */ }
-        try { this._inSweepGainRef.connect(ctx.destination); } catch { /* ok */ }
+        try {
+          this._inSweepGainRef.disconnect(this._inSweepFilter);
+        } catch {
+          /* ok */
+        }
+        try {
+          this._inSweepGainRef.connect(ctx.destination);
+        } catch {
+          /* ok */
+        }
       }
       this._inSweepFilter = null;
     }
@@ -399,7 +474,7 @@ export class TransitionEffects {
     this._isPaused = false;
 
     if (IS_DEV) {
-      console.log('TransitionEffects: Cleaned up');
+      console.log("TransitionEffects: Cleaned up");
     }
   }
 

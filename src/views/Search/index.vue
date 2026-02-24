@@ -7,12 +7,7 @@
     <div class="title" v-else>
       <span class="key">{{ $t("general.name.noKeywords") }}</span>
       <br />
-      <n-button
-        strong
-        secondary
-        @click="router.go(-1)"
-        style="margin-top: 20px"
-      >
+      <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -48,7 +43,13 @@ import { useTabTransition } from "@/composables/useTabTransition";
 
 const { t } = useI18n();
 const router = useRouter();
-const { transitionName, updateDirection, syncIndex } = useTabTransition(["songs", "artists", "albums", "videos", "playlists"]);
+const { transitionName, updateDirection, syncIndex } = useTabTransition([
+  "songs",
+  "artists",
+  "albums",
+  "videos",
+  "playlists",
+]);
 
 // 搜索关键词
 const searchKeywords = ref(router.currentRoute.value.query.keywords);
@@ -66,7 +67,7 @@ watch(
     searchKeywords.value = val.query.keywords;
     tabValue.value = val.path.split("/")[2];
     syncIndex(tabValue.value);
-  }
+  },
 );
 
 // Tab 选项卡变化
@@ -82,8 +83,7 @@ const tabChange = (value) => {
 };
 
 onMounted(() => {
-  if (searchKeywords.value)
-    $setSiteTitle(searchKeywords.value + " " + t("nav.search.results"));
+  if (searchKeywords.value) $setSiteTitle(searchKeywords.value + " " + t("nav.search.results"));
 });
 </script>
 

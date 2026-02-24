@@ -11,18 +11,12 @@
     <div class="copyright">
       <div class="desc">
         <n-text class="name">{{ siteTitle }}</n-text>
-        <n-text class="version" :depth="3">
-          v&nbsp;{{ packageJson.version }}
-        </n-text>
+        <n-text class="version" :depth="3"> v&nbsp;{{ packageJson.version }} </n-text>
       </div>
       <n-blockquote>
         <n-text class="power">
           Copyright&nbsp;©&nbsp;2020 - {{ new Date().getFullYear() }}
-          <n-a
-            :href="packageJson.home"
-            target="_blank"
-            v-html="packageJson.author"
-          />
+          <n-a :href="packageJson.home" target="_blank" v-html="packageJson.author" />
         </n-text>
         <n-text class="point" v-html="'·'" />
         <n-a
@@ -33,12 +27,7 @@
           v-html="icp"
         />
       </n-blockquote>
-      <n-button
-        class="github"
-        secondary
-        strong
-        @click="jumpUrl(packageJson.github)"
-      >
+      <n-button class="github" secondary strong @click="jumpUrl(packageJson.github)">
         <template #icon>
           <n-icon :component="GithubOne" />
         </template>

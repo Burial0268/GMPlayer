@@ -1,7 +1,5 @@
 <template>
-  <div :class="[
-    hasLyrics && !music.getLoadingState ? 'all' : 'all noLrc'
-  ]">
+  <div :class="[hasLyrics && !music.getLoadingState ? 'all' : 'all noLrc']">
     <div class="tip" ref="tipRef" v-show="lrcMouseStatus">
       <n-text>{{ $t("other.lrcClicks") }}</n-text>
     </div>

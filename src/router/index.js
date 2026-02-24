@@ -28,9 +28,7 @@ router.beforeEach((to, from, next) => {
           next();
         } else {
           $message.error(
-            localStorage.getItem("cookie")
-              ? "登录过期，请重新登录"
-              : "请登录账号后使用"
+            localStorage.getItem("cookie") ? "登录过期，请重新登录" : "请登录账号后使用",
           );
           user.userLogOut();
           next("/login");

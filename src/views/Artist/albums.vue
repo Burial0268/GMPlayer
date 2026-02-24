@@ -23,9 +23,7 @@ const artistId = ref(router.currentRoute.value.query.id);
 const artistData = ref([]);
 const pagelimit = ref(30);
 const pageNumber = ref(
-  router.currentRoute.value.query.page
-    ? Number(router.currentRoute.value.query.page)
-    : 1
+  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 const totalCount = ref(0);
 
@@ -38,15 +36,23 @@ const getArtistAblumsData = (id: string | number | string[], limit = 30, offset 
     // 列表数据
     artistData.value = [];
     if (res.hotAlbums) {
-      res.hotAlbums.forEach((v: { id: number; picUrl: string; name: string; artists: any; publishTime: string | number; }) => {
-        artistData.value.push({
-          id: v.id,
-          cover: v.picUrl,
-          name: v.name,
-          artist: v.artists,
-          time: getLongTime(v.publishTime),
-        });
-      });
+      res.hotAlbums.forEach(
+        (v: {
+          id: number;
+          picUrl: string;
+          name: string;
+          artists: any;
+          publishTime: string | number;
+        }) => {
+          artistData.value.push({
+            id: v.id,
+            cover: v.picUrl,
+            name: v.name,
+            artist: v.artists,
+            time: getLongTime(v.publishTime),
+          });
+        },
+      );
     } else {
       $message.error("搜索内容为空");
     }
@@ -70,19 +76,11 @@ const pageNumberChange = (val: number) => {
 const pageSizeChange = (val: number) => {
   console.log(val);
   pagelimit.value = val;
-  getArtistAblumsData(
-    artistId.value,
-    val,
-    (pageNumber.value - 1) * pagelimit.value
-  );
+  getArtistAblumsData(artistId.value, val, (pageNumber.value - 1) * pagelimit.value);
 };
 
 onMounted(() => {
-  getArtistAblumsData(
-    artistId.value,
-    pagelimit.value,
-    (pageNumber.value - 1) * pagelimit.value
-  );
+  getArtistAblumsData(artistId.value, pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
 });
 
 // 监听路由参数变化
@@ -95,10 +93,10 @@ watch(
       getArtistAblumsData(
         artistId.value,
         pagelimit.value,
-        (pageNumber.value - 1) * pagelimit.value
+        (pageNumber.value - 1) * pagelimit.value,
       );
     }
-  }
+  },
 );
 </script>
 

@@ -1,19 +1,26 @@
 <template>
   <Transition name="show">
-    <n-card v-show="music.getPlaylists[0] && music.showPlayBar" class="player" content-style="padding: 0"
-      @click.stop="setting.bottomClick ? music.setBigPlayerState(true) : null">
+    <n-card
+      v-show="music.getPlaylists[0] && music.showPlayBar"
+      class="player"
+      content-style="padding: 0"
+      @click.stop="setting.bottomClick ? music.setBigPlayerState(true) : null"
+    >
       <div class="slider">
         <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-        <vue-slider v-model="music.getPlaySongTime.barMoveDistance" @drag-start="music.setPlayState(false)"
-          @drag-end="sliderDragEnd" @click.stop="
-            songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)
-            " :tooltip="'active'" :use-keyboard="false">
+        <vue-slider
+          v-model="music.getPlaySongTime.barMoveDistance"
+          @drag-start="music.setPlayState(false)"
+          @drag-end="sliderDragEnd"
+          @click.stop="songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)"
+          :tooltip="'active'"
+          :use-keyboard="false"
+        >
           <template v-slot:tooltip>
             <div class="slider-tooltip">
               {{
                 getSongPlayingTime(
-                  (music.getPlaySongTime.duration / 100) *
-                  music.getPlaySongTime.barMoveDistance
+                  (music.getPlaySongTime.duration / 100) * music.getPlaySongTime.barMoveDistance,
                 )
               }}
             </div>
@@ -24,22 +31,22 @@
       <div class="all">
         <div class="data">
           <div class="pic" @click.stop="music.setBigPlayerState(true)">
-            <img :src="music.getPlaySongData
-              ? music.getPlaySongData.album.picUrl.replace(
-                /^http:/,
-                'https:'
-              ) + '?param=50y50'
-              : '/images/pic/default.png'
-              " alt="pic" />
+            <img
+              :src="
+                music.getPlaySongData
+                  ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=50y50'
+                  : '/images/pic/default.png'
+              "
+              alt="pic"
+            />
             <n-icon class="open" size="30" :component="KeyboardArrowUpFilled" />
           </div>
           <div class="name">
-            <div class="song text-hidden" @click.stop="router.push(`/song?id=${music.getPlaySongData.id}`)">
-              {{
-                music.getPlaySongData
-                  ? music.getPlaySongData.name
-                  : $t("other.noSong")
-              }}
+            <div
+              class="song text-hidden"
+              @click.stop="router.push(`/song?id=${music.getPlaySongData.id}`)"
+            >
+              {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
             </div>
             <!-- 显示歌手或歌词 -->
             <div class="artisrOrLrc" v-if="music.getPlaySongData">
@@ -47,12 +54,18 @@
                 <template v-if="setting.bottomLyricShow">
                   <Transition name="fade" mode="out-in">
                     <n-text
-                      v-if="music.getPlaySongLyric?.lrc?.length && setting.showYrc && music.getPlaySongLyricIndex != -1 && music.getPlaySongLyric.hasYrc"
+                      v-if="
+                        music.getPlaySongLyric?.lrc?.length &&
+                        setting.showYrc &&
+                        music.getPlaySongLyricIndex != -1 &&
+                        music.getPlaySongLyric.hasYrc
+                      "
                       :key="'yrc-' + music.getPlaySongLyricIndex"
                       class="lrc text-hidden"
                     >
                       <n-text
-                        v-for="item in music.getPlaySongLyric.yrc[music.getPlaySongLyricIndex].content"
+                        v-for="item in music.getPlaySongLyric.yrc[music.getPlaySongLyricIndex]
+                          .content"
                         :key="item"
                         :depth="3"
                       >
@@ -60,14 +73,14 @@
                       </n-text>
                     </n-text>
                     <n-text
-                      v-else-if="music.getPlaySongLyric?.lrc?.length && music.getPlaySongLyricIndex != -1"
+                      v-else-if="
+                        music.getPlaySongLyric?.lrc?.length && music.getPlaySongLyricIndex != -1
+                      "
                       :key="'lrc-' + music.getPlaySongLyricIndex"
                       class="lrc text-hidden"
                       :depth="3"
                     >
-                      {{
-                        music.getPlaySongLyric.lrc[music.getPlaySongLyricIndex]?.content
-                      }}
+                      {{ music.getPlaySongLyric.lrc[music.getPlaySongLyricIndex]?.content }}
                     </n-text>
                     <AllArtists
                       v-else
@@ -85,11 +98,24 @@
           </div>
         </div>
         <div class="control">
-          <n-icon v-if="!music.getPersonalFmMode" class="prev" size="30" :component="SkipPreviousRound"
-            @click.stop="music.setPlaySongIndex('prev')" />
-          <n-icon v-else class="dislike" size="20" :component="ThumbDownRound"
-            @click="music.setFmDislike(music.getPersonalFmData.id)" />
-          <div class="play-state" @click.stop="music.getLoadingState ? null : music.setPlayState(!music.getPlayState)">
+          <n-icon
+            v-if="!music.getPersonalFmMode"
+            class="prev"
+            size="30"
+            :component="SkipPreviousRound"
+            @click.stop="music.setPlaySongIndex('prev')"
+          />
+          <n-icon
+            v-else
+            class="dislike"
+            size="20"
+            :component="ThumbDownRound"
+            @click="music.setFmDislike(music.getPersonalFmData.id)"
+          />
+          <div
+            class="play-state"
+            @click.stop="music.getLoadingState ? null : music.setPlayState(!music.getPlayState)"
+          >
             <AnimatePresence mode="wait">
               <Motion
                 v-if="music.getLoadingState"
@@ -111,24 +137,38 @@
                 :transition="{ duration: 0.2 }"
                 class="play-state-inner"
               >
-                <n-icon size="46" :component="music.getPlayState ? PauseCircleFilled : PlayCircleFilled" />
+                <n-icon
+                  size="46"
+                  :component="music.getPlayState ? PauseCircleFilled : PlayCircleFilled"
+                />
               </Motion>
             </AnimatePresence>
           </div>
-          <n-icon class="next" size="30" :component="SkipNextRound" @click.stop="music.setPlaySongIndex('next')" />
+          <n-icon
+            class="next"
+            size="30"
+            :component="SkipNextRound"
+            @click.stop="music.setPlaySongIndex('next')"
+          />
         </div>
         <div :class="music.getPersonalFmMode ? 'menu fm' : 'menu'">
           <n-popover v-if="music.getPlaySongData" trigger="hover" :keep-alive-on-hover="false">
             <template #trigger>
               <div class="like">
-                <n-icon class="like-icon" size="24" :component="music.getSongIsLike(music.getPlaySongData.id)
-                  ? FavoriteRound
-                  : FavoriteBorderRound
-                  " @click.stop="
+                <n-icon
+                  class="like-icon"
+                  size="24"
+                  :component="
+                    music.getSongIsLike(music.getPlaySongData.id)
+                      ? FavoriteRound
+                      : FavoriteBorderRound
+                  "
+                  @click.stop="
                     music.getSongIsLike(music.getPlaySongData.id)
                       ? music.changeLikeList(music.getPlaySongData.id, false)
                       : music.changeLikeList(music.getPlaySongData.id, true)
-                    " />
+                  "
+                />
               </div>
             </template>
             {{
@@ -140,28 +180,43 @@
           <n-popover trigger="hover" :keep-alive-on-hover="false">
             <template #trigger>
               <div class="add-playlist">
-                <n-icon class="add-icon" size="30" :component="PlaylistAddRound" @click.stop="
-                  addPlayListRef.openAddToPlaylist(music.getPlaySongData.id)
-                  " />
+                <n-icon
+                  class="add-icon"
+                  size="30"
+                  :component="PlaylistAddRound"
+                  @click.stop="addPlayListRef.openAddToPlaylist(music.getPlaySongData.id)"
+                />
               </div>
             </template>
             {{ $t("menu.add") }}
           </n-popover>
-          <n-dropdown trigger="hover" :options="patternOptions" :show-arrow="true" @select="patternClick">
+          <n-dropdown
+            trigger="hover"
+            :options="patternOptions"
+            :show-arrow="true"
+            @select="patternClick"
+          >
             <div class="pattern">
-              <n-icon :component="persistData.playSongMode === 'normal'
-                ? PlayCycle
-                : persistData.playSongMode === 'random'
-                  ? ShuffleOne
-                  : PlayOnce
-                " @click.stop="music.setPlaySongMode()" />
+              <n-icon
+                :component="
+                  persistData.playSongMode === 'normal'
+                    ? PlayCycle
+                    : persistData.playSongMode === 'random'
+                      ? ShuffleOne
+                      : PlayOnce
+                "
+                @click.stop="music.setPlaySongMode()"
+              />
             </div>
           </n-dropdown>
           <n-popover trigger="hover" :keep-alive-on-hover="false">
             <template #trigger>
               <div :class="music.showPlayList ? 'playlist open' : 'playlist'">
-                <n-icon size="30" :component="PlaylistPlayRound"
-                  @click.stop="music.showPlayList = !music.showPlayList" />
+                <n-icon
+                  size="30"
+                  :component="PlaylistPlayRound"
+                  @click.stop="music.showPlayList = !music.showPlayList"
+                />
               </div>
             </template>
             {{ $t("general.name.playlists") }}
@@ -169,23 +224,31 @@
           <div class="volume">
             <n-popover trigger="hover" placement="top-start" :keep-alive-on-hover="false">
               <template #trigger>
-                <n-icon size="28" :component="persistData.playVolume == 0
-                  ? VolumeOffRound
-                  : persistData.playVolume < 0.4
-                    ? VolumeMuteRound
-                    : persistData.playVolume < 0.7
-                      ? VolumeDownRound
-                      : VolumeUpRound
-                  " @click.stop="volumeMute" />
+                <n-icon
+                  size="28"
+                  :component="
+                    persistData.playVolume == 0
+                      ? VolumeOffRound
+                      : persistData.playVolume < 0.4
+                        ? VolumeMuteRound
+                        : persistData.playVolume < 0.7
+                          ? VolumeDownRound
+                          : VolumeUpRound
+                  "
+                  @click.stop="volumeMute"
+                />
               </template>
-              {{
-                persistData.playVolume > 0
-                  ? $t("general.name.mute")
-                  : $t("general.name.unmute")
-              }}
+              {{ persistData.playVolume > 0 ? $t("general.name.mute") : $t("general.name.unmute") }}
             </n-popover>
-            <n-slider class="volmePg" v-model:value="persistData.playVolume" :tooltip="false" :min="0" :max="1"
-              :step="0.01" @click.stop />
+            <n-slider
+              class="volmePg"
+              v-model:value="persistData.playVolume"
+              :tooltip="false"
+              :min="0"
+              :max="1"
+              :step="0.01"
+              @click.stop
+            />
           </div>
         </div>
       </div>
@@ -277,7 +340,9 @@ const getPlaySongData = (data, level = setting.songLevel) => {
       return;
     }
     const { id, fee, pc } = data;
-    console.log(`[Player] getPlaySongData called for ID: ${id}, Fee: ${fee}, PC: ${pc}, Level: ${level}`);
+    console.log(
+      `[Player] getPlaySongData called for ID: ${id}, Fee: ${fee}, PC: ${pc}, Level: ${level}`,
+    );
 
     // If AutoMix is crossfading, it already handles sound creation — only fetch lyrics
     const autoMix = getAutoMixEngine();
@@ -305,71 +370,71 @@ const getPlaySongData = (data, level = setting.songLevel) => {
     }
 
     // VIP 歌曲或需要购买专辑
-    if (
-      useUnmServerHas &&
-      setting.useUnmServer &&
-      !pc &&
-      (fee === 1 || fee === 4)
-    ) {
+    if (useUnmServerHas && setting.useUnmServer && !pc && (fee === 1 || fee === 4)) {
       console.log("[Player] Attempting UNM server for VIP/paid song.");
       getMusicNumUrlData(id, generation);
     }
     // 免费或无版权
     else {
-      checkMusicCanUse(id).then((res) => {
-        if (generation !== _songLoadGeneration) return;
-        console.log(`[Player] checkMusicCanUse response for ${id}:`, res);
-        if (res.success) {
-          console.log("[Player] Song is usable via official API.");
-          if (!pc && (fee === 1 || fee === 4))
-            $message.info(t("general.message.vipTip"));
-          // 获取音乐地址
-          getMusicUrl(id, level).then((res) => {
-            if (generation !== _songLoadGeneration) return;
-            console.log(`[Player] getMusicUrl response for ${id}:`, res);
-            if (res.data && res.data[0] && res.data[0].url) {
-              const url = res.data[0].url.replace(/^http:/, "https:");
-              console.log(`[Player] Creating sound instance with official URL: ${url}`);
-              player.value = createSound(url);
-            } else {
-              console.error(`[Player] Invalid URL data from getMusicUrl for ${id}:`, res);
-              // Fallback to UNM if available? Or just error out? Let's try UNM.
-              if (useUnmServerHas && setting.useUnmServer) {
-                 console.warn(`[Player] Official URL invalid for ${id}, falling back to UNM.`);
-                 getMusicNumUrlData(id, generation);
-              } else {
-                $message.warning(t("general.message.playError"));
-                music.setPlaySongIndex("next");
-              }
-            }
-          }).catch(err => {
-              if (generation !== _songLoadGeneration) return;
-              console.error(`[Player] Error fetching official Music URL for ${id}:`, err);
-              // Fallback to UNM if available?
-              if (useUnmServerHas && setting.useUnmServer) {
-                 console.warn(`[Player] Official URL fetch failed for ${id}, falling back to UNM.`);
-                 getMusicNumUrlData(id, generation);
-              } else {
-                $message.warning(t("general.message.playError"));
-                music.setPlaySongIndex("next");
-              }
-          });
-        } else {
-          console.warn(`[Player] Song ${id} not usable via official API.`);
-          if (useUnmServerHas && setting.useUnmServer) {
-            console.log(`[Player] Official check failed for ${id}, falling back to UNM.`);
-            getMusicNumUrlData(id, generation);
+      checkMusicCanUse(id)
+        .then((res) => {
+          if (generation !== _songLoadGeneration) return;
+          console.log(`[Player] checkMusicCanUse response for ${id}:`, res);
+          if (res.success) {
+            console.log("[Player] Song is usable via official API.");
+            if (!pc && (fee === 1 || fee === 4)) $message.info(t("general.message.vipTip"));
+            // 获取音乐地址
+            getMusicUrl(id, level)
+              .then((res) => {
+                if (generation !== _songLoadGeneration) return;
+                console.log(`[Player] getMusicUrl response for ${id}:`, res);
+                if (res.data && res.data[0] && res.data[0].url) {
+                  const url = res.data[0].url.replace(/^http:/, "https:");
+                  console.log(`[Player] Creating sound instance with official URL: ${url}`);
+                  player.value = createSound(url);
+                } else {
+                  console.error(`[Player] Invalid URL data from getMusicUrl for ${id}:`, res);
+                  // Fallback to UNM if available? Or just error out? Let's try UNM.
+                  if (useUnmServerHas && setting.useUnmServer) {
+                    console.warn(`[Player] Official URL invalid for ${id}, falling back to UNM.`);
+                    getMusicNumUrlData(id, generation);
+                  } else {
+                    $message.warning(t("general.message.playError"));
+                    music.setPlaySongIndex("next");
+                  }
+                }
+              })
+              .catch((err) => {
+                if (generation !== _songLoadGeneration) return;
+                console.error(`[Player] Error fetching official Music URL for ${id}:`, err);
+                // Fallback to UNM if available?
+                if (useUnmServerHas && setting.useUnmServer) {
+                  console.warn(
+                    `[Player] Official URL fetch failed for ${id}, falling back to UNM.`,
+                  );
+                  getMusicNumUrlData(id, generation);
+                } else {
+                  $message.warning(t("general.message.playError"));
+                  music.setPlaySongIndex("next");
+                }
+              });
           } else {
-            $message.warning(t("general.message.playError"));
-            music.setPlaySongIndex("next");
+            console.warn(`[Player] Song ${id} not usable via official API.`);
+            if (useUnmServerHas && setting.useUnmServer) {
+              console.log(`[Player] Official check failed for ${id}, falling back to UNM.`);
+              getMusicNumUrlData(id, generation);
+            } else {
+              $message.warning(t("general.message.playError"));
+              music.setPlaySongIndex("next");
+            }
           }
-        }
-      }).catch(err => {
+        })
+        .catch((err) => {
           if (generation !== _songLoadGeneration) return;
           console.error(`[Player] Error calling checkMusicCanUse for ${id}:`, err);
           $message.warning(t("general.message.playError"));
           music.setPlaySongIndex("next");
-      });
+        });
     }
     // 获取歌词 (using the new unified function)
     fetchAndParseLyric(id);
@@ -390,7 +455,7 @@ const renderIcon = (icon) => {
       { style: { transform: "translateX(1px)" } },
       {
         default: () => icon,
-      }
+      },
     );
   };
 };
@@ -477,8 +542,7 @@ const patternClick = (val) => {
 // 歌曲更换事件
 const songChange = debounce(500, (val) => {
   if (val === undefined) {
-    window.document.title =
-      sessionStorage.getItem("siteTitle") ?? import.meta.env.VITE_SITE_TITLE;
+    window.document.title = sessionStorage.getItem("siteTitle") ?? import.meta.env.VITE_SITE_TITLE;
   }
   // 加载数据
   getPlaySongData(val);
@@ -508,7 +572,7 @@ watch(
       songChange(val);
     }
   },
-  { deep: true }
+  { deep: true },
 );
 
 // 监听当前音量数据变化
@@ -520,8 +584,8 @@ watch(
       player.value = window.$player;
     }
     if (player.value) setVolume(player.value, val);
-  }
-)
+  },
+);
 
 // 监听当前音乐状态变化
 watch(
@@ -543,7 +607,9 @@ watch(
           }
           // Crossfade was in setup phase and got cancelled.
           // Fall through to normal fadePlayOrPause below.
-          console.log("[Player] AutoMix crossfade cancelled during setup, falling through to normal pause");
+          console.log(
+            "[Player] AutoMix crossfade cancelled during setup, falling through to normal pause",
+          );
         } else {
           autoMix.resumeCrossfade();
           if (autoMix.isCrossfading()) {
@@ -558,54 +624,64 @@ watch(
         player.value = window.$player;
       }
       if (player.value && !music.isLoadingSong) {
-         const hPlayer = player.value; // Assuming player.value is the Howl instance
-         if (typeof hPlayer.playing !== 'function') {
-           console.error("[Player] player.value is not a valid NativeSound instance or 'playing' method missing", hPlayer);
-           return;
-         }
-         const isPlaying = hPlayer.playing();
-         console.log(`[Player] Current NativeSound playing state: ${isPlaying}`);
+        const hPlayer = player.value; // Assuming player.value is the Howl instance
+        if (typeof hPlayer.playing !== "function") {
+          console.error(
+            "[Player] player.value is not a valid NativeSound instance or 'playing' method missing",
+            hPlayer,
+          );
+          return;
+        }
+        const isPlaying = hPlayer.playing();
+        console.log(`[Player] Current NativeSound playing state: ${isPlaying}`);
 
-         if (val && !isPlaying) {
-            console.log("[Player] Calling fadePlayOrPause with 'play'");
-            fadePlayOrPause(player.value, "play", persistData.value.playVolume);
-         } else if (!val && isPlaying) {
-            console.log("[Player] Calling fadePlayOrPause with 'pause'");
-            fadePlayOrPause(player.value, "pause", persistData.value.playVolume);
-         } else {
-            console.log("[Player] fadePlayOrPause skipped, already in desired state or player not ready.");
-         }
+        if (val && !isPlaying) {
+          console.log("[Player] Calling fadePlayOrPause with 'play'");
+          fadePlayOrPause(player.value, "play", persistData.value.playVolume);
+        } else if (!val && isPlaying) {
+          console.log("[Player] Calling fadePlayOrPause with 'pause'");
+          fadePlayOrPause(player.value, "pause", persistData.value.playVolume);
+        } else {
+          console.log(
+            "[Player] fadePlayOrPause skipped, already in desired state or player not ready.",
+          );
+        }
       } else {
-         console.warn(`[Player] Skipping fadePlayOrPause. Player: ${player.value}, isLoadingSong: ${music.isLoadingSong}`);
+        console.warn(
+          `[Player] Skipping fadePlayOrPause. Player: ${player.value}, isLoadingSong: ${music.isLoadingSong}`,
+        );
       }
     });
-  }
+  },
 );
 
 const fetchAndParseLyric = (id) => {
   const useTTMLRepo = setting.useTTMLRepo;
 
-  getUnifiedLyric(id, useTTMLRepo).then(lyricData => {
-    console.log(`[Player] Unified Lyric data received for ${id} (using TTML repo: ${useTTMLRepo})`);
+  getUnifiedLyric(id, useTTMLRepo)
+    .then((lyricData) => {
+      console.log(
+        `[Player] Unified Lyric data received for ${id} (using TTML repo: ${useTTMLRepo})`,
+      );
 
-    const parsedResult = parseLyric(lyricData);
-    console.log(`[Player] Parsed lyric result for ${id}`);
+      const parsedResult = parseLyric(lyricData);
+      console.log(`[Player] Parsed lyric result for ${id}`);
 
-    // 将解析后的歌词转换为标准LRC格式
-    const formattedLrc = formatToLrc(parsedResult);
-    console.log(`[Player] Formatted LRC for ${id}`);
-    
-    // 添加格式化后的LRC到结果中
-    parsedResult.formattedLrc = formattedLrc;
+      // 将解析后的歌词转换为标准LRC格式
+      const formattedLrc = formatToLrc(parsedResult);
+      console.log(`[Player] Formatted LRC for ${id}`);
 
-    music.setPlaySongLyric(parsedResult);
+      // 添加格式化后的LRC到结果中
+      parsedResult.formattedLrc = formattedLrc;
 
-  }).catch(err => {
-    console.error(`[Player] Failed to get unified lyric for ${id}:`, err);
-    const defaultResult = parseLyric(null);
-    defaultResult.formattedLrc = ""; // 确保默认结果也有formattedLrc字段
-    music.setPlaySongLyric(defaultResult);
-  });
+      music.setPlaySongLyric(parsedResult);
+    })
+    .catch((err) => {
+      console.error(`[Player] Failed to get unified lyric for ${id}:`, err);
+      const defaultResult = parseLyric(null);
+      defaultResult.formattedLrc = ""; // 确保默认结果也有formattedLrc字段
+      music.setPlaySongLyric(defaultResult);
+    });
 };
 </script>
 
@@ -849,7 +925,6 @@ const fetchAndParseLyric = (id) => {
       color: var(--main-color);
 
       @media (max-width: 640px) {
-
         .volume,
         .like,
         .add-playlist,
@@ -859,7 +934,6 @@ const fetchAndParseLyric = (id) => {
       }
 
       &.fm {
-
         .pattern,
         .playlist {
           display: none;

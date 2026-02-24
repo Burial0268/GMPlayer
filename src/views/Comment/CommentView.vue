@@ -19,12 +19,7 @@
     <div class="title" v-else>
       <span class="key">{{ $t("general.name.noKeywords") }}</span>
       <br />
-      <n-button
-        strong
-        secondary
-        @click="router.go(-1)"
-        style="margin-top: 20px"
-      >
+      <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -36,11 +31,7 @@
           <n-skeleton text style="width: 60%" />
         </div>
         <div class="content">
-          <Comment
-            v-for="item in commentData.hotComments"
-            :key="item"
-            :commentData="item"
-          />
+          <Comment v-for="item in commentData.hotComments" :key="item" :commentData="item" />
         </div>
       </div>
       <div class="allComments" ref="allCommentsRef">
@@ -53,11 +44,7 @@
           <n-skeleton text style="width: 60%" />
         </div>
         <div class="content">
-          <Comment
-            v-for="item in commentData.allComments"
-            :key="item"
-            :commentData="item"
-          />
+          <Comment v-for="item in commentData.allComments" :key="item" :commentData="item" />
         </div>
       </div>
       <Pagination
@@ -86,9 +73,7 @@ const music = musicStore();
 // 歌曲信息
 const songId = ref(router.currentRoute.value.query.id);
 const pageNumber = ref(
-  router.currentRoute.value.query.page
-    ? Number(router.currentRoute.value.query.page)
-    : 1
+  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 
 // 评论数据
@@ -152,7 +137,7 @@ watch(
       songId.value = val.query.id;
       getCommentData(val.query.id, (pageNumber.value - 1) * 20);
     }
-  }
+  },
 );
 </script>
 

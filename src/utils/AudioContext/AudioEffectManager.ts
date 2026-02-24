@@ -13,11 +13,11 @@
  *     (Blackman window cannot reproduce AMLL's official implementation)
  */
 
-import { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
-import type { LowFreqVolumeOptions } from './LowFreqVolumeAnalyzer';
-import { AudioContextManager } from './AudioContextManager';
-import { WasmFFTManager } from './WasmFFTManager';
-import { isPCMWorkletRegisteredFor } from './pcm-capture-worklet';
+import { LowFreqVolumeAnalyzer } from "./LowFreqVolumeAnalyzer";
+import type { LowFreqVolumeOptions } from "./LowFreqVolumeAnalyzer";
+import { AudioContextManager } from "./AudioContextManager";
+import { WasmFFTManager } from "./WasmFFTManager";
+import { isPCMWorkletRegisteredFor } from "./pcm-capture-worklet";
 
 export interface EffectManagerOptions {
   /** FFT size for AnalyserNode (spectrum display). Default: 2048 */
@@ -132,12 +132,12 @@ export class AudioEffectManager {
         this._wasmFFT = new WasmFFTManager(this.options.fftOutputSize);
         this._wasmFFT.setFreqRange(this.options.freqMin, this.options.freqMax);
         if (!this._wasmFFT.isReady()) {
-          console.warn('AudioEffectManager: WasmFFTManager failed to initialize');
+          console.warn("AudioEffectManager: WasmFFTManager failed to initialize");
         }
         this._cachedWasmSpectrum = new Array(this.options.fftOutputSize).fill(0);
       }
     } catch (err) {
-      console.error('AudioEffectManager: Failed to initialize nodes', err);
+      console.error("AudioEffectManager: Failed to initialize nodes", err);
     }
   }
 
@@ -153,7 +153,7 @@ export class AudioEffectManager {
    */
   connect(inputNode: AudioNode): AudioNode {
     if (!this.analyserNode) {
-      console.warn('AudioEffectManager: Nodes not initialized');
+      console.warn("AudioEffectManager: Nodes not initialized");
       return inputNode;
     }
 
@@ -165,9 +165,13 @@ export class AudioEffectManager {
       // Skip on mobile: AnalyserNode fallback is used for lowFreqVolume instead,
       // avoiding AudioWorklet + WASM overhead that causes audio glitches on mobile
       // (constant postMessage traffic + WASM calls + GC pressure from Float32Array transfers)
-      if (!AudioContextManager.isMobile() && isPCMWorkletRegisteredFor(this.audioCtx) && this._wasmFFT?.isReady()) {
+      if (
+        !AudioContextManager.isMobile() &&
+        isPCMWorkletRegisteredFor(this.audioCtx) &&
+        this._wasmFFT?.isReady()
+      ) {
         try {
-          this._workletNode = new AudioWorkletNode(this.audioCtx, 'pcm-capture-processor');
+          this._workletNode = new AudioWorkletNode(this.audioCtx, "pcm-capture-processor");
 
           this._workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
             if (this._seekPending) return; // Discard stale PCM during seek
@@ -179,14 +183,14 @@ export class AudioEffectManager {
 
           inputNode.connect(this._workletNode);
         } catch (err) {
-          console.warn('AudioEffectManager: Failed to create AudioWorkletNode', err);
+          console.warn("AudioEffectManager: Failed to create AudioWorkletNode", err);
         }
       }
 
       this._isConnected = true;
       return inputNode;
     } catch (err) {
-      console.error('AudioEffectManager: Failed to connect', err);
+      console.error("AudioEffectManager: Failed to connect", err);
       return inputNode;
     }
   }

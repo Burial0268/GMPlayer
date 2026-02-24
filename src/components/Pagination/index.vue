@@ -81,7 +81,7 @@ watch(
   () => currentPageSize.value,
   (val) => {
     pageSizeChange(val);
-  }
+  },
 );
 
 // 当前页数数据变化
@@ -92,13 +92,13 @@ watch(
   () => currentPageNumber.value,
   (val) => {
     pageNumberChange(val);
-  }
+  },
 );
 watch(
   () => props.pageNumber,
   (val) => {
     currentPageNumber.value = val;
-  }
+  },
 );
 
 onMounted(() => {

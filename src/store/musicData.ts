@@ -8,9 +8,20 @@ import { getMusicUrl } from "@/api/song";
 import { userStore, settingStore } from "@/store";
 import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
-import { soundStop, fadePlayOrPause, getAutoMixEngine, getAudioPreloader } from "@/utils/AudioContext";
+import {
+  soundStop,
+  fadePlayOrPause,
+  getAutoMixEngine,
+  getAudioPreloader,
+} from "@/utils/AudioContext";
 import getLanguageData from "@/utils/getLanguageData";
-import { preprocessLyrics, type SongLyric, type ParsedLrcLine, type ParsedYrcLine, type StoredLyricLine } from "@/utils/LyricsProcessor";
+import {
+  preprocessLyrics,
+  type SongLyric,
+  type ParsedLrcLine,
+  type ParsedYrcLine,
+  type StoredLyricLine,
+} from "@/utils/LyricsProcessor";
 
 declare const $message: any;
 declare const $player: any;
@@ -66,7 +77,7 @@ interface PersistData {
 }
 
 interface AutoMixStateData {
-  phase: 'idle' | 'analyzing' | 'waiting' | 'crossfading' | 'finishing';
+  phase: "idle" | "analyzing" | "waiting" | "crossfading" | "finishing";
   outroType: string | null;
   outroConfidence: number;
   crossfadeStartTime: number;
@@ -128,7 +139,7 @@ const useMusicDataStore = defineStore("musicData", {
       isLoadingSong: false,
       preloadedSongIds: new Set(),
       autoMixState: {
-        phase: 'idle',
+        phase: "idle",
         outroType: null,
         outroConfidence: 0,
         crossfadeStartTime: 0,
@@ -252,7 +263,9 @@ const useMusicDataStore = defineStore("musicData", {
       const playlist = this.persistData.playlists;
       const listLength = playlist.length;
       if (listLength < 2 || this.persistData.playSongMode !== "normal") {
-        console.log(`预加载已跳过：歌曲数 ${listLength} / 播放模式 ${this.persistData.playSongMode}`);
+        console.log(
+          `预加载已跳过：歌曲数 ${listLength} / 播放模式 ${this.persistData.playSongMode}`,
+        );
         return;
       }
 
@@ -290,7 +303,7 @@ const useMusicDataStore = defineStore("musicData", {
           .catch((err: any) => {
             console.error(`获取 ${songData.name} URL 失败`, err);
             return null;
-          })
+          }),
       );
 
       Promise.all(urlPromises).then((results) => {
@@ -309,7 +322,7 @@ const useMusicDataStore = defineStore("musicData", {
             })
             .catch((err) => {
               console.warn(`歌曲 ${song.name} 预加载请求失败`, err);
-            })
+            }),
         );
 
         Promise.all(fetchPromises).then(() => {
@@ -604,13 +617,12 @@ const useMusicDataStore = defineStore("musicData", {
       if (value.duration === 0) {
         this.persistData.playSongTime.barMoveDistance = 0;
       } else {
-        this.persistData.playSongTime.barMoveDistance =
-          (value.currentTime / value.duration) * 100;
+        this.persistData.playSongTime.barMoveDistance = (value.currentTime / value.duration) * 100;
       }
 
       if (!Number.isNaN(this.persistData.playSongTime.barMoveDistance)) {
         this.persistData.playSongTime.songTimePlayed = getSongPlayingTime(
-          (value.duration / 100) * this.persistData.playSongTime.barMoveDistance
+          (value.duration / 100) * this.persistData.playSongTime.barMoveDistance,
         );
         this.persistData.playSongTime.songTimeDuration = getSongPlayingTime(value.duration);
       }
@@ -665,7 +677,7 @@ const useMusicDataStore = defineStore("musicData", {
         }
       }
       // Clean up preloader when mode is not normal (can't predict next song)
-      if (this.persistData.playSongMode !== 'normal') {
+      if (this.persistData.playSongMode !== "normal") {
         getAudioPreloader().cleanup();
       }
       $message.info(getLanguageData(value!), {
@@ -848,7 +860,7 @@ const useMusicDataStore = defineStore("musicData", {
 });
 
 if (import.meta.hot) {
-  import.meta.hot.accept(acceptHMRUpdate(useMusicDataStore, import.meta.hot))
+  import.meta.hot.accept(acceptHMRUpdate(useMusicDataStore, import.meta.hot));
 }
 
 export default useMusicDataStore;

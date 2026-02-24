@@ -2,20 +2,31 @@
   <Transition name="fade" mode="out-in">
     <div :key="`bg--${songPicGradient}`" :class="['overlay', backgroundImageShow]">
       <template v-if="backgroundImageShow === 'blur'">
-        <BlurBackgroundRender v-if="hasPlayData" :fps="isPlaying ? (fps || 30) : 0"
-          :playing="actualPlaying" :album="coverImageUrl" :blurLevel="blurAmount || 30"
-          :saturation="contrastAmount || 1.2" :renderScale="renderScale || 0.5"
-          class="blur-webgl" />
+        <BlurBackgroundRender
+          v-if="hasPlayData"
+          :fps="isPlaying ? fps || 30 : 0"
+          :playing="actualPlaying"
+          :album="coverImageUrl"
+          :blurLevel="blurAmount || 30"
+          :saturation="contrastAmount || 1.2"
+          :renderScale="renderScale || 0.5"
+          class="blur-webgl"
+        />
       </template>
     </div>
   </Transition>
 
   <template v-if="backgroundImageShow === 'eplor'">
-    <BackgroundRender :fps="isPlaying ? fps : 0" :playing="actualPlaying"
+    <BackgroundRender
+      :fps="isPlaying ? fps : 0"
+      :playing="actualPlaying"
       :flowSpeed="isPlaying ? flowSpeed : 0"
       :album="albumImageUrl === 'none' ? coverImageUrl : albumImageUrl"
-      :renderScale="renderScale" :lowFreqVolume="lowFreqVolume" :staticMode="staticMode"
-      class="overlay" />
+      :renderScale="renderScale"
+      :lowFreqVolume="lowFreqVolume"
+      :staticMode="staticMode"
+      class="overlay"
+    />
   </template>
 
   <div :class="grayClasses" />
@@ -43,14 +54,14 @@ const props = defineProps<{
   staticMode: boolean;
 }>();
 
-const isEplorOrBlurMode = computed(() =>
-  props.backgroundImageShow === 'eplor' || props.backgroundImageShow === 'blur'
+const isEplorOrBlurMode = computed(
+  () => props.backgroundImageShow === "eplor" || props.backgroundImageShow === "blur",
 );
 
 const grayClasses = computed(() => {
-  const classes: string[] = ['gray'];
-  if (props.backgroundImageShow === 'blur') classes.push('blur');
-  if (isEplorOrBlurMode.value) classes.push('no-backdrop');
+  const classes: string[] = ["gray"];
+  if (props.backgroundImageShow === "blur") classes.push("blur");
+  if (isEplorOrBlurMode.value) classes.push("no-backdrop");
   return classes;
 });
 </script>
@@ -128,7 +139,9 @@ const grayClasses = computed(() => {
   -webkit-backdrop-filter: blur(80px);
   backdrop-filter: blur(80px);
   z-index: -1;
-  transition: backdrop-filter 0.5s ease, background-color 0.5s ease;
+  transition:
+    backdrop-filter 0.5s ease,
+    background-color 0.5s ease;
 
   &.blur {
     background-color: #00000060;

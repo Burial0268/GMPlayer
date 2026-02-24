@@ -11,14 +11,23 @@
  * Public API unchanged — `analyzeTrack()` and `spectralSimilarity()`.
  */
 
-import { AudioContextManager } from '../AudioContextManager';
-import type { BPMResult } from './BPMDetector';
+import { AudioContextManager } from "../AudioContextManager";
+import type { BPMResult } from "./BPMDetector";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
 // ─── Public types ──────────────────────────────────────────────────
 
-export type OutroType = 'hard' | 'fadeOut' | 'reverbTail' | 'silence' | 'noiseEnd' | 'slowDown' | 'sustained' | 'musicalOutro' | 'loopFade';
+export type OutroType =
+  | "hard"
+  | "fadeOut"
+  | "reverbTail"
+  | "silence"
+  | "noiseEnd"
+  | "slowDown"
+  | "sustained"
+  | "musicalOutro"
+  | "loopFade";
 
 export interface OutroAnalysis {
   outroType: OutroType;
@@ -104,10 +113,7 @@ function getWorker(): Worker | null {
   if (worker) return worker;
 
   try {
-    worker = new Worker(
-      new URL('./analysis-worker.ts', import.meta.url),
-      { type: 'module' }
-    );
+    worker = new Worker(new URL("./analysis-worker.ts", import.meta.url), { type: "module" });
 
     worker.onmessage = (e: MessageEvent) => {
       const { type, id } = e.data;
@@ -115,29 +121,29 @@ function getWorker(): Worker | null {
       if (!pending) return;
       pendingRequests.delete(id);
 
-      if (type === 'result') {
+      if (type === "result") {
         pending.resolve(e.data as TrackAnalysis);
-      } else if (type === 'error') {
+      } else if (type === "error") {
         pending.reject(new Error(e.data.error));
       }
     };
 
     worker.onerror = (err) => {
-      console.warn('TrackAnalyzer: Worker error', err);
+      console.warn("TrackAnalyzer: Worker error", err);
       // Reject all pending requests
       for (const [id, pending] of pendingRequests) {
-        pending.reject(new Error('Worker error'));
+        pending.reject(new Error("Worker error"));
         pendingRequests.delete(id);
       }
     };
 
     if (IS_DEV) {
-      console.log('TrackAnalyzer: Web Worker initialized');
+      console.log("TrackAnalyzer: Web Worker initialized");
     }
 
     return worker;
   } catch (err) {
-    console.warn('TrackAnalyzer: Failed to create Worker, will use main-thread fallback', err);
+    console.warn("TrackAnalyzer: Failed to create Worker, will use main-thread fallback", err);
     workerFailed = true;
     return null;
   }
@@ -151,7 +157,7 @@ async function decodeBlob(blobUrl: string): Promise<AudioBuffer> {
 
   const ctx = AudioContextManager.getContext();
   if (!ctx) {
-    throw new Error('No AudioContext available for decoding');
+    throw new Error("No AudioContext available for decoding");
   }
 
   // Use callback form for maximum browser compatibility
@@ -192,7 +198,7 @@ function mixToMono(buffer: AudioBuffer): Float32Array {
 // ─── Main-thread fallback (yielding) ──────────────────────────────
 
 function yieldToMain(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 0));
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 /**
@@ -210,9 +216,7 @@ function analyzeVolumeFallback(data: Float32Array): VolumeAnalysis {
   }
 
   const rms = Math.sqrt(sumSquares / length);
-  const estimatedLUFS = rms > 0
-    ? 20 * Math.log10(rms / 0.707) - 0.691
-    : -70;
+  const estimatedLUFS = rms > 0 ? 20 * Math.log10(rms / 0.707) - 0.691 : -70;
   const lufsOffset = -14 - estimatedLUFS;
   const rawGain = Math.pow(10, lufsOffset / 20);
   const gainAdjustment = Math.max(0.1, Math.min(3.0, rawGain));
@@ -223,7 +227,11 @@ function analyzeVolumeFallback(data: Float32Array): VolumeAnalysis {
 /**
  * Fallback: run energy analysis on main thread.
  */
-function analyzeEnergyFallback(data: Float32Array, sampleRate: number, duration: number): EnergyAnalysis {
+function analyzeEnergyFallback(
+  data: Float32Array,
+  sampleRate: number,
+  duration: number,
+): EnergyAnalysis {
   const secondCount = Math.ceil(duration);
   const energyPerSecond: number[] = new Array(secondCount);
   const length = data.length;
@@ -233,7 +241,10 @@ function analyzeEnergyFallback(data: Float32Array, sampleRate: number, duration:
     const start = (sec * sampleRate) | 0;
     const end = Math.min(((sec + 1) * sampleRate) | 0, length);
     const count = end - start;
-    if (count <= 0) { energyPerSecond[sec] = 0; continue; }
+    if (count <= 0) {
+      energyPerSecond[sec] = 0;
+      continue;
+    }
 
     let sumSq = 0;
     for (let i = start; i < end; i++) sumSq += data[i] * data[i];
@@ -316,7 +327,14 @@ function analyzeEnergyFallback(data: Float32Array, sampleRate: number, duration:
     }
   }
 
-  return { energyPerSecond, outroStartOffset, introEndOffset, averageEnergy, trailingSilence, isFadeOut };
+  return {
+    energyPerSecond,
+    outroStartOffset,
+    introEndOffset,
+    averageEnergy,
+    trailingSilence,
+    isFadeOut,
+  };
 }
 
 /**
@@ -326,7 +344,7 @@ async function analyzeOnMainThread(
   monoData: Float32Array,
   sampleRate: number,
   duration: number,
-  analyzeBPM: boolean
+  analyzeBPM: boolean,
 ): Promise<TrackAnalysis> {
   const volume = analyzeVolumeFallback(monoData);
   await yieldToMain();
@@ -353,7 +371,10 @@ async function analyzeOnMainThread(
 /**
  * Fallback: run intro analysis on main thread (lightweight — just scans energyPerSecond).
  */
-function analyzeIntroFallback(energyPerSecond: number[], averageEnergy: number): IntroAnalysis | null {
+function analyzeIntroFallback(
+  energyPerSecond: number[],
+  averageEnergy: number,
+): IntroAnalysis | null {
   const scanLen = Math.min(20, energyPerSecond.length);
   if (scanLen < 4) return null;
 
@@ -377,7 +398,7 @@ function analyzeIntroFallback(energyPerSecond: number[], averageEnergy: number):
 
   let sum = 0;
   for (let i = 0; i < scanLen; i++) sum += energyPerSecond[i];
-  const introEnergyRatio = averageEnergy > 0.001 ? (sum / scanLen) / averageEnergy : 1;
+  const introEnergyRatio = averageEnergy > 0.001 ? sum / scanLen / averageEnergy : 1;
 
   return { quietIntroDuration, energyBuildDuration, introEnergyRatio, multibandEnergy: null };
 }
@@ -390,12 +411,12 @@ function analyzeIntroFallback(energyPerSecond: number[], averageEnergy: number):
  */
 export async function analyzeTrack(
   blobUrl: string,
-  options?: AnalyzeOptions
+  options?: AnalyzeOptions,
 ): Promise<TrackAnalysis> {
   const analyzeBPM = options?.analyzeBPM ?? true;
 
   if (IS_DEV) {
-    console.log('TrackAnalyzer: Starting analysis for', blobUrl.substring(0, 50));
+    console.log("TrackAnalyzer: Starting analysis for", blobUrl.substring(0, 50));
   }
 
   // Step 1: decode on main thread using global AudioContext
@@ -413,7 +434,7 @@ export async function analyzeTrack(
     return analyzeViaWorker(w, monoData, sampleRate, duration, analyzeBPM);
   } else {
     if (IS_DEV) {
-      console.log('TrackAnalyzer: Using main-thread fallback');
+      console.log("TrackAnalyzer: Using main-thread fallback");
     }
     return analyzeOnMainThread(monoData, sampleRate, duration, analyzeBPM);
   }
@@ -424,7 +445,7 @@ function analyzeViaWorker(
   monoData: Float32Array,
   sampleRate: number,
   duration: number,
-  analyzeBPM: boolean
+  analyzeBPM: boolean,
 ): Promise<TrackAnalysis> {
   const id = ++requestId;
 
@@ -432,22 +453,24 @@ function analyzeViaWorker(
     // Timeout: if Worker doesn't respond in 30s, reject
     const timeout = setTimeout(() => {
       pendingRequests.delete(id);
-      reject(new Error('Worker analysis timed out'));
+      reject(new Error("Worker analysis timed out"));
     }, 30000);
 
     pendingRequests.set(id, {
       resolve: (result) => {
         clearTimeout(timeout);
         if (IS_DEV) {
-          console.log('TrackAnalyzer: Worker analysis complete', {
-            duration: duration.toFixed(1) + 's',
+          console.log("TrackAnalyzer: Worker analysis complete", {
+            duration: duration.toFixed(1) + "s",
             rms: result.volume.rms.toFixed(4),
             lufs: result.volume.estimatedLUFS.toFixed(1),
-            bpm: !analyzeBPM ? 'skipped' : (result.bpm?.bpm ?? ('null (duration=' + duration.toFixed(1) + 's)')),
-            bpmConfidence: result.bpm?.confidence?.toFixed(2) ?? 'n/a',
-            outroType: result.outro?.outroType ?? 'n/a',
-            outroConfidence: result.outro?.outroConfidence?.toFixed(2) ?? 'n/a',
-            suggestedCrossfadeStart: result.outro?.suggestedCrossfadeStart?.toFixed(1) ?? 'n/a',
+            bpm: !analyzeBPM
+              ? "skipped"
+              : (result.bpm?.bpm ?? "null (duration=" + duration.toFixed(1) + "s)"),
+            bpmConfidence: result.bpm?.confidence?.toFixed(2) ?? "n/a",
+            outroType: result.outro?.outroType ?? "n/a",
+            outroConfidence: result.outro?.outroConfidence?.toFixed(2) ?? "n/a",
+            suggestedCrossfadeStart: result.outro?.suggestedCrossfadeStart?.toFixed(1) ?? "n/a",
           });
         }
         resolve(result);
@@ -459,10 +482,9 @@ function analyzeViaWorker(
     });
 
     // Transfer the mono data buffer (zero-copy)
-    w.postMessage(
-      { type: 'analyze', id, monoData, sampleRate, duration, analyzeBPM },
-      [monoData.buffer]
-    );
+    w.postMessage({ type: "analyze", id, monoData, sampleRate, duration, analyzeBPM }, [
+      monoData.buffer,
+    ]);
   });
 }
 
@@ -470,15 +492,14 @@ function analyzeViaWorker(
  * Compute similarity between two spectral fingerprints (0-1, 1 = identical).
  * Runs on main thread — cheap O(24) operation.
  */
-export function spectralSimilarity(
-  fp1: SpectralFingerprint,
-  fp2: SpectralFingerprint
-): number {
+export function spectralSimilarity(fp1: SpectralFingerprint, fp2: SpectralFingerprint): number {
   const a = fp1.bands;
   const b = fp2.bands;
   if (a.length !== b.length) return 0;
 
-  let dot = 0, n1 = 0, n2 = 0;
+  let dot = 0,
+    n1 = 0,
+    n2 = 0;
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i];
     n1 += a[i] * a[i];

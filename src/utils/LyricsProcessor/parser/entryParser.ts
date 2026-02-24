@@ -3,8 +3,8 @@
  * LRC 格式解析器 - 严格时间匹配 (优化版)
  */
 
-import type { TimeTextEntry } from '../types';
-import { parseLrcTime } from '../timeUtils';
+import type { TimeTextEntry } from "../types";
+import { parseLrcTime } from "../timeUtils";
 
 // Pre-compiled regex (avoid recompilation on each call)
 const LRC_LINE_REGEX = /^\[(\d+:\d+(?:\.\d+)?)\](.*)/;
@@ -17,7 +17,7 @@ const LRC_LINE_REGEX = /^\[(\d+:\d+(?:\.\d+)?)\](.*)/;
 export function parseLrcToEntries(lrcText: string): TimeTextEntry[] {
   if (!lrcText) return [];
 
-  const lines = lrcText.split('\n');
+  const lines = lrcText.split("\n");
   const entries: TimeTextEntry[] = [];
   entries.length = lines.length; // Pre-allocate approximate size
 
@@ -65,7 +65,7 @@ export function buildTimeMap(entries: TimeTextEntry[]): Map<number, string> {
 export function strictTimeMatchBinary(
   targetTime: number,
   sortedEntries: TimeTextEntry[],
-  tolerance: number = 500
+  tolerance: number = 500,
 ): string | undefined {
   if (sortedEntries.length === 0) return undefined;
 
@@ -108,7 +108,7 @@ export function strictTimeMatchBinary(
 export function strictTimeMatch(
   targetTime: number,
   timeMap: Map<number, string>,
-  tolerance: number = 500
+  tolerance: number = 500,
 ): string | undefined {
   // Fast path: exact match
   const exact = timeMap.get(targetTime);
@@ -154,4 +154,3 @@ export function strictTimeMatch(
 
   return bestMatch;
 }
-

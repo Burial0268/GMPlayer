@@ -1,6 +1,5 @@
 <template>
-  <div v-if="visible" class="mobile-cover-frame" :style="frameStyle"
-    @click="$emit('click')">
+  <div v-if="visible" class="mobile-cover-frame" :style="frameStyle" @click="$emit('click')">
     <img :src="coverUrl" alt="cover" />
   </div>
 </template>
@@ -27,7 +26,12 @@ defineEmits<{
   pointer-events: auto;
   z-index: 60;
   box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.35);
-  transition: width 0.4s ease, height 0.4s ease, left 0.4s ease, top 0.4s ease, border-radius 0.4s ease;
+  transition:
+    width 0.4s ease,
+    height 0.4s ease,
+    left 0.4s ease,
+    top 0.4s ease,
+    border-radius 0.4s ease;
 
   img {
     position: absolute;

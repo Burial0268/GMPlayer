@@ -1,32 +1,57 @@
 <template>
-  <div
-    :class="menuShow ? 'menu show' : 'menu'"
-    v-show="setting.playerStyle === 'record'">
+  <div :class="menuShow ? 'menu show' : 'menu'" v-show="setting.playerStyle === 'record'">
     <div class="time">
       <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-      <BouncingSlider :value="music.getPlaySongTime.currentTime || 0" :min="0"
-        :max="music.getPlaySongTime.duration || 1" :is-playing="music.getPlayState"
-        @update:value="handleProgressSeek" @seek-start="music.setPlayState(false)"
-        @seek-end="music.setPlayState(true)" />
+      <BouncingSlider
+        :value="music.getPlaySongTime.currentTime || 0"
+        :min="0"
+        :max="music.getPlaySongTime.duration || 1"
+        :is-playing="music.getPlayState"
+        @update:value="handleProgressSeek"
+        @seek-start="music.setPlayState(false)"
+        @seek-end="music.setPlayState(true)"
+      />
       <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
     </div>
     <div class="control">
-      <n-icon v-if="!music.getPersonalFmMode" class="prev" size="30" :component="IconRewind"
-        @click.stop="music.setPlaySongIndex('prev')" />
-      <n-icon v-else class="dislike" :component="ThumbDownRound"
-        @click="music.setFmDislike(music.getPersonalFmData.id)" />
+      <n-icon
+        v-if="!music.getPersonalFmMode"
+        class="prev"
+        size="30"
+        :component="IconRewind"
+        @click.stop="music.setPlaySongIndex('prev')"
+      />
+      <n-icon
+        v-else
+        class="dislike"
+        :component="ThumbDownRound"
+        @click="music.setFmDislike(music.getPersonalFmData.id)"
+      />
       <div class="play-state">
-        <n-button :loading="music.getLoadingState" secondary circle :keyboard="false" :focusable="false">
+        <n-button
+          :loading="music.getLoadingState"
+          secondary
+          circle
+          :keyboard="false"
+          :focusable="false"
+        >
           <template #icon>
             <Transition name="fade" mode="out-in">
-              <n-icon size="42" :component="music.getPlayState ? IconPause : IconPlay"
-                @click.stop="music.setPlayState(!music.getPlayState)" />
+              <n-icon
+                size="42"
+                :component="music.getPlayState ? IconPause : IconPlay"
+                @click.stop="music.setPlayState(!music.getPlayState)"
+              />
             </Transition>
           </template>
         </n-button>
       </div>
-      <n-icon class="next" size="30" :component="IconForward"
-        @click.stop="music.setPlaySongIndex('next')" />
+      <n-icon
+        class="next"
+        size="30"
+        :component="IconForward"
+        @click.stop="music.setPlaySongIndex('next')"
+      />
     </div>
   </div>
 </template>

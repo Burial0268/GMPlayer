@@ -9,9 +9,9 @@
  * - Reduced console.log for production performance
  */
 
-import { AudioEffectManager } from './AudioEffectManager';
-import { AudioContextManager } from './AudioContextManager';
-import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from './types';
+import { AudioEffectManager } from "./AudioEffectManager";
+import { AudioContextManager } from "./AudioContextManager";
+import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from "./types";
 
 // Development mode detection
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -73,18 +73,18 @@ export class NativeSound implements ISound {
   constructor({ src, volume = 1, preload = true }: SoundOptions) {
     // Audio element
     this._audio = new Audio();
-    this._audio.crossOrigin = 'anonymous';
-    this._audio.preload = preload ? 'auto' : 'metadata';
+    this._audio.crossOrigin = "anonymous";
+    this._audio.preload = preload ? "auto" : "metadata";
     this._audio.src = Array.isArray(src) ? src[0] : src;
 
     // Mobile-specific optimizations
     if (AudioContextManager.isMobile()) {
       // Disable preload on mobile to save bandwidth
-      this._audio.preload = 'metadata';
+      this._audio.preload = "metadata";
       // Enable inline playback on iOS
       (this._audio as any).playsInline = true;
-      this._audio.setAttribute('playsinline', '');
-      this._audio.setAttribute('webkit-playsinline', '');
+      this._audio.setAttribute("playsinline", "");
+      this._audio.setAttribute("webkit-playsinline", "");
     }
 
     // State
@@ -97,10 +97,10 @@ export class NativeSound implements ISound {
 
     // Listen for AudioContext state changes
     this._boundResumeHandler = this._handleContextResume.bind(this);
-    AudioContextManager.on('resumed', this._boundResumeHandler);
+    AudioContextManager.on("resumed", this._boundResumeHandler);
 
     if (IS_DEV) {
-      console.log('NativeSound created:', this._audio.src);
+      console.log("NativeSound created:", this._audio.src);
     }
   }
 
@@ -111,7 +111,7 @@ export class NativeSound implements ISound {
     // If playback was pending while context was suspended, retry
     if (this._pendingPlay && this._loaded) {
       if (IS_DEV) {
-        console.log('NativeSound: AudioContext resumed, retrying play');
+        console.log("NativeSound: AudioContext resumed, retrying play");
       }
       this._pendingPlay = false;
       this._doPlay();
@@ -129,7 +129,7 @@ export class NativeSound implements ISound {
     try {
       const audioCtx = AudioContextManager.getContext();
       if (!audioCtx) {
-        console.warn('NativeSound: AudioContext not available');
+        console.warn("NativeSound: AudioContext not available");
         return false;
       }
 
@@ -162,12 +162,12 @@ export class NativeSound implements ISound {
       this._isAudioGraphInitialized = true;
 
       if (IS_DEV) {
-        console.log('NativeSound: Audio graph initialized');
+        console.log("NativeSound: Audio graph initialized");
       }
 
       return true;
     } catch (err) {
-      console.error('NativeSound: Failed to initialize audio graph', err);
+      console.error("NativeSound: Failed to initialize audio graph", err);
       return false;
     }
   }
@@ -177,10 +177,10 @@ export class NativeSound implements ISound {
     this._boundHandlers = {
       canplaythrough: () => {
         if (IS_DEV) {
-          console.log('NativeSound: canplaythrough (load)');
+          console.log("NativeSound: canplaythrough (load)");
         }
         this._loaded = true;
-        this._emit('load');
+        this._emit("load");
         if (this._pendingPlay) {
           this._pendingPlay = false;
           this._doPlay();
@@ -190,10 +190,10 @@ export class NativeSound implements ISound {
         // Fired when first frame is loaded - good for mobile
         if (!this._loaded && this._audio.readyState >= 2) {
           if (IS_DEV) {
-            console.log('NativeSound: loadeddata (early load)');
+            console.log("NativeSound: loadeddata (early load)");
           }
           this._loaded = true;
-          this._emit('load');
+          this._emit("load");
           if (this._pendingPlay) {
             this._pendingPlay = false;
             this._doPlay();
@@ -202,35 +202,35 @@ export class NativeSound implements ISound {
       },
       play: () => {
         if (IS_DEV) {
-          console.log('NativeSound: play event');
+          console.log("NativeSound: play event");
         }
         this._isPlaying = true;
         this._consecutiveErrors = 0; // Reset error count on successful play
-        this._emit('play');
+        this._emit("play");
       },
       pause: () => {
         if (this._unloading) return;
         if (IS_DEV) {
-          console.log('NativeSound: pause event');
+          console.log("NativeSound: pause event");
         }
         this._isPlaying = false;
-        this._emit('pause');
+        this._emit("pause");
       },
       ended: () => {
         if (IS_DEV) {
-          console.log('NativeSound: ended event');
+          console.log("NativeSound: ended event");
         }
         this._isPlaying = false;
-        this._emit('end');
+        this._emit("end");
       },
       stalled: () => {
         if (this._unloading) return;
-        console.warn('NativeSound: stalled - network issue');
+        console.warn("NativeSound: stalled - network issue");
       },
       waiting: () => {
         if (this._unloading) return;
         if (IS_DEV) {
-          console.log('NativeSound: waiting for data');
+          console.log("NativeSound: waiting for data");
         }
       },
       error: () => {
@@ -246,22 +246,24 @@ export class NativeSound implements ISound {
 
         const error = this._audio.error;
         const errorMessages: Record<number, string> = {
-          1: 'MEDIA_ERR_ABORTED',
-          2: 'MEDIA_ERR_NETWORK',
-          3: 'MEDIA_ERR_DECODE',
-          4: 'MEDIA_ERR_SRC_NOT_SUPPORTED',
+          1: "MEDIA_ERR_ABORTED",
+          2: "MEDIA_ERR_NETWORK",
+          3: "MEDIA_ERR_DECODE",
+          4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
         };
-        const errorMsg = error ? errorMessages[error.code] || `Unknown error code: ${error.code}` : 'Unknown error';
+        const errorMsg = error
+          ? errorMessages[error.code] || `Unknown error code: ${error.code}`
+          : "Unknown error";
 
-        console.error('NativeSound: error event -', errorMsg, 'src:', this._audio.src);
+        console.error("NativeSound: error event -", errorMsg, "src:", this._audio.src);
 
         this._isPlaying = false;
         this._pendingPlay = false;
 
         // Only emit errors if not exceeding max
         if (this._consecutiveErrors <= this._maxConsecutiveErrors) {
-          this._emit('loaderror');
-          this._emit('playerror');
+          this._emit("loaderror");
+          this._emit("playerror");
         }
       },
     };
@@ -269,23 +271,25 @@ export class NativeSound implements ISound {
     // Handle case where audio is already loaded (cached)
     if (this._audio.readyState >= 3) {
       if (IS_DEV) {
-        console.log('NativeSound: audio already loaded (readyState:', this._audio.readyState, ')');
+        console.log("NativeSound: audio already loaded (readyState:", this._audio.readyState, ")");
       }
       this._loaded = true;
       // Defer emit to allow event listeners to be registered
-      setTimeout(() => this._emit('load'), 0);
+      setTimeout(() => this._emit("load"), 0);
     } else {
-      this._audio.addEventListener('canplaythrough', this._boundHandlers.canplaythrough, { once: true });
+      this._audio.addEventListener("canplaythrough", this._boundHandlers.canplaythrough, {
+        once: true,
+      });
       // Also listen for loadeddata for faster mobile response
-      this._audio.addEventListener('loadeddata', this._boundHandlers.loadeddata, { once: true });
+      this._audio.addEventListener("loadeddata", this._boundHandlers.loadeddata, { once: true });
     }
 
-    this._audio.addEventListener('play', this._boundHandlers.play);
-    this._audio.addEventListener('pause', this._boundHandlers.pause);
-    this._audio.addEventListener('ended', this._boundHandlers.ended);
-    this._audio.addEventListener('error', this._boundHandlers.error);
-    this._audio.addEventListener('stalled', this._boundHandlers.stalled);
-    this._audio.addEventListener('waiting', this._boundHandlers.waiting);
+    this._audio.addEventListener("play", this._boundHandlers.play);
+    this._audio.addEventListener("pause", this._boundHandlers.pause);
+    this._audio.addEventListener("ended", this._boundHandlers.ended);
+    this._audio.addEventListener("error", this._boundHandlers.error);
+    this._audio.addEventListener("stalled", this._boundHandlers.stalled);
+    this._audio.addEventListener("waiting", this._boundHandlers.waiting);
   }
 
   private _emit(event: SoundEventType, ...args: unknown[]): void {
@@ -321,19 +325,19 @@ export class NativeSound implements ISound {
     if (!this._isAudioGraphInitialized) {
       const success = await this._initAudioGraph();
       if (!success) {
-        console.error('NativeSound: Failed to initialize audio graph');
-        this._emit('playerror');
+        console.error("NativeSound: Failed to initialize audio graph");
+        this._emit("playerror");
         return;
       }
     }
 
     // Resume AudioContext if suspended
     const audioCtx = AudioContextManager.getContext();
-    if (audioCtx && audioCtx.state === 'suspended') {
+    if (audioCtx && audioCtx.state === "suspended") {
       try {
         await AudioContextManager.resume();
       } catch (err) {
-        console.warn('NativeSound: Failed to resume AudioContext', err);
+        console.warn("NativeSound: Failed to resume AudioContext", err);
         // Continue anyway - might work
       }
     }
@@ -342,32 +346,37 @@ export class NativeSound implements ISound {
       await this._audio.play();
     } catch (err: any) {
       // Handle common play() rejections
-      const errName = err?.name || '';
-      if (errName === 'NotAllowedError') {
-        console.warn('NativeSound: play() blocked - user interaction required');
+      const errName = err?.name || "";
+      if (errName === "NotAllowedError") {
+        console.warn("NativeSound: play() blocked - user interaction required");
         this._pendingPlay = true; // Retry on next user interaction
-      } else if (errName === 'NotSupportedError') {
-        console.error('NativeSound: play() failed - source not supported');
-        this._emit('playerror');
-      } else if (errName === 'AbortError') {
-        console.warn('NativeSound: play() aborted');
+      } else if (errName === "NotSupportedError") {
+        console.error("NativeSound: play() failed - source not supported");
+        this._emit("playerror");
+      } else if (errName === "AbortError") {
+        console.warn("NativeSound: play() aborted");
       } else {
-        console.error('NativeSound: play() failed:', err);
-        this._emit('playerror');
+        console.error("NativeSound: play() failed:", err);
+        this._emit("playerror");
       }
     }
   }
 
   play(): this {
     if (IS_DEV) {
-      console.log('NativeSound: play() called, loaded:', this._loaded, 'readyState:', this._audio.readyState);
+      console.log(
+        "NativeSound: play() called, loaded:",
+        this._loaded,
+        "readyState:",
+        this._audio.readyState,
+      );
     }
     if (this._loaded || this._audio.readyState >= 2) {
       this._loaded = true;
       this._doPlay();
     } else {
       if (IS_DEV) {
-        console.log('NativeSound: queuing play until loaded');
+        console.log("NativeSound: queuing play until loaded");
       }
       this._pendingPlay = true;
       // Force load if not already loading
@@ -399,7 +408,7 @@ export class NativeSound implements ISound {
     try {
       // Remove previous seeked handler if rapid-seeking
       if (this._seekedHandler) {
-        this._audio.removeEventListener('seeked', this._seekedHandler);
+        this._audio.removeEventListener("seeked", this._seekedHandler);
         this._seekedHandler = null;
       }
 
@@ -412,10 +421,10 @@ export class NativeSound implements ISound {
           this._seekedHandler = null;
           this._effectManager?.onSeeked();
         };
-        this._audio.addEventListener('seeked', this._seekedHandler, { once: true });
+        this._audio.addEventListener("seeked", this._seekedHandler, { once: true });
       }
     } catch (e) {
-      console.warn('NativeSound: Failed to seek to', pos, e);
+      console.warn("NativeSound: Failed to seek to", pos, e);
     }
     return this;
   }
@@ -449,7 +458,7 @@ export class NativeSound implements ISound {
     const audioCtx = AudioContextManager.getContext();
 
     // Use Web Audio API's built-in fade if available
-    if (this._gainNode && audioCtx && audioCtx.state === 'running') {
+    if (this._gainNode && audioCtx && audioCtx.state === "running") {
       const currentTime = audioCtx.currentTime;
       this._gainNode.gain.cancelScheduledValues(currentTime);
       this._gainNode.gain.setValueAtTime(from, currentTime);
@@ -458,7 +467,7 @@ export class NativeSound implements ISound {
       // Emit fade event after duration
       setTimeout(() => {
         this._volume = to;
-        this._emit('fade');
+        this._emit("fade");
       }, duration);
     } else {
       // Fallback to requestAnimationFrame fade
@@ -476,7 +485,7 @@ export class NativeSound implements ISound {
         } else {
           this._fadeAnimationId = null;
           this._volume = Math.max(0, Math.min(1, to));
-          this._emit('fade');
+          this._emit("fade");
         }
       };
 
@@ -581,7 +590,7 @@ export class NativeSound implements ISound {
 
   unload(): void {
     if (IS_DEV) {
-      console.log('NativeSound: unloading');
+      console.log("NativeSound: unloading");
     }
     this._unloading = true;
 
@@ -592,31 +601,31 @@ export class NativeSound implements ISound {
 
     // Remove AudioContext event listener
     if (this._boundResumeHandler) {
-      AudioContextManager.off('resumed', this._boundResumeHandler);
+      AudioContextManager.off("resumed", this._boundResumeHandler);
       this._boundResumeHandler = null;
     }
 
     // Remove native event listeners first
     if (this._boundHandlers) {
-      this._audio.removeEventListener('canplaythrough', this._boundHandlers.canplaythrough);
-      this._audio.removeEventListener('loadeddata', this._boundHandlers.loadeddata);
-      this._audio.removeEventListener('play', this._boundHandlers.play);
-      this._audio.removeEventListener('pause', this._boundHandlers.pause);
-      this._audio.removeEventListener('ended', this._boundHandlers.ended);
-      this._audio.removeEventListener('error', this._boundHandlers.error);
-      this._audio.removeEventListener('stalled', this._boundHandlers.stalled);
-      this._audio.removeEventListener('waiting', this._boundHandlers.waiting);
+      this._audio.removeEventListener("canplaythrough", this._boundHandlers.canplaythrough);
+      this._audio.removeEventListener("loadeddata", this._boundHandlers.loadeddata);
+      this._audio.removeEventListener("play", this._boundHandlers.play);
+      this._audio.removeEventListener("pause", this._boundHandlers.pause);
+      this._audio.removeEventListener("ended", this._boundHandlers.ended);
+      this._audio.removeEventListener("error", this._boundHandlers.error);
+      this._audio.removeEventListener("stalled", this._boundHandlers.stalled);
+      this._audio.removeEventListener("waiting", this._boundHandlers.waiting);
       this._boundHandlers = null;
     }
 
     // Remove pending seeked handler
     if (this._seekedHandler) {
-      this._audio.removeEventListener('seeked', this._seekedHandler);
+      this._audio.removeEventListener("seeked", this._seekedHandler);
       this._seekedHandler = null;
     }
 
     this._audio.pause();
-    this._audio.src = '';
+    this._audio.src = "";
     this._audio.load();
 
     // Cleanup Web Audio nodes

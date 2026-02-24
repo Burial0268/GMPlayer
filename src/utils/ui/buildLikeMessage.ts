@@ -3,7 +3,7 @@ export const buildLikeMessage = (
   entityName: string,
   type: number,
   result: "success" | "failed",
-  language: string
+  language: string,
 ) => {
   const space = language === "zh-CN" ? "" : " ";
   const resultKey = result === "success" ? "general.dialog.success" : "general.dialog.failed";

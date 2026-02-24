@@ -20,9 +20,7 @@ const { t } = useI18n();
 // 程序重置
 const resetApp = () => {
   const cleanAll = () => {
-    $message
-      ? $message.success(t("other.cleanAll"))
-      : alert(t("other.cleanAll"));
+    $message ? $message.success(t("other.cleanAll")) : alert(t("other.cleanAll"));
     localStorage.clear();
     window.location.href = "/";
   };

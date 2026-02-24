@@ -61,4 +61,4 @@ void main() {
     vec2 packedMotion = motion * 0.5 + 0.5;
     fragColor = vec4(packedMotion, 0.0, 1.0);
 }
-`; 
+`;

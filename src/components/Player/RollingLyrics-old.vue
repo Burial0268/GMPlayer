@@ -6,17 +6,11 @@
       setting.playerStyle === 'cover' ? 'lrc-all cover' : 'lrc-all record',
       setting.lyricsBlock === 'center' ? 'center' : 'top',
     ]"
-    :style="
-      setting.lyricsPosition === 'center'
-        ? { textAlign: 'center', paddingRight: '0' }
-        : null
-    "
+    :style="setting.lyricsPosition === 'center' ? { textAlign: 'center', paddingRight: '0' } : null"
   >
     <div
       class="placeholder"
-      :id="
-        !music.getPlaySongLyric.hasYrc || !setting.showYrc ? 'lrc-1' : 'yrc-1'
-      "
+      :id="!music.getPlaySongLyric.hasYrc || !setting.showYrc ? 'lrc-1' : 'yrc-1'"
     >
       <CountDown
         v-if="setting.countDownShow"
@@ -36,34 +30,24 @@
         <div
           :class="setting.lyricsBlur ? 'lrc-text blur' : 'lrc-text'"
           :style="{
-            transformOrigin:
-              setting.lyricsPosition === 'center' ? 'center' : null,
+            transformOrigin: setting.lyricsPosition === 'center' ? 'center' : null,
             filter: setting.lyricsBlur
               ? `blur(${getFilter(music.getPlaySongLyricIndex, index)}px)`
               : null,
           }"
         >
-          <span
-            class="lyric"
-            :style="{ fontSize: setting.lyricsFontSize + 'vh' }"
-          >
+          <span class="lyric" :style="{ fontSize: setting.lyricsFontSize + 'vh' }">
             {{ item.content }}
           </span>
           <span
-            v-show="
-              music.getPlaySongLyric.hasLrcTran &&
-              setting.showTransl &&
-              item.tran
-            "
+            v-show="music.getPlaySongLyric.hasLrcTran && setting.showTransl && item.tran"
             :style="{ fontSize: setting.lyricsFontSize - 1 + 'vh' }"
             class="lyric-fy"
           >
             {{ item.tran }}</span
           >
           <span
-            v-show="
-              music.getPlaySongLyric.hasLrcRoma && setting.showRoma && item.roma
-            "
+            v-show="music.getPlaySongLyric.hasLrcRoma && setting.showRoma && item.roma"
             :style="{ fontSize: setting.lyricsFontSize - 1.5 + 'vh' }"
             class="lyric-roma"
           >
@@ -84,17 +68,13 @@
         <div
           :class="setting.lyricsBlur ? 'yrc-text blur' : 'yrc-text'"
           :style="{
-            transformOrigin:
-              setting.lyricsPosition === 'center' ? 'center' : null,
+            transformOrigin: setting.lyricsPosition === 'center' ? 'center' : null,
             filter: setting.lyricsBlur
               ? `blur(${getFilter(music.getPlaySongLyricIndex, index)}px)`
               : null,
           }"
         >
-          <div
-            class="lyric"
-            :style="{ fontSize: setting.lyricsFontSize + 'vh' }"
-          >
+          <div class="lyric" :style="{ fontSize: setting.lyricsFontSize + 'vh' }">
             <span
               v-for="(v, i) in item.content"
               :key="i"
@@ -112,20 +92,14 @@
             </span>
           </div>
           <span
-            v-show="
-              music.getPlaySongLyric.hasYrcTran &&
-              setting.showTransl &&
-              item.tran
-            "
+            v-show="music.getPlaySongLyric.hasYrcTran && setting.showTransl && item.tran"
             :style="{ fontSize: setting.lyricsFontSize - 1 + 'vh' }"
             class="lyric-fy"
           >
             {{ item.tran }}
           </span>
           <span
-            v-show="
-              music.getPlaySongLyric.hasYrcRoma && setting.showRoma && item.roma
-            "
+            v-show="music.getPlaySongLyric.hasYrcRoma && setting.showRoma && item.roma"
             :style="{ fontSize: setting.lyricsFontSize - 1.5 + 'vh' }"
             class="lyric-roma"
           >

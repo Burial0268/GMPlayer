@@ -8,9 +8,9 @@
  * Used to determine transition strategy (effects, duration adjustments).
  */
 
-import { spectralSimilarity, type TrackAnalysis, type SpectralFingerprint } from './TrackAnalyzer';
-import type { OutroType } from './TrackAnalyzer';
-import type { CompatibilityScore, CrossfadeCurve, TransitionStrategy } from './types';
+import { spectralSimilarity, type TrackAnalysis, type SpectralFingerprint } from "./TrackAnalyzer";
+import type { OutroType } from "./TrackAnalyzer";
+import type { CompatibilityScore, CrossfadeCurve, TransitionStrategy } from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -25,7 +25,7 @@ export class CompatibilityScorer {
     if (!bpm1 || !bpm2) return 0.5; // unknown → neutral
 
     // Check exact and harmonic ratios
-    const ratios = [1, 2, 0.5, 1.5, 2/3];
+    const ratios = [1, 2, 0.5, 1.5, 2 / 3];
     let bestDiff = Infinity;
 
     for (const ratio of ratios) {
@@ -36,7 +36,7 @@ export class CompatibilityScorer {
 
     // <5% diff = perfect, >20% diff = poor
     if (bestDiff < 0.05) return 1;
-    if (bestDiff > 0.20) return 0;
+    if (bestDiff > 0.2) return 0;
     return 1 - (bestDiff - 0.05) / 0.15;
   }
 
@@ -47,7 +47,7 @@ export class CompatibilityScorer {
    */
   scoreIntensity(
     outroMB: { low: number[]; mid: number[]; high: number[] } | undefined,
-    introMB: { low: number[]; mid: number[]; high: number[] } | null | undefined
+    introMB: { low: number[]; mid: number[]; high: number[] } | null | undefined,
   ): number {
     if (!outroMB || !introMB) return 0.5; // unknown → neutral
 
@@ -101,7 +101,10 @@ export class CompatibilityScorer {
    *
    * @returns 0-1 score (1 = identical spectral balance)
    */
-  scoreSpectral(fp1: SpectralFingerprint | undefined, fp2: SpectralFingerprint | undefined): number {
+  scoreSpectral(
+    fp1: SpectralFingerprint | undefined,
+    fp2: SpectralFingerprint | undefined,
+  ): number {
     if (!fp1 || !fp2) return 0.5;
     return spectralSimilarity(fp1, fp2);
   }
@@ -111,49 +114,32 @@ export class CompatibilityScorer {
    *
    * @returns CompatibilityScore with overall and per-dimension scores
    */
-  computeOverall(
-    current: TrackAnalysis | null,
-    next: TrackAnalysis | null
-  ): CompatibilityScore {
+  computeOverall(current: TrackAnalysis | null, next: TrackAnalysis | null): CompatibilityScore {
     if (!current || !next) {
       return { overall: 0.5, bpm: 0.5, intensity: 0.5, loudness: 0.5, spectral: 0.5 };
     }
 
-    const bpm = this.scoreBPM(
-      current.bpm?.bpm ?? null,
-      next.bpm?.bpm ?? null
-    );
+    const bpm = this.scoreBPM(current.bpm?.bpm ?? null, next.bpm?.bpm ?? null);
 
     const intensity = this.scoreIntensity(
       current.outro?.multibandEnergy,
-      next.intro?.multibandEnergy
+      next.intro?.multibandEnergy,
     );
 
-    const loudness = this.scoreLoudness(
-      current.volume.estimatedLUFS,
-      next.volume.estimatedLUFS
-    );
+    const loudness = this.scoreLoudness(current.volume.estimatedLUFS, next.volume.estimatedLUFS);
 
-    const spectral = this.scoreSpectral(
-      current.fingerprint,
-      next.fingerprint
-    );
+    const spectral = this.scoreSpectral(current.fingerprint, next.fingerprint);
 
     // Weighted average: spectral and intensity matter most for crossfade quality
-    const overall = (
-      bpm * 0.15 +
-      intensity * 0.30 +
-      loudness * 0.20 +
-      spectral * 0.35
-    );
+    const overall = bpm * 0.15 + intensity * 0.3 + loudness * 0.2 + spectral * 0.35;
 
     const score = { overall, bpm, intensity, loudness, spectral };
 
     if (IS_DEV) {
       console.log(
         `CompatibilityScorer: overall=${overall.toFixed(2)} ` +
-        `(bpm=${bpm.toFixed(2)}, intensity=${intensity.toFixed(2)}, ` +
-        `loudness=${loudness.toFixed(2)}, spectral=${spectral.toFixed(2)})`
+          `(bpm=${bpm.toFixed(2)}, intensity=${intensity.toFixed(2)}, ` +
+          `loudness=${loudness.toFixed(2)}, spectral=${spectral.toFixed(2)})`,
       );
     }
 
@@ -167,7 +153,7 @@ export class CompatibilityScorer {
    */
   computeTransitionStrategy(
     score: CompatibilityScore,
-    outroType: OutroType | null
+    outroType: OutroType | null,
   ): TransitionStrategy {
     const strategy: TransitionStrategy = {
       durationMultiplier: 1,
@@ -185,7 +171,7 @@ export class CompatibilityScorer {
     strategy.durationMultiplier = 0.85 + (1 - score.overall) * 0.45;
 
     // Reverb tail for hard endings, sustained, musical outro with sufficient energy
-    if (outroType === 'hard' || outroType === 'musicalOutro' || outroType === 'sustained') {
+    if (outroType === "hard" || outroType === "musicalOutro" || outroType === "sustained") {
       strategy.useReverbTail = true;
       strategy.useEffects = true;
     }
@@ -208,20 +194,18 @@ export class CompatibilityScorer {
 
     // Curve override for very low compatibility (sCurve is smoother)
     if (score.overall < 0.3) {
-      strategy.recommendedCurve = 'sCurve' as CrossfadeCurve;
+      strategy.recommendedCurve = "sCurve" as CrossfadeCurve;
       strategy.shapeOverride = { inShape: 1.15, outShape: 0.95 };
     }
 
     if (IS_DEV && strategy.useEffects) {
       console.log(
         `CompatibilityScorer: Strategy — durationMul=${strategy.durationMultiplier.toFixed(2)}, ` +
-        `reverbTail=${strategy.useReverbTail}, noiseRiser=${strategy.useNoiseRiser}` +
-        (strategy.useFilterSweep
-          ? `, filterSweep=true, intensity=${strategy.filterSweepIntensity.toFixed(2)}`
-          : '') +
-        (strategy.recommendedCurve
-          ? `, curve=${strategy.recommendedCurve}`
-          : '')
+          `reverbTail=${strategy.useReverbTail}, noiseRiser=${strategy.useNoiseRiser}` +
+          (strategy.useFilterSweep
+            ? `, filterSweep=true, intensity=${strategy.filterSweepIntensity.toFixed(2)}`
+            : "") +
+          (strategy.recommendedCurve ? `, curve=${strategy.recommendedCurve}` : ""),
       );
     }
 

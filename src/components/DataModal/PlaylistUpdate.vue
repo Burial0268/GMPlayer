@@ -14,10 +14,7 @@
       :model="playlistUpdateValue"
     >
       <n-form-item :label="$t('other.plName')" path="name">
-        <n-input
-          v-model:value="playlistUpdateValue.name"
-          :placeholder="$t('other.plNameTip')"
-        />
+        <n-input v-model:value="playlistUpdateValue.name" :placeholder="$t('other.plNameTip')" />
       </n-form-item>
       <n-form-item :label="$t('other.plDes')" path="desc">
         <n-input
@@ -87,7 +84,7 @@ const toUpdatePlayList = (e) => {
         playlistUpdateId.value,
         playlistUpdateValue._value.name,
         playlistUpdateValue._value.desc,
-        playlistUpdateValue._value.tags.join(";")
+        playlistUpdateValue._value.tags.join(";"),
       ).then((res) => {
         console.log(res);
         if (res.code === 200) {

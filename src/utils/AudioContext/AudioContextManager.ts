@@ -8,9 +8,9 @@
  * - Automatic resume on user interaction
  */
 
-import { resetPCMWorkletRegistration, registerPCMCaptureWorklet } from './pcm-capture-worklet';
+import { resetPCMWorkletRegistration, registerPCMCaptureWorklet } from "./pcm-capture-worklet";
 
-type AudioContextState = 'suspended' | 'running' | 'closed' | 'interrupted';
+type AudioContextState = "suspended" | "running" | "closed" | "interrupted";
 
 interface AudioContextManagerEvents {
   statechange: (state: AudioContextState) => void;
@@ -37,14 +37,16 @@ class AudioContextManagerClass {
   }
 
   private _detectMobile(): boolean {
-    if (typeof navigator === 'undefined') return false;
-    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
-      || ('ontouchstart' in window)
-      || (navigator.maxTouchPoints > 0);
+    if (typeof navigator === "undefined") return false;
+    return (
+      /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+      "ontouchstart" in window ||
+      navigator.maxTouchPoints > 0
+    );
   }
 
   private _setupGlobalListeners(): void {
-    if (typeof document === 'undefined') return;
+    if (typeof document === "undefined") return;
 
     this._boundHandlers = {
       visibilityChange: this._handleVisibilityChange.bind(this),
@@ -53,19 +55,22 @@ class AudioContextManagerClass {
     };
 
     // Visibility change for mobile background playback
-    document.addEventListener('visibilitychange', this._boundHandlers.visibilityChange);
+    document.addEventListener("visibilitychange", this._boundHandlers.visibilityChange);
 
     // User interaction listeners for AudioContext resume
-    const interactionEvents = ['touchstart', 'touchend', 'click', 'keydown'];
-    interactionEvents.forEach(event => {
-      document.addEventListener(event, this._boundHandlers!.userInteraction, { once: false, passive: true });
+    const interactionEvents = ["touchstart", "touchend", "click", "keydown"];
+    interactionEvents.forEach((event) => {
+      document.addEventListener(event, this._boundHandlers!.userInteraction, {
+        once: false,
+        passive: true,
+      });
     });
   }
 
   private _handleVisibilityChange(): void {
     if (!this._ctx) return;
 
-    if (document.visibilityState === 'visible') {
+    if (document.visibilityState === "visible") {
       // Page became visible - resume AudioContext
       this._tryResume();
     }
@@ -80,11 +85,11 @@ class AudioContextManagerClass {
   private _handleStateChange(): void {
     if (!this._ctx) return;
     const state = this._ctx.state as AudioContextState;
-    this._emit('statechange', state);
+    this._emit("statechange", state);
 
-    if (state === 'interrupted') {
+    if (state === "interrupted") {
       // iOS specific - audio was interrupted (e.g., phone call)
-      this._emit('interrupted');
+      this._emit("interrupted");
     }
   }
 
@@ -93,7 +98,7 @@ class AudioContextManagerClass {
    * Note: On mobile, creation may fail without user interaction
    */
   getContext(): AudioContext | null {
-    if (this._ctx && this._ctx.state !== 'closed') {
+    if (this._ctx && this._ctx.state !== "closed") {
       return this._ctx;
     }
 
@@ -105,19 +110,19 @@ class AudioContextManagerClass {
     try {
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       if (!AudioContextClass) {
-        console.warn('AudioContextManager: Web Audio API not supported');
+        console.warn("AudioContextManager: Web Audio API not supported");
         return null;
       }
 
       // Mobile-optimized settings
       const options: AudioContextOptions = this._isMobile
-        ? { latencyHint: 'playback', sampleRate: 44100 }
-        : { latencyHint: 'interactive' };
+        ? { latencyHint: "playback", sampleRate: 44100 }
+        : { latencyHint: "interactive" };
 
       this._ctx = new AudioContextClass(options);
 
       // Listen for state changes (iOS interruption support)
-      this._ctx.addEventListener('statechange', this._boundHandlers!.stateChange);
+      this._ctx.addEventListener("statechange", this._boundHandlers!.stateChange);
 
       // Attempt immediate resume if we have user interaction
       if (this._hasUserInteraction) {
@@ -126,7 +131,7 @@ class AudioContextManagerClass {
 
       return this._ctx;
     } catch (err) {
-      console.error('AudioContextManager: Failed to create AudioContext', err);
+      console.error("AudioContextManager: Failed to create AudioContext", err);
       return null;
     }
   }
@@ -135,7 +140,7 @@ class AudioContextManagerClass {
    * Check if AudioContext is available and running
    */
   isReady(): boolean {
-    return this._ctx !== null && this._ctx.state === 'running';
+    return this._ctx !== null && this._ctx.state === "running";
   }
 
   /**
@@ -158,10 +163,10 @@ class AudioContextManagerClass {
    */
   async resume(): Promise<void> {
     if (!this._ctx) {
-      throw new Error('AudioContext not initialized');
+      throw new Error("AudioContext not initialized");
     }
 
-    if (this._ctx.state === 'running') {
+    if (this._ctx.state === "running") {
       return;
     }
 
@@ -170,9 +175,10 @@ class AudioContextManagerClass {
       return this._resumePromise;
     }
 
-    this._resumePromise = this._ctx.resume()
+    this._resumePromise = this._ctx
+      .resume()
       .then(() => {
-        this._emit('resumed');
+        this._emit("resumed");
       })
       .finally(() => {
         this._resumePromise = null;
@@ -185,15 +191,18 @@ class AudioContextManagerClass {
    * Try to resume without throwing errors
    */
   private _tryResume(): void {
-    if (!this._ctx || this._ctx.state === 'running' || this._ctx.state === 'closed') {
+    if (!this._ctx || this._ctx.state === "running" || this._ctx.state === "closed") {
       return;
     }
 
-    this._ctx.resume().then(() => {
-      this._emit('resumed');
-    }).catch(() => {
-      // Ignore resume errors - will retry on next user interaction
-    });
+    this._ctx
+      .resume()
+      .then(() => {
+        this._emit("resumed");
+      })
+      .catch(() => {
+        // Ignore resume errors - will retry on next user interaction
+      });
   }
 
   /**
@@ -201,7 +210,7 @@ class AudioContextManagerClass {
    */
   on<K extends keyof AudioContextManagerEvents>(
     event: K,
-    callback: AudioContextManagerEvents[K]
+    callback: AudioContextManagerEvents[K],
   ): void {
     if (!this._listeners.has(event)) {
       this._listeners.set(event, new Set());
@@ -214,7 +223,7 @@ class AudioContextManagerClass {
    */
   off<K extends keyof AudioContextManagerEvents>(
     event: K,
-    callback: AudioContextManagerEvents[K]
+    callback: AudioContextManagerEvents[K],
   ): void {
     this._listeners.get(event)?.delete(callback);
   }
@@ -223,7 +232,7 @@ class AudioContextManagerClass {
     event: K,
     ...args: Parameters<AudioContextManagerEvents[K]>
   ): void {
-    this._listeners.get(event)?.forEach(cb => {
+    this._listeners.get(event)?.forEach((cb) => {
       try {
         (cb as Function)(...args);
       } catch (e) {
@@ -241,7 +250,7 @@ class AudioContextManagerClass {
 
     const ctx = this.getContext();
     if (!ctx) {
-      console.warn('AudioContextManager: Cannot register worklet - no AudioContext');
+      console.warn("AudioContextManager: Cannot register worklet - no AudioContext");
       return;
     }
 
@@ -249,7 +258,7 @@ class AudioContextManagerClass {
       await registerPCMCaptureWorklet(ctx);
       this._workletRegistered = true;
     } catch (err) {
-      console.warn('AudioContextManager: Failed to register PCM capture worklet', err);
+      console.warn("AudioContextManager: Failed to register PCM capture worklet", err);
     }
   }
 
@@ -275,7 +284,7 @@ class AudioContextManagerClass {
     if (!this._ctx) return;
 
     try {
-      this._ctx.removeEventListener('statechange', this._boundHandlers!.stateChange);
+      this._ctx.removeEventListener("statechange", this._boundHandlers!.stateChange);
       await this._ctx.close();
     } catch (e) {
       // Ignore close errors
@@ -287,10 +296,10 @@ class AudioContextManagerClass {
    * Cleanup all listeners (for testing/hot reload)
    */
   destroy(): void {
-    if (typeof document !== 'undefined' && this._boundHandlers) {
-      document.removeEventListener('visibilitychange', this._boundHandlers.visibilityChange);
-      const interactionEvents = ['touchstart', 'touchend', 'click', 'keydown'];
-      interactionEvents.forEach(event => {
+    if (typeof document !== "undefined" && this._boundHandlers) {
+      document.removeEventListener("visibilitychange", this._boundHandlers.visibilityChange);
+      const interactionEvents = ["touchstart", "touchend", "click", "keydown"];
+      interactionEvents.forEach((event) => {
         document.removeEventListener(event, this._boundHandlers!.userInteraction);
       });
     }

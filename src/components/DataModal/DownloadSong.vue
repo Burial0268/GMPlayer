@@ -13,11 +13,7 @@
         <n-alert v-if="songData.pc" class="tip" type="info" :show-icon="false">
           {{ $t("other.cloudTip") }}
         </n-alert>
-        <n-radio-group
-          class="downloadGroup"
-          v-model:value="downloadChoose"
-          name="downloadGroup"
-        >
+        <n-radio-group class="downloadGroup" v-model:value="downloadChoose" name="downloadGroup">
           <n-space vertical>
             <n-radio
               v-for="item in downloadLevel"
@@ -50,18 +46,10 @@
           :loading="downloadStatus"
           type="primary"
           @click="
-            toSongDownload(
-              songId,
-              downloadChoose,
-              songData.artist[0].name + '-' + songData.name
-            )
+            toSongDownload(songId, downloadChoose, songData.artist[0].name + '-' + songData.name)
           "
         >
-          {{
-            downloadStatus
-              ? $t("general.dialog.downloadingNow")
-              : $t("general.dialog.download")
-          }}
+          {{ downloadStatus ? $t("general.dialog.downloadingNow") : $t("general.dialog.download") }}
         </n-button>
       </n-space>
     </template>

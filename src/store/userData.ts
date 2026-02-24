@@ -159,9 +159,8 @@ const useUserDataStore = defineStore("userData", {
         try {
           this.userPlayLists.isLoading = true;
           const { userId } = this.userData;
-          const { createdPlaylistCount, subPlaylistCount } =
-            await getUserSubcount();
-          const number = (createdPlaylistCount + subPlaylistCount) || 30;
+          const { createdPlaylistCount, subPlaylistCount } = await getUserSubcount();
+          const number = createdPlaylistCount + subPlaylistCount || 30;
           const res = await getUserPlaylist(userId!, number);
           if (res.playlist) {
             this.userPlayLists = {
@@ -294,7 +293,7 @@ const useUserDataStore = defineStore("userData", {
 });
 
 if (import.meta.hot) {
-  import.meta.hot.accept(acceptHMRUpdate(useUserDataStore, import.meta.hot))
+  import.meta.hot.accept(acceptHMRUpdate(useUserDataStore, import.meta.hot));
 }
 
 export default useUserDataStore;

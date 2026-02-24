@@ -6,7 +6,7 @@ export function useMobileCoverFrame(
   bigPlayerRef: MaybeComputedRef<HTMLElement | null>,
   phonyBigCoverRef: MaybeComputedRef<HTMLElement | null>,
   phonySmallCoverRef: MaybeComputedRef<HTMLElement | null>,
-  mobileLayer: Ref<number>
+  mobileLayer: Ref<number>,
 ) {
   const currentCoverStyle = ref<{
     width: number;
@@ -19,9 +19,7 @@ export function useMobileCoverFrame(
   const calcCoverLayout = (hideLyric = true) => {
     const root = bigPlayerRef.value;
     if (!root) return undefined;
-    const targetCover = hideLyric
-      ? phonyBigCoverRef.value
-      : phonySmallCoverRef.value;
+    const targetCover = hideLyric ? phonyBigCoverRef.value : phonySmallCoverRef.value;
     if (!targetCover) return undefined;
 
     let rootEl: HTMLElement = root;
@@ -65,12 +63,9 @@ export function useMobileCoverFrame(
     cleanupResizeObserver();
     updateCoverStyle();
     layoutResizeObserver = new ResizeObserver(updateCoverStyle);
-    if (phonyBigCoverRef.value)
-      layoutResizeObserver.observe(phonyBigCoverRef.value);
-    if (phonySmallCoverRef.value)
-      layoutResizeObserver.observe(phonySmallCoverRef.value);
-    if (bigPlayerRef.value)
-      layoutResizeObserver.observe(bigPlayerRef.value);
+    if (phonyBigCoverRef.value) layoutResizeObserver.observe(phonyBigCoverRef.value);
+    if (phonySmallCoverRef.value) layoutResizeObserver.observe(phonySmallCoverRef.value);
+    if (bigPlayerRef.value) layoutResizeObserver.observe(bigPlayerRef.value);
   };
 
   const cleanupResizeObserver = () => {

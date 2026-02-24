@@ -12,17 +12,10 @@
       </Transition>
     </div>
     <div class="center">
-      <router-link
-        class="link"
-        to="/"
-        @mouseenter="onLinkEnter"
-        @mouseleave="onLinkLeave"
-      >{{ $t("nav.home") }}</router-link>
-      <n-dropdown
-        trigger="hover"
-        :options="discoverOptions"
-        @select="menuSelect"
-      >
+      <router-link class="link" to="/" @mouseenter="onLinkEnter" @mouseleave="onLinkLeave">{{
+        $t("nav.home")
+      }}</router-link>
+      <n-dropdown trigger="hover" :options="discoverOptions" @select="menuSelect">
         <router-link
           class="link"
           to="/discover"
@@ -33,12 +26,9 @@
         </router-link>
       </n-dropdown>
       <n-dropdown trigger="hover" :options="userOptions" @select="menuSelect">
-        <router-link
-          class="link"
-          to="/user"
-          @mouseenter="onLinkEnter"
-          @mouseleave="onLinkLeave"
-        >{{ $t("nav.user") }}</router-link>
+        <router-link class="link" to="/user" @mouseenter="onLinkEnter" @mouseleave="onLinkLeave">{{
+          $t("nav.user")
+        }}</router-link>
       </n-dropdown>
     </div>
     <div class="right">
@@ -66,8 +56,7 @@
           size="small"
           :src="
             user.getUserData.avatarUrl
-              ? user.getUserData.avatarUrl.replace(/^http:/, 'https:') +
-                '?param=60y60'
+              ? user.getUserData.avatarUrl.replace(/^http:/, 'https:') + '?param=60y60'
               : '/images/ico/user-filling.svg'
           "
           :img-props="{ class: 'avatarImg' }"
@@ -103,7 +92,7 @@ import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import AboutSite from "@/components/DataModal/AboutSite.vue";
 import SearchInp from "@/components/SearchInp/index.vue";
-import gsap from 'gsap';
+import gsap from "gsap";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -117,16 +106,16 @@ const logoUrl = import.meta.env.VITE_SITE_LOGO;
 // 检测是否在 Tauri 环境中运行
 const isTauri = ref(false);
 onMounted(() => {
-  isTauri.value = typeof window !== 'undefined' && '__TAURI__' in window;
+  isTauri.value = typeof window !== "undefined" && "__TAURI__" in window;
 });
 
 // 添加动画处理函数
 const onLinkEnter = (event) => {
-  gsap.to(event.target, { scale: 1.1, duration: 0.2, ease: 'power1.out' });
+  gsap.to(event.target, { scale: 1.1, duration: 0.2, ease: "power1.out" });
 };
 
 const onLinkLeave = (event) => {
-  gsap.to(event.target, { scale: 1, duration: 0.2, ease: 'power1.in' });
+  gsap.to(event.target, { scale: 1, duration: 0.2, ease: "power1.in" });
 };
 
 // 下拉菜单显隐
@@ -148,7 +137,7 @@ const renderIcon = (icon) => {
       { style: { transform: "translateX(2px) translateY(1px)" } },
       {
         default: () => icon,
-      }
+      },
     );
   };
 };
@@ -158,8 +147,7 @@ const userDataRender = () => {
   return h(
     "div",
     {
-      style:
-        "display: flex; align-items: center; padding: 8px 12px; cursor: pointer",
+      style: "display: flex; align-items: center; padding: 8px 12px; cursor: pointer",
       onclick: () => {
         user.userLogin ? router.push("/user") : router.push("/login");
         showDropdown.value = false;
@@ -170,8 +158,7 @@ const userDataRender = () => {
         round: true,
         style: "margin-right: 12px",
         src: user.userLogin
-          ? user.getUserData.avatarUrl.replace(/^http:/, "https:") +
-            "?param=60y60"
+          ? user.getUserData.avatarUrl.replace(/^http:/, "https:") + "?param=60y60"
           : "/images/ico/user-filling.svg",
         fallbackSrc: "/images/ico/user-filling.svg",
       }),
@@ -182,10 +169,8 @@ const userDataRender = () => {
             { depth: 2 },
             {
               default: () =>
-                user.userLogin
-                  ? user.getUserData.nickname
-                  : t("nav.avatar.notLogin"),
-            }
+                user.userLogin ? user.getUserData.nickname : t("nav.avatar.notLogin"),
+            },
           ),
         ]),
         h("div", { style: "font-size: 12px;" }, [
@@ -201,22 +186,20 @@ const userDataRender = () => {
                         {
                           height: 4,
                           type: "line",
-                          percentage:
-                            user.getUserOtherData.level.progress * 100,
+                          percentage: user.getUserOtherData.level.progress * 100,
                           color: setting.themeData.primaryColor,
                         },
                         {
-                          default: () =>
-                            "Lv." + user.getUserOtherData.level.level,
-                        }
+                          default: () => "Lv." + user.getUserOtherData.level.level,
+                        },
                       )
                     : t("nav.avatar.loginError")
                   : t("nav.avatar.notLoginSubtitle"),
-            }
+            },
           ),
         ]),
       ]),
-    ]
+    ],
   );
 };
 
@@ -291,10 +274,8 @@ const changeDropdownOptions = () => {
           { style: { transform: "translateX(2px) translateY(1px)" } },
           {
             default: () =>
-              setting.getSiteTheme == "light"
-                ? t("nav.avatar.dark")
-                : t("nav.avatar.light"),
-          }
+              setting.getSiteTheme == "light" ? t("nav.avatar.dark") : t("nav.avatar.light"),
+          },
         );
       },
       key: "changeTheme",
@@ -303,9 +284,8 @@ const changeDropdownOptions = () => {
           NIcon,
           { style: { transform: "translateX(2px) translateY(1px)" } },
           {
-            default: () =>
-              setting.getSiteTheme == "light" ? h(Moon) : h(SunOne),
-          }
+            default: () => (setting.getSiteTheme == "light" ? h(Moon) : h(SunOne)),
+          },
         );
       },
     },
@@ -325,9 +305,8 @@ const changeDropdownOptions = () => {
           NText,
           { style: { transform: "translateX(2px) translateY(1px)" } },
           {
-            default: () =>
-              user.userLogin ? t("nav.avatar.logout") : t("nav.avatar.login"),
-          }
+            default: () => (user.userLogin ? t("nav.avatar.logout") : t("nav.avatar.login")),
+          },
         );
       },
       key: "user",
@@ -337,7 +316,7 @@ const changeDropdownOptions = () => {
           { style: { transform: "translateX(2px) translateY(1px)" } },
           {
             default: () => (user.userLogin ? h(Logout) : h(Login)),
-          }
+          },
         );
       },
     },
@@ -431,7 +410,7 @@ watch(
   () => user.userLogin,
   (val) => {
     changeUserOptions(val);
-  }
+  },
 );
 
 // 监听语言变化
@@ -442,7 +421,7 @@ watch(
     changeMbMenuOptions();
     changeDropdownOptions();
     changeUserOptions(user.userLogin);
-  }
+  },
 );
 
 onMounted(() => {

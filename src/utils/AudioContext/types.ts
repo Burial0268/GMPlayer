@@ -14,7 +14,15 @@ export interface SoundOptions {
 /**
  * Supported sound event types
  */
-export type SoundEventType = 'load' | 'play' | 'pause' | 'end' | 'fade' | 'loaderror' | 'playerror' | 'progress';
+export type SoundEventType =
+  | "load"
+  | "play"
+  | "pause"
+  | "end"
+  | "fade"
+  | "loaderror"
+  | "playerror"
+  | "progress";
 
 /**
  * Sound event callback function signature
@@ -40,7 +48,7 @@ export interface ISound {
   getFFTData(): number[];
   getLowFrequencyVolume(): number;
   getAverageAmplitude(): number;
-  getEffectManager(): import('./AudioEffectManager').AudioEffectManager | null;
+  getEffectManager(): import("./AudioEffectManager").AudioEffectManager | null;
   unload(): void;
 }
 

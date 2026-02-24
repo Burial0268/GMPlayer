@@ -45,11 +45,7 @@
             @click="toLikeArtist(artistData)"
           >
             <template #icon>
-              <n-icon
-                :component="
-                  artistLikeBtn ? PersonAddAlt1Round : PersonRemoveAlt1Round
-                "
-              />
+              <n-icon :component="artistLikeBtn ? PersonAddAlt1Round : PersonRemoveAlt1Round" />
             </template>
             {{
               artistLikeBtn
@@ -77,12 +73,7 @@
     <div class="error" v-else-if="!artistId">
       <n-text>{{ $t("general.name.noKeywords") }}</n-text>
       <br />
-      <n-button
-        strong
-        secondary
-        @click="router.go(-1)"
-        style="margin-top: 20px"
-      >
+      <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -98,10 +89,7 @@
       <n-tab name="videos"> MV </n-tab>
     </n-tabs>
     <main class="content" v-if="artistData">
-      <router-view
-        v-slot="{ Component }"
-        :mvSize="artistData ? artistData.mvSize : null"
-      >
+      <router-view v-slot="{ Component }" :mvSize="artistData ? artistData.mvSize : null">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive>
             <component :is="Component" />
@@ -129,7 +117,11 @@ import { useTabTransition } from "@/composables/useTabTransition";
 const { t } = useI18n();
 const router = useRouter();
 const user = userStore();
-const { transitionName, updateDirection, syncIndex } = useTabTransition(["songs", "albums", "videos"]);
+const { transitionName, updateDirection, syncIndex } = useTabTransition([
+  "songs",
+  "albums",
+  "videos",
+]);
 
 // 歌手数据
 const artistId = ref(router.currentRoute.value.query.id);
@@ -184,9 +176,7 @@ const tabChange = (value: any) => {
 // 判断收藏还是取消
 const isLikeOrDislike = (id: string | string[]) => {
   if (user.getUserArtistLists.list[0]) {
-    const index = user.getUserArtistLists.list.findIndex(
-      (item) => item.id === Number(id)
-    );
+    const index = user.getUserArtistLists.list.findIndex((item) => item.id === Number(id));
     if (index !== -1) {
       return false;
     }
@@ -197,7 +187,7 @@ const isLikeOrDislike = (id: string | string[]) => {
 };
 
 // 收藏/取消收藏歌手
-const toLikeArtist = (data: { id: number; name: any; }) => {
+const toLikeArtist = (data: { id: number; name: any }) => {
   const type = isLikeOrDislike(data.id.toString()) ? 1 : 2;
   likeArtist(type, data.id).then((res) => {
     if (res.code === 200) {
@@ -206,7 +196,7 @@ const toLikeArtist = (data: { id: number; name: any; }) => {
           type == 1
             ? t("menu.collection", { name: t("general.dialog.success") })
             : t("menu.cancelCollection", { name: t("general.dialog.success") })
-        }`
+        }`,
       );
       user.setUserArtistLists(() => {
         artistLikeBtn.value = isLikeOrDislike(artistId.value);
@@ -217,7 +207,7 @@ const toLikeArtist = (data: { id: number; name: any; }) => {
           type == 1
             ? t("menu.collection", { name: t("general.dialog.failed") })
             : t("menu.cancelCollection", { name: t("general.dialog.failed") })
-        }`
+        }`,
       );
     }
   });
@@ -226,11 +216,7 @@ const toLikeArtist = (data: { id: number; name: any; }) => {
 onMounted(() => {
   getArtistDetailData(artistId.value);
   artistLikeBtn.value = isLikeOrDislike(artistId.value);
-  if (
-    user.userLogin &&
-    !user.getUserArtistLists.has &&
-    !user.getUserArtistLists.isLoading
-  ) {
+  if (user.userLogin && !user.getUserArtistLists.has && !user.getUserArtistLists.isLoading) {
     user.setUserArtistLists(() => {
       console.log("执行回调", artistId.value, isLikeOrDislike(artistId.value));
       artistLikeBtn.value = isLikeOrDislike(artistId.value);
@@ -249,7 +235,7 @@ watch(
     if (val.path.split("/")[1] == "artist") {
       getArtistDetailData(artistId.value);
     }
-  }
+  },
 );
 </script>
 

@@ -23,8 +23,14 @@ export function usePwaThemeColor() {
     }
   };
 
-  watch(() => music.showBigPlayer, () => changePwaColor());
-  watch(() => songPicColor.value, () => changePwaColor());
+  watch(
+    () => music.showBigPlayer,
+    () => changePwaColor(),
+  );
+  watch(
+    () => songPicColor.value,
+    () => changePwaColor(),
+  );
 
   return { changePwaColor };
 }

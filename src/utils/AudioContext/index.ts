@@ -15,7 +15,7 @@ export {
   soundStop,
   processSpectrum,
   adoptIncomingSound,
-} from './PlayerFunctions';
+} from "./PlayerFunctions";
 
 // Export types
 export type {
@@ -24,31 +24,39 @@ export type {
   SoundEventCallback,
   ISound,
   PlaySongTime,
-} from './types';
+} from "./types";
 
-export type { EffectManagerOptions } from './AudioEffectManager';
-export type { LowFreqVolumeOptions } from './LowFreqVolumeAnalyzer';
+export type { EffectManagerOptions } from "./AudioEffectManager";
+export type { LowFreqVolumeOptions } from "./LowFreqVolumeAnalyzer";
 
 // AutoMix types (from new AutoMix sub-module)
-export type { CrossfadeCurve, CrossfadeParams } from './AutoMix';
-export type { TrackAnalysis, VolumeAnalysis, EnergyAnalysis, SpectralFingerprint, AnalyzeOptions, OutroType, OutroAnalysis } from './AutoMix';
-export type { BPMResult } from './AutoMix';
-export type { AutoMixState } from './AutoMix';
+export type { CrossfadeCurve, CrossfadeParams } from "./AutoMix";
+export type {
+  TrackAnalysis,
+  VolumeAnalysis,
+  EnergyAnalysis,
+  SpectralFingerprint,
+  AnalyzeOptions,
+  OutroType,
+  OutroAnalysis,
+} from "./AutoMix";
+export type { BPMResult } from "./AutoMix";
+export type { AutoMixState } from "./AutoMix";
 
 // Export classes for advanced usage
-export { NativeSound } from './NativeSound';
-export { BufferedSound } from './BufferedSound';
-export { SoundManager } from './SoundManager';
-export { AudioEffectManager } from './AudioEffectManager';
-export { LowFreqVolumeAnalyzer } from './LowFreqVolumeAnalyzer';
-export { AudioContextManager } from './AudioContextManager';
-export { WasmFFTManager } from './WasmFFTManager';
+export { NativeSound } from "./NativeSound";
+export { BufferedSound } from "./BufferedSound";
+export { SoundManager } from "./SoundManager";
+export { AudioEffectManager } from "./AudioEffectManager";
+export { LowFreqVolumeAnalyzer } from "./LowFreqVolumeAnalyzer";
+export { AudioContextManager } from "./AudioContextManager";
+export { WasmFFTManager } from "./WasmFFTManager";
 
 // AudioPreloader
-export { AudioPreloader, getAudioPreloader } from './AudioPreloader';
+export { AudioPreloader, getAudioPreloader } from "./AudioPreloader";
 
 // AutoMix exports (backward-compatible aliases)
-export { CrossfadeScheduler as CrossfadeManager } from './AutoMix';
-export { AutoMixEngine, getAutoMixEngine } from './AutoMix';
-export { analyzeTrack, spectralSimilarity, terminateAnalysisWorker } from './AutoMix';
-export { findNearestBeat } from './AutoMix';
+export { CrossfadeScheduler as CrossfadeManager } from "./AutoMix";
+export { AutoMixEngine, getAutoMixEngine } from "./AutoMix";
+export { analyzeTrack, spectralSimilarity, terminateAnalysisWorker } from "./AutoMix";
+export { findNearestBeat } from "./AutoMix";

@@ -7,8 +7,8 @@ import request from "@/utils/request";
 // @ts-ignore
 import { parseLrc, parseQrc, parseYrc, LyricLine } from "@applemusic-like-lyrics/lyric";
 import { ensureTTMLLoaded, parseTTML } from "./parseTTML";
-import { preprocessLyrics } from './processor';
-import { detectYrcType } from './timeUtils';
+import { preprocessLyrics } from "./processor";
+import { detectYrcType } from "./timeUtils";
 
 // Re-define LyricData interface based on parseLyric.ts
 interface LyricData {
@@ -83,12 +83,12 @@ class NeteaseLyricProvider implements LyricProvider {
 
       // Ensure the response has a code, default to 200 if missing but data exists
       if (response && (response.lrc || response.tlyric || response.yrc)) {
-          if (typeof response.code === 'undefined') {
-              response.code = 200;
-          }
+        if (typeof response.code === "undefined") {
+          response.code = 200;
+        }
       } else if (!response || response.code !== 200) {
-          console.warn("Netease lyric response indicates failure or no data:", response);
-          return null; // Return null if code is not 200 or data is missing
+        console.warn("Netease lyric response indicates failure or no data:", response);
+        return null; // Return null if code is not 200 or data is missing
       }
 
       return response;
@@ -101,10 +101,10 @@ class NeteaseLyricProvider implements LyricProvider {
 
 // TTML mirror URLs for fetching high-quality word-by-word lyrics from the AMLL TTML DB
 const TTML_MIRROR_URLS = [
-  'https://amll-ttml-db.gbclstudio.cn/ncm-lyrics/{id}.ttml',
-  'https://amlldb.bikonoo.com/ncm-lyrics/{id}.ttml',
-  'https://raw.githubusercontent.com/amll-dev/amll-ttml-db/refs/heads/main/ncm-lyrics/{id}.ttml',
-  'https://amll.mirror.dimeta.top/api/db/ncm-lyrics/{id}.ttml',
+  "https://amll-ttml-db.gbclstudio.cn/ncm-lyrics/{id}.ttml",
+  "https://amlldb.bikonoo.com/ncm-lyrics/{id}.ttml",
+  "https://raw.githubusercontent.com/amll-dev/amll-ttml-db/refs/heads/main/ncm-lyrics/{id}.ttml",
+  "https://amll.mirror.dimeta.top/api/db/ncm-lyrics/{id}.ttml",
 ];
 
 // Implementation for TTML Repository - fetches .ttml files directly from GitHub repo mirrors
@@ -116,7 +116,7 @@ class TTMLRepoProvider implements LyricProvider {
    */
   private async fetchTTMLFromMirrors(id: number): Promise<string | null> {
     for (const urlTemplate of TTML_MIRROR_URLS) {
-      const url = urlTemplate.replace('{id}', String(id));
+      const url = urlTemplate.replace("{id}", String(id));
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 8000);
@@ -126,14 +126,14 @@ class TTMLRepoProvider implements LyricProvider {
 
         if (response.ok) {
           const text = await response.text();
-          if (text && text.includes('<tt') ) {
+          if (text && text.includes("<tt")) {
             console.log(`[TTMLRepoProvider] Successfully fetched TTML for id ${id} from ${url}`);
             return text;
           }
         }
         console.log(`[TTMLRepoProvider] Mirror returned ${response.status} for id ${id}: ${url}`);
       } catch (error: any) {
-        if (error.name === 'AbortError') {
+        if (error.name === "AbortError") {
           console.log(`[TTMLRepoProvider] Timeout fetching id ${id} from ${url}`);
         } else {
           console.log(`[TTMLRepoProvider] Error fetching id ${id} from ${url}:`, error.message);
@@ -167,14 +167,14 @@ class TTMLRepoProvider implements LyricProvider {
       const serializedYrc = `___PARSED_LYRIC_LINES___${JSON.stringify(ttmlLyric.lines)}`;
 
       // Build fallback LRC text from TTML lines
-      let lrcText = '';
-      ttmlLyric.lines.forEach(line => {
+      let lrcText = "";
+      ttmlLyric.lines.forEach((line) => {
         if (line.words && line.words.length > 0) {
           const timeMs = line.words[0].startTime;
           const minutes = Math.floor(timeMs / 60000);
           const seconds = ((timeMs % 60000) / 1000).toFixed(2);
-          const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.padStart(5, '0')}`;
-          const content = line.words.map((w: any) => w.word).join('');
+          const timeStr = `${minutes.toString().padStart(2, "0")}:${seconds.padStart(5, "0")}`;
+          const content = line.words.map((w: any) => w.word).join("");
           lrcText += `[${timeStr}]${content}\n`;
         }
       });
@@ -198,7 +198,7 @@ class TTMLRepoProvider implements LyricProvider {
         meta: {
           found: true,
           id: String(id),
-          source: 'repository',
+          source: "repository",
         },
       };
 
@@ -216,7 +216,7 @@ export class LyricService {
   private defaultProcessOptions: LyricProcessOptions = {
     showYrc: true,
     showRoma: false,
-    showTransl: false
+    showTransl: false,
   };
   // 添加NCM提供者实例，用于回退
   private ncmProvider: NeteaseLyricProvider;
@@ -276,8 +276,8 @@ export class LyricService {
 
         if (result.lrc?.lyric) {
           console.log(`[LyricService] 处理歌词同步，id: ${id}`);
-          const mainTimeMap = new Map<number, {time: string, content: string, rawLine: string}>();
-          const mainLrcLines = result.lrc.lyric.split('\n').filter(line => line.trim());
+          const mainTimeMap = new Map<number, { time: string; content: string; rawLine: string }>();
+          const mainLrcLines = result.lrc.lyric.split("\n").filter((line) => line.trim());
           const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2})\]/;
 
           for (const line of mainLrcLines) {
@@ -288,18 +288,18 @@ export class LyricService {
               const ms = parseInt(match[3]);
               const timeMs = min * 60000 + sec * 1000 + ms * 10;
               const timeStr = `${match[1]}:${match[2]}.${match[3]}`;
-              const content = line.replace(timeRegex, '').trim();
+              const content = line.replace(timeRegex, "").trim();
               if (content) {
-                mainTimeMap.set(timeMs, {time: timeStr, content, rawLine: line});
+                mainTimeMap.set(timeMs, { time: timeStr, content, rawLine: line });
               }
             }
           }
 
           // 条件性跳过 syncLyricTimestamps
-          const skipTimestampSyncLrc = result.meta?.source === 'repository'; // Main lyric source
+          const skipTimestampSyncLrc = result.meta?.source === "repository"; // Main lyric source
           // For roma, we also check if the specific romaji lyric source (if distinguishable) is repository grade
           // Assuming for now that if meta.source is repository, associated roma is also repository grade.
-          const skipTimestampSyncRoma = result.meta?.source === 'repository';
+          const skipTimestampSyncRoma = result.meta?.source === "repository";
 
           if (result.tlyric?.lyric) {
             // Translation sync logic doesn't change based on roma source being repository
@@ -309,7 +309,7 @@ export class LyricService {
               result.tlyric.lyric,
               mainTimeMap,
               "翻译歌词",
-              id
+              id,
             );
           } else {
             console.log(`[LyricService] 没有发现翻译歌词，id: ${id}`);
@@ -317,14 +317,16 @@ export class LyricService {
 
           if (result.romalrc?.lyric) {
             if (skipTimestampSyncRoma) {
-              console.log(`[LyricService] 检测到音译来源 (romalrc) 为 repository，跳过时间戳同步，id: ${id}`);
+              console.log(
+                `[LyricService] 检测到音译来源 (romalrc) 为 repository，跳过时间戳同步，id: ${id}`,
+              );
             } else {
               console.log(`[LyricService] 对音译歌词进行时间戳同步，id: ${id}`);
               result.romalrc.lyric = this.syncLyricTimestamps(
                 result.romalrc.lyric,
                 mainTimeMap,
                 "音译歌词",
-                id
+                id,
               );
             }
           } else {
@@ -333,7 +335,9 @@ export class LyricService {
 
           // 如果没有lrc但有yrc，确保我们能从yrc中创建一个基本的lrc
           if ((!result.lrc || !result.lrc.lyric) && result.yrc && result.yrc.lyric) {
-            console.log(`[LyricService] No LRC found for id ${id}, attempting to generate from YRC`);
+            console.log(
+              `[LyricService] No LRC found for id ${id}, attempting to generate from YRC`,
+            );
 
             try {
               // 判断内容是否是yrc或qrc格式，并选择对应的解析器
@@ -343,7 +347,7 @@ export class LyricService {
               const content = result.yrc.lyric;
               const contentType = detectYrcType(content);
 
-              if (contentType === 'yrc') {
+              if (contentType === "yrc") {
                 // 使用YRC解析器
                 parsedLyric = parseYrc(content);
                 console.log(`[LyricService] Using YRC parser for id: ${id}`);
@@ -354,14 +358,14 @@ export class LyricService {
               }
 
               if (parsedLyric && parsedLyric.length > 0) {
-                let lrcText = '';
-                parsedLyric.forEach(line => {
+                let lrcText = "";
+                parsedLyric.forEach((line) => {
                   if (line.words && line.words.length > 0) {
                     const timeMs = line.words[0].startTime;
                     const minutes = Math.floor(timeMs / 60000);
                     const seconds = ((timeMs % 60000) / 1000).toFixed(2);
-                    const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.padStart(5, '0')}`;
-                    const content = line.words.map(w => w.word).join('');
+                    const timeStr = `${minutes.toString().padStart(2, "0")}:${seconds.padStart(5, "0")}`;
+                    const content = line.words.map((w) => w.word).join("");
                     lrcText += `[${timeStr}]${content}\n`;
                   }
                 });
@@ -369,11 +373,15 @@ export class LyricService {
                 // 如果成功创建了lrc文本，使用它
                 if (lrcText.trim()) {
                   result.lrc = { lyric: lrcText };
-                  console.log(`[LyricService] Successfully generated LRC from ${contentType} for id ${id}`);
+                  console.log(
+                    `[LyricService] Successfully generated LRC from ${contentType} for id ${id}`,
+                  );
                 } else {
                   // 如果无法创建有效内容，使用占位符
                   result.lrc = { lyric: "[00:00.00]无法从歌词生成LRC\n[99:99.99]" };
-                  console.warn(`[LyricService] Failed to generate meaningful LRC from ${contentType} for id ${id}`);
+                  console.warn(
+                    `[LyricService] Failed to generate meaningful LRC from ${contentType} for id ${id}`,
+                  );
                 }
               } else {
                 // 解析YRC/QRC失败，使用占位符
@@ -383,13 +391,18 @@ export class LyricService {
             } catch (error) {
               // 出现异常，使用占位符
               result.lrc = { lyric: "[00:00.00]处理歌词时出错\n[99:99.99]" };
-              console.error(`[LyricService] Error generating LRC from YRC/QRC for id ${id}:`, error);
+              console.error(
+                `[LyricService] Error generating LRC from YRC/QRC for id ${id}:`,
+                error,
+              );
             }
           }
 
           // 如果没有lrc也没有yrc，使用占位符
           if ((!result.lrc || !result.lrc.lyric) && (!result.yrc || !result.yrc.lyric)) {
-            console.warn(`[LyricService] No lyric data (neither LRC nor YRC) found for id ${id}, using placeholder`);
+            console.warn(
+              `[LyricService] No lyric data (neither LRC nor YRC) found for id ${id}, using placeholder`,
+            );
             result.lrc = { lyric: "[00:00.00]暂无歌词\n[99:99.99]" };
           }
         }
@@ -398,7 +411,7 @@ export class LyricService {
         const options = processOptions || this.defaultProcessOptions;
 
         // 预处理歌词数据，提前生成缓存以提高性能
-        console.time('[LyricService] 预处理歌词');
+        console.time("[LyricService] 预处理歌词");
         try {
           // 初始化AMLL数据字段
           result.lrcAMData = result.lrcAMData || [];
@@ -409,7 +422,7 @@ export class LyricService {
         } catch (err) {
           console.warn(`[LyricService] 歌曲ID ${id} 歌词预处理失败:`, err);
         }
-        console.timeEnd('[LyricService] 预处理歌词');
+        console.timeEnd("[LyricService] 预处理歌词");
       }
 
       const endTime = performance.now();
@@ -433,20 +446,20 @@ export class LyricService {
    */
   private syncLyricTimestamps(
     lyricText: string,
-    mainTimeMap: Map<number, {time: string, content: string, rawLine: string}>,
+    mainTimeMap: Map<number, { time: string; content: string; rawLine: string }>,
     lyricType: string,
-    songId: number
+    songId: number,
   ): string {
     if (!lyricText || !mainTimeMap.size) return lyricText;
 
     console.log(`[LyricService] 开始同步${lyricType}，歌曲ID: ${songId}`);
 
     const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2})\]/;
-    const lines = lyricText.split('\n').filter(line => line.trim());
+    const lines = lyricText.split("\n").filter((line) => line.trim());
     const mainTimestamps = Array.from(mainTimeMap.keys()).sort((a, b) => a - b);
 
     // 构建辅助歌词的时间和内容数组
-    const auxLyrics: {timeMs: number, timeStr: string, content: string}[] = [];
+    const auxLyrics: { timeMs: number; timeStr: string; content: string }[] = [];
 
     for (const line of lines) {
       const match = line.match(timeRegex);
@@ -457,9 +470,9 @@ export class LyricService {
         const timeMs = min * 60000 + sec * 1000 + ms * 10;
         const timeStr = `${match[1]}:${match[2]}.${match[3]}`;
 
-        const content = line.replace(timeRegex, '').trim();
+        const content = line.replace(timeRegex, "").trim();
         if (content) {
-          auxLyrics.push({timeMs, timeStr, content});
+          auxLyrics.push({ timeMs, timeStr, content });
         }
       }
     }
@@ -468,18 +481,22 @@ export class LyricService {
     auxLyrics.sort((a, b) => a.timeMs - b.timeMs);
 
     // 如果辅助歌词数量和主歌词不同，使用智能匹配
-    let newLyricText = '';
+    let newLyricText = "";
 
     if (auxLyrics.length === mainTimestamps.length) {
       // 数量相同，直接一一对应同步
-      console.log(`[LyricService] ${lyricType}行数与主歌词匹配(${auxLyrics.length}行)，执行直接同步`);
+      console.log(
+        `[LyricService] ${lyricType}行数与主歌词匹配(${auxLyrics.length}行)，执行直接同步`,
+      );
       for (let i = 0; i < auxLyrics.length; i++) {
         const mainTime = mainTimeMap.get(mainTimestamps[i])?.time || "00:00.00";
         newLyricText += `[${mainTime}]${auxLyrics[i].content}\n`;
       }
     } else {
       // 数量不同，使用时间最接近原则匹配
-      console.log(`[LyricService] ${lyricType}行数与主歌词不匹配(主: ${mainTimestamps.length}行, 辅: ${auxLyrics.length}行)，执行智能匹配`);
+      console.log(
+        `[LyricService] ${lyricType}行数与主歌词不匹配(主: ${mainTimestamps.length}行, 辅: ${auxLyrics.length}行)，执行智能匹配`,
+      );
 
       // 为每行辅助歌词找到时间上最接近的主歌词行
       for (const auxLyric of auxLyrics) {
@@ -509,7 +526,9 @@ export class LyricService {
       }
     }
 
-    console.log(`[LyricService] ${lyricType}同步完成，原行数: ${auxLyrics.length}，同步后行数: ${newLyricText.split('\n').filter(l => l.trim()).length}`);
+    console.log(
+      `[LyricService] ${lyricType}同步完成，原行数: ${auxLyrics.length}，同步后行数: ${newLyricText.split("\n").filter((l) => l.trim()).length}`,
+    );
 
     return newLyricText;
   }

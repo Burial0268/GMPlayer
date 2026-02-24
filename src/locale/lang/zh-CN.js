@@ -206,7 +206,7 @@ export default {
       downloadingNow: "正在下载",
       editor: "编辑",
       resetUp: "重新上传",
-      save: '保存',
+      save: "保存",
     },
     message: {
       copySuccess: "复制成功",
@@ -333,25 +333,25 @@ export default {
     backgroundImageShowTip_blur: "将专辑封面流动显示",
     backgroundImageShowTip_solid: "提取专辑主色作为背景颜色",
     backgroundImageShowTip_eplor: "与 Apple Music 类似的滚动色块背景",
-    eploryBackgroundConfig: '封面滚动型背景设置',
-    eploryBackgroundConfigTip: '通过设置封面滚动型背景的详细参数，可适当降低运行所消耗的性能',
+    eploryBackgroundConfig: "封面滚动型背景设置",
+    eploryBackgroundConfigTip: "通过设置封面滚动型背景的详细参数，可适当降低运行所消耗的性能",
     eplorySetting: {
       fps: {
-        title: '动画帧率',
-        tip: '设置封面滚动型背景的帧率，数值越大，滚动越流畅，但可能造成性能消耗。默认为 60',
+        title: "动画帧率",
+        tip: "设置封面滚动型背景的帧率，数值越大，滚动越流畅，但可能造成性能消耗。默认为 60",
       },
       flowSpeed: {
-        title: '流动速度',
-        tip: '设置封面滚动型背景的流动速度，数值越大，滚动速度越快，但可能造成性能消耗。默认为 2',
+        title: "流动速度",
+        tip: "设置封面滚动型背景的流动速度，数值越大，滚动速度越快，但可能造成性能消耗。默认为 2",
       },
       renderScale: {
         title: "渲染缩放倍率",
-        tip: '设置色块放大的倍率，默认为 0.5'
+        tip: "设置色块放大的倍率，默认为 0.5",
       },
       albumImageUrl: {
-        title: '锁定背景',
-        tip: '设定该数值即代表你将锁定流动的背景所取色用的图片，默认为 none'
-      }
+        title: "锁定背景",
+        tip: "设定该数值即代表你将锁定流动的背景所取色用的图片，默认为 none",
+      },
     },
     showTransl: "显示歌词翻译",
     showTranslTip: "是否在具有翻译歌词时显示",

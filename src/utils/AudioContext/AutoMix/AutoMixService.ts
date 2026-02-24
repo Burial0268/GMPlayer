@@ -7,14 +7,14 @@
  *   CompatibilityScorer, TransitionEffects
  */
 
-import { TransitionStateMachine } from './TransitionStateMachine';
-import { CrossfadeScheduler } from './CrossfadeScheduler';
-import { PreBufferManager } from './PreBufferManager';
-import { VocalActivityGuard } from './VocalActivityGuard';
-import { CompatibilityScorer } from './CompatibilityScorer';
-import { TransitionEffects } from './TransitionEffects';
-import type { AutoMixState } from './types';
-import type { ISound } from '../types';
+import { TransitionStateMachine } from "./TransitionStateMachine";
+import { CrossfadeScheduler } from "./CrossfadeScheduler";
+import { PreBufferManager } from "./PreBufferManager";
+import { VocalActivityGuard } from "./VocalActivityGuard";
+import { CompatibilityScorer } from "./CompatibilityScorer";
+import { TransitionEffects } from "./TransitionEffects";
+import type { AutoMixState } from "./types";
+import type { ISound } from "../types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -27,11 +27,11 @@ export class AutoMixService {
       new PreBufferManager(),
       new VocalActivityGuard(),
       new CompatibilityScorer(),
-      new TransitionEffects()
+      new TransitionEffects(),
     );
 
     if (IS_DEV) {
-      console.log('AutoMixService: Created');
+      console.log("AutoMixService: Created");
     }
   }
 

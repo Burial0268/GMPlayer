@@ -27,4 +27,4 @@ vec4 reSample(sampler2D tex, vec2 res, in int d, in vec2 uv)
 
 void main() {
     fragColor = reSample(u_texture, resolution, u_level, v_texCoord);
-}`; 
+}`;

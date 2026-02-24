@@ -6,11 +6,7 @@
  */
 let timeout: ReturnType<typeof setTimeout> | null;
 
-const debounce = (
-  func: () => void,
-  wait: number = 300,
-  immediate: boolean = false
-): void => {
+const debounce = (func: () => void, wait: number = 300, immediate: boolean = false): void => {
   // 清除定时器
   if (timeout !== null) {
     clearTimeout(timeout);

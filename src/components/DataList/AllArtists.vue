@@ -1,10 +1,6 @@
 <template>
   <div class="artists">
-    <span
-      class="artist"
-      v-for="(item, index) in artistsData.filter((v) => v)"
-      :key="item"
-    >
+    <span class="artist" v-for="(item, index) in artistsData.filter((v) => v)" :key="item">
       <n-text
         class="name"
         :depth="isDark ? 3 : 0"
@@ -13,9 +9,7 @@
       />
       <span
         class="line"
-        v-if="
-          index != artistsData.length - 1 && artistsData[artistsData.length - 1]
-        "
+        v-if="index != artistsData.length - 1 && artistsData[artistsData.length - 1]"
         >/</span
       >
     </span>
@@ -43,7 +37,7 @@ const props = defineProps({
 
 // 跳转歌手页面
 const jumpArtist = (id) => {
-  console.log('歌手ID',id);
+  console.log("歌手ID", id);
   music.setBigPlayerState(false);
   router.push({
     path: "/artist/songs",

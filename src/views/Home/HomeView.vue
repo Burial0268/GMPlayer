@@ -46,14 +46,13 @@ import PaDailySongs from "@/components/Personalized/PaDailySongs.vue";
 import PaPersonalFm from "@/components/Personalized/PaPersonalFm.vue";
 import PaRadar from "@/components/Personalized/PaRadar.vue";
 import PaLikeSongs from "@/components/Personalized/PaLikeSongs.vue";
-import gsap from 'gsap';
-import { onMounted } from 'vue';
+import gsap from "gsap";
+import { onMounted } from "vue";
 
 const setting = settingStore();
 
 onMounted(() => {
-  if (typeof $setSiteTitle !== "undefined")
-    $setSiteTitle(import.meta.env.VITE_SITE_TITLE);
+  if (typeof $setSiteTitle !== "undefined") $setSiteTitle(import.meta.env.VITE_SITE_TITLE);
   // 回顶
   if (typeof $scrollToTop !== "undefined") $scrollToTop();
 

@@ -122,7 +122,7 @@ watch(
   () => setting.getSiteTheme,
   () => {
     changeTheme();
-  }
+  },
 );
 
 // 监听系统明暗变化
@@ -130,17 +130,17 @@ watch(
   () => osThemeRef.value,
   (val) => {
     osThemeChange(val);
-  }
+  },
 );
 
 // 监听主题色变化
 watch(
   () => setting.themeType,
-  (val) => changeThemeColor(val)
+  (val) => changeThemeColor(val),
 );
 watch(
   () => setting.themeData,
-  (val) => changeThemeColor(val.label)
+  (val) => changeThemeColor(val.label),
 );
 
 onMounted(() => {

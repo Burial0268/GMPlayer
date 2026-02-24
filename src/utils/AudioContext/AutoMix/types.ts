@@ -5,20 +5,20 @@
  * plus new types for transition effects, compatibility scoring, and vocal guard.
  */
 
-import type { OutroType } from './TrackAnalyzer';
+import type { OutroType } from "./TrackAnalyzer";
 
 // ─── State machine types ──────────────────────────────────────────
 
-export type AutoMixState = 'idle' | 'analyzing' | 'waiting' | 'crossfading' | 'finishing';
+export type AutoMixState = "idle" | "analyzing" | "waiting" | "crossfading" | "finishing";
 
 export interface CachedAnalysis {
   songId: number;
-  analysis: import('./TrackAnalyzer').TrackAnalysis;
+  analysis: import("./TrackAnalyzer").TrackAnalysis;
 }
 
 // ─── Crossfade curve types ────────────────────────────────────────
 
-export type CrossfadeCurve = 'linear' | 'equalPower' | 'sCurve';
+export type CrossfadeCurve = "linear" | "equalPower" | "sCurve";
 
 export interface CrossfadeParams {
   /** Crossfade duration in seconds */
@@ -123,25 +123,31 @@ export interface TransitionStrategy {
  */
 export function getOutroTypeCrossfadeProfile(outroType: OutroType): CrossfadeProfile {
   switch (outroType) {
-    case 'hard':
-      return { curve: 'equalPower', fadeInOnly: false, durationRange: [2, 3], inShape: 0.85, outShape: 1.2 };
-    case 'fadeOut':
-      return { curve: 'equalPower', fadeInOnly: true, inShape: 1.15 };
-    case 'reverbTail':
-      return { curve: 'sCurve', fadeInOnly: false, inShape: 1.2, outShape: 0.9 };
-    case 'silence':
-      return { curve: 'equalPower', fadeInOnly: false, durationRange: [2, 4], inShape: 0.9 };
-    case 'noiseEnd':
-      return { curve: 'equalPower', fadeInOnly: false, inShape: 0.9, outShape: 1.15 };
-    case 'slowDown':
-      return { curve: 'sCurve', fadeInOnly: false, inShape: 1.1 };
-    case 'sustained':
-      return { curve: 'sCurve', fadeInOnly: false, inShape: 1.15, outShape: 0.95 };
-    case 'musicalOutro':
-      return { curve: 'equalPower', fadeInOnly: false };
-    case 'loopFade':
-      return { curve: 'equalPower', fadeInOnly: true };
+    case "hard":
+      return {
+        curve: "equalPower",
+        fadeInOnly: false,
+        durationRange: [2, 3],
+        inShape: 0.85,
+        outShape: 1.2,
+      };
+    case "fadeOut":
+      return { curve: "equalPower", fadeInOnly: true, inShape: 1.15 };
+    case "reverbTail":
+      return { curve: "sCurve", fadeInOnly: false, inShape: 1.2, outShape: 0.9 };
+    case "silence":
+      return { curve: "equalPower", fadeInOnly: false, durationRange: [2, 4], inShape: 0.9 };
+    case "noiseEnd":
+      return { curve: "equalPower", fadeInOnly: false, inShape: 0.9, outShape: 1.15 };
+    case "slowDown":
+      return { curve: "sCurve", fadeInOnly: false, inShape: 1.1 };
+    case "sustained":
+      return { curve: "sCurve", fadeInOnly: false, inShape: 1.15, outShape: 0.95 };
+    case "musicalOutro":
+      return { curve: "equalPower", fadeInOnly: false };
+    case "loopFade":
+      return { curve: "equalPower", fadeInOnly: true };
     default:
-      return { curve: 'equalPower', fadeInOnly: false };
+      return { curve: "equalPower", fadeInOnly: false };
   }
 }

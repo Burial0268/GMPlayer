@@ -46,7 +46,7 @@ watch(
     if (val.name == "ar-songs") {
       getArtistSongsData(artistId.value);
     }
-  }
+  },
 );
 </script>
 

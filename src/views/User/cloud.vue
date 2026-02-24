@@ -1,14 +1,7 @@
 <template>
   <div class="cloud">
     <div class="data">
-      <n-button
-        class="up"
-        type="primary"
-        strong
-        secondary
-        round
-        @click="upSongRef.click()"
-      >
+      <n-button class="up" type="primary" strong secondary round @click="upSongRef.click()">
         <template #icon>
           <n-icon :component="BackupRound" />
         </template>
@@ -105,9 +98,7 @@ const cloudSpace = ref([]);
 const cloudData = ref([]);
 const pagelimit = ref(30);
 const pageNumber = ref(
-  router.currentRoute.value.query.page
-    ? Number(router.currentRoute.value.query.page)
-    : 1
+  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 const totalCount = ref(0);
 
@@ -175,7 +166,7 @@ const upCloudSongData = (e) => {
         $message.success(
           t("general.message.upCloudSuccess", {
             name: res.privateCloud.simpleSong?.name,
-          })
+          }),
         );
         getCloudData(pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
       } else {
@@ -224,11 +215,7 @@ const pageNumberChange = (val) => {
 
 // 当前页数据重载
 const cloudDataLoad = (scroll = false) => {
-  getCloudData(
-    pagelimit.value,
-    (pageNumber.value - 1) * pagelimit.value,
-    scroll
-  );
+  getCloudData(pagelimit.value, (pageNumber.value - 1) * pagelimit.value, scroll);
 };
 provide("cloudDataLoad", cloudDataLoad);
 
@@ -240,7 +227,7 @@ watch(
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getCloudData(pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
     }
-  }
+  },
 );
 
 onMounted(() => {

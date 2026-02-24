@@ -1,12 +1,7 @@
 <template>
   <div class="discover">
     <n-text class="title">{{ $t("nav.discover") }}</n-text>
-    <n-tabs
-      class="main-tab"
-      type="segment"
-      @update:value="tabChange"
-      v-model:value="tabValue"
-    >
+    <n-tabs class="main-tab" type="segment" @update:value="tabChange" v-model:value="tabValue">
       <n-tab name="playlists">{{ $t("nav.discoverChildren.playlists") }}</n-tab>
       <n-tab name="toplists">{{ $t("nav.discoverChildren.toplists") }}</n-tab>
       <n-tab name="artists">{{ $t("nav.discoverChildren.artists") }}</n-tab>
@@ -28,7 +23,11 @@ import { useRouter } from "vue-router";
 import { useTabTransition } from "@/composables/useTabTransition";
 
 const router = useRouter();
-const { transitionName, updateDirection, syncIndex } = useTabTransition(["playlists", "toplists", "artists"]);
+const { transitionName, updateDirection, syncIndex } = useTabTransition([
+  "playlists",
+  "toplists",
+  "artists",
+]);
 
 // Tab 默认选中
 const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
@@ -48,7 +47,7 @@ watch(
   (val) => {
     tabValue.value = val.path.split("/")[2];
     syncIndex(tabValue.value);
-  }
+  },
 );
 </script>
 

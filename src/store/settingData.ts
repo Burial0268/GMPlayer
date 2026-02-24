@@ -150,9 +150,7 @@ const useSettingDataStore = defineStore("settingData", {
   actions: {
     setSiteTheme(value: "light" | "dark") {
       const isLightMode = value === "light";
-      const message = isLightMode
-        ? getLanguageData("lightMode")
-        : getLanguageData("darkMode");
+      const message = isLightMode ? getLanguageData("lightMode") : getLanguageData("darkMode");
       const icon = isLightMode ? WbSunnyFilled : DarkModeFilled;
       this.theme = value;
       $message.info(message, {
@@ -166,17 +164,19 @@ const useSettingDataStore = defineStore("settingData", {
   persist: [
     {
       storage: localStorage,
-      afterHydrate(ctx: { store: any; }) {
+      afterHydrate(ctx: { store: any }) {
         // Migrate old useLyricAtlasAPI → useTTMLRepo
         const store = ctx.store;
-        const raw = localStorage.getItem('settingData');
+        const raw = localStorage.getItem("settingData");
         if (raw) {
           try {
             const parsed = JSON.parse(raw);
-            if ('useLyricAtlasAPI' in parsed && !('useTTMLRepo' in parsed)) {
+            if ("useLyricAtlasAPI" in parsed && !("useTTMLRepo" in parsed)) {
               store.useTTMLRepo = parsed.useLyricAtlasAPI;
             }
-          } catch (_) { /* ignore */ }
+          } catch (_) {
+            /* ignore */
+          }
         }
       },
     },
@@ -184,7 +184,7 @@ const useSettingDataStore = defineStore("settingData", {
 });
 
 if (import.meta.hot) {
-  import.meta.hot.accept(acceptHMRUpdate(useSettingDataStore, import.meta.hot))
+  import.meta.hot.accept(acceptHMRUpdate(useSettingDataStore, import.meta.hot));
 }
 
 export default useSettingDataStore;

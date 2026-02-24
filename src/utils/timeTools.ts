@@ -1,7 +1,7 @@
 import getLanguageData from "./getLanguageData";
-import { format } from 'date-fns';
-import dayjs from 'dayjs';
-import duration from 'dayjs/plugin/duration';
+import { format } from "date-fns";
+import dayjs from "dayjs";
+import duration from "dayjs/plugin/duration";
 
 // 初始化dayjs的duration插件
 dayjs.extend(duration);
@@ -25,7 +25,7 @@ export const getSongTime = (mss: number): string => {
   date.setMilliseconds(mss);
 
   // Format the date as mm:ss
-  return format(date, 'mm:ss');
+  return format(date, "mm:ss");
 };
 
 /**
@@ -103,7 +103,7 @@ export const formatNumber = (num: number | string): string | number => {
   // Define formatter based on the current locale
   const formatter = new Intl.NumberFormat(undefined, {
     minimumFractionDigits: 1,
-    maximumFractionDigits: 1
+    maximumFractionDigits: 1,
   });
 
   // Function to format the number into million or billion

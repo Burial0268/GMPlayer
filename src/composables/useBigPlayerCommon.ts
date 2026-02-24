@@ -14,9 +14,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
     return music.getPlaySongData.album.picUrl.replace(/^http:/, "https:");
   });
 
-  const coverImageUrl500 = computed(
-    () => coverImageUrl.value + "?param=500y500"
-  );
+  const coverImageUrl500 = computed(() => coverImageUrl.value + "?param=500y500");
 
   // --- Song metadata ---
   const artistList = computed(() => music.getPlaySongData?.artist ?? []);
@@ -26,10 +24,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   const remainingTime = computed(() => {
     const playTime = music.getPlaySongTime;
     if (!playTime || !playTime.duration) return "0:00";
-    const remaining = Math.max(
-      0,
-      playTime.duration - (playTime.currentTime || 0)
-    );
+    const remaining = Math.max(0, playTime.duration - (playTime.currentTime || 0));
     const minutes = Math.floor(remaining / 60);
     const seconds = Math.floor(remaining % 60);
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
@@ -51,8 +46,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   const lrcMouseStatus = ref(false);
 
   const lyricsScroll = (index: number) => {
-    const lrcType =
-      !music.getPlaySongLyric.hasYrc || !setting.showYrc ? "lrc" : "yrc";
+    const lrcType = !music.getPlaySongLyric.hasYrc || !setting.showYrc ? "lrc" : "yrc";
     const el = document.getElementById(lrcType + index);
     if (!el || lrcMouseStatus.value) return;
 
@@ -60,8 +54,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
     if (!container) return;
 
     const containerHeight = container.clientHeight;
-    const scrollDistance =
-      el.offsetTop - container.offsetTop - containerHeight * 0.35;
+    const scrollDistance = el.offsetTop - container.offsetTop - containerHeight * 0.35;
 
     container.scrollTo({
       top: scrollDistance,
@@ -89,10 +82,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   };
 
   const handleProgressSeek = (val: number) => {
-    if (
-      typeof window.$player !== "undefined" &&
-      music.getPlaySongTime?.duration
-    ) {
+    if (typeof window.$player !== "undefined" && music.getPlaySongTime?.duration) {
       music.persistData.playSongTime.currentTime = val;
       setSeek(window.$player, val);
     }

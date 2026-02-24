@@ -9,13 +9,7 @@ export const artist = {
   /**
    * 歌手分类列表
    */
-  getList: (
-    type: ArtistType = -1,
-    area: ArtistArea = -1,
-    limit = 30,
-    offset = 0,
-    initial = -1
-  ) =>
+  getList: (type: ArtistType = -1, area: ArtistArea = -1, limit = 30, offset = 0, initial = -1) =>
     request<any>({
       method: "GET",
       url: "/artist/list",

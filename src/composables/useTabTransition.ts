@@ -7,8 +7,7 @@ export function useTabTransition(tabNames: string[]) {
   function updateDirection(newTabName: string) {
     const newIndex = tabNames.indexOf(newTabName);
     if (newIndex < 0) return;
-    transitionName.value =
-      newIndex > currentIndex ? "slide-left" : "slide-right";
+    transitionName.value = newIndex > currentIndex ? "slide-left" : "slide-right";
     currentIndex = newIndex;
   }
 

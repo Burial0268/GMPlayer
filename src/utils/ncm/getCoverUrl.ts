@@ -14,4 +14,4 @@ const getCoverUrl = (url: string, size: number | null = null): string => {
   return imageUrl;
 };
 
-export default getCoverUrl; 
+export default getCoverUrl;

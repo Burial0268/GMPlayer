@@ -3,10 +3,10 @@
  * 歌词处理模块类型定义
  */
 
-import type { LyricLine as AMLLLine, LyricWord as AMLLWord } from '@applemusic-like-lyrics/core';
+import type { LyricLine as AMLLLine, LyricWord as AMLLWord } from "@applemusic-like-lyrics/core";
 
 // Re-export AMLL types
-export type { LyricLine as AMLLLine, LyricWord as AMLLWord } from '@applemusic-like-lyrics/core';
+export type { LyricLine as AMLLLine, LyricWord as AMLLWord } from "@applemusic-like-lyrics/core";
 
 // ============== Basic Types ==============
 

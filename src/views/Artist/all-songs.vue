@@ -2,21 +2,14 @@
   <div class="all-songs">
     <div class="title" v-if="artistId">
       <template v-if="artistData[0]">
-        <span class="key">{{
-          artistName ? artistName : $t("general.name.unknownArtist")
-        }}</span>
+        <span class="key">{{ artistName ? artistName : $t("general.name.unknownArtist") }}</span>
         <span>{{ $t("general.name.allSong") }} </span>
       </template>
     </div>
     <div class="title" v-else>
       <span class="key">{{ $t("general.name.noKeywords") }}</span>
       <br />
-      <n-button
-        strong
-        secondary
-        @click="router.go(-1)"
-        style="margin-top: 20px"
-      >
+      <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -52,9 +45,7 @@ const artistName = ref(null);
 const totalCount = ref(0);
 const pagelimit = ref(30);
 const pageNumber = ref(
-  router.currentRoute.value.query.page
-    ? Number(router.currentRoute.value.query.page)
-    : 1
+  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 
 // 获取歌手名称
@@ -65,7 +56,12 @@ const getArtistDetailData = (id: number) => {
 };
 
 // 获取歌手信息
-const getArtistAllSongsData = (id: string | number | string[], limit = 30, offset = 0, order: ArtistSongsSortOrder = "hot") => {
+const getArtistAllSongsData = (
+  id: string | number | string[],
+  limit = 30,
+  offset = 0,
+  order: ArtistSongsSortOrder = "hot",
+) => {
   if (!id) return false;
   getArtistAllSongs(Number(id), limit, offset, order)
     .then((res) => {
@@ -102,20 +98,16 @@ watch(
       getArtistAllSongsData(
         artistId.value,
         pagelimit.value,
-        pageNumber.value ? (pageNumber.value - 1) * pagelimit.value : 0
+        pageNumber.value ? (pageNumber.value - 1) * pagelimit.value : 0,
       );
     }
-  }
+  },
 );
 
 // 每页个数数据变化
 const pageSizeChange = (val: number) => {
   pagelimit.value = val;
-  getArtistAllSongsData(
-    artistId.value,
-    val,
-    (pageNumber.value - 1) * pagelimit.value
-  );
+  getArtistAllSongsData(artistId.value, val, (pageNumber.value - 1) * pagelimit.value);
 };
 
 // 当前页数数据变化
@@ -130,11 +122,7 @@ const pageNumberChange = (val: number) => {
 };
 
 onMounted(() => {
-  getArtistAllSongsData(
-    artistId.value,
-    pagelimit.value,
-    (pageNumber.value - 1) * pagelimit.value
-  );
+  getArtistAllSongsData(artistId.value, pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
 });
 </script>
 
