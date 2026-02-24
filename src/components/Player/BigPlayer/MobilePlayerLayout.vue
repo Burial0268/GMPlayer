@@ -48,6 +48,7 @@
         @lrcTextClick="$emit('lrcTextClick', $event)"
         class="mobile-lyrics"
       />
+      <LyricOffsetControl class="mobile-lyric-offset" />
     </div>
     <div v-else class="no-lyrics"><span>¯\_(ツ)_/¯</span></div>
   </div>
@@ -129,6 +130,7 @@ import RollingLyrics from "../RollingLyrics.vue";
 import BouncingSlider from "../BouncingSlider.vue";
 import MobileControls from "./MobileControls.vue";
 import MobileCoverFrame from "./MobileCoverFrame.vue";
+import LyricOffsetControl from "./LyricOffsetControl.vue";
 
 defineProps<{
   songName: string;
@@ -302,6 +304,14 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   mix-blend-mode: plus-lighter;
   min-height: 0;
   mask-image: linear-gradient(transparent 0%, black 8%, black 100%);
+  position: relative;
+
+  .mobile-lyric-offset {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
 
   .mobile-lyrics {
     height: 100%;

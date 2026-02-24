@@ -74,6 +74,8 @@ interface SettingDataState {
   autoMixSmartCurve: boolean;
   autoMixTransitionEffects: boolean;
   autoMixVocalGuard: boolean;
+  // Lyric time offset (ms). Positive = lyrics advance, Negative = lyrics delay
+  lyricTimeOffset: number;
 }
 
 const useSettingDataStore = defineStore("settingData", {
@@ -140,6 +142,8 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixSmartCurve: true,
       autoMixTransitionEffects: true,
       autoMixVocalGuard: true,
+      // Lyric time offset (ms)
+      lyricTimeOffset: 0,
     };
   },
   getters: {

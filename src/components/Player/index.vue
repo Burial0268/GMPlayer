@@ -264,7 +264,6 @@
 
 <script setup>
 import {
-  checkMusicCanUse,
   getMusicUrl,
   getMusicNumUrl,
   getMusicDetail,
@@ -374,54 +373,22 @@ const getPlaySongData = (data, level = setting.songLevel) => {
       console.log("[Player] Attempting UNM server for VIP/paid song.");
       getMusicNumUrlData(id, generation);
     }
-    // 免费或无版权
+    // 免费或无版权 — fetch URL directly (avoids checkMusicCanUse race condition
+    // where the login session may not be established yet on page reload, causing
+    // the availability check to fail and all songs to fallback to UNM).
     else {
-      checkMusicCanUse(id)
+      console.log(`[Player] Fetching official URL directly for ${id}.`);
+      getMusicUrl(id, level)
         .then((res) => {
           if (generation !== _songLoadGeneration) return;
-          console.log(`[Player] checkMusicCanUse response for ${id}:`, res);
-          if (res.success) {
-            console.log("[Player] Song is usable via official API.");
-            if (!pc && (fee === 1 || fee === 4)) $message.info(t("general.message.vipTip"));
-            // 获取音乐地址
-            getMusicUrl(id, level)
-              .then((res) => {
-                if (generation !== _songLoadGeneration) return;
-                console.log(`[Player] getMusicUrl response for ${id}:`, res);
-                if (res.data && res.data[0] && res.data[0].url) {
-                  const url = res.data[0].url.replace(/^http:/, "https:");
-                  console.log(`[Player] Creating sound instance with official URL: ${url}`);
-                  player.value = createSound(url);
-                } else {
-                  console.error(`[Player] Invalid URL data from getMusicUrl for ${id}:`, res);
-                  // Fallback to UNM if available? Or just error out? Let's try UNM.
-                  if (useUnmServerHas && setting.useUnmServer) {
-                    console.warn(`[Player] Official URL invalid for ${id}, falling back to UNM.`);
-                    getMusicNumUrlData(id, generation);
-                  } else {
-                    $message.warning(t("general.message.playError"));
-                    music.setPlaySongIndex("next");
-                  }
-                }
-              })
-              .catch((err) => {
-                if (generation !== _songLoadGeneration) return;
-                console.error(`[Player] Error fetching official Music URL for ${id}:`, err);
-                // Fallback to UNM if available?
-                if (useUnmServerHas && setting.useUnmServer) {
-                  console.warn(
-                    `[Player] Official URL fetch failed for ${id}, falling back to UNM.`,
-                  );
-                  getMusicNumUrlData(id, generation);
-                } else {
-                  $message.warning(t("general.message.playError"));
-                  music.setPlaySongIndex("next");
-                }
-              });
+          console.log(`[Player] getMusicUrl response for ${id}:`, res);
+          if (res.data && res.data[0] && res.data[0].url) {
+            const url = res.data[0].url.replace(/^http:/, "https:");
+            console.log(`[Player] Creating sound instance with official URL: ${url}`);
+            player.value = createSound(url);
           } else {
-            console.warn(`[Player] Song ${id} not usable via official API.`);
+            console.warn(`[Player] No official URL for ${id}, trying UNM fallback.`);
             if (useUnmServerHas && setting.useUnmServer) {
-              console.log(`[Player] Official check failed for ${id}, falling back to UNM.`);
               getMusicNumUrlData(id, generation);
             } else {
               $message.warning(t("general.message.playError"));
@@ -431,9 +398,14 @@ const getPlaySongData = (data, level = setting.songLevel) => {
         })
         .catch((err) => {
           if (generation !== _songLoadGeneration) return;
-          console.error(`[Player] Error calling checkMusicCanUse for ${id}:`, err);
-          $message.warning(t("general.message.playError"));
-          music.setPlaySongIndex("next");
+          console.error(`[Player] Error fetching official URL for ${id}:`, err);
+          if (useUnmServerHas && setting.useUnmServer) {
+            console.warn(`[Player] Official URL fetch failed for ${id}, falling back to UNM.`);
+            getMusicNumUrlData(id, generation);
+          } else {
+            $message.warning(t("general.message.playError"));
+            music.setPlaySongIndex("next");
+          }
         });
     }
     // 获取歌词 (using the new unified function)

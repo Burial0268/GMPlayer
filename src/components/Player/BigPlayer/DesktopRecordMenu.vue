@@ -14,19 +14,30 @@
       <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
     </div>
     <div class="control">
-      <n-icon
-        v-if="!music.getPersonalFmMode"
-        class="prev"
-        size="30"
-        :component="IconRewind"
-        @click.stop="music.setPlaySongIndex('prev')"
-      />
-      <n-icon
-        v-else
-        class="dislike"
-        :component="ThumbDownRound"
-        @click="music.setFmDislike(music.getPersonalFmData.id)"
-      />
+      <div class="skip-state" v-if="!music.getPersonalFmMode">
+        <n-button
+          circle
+          :keyboard="false"
+          :focusable="false"
+          @click.stop="music.setPlaySongIndex('prev')"
+        >
+          <template #icon>
+            <n-icon size="26" :component="IconRewind" />
+          </template>
+        </n-button>
+      </div>
+      <div class="skip-state" v-else>
+        <n-button
+          circle
+          :keyboard="false"
+          :focusable="false"
+          @click.stop="music.setFmDislike(music.getPersonalFmData.id)"
+        >
+          <template #icon>
+            <n-icon size="22" :component="ThumbDownRound" />
+          </template>
+        </n-button>
+      </div>
       <div class="play-state">
         <n-button
           :loading="music.getLoadingState"
@@ -46,12 +57,18 @@
           </template>
         </n-button>
       </div>
-      <n-icon
-        class="next"
-        size="30"
-        :component="IconForward"
-        @click.stop="music.setPlaySongIndex('next')"
-      />
+      <div class="skip-state">
+        <n-button
+          circle
+          :keyboard="false"
+          :focusable="false"
+          @click.stop="music.setPlaySongIndex('next')"
+        >
+          <template #icon>
+            <n-icon size="26" :component="IconForward" />
+          </template>
+        </n-button>
+      </div>
     </div>
   </div>
 </template>
@@ -111,27 +128,37 @@ const setting = settingStore();
     justify-content: center;
     transform: scale(1.4);
 
-    .next,
-    .prev,
-    .dislike {
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 50%;
-      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-      will-change: transform, background-color;
+    .skip-state {
+      display: flex;
+      align-items: center;
+      justify-content: center;
 
-      &:hover {
-        background-color: var(--main-color);
-        transform: scale(1.1);
+      .n-button {
+        --n-width: 36px;
+        --n-height: 36px;
+        --n-color: transparent;
+        --n-color-hover: var(--main-color);
+        --n-color-pressed: var(--main-color);
+        --n-text-color: var(--main-cover-color);
+        --n-text-color-hover: var(--main-cover-color);
+        --n-text-color-pressed: var(--main-cover-color);
+        --n-border: none;
+        border: none;
+        transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        will-change: transform, background-color;
+
+        &:hover {
+          transform: scale(1.1);
+        }
+
+        &:active {
+          transform: scale(0.9);
+        }
       }
 
-      &:active {
-        transform: scale(0.9);
+      .n-icon {
+        color: var(--main-cover-color);
       }
-    }
-
-    .dislike {
-      padding: 9px;
     }
 
     .play-state {
@@ -197,10 +224,9 @@ const setting = settingStore();
 }
 
 .control {
-  .prev,
-  .next {
-    width: 30px;
-    height: 30px;
+  .skip-state .n-button {
+    width: 36px;
+    height: 36px;
   }
 
   .control-icon {

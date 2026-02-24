@@ -1,21 +1,26 @@
 <template>
-  <div class="lrcShow">
+  <div class="lrcShow" @mouseenter="lrcHovered = true" @mouseleave="lrcHovered = false">
     <RollingLyrics
       @mouseenter="onMouseEnter"
       @mouseleave="$emit('lrcAllLeave')"
       @lrcTextClick="$emit('lrcTextClick', $event)"
     />
 
+    <LyricOffsetControl class="desktop-lyric-offset" :visible="lrcHovered" />
+
     <DesktopRecordMenu :menuShow="menuShow" :handleProgressSeek="handleProgressSeek" />
   </div>
 </template>
 
 <script setup lang="ts">
+import { ref } from "vue";
 import { settingStore } from "@/store";
 import RollingLyrics from "../RollingLyrics.vue";
 import DesktopRecordMenu from "./DesktopRecordMenu.vue";
+import LyricOffsetControl from "./LyricOffsetControl.vue";
 
 const setting = settingStore();
+const lrcHovered = ref(false);
 
 defineProps<{
   menuShow: boolean;
@@ -39,6 +44,14 @@ const onMouseEnter = () => {
   display: flex;
   justify-content: center;
   flex-direction: column;
+  position: relative;
+
+  .desktop-lyric-offset {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+  }
 
   .data {
     padding: 0 3vh;

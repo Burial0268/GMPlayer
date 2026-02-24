@@ -637,15 +637,13 @@ const useMusicDataStore = defineStore("musicData", {
       }
 
       let currentIndex = this.playSongLyricIndex;
+      const offsetTime = value.currentTime + (setting.lyricTimeOffset ?? 0) / 1000;
 
-      if (currentIndex > 0 && lyrics[currentIndex]?.time > value.currentTime) {
+      if (currentIndex > 0 && lyrics[currentIndex]?.time > offsetTime) {
         currentIndex = -1;
       }
 
-      while (
-        currentIndex < lyrics.length - 1 &&
-        lyrics[currentIndex + 1].time <= value.currentTime
-      ) {
+      while (currentIndex < lyrics.length - 1 && lyrics[currentIndex + 1].time <= offsetTime) {
         currentIndex++;
       }
 

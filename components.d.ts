@@ -33,6 +33,7 @@ declare module 'vue' {
     IconPause: typeof import('./src/components/Player/icons/IconPause.vue')['default']
     IconPlay: typeof import('./src/components/Player/icons/IconPlay.vue')['default']
     IconRewind: typeof import('./src/components/Player/icons/IconRewind.vue')['default']
+    LyricOffsetControl: typeof import('./src/components/Player/BigPlayer/LyricOffsetControl.vue')['default']
     LyricSetting: typeof import('./src/components/DataModal/LyricSetting.vue')['default']
     MobileControls: typeof import('./src/components/Player/BigPlayer/MobileControls.vue')['default']
     MobileCoverFrame: typeof import('./src/components/Player/BigPlayer/MobileCoverFrame.vue')['default']

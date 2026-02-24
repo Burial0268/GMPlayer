@@ -12,20 +12,30 @@
       "
       @click.stop="music.setPlaySongMode()"
     />
-    <n-icon
-      v-if="!music.getPersonalFmMode"
-      class="prev"
-      size="36"
-      :component="IconRewind"
-      @click.stop="music.setPlaySongIndex('prev')"
-    />
-    <n-icon
-      v-else
-      class="dislike"
-      size="28"
-      :component="ThumbDownRound"
-      @click="music.setFmDislike(music.getPersonalFmData.id)"
-    />
+    <div class="skip-state" v-if="!music.getPersonalFmMode">
+      <n-button
+        circle
+        :keyboard="false"
+        :focusable="false"
+        @click.stop="music.setPlaySongIndex('prev')"
+      >
+        <template #icon>
+          <n-icon size="30" :component="IconRewind" />
+        </template>
+      </n-button>
+    </div>
+    <div class="skip-state" v-else>
+      <n-button
+        circle
+        :keyboard="false"
+        :focusable="false"
+        @click.stop="music.setFmDislike(music.getPersonalFmData.id)"
+      >
+        <template #icon>
+          <n-icon size="24" :component="ThumbDownRound" />
+        </template>
+      </n-button>
+    </div>
     <div class="play-state">
       <n-button
         :loading="music.getLoadingState"
@@ -42,12 +52,18 @@
         </template>
       </n-button>
     </div>
-    <n-icon
-      class="next"
-      size="36"
-      :component="IconForward"
-      @click.stop="music.setPlaySongIndex('next')"
-    />
+    <div class="skip-state">
+      <n-button
+        circle
+        :keyboard="false"
+        :focusable="false"
+        @click.stop="music.setPlaySongIndex('next')"
+      >
+        <template #icon>
+          <n-icon size="30" :component="IconForward" />
+        </template>
+      </n-button>
+    </div>
     <n-icon class="mode-btn" size="22" :component="MessageRound" @click.stop="$emit('toComment')" />
   </div>
   <!-- 音量控制 -->
@@ -95,7 +111,7 @@ const { persistData } = storeToRefs(music);
   justify-content: space-evenly;
   width: 100%;
 
-  .n-icon {
+  > .n-icon {
     color: var(--main-cover-color);
     cursor: pointer;
     transition:
@@ -115,13 +131,28 @@ const { persistData } = storeToRefs(music);
     }
   }
 
-  .prev,
-  .next {
-    opacity: 0.9;
-  }
+  .skip-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
 
-  .dislike {
-    opacity: 0.9;
+    .n-button {
+      --n-width: min(12vw, 48px);
+      --n-height: min(12vw, 48px);
+      --n-color: transparent;
+      --n-color-hover: rgba(255, 255, 255, 0.1);
+      --n-color-pressed: rgba(255, 255, 255, 0.15);
+      --n-text-color: var(--main-cover-color);
+      --n-text-color-hover: var(--main-cover-color);
+      --n-text-color-pressed: var(--main-cover-color);
+      --n-border: none;
+      border: none;
+    }
+
+    .n-icon {
+      opacity: 0.9;
+      color: var(--main-cover-color);
+    }
   }
 
   .play-state {
@@ -144,6 +175,7 @@ const { persistData } = storeToRefs(music);
 
     .n-icon {
       opacity: 1;
+      color: var(--main-cover-color);
     }
   }
 }

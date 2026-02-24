@@ -19,33 +19,41 @@
       </div>
       <div class="meta">
         <div class="title">
-          <n-text class="name text-hidden">{{ playListDetail.name }}</n-text>
-          <n-text class="creator">{{ playListDetail.creator.nickname }}</n-text>
+          <n-text class="name text-hidden">{{ playListDetail!.name }}</n-text>
+          <n-text class="creator">{{ playListDetail!.creator.nickname }}</n-text>
         </div>
         <div class="intr">
           <span class="name">{{
-            $t("general.name.desc", { name: $t("general.name.playlist") })
+            t("general.name.desc", { name: t("general.name.playlist") })
           }}</span>
           <span class="desc text-hidden">
-            {{ playListDetail.description ? playListDetail.description : $t("other.noDesc") }}
+            {{
+              playListDetail && playListDetail.description
+                ? playListDetail.description
+                : t("other.noDesc")
+            }}
           </span>
           <n-button
             class="all-desc"
             block
             strong
             secondary
-            v-if="playListDetail?.description?.length > 70"
+            v-if="
+              playListDetail &&
+              playListDetail.description &&
+              playListDetail.description.length > 70
+            "
             @click="playListDescShow = true"
           >
-            {{ $t("general.name.allDesc") }}
+            {{ t("general.name.allDesc") }}
           </n-button>
         </div>
-        <n-space class="tag" v-if="playListDetail.tags">
+        <n-space class="tag" v-if="playListDetail && playListDetail.tags">
           <n-tag
             class="tags"
             round
             :bordered="false"
-            v-for="item in playListDetail.tags"
+            v-for="item in playListDetail!.tags"
             :key="item"
             @click="router.push(`/discover/playlists?cat=${item}&page=1`)"
           >
@@ -57,7 +65,7 @@
             <template #icon>
               <n-icon :component="MusicList" />
             </template>
-            {{ $t("general.name.play") }}
+            {{ t("general.name.play") }}
           </n-button>
           <n-dropdown
             placement="right-start"
@@ -76,19 +84,25 @@
     </div>
     <div class="right">
       <div class="meta">
-        <n-text class="name">{{ playListDetail.name }}</n-text>
+        <n-text class="name">{{ playListDetail!.name }}</n-text>
         <n-text class="creator">
           <n-icon :depth="3" :component="People" />
-          {{ playListDetail.creator.nickname }}
+          {{ playListDetail!.creator.nickname }}
         </n-text>
         <n-space class="time">
           <div class="num">
             <n-icon :depth="3" :component="Newlybuild" />
-            <n-text v-html="getLongTime(playListDetail.createTime)" />
+            <n-text
+              v-if="playListDetail && playListDetail.createTime"
+              v-html="getLongTime(playListDetail.createTime)"
+            />
           </div>
           <div class="num">
             <n-icon :depth="3" :component="Write" />
-            <n-text v-html="getLongTime(playListDetail.updateTime)" />
+            <n-text
+              v-if="playListDetail && playListDetail.updateTime"
+              v-html="getLongTime(playListDetail.updateTime)"
+            />
           </div>
         </n-space>
       </div>
@@ -106,22 +120,22 @@
         class="s-modal"
         v-model:show="playListDescShow"
         preset="card"
-        :title="$t('general.name.desc', { name: $t('general.name.playlist') })"
+        :title="t('general.name.desc', { name: t('general.name.playlist') })"
         :bordered="false"
       >
-        <n-scrollbar>
-          <n-text v-html="playListDetail.description.replace(/\n/g, '<br>')" />
+        <n-scrollbar v-if="hasPlaylistDescription">
+          <n-text v-html="playlistDescriptionHtml" />
         </n-scrollbar>
       </n-modal>
     </div>
   </div>
   <div class="title" v-else-if="!playListId || !loadingState">
     <span class="key">{{
-      loadingState ? $t("general.name.noKeywords") : $t("general.message.acquisitionFailed")
+      loadingState ? t("general.name.noKeywords") : t("general.message.acquisitionFailed")
     }}</span>
     <br />
     <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
-      {{ $t("general.name.goBack") }}
+      {{ t("general.name.goBack") }}
     </n-button>
   </div>
   <div class="loading" v-else>
@@ -138,6 +152,7 @@
 </template>
 
 <script setup lang="ts">
+import type { DropdownMixedOption } from "naive-ui/es/dropdown/src/interface";
 import { NIcon, NText } from "naive-ui";
 import { getPlayListDetail, getAllPlayList, delPlayList, likePlaylist } from "@/api/playlist";
 import { useRouter } from "vue-router";
@@ -171,22 +186,48 @@ const setting = settingStore();
 const { playAllSong: playAll } = usePlayAllSong();
 
 // 歌单数据
-const playListId = ref(router.currentRoute.value.query.id);
-const playListDetail = ref(null);
-const playListData = ref([]);
+const playListId = ref<string | number | string[] | undefined>(
+  router.currentRoute.value.query.id as string | number | string[] | undefined,
+);
+
+interface PlaylistCreator {
+  nickname: string;
+}
+
+interface PlaylistDetail {
+  id: number;
+  name: string;
+  coverImgUrl: string;
+  creator: PlaylistCreator;
+  description?: string;
+  tags?: string[];
+  createTime?: number;
+  updateTime?: number;
+}
+
+const playListDetail = ref<PlaylistDetail | null>(null);
+const playListData = ref<unknown[]>([]);
 const playListDescShow = ref(false);
 const pagelimit = ref(30);
 const loadingState = ref(true);
-const pageNumber = ref(
+const pageNumber = ref<number>(
   router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
 );
 const totalCount = ref(0);
+
+const hasPlaylistDescription = computed(
+  () => !!playListDetail.value && !!playListDetail.value.description,
+);
+
+const playlistDescriptionHtml = computed(() =>
+  playListDetail.value?.description?.replace(/\n/g, "<br>") ?? "",
+);
 
 const normalizePlaylistId = (id: string | number | string[]) =>
   Number(Array.isArray(id) ? id[0] : id);
 
 // 判断收藏还是取消
-const isLikeOrDislike = (id: string | string[]) => {
+const isLikeOrDislike = (id: string | number | string[]) => {
   const playlists = user.getUserPlayLists.like;
   if (playlists.length) {
     return !playlists.some((item) => item.id === Number(id));
@@ -195,7 +236,7 @@ const isLikeOrDislike = (id: string | string[]) => {
 };
 
 // 判断是否可删除
-const isCanDelete = (id: string | string[]) => {
+const isCanDelete = (id: string | number | string[]) => {
   const playlists = user.getUserPlayLists.own;
   if (playlists.length) {
     return playlists.some((item) => item.id === Number(id));
@@ -204,7 +245,7 @@ const isCanDelete = (id: string | string[]) => {
 };
 
 // 歌单下拉菜单数据
-const dropdownOptions = ref([]);
+const dropdownOptions = ref<DropdownMixedOption[]>([]);
 
 // 更改歌单下拉菜单数据
 const setDropdownOptions = () => {
@@ -232,7 +273,7 @@ const setDropdownOptions = () => {
           }
         },
       },
-      icon: renderIcon(h(LinkTwo)),
+      icon: renderIcon(h(LinkTwo) as any),
     },
     {
       key: "del",
@@ -243,7 +284,7 @@ const setDropdownOptions = () => {
           toDelPlayList(playListDetail.value);
         },
       },
-      icon: renderIcon(h(DeleteFour)),
+      icon: renderIcon(h(DeleteFour) as any),
     },
     {
       key: "like",
@@ -256,7 +297,7 @@ const setDropdownOptions = () => {
           toChangeLike(playListId.value);
         },
       },
-      icon: renderIcon(h(isLikeOrDislike(playListId.value) ? Like : Unlike)),
+      icon: renderIcon(h(isLikeOrDislike(playListId.value) ? Like : Unlike) as any),
     },
   ];
 };
@@ -382,7 +423,7 @@ const pageNumberChange = (val: number) => {
 watch(
   () => router.currentRoute.value,
   (val, oldVal) => {
-    if (val.name == "playlist") {
+    if (val.name === "playlist") {
       playListId.value = val.query.id;
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       if (val.query.id !== oldVal?.query?.id) {

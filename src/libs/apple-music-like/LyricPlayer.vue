@@ -63,8 +63,13 @@ const emit = defineEmits<{
 }>();
 
 // 计算当前播放时间
+// Fixed advance to compensate for spring animation settling delay
+const SPRING_ADVANCE_MS = 150;
 watchEffect(() => {
-  currentTime.value = music.persistData.playSongTime.currentTime * 1000;
+  currentTime.value =
+    music.persistData.playSongTime.currentTime * 1000 +
+    (setting.lyricTimeOffset ?? 0) +
+    SPRING_ADVANCE_MS;
 });
 
 // 计算对齐方式
@@ -139,6 +144,23 @@ watch(
       showRoma: setting.showRoma,
       showTransl: setting.showTransl,
     });
+
+    // Ensure translation/roma are stripped when settings disable them.
+    // processLyrics should already handle this, but we sanitize here as a
+    // final guarantee so the AMLL renderer never receives stale sub-line data.
+    if (!setting.showTransl || !setting.showRoma) {
+      for (let i = 0; i < processed.length; i++) {
+        const line = processed[i];
+        if (!setting.showTransl) line.translatedLyric = "";
+        if (!setting.showRoma) {
+          line.romanLyric = "";
+          const words = line.words;
+          for (let j = 0; j < words.length; j++) {
+            words[j].romanWord = "";
+          }
+        }
+      }
+    }
 
     amllLyricLines.value = processed;
     playerKey.value = Symbol(); // 强制重新渲染组件
