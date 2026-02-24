@@ -184,7 +184,7 @@ importers:
         specifier: ^28.8.0
         version: 28.8.0(@babel/parser@7.29.0)(@nuxt/kit@3.17.5)(vue@3.5.29(typescript@5.9.3))
       vite:
-        specifier: npm:rolldown-vite@^7.3.1
+        specifier: npm:rolldown-vite@latest
         version: rolldown-vite@7.3.1(@types/node@20.19.33)(esbuild@0.27.3)(jiti@2.6.1)(sass@1.97.3)(terser@5.46.0)
       vite-plugin-compression2:
         specifier: ^2.4.0
