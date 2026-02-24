@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "rules": {
+    "no-unused-vars": "warn",
+    "no-console": "off",
+    "eqeqeq": "warn",
+    "no-async-promise-executor": "warn",
+    "no-constant-binary-expression": "error",
+    "no-constructor-return": "error",
+    "no-self-compare": "warn",
+    "no-template-curly-in-string": "warn",
+    "prefer-const": "warn",
+    "typescript/no-non-null-asserted-optional-chain": "warn"
+  },
+  "ignorePatterns": [
+    "dist",
+    "node_modules",
+    "deps",
+    "*.d.ts",
+    "auto-imports.d.ts",
+    "components.d.ts"
+  ]
+}

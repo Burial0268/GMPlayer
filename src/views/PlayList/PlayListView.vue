@@ -410,7 +410,7 @@ watch(
     if (val.name == "playlist") {
       playListId.value = val.query.id;
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
-      if (val.query.id != oldVal?.query?.id) {
+      if (val.query.id !== oldVal?.query?.id) {
         getPlayListDetailData(playListId.value);
         getAllPlayListData(
           playListId.value,
