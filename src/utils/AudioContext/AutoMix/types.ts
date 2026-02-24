@@ -99,12 +99,20 @@ export interface CompatibilityScore {
 export interface TransitionStrategy {
   /** Recommended crossfade duration multiplier */
   durationMultiplier: number;
-  /** Whether to use transition effects (reverb/riser) */
+  /** Whether to use transition effects (reverb/riser/filter sweep) */
   useEffects: boolean;
   /** Whether reverb tail is recommended */
   useReverbTail: boolean;
   /** Whether noise riser is recommended */
   useNoiseRiser: boolean;
+  /** Enable LPF/HPF frequency sweep for style-different tracks */
+  useFilterSweep: boolean;
+  /** 0-1, controls cutoff aggressiveness (higher = more aggressive sweep) */
+  filterSweepIntensity: number;
+  /** Override curve for low compatibility transitions (null = use default) */
+  recommendedCurve: CrossfadeCurve | null;
+  /** Override shapes for low compatibility transitions (null = use default) */
+  shapeOverride: { inShape: number; outShape: number } | null;
 }
 
 // ─── Pure lookup function ─────────────────────────────────────────

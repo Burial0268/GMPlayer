@@ -10,7 +10,7 @@
 
 import { spectralSimilarity, type TrackAnalysis, type SpectralFingerprint } from './TrackAnalyzer';
 import type { OutroType } from './TrackAnalyzer';
-import type { CompatibilityScore, TransitionStrategy } from './types';
+import type { CompatibilityScore, CrossfadeCurve, TransitionStrategy } from './types';
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -174,11 +174,15 @@ export class CompatibilityScorer {
       useEffects: false,
       useReverbTail: false,
       useNoiseRiser: false,
+      useFilterSweep: false,
+      filterSweepIntensity: 0,
+      recommendedCurve: null,
+      shapeOverride: null,
     };
 
     // Duration adjustment based on compatibility
-    // Similar tracks → shorter crossfade (0.9x), different → longer (1.1x)
-    strategy.durationMultiplier = 0.9 + (1 - score.overall) * 0.2;
+    // Similar tracks → shorter crossfade (0.85x), different → longer (1.3x)
+    strategy.durationMultiplier = 0.85 + (1 - score.overall) * 0.45;
 
     // Reverb tail for hard endings, sustained, musical outro with sufficient energy
     if (outroType === 'hard' || outroType === 'musicalOutro' || outroType === 'sustained') {
@@ -192,10 +196,32 @@ export class CompatibilityScorer {
       strategy.useEffects = true;
     }
 
+    // Filter sweep for spectrally or overall incompatible tracks
+    if (score.spectral < 0.35 || score.overall < 0.3) {
+      strategy.useFilterSweep = true;
+      strategy.useEffects = true;
+      // Intensity: lower compat → more aggressive sweep
+      strategy.filterSweepIntensity = Math.min(1, Math.max(0, 1 - score.spectral * 2));
+      // Filter sweep benefits from reverb tail (full-spectrum reverb creates "receding" effect)
+      strategy.useReverbTail = true;
+    }
+
+    // Curve override for very low compatibility (sCurve is smoother)
+    if (score.overall < 0.3) {
+      strategy.recommendedCurve = 'sCurve' as CrossfadeCurve;
+      strategy.shapeOverride = { inShape: 1.15, outShape: 0.95 };
+    }
+
     if (IS_DEV && strategy.useEffects) {
       console.log(
         `CompatibilityScorer: Strategy — durationMul=${strategy.durationMultiplier.toFixed(2)}, ` +
-        `reverbTail=${strategy.useReverbTail}, noiseRiser=${strategy.useNoiseRiser}`
+        `reverbTail=${strategy.useReverbTail}, noiseRiser=${strategy.useNoiseRiser}` +
+        (strategy.useFilterSweep
+          ? `, filterSweep=true, intensity=${strategy.filterSweepIntensity.toFixed(2)}`
+          : '') +
+        (strategy.recommendedCurve
+          ? `, curve=${strategy.recommendedCurve}`
+          : '')
       );
     }
 

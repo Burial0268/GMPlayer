@@ -89,6 +89,13 @@ export class TransitionStateMachine {
   // Persistent gain adjustment for the currently-playing track (from LUFS normalization).
   private _activeGainAdjustment: number = 1;
 
+  // Last computed transition strategy (used across _finalizeCrossfadeParams and _doCrossfade)
+  private _lastStrategy: TransitionStrategy | null = null;
+
+  // Pending store update: next playlist index to set after crossfade.
+  // Used as fallback in _onCrossfadeComplete when _waitForPlayStart is delayed (background tabs).
+  private _pendingNextIndex: number = -1;
+
   // Pause state during crossfade
   private _isPaused: boolean = false;
 
@@ -619,6 +626,9 @@ export class TransitionStateMachine {
     );
     const strategy = this._compatScorer.computeTransitionStrategy(compatScore, this._outroType);
 
+    // Store strategy for reuse in _doCrossfade (avoid recomputing compatibility)
+    this._lastStrategy = strategy;
+
     // Apply compatibility-based duration adjustment
     crossfadeDuration *= strategy.durationMultiplier;
 
@@ -658,10 +668,30 @@ export class TransitionStateMachine {
       incomingGainAdjustment = Math.max(0.5, Math.min(2.0, inAdj));
     }
 
-    // Spectral crossfade
+    // Filter sweep replaces spectral EQ (both serve frequency-domain smoothing;
+    // filter sweep is far more aggressive for truly incompatible tracks)
     let spectralCrossfade: SpectralCrossfadeData | false = false;
-    if (this._settingsSmartCurve && !effectiveFadeInOnly) {
+    if (this._settingsSmartCurve && !effectiveFadeInOnly && !strategy.useFilterSweep) {
       spectralCrossfade = this._computeSpectralCrossfadeData();
+    }
+
+    // Apply curve/shape overrides from strategy
+    if (strategy.recommendedCurve && outroConfidence < 0.75) {
+      // No strong outro detection → use recommended curve
+      effectiveCurve = strategy.recommendedCurve;
+    }
+    if (strategy.shapeOverride) {
+      if (outroConfidence >= 0.75) {
+        // Blend: average of outro profile and strategy override
+        effectiveInShape = (effectiveInShape + strategy.shapeOverride.inShape) / 2;
+        effectiveOutShape = (effectiveOutShape + strategy.shapeOverride.outShape) / 2;
+      } else {
+        effectiveInShape = strategy.shapeOverride.inShape;
+        effectiveOutShape = strategy.shapeOverride.outShape;
+      }
+      // Safety clamp per anti-overfitting principle
+      effectiveInShape = Math.max(0.7, Math.min(1.3, effectiveInShape));
+      effectiveOutShape = Math.max(0.7, Math.min(1.3, effectiveOutShape));
     }
 
     if (IS_DEV) {
@@ -894,6 +924,10 @@ export class TransitionStateMachine {
     const outgoingSound = SoundManager.getCurrentSound();
     if (!outgoingSound) throw new Error('No outgoing sound');
 
+    // Store pending index early — used as fallback by _onCrossfadeComplete
+    // if _waitForPlayStart is delayed (background tab throttling).
+    this._pendingNextIndex = nextIndex;
+
     // Register the outgoing 'end' safety net EARLY
     let outgoingEndedEarly = false;
     outgoingSound.once('end', () => {
@@ -936,16 +970,21 @@ export class TransitionStateMachine {
 
       // ── Transition effects ──
       if (this._settingsTransitionEffects) {
-        const compatScore = this._compatScorer.computeOverall(
-          this._currentAnalysis?.analysis ?? null,
-          this._nextAnalysis?.analysis ?? null
-        );
-        const strategy = this._compatScorer.computeTransitionStrategy(compatScore, this._outroType);
+        const strategy = this._lastStrategy;
         const audioCtx = AudioContextManager.getContext();
 
-        if (audioCtx && strategy.useEffects) {
+        if (audioCtx && strategy && strategy.useEffects) {
           const now = audioCtx.currentTime;
 
+          // Filter sweep (replaces spectral EQ for low-compat transitions)
+          if (strategy.useFilterSweep && outgoingGain && incomingGain) {
+            this._transitionEffects.createFilterSweep(
+              audioCtx, outgoingGain, incomingGain,
+              strategy.filterSweepIntensity, now, params.duration, params.fadeInOnly ?? false
+            );
+          }
+
+          // Reverb tail (with enhanced gain for low compat when filter sweep is active)
           if (strategy.useReverbTail && outgoingGain) {
             const decayTime = this._outroType === 'hard' ? 1.5 : 2.5;
             this._transitionEffects.createReverbTail(
@@ -953,9 +992,11 @@ export class TransitionStateMachine {
             );
           }
 
+          // Noise riser (with enhanced duration for low compat)
           if (strategy.useNoiseRiser) {
             const bpm = this._currentAnalysis?.analysis.bpm?.bpm;
-            const riserDuration = Math.min(1.5, params.duration * 0.2);
+            const maxRiser = 1.5 + (strategy.filterSweepIntensity * 1.0);
+            const riserDuration = Math.min(maxRiser, params.duration * 0.25);
             this._transitionEffects.createNoiseRiser(
               audioCtx, riserDuration, now, bpm
             );
@@ -993,6 +1034,9 @@ export class TransitionStateMachine {
     window.$player = incomingSound;
 
     adoptIncomingSound(incomingSound);
+
+    // Clear pending flag — normal path completed successfully
+    this._pendingNextIndex = -1;
 
     if (IS_DEV) {
       console.log(`TransitionStateMachine: Crossfade started → "${nextSong.name}"`);
@@ -1106,9 +1150,31 @@ export class TransitionStateMachine {
       }
     }
 
+    // Fallback: if _waitForPlayStart was delayed (background tab), the normal
+    // _doCrossfade path may not have updated the store yet. Apply pending updates
+    // so the debounced watcher in Player/index.vue sees isCrossfading()=true.
+    if (this._pendingNextIndex >= 0 && this._musicStoreRef) {
+      const music = this._musicStoreRef;
+      if (music.persistData.playSongIndex !== this._pendingNextIndex) {
+        music.persistData.playSongIndex = this._pendingNextIndex;
+        if (typeof music.resetSongLyricState === 'function') {
+          music.resetSongLyricState();
+        }
+        if (IS_DEV) {
+          console.log('TransitionStateMachine: Applied pending playSongIndex (bg tab fallback)');
+        }
+      }
+      if (currentSound && window.$player !== currentSound) {
+        window.$player = currentSound;
+        adoptIncomingSound(currentSound);
+      }
+      this._pendingNextIndex = -1;
+    }
+
     this._currentAnalysis = this._nextAnalysis;
     this._nextAnalysis = null;
     this._incomingSound = null;
+    this._lastStrategy = null;
     this._evictCache();
 
     if (this._finishingTimerId !== null) {
@@ -1177,6 +1243,8 @@ export class TransitionStateMachine {
 
     this._analyzingInFlight = false;
     this._nextAnalysis = null;
+    this._lastStrategy = null;
+    this._pendingNextIndex = -1;
     this._isPaused = false;
     this._activeGainAdjustment = 1;
     this._state = 'idle';

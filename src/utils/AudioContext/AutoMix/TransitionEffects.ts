@@ -27,6 +27,13 @@ export class TransitionEffects {
   private _noiseFilter: BiquadFilterNode | null = null;
   private _riserGain: GainNode | null = null;
 
+  // Filter sweep nodes
+  private _outSweepFilter: BiquadFilterNode | null = null;
+  private _inSweepFilter: BiquadFilterNode | null = null;
+  private _outSweepGainRef: GainNode | null = null;
+  private _inSweepGainRef: GainNode | null = null;
+  private _sweepTargets: { outCutoff: number; inStart: number; duration: number } | null = null;
+
   // Tracking state
   private _isActive: boolean = false;
   private _isPaused: boolean = false;
@@ -89,6 +96,111 @@ export class TransitionEffects {
       console.log(
         `TransitionEffects: Reverb tail created — decay=${decayTime.toFixed(1)}s, ` +
         `duration=${crossfadeDuration.toFixed(1)}s`
+      );
+    }
+  }
+
+  /**
+   * Create and schedule a DJ-style filter sweep: outgoing LPF + incoming HPF.
+   * Partitions the frequency spectrum so outgoing "recedes" (muffled) while incoming "fills in".
+   *
+   * Audio graph after setup:
+   *   Outgoing: gainNode → LPF(20kHz→cutoff) → destination
+   *   Incoming: gainNode → HPF(startCutoff→20Hz) → destination
+   *
+   * @param ctx - AudioContext
+   * @param outgoingGain - GainNode of the outgoing track
+   * @param incomingGain - GainNode of the incoming track
+   * @param intensity - 0-1, controls cutoff aggressiveness
+   * @param startTime - AudioContext time when sweep should begin
+   * @param duration - Total crossfade duration
+   * @param fadeInOnly - If true, halve outgoing LPF intensity (song already declining)
+   */
+  createFilterSweep(
+    ctx: AudioContext,
+    outgoingGain: GainNode,
+    incomingGain: GainNode,
+    intensity: number,
+    startTime: number,
+    duration: number,
+    fadeInOnly: boolean
+  ): void {
+    // Guard: clean up any previous filter sweep nodes to prevent orphaned graph nodes
+    if (this._outSweepFilter || this._inSweepFilter) {
+      if (IS_DEV) {
+        console.warn('TransitionEffects: Previous filter sweep still active, cleaning up first');
+      }
+      if (this._outSweepFilter) {
+        try { this._outSweepFilter.disconnect(); } catch { /* ok */ }
+        if (this._outSweepGainRef) {
+          try { this._outSweepGainRef.disconnect(this._outSweepFilter); } catch { /* ok */ }
+          try { this._outSweepGainRef.connect(ctx.destination); } catch { /* ok */ }
+        }
+        this._outSweepFilter = null;
+      }
+      if (this._inSweepFilter) {
+        try { this._inSweepFilter.disconnect(); } catch { /* ok */ }
+        if (this._inSweepGainRef) {
+          try { this._inSweepGainRef.disconnect(this._inSweepFilter); } catch { /* ok */ }
+          try { this._inSweepGainRef.connect(ctx.destination); } catch { /* ok */ }
+        }
+        this._inSweepFilter = null;
+      }
+      this._outSweepGainRef = null;
+      this._inSweepGainRef = null;
+      this._sweepTargets = null;
+    }
+    // For fadeInOnly, halve the outgoing filter intensity
+    const outIntensity = fadeInOnly ? intensity * 0.5 : intensity;
+
+    // Outgoing LPF: sweeps from 20kHz down to cutoff (making outgoing "recede")
+    // intensity 0 → cutoff 2000Hz, intensity 1 → cutoff 400Hz
+    const outCutoff = 2000 - outIntensity * 1600; // lerp(2000, 400, outIntensity)
+
+    this._outSweepFilter = ctx.createBiquadFilter();
+    this._outSweepFilter.type = 'lowpass';
+    this._outSweepFilter.Q.value = 0.707; // Butterworth: flat passband
+    this._outSweepFilter.frequency.setValueAtTime(20000, startTime);
+    this._outSweepFilter.frequency.exponentialRampToValueAtTime(outCutoff, startTime + duration);
+
+    // Insert LPF inline: outgoingGain → LPF → destination
+    // Note: outgoingGain already connects to destination via CrossfadeScheduler.
+    // We insert by connecting outgoingGain → LPF → destination and disconnecting
+    // outgoingGain's direct connection to destination.
+    try { outgoingGain.disconnect(ctx.destination); } catch { /* may not be directly connected */ }
+    outgoingGain.connect(this._outSweepFilter);
+    this._outSweepFilter.connect(ctx.destination);
+    this._outSweepGainRef = outgoingGain;
+
+    // Incoming HPF: sweeps from startCutoff down to 20Hz (letting incoming "fill in")
+    // intensity 0 → startCutoff 300Hz, intensity 1 → startCutoff 1200Hz
+    const inStart = 300 + intensity * 900; // lerp(300, 1200, intensity)
+
+    this._inSweepFilter = ctx.createBiquadFilter();
+    this._inSweepFilter.type = 'highpass';
+    this._inSweepFilter.Q.value = 0.707;
+    this._inSweepFilter.frequency.setValueAtTime(inStart, startTime);
+    this._inSweepFilter.frequency.exponentialRampToValueAtTime(20, startTime + duration);
+
+    // Insert HPF inline: incomingGain → HPF → destination
+    try { incomingGain.disconnect(ctx.destination); } catch { /* may not be directly connected */ }
+    incomingGain.connect(this._inSweepFilter);
+    this._inSweepFilter.connect(ctx.destination);
+    this._inSweepGainRef = incomingGain;
+
+    // Store targets for pause/resume
+    this._sweepTargets = { outCutoff, inStart, duration };
+
+    this._isActive = true;
+
+    if (IS_DEV) {
+      console.log(
+        `TransitionEffects: Filter sweep created — ` +
+        `outLPF: 20kHz→${outCutoff.toFixed(0)}Hz, ` +
+        `inHPF: ${inStart.toFixed(0)}Hz→20Hz, ` +
+        `intensity=${intensity.toFixed(2)}, ` +
+        `duration=${duration.toFixed(1)}s` +
+        (fadeInOnly ? ' (fadeInOnly, halved out intensity)' : '')
       );
     }
   }
@@ -183,6 +295,14 @@ export class TransitionEffects {
       this._riserGain.gain.cancelScheduledValues(now);
       this._riserGain.gain.setValueAtTime(0, now);
     }
+    // Freeze filter sweep automation
+    if (this._outSweepFilter) {
+      this._outSweepFilter.frequency.cancelScheduledValues(now);
+      // Hold at current value (freeze)
+    }
+    if (this._inSweepFilter) {
+      this._inSweepFilter.frequency.cancelScheduledValues(now);
+    }
   }
 
   /**
@@ -202,12 +322,29 @@ export class TransitionEffects {
       const midGain = Math.pow(10, -18 / 20); // ~0.125
       this._riserGain.gain.setValueAtTime(midGain, now);
     }
+    // Re-ramp filter sweep from current position to target
+    if (this._sweepTargets) {
+      const remainDuration = this._sweepTargets.duration * 0.5; // approximate remaining
+      if (this._outSweepFilter) {
+        this._outSweepFilter.frequency.exponentialRampToValueAtTime(
+          this._sweepTargets.outCutoff, now + remainDuration
+        );
+      }
+      if (this._inSweepFilter) {
+        this._inSweepFilter.frequency.exponentialRampToValueAtTime(
+          20, now + remainDuration
+        );
+      }
+    }
   }
 
   /**
    * Clean up all effect nodes, disconnecting from the audio graph.
    */
   cleanup(): void {
+    // Get AudioContext for reconnecting gain nodes after sweep filter removal
+    const ctx = AudioContextManager.getContext();
+
     if (this._convolver) {
       try { this._convolver.disconnect(); } catch { /* ok */ }
       this._convolver = null;
@@ -233,6 +370,30 @@ export class TransitionEffects {
       try { this._riserGain.disconnect(); } catch { /* ok */ }
       this._riserGain = null;
     }
+
+    // Clean up filter sweep: disconnect filters and reconnect gain nodes → destination
+    // Note: outgoing gain is NOT reconnected — it's about to be stopped/unloaded
+    // by _onCrossfadeComplete. Only the incoming gain needs reconnection.
+    if (this._outSweepFilter) {
+      try { this._outSweepFilter.disconnect(); } catch { /* ok */ }
+      if (this._outSweepGainRef) {
+        try { this._outSweepGainRef.disconnect(this._outSweepFilter); } catch { /* ok */ }
+        // Don't reconnect outgoing to destination — sound is being destroyed
+      }
+      this._outSweepFilter = null;
+    }
+    this._outSweepGainRef = null;
+
+    if (this._inSweepFilter) {
+      try { this._inSweepFilter.disconnect(); } catch { /* ok */ }
+      if (this._inSweepGainRef && ctx) {
+        try { this._inSweepGainRef.disconnect(this._inSweepFilter); } catch { /* ok */ }
+        try { this._inSweepGainRef.connect(ctx.destination); } catch { /* ok */ }
+      }
+      this._inSweepFilter = null;
+    }
+    this._inSweepGainRef = null;
+    this._sweepTargets = null;
 
     this._isActive = false;
     this._isPaused = false;
