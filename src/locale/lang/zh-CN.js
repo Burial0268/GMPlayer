@@ -279,6 +279,14 @@ export default {
     loginExpired: "登录已失效，请重新登录",
     cleanAll: "重置成功",
   },
+  // 关闭行为对话框
+  closeDialog: {
+    title: "关闭窗口",
+    message: "你想要隐藏到系统托盘还是退出应用？",
+    hideToTray: "隐藏到托盘",
+    exit: "退出",
+    remember: "记住我的选择",
+  },
   setting: {
     dev: "开发中功能",
     main: "基础",
@@ -420,5 +428,16 @@ export default {
     autoMixOutroSustained: "持续音",
     autoMixOutroMusicalOutro: "音乐尾奏",
     autoMixOutroLoopFade: "循环渐弱",
+    miniPlayer: "迷你播放器",
+    desktopLyrics: "桌面歌词",
+  },
+  desktopLyrics: {
+    lock: "锁定 (鼠标穿透)",
+    unlock: "解锁",
+    locked: "已锁定",
+    smaller: "缩小字体",
+    larger: "放大字体",
+    close: "关闭",
+    noLyrics: "暂无歌词",
   },
 };

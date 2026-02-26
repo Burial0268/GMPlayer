@@ -279,6 +279,14 @@ export default {
     loginExpired: "Login is disabled, please login again",
     cleanAll: "Reset successful",
   },
+  // Close behavior dialog
+  closeDialog: {
+    title: "Close Window",
+    message: "Would you like to hide to the system tray or exit the application?",
+    hideToTray: "Hide to Tray",
+    exit: "Exit",
+    remember: "Remember my choice",
+  },
   // Setting
   setting: {
     dev: "WIP",
@@ -407,5 +415,16 @@ export default {
     autoMixOutroSustained: "Sustained",
     autoMixOutroMusicalOutro: "Musical Outro",
     autoMixOutroLoopFade: "Loop Fade",
+    miniPlayer: "Mini Player",
+    desktopLyrics: "Desktop Lyrics",
+  },
+  desktopLyrics: {
+    lock: "Lock (click-through)",
+    unlock: "Unlock",
+    locked: "Locked",
+    smaller: "Smaller text",
+    larger: "Larger text",
+    close: "Close",
+    noLyrics: "No lyrics",
   },
 };
