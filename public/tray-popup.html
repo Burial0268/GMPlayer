@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=260, initial-scale=1.0" />
+    <!-- HarmonyOS Sans -->
+    <link rel="stylesheet" href="https://s1.hdslb.com/bfs/static/jinkela/long/font/regular.css" />
+    <title>Tray Popup</title>
+    <style>
+      * {
+        -webkit-user-select: none;
+        -webkit-user-drag: none;
+        user-select: none;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      :root {
+        --popup-bg: rgba(245, 245, 245, 0.92);
+        --popup-border: rgba(0, 0, 0, 0.06);
+        --text-primary: rgba(30, 30, 30, 0.88);
+        --text-secondary: rgba(30, 30, 30, 0.5);
+        --icon-color: rgba(30, 30, 30, 0.55);
+        --divider: rgba(0, 0, 0, 0.06);
+        --hover-bg: rgba(0, 0, 0, 0.04);
+        --ctrl-hover-bg: rgba(0, 0, 0, 0.06);
+        --ctrl-play-bg: rgba(0, 0, 0, 0.06);
+        --ctrl-play-hover: rgba(0, 0, 0, 0.1);
+        --cover-bg: rgba(0, 0, 0, 0.04);
+        --quit-hover: rgba(220, 50, 50, 0.08);
+        --quit-color: rgba(180, 40, 40, 0.75);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --popup-bg: rgba(30, 30, 30, 0.92);
+          --popup-border: rgba(255, 255, 255, 0.08);
+          --text-primary: rgba(255, 255, 255, 0.9);
+          --text-secondary: rgba(255, 255, 255, 0.5);
+          --icon-color: rgba(255, 255, 255, 0.45);
+          --divider: rgba(255, 255, 255, 0.06);
+          --hover-bg: rgba(255, 255, 255, 0.06);
+          --ctrl-hover-bg: rgba(255, 255, 255, 0.08);
+          --ctrl-play-bg: rgba(255, 255, 255, 0.08);
+          --ctrl-play-hover: rgba(255, 255, 255, 0.14);
+          --cover-bg: rgba(255, 255, 255, 0.05);
+          --quit-hover: rgba(255, 70, 70, 0.12);
+          --quit-color: rgba(255, 100, 100, 0.85);
+        }
+      }
+
+      html,
+      body {
+        width: 260px;
+        height: 310px;
+        overflow: hidden;
+        background: transparent;
+      }
+      .tray-popup {
+        width: 260px;
+        height: 310px;
+        background: var(--popup-bg);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--popup-border);
+        color: var(--text-primary);
+        font-family:
+          "HarmonyOS_Regular",
+          "Segoe UI",
+          system-ui,
+          -apple-system,
+          sans-serif;
+        display: flex;
+        flex-direction: column;
+        padding: 8px 0;
+        overflow: hidden;
+      }
+      .tray-popup.native-effect {
+        background: transparent;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }
+
+      /* Song info */
+      .song-section {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 4px 14px 6px;
+        cursor: pointer;
+        border-radius: 0;
+        transition: background 0.15s;
+      }
+      .song-section:hover {
+        background: var(--hover-bg);
+      }
+      .song-section:hover .title {
+        text-decoration: underline;
+      }
+      .cover {
+        width: 36px;
+        height: 36px;
+        border-radius: 6px;
+        object-fit: cover;
+        flex-shrink: 0;
+        background: var(--cover-bg);
+      }
+      .text {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .title {
+        font-size: 13px;
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--text-primary);
+        line-height: 1.3;
+      }
+      .artist {
+        font-size: 11px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--text-secondary);
+        line-height: 1.3;
+      }
+
+      /* Dividers */
+      .divider {
+        height: 1px;
+        background: var(--divider);
+        margin: 5px 12px;
+        flex-shrink: 0;
+      }
+
+      /* Media controls */
+      .controls {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 4px 14px;
+      }
+      .ctrl-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: none;
+        border: none;
+        color: var(--text-primary);
+        cursor: pointer;
+        padding: 6px;
+        border-radius: 50%;
+        transition: all 0.15s ease;
+      }
+      .ctrl-btn:hover {
+        background: var(--ctrl-hover-bg);
+      }
+      .ctrl-btn:active {
+        transform: scale(0.92);
+      }
+      .ctrl-btn.play {
+        background: var(--ctrl-play-bg);
+        padding: 8px;
+      }
+      .ctrl-btn.play:hover {
+        background: var(--ctrl-play-hover);
+      }
+
+      /* Menu items */
+      .menu-section {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+      }
+      .menu-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 0 14px;
+        height: 34px;
+        cursor: pointer;
+        transition: background 0.15s;
+        flex-shrink: 0;
+      }
+      .menu-item:hover {
+        background: var(--hover-bg);
+      }
+      .menu-item .mi-icon {
+        width: 18px;
+        height: 18px;
+        flex-shrink: 0;
+        color: var(--icon-color);
+      }
+      .menu-item span {
+        font-size: 13px;
+        color: var(--text-primary);
+        flex: 1;
+      }
+      .menu-item.quit:hover {
+        background: var(--quit-hover);
+      }
+      .menu-item.quit .mi-icon,
+      .menu-item.quit span {
+        color: var(--quit-color);
+      }
+
+      /* Play/pause toggle */
+      .icon-pause {
+        display: none;
+      }
+      .is-playing .icon-play {
+        display: none;
+      }
+      .is-playing .icon-pause {
+        display: block;
+      }
+    </style>
+  </head>
+  <body oncontextmenu="return false;">
+    <div class="tray-popup" id="popup">
+      <!-- Song info — click to open main window -->
+      <div class="song-section" id="song-info" title="">
+        <img class="cover" id="cover" src="/images/pic/default.png" alt="" />
+        <div class="text">
+          <div class="title" id="title">GMPlayer</div>
+          <div class="artist" id="artist"></div>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Media controls -->
+      <div class="controls">
+        <button class="ctrl-btn" id="btn-prev">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+          </svg>
+        </button>
+        <button class="ctrl-btn play" id="btn-play">
+          <svg class="icon-play" viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <svg class="icon-pause" viewBox="0 0 24 24" width="26" height="26" fill="currentColor">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+          </svg>
+        </button>
+        <button class="ctrl-btn" id="btn-next">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+            <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Menu items -->
+      <div class="menu-section">
+        <div class="menu-item" id="item-mode">
+          <svg class="mi-icon" id="mode-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              id="mode-path"
+              d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"
+            />
+          </svg>
+          <span id="mode-label"></span>
+        </div>
+        <div class="menu-item" id="item-main">
+          <svg class="mi-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              d="M21 3H3c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H3V5h18v14zM5 15h14v2H5z"
+            />
+          </svg>
+          <span id="label-main"></span>
+        </div>
+        <div class="menu-item" id="item-lyrics">
+          <svg class="mi-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"
+            />
+          </svg>
+          <span id="label-lyrics"></span>
+        </div>
+        <div class="menu-item" id="item-settings">
+          <svg class="mi-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"
+            />
+          </svg>
+          <span id="label-settings"></span>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <!-- Quit -->
+      <div class="menu-item quit" id="item-quit">
+        <svg class="mi-icon" viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M13 3h-2v10h2V3zm4.83 2.17l-1.42 1.42C17.99 7.86 19 9.81 19 12c0 3.87-3.13 7-7 7s-7-3.13-7-7c0-2.19 1.01-4.14 2.58-5.42L6.17 5.17C4.23 6.82 3 9.26 3 12c0 4.97 4.03 9 9 9s9-4.03 9-9c0-2.74-1.23-5.18-3.17-6.83z"
+          />
+        </svg>
+        <span id="label-quit"></span>
+      </div>
+    </div>
+
+    <script>
+      document.addEventListener("contextmenu", function (e) {
+        e.preventDefault();
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.keyCode === 116) {
+          // F5键的keyCode是116
+          event.preventDefault(); // 阻止浏览器默认行为
+        }
+      });
+      (function () {
+        var popup = document.getElementById("popup");
+        var coverEl = document.getElementById("cover");
+        var titleEl = document.getElementById("title");
+        var artistEl = document.getElementById("artist");
+        var btnPlay = document.getElementById("btn-play");
+        var btnPrev = document.getElementById("btn-prev");
+        var btnNext = document.getElementById("btn-next");
+        var modePathEl = document.getElementById("mode-path");
+        var modeLabelEl = document.getElementById("mode-label");
+
+        // Platform detection — native window effects on Windows & macOS
+        var ua = navigator.userAgent;
+        var hasNativeEffect = ua.includes("Windows") || ua.includes("Macintosh");
+        if (hasNativeEffect) popup.classList.add("native-effect");
+
+        var isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+
+        // Simple i18n
+        var lang = navigator.language.startsWith("zh") ? "zh" : "en";
+        var i18n = {
+          zh: {
+            normal: "列表循环",
+            random: "随机播放",
+            single: "单曲循环",
+            openMain: "打开主窗口",
+            lyrics: "桌面歌词",
+            settings: "设置",
+            quit: "退出",
+          },
+          en: {
+            normal: "List Loop",
+            random: "Shuffle",
+            single: "Single Loop",
+            openMain: "Main Window",
+            lyrics: "Desktop Lyrics",
+            settings: "Settings",
+            quit: "Quit",
+          },
+        };
+        var t = i18n[lang];
+
+        // Set static labels
+        document.getElementById("label-main").textContent = t.openMain;
+        document.getElementById("label-lyrics").textContent = t.lyrics;
+        document.getElementById("label-settings").textContent = t.settings;
+        document.getElementById("label-quit").textContent = t.quit;
+        modeLabelEl.textContent = t.normal;
+
+        // Play mode icon SVG paths
+        var modeIcons = {
+          normal: "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z",
+          random:
+            "M10.59 9.17L5.41 4 4 5.41l5.17 5.18 1.42-1.42zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z",
+          single:
+            "M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4zm-4-2V9h-1l-2 1v1h1.5v4H13z",
+        };
+
+        function getTauri() {
+          return window.__TAURI__;
+        }
+
+        function updateState(state) {
+          if (state.title) titleEl.textContent = state.title;
+          else titleEl.textContent = "GMPlayer";
+          artistEl.textContent = state.artist || "";
+          if (state.coverUrl) coverEl.src = state.coverUrl;
+          else coverEl.src = "/images/pic/default.png";
+
+          if (state.isPlaying) {
+            popup.classList.add("is-playing");
+          } else {
+            popup.classList.remove("is-playing");
+          }
+
+          // Update play mode display
+          if (state.playMode && modeIcons[state.playMode]) {
+            modePathEl.setAttribute("d", modeIcons[state.playMode]);
+            modeLabelEl.textContent = t[state.playMode] || t.normal;
+          }
+
+          // CSS fallback: accent color tint when no native effect
+          if (!hasNativeEffect && state.accentColor) {
+            var m = state.accentColor.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+            if (m) {
+              var base = isDark ? 30 : 240;
+              var r = parseInt(m[1]),
+                g = parseInt(m[2]),
+                b = parseInt(m[3]);
+              var mr = Math.round(base * 0.85 + r * 0.15);
+              var mg = Math.round(base * 0.85 + g * 0.15);
+              var mb = Math.round(base * 0.85 + b * 0.15);
+              popup.style.background = "rgba(" + mr + "," + mg + "," + mb + ", 0.92)";
+            }
+          }
+        }
+
+        // Song info click → open main window
+        document.getElementById("song-info").addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.core.invoke("show_window", { label: "main" });
+        });
+
+        // Media controls
+        btnPlay.addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.event.emit("tray-play-pause", null);
+        });
+        btnPrev.addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.event.emit("tray-prev-track", null);
+        });
+        btnNext.addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.event.emit("tray-next-track", null);
+        });
+
+        // Menu items
+        document.getElementById("item-mode").addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.event.emit("tray-cycle-play-mode", null);
+        });
+        document.getElementById("item-main").addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.core.invoke("show_window", { label: "main" });
+        });
+        document.getElementById("item-lyrics").addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.core.invoke("create_window", { label: "desktop-lyrics" });
+        });
+        document.getElementById("item-settings").addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.core.invoke("create_window", { label: "settings" });
+        });
+        document.getElementById("item-quit").addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.core.invoke("quit_app");
+        });
+
+        // Listen for state updates
+        function setup() {
+          var tc = getTauri();
+          if (!tc) return;
+          tc.event.listen("player-state-update", function (event) {
+            updateState(event.payload);
+          });
+          tc.event.listen("tray-popup-opened", function () {
+            // Main window pushes fresh state in response
+          });
+        }
+
+        if (getTauri()) setup();
+        else document.addEventListener("DOMContentLoaded", setup);
+      })();
+    </script>
+  </body>
+</html>
