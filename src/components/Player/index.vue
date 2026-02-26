@@ -263,12 +263,7 @@
 </template>
 
 <script setup>
-import {
-  getMusicUrl,
-  getMusicNumUrl,
-  getMusicDetail,
-  getUnifiedLyric,
-} from "@/api/song";
+import { getMusicUrl, getMusicNumUrl, getMusicDetail, getUnifiedLyric } from "@/api/song";
 import { Motion, AnimatePresence } from "motion-v";
 import { NIcon } from "naive-ui";
 import {
@@ -289,7 +284,7 @@ import {
 } from "@vicons/material";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { storeToRefs } from "pinia";
-import { musicStore, settingStore } from "@/store";
+import { musicStore, settingStore, siteStore } from "@/store";
 import {
   createSound,
   setVolume,
@@ -300,16 +295,19 @@ import {
 } from "@/utils/AudioContext";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import { useRouter } from "vue-router";
-import { debounce } from "throttle-debounce";
+import { debounce, throttle } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
+import { isTauri } from "@/utils/tauri";
+import { windowManager } from "@/utils/tauri/windowManager";
 import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
 import PlayListDrawer from "@/components/DataModal/PlayListDrawer.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import BigPlayer from "./BigPlayer/index.vue";
 import "vue-slider-component/theme/default.css";
-import { watch } from "vue";
+import { watch, toRaw } from "vue";
 import { parseLyricData as parseLyric, formatAsLrc as formatToLrc } from "@/utils/LyricsProcessor";
+import { preprocessLyrics, getProcessedLyrics } from "@/utils/LyricsProcessor";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -520,12 +518,304 @@ const songChange = debounce(500, (val) => {
   getPlaySongData(val);
 });
 
+// Tauri: broadcast player state to other windows (tray popup, mini player, desktop lyrics)
+const broadcastPlayerState = () => {
+  if (!isTauri()) return;
+  const songData = music.getPlaySongData;
+  const site = siteStore();
+  const playTime = music.getPlaySongTime;
+  const payload = {
+    title: songData?.name || "",
+    artist: songData?.artist?.map((a) => a.name).join(", ") || "",
+    artistList: songData?.artist?.map((a) => ({ id: a.id, name: a.name })) || [],
+    coverUrl: songData?.album?.picUrl
+      ? songData.album.picUrl.replace(/^http:/, "https:") + "?param=128y128"
+      : "",
+    coverUrlLarge: songData?.album?.picUrl
+      ? songData.album.picUrl.replace(/^http:/, "https:") + "?param=512y512"
+      : "",
+    songId: songData?.id || null,
+    isPlaying: music.getPlayState,
+    isLoading: music.isLoadingSong,
+    isLiked: songData ? music.getSongIsLike(songData.id) : false,
+    accentColor: site.songPicColor || "",
+    currentTime: playTime?.currentTime || 0,
+    duration: playTime?.duration || 0,
+    volume: persistData.value.playVolume,
+    playMode: music.persistData.playSongMode || "normal",
+  };
+  window.__TAURI__?.event.emit("player-state-update", payload);
+
+  // Update native window effect tint color with accent blend
+  if (site.songPicColor) {
+    const m = site.songPicColor.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+    if (m) {
+      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const base = isDark ? 30 : 240;
+      const r = Math.round(base * 0.85 + parseInt(m[1]) * 0.15);
+      const g = Math.round(base * 0.85 + parseInt(m[2]) * 0.15);
+      const b = Math.round(base * 0.85 + parseInt(m[3]) * 0.15);
+      windowManager.setWindowEffectColor("tray-popup", r, g, b, 200);
+    }
+  }
+};
+
+// Tauri: broadcast time update to slave windows (~20fps, throttled 50ms)
+const broadcastTimeUpdate = throttle(50, () => {
+  if (!isTauri() || !music.getPlayState) return;
+  window.__TAURI__?.event.emit("player-time-update", {
+    currentTime: music.getPlaySongTime.currentTime,
+    lyricIndex: music.playSongLyricIndex,
+  });
+});
+
+// Tauri: broadcast lyric data to slave windows
+const broadcastLyricData = () => {
+  if (!isTauri()) return;
+  const songData = music.getPlaySongData;
+  if (!songData) return;
+
+  const rawSongLyric = toRaw(music.songLyric);
+  if (!rawSongLyric || !rawSongLyric.lrc) return;
+
+  // Process lyrics for AMLL
+  let amllLines = [];
+  try {
+    preprocessLyrics(rawSongLyric, {
+      showYrc: setting.showYrc,
+      showRoma: setting.showRoma,
+      showTransl: setting.showTransl,
+    });
+    amllLines = getProcessedLyrics(rawSongLyric, {
+      showYrc: setting.showYrc,
+      showRoma: setting.showRoma,
+      showTransl: setting.showTransl,
+    });
+
+    // Sanitize based on settings
+    if (!setting.showTransl || !setting.showRoma) {
+      for (let i = 0; i < amllLines.length; i++) {
+        const line = amllLines[i];
+        if (!setting.showTransl) line.translatedLyric = "";
+        if (!setting.showRoma) {
+          line.romanLyric = "";
+          const words = line.words;
+          for (let j = 0; j < words.length; j++) {
+            words[j].romanWord = "";
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("[Player] Failed to process lyrics for broadcast:", err);
+  }
+
+  const payload = {
+    songId: songData.id,
+    lrc: rawSongLyric.lrc.map((l) => ({ time: l.time, content: l.content })),
+    amllLines,
+    hasYrc: rawSongLyric.hasYrc || false,
+    hasLrcTran: rawSongLyric.hasLrcTran || false,
+    hasLrcRoma: rawSongLyric.hasLrcRoma || false,
+  };
+  window.__TAURI__?.event.emit("player-lyric-update", payload);
+};
+
+// Tauri: broadcast settings to slave windows
+const broadcastSettings = () => {
+  if (!isTauri()) return;
+  const payload = {
+    lyricTimeOffset: setting.lyricTimeOffset,
+    lyricsFontSize: setting.lyricsFontSize,
+    lyricFont: setting.lyricFont,
+    lyricFontWeight: setting.lyricFontWeight,
+    lyricLetterSpacing: setting.lyricLetterSpacing,
+    lyricLineHeight: setting.lyricLineHeight,
+    lyricsBlur: setting.lyricsBlur,
+    lyricsBlock: setting.lyricsBlock,
+    lyricsPosition: setting.lyricsPosition,
+    showYrc: setting.showYrc,
+    showYrcAnimation: setting.showYrcAnimation,
+    showTransl: setting.showTransl,
+    showRoma: setting.showRoma,
+    springParams: setting.springParams,
+  };
+  window.__TAURI__?.event.emit("player-settings-update", payload);
+};
+
+// Tauri: push full state snapshot to a newly opened slave window
+const broadcastFullState = () => {
+  if (!isTauri()) return;
+  const statePayload = {
+    title: music.getPlaySongData?.name || "",
+    artist: music.getPlaySongData?.artist?.map((a) => a.name).join(", ") || "",
+    artistList: music.getPlaySongData?.artist?.map((a) => ({ id: a.id, name: a.name })) || [],
+    coverUrl: music.getPlaySongData?.album?.picUrl
+      ? music.getPlaySongData.album.picUrl.replace(/^http:/, "https:") + "?param=128y128"
+      : "",
+    coverUrlLarge: music.getPlaySongData?.album?.picUrl
+      ? music.getPlaySongData.album.picUrl.replace(/^http:/, "https:") + "?param=512y512"
+      : "",
+    songId: music.getPlaySongData?.id || null,
+    isPlaying: music.getPlayState,
+    isLoading: music.isLoadingSong,
+    isLiked: music.getPlaySongData ? music.getSongIsLike(music.getPlaySongData.id) : false,
+    accentColor: siteStore().songPicColor || "",
+    currentTime: music.getPlaySongTime.currentTime,
+    duration: music.getPlaySongTime.duration,
+    volume: persistData.value.playVolume,
+    playMode: music.persistData.playSongMode || "normal",
+  };
+
+  // Build lyric payload
+  let lyricPayload = null;
+  const rawSongLyric = toRaw(music.songLyric);
+  if (rawSongLyric && rawSongLyric.lrc && rawSongLyric.lrc.length > 0 && music.getPlaySongData) {
+    let amllLines = [];
+    try {
+      preprocessLyrics(rawSongLyric, {
+        showYrc: setting.showYrc,
+        showRoma: setting.showRoma,
+        showTransl: setting.showTransl,
+      });
+      amllLines = getProcessedLyrics(rawSongLyric, {
+        showYrc: setting.showYrc,
+        showRoma: setting.showRoma,
+        showTransl: setting.showTransl,
+      });
+      if (!setting.showTransl || !setting.showRoma) {
+        for (let i = 0; i < amllLines.length; i++) {
+          const line = amllLines[i];
+          if (!setting.showTransl) line.translatedLyric = "";
+          if (!setting.showRoma) {
+            line.romanLyric = "";
+            const words = line.words;
+            for (let j = 0; j < words.length; j++) {
+              words[j].romanWord = "";
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error("[Player] Failed to process lyrics for full state:", err);
+    }
+    lyricPayload = {
+      songId: music.getPlaySongData.id,
+      lrc: rawSongLyric.lrc.map((l) => ({ time: l.time, content: l.content })),
+      amllLines,
+      hasYrc: rawSongLyric.hasYrc || false,
+      hasLrcTran: rawSongLyric.hasLrcTran || false,
+      hasLrcRoma: rawSongLyric.hasLrcRoma || false,
+    };
+  }
+
+  const settingsPayload = {
+    lyricTimeOffset: setting.lyricTimeOffset,
+    lyricsFontSize: setting.lyricsFontSize,
+    lyricFont: setting.lyricFont,
+    lyricFontWeight: setting.lyricFontWeight,
+    lyricLetterSpacing: setting.lyricLetterSpacing,
+    lyricLineHeight: setting.lyricLineHeight,
+    lyricsBlur: setting.lyricsBlur,
+    lyricsBlock: setting.lyricsBlock,
+    lyricsPosition: setting.lyricsPosition,
+    showYrc: setting.showYrc,
+    showYrcAnimation: setting.showYrcAnimation,
+    showTransl: setting.showTransl,
+    showRoma: setting.showRoma,
+    springParams: setting.springParams,
+  };
+
+  window.__TAURI__?.event.emit("player-full-state", {
+    state: statePayload,
+    time: {
+      currentTime: music.getPlaySongTime.currentTime,
+      lyricIndex: music.playSongLyricIndex,
+    },
+    lyric: lyricPayload,
+    settings: settingsPayload,
+  });
+};
+
+// Tauri: set up tray + slave control event listeners
+const setupTrayListeners = async () => {
+  const tauri = window.__TAURI__;
+  if (!tauri) return;
+
+  // Listen for tray play/pause
+  await tauri.event.listen("tray-play-pause", () => {
+    music.setPlayState(!music.getPlayState);
+  });
+
+  // Listen for tray prev/next track
+  await tauri.event.listen("tray-prev-track", () => {
+    music.setPlaySongIndex("prev");
+  });
+  await tauri.event.listen("tray-next-track", () => {
+    music.setPlaySongIndex("next");
+  });
+
+  // Listen for tray popup opened — push fresh state
+  await tauri.event.listen("tray-popup-opened", () => {
+    broadcastPlayerState();
+  });
+
+  // Listen for tray play mode cycle
+  await tauri.event.listen("tray-cycle-play-mode", () => {
+    music.setPlaySongMode();
+    broadcastPlayerState();
+  });
+
+  // ── Slave window command listeners ──────────────────────────────────
+
+  await tauri.event.listen("slave-play-pause", () => {
+    music.setPlayState(!music.getPlayState);
+  });
+
+  await tauri.event.listen("slave-prev-track", () => {
+    music.setPlaySongIndex("prev");
+  });
+
+  await tauri.event.listen("slave-next-track", () => {
+    music.setPlaySongIndex("next");
+  });
+
+  await tauri.event.listen("slave-seek", (e) => {
+    const { time } = e.payload;
+    if (player.value && typeof time === "number") {
+      setSeek(player.value, time);
+    }
+  });
+
+  await tauri.event.listen("slave-volume", (e) => {
+    const { volume } = e.payload;
+    if (typeof volume === "number") {
+      persistData.value.playVolume = Math.max(0, Math.min(1, volume));
+    }
+  });
+
+  await tauri.event.listen("slave-cycle-play-mode", () => {
+    music.setPlaySongMode();
+    broadcastPlayerState();
+  });
+
+  // Slave window opened — push full state snapshot
+  await tauri.event.listen("slave-window-opened", () => {
+    broadcastFullState();
+  });
+};
+
 onMounted(() => {
   // 挂载方法
   window.$getPlaySongData = getPlaySongData;
   // 获取音乐数据
   if (music.getPlaylists[0] && music.getPlaySongData) {
     getPlaySongData(music.getPlaySongData);
+  }
+
+  // Tauri: wire up tray control listeners + state broadcasting
+  if (isTauri()) {
+    setupTrayListeners();
   }
 });
 
@@ -542,6 +832,21 @@ watch(
         music.setPlaySongTime({ currentTime: 0, duration: 0 });
       }
       songChange(val);
+      broadcastPlayerState();
+
+      // Update tray tooltip with current song info
+      if (isTauri()) {
+        if (val?.name) {
+          const artistNames = val.artist?.map((a) => a.name).join(", ") || "";
+          const tooltip = artistNames ? `${val.name} - ${artistNames}` : val.name;
+          windowManager.setTrayTooltip(tooltip).catch(() => {
+            // Silently fail if tray update fails
+          });
+        } else {
+          // Reset to default when no song is playing
+          windowManager.setTrayTooltip("GMPlayer").catch(() => {});
+        }
+      }
     }
   },
   { deep: true },
@@ -564,6 +869,14 @@ watch(
   () => music.getPlayState,
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
+    broadcastPlayerState();
+    // Also broadcast time on play state change for slave windows
+    if (isTauri()) {
+      window.__TAURI__?.event.emit("player-time-update", {
+        currentTime: music.getPlaySongTime.currentTime,
+        lyricIndex: music.playSongLyricIndex,
+      });
+    }
     nextTick().then(() => {
       // During AutoMix crossfade, CrossfadeManager controls gain scheduling.
       // fadePlayOrPause's fade(0, volume, 300) would cancel CrossfadeManager's
@@ -624,6 +937,47 @@ watch(
         );
       }
     });
+  },
+);
+
+// Tauri: broadcast time update when currentTime changes
+watch(
+  () => music.getPlaySongTime.currentTime,
+  () => {
+    broadcastTimeUpdate();
+  },
+);
+
+// Tauri: broadcast lyric data when songLyric changes
+watch(
+  () => music.songLyric,
+  () => {
+    broadcastLyricData();
+  },
+  { deep: true },
+);
+
+// Tauri: broadcast settings when lyric-related settings change
+watch(
+  () => [
+    setting.lyricTimeOffset,
+    setting.lyricsFontSize,
+    setting.lyricFont,
+    setting.lyricFontWeight,
+    setting.lyricLetterSpacing,
+    setting.lyricLineHeight,
+    setting.lyricsBlur,
+    setting.lyricsBlock,
+    setting.lyricsPosition,
+    setting.showYrc,
+    setting.showYrcAnimation,
+    setting.showTransl,
+    setting.showRoma,
+  ],
+  () => {
+    broadcastSettings();
+    // Re-process and re-broadcast lyrics when display settings change
+    broadcastLyricData();
   },
 );
 

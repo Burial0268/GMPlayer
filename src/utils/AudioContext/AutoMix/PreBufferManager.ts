@@ -8,10 +8,11 @@
 
 import { BufferedSound } from "../BufferedSound";
 import { analyzeTrack, type TrackAnalysis } from "./TrackAnalyzer";
-import { getMusicUrl } from "@/api/song";
+import { getMusicUrl, getMusicNumUrl } from "@/api/song";
 import type { CachedAnalysis } from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
+const useUnmServerHas = import.meta.env.VITE_UNM_API ? true : false;
 
 interface PreBufferState {
   sound: BufferedSound;
@@ -56,14 +57,56 @@ export class PreBufferManager {
     this._isBuffering = true;
 
     const doPreBuffer = async () => {
-      // Step 1: Fetch music URL
-      const res = await getMusicUrl(nextSong.id);
-      if (!res?.data?.[0]?.url) throw new Error("Failed to get music URL");
+      // Step 1: Fetch music URL (with UNM fallback)
+      let url: string | null = null;
+
+      try {
+        const res = await getMusicUrl(nextSong.id);
+        const rawUrl = res?.data?.[0]?.url;
+
+        if (rawUrl) {
+          url = rawUrl.replace(/^http:/, "https:");
+          // Check for trial version (jd-musicrep-ts) - needs UNM replacement
+          if (url.includes("jd-musicrep-ts") && useUnmServerHas) {
+            if (IS_DEV) {
+              console.log(`[PreBufferManager] ${nextSong.name} is trial version, trying UNM`);
+            }
+            url = null; // Force UNM fallback
+          }
+        }
+      } catch (err) {
+        if (IS_DEV) {
+          console.warn(`[PreBufferManager] getMusicUrl failed for ${nextSong.name}:`, err);
+        }
+        url = null;
+      }
+
+      // UNM fallback: if no URL or trial version detected
+      if (!url && useUnmServerHas) {
+        try {
+          const unmRes = await getMusicNumUrl(nextSong.id);
+          if (unmRes?.code === 200 && unmRes?.data?.url) {
+            url = unmRes.data.url.replace(/^http:/, "https:");
+            if (IS_DEV) {
+              console.log(`[PreBufferManager] Got UNM URL for ${nextSong.name}:`, url);
+            }
+          } else {
+            throw new Error("UNM returned invalid data");
+          }
+        } catch (unmErr) {
+          if (IS_DEV) {
+            console.warn(`[PreBufferManager] UNM fallback failed for ${nextSong.name}:`, unmErr);
+          }
+          throw new Error("Failed to get music URL from both official and UNM sources");
+        }
+      }
+
+      if (!url) {
+        throw new Error("Failed to get music URL");
+      }
 
       // Bail if state changed
       if (stateGetter() !== "waiting") return;
-
-      const url = res.data[0].url.replace(/^http:/, "https:");
 
       // Step 2: Create BufferedSound (starts silent, begins download)
       const sound = new BufferedSound({

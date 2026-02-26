@@ -343,7 +343,11 @@ watch(
   width: 100%;
   display: flex;
   justify-content: flex-end;
+  // 允许拖动穿透空白区域
+  pointer-events: none;
   .input {
+    // 输入框本身保持可交互
+    pointer-events: auto;
     width: 200px;
     transition: all 0.3s;
     @media (max-width: 450px) {

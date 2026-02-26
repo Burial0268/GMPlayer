@@ -15,6 +15,7 @@ export {
   soundStop,
   processSpectrum,
   adoptIncomingSound,
+  setPageVisible,
 } from "./PlayerFunctions";
 
 // Export types

@@ -76,6 +76,8 @@ interface SettingDataState {
   autoMixVocalGuard: boolean;
   // Lyric time offset (ms). Positive = lyrics advance, Negative = lyrics delay
   lyricTimeOffset: number;
+  // Close behavior for Tauri desktop app
+  closeBehavior: "ask" | "tray" | "exit";
 }
 
 const useSettingDataStore = defineStore("settingData", {
@@ -144,6 +146,8 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixVocalGuard: true,
       // Lyric time offset (ms)
       lyricTimeOffset: 0,
+      // Close behavior (Tauri): 'ask' | 'tray' | 'exit'
+      closeBehavior: "ask",
     };
   },
   getters: {

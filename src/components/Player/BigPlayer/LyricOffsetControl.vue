@@ -16,20 +16,12 @@
     </div>
 
     <!-- Offset value badge (click to reset) -->
-    <div
-      class="offset-value"
-      @click.stop="resetOffset"
-      :title="t('setting.lyricOffsetReset')"
-    >
+    <div class="offset-value" @click.stop="resetOffset" :title="t('setting.lyricOffsetReset')">
       {{ offsetDisplay }}
     </div>
 
     <!-- [-] button -->
-    <div
-      class="offset-btn"
-      @click.stop="adjustOffset(-500)"
-      :title="t('setting.lyricOffsetDelay')"
-    >
+    <div class="offset-btn" @click.stop="adjustOffset(-500)" :title="t('setting.lyricOffsetDelay')">
       <n-icon size="18" :component="RemoveRound" />
     </div>
   </div>

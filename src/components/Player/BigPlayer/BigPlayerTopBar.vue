@@ -1,5 +1,5 @@
 <template>
-  <div class="icon-menu">
+  <div class="icon-menu" data-tauri-drag-region>
     <div class="menu-left">
       <div v-if="showLyricSetting" class="icon">
         <n-icon
@@ -9,6 +9,14 @@
           @click="$emit('openSettings')"
         />
       </div>
+      <template v-if="isTauriEnv">
+        <div class="icon" @click="toggleMiniPlayer" :title="$t('setting.miniPlayer')">
+          <n-icon size="26" :component="PictureInPictureAltRound" />
+        </div>
+        <div class="icon" @click="toggleDesktopLyrics" :title="$t('setting.desktopLyrics')">
+          <n-icon size="26" :component="SubtitlesRound" />
+        </div>
+      </template>
     </div>
     <div class="menu-right">
       <div class="icon">
@@ -22,8 +30,21 @@
 </template>
 
 <script setup lang="ts">
-import { KeyboardArrowDownFilled, SettingsRound } from "@vicons/material";
+import {
+  KeyboardArrowDownFilled,
+  SettingsRound,
+  PictureInPictureAltRound,
+  SubtitlesRound,
+} from "@vicons/material";
 import type { Component } from "vue";
+import { ref, onMounted } from "vue";
+import { windowManager } from "@/utils/tauri/windowManager";
+
+const isTauriEnv = ref(false);
+
+onMounted(() => {
+  isTauriEnv.value = typeof window !== "undefined" && "__TAURI__" in window;
+});
 
 defineProps<{
   showLyricSetting: boolean;
@@ -35,6 +56,31 @@ defineEmits<{
   toggleFullscreen: [];
   close: [];
 }>();
+
+const toggleMiniPlayer = async () => {
+  const state = await windowManager.getWindowState("mini-player");
+  if (state?.exists) {
+    windowManager.toggleWindow("mini-player");
+  } else {
+    windowManager.createWindow("mini-player");
+  }
+};
+
+const toggleDesktopLyrics = async () => {
+  const state = await windowManager.getWindowState("desktop-lyrics");
+  if (state?.exists) {
+    if (state.visible) {
+      // Emit unlock event — if lyrics are locked (click-through), this unlocks them.
+      // If already unlocked, it's a no-op. User closes via the lyrics window's own close button.
+      const tauri = window.__TAURI__;
+      if (tauri) await tauri.event.emit("desktop-lyrics-unlock");
+    } else {
+      windowManager.showWindow("desktop-lyrics");
+    }
+  } else {
+    windowManager.createWindow("desktop-lyrics");
+  }
+};
 </script>
 
 <style lang="scss" scoped>
@@ -90,6 +136,12 @@ defineEmits<{
           display: none;
         }
       }
+    }
+  }
+
+  .menu-left {
+    .icon + .icon {
+      margin-left: 8px;
     }
   }
 

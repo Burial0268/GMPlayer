@@ -39,9 +39,7 @@
             strong
             secondary
             v-if="
-              playListDetail &&
-              playListDetail.description &&
-              playListDetail.description.length > 70
+              playListDetail && playListDetail.description && playListDetail.description.length > 70
             "
             @click="playListDescShow = true"
           >
@@ -219,8 +217,8 @@ const hasPlaylistDescription = computed(
   () => !!playListDetail.value && !!playListDetail.value.description,
 );
 
-const playlistDescriptionHtml = computed(() =>
-  playListDetail.value?.description?.replace(/\n/g, "<br>") ?? "",
+const playlistDescriptionHtml = computed(
+  () => playListDetail.value?.description?.replace(/\n/g, "<br>") ?? "",
 );
 
 const normalizePlaylistId = (id: string | number | string[]) =>

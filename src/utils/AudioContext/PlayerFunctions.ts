@@ -723,3 +723,16 @@ export const processSpectrum = (sound: ISound | undefined): void => {
     console.log("processSpectrum called - now handled internally by NativeSound");
   }
 };
+
+/**
+ * Set page visibility state for spectrum/animation suspension.
+ * Called from Tauri main-window-visibility events (hide() doesn't trigger visibilitychange).
+ */
+export const setPageVisible = (visible: boolean): void => {
+  isPageVisible = visible;
+  if (!visible && spectrumAnimationId !== null) {
+    startBackgroundMonitor();
+  } else if (visible) {
+    stopBackgroundMonitor();
+  }
+};

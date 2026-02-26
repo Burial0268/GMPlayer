@@ -1,6 +1,6 @@
 <template>
-  <nav :class="{ 'tauri-app': isTauri }">
-    <div class="left">
+  <nav :class="{ 'tauri-app': isTauri }" :data-tauri-drag-region="isTauri || undefined">
+    <div class="left" :data-tauri-drag-region="isTauri || undefined">
       <div class="logo" @click="router.push('/')">
         <img :src="logoUrl" alt="logo" />
       </div>
@@ -11,7 +11,7 @@
         </div>
       </Transition>
     </div>
-    <div class="center">
+    <div class="center" :data-tauri-drag-region="isTauri || undefined">
       <router-link class="link" to="/" @mouseenter="onLinkEnter" @mouseleave="onLinkLeave">{{
         $t("nav.home")
       }}</router-link>
@@ -31,7 +31,7 @@
         }}</router-link>
       </n-dropdown>
     </div>
-    <div class="right">
+    <div class="right" :data-tauri-drag-region="isTauri || undefined">
       <SearchInp />
       <!-- 移动端菜单 -->
       <n-dropdown trigger="click" :options="mbMenuOptions" @select="menuSelect">
@@ -446,7 +446,7 @@ nav {
   align-items: center;
   max-width: 1400px;
   margin: 0 auto;
-  // Tauri decorum 窗口控制按钮预留空间
+  // Tauri 窗口控制按钮预留空间 (140px 视觉效果最好)
   &.tauri-app {
     padding-right: 140px;
   }

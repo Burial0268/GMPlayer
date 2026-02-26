@@ -63,13 +63,9 @@ const emit = defineEmits<{
 }>();
 
 // 计算当前播放时间
-// Fixed advance to compensate for spring animation settling delay
-const SPRING_ADVANCE_MS = 150;
 watchEffect(() => {
   currentTime.value =
-    music.persistData.playSongTime.currentTime * 1000 +
-    (setting.lyricTimeOffset ?? 0) +
-    SPRING_ADVANCE_MS;
+    music.persistData.playSongTime.currentTime * 1000 + (setting.lyricTimeOffset ?? 0);
 });
 
 // 计算对齐方式
