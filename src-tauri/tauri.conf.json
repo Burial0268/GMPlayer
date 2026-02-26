@@ -50,6 +50,7 @@
         "height": 653,
         "decorations": false,
         "resizable": true,
+        "visible": false,
         "title": "GMPlayer",
         "width": 881,
         "useHttpsScheme": true

@@ -1,11 +1,8 @@
 [package]
-name = "app"
+name = "gmplayer"
 version = "0.1.0"
-description = "A Tauri App"
+description = "Third Party Netease Cloud Music Player, based on Tauri + Vue"
 authors = ["GBCLStudio"]
-license = ""
-repository = ""
-default-run = "app"
 edition = "2021"
 rust-version = "1.80"
 
@@ -14,12 +11,39 @@ rust-version = "1.80"
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
+[profile.dev]
+incremental = true # 以较小的步骤编译您的二进制文件。
+
+[profile.release]
+codegen-units = 1 # 允许 LLVM 执行更好的优化。
+lto = true # 启用链接时优化。
+opt-level = 3 # 优先考虑小的二进制文件大小。如果您更喜欢速度，请使用 `3`。
+panic = "abort" # 通过禁用 panic 处理程序来提高性能。
+strip = true # 确保移除调试符号。
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "gmplayer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-decorum = "1.1.1"
 tauri-plugin-http = { version = "2.5.7", features = ["charset", "cookies", "http2", "macos-system-configuration", "brotli", "gzip"] }
+tauri-plugin-window-state = "2"
+parking_lot = "0.12"
+log = "0.4"
+tauri-plugin-log = "2"
+
+[target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_os = "openbsd"), not(target_os = "illumos"), not(all(target_env = "musl", target_pointer_width = "32")), not(target_arch = "riscv64")))'.dependencies]
+tikv-jemallocator = "0.6.0"
+
+[target.'cfg(windows)'.dependencies]
+rpmalloc = { version = "0.2.2", features = ["adaptive_thread_cache", "statistics"] }
 
 [features]
 # this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.

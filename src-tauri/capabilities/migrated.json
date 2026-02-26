@@ -3,7 +3,12 @@
   "description": "permissions that were migrated from v1",
   "local": true,
   "windows": [
-    "main"
+    "main",
+    "mini-player",
+    "desktop-lyrics",
+    "settings",
+    "about",
+    "tray-popup"
   ],
   "permissions": [
     "core:default",
@@ -16,6 +21,14 @@
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-show",
+    "core:window:allow-hide",
+    "core:window:allow-is-visible",
+    "core:window:allow-unminimize",
+    "core:window:allow-is-minimized",
+    "core:window:allow-create",
+    "core:event:allow-emit",
+    "core:event:allow-listen",
     "decorum:allow-show-snap-overlay",
     {
       "identifier": "http:default",
@@ -29,6 +42,7 @@
         }
       ]
     },
-    "http:default"
+    "http:default",
+    "log:default"
   ]
 }
