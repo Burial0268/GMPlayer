@@ -121,6 +121,7 @@ declare module 'vue' {
     SearchInp: typeof import('./src/components/SearchInp/index.vue')['default']
     SmallSongData: typeof import('./src/components/DataList/SmallSongData.vue')['default']
     Spectrum: typeof import('./src/components/Player/Spectrum.vue')['default']
+    TitleBar: typeof import('./src/components/TitleBar/index.vue')['default']
     VideoLists: typeof import('./src/components/DataList/VideoLists.vue')['default']
   }
 }

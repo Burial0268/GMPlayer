@@ -1,5 +1,10 @@
 <template>
-  <Provider>
+  <!-- Standalone windows (tray popup etc.) — bare router-view, no nav/player/titlebar -->
+  <template v-if="isStandaloneWindow">
+    <router-view />
+  </template>
+  <!-- Normal app layout -->
+  <Provider v-else>
     <div :class="['app-body', music.showBigPlayer ? 'bigplayer-open' : '']">
       <n-layout class="app-layout" style="height: 100vh">
         <n-layout-header bordered>
@@ -42,20 +47,25 @@
         </n-layout-content>
       </n-layout>
     </div>
+    <TitleBar />
   </Provider>
 </template>
 
 <script setup lang="ts">
 import { musicStore, userStore, settingStore, siteStore } from "@/store";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { getLoginState, refreshLogin } from "@/api/login";
 import { userDailySignin, userYunbeiSign } from "@/api/user";
 import { useI18n } from "vue-i18n";
+import { isTauri, windowManager } from "@/utils/tauri";
+import { listen } from "@tauri-apps/api/event";
+import { setPageVisible } from "@/utils/AudioContext";
 import Provider from "@/components/Provider/index.vue";
 import Nav from "@/components/Nav/index.vue";
 import Player from "@/components/Player/index.vue";
+import TitleBar from "@/components/TitleBar/index.vue";
 import packageJson from "@/../package.json";
-import { ref, watch } from "vue";
+import { ref, watch, computed, h } from "vue";
 
 const { t } = useI18n();
 const music = musicStore();
@@ -63,7 +73,30 @@ const user = userStore();
 const setting = settingStore();
 const site = siteStore();
 const router = useRouter();
+const route = useRoute();
 const mainContent = ref(null);
+
+type EmitLine = {
+  line: {
+    getLine: () => { startTime: number };
+  };
+};
+
+const emit = defineEmits<{
+  "line-click": [e: EmitLine];
+  lrcTextClick: [time: number];
+}>();
+
+// Standalone window detection (tray popup, etc.)
+const isStandaloneWindow = computed(() => !!route.meta.standalone);
+
+// 监听来自 MiniPlayer 的歌词点击事件
+listen<EmitLine>("lrcTextClick", (event) => {
+  emit("line-click", event.payload);
+});
+listen<number>("lrcTextClick", (event) => {
+  emit("lrcTextClick", event.payload);
+});
 
 // 公告数据
 const annShow = import.meta.env.VITE_ANN_TITLE && import.meta.env.VITE_ANN_CONTENT ? true : false;
@@ -158,6 +191,55 @@ const scrollToTop = () => {
   });
 };
 
+// Tauri: handle close behavior (hide-to-tray vs exit vs ask)
+const rememberClose = ref(false);
+const handleCloseRequested = () => {
+  const behavior = setting.closeBehavior;
+  if (behavior === "tray") {
+    windowManager.hideWindow("main");
+  } else if (behavior === "exit") {
+    windowManager.quitApp();
+  } else {
+    // "ask" — show dialog with "remember" checkbox
+    rememberClose.value = false;
+    $dialog.create({
+      title: t("closeDialog.title"),
+      content: () =>
+        h("div", [
+          h("p", { style: "margin: 0 0 12px 0" }, t("closeDialog.message")),
+          h(
+            "label",
+            {
+              style:
+                "display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px",
+            },
+            [
+              h("input", {
+                type: "checkbox",
+                checked: rememberClose.value,
+                onChange: (e) => {
+                  rememberClose.value = e.target.checked;
+                },
+              }),
+              t("closeDialog.remember"),
+            ],
+          ),
+        ]),
+      positiveText: t("closeDialog.hideToTray"),
+      negativeText: t("closeDialog.exit"),
+      type: "info",
+      onPositiveClick: () => {
+        if (rememberClose.value) setting.closeBehavior = "tray";
+        windowManager.hideWindow("main");
+      },
+      onNegativeClick: () => {
+        if (rememberClose.value) setting.closeBehavior = "exit";
+        windowManager.quitApp();
+      },
+    });
+  }
+};
+
 onMounted(() => {
   // 挂载方法至全局
   window.$scrollToTop = scrollToTop;
@@ -168,6 +250,11 @@ onMounted(() => {
   // 更改页面语言
   const html = document.documentElement;
   if (html) html.setAttribute("lang", setting.language);
+
+  // Tauri 环境标识
+  if (typeof window !== "undefined" && "__TAURI__" in window) {
+    document.documentElement.classList.add("tauri-app");
+  }
 
   // 公告
   if (annShow) {
@@ -225,36 +312,27 @@ onMounted(() => {
 
   // 键盘监听
   window.addEventListener("keydown", spacePlayOrPause);
+
+  // Tauri: handle main window close-requested event
+  if (isTauri()) {
+    window.__TAURI__?.event
+      .listen("main-close-requested", () => {
+        handleCloseRequested();
+      })
+      .catch(() => {});
+
+    // Suspend animations when main window is hidden (close-to-tray)
+    windowManager.onMainWindowVisibility((visible) => {
+      setPageVisible(visible);
+    });
+
+    // Show main window now that the frontend is mounted (starts hidden to avoid blank flash)
+    windowManager.showWindow("main");
+  }
 });
 </script>
 
 <style lang="scss" scoped>
-.titlebar {
-  height: 30px;
-  background: transparent;
-  user-select: none;
-  display: flex;
-  justify-content: flex-end;
-  position: fixed;
-  top: 0;
-  left: 3px;
-  right: 0;
-}
-
-.titlebar-button {
-  margin-top: -3px;
-  transform: translateX(5%);
-  display: inline-flex;
-  justify-content: center;
-  align-items: center;
-  width: 30px;
-  height: 20px;
-}
-
-.titlebar-button:hover {
-  background: #f32156;
-}
-
 .n-layout-header {
   height: 60px;
   display: flex;

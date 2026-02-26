@@ -132,6 +132,10 @@ export default defineConfig(({ mode }) => {
       minify: isTauriDebug ? false : "oxc",
       sourcemap: isTauriDebug,
       rolldownOptions: {
+        input: {
+          main: fileURLToPath(new URL("./index.html", import.meta.url)),
+          slave: fileURLToPath(new URL("./slave.html", import.meta.url)),
+        },
         output: {
           // Oxc minifier options: drop console.log in production
           ...(!isTauriDebug && {
