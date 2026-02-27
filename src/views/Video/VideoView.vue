@@ -224,9 +224,25 @@ onMounted(() => {
   });
 });
 
-onBeforeUnmount(() => {
-  // 恢复控制条
+onActivated(() => {
+  // keep-alive 复用时也需隐藏控制条
+  music.setPlayBarState(false);
+});
+
+onDeactivated(() => {
+  // keep-alive 缓存时恢复控制条，暂停视频
   music.setPlayBarState(true);
+  if (player.value) {
+    player.value.pause();
+  }
+});
+
+onBeforeUnmount(() => {
+  // 恢复控制条，销毁播放器
+  music.setPlayBarState(true);
+  if (player.value) {
+    player.value.destroy();
+  }
 });
 
 // 监听路由参数变化

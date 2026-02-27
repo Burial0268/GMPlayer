@@ -301,6 +301,20 @@ onMounted(() => {
   getQrKeyData();
 });
 
+onActivated(() => {
+  // keep-alive 复用时也需隐藏控制条
+  music.setPlayBarState(false);
+  // 重新获取二维码
+  getQrKeyData();
+});
+
+onDeactivated(() => {
+  // keep-alive 缓存时恢复控制条并清除定时器
+  music.setPlayBarState(true);
+  clearInterval(qrCheckInterval);
+  clearInterval(captchaTimeOut);
+});
+
 onBeforeUnmount(() => {
   isUnmounted = true;
   // 恢复控制条
