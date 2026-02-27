@@ -41,9 +41,9 @@
     </div>
 
     <!-- Compact mode: cover + info + controls -->
-    <div v-if="!expanded" class="compact-row">
+    <div v-if="!expanded" class="compact-row" data-tauri-drag-region>
       <img class="cover" :src="state.coverUrl || '/images/pic/default.png'" alt="cover" />
-      <div class="info">
+      <div class="info" data-tauri-drag-region>
         <div class="title text-hidden">{{ state.title || "GMPlayer" }}</div>
         <div class="subtitle text-hidden">
           <template v-if="currentLyricLine && state.isPlaying">
@@ -55,28 +55,38 @@
         </div>
       </div>
       <div class="compact-controls">
+        <button class="ctrl-btn win-action" @click="openMain" title="Open Main Window">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+            <path d="M19 19H5V5h7V3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
+          </svg>
+        </button>
+        <button class="ctrl-btn win-action" @click="toggleExpand">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+            <path d="M12 8l-6 6 1.41 1.41L12 10.83l4.59 4.58L18 14z" transform="rotate(180 12 12)" />
+          </svg>
+        </button>
+        <span class="compact-divider" />
         <button class="ctrl-btn" @click="bridge.prevTrack()">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
             <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
           </svg>
         </button>
         <button class="ctrl-btn play" @click="bridge.playPause()">
-          <svg
-            v-if="state.isPlaying"
-            viewBox="0 0 24 24"
-            width="24"
-            height="24"
-            fill="currentColor"
-          >
+          <svg v-if="state.isPlaying" viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
             <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
           </svg>
-          <svg v-else viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+          <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
         </button>
         <button class="ctrl-btn" @click="bridge.nextTrack()">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
             <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+          </svg>
+        </button>
+        <button class="ctrl-btn win-action close" @click="closeWindow">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+            <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
           </svg>
         </button>
       </div>
@@ -554,15 +564,24 @@ onUnmounted(() => {
   }
 }
 
+// Hide absolute window-controls in compact mode
+.mini-player:not(.expanded) {
+  .window-controls {
+    display: none;
+  }
+}
+
 // ── Compact row ──────────────────────────────────────────────────────
 
 .compact-row {
   display: flex;
   align-items: center;
-  padding: 12px;
+  padding: 10px;
   gap: 10px;
   height: 76px;
   box-sizing: border-box;
+  position: relative;
+  z-index: 15;
 
   .cover {
     width: 52px;
@@ -596,8 +615,30 @@ onUnmounted(() => {
   .compact-controls {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     flex-shrink: 0;
+
+    .compact-divider {
+      width: 1px;
+      height: 14px;
+      background: rgba(255, 255, 255, 0.15);
+      margin: 0 3px;
+    }
+
+    .win-action {
+      color: rgba(255, 255, 255, 0.4);
+      padding: 5px;
+
+      &:hover {
+        background: rgba(255, 255, 255, 0.1);
+        color: rgba(255, 255, 255, 0.8);
+      }
+
+      &.close:hover {
+        background: rgba(232, 65, 66, 0.8);
+        color: #fff;
+      }
+    }
   }
 }
 
@@ -671,7 +712,10 @@ onUnmounted(() => {
 
 .layer {
   position: absolute;
-  inset: 0;
+  top: 32px;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   flex-direction: column;
   transition: opacity 0.35s ease;
@@ -683,6 +727,7 @@ onUnmounted(() => {
   align-items: center;
   opacity: 1;
   pointer-events: auto;
+  overflow-y: auto;
 
   .phony-big-cover {
     width: 100%;
