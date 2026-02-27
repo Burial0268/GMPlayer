@@ -11,11 +11,12 @@
  */
 
 import { BufferedSound } from "./BufferedSound";
-import { getMusicUrl } from "@/api/song";
+import { getMusicUrl, getMusicNumUrl } from "@/api/song";
 import { getAutoMixEngine } from "./AutoMix";
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
+import { MusicLevel } from "@/api/types";
 
 // Lazy store access (called at runtime, not import time)
 const musicStore = () => useMusicDataStore();
@@ -29,6 +30,7 @@ interface PreloadedEntry {
 }
 
 const IS_DEV = import.meta.env?.DEV ?? false;
+const useUnmServerHas = !!import.meta.env.VITE_UNM_API;
 
 export class AudioPreloader {
   private _entry: PreloadedEntry | null = null;
@@ -71,7 +73,6 @@ export class AudioPreloader {
     }
 
     // Guard: VIP song with UNM enabled — UNM uses different source
-    const useUnmServerHas = !!import.meta.env.VITE_UNM_API;
     if (
       useUnmServerHas &&
       setting.useUnmServer &&
@@ -99,72 +100,121 @@ export class AudioPreloader {
 
     const level = setting.songLevel || "exhigh";
 
-    getMusicUrl(nextSong.id, level)
-      .then((res: any) => {
+    this._resolveAndPreload(nextSong, nextIndex, level, abortSignal);
+  }
+
+  /** Resolve music URL (with trial detection + UNM fallback) and create BufferedSound */
+  private async _resolveAndPreload(
+    nextSong: any,
+    nextIndex: number,
+    level: string,
+    abortSignal: AbortSignal,
+  ): Promise<void> {
+    try {
+      // Step 1: Resolve URL (with trial version detection + UNM fallback)
+      let url: string | null = null;
+
+      try {
+        const res = await getMusicUrl(nextSong.id, level as MusicLevel);
         if (abortSignal.aborted) return;
 
-        if (!res.data?.[0]?.url) {
-          if (IS_DEV) {
-            console.warn(`[AudioPreloader] No URL returned for: ${nextSong.name}`);
+        const rawUrl = res?.data?.[0]?.url;
+        if (rawUrl) {
+          url = rawUrl.replace(/^http:/, "https:");
+          // Check for trial version (jd-musicrep-ts) - needs UNM replacement
+          if (url.includes("jd-musicrep-ts") && useUnmServerHas) {
+            if (IS_DEV) {
+              console.log(`[AudioPreloader] ${nextSong.name} is trial version, trying UNM`);
+            }
+            url = null; // Force UNM fallback
           }
-          this._isPreloading = false;
-          return;
         }
-
-        const url = res.data[0].url.replace(/^http:/, "https:");
-
-        // Create BufferedSound with volume=0 (will be set to real volume on consume)
-        const sound = new BufferedSound({
-          src: [url],
-          preload: true,
-          volume: 0,
-        });
-
-        const entry: PreloadedEntry = {
-          songId: nextSong.id,
-          songIndex: nextIndex,
-          sound,
-          ready: false,
-        };
-        this._entry = entry;
-
-        // Wait for load with timeout
-        const timeoutId = setTimeout(() => {
-          if (!entry.ready && this._entry === entry) {
-            if (IS_DEV) {
-              console.warn(`[AudioPreloader] Timeout for: ${nextSong.name}`);
-            }
-            this.cleanup();
-          }
-        }, 30000);
-
-        sound.once("load", () => {
-          clearTimeout(timeoutId);
-          if (abortSignal.aborted || this._entry !== entry) return;
-          entry.ready = true;
-          this._isPreloading = false;
-          if (IS_DEV) {
-            console.log(`[AudioPreloader] Preloaded: "${nextSong.name}" (id: ${nextSong.id})`);
-          }
-        });
-
-        sound.once("loaderror", () => {
-          clearTimeout(timeoutId);
-          if (this._entry === entry) {
-            if (IS_DEV) {
-              console.warn(`[AudioPreloader] Load error for: ${nextSong.name}`);
-            }
-            this.cleanup();
-          }
-        });
-      })
-      .catch((err: any) => {
-        if (abortSignal.aborted) return;
+      } catch (err) {
         if (IS_DEV) {
-          console.warn("[AudioPreloader] getMusicUrl failed:", err);
+          console.warn(`[AudioPreloader] getMusicUrl failed for ${nextSong.name}:`, err);
+        }
+        url = null;
+      }
+
+      if (abortSignal.aborted) return;
+
+      // UNM fallback: if no URL or trial version detected
+      if (!url && useUnmServerHas) {
+        try {
+          const unmRes = await getMusicNumUrl(nextSong.id);
+          if (abortSignal.aborted) return;
+          if (unmRes?.code === 200 && unmRes?.data?.url) {
+            url = unmRes.data.url.replace(/^http:/, "https:");
+            if (IS_DEV) {
+              console.log(`[AudioPreloader] Got UNM URL for ${nextSong.name}`);
+            }
+          }
+        } catch (unmErr) {
+          if (IS_DEV) {
+            console.warn(`[AudioPreloader] UNM fallback failed for ${nextSong.name}:`, unmErr);
+          }
+        }
+      }
+
+      if (!url || abortSignal.aborted) {
+        if (IS_DEV && !url) {
+          console.warn(`[AudioPreloader] No URL resolved for: ${nextSong.name}`);
         }
         this._isPreloading = false;
+        return;
+      }
+
+      // Step 2: Create BufferedSound with volume=0 (will be set to real volume on consume)
+      const sound = new BufferedSound({
+        src: [url],
+        preload: true,
+        volume: 0,
       });
+
+      const entry: PreloadedEntry = {
+        songId: nextSong.id,
+        songIndex: nextIndex,
+        sound,
+        ready: false,
+      };
+      this._entry = entry;
+
+      // Wait for load with timeout
+      const timeoutId = setTimeout(() => {
+        if (!entry.ready && this._entry === entry) {
+          if (IS_DEV) {
+            console.warn(`[AudioPreloader] Timeout for: ${nextSong.name}`);
+          }
+          this.cleanup();
+        }
+      }, 30000);
+
+      sound.once("load", () => {
+        clearTimeout(timeoutId);
+        if (abortSignal.aborted || this._entry !== entry) return;
+        entry.ready = true;
+        this._isPreloading = false;
+        if (IS_DEV) {
+          console.log(`[AudioPreloader] Preloaded: "${nextSong.name}" (id: ${nextSong.id})`);
+        }
+      });
+
+      sound.once("loaderror", () => {
+        clearTimeout(timeoutId);
+        if (this._entry === entry) {
+          if (IS_DEV) {
+            console.warn(`[AudioPreloader] Load error for: ${nextSong.name}`);
+          }
+          this.cleanup();
+        }
+      });
+    } catch (err) {
+      if (abortSignal.aborted) return;
+      if (IS_DEV) {
+        console.warn("[AudioPreloader] _resolveAndPreload failed:", err);
+      }
+      this._isPreloading = false;
+    }
   }
 
   /** Consume the preloaded BufferedSound if it matches songId. Returns null otherwise. */

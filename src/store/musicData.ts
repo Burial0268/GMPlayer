@@ -4,7 +4,7 @@ import { getSongTime, getSongPlayingTime } from "@/utils/timeTools";
 import { getPersonalFm, setFmTrash } from "@/api/home";
 import { getLikelist, setLikeSong } from "@/api/user";
 import { getPlayListCatlist } from "@/api/playlist";
-import { getMusicUrl, getMusicNumUrl } from "@/api/song";
+import { getMusicUrl } from "@/api/song";
 import { userStore, settingStore } from "@/store";
 import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
@@ -292,46 +292,9 @@ const useMusicDataStore = defineStore("musicData", {
         getMusicUrl(songData.id)
           .then((res: any) => {
             const url = res.data[0]?.url?.replace(/^http:/, "https:");
-            // 检测是否为无版权/灰化歌曲（无URL）或试听版本（jd-musicrep-ts）
-            if (!url || url.includes("jd-musicrep-ts")) {
-              if (!url) {
-                console.log(`${songData.name} 无版权，尝试通过 UNM 解灰`);
-              } else {
-                console.log(`${songData.name} 是试听版，尝试通过 UNM 获取完整版`);
-              }
-              // 触发 UNM 逻辑
-              return getMusicNumUrl(songData.id)
-                .then((unmRes: any) => {
-                  if (unmRes.data?.url) {
-                    return {
-                      id: songData.id,
-                      name: songData.name,
-                      url: unmRes.data.url.replace(/^http:/, "https:"),
-                    };
-                  }
-                  // UNM 失败则降级
-                  if (!url) {
-                    console.warn(`${songData.name} UNM 解灰失败，跳过预加载`);
-                    return null;
-                  }
-                  console.warn(`${songData.name} UNM 获取失败，使用试听版`);
-                  return {
-                    id: songData.id,
-                    name: songData.name,
-                    url,
-                  };
-                })
-                .catch((unmErr: any) => {
-                  console.warn(`${songData.name} UNM 请求失败:`, unmErr);
-                  if (!url) {
-                    return null;
-                  }
-                  return {
-                    id: songData.id,
-                    name: songData.name,
-                    url,
-                  };
-                });
+            if (!url) {
+              console.warn(`${songData.name} 无法获取 URL，跳过预加载`);
+              return null;
             }
             return {
               id: songData.id,
