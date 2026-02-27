@@ -224,6 +224,11 @@
       .is-playing .icon-pause {
         display: block;
       }
+
+      /* Like state */
+      .ctrl-btn.liked {
+        color: #ff4081;
+      }
     </style>
   </head>
   <body oncontextmenu="return false;">
@@ -241,6 +246,14 @@
 
       <!-- Media controls -->
       <div class="controls">
+        <button class="ctrl-btn" id="btn-like">
+          <svg id="like-icon" viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path
+              id="like-path"
+              d="M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z"
+            />
+          </svg>
+        </button>
         <button class="ctrl-btn" id="btn-prev">
           <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
             <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
@@ -259,21 +272,20 @@
             <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
           </svg>
         </button>
+        <button class="ctrl-btn" id="btn-mode">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+            <path
+              id="mode-path"
+              d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"
+            />
+          </svg>
+        </button>
       </div>
 
       <div class="divider"></div>
 
       <!-- Menu items -->
       <div class="menu-section">
-        <div class="menu-item" id="item-mode">
-          <svg class="mi-icon" id="mode-icon" viewBox="0 0 24 24" fill="currentColor">
-            <path
-              id="mode-path"
-              d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"
-            />
-          </svg>
-          <span id="mode-label"></span>
-        </div>
         <div class="menu-item" id="item-main">
           <svg class="mi-icon" viewBox="0 0 24 24" fill="currentColor">
             <path
@@ -281,6 +293,14 @@
             />
           </svg>
           <span id="label-main"></span>
+        </div>
+        <div class="menu-item" id="item-mini">
+          <svg class="mi-icon" viewBox="0 0 24 24" fill="currentColor">
+            <path
+              d="M19 11h-8v6h8v-6zm4 8V4.98C23 3.88 22.1 3 21 3H3c-1.1 0-2 .88-2 1.98V19c0 1.1.9 2 2 2h18c1.1 0 2-.9 2-2zm-2 .02H3V4.97h18v14.05z"
+            />
+          </svg>
+          <span id="label-mini"></span>
         </div>
         <div class="menu-item" id="item-lyrics">
           <svg class="mi-icon" viewBox="0 0 24 24" fill="currentColor">
@@ -332,7 +352,9 @@
         var btnPrev = document.getElementById("btn-prev");
         var btnNext = document.getElementById("btn-next");
         var modePathEl = document.getElementById("mode-path");
-        var modeLabelEl = document.getElementById("mode-label");
+        var btnLike = document.getElementById("btn-like");
+        var likePathEl = document.getElementById("like-path");
+        var btnMode = document.getElementById("btn-mode");
 
         // Platform detection — native window effects on Windows & macOS
         var ua = navigator.userAgent;
@@ -348,7 +370,10 @@
             normal: "列表循环",
             random: "随机播放",
             single: "单曲循环",
+            like: "喜欢歌曲",
+            unlike: "取消喜欢",
             openMain: "打开主窗口",
+            miniPlayer: "迷你播放器",
             lyrics: "桌面歌词",
             settings: "设置",
             quit: "退出",
@@ -357,7 +382,10 @@
             normal: "List Loop",
             random: "Shuffle",
             single: "Single Loop",
+            like: "Like Song",
+            unlike: "Unlike",
             openMain: "Main Window",
+            miniPlayer: "Mini Player",
             lyrics: "Desktop Lyrics",
             settings: "Settings",
             quit: "Quit",
@@ -367,10 +395,18 @@
 
         // Set static labels
         document.getElementById("label-main").textContent = t.openMain;
+        document.getElementById("label-mini").textContent = t.miniPlayer;
         document.getElementById("label-lyrics").textContent = t.lyrics;
         document.getElementById("label-settings").textContent = t.settings;
         document.getElementById("label-quit").textContent = t.quit;
-        modeLabelEl.textContent = t.normal;
+
+        // Like icon SVG paths
+        var likeIcons = {
+          liked:
+            "M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z",
+          unliked:
+            "M16.5 3c-1.74 0-3.41.81-4.5 2.09C10.91 3.81 9.24 3 7.5 3 4.42 3 2 5.42 2 8.5c0 3.78 3.4 6.86 8.55 11.54L12 21.35l1.45-1.32C18.6 15.36 22 12.28 22 8.5 22 5.42 19.58 3 16.5 3zm-4.4 15.55l-.1.1-.1-.1C7.14 14.24 4 11.39 4 8.5 4 6.5 5.5 5 7.5 5c1.54 0 3.04.99 3.57 2.36h1.87C13.46 5.99 14.96 5 16.5 5c2 0 3.5 1.5 3.5 3.5 0 2.89-3.14 5.74-7.9 10.05z",
+        };
 
         // Play mode icon SVG paths
         var modeIcons = {
@@ -401,7 +437,17 @@
           // Update play mode display
           if (state.playMode && modeIcons[state.playMode]) {
             modePathEl.setAttribute("d", modeIcons[state.playMode]);
-            modeLabelEl.textContent = t[state.playMode] || t.normal;
+          }
+
+          // Update like state
+          if (typeof state.isLiked === "boolean") {
+            if (state.isLiked) {
+              btnLike.classList.add("liked");
+              likePathEl.setAttribute("d", likeIcons.liked);
+            } else {
+              btnLike.classList.remove("liked");
+              likePathEl.setAttribute("d", likeIcons.unliked);
+            }
           }
 
           // CSS fallback: accent color tint when no native effect
@@ -440,14 +486,24 @@
           if (tc) tc.event.emit("tray-next-track", null);
         });
 
-        // Menu items
-        document.getElementById("item-mode").addEventListener("click", function () {
+        // Control buttons
+        btnLike.addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.event.emit("tray-like-song", null);
+        });
+        btnMode.addEventListener("click", function () {
           var tc = getTauri();
           if (tc) tc.event.emit("tray-cycle-play-mode", null);
         });
+
+        // Menu items
         document.getElementById("item-main").addEventListener("click", function () {
           var tc = getTauri();
           if (tc) tc.core.invoke("show_window", { label: "main" });
+        });
+        document.getElementById("item-mini").addEventListener("click", function () {
+          var tc = getTauri();
+          if (tc) tc.core.invoke("create_window", { label: "mini-player" });
         });
         document.getElementById("item-lyrics").addEventListener("click", function () {
           var tc = getTauri();

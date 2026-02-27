@@ -58,7 +58,7 @@ import { getLoginState, refreshLogin } from "@/api/login";
 import { userDailySignin, userYunbeiSign } from "@/api/user";
 import { useI18n } from "vue-i18n";
 import { isTauri, windowManager } from "@/utils/tauri";
-import { listen } from "@tauri-apps/api/event";
+
 import { setPageVisible } from "@/utils/AudioContext";
 import Provider from "@/components/Provider/index.vue";
 import Nav from "@/components/Nav/index.vue";
@@ -76,27 +76,8 @@ const router = useRouter();
 const route = useRoute();
 const mainContent = ref(null);
 
-type EmitLine = {
-  line: {
-    getLine: () => { startTime: number };
-  };
-};
-
-const emit = defineEmits<{
-  "line-click": [e: EmitLine];
-  lrcTextClick: [time: number];
-}>();
-
 // Standalone window detection (tray popup, etc.)
 const isStandaloneWindow = computed(() => !!route.meta.standalone);
-
-// 监听来自 MiniPlayer 的歌词点击事件
-listen<EmitLine>("lrcTextClick", (event) => {
-  emit("line-click", event.payload);
-});
-listen<number>("lrcTextClick", (event) => {
-  emit("lrcTextClick", event.payload);
-});
 
 // 公告数据
 const annShow = import.meta.env.VITE_ANN_TITLE && import.meta.env.VITE_ANN_CONTENT ? true : false;

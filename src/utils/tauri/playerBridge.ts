@@ -206,6 +206,10 @@ export function usePlayerBridge() {
     getTauri()?.event.emit("slave-cycle-play-mode", null);
   }
 
+  function toggleLike(): void {
+    getTauri()?.event.emit("slave-like-song", null);
+  }
+
   // ── Auto-connect lifecycle ──────────────────────────────────────────
 
   onMounted(() => {
@@ -231,6 +235,7 @@ export function usePlayerBridge() {
     seek,
     setVolume,
     cyclePlayMode,
+    toggleLike,
 
     // Lifecycle
     connect,

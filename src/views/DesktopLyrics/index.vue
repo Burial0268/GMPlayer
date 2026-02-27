@@ -89,6 +89,7 @@
         :line-pos-y-spring-params="bridge.settings.springParams.posY"
         :line-scale-spring-params="bridge.settings.springParams.scale"
         :enable-interlude-dots="true"
+        @line-click="handleLineClick"
         :style="lyricStyles"
         :key="playerKey"
         ref="amllPlayerRef"
@@ -232,6 +233,15 @@ watch(
     amllPlayerRef.value?.lyricPlayer.value?.update();
   },
 );
+
+// ── Lyric Click → Seek ──────────────────────────────────────────────
+
+const handleLineClick = (evt: any) => {
+  const targetTime = evt.line.getLine().startTime;
+  amllPlayerRef.value?.lyricPlayer.value?.setCurrentTime(targetTime, true);
+  amllPlayerRef.value?.lyricPlayer.value?.update();
+  bridge.seek(targetTime / 1000);
+};
 
 // ── Mouse Events ────────────────────────────────────────────────────
 

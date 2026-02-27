@@ -766,6 +766,15 @@ const setupTrayListeners = async () => {
     broadcastPlayerState();
   });
 
+  // Listen for like song from tray
+  await tauri.event.listen("tray-like-song", async () => {
+    const songData = music.getPlaySongData;
+    if (songData) {
+      await music.changeLikeList(songData.id, !music.getSongIsLike(songData.id));
+      broadcastPlayerState();
+    }
+  });
+
   // ── Slave window command listeners ──────────────────────────────────
 
   await tauri.event.listen("slave-play-pause", () => {
@@ -797,6 +806,15 @@ const setupTrayListeners = async () => {
   await tauri.event.listen("slave-cycle-play-mode", () => {
     music.setPlaySongMode();
     broadcastPlayerState();
+  });
+
+  // Listen for like song from slave windows
+  await tauri.event.listen("slave-like-song", async () => {
+    const songData = music.getPlaySongData;
+    if (songData) {
+      await music.changeLikeList(songData.id, !music.getSongIsLike(songData.id));
+      broadcastPlayerState();
+    }
   });
 
   // Slave window opened — push full state snapshot
