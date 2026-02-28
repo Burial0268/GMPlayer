@@ -184,6 +184,7 @@ export const listenTogether = {
       method: "POST",
       url: "/listentogether/sync/playlist/get",
       data: { roomId },
+      hiddenBar: true,
     }),
 
   /**
@@ -200,6 +201,7 @@ export const listenTogether = {
       method: "POST",
       url: "/listentogether/play/command",
       data: params,
+      hiddenBar: true,
     }),
 
   /**
@@ -213,6 +215,7 @@ export const listenTogether = {
       method: "POST",
       url: "/listentogether/sync/list/command",
       data: params,
+      hiddenBar: true,
     }),
 
   /**
@@ -227,6 +230,7 @@ export const listenTogether = {
       method: "GET",
       url: "/listentogether/status",
       params: { timestamp: Date.now() },
+      hiddenBar: true,
     }),
 
   /**
