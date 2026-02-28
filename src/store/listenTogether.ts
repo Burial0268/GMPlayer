@@ -121,8 +121,8 @@ const useListenTogetherStore = defineStore("listenTogether", {
      * 分享链接
      */
     shareLink: (state): string => {
-      const musicData = useMusicDataStore();
       if (!state.roomInfo) return "";
+      const musicData = useMusicDataStore();
       return `https://st.music.163.com/listen-together/share/index.html?roomId=${state.roomInfo.roomId}&inviterId=${state.roomInfo.creatorId}&songId=${musicData.getPlaySongData.id}`;
     },
   },
