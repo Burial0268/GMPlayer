@@ -107,11 +107,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
      */
     hostInfo: (state): RoomUser | null => {
       if (!state.roomInfo) return null;
-      return (
-        state.roomInfo.roomUsers.find(
-          (u) => u.userId === state.roomInfo!.creatorId
-        ) ?? null
-      );
+      return state.roomInfo.roomUsers.find((u) => u.userId === state.roomInfo!.creatorId) ?? null;
     },
 
     /**
@@ -161,7 +157,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
           this.lastSyncedSongId = currentSong.id;
           // 初始化在线用户列表（排除房主自身）
           this.users = res.data.roomInfo.roomUsers.filter(
-            (u) => u.userId !== res.data!.roomInfo.creatorId
+            (u) => u.userId !== res.data!.roomInfo.creatorId,
           );
 
           // 创建后立即 checkRoom，与参考实现保持一致
@@ -261,9 +257,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
         }
 
         $message.success(
-          this.role === "host"
-            ? "listenTogether.closeSuccess"
-            : "listenTogether.leaveSuccess"
+          this.role === "host" ? "listenTogether.closeSuccess" : "listenTogether.leaveSuccess",
         );
       } catch (error) {
         console.error("Leave room error:", error);
@@ -277,7 +271,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
      */
     async sendPlayCommand(
       commandType: "PLAY" | "PAUSE" | "GOTO" | "seek",
-      progress?: number
+      progress?: number,
     ): Promise<boolean> {
       if (!this.isHost || !this.roomInfo) return false;
 
@@ -302,9 +296,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
 
         // formerSongId：GOTO（切歌）时传上一首歌的 ID，其他命令传 "-1"
         const formerSongId =
-          commandType === "GOTO" && this.lastSyncedSongId
-            ? this.lastSyncedSongId.toString()
-            : "-1";
+          commandType === "GOTO" && this.lastSyncedSongId ? this.lastSyncedSongId.toString() : "-1";
 
         const res = await listenTogether.sendPlayCommand({
           roomId: this.roomInfo.roomId,

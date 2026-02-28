@@ -34,6 +34,7 @@ interface LanguageTexts {
   addSongToNext: string;
   removeSong: string;
   songLoadError?: string;
+  noSong?: string;
   songPlayError?: string;
   songLoadTest?: string;
   songNotDetails: string;
@@ -78,6 +79,7 @@ const languageData: LanguageData = {
     addSongToNext: "已添加至下一曲播放",
     removeSong: "已从播放列表中移除",
     songLoadError: "音乐数据获取失败",
+    noSong: "未找到歌曲",
     songPlayError: "歌曲播放失败",
     songLoadTest: "歌曲重试次数过多，请刷新后重试",
     songNotDetails: "歌曲详细信息获取失败，可尝试歌曲匹配",
@@ -110,6 +112,7 @@ const languageData: LanguageData = {
     normal: "list loop",
     playError: "Playback error, please refresh and try again",
     addSongToNext: "has been added to the next song to play",
+    noSong: "No song was found",
     removeSong: "has been removed from the playlist",
     songNotDetails: "Song details failed to get, try song match",
   },

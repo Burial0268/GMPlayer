@@ -26,7 +26,7 @@ export type PlaylistCommandType = "ADD" | "DEL" | "REPLACE" | "MOVE";
  */
 export interface RoomUser {
   userId: number;
-  nickname: string;             // 实际返回字段为 nickname，非 nickName
+  nickname: string; // 实际返回字段为 nickname，非 nickName
   avatarUrl: string;
   outerId: string | null;
   identityIcon: string | null;

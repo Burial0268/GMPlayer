@@ -9,14 +9,6 @@
           @click="$emit('openSettings')"
         />
       </div>
-      <template v-if="isTauriEnv">
-        <div class="icon" @click="toggleMiniPlayer" :title="$t('setting.miniPlayer')">
-          <n-icon size="26" :component="PictureInPictureAltRound" />
-        </div>
-        <div class="icon" @click="toggleDesktopLyrics" :title="$t('setting.desktopLyrics')">
-          <n-icon size="26" :component="SubtitlesRound" />
-        </div>
-      </template>
     </div>
     <div class="menu-right">
       <div class="icon">
@@ -56,31 +48,6 @@ defineEmits<{
   toggleFullscreen: [];
   close: [];
 }>();
-
-const toggleMiniPlayer = async () => {
-  const state = await windowManager.getWindowState("mini-player");
-  if (state?.exists) {
-    windowManager.toggleWindow("mini-player");
-  } else {
-    windowManager.createWindow("mini-player");
-  }
-};
-
-const toggleDesktopLyrics = async () => {
-  const state = await windowManager.getWindowState("desktop-lyrics");
-  if (state?.exists) {
-    if (state.visible) {
-      // Emit unlock event — if lyrics are locked (click-through), this unlocks them.
-      // If already unlocked, it's a no-op. User closes via the lyrics window's own close button.
-      const tauri = window.__TAURI__;
-      if (tauri) await tauri.event.emit("desktop-lyrics-unlock");
-    } else {
-      windowManager.showWindow("desktop-lyrics");
-    }
-  } else {
-    windowManager.createWindow("desktop-lyrics");
-  }
-};
 </script>
 
 <style lang="scss" scoped>

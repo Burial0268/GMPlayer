@@ -35,6 +35,7 @@ export interface WindowConfig {
   closeableToTray?: boolean;
   useOverlayTitlebar?: boolean;
   trafficLightsInset?: [number, number];
+  parentLabel?: string;
 }
 
 /**

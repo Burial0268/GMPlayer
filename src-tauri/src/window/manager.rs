@@ -60,6 +60,15 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
         builder = builder.center();
     }
 
+    // Handle parent window relationship for child windows
+    if let Some(ref parent_label) = config.parent_label {
+        if let Some(parent_window) = app.get_webview_window(parent_label) {
+            builder = builder.parent(&parent_window).map_err(|e| e.to_string())?;
+        } else {
+            return Err(format!("Parent window '{}' not found for '{}'", parent_label, label));
+        }
+    }
+
     let _window = builder.build().map_err(|e| e.to_string())?;
 
     // Apply native window effects (acrylic, mica, etc.) if configured.
@@ -230,6 +239,16 @@ pub fn resize_window(app: &AppHandle, label: &str, width: f64, height: f64) -> R
         .ok_or_else(|| format!("Window '{}' not found", label))?;
     window
         .set_size(LogicalSize::new(width, height))
+        .map_err(|e| e.to_string())
+}
+
+/// Set window position to specific physical coordinates.
+pub fn set_window_position(app: &AppHandle, label: &str, x: i32, y: i32) -> Result<(), String> {
+    let window = app
+        .get_webview_window(label)
+        .ok_or_else(|| format!("Window '{}' not found", label))?;
+    window
+        .set_position(PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())
 }
 

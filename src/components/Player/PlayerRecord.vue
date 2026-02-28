@@ -52,6 +52,15 @@
                 : music.changeLikeList(music.getPlaySongData.id, true))
             "
           />
+          <n-dropdown
+            v-if="music.getPlaySongData && moreOptions.length"
+            :options="moreOptions"
+            trigger="click"
+            placement="bottom-end"
+            @select="handleMoreSelect"
+          >
+            <n-icon class="more-button" size="24" :component="MoreHorizRound" />
+          </n-dropdown>
         </div>
       </div>
       <div class="progress-bar">
@@ -139,9 +148,12 @@ import {
   VolumeOffRound,
   VolumeUpRound,
   MessageRound,
+  MoreHorizRound,
+  PictureInPictureAltRound,
+  SubtitlesRound,
 } from "@vicons/material";
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
-import { computed } from "vue";
+import { computed, h, ref } from "vue";
 import IconForward from "./icons/IconForward.vue";
 import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
@@ -151,11 +163,63 @@ import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
 import BouncingSlider from "./BouncingSlider.vue";
+import { NIcon } from "naive-ui";
+import { useI18n } from "vue-i18n";
+import { windowManager } from "@/utils/tauri/windowManager";
 
 const router = useRouter();
 const music = musicStore();
 const user = userStore();
 const { persistData } = storeToRefs(music);
+const { t } = useI18n();
+const isTauriEnv = ref(typeof window !== "undefined" && "__TAURI__" in window);
+
+// MiniPlayer / DesktopLyrics 切换
+const toggleMiniPlayer = async () => {
+  const state = await windowManager.getWindowState("mini-player");
+  if (state?.exists) {
+    windowManager.toggleWindow("mini-player");
+  } else {
+    windowManager.createWindow("mini-player");
+  }
+};
+
+const toggleDesktopLyrics = async () => {
+  const state = await windowManager.getWindowState("desktop-lyrics");
+  if (state?.exists) {
+    if (state.visible) {
+      const tauri = window.__TAURI__;
+      if (tauri) await tauri.event.emit("desktop-lyrics-unlock");
+    } else {
+      windowManager.showWindow("desktop-lyrics");
+    }
+  } else {
+    windowManager.createWindow("desktop-lyrics");
+  }
+};
+
+// 更多菜单
+const renderIcon = (icon) => () => h(NIcon, { size: 18 }, { default: () => h(icon) });
+
+const moreOptions = computed(() => {
+  const options = [];
+  if (isTauriEnv.value) {
+    options.push(
+      {
+        label: t("setting.miniPlayer"),
+        key: "miniPlayer",
+        icon: renderIcon(PictureInPictureAltRound),
+      },
+      { label: t("setting.desktopLyrics"), key: "desktopLyrics", icon: renderIcon(SubtitlesRound) },
+    );
+  }
+  return options;
+});
+
+const handleMoreSelect = (key) => {
+  if (key === "miniPlayer") toggleMiniPlayer();
+  else if (key === "desktopLyrics") toggleDesktopLyrics();
+};
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {
@@ -350,11 +414,21 @@ const goToComment = () => {
       .action-row {
         display: flex;
         align-items: center;
+        gap: 0.5rem;
         .like-button {
           font-size: 1.75rem;
           cursor: pointer;
           opacity: 0.7;
           transition: opacity 0.2s ease;
+        }
+        .more-button {
+          font-size: 1.75rem;
+          cursor: pointer;
+          opacity: 0.7;
+          transition: opacity 0.2s ease;
+          &:hover {
+            opacity: 1;
+          }
         }
       }
     }

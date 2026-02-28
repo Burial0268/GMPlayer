@@ -210,6 +210,10 @@ export function usePlayerBridge() {
     getTauri()?.event.emit("slave-like-song", null);
   }
 
+  function setLyricsFontSize(size: number): void {
+    getTauri()?.event.emit("slave-set-lyrics-font-size", { size });
+  }
+
   // ── Auto-connect lifecycle ──────────────────────────────────────────
 
   onMounted(() => {
@@ -236,6 +240,7 @@ export function usePlayerBridge() {
     setVolume,
     cyclePlayMode,
     toggleLike,
+    setLyricsFontSize,
 
     // Lifecycle
     connect,

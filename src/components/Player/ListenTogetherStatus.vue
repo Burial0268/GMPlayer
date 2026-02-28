@@ -6,7 +6,9 @@
           <n-icon size="22" :component="PeopleOutline" />
         </n-badge>
         <span v-if="!isMobile" class="status-text">
-          {{ listenTogether.isHost ? t("other.listenTogether.host") : t("other.listenTogether.guest") }}
+          {{
+            listenTogether.isHost ? t("other.listenTogether.host") : t("other.listenTogether.guest")
+          }}
         </span>
       </div>
     </template>

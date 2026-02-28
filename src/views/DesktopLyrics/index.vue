@@ -1,111 +1,176 @@
 <template>
   <div
-    class="desktop-lyrics"
-    :class="{ locked: isLocked, 'has-lyrics': hasLyrics }"
+    class="desktop-lyric"
+    :class="{ locked: isLocked, hovering: isHovering && !isLocked }"
+    :data-tauri-drag-region="!isLocked || undefined"
+    @mousemove="onMouseMove"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
     @contextmenu.prevent
   >
-    <!-- Drag handle (left side) -->
-    <div v-if="!isLocked" class="drag-handle" data-tauri-drag-region title="Drag to move">
-      <div class="drag-dots">
-        <span></span>
-        <span></span>
-        <span></span>
-      </div>
-    </div>
-
-    <!-- Hover controls -->
-    <Transition name="controls-fade">
-      <div v-if="showControls" class="controls-bar">
-        <button
-          class="ctrl-btn"
-          :class="{ active: isLocked }"
-          @click="toggleLock"
-          :title="isLocked ? $t('desktopLyrics.unlock') : $t('desktopLyrics.lock')"
-        >
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-            <path
-              v-if="isLocked"
-              d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
-            />
-            <path
-              v-else
-              d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z"
-            />
-          </svg>
-        </button>
-        <div class="ctrl-divider"></div>
-        <button class="ctrl-btn" @click="decreaseFontSize" :title="$t('desktopLyrics.smaller')">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-            <path d="M19 13H5v-2h14v2z" />
-          </svg>
-        </button>
-        <span class="font-size-indicator">{{ localFontSize }}</span>
-        <button class="ctrl-btn" @click="increaseFontSize" :title="$t('desktopLyrics.larger')">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-            <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-          </svg>
-        </button>
-        <div class="ctrl-divider"></div>
-        <button class="ctrl-btn close" @click="closeWindow" :title="$t('desktopLyrics.close')">
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-            <path
-              d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
-            />
-          </svg>
-        </button>
-      </div>
-    </Transition>
-
-    <!-- Lock indicator -->
-    <Transition name="lock-indicator-fade">
-      <div v-if="isLocked && showLockIndicator" class="lock-indicator">
-        <svg viewBox="0 0 24 24" width="12" height="12" fill="currentColor">
-          <path
-            d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1 1.71 0 3.1 1.39 3.1 3.1v2z"
-          />
-        </svg>
-        <span>{{ $t("desktopLyrics.locked") }}</span>
-      </div>
-    </Transition>
-
-    <!-- Content container -->
-    <div class="content-wrapper">
-      <!-- AMLL Lyric Player -->
-      <LyricPlayer
-        v-if="hasLyrics"
-        class="amll-lyric-player"
-        :lyric-lines="amllLines"
-        :current-time="adjustedTime"
-        :playing="state.isPlaying"
-        :enable-blur="false"
-        :enable-spring="bridge.settings.showYrcAnimation"
-        :enable-scale="bridge.settings.showYrcAnimation"
-        :word-fade-width="0.5"
-        align-anchor="center"
-        :align-position="0.5"
-        :line-pos-x-spring-params="bridge.settings.springParams.posX"
-        :line-pos-y-spring-params="bridge.settings.springParams.posY"
-        :line-scale-spring-params="bridge.settings.springParams.scale"
-        :enable-interlude-dots="true"
-        @line-click="handleLineClick"
-        :style="lyricStyles"
-        :key="playerKey"
-        ref="amllPlayerRef"
-      />
-      <div v-else class="no-lyrics">
-        <div class="no-lyrics-content">
-          <div class="music-icon">
-            <svg viewBox="0 0 24 24" width="32" height="32" fill="currentColor">
+    <!-- Header bar -->
+    <Transition name="header-fade">
+      <div
+        v-if="showHeader"
+        class="header"
+        :data-tauri-drag-region="!isLocked || undefined"
+        @mouseenter="isHeaderHovering = true"
+        @mouseleave="onHeaderLeave"
+      >
+        <template v-if="!isLocked">
+          <div class="header-left">
+            <span class="song-name" :title="state.title" :data-tauri-drag-region="!isLocked || undefined">
+              {{ state.title || $t("desktopLyrics.noLyrics") }}
+            </span>
+          </div>
+          <div class="header-center">
+            <button
+              class="ctrl-btn"
+              @pointerdown.stop
+              @click="bridge.prevTrack()"
+              :title="$t('desktopLyrics.prev')"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+              </svg>
+            </button>
+            <button
+              class="ctrl-btn play-btn"
+              @pointerdown.stop
+              @click="bridge.playPause()"
+              :title="$t('desktopLyrics.playPause')"
+            >
+              <svg
+                v-if="state.isPlaying"
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                fill="currentColor"
+              >
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </button>
+            <button
+              class="ctrl-btn"
+              @pointerdown.stop
+              @click="bridge.nextTrack()"
+              :title="$t('desktopLyrics.next')"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+              </svg>
+            </button>
+          </div>
+          <div class="header-right">
+            <button
+              class="ctrl-btn font-btn"
+              @pointerdown.stop
+              @click="decreaseFontSize"
+              :title="$t('desktopLyrics.smaller')"
+            >
+              A<span class="font-sign">-</span>
+            </button>
+            <button
+              class="ctrl-btn font-btn"
+              @pointerdown.stop
+              @click="increaseFontSize"
+              :title="$t('desktopLyrics.larger')"
+            >
+              A<span class="font-sign">+</span>
+            </button>
+            <button
+              class="ctrl-btn"
+              @pointerdown.stop
+              @click="toggleLock"
+              :title="$t('desktopLyrics.lock')"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <path
+                  d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"
+                />
+              </svg>
+            </button>
+            <button
+              class="ctrl-btn"
+              @pointerdown.stop
+              @click="handleClose"
+              :title="$t('desktopLyrics.close')"
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                <path
+                  d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+                />
+              </svg>
+            </button>
+          </div>
+        </template>
+        <template v-else>
+          <!-- Locked mode: show unlock button -->
+          <div class="header-center locked-header">
+            <svg
+              viewBox="0 0 24 24"
+              width="14"
+              height="14"
+              fill="currentColor"
+              style="opacity: 0.7"
+            >
               <path
-                d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"
+                d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"
               />
             </svg>
+            <span class="locked-label">{{ $t("desktopLyrics.locked") }}</span>
+            <button class="ctrl-btn unlock-btn" @click="handleUnlock">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+                <path
+                  d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z"
+                />
+              </svg>
+              {{ $t("desktopLyrics.unlock") }}
+            </button>
           </div>
-          <span class="song-title">{{ state.title || $t("desktopLyrics.noLyrics") }}</span>
-          <span v-if="state.artist" class="artist-name">{{ state.artist }}</span>
+        </template>
+      </div>
+    </Transition>
+
+    <!-- Lyric content -->
+    <div class="lyric-area">
+      <TransitionGroup v-if="hasLyrics" name="lyric-slide" tag="div" class="lyric-container">
+        <div
+          v-for="line in visibleLines"
+          :key="line.key"
+          class="lyric-line"
+          :class="{ current: line.isCurrent }"
+          @click="seekToLine(line)"
+        >
+          <div class="lyric-inner" :style="lyricTextStyle">
+            <template v-if="line.isCurrent && line.words.length > 1">
+              <span
+                v-for="(word, wi) in line.words"
+                :key="wi"
+                class="lyric-word"
+                :style="getWordStyle(word)"
+                >{{ word.word }}</span
+              >
+            </template>
+            <span v-else class="lyric-text" :class="{ current: line.isCurrent }">{{
+              line.text
+            }}</span>
+          </div>
+          <div
+            v-if="line.translatedLyric && bridge.settings.showTransl"
+            class="lyric-tran"
+            :style="tranStyle"
+          >
+            {{ line.translatedLyric }}
+          </div>
         </div>
+      </TransitionGroup>
+      <div v-else class="no-lyrics" :style="lyricTextStyle">
+        <span class="song-title">{{ state.title || $t("desktopLyrics.noLyrics") }}</span>
+        <span v-if="state.artist" class="artist-name">{{ state.artist }}</span>
       </div>
     </div>
   </div>
@@ -115,226 +180,380 @@
 import { ref, computed, watch, shallowRef, onMounted, onUnmounted } from "vue";
 import { usePlayerBridge } from "@/utils/tauri/playerBridge";
 import { windowManager } from "@/utils/tauri/windowManager";
-import { LyricPlayer, LyricPlayerRef } from "@applemusic-like-lyrics/vue";
-import type { AMLLLine } from "@/utils/LyricsProcessor";
-import "@applemusic-like-lyrics/core/style.css";
+import type { AMLLLine, AMLLWord } from "@/utils/LyricsProcessor";
 
 const bridge = usePlayerBridge();
 const { state } = bridge;
 
-const playerKey = ref(Symbol());
-const amllPlayerRef = ref<LyricPlayerRef>();
-const showControls = ref(false);
-const isLocked = ref(false);
-const showLockIndicator = ref(false);
-const localFontSize = ref(46);
+// ── Lyric Data ────────────────────────────────────────────────────────
+
 const amllLines = shallowRef<AMLLLine[]>([]);
-let lockIndicatorTimer: ReturnType<typeof setTimeout> | null = null;
+const songGeneration = ref(0);
 
-// ── Cursor Polling State ────────────────────────────────────────────
-// When locked (click-through), the window ignores all cursor events, so
-// browser mouseenter never fires. We poll the screen cursor position from
-// Rust and temporarily lift ignore_cursor_events when the cursor is over
-// the window — allowing native hover to take over. On mouseleave we
-// re-enable click-through and restart the poll.
+const hasLyrics = computed(() => amllLines.value && amllLines.value.length > 0);
 
-let cursorPollTimer: ReturnType<typeof setInterval> | null = null;
-const CURSOR_POLL_INTERVAL = 100; // ms
-
-async function isCursorInWindow(): Promise<boolean> {
-  try {
-    const [cursor, bounds] = await Promise.all([
-      windowManager.getCursorPosition(),
-      windowManager.getWindowBounds("desktop-lyrics"),
-    ]);
-    if (!cursor || !bounds) return false;
-    const [cx, cy] = cursor;
-    const [wx, wy, ww, wh] = bounds;
-    return cx >= wx && cx <= wx + ww && cy >= wy && cy <= wy + wh;
-  } catch {
-    return false;
-  }
-}
-
-function startCursorPolling() {
-  stopCursorPolling();
-  cursorPollTimer = setInterval(async () => {
-    if (await isCursorInWindow()) {
-      // Cursor entered — temporarily lift click-through so browser hover works
-      stopCursorPolling();
-      try {
-        await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
-      } catch {
-        // If this fails, restart polling
-        if (isLocked.value) startCursorPolling();
-      }
-      // showControls will be set true by onMouseEnter from the browser
-    }
-  }, CURSOR_POLL_INTERVAL);
-}
-
-function stopCursorPolling() {
-  if (cursorPollTimer !== null) {
-    clearInterval(cursorPollTimer);
-    cursorPollTimer = null;
-  }
-}
-
-// ── AMLL Data ────────────────────────────────────────────────────────
-
-const hasLyrics = computed(() => {
-  return amllLines.value && amllLines.value.length > 0;
-});
-
-// Update AMLL lines when lyric data arrives from bridge
 watch(
   () => bridge.lyricData.value,
   (data) => {
     if (data?.amllLines && data.amllLines.length > 0) {
       amllLines.value = data.amllLines;
-      playerKey.value = Symbol(); // Force remount
     } else {
       amllLines.value = [];
     }
+    songGeneration.value++;
   },
   { immediate: true },
 );
 
-// ── Time Calculation ─────────────────────────────────────────────────
+// ── Time Interpolation (RAF + performance.now anchor) ─────────────────
 
-const adjustedTime = computed(() => {
-  return bridge.currentTime.value * 1000 + (bridge.settings.lyricTimeOffset ?? 0);
-});
-
-// ── Styling ──────────────────────────────────────────────────────────
-
-const lyricStyles = computed(() => ({
-  "--amll-lp-color": state.accentColor ? `rgb(${state.accentColor})` : "rgb(239, 239, 239)",
-  "--amll-lyric-view-color": state.accentColor ? `rgb(${state.accentColor})` : "rgb(239, 239, 239)",
-  "--amll-lp-font-size": `${localFontSize.value}px`,
-  "font-weight": bridge.settings.lyricFontWeight || "bold",
-  "font-family": bridge.settings.lyricFont || "HarmonyOS Sans SC",
-  "letter-spacing": bridge.settings.lyricLetterSpacing || "normal",
-  "font-size": `${localFontSize.value}px`,
-  cursor: "default",
-  "-webkit-tap-highlight-color": "transparent",
-}));
-
-// ── Play state sync ──────────────────────────────────────────────────
+const interpolatedTimeMs = ref(0);
+let timeAnchorMs = 0;
+let perfAnchor = 0;
+let rafId = 0;
 
 watch(
-  () => state.isPlaying,
-  (playing) => {
-    if (playing) {
-      amllPlayerRef.value?.lyricPlayer.value?.resume();
-    } else {
-      amllPlayerRef.value?.lyricPlayer.value?.pause();
+  () => bridge.currentTime.value,
+  (sec) => {
+    const bridgeMs = sec * 1000 + (bridge.settings.lyricTimeOffset ?? 0);
+    const now = performance.now();
+
+    if (!state.isPlaying) {
+      // When paused, snap directly to bridge time
+      interpolatedTimeMs.value = bridgeMs;
+      timeAnchorMs = bridgeMs;
+      perfAnchor = now;
+      return;
     }
-    amllPlayerRef.value?.lyricPlayer.value?.update();
+
+    const predicted = timeAnchorMs + (now - perfAnchor);
+    if (Math.abs(bridgeMs - predicted) > 300) {
+      timeAnchorMs = bridgeMs;
+      perfAnchor = now;
+    }
   },
 );
 
-// ── Lyric Click → Seek ──────────────────────────────────────────────
-
-const handleLineClick = (evt: any) => {
-  const targetTime = evt.line.getLine().startTime;
-  amllPlayerRef.value?.lyricPlayer.value?.setCurrentTime(targetTime, true);
-  amllPlayerRef.value?.lyricPlayer.value?.update();
-  bridge.seek(targetTime / 1000);
-};
-
-// ── Mouse Events ────────────────────────────────────────────────────
-
-function onMouseEnter() {
-  showControls.value = true;
-}
-
-function onMouseLeave() {
-  showControls.value = false;
-  if (isLocked.value) {
-    // Re-enable click-through and restart polling
-    windowManager.setIgnoreCursorEvents("desktop-lyrics", true).catch(() => {});
-    startCursorPolling();
+function tick() {
+  if (state.isPlaying) {
+    interpolatedTimeMs.value = timeAnchorMs + (performance.now() - perfAnchor);
   }
+  rafId = requestAnimationFrame(tick);
 }
 
-// ── Controls ─────────────────────────────────────────────────────────
+// ── Lyric Index (binary search) ───────────────────────────────────────
 
-async function toggleLock() {
-  isLocked.value = !isLocked.value;
-  try {
-    if (isLocked.value) {
-      // Entering lock: hide controls, enable click-through, start polling
-      showControls.value = false;
-      showLockIndicator.value = true;
-      // Hide lock indicator after 2 seconds
-      if (lockIndicatorTimer) clearTimeout(lockIndicatorTimer);
-      lockIndicatorTimer = setTimeout(() => {
-        showLockIndicator.value = false;
-      }, 2000);
-      await windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
-      startCursorPolling();
-    } else {
-      // Unlocking: disable click-through, stop polling
-      stopCursorPolling();
-      showLockIndicator.value = false;
-      if (lockIndicatorTimer) clearTimeout(lockIndicatorTimer);
-      await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
-    }
-  } catch (err) {
-    console.warn("[DesktopLyrics] Could not set cursor events:", err);
+const currentLineIndex = computed(() => {
+  const timeMs = interpolatedTimeMs.value;
+  const lines = amllLines.value;
+  if (!lines || lines.length === 0) return -1;
+  // Find the last line with startTime <= timeMs
+  let lo = 0;
+  let hi = lines.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (lines[mid].startTime <= timeMs) lo = mid + 1;
+    else hi = mid - 1;
   }
+  return hi;
+});
+
+// ── Visible Lines ─────────────────────────────────────────────────────
+
+interface VisibleLine {
+  key: string;
+  isCurrent: boolean;
+  words: AMLLWord[];
+  text: string;
+  translatedLyric: string;
+  lineStartTime: number;
+  lineEndTime: number;
 }
 
-async function unlock() {
-  if (!isLocked.value) return;
-  isLocked.value = false;
-  stopCursorPolling();
-  try {
-    await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
-  } catch (err) {
-    console.warn("[DesktopLyrics] Could not unlock:", err);
-  }
+function clamp(v: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, v));
 }
+
+const visibleLines = computed<VisibleLine[]>(() => {
+  const lines = amllLines.value;
+  if (!lines || lines.length === 0) return [];
+  const idx = currentLineIndex.value;
+  const gen = songGeneration.value;
+  const result: VisibleLine[] = [];
+
+  if (idx >= 0 && idx < lines.length) {
+    const line = lines[idx];
+    result.push({
+      key: `${gen}-${idx}`,
+      isCurrent: true,
+      words: line.words,
+      text: line.words.map((w) => w.word).join(""),
+      translatedLyric: line.translatedLyric || "",
+      lineStartTime: line.startTime,
+      lineEndTime: line.endTime,
+    });
+  }
+
+  const nextIdx = Math.max(0, idx + 1);
+  if (nextIdx < lines.length && result.length < 2) {
+    const line = lines[nextIdx];
+    result.push({
+      key: `${gen}-${nextIdx}`,
+      isCurrent: false,
+      words: line.words,
+      text: line.words.map((w) => w.word).join(""),
+      translatedLyric: line.translatedLyric || "",
+      lineStartTime: line.startTime,
+      lineEndTime: line.endTime,
+    });
+  }
+
+  return result;
+});
+
+// ── YRC Word Gradient Style ───────────────────────────────────────────
+
+function getWordStyle(word: AMLLWord) {
+  const duration = word.endTime - word.startTime;
+  if (duration <= 0) return {};
+  const progress = clamp((interpolatedTimeMs.value - word.startTime) / duration, 0, 1);
+  return {
+    backgroundPosition: `${(1 - progress) * 100}% 0`,
+  };
+}
+
+// ── Font Size ─────────────────────────────────────────────────────────
+
+const fontSizeOffset = ref(0);
+const windowHeight = ref(120);
+
+const localFontSize = computed(() => {
+  const base = clamp(20 + (windowHeight.value - 100) * 0.3, 20, 80);
+  return clamp(Math.round(base + fontSizeOffset.value), 16, 96);
+});
 
 function increaseFontSize() {
-  localFontSize.value = Math.min(80, localFontSize.value + 4);
+  fontSizeOffset.value = Math.min(fontSizeOffset.value + 4, 40);
 }
 
 function decreaseFontSize() {
-  localFontSize.value = Math.max(20, localFontSize.value - 4);
+  fontSizeOffset.value = Math.max(fontSizeOffset.value - 4, -20);
 }
 
-function closeWindow() {
+// ── Computed Styles ───────────────────────────────────────────────────
+
+const accentColor = computed(() =>
+  state.accentColor ? `rgb(${state.accentColor})` : "rgb(255, 255, 255)",
+);
+
+const inactiveColor = computed(() =>
+  state.accentColor ? `rgba(${state.accentColor}, 0.35)` : "rgba(255, 255, 255, 0.35)",
+);
+
+const lyricTextStyle = computed(() => ({
+  fontSize: `${localFontSize.value}px`,
+  fontWeight: bridge.settings.lyricFontWeight || "bold",
+  fontFamily: bridge.settings.lyricFont || "HarmonyOS Sans SC",
+  letterSpacing: bridge.settings.lyricLetterSpacing || "normal",
+  "--active-color": accentColor.value,
+  "--inactive-color": inactiveColor.value,
+}));
+
+const tranStyle = computed(() => ({
+  fontSize: `${Math.max(14, Math.round(localFontSize.value * 0.45))}px`,
+}));
+
+// ── Drag Attrs (disabled when locked) ─────────────────────────────────
+
+const dragAttrs = computed(() => (!isLocked.value ? { "data-tauri-drag-region": "" } : {}));
+
+// ── Header Visibility ─────────────────────────────────────────────────
+
+const isHovering = ref(false);
+const showHeader = ref(false);
+const isHeaderHovering = ref(false);
+let headerTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function clearHeaderTimeout() {
+  if (headerTimeout) {
+    clearTimeout(headerTimeout);
+    headerTimeout = null;
+  }
+}
+
+function scheduleHideHeader() {
+  clearHeaderTimeout();
+  headerTimeout = setTimeout(() => {
+    if (!isHeaderHovering.value) {
+      showHeader.value = false;
+      isHovering.value = false;
+    }
+  }, 1500);
+}
+
+function onMouseEnter() {
+  if (isLocked.value) return;
+  isHovering.value = true;
+  showHeader.value = true;
+  clearHeaderTimeout();
+}
+
+function onMouseMove() {
+  if (isLocked.value) return;
+  if (!showHeader.value) {
+    showHeader.value = true;
+    isHovering.value = true;
+  }
+  scheduleHideHeader();
+}
+
+function onMouseLeave() {
+  if (isLocked.value) return;
+  isHovering.value = false;
+  scheduleHideHeader();
+}
+
+function onHeaderLeave() {
+  isHeaderHovering.value = false;
+  if (!isLocked.value) {
+    scheduleHideHeader();
+  } else if (isTempUnlocked.value) {
+    scheduleReLock();
+  }
+}
+
+// ── Lock Mechanism ────────────────────────────────────────────────────
+
+const isLocked = ref(false);
+const isTempUnlocked = ref(false);
+let cursorPollInterval: ReturnType<typeof setInterval> | null = null;
+let reLockTimeout: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleReLock() {
+  if (reLockTimeout) clearTimeout(reLockTimeout);
+  reLockTimeout = setTimeout(async () => {
+    if (isLocked.value && isTempUnlocked.value && !isHeaderHovering.value) {
+      isTempUnlocked.value = false;
+      showHeader.value = false;
+      await windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
+    }
+  }, 500);
+}
+
+async function toggleLock() {
+  isLocked.value = true;
+  showHeader.value = false;
+  isHovering.value = false;
+  clearHeaderTimeout();
+  await windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
+  startCursorPolling();
+}
+
+async function handleUnlock() {
+  isLocked.value = false;
+  isTempUnlocked.value = false;
   stopCursorPolling();
-  windowManager.closeWindow("desktop-lyrics");
+  if (reLockTimeout) {
+    clearTimeout(reLockTimeout);
+    reLockTimeout = null;
+  }
+  await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
 }
 
-// ── Lifecycle ────────────────────────────────────────────────────────
+function startCursorPolling() {
+  stopCursorPolling();
+  cursorPollInterval = setInterval(async () => {
+    if (!isLocked.value) return;
+
+    const cursor = await windowManager.getCursorPosition();
+    const bounds = await windowManager.getWindowBounds("desktop-lyrics");
+    if (!cursor || !bounds) return;
+
+    const [cx, cy] = cursor;
+    const [wx, wy, ww, wh] = bounds;
+    const margin = 30;
+
+    const isNear =
+      cx >= wx - margin && cx <= wx + ww + margin && cy >= wy - margin && cy <= wy + wh + margin;
+
+    if (isNear && !isTempUnlocked.value) {
+      isTempUnlocked.value = true;
+      await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
+      showHeader.value = true;
+    } else if (!isNear && isTempUnlocked.value && !isHeaderHovering.value) {
+      isTempUnlocked.value = false;
+      showHeader.value = false;
+      await windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
+    }
+  }, 150);
+}
+
+function stopCursorPolling() {
+  if (cursorPollInterval) {
+    clearInterval(cursorPollInterval);
+    cursorPollInterval = null;
+  }
+}
+
+// ── Seek on Line Click ────────────────────────────────────────────────
+
+function seekToLine(line: VisibleLine) {
+  if (isLocked.value) return;
+  bridge.seek(line.lineStartTime / 1000);
+}
+
+// ── Close ─────────────────────────────────────────────────────────────
+
+async function handleClose() {
+  await windowManager.closeWindow("desktop-lyrics");
+}
+
+// ── Lifecycle ─────────────────────────────────────────────────────────
 
 let unlistenUnlock: (() => void) | null = null;
+let unlistenResized: (() => void) | null = null;
 
 onMounted(async () => {
-  // Listen for unlock event from main window (e.g., via tray or BigPlayer button)
+  // Set initial height from window
+  windowHeight.value = window.innerHeight;
+
+  // Start RAF loop for time interpolation
+  rafId = requestAnimationFrame(tick);
+
   const tauri = window.__TAURI__;
-  if (tauri) {
-    const u = await tauri.event.listen("desktop-lyrics-unlock", () => {
-      unlock();
-    });
-    unlistenUnlock = u;
-  }
+  if (!tauri) return;
+
+  // Unlock event from main window (tray/BigPlayer button)
+  unlistenUnlock = await tauri.event.listen("desktop-lyrics-unlock", () => {
+    if (!isLocked.value) return;
+    handleUnlock();
+  });
+
+  // Window resize event for font size
+  unlistenResized = await tauri.event.listen(
+    "desktop-lyrics-resized",
+    (e: { payload: [number, number] }) => {
+      if (Array.isArray(e.payload)) {
+        const [, physicalHeight] = e.payload;
+        windowHeight.value = physicalHeight / (window.devicePixelRatio || 1);
+      }
+    },
+  );
 });
 
 onUnmounted(() => {
+  cancelAnimationFrame(rafId);
+  clearHeaderTimeout();
   stopCursorPolling();
+  if (reLockTimeout) clearTimeout(reLockTimeout);
   if (unlistenUnlock) unlistenUnlock();
-  if (lockIndicatorTimer) clearTimeout(lockIndicatorTimer);
+  if (unlistenResized) unlistenResized();
 });
 </script>
 
 <style lang="scss" scoped>
 // ── Main container ────────────────────────────────────────────────────
-.desktop-lyrics {
+.desktop-lyric {
   width: 100%;
   height: 100%;
   position: relative;
@@ -343,12 +562,9 @@ onUnmounted(() => {
   background: transparent;
   transition: background 0.3s ease;
 
-  // Only show background when hovering and not locked
-  &:hover:not(.locked) {
-    background: rgba(0, 0, 0, 0.2);
-    box-shadow:
-      0 8px 32px rgba(0, 0, 0, 0.3),
-      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  &.hovering {
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 12px;
   }
 
   &.locked {
@@ -356,228 +572,297 @@ onUnmounted(() => {
   }
 }
 
-// ── Drag handle (left side) ───────────────────────────────────────────
-.drag-handle {
+// ── Drag layer ────────────────────────────────────────────────────────
+.drag-layer {
   position: absolute;
-  top: 50%;
-  left: 8px;
-  transform: translateY(-50%);
-  width: 28px;
-  height: 80px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  inset: 0;
+  z-index: 0;
   cursor: grab;
-  z-index: 10;
-  opacity: 0;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.4);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow:
-    0 4px 12px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-
-  .desktop-lyrics:not(.locked):hover & {
-    opacity: 1;
-  }
-
-  &:hover {
-    background: rgba(0, 0, 0, 0.6);
-    border-color: rgba(255, 255, 255, 0.2);
-    transform: translateY(-50%) scale(1.05);
-
-    .drag-dots span {
-      background: rgba(255, 255, 255, 0.7);
-    }
-  }
 
   &:active {
     cursor: grabbing;
-    transform: translateY(-50%) scale(0.98);
   }
 }
 
-.drag-dots {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-
-  span {
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.5);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-    transition: background 0.2s ease;
-  }
-}
-
-// ── Content wrapper ───────────────────────────────────────────────────
-.content-wrapper {
-  width: 100%;
-  height: 100%;
+// ── Header bar ────────────────────────────────────────────────────────
+.header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 16px 32px;
-  box-sizing: border-box;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: rgba(20, 20, 20, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  min-height: 32px;
 }
 
-// ── Controls bar ─────────────────────────────────────────────────────
-.controls-fade-enter-active,
-.controls-fade-leave-active {
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+.header-left {
+  flex: 1;
+  min-width: 0;
+  margin-right: 8px;
 }
 
-.controls-fade-enter-from,
-.controls-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
+.song-name {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family:
+    "HarmonyOS Sans SC",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 
-.controls-bar {
-  position: absolute;
-  top: 12px;
-  right: 12px;
+.header-center {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.header-right {
   display: flex;
   align-items: center;
   gap: 2px;
-  z-index: 20;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-radius: 10px;
-  padding: 5px;
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+  margin-left: 8px;
 }
 
 .ctrl-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  background: transparent;
+  background: none;
   border: none;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.85);
   cursor: pointer;
+  padding: 4px;
   border-radius: 6px;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.15s ease;
+  font-family: inherit;
 
   &:hover {
     background: rgba(255, 255, 255, 0.12);
-    color: #fff;
-    transform: translateY(-1px);
   }
 
   &:active {
-    transform: translateY(0);
-  }
-
-  &.active {
-    background: rgba(255, 255, 255, 0.15);
-    color: #fff;
-  }
-
-  &.close {
-    &:hover {
-      background: rgba(232, 65, 66, 0.85);
-    }
+    transform: scale(0.92);
   }
 }
 
-.ctrl-divider {
-  width: 1px;
-  height: 16px;
+.play-btn {
   background: rgba(255, 255, 255, 0.1);
-  margin: 0 2px;
+  padding: 4px 6px;
+  border-radius: 8px;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
 }
 
-.font-size-indicator {
-  font-size: 11px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.5);
-  min-width: 20px;
-  text-align: center;
-  user-select: none;
-}
-
-// ── Lock indicator ───────────────────────────────────────────────────
-.lock-indicator-fade-enter-active,
-.lock-indicator-fade-leave-active {
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.lock-indicator-fade-enter-from,
-.lock-indicator-fade-leave-to {
-  opacity: 0;
-  transform: translateX(-50%) translateY(-10px);
-}
-
-.lock-indicator {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  border-radius: 20px;
-  color: rgba(255, 255, 255, 0.8);
+.font-btn {
   font-size: 12px;
-  font-weight: 500;
-  z-index: 15;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-
-  svg {
-    opacity: 0.8;
-  }
+  font-weight: 700;
+  padding: 2px 5px;
+  min-width: 28px;
 }
 
-// ── AMLL Player ──────────────────────────────────────────────────────
-.amll-lyric-player {
+.font-sign {
+  font-size: 10px;
+  margin-left: 1px;
+}
+
+// Locked header
+.locked-header {
+  gap: 8px;
   width: 100%;
-  height: 100%;
+  justify-content: center;
+}
 
-  // Emphasize span padding fix (from LyricPlayer.vue)
-  &.dom:deep(span[class^="_emphasizeWrapper"] span) {
-    padding: 1em;
-    margin: -1em;
-  }
+.locked-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+}
 
-  // Improve centering
-  &:deep(.amll-lyric-view) {
-    justify-content: center;
+.unlock-btn {
+  font-size: 12px;
+  font-weight: 600;
+  gap: 4px;
+  padding: 3px 10px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.2);
   }
 }
 
-// ── No lyrics state ──────────────────────────────────────────────────
-.no-lyrics {
+// Header transitions
+.header-fade-enter-active,
+.header-fade-leave-active {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.header-fade-enter-from,
+.header-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+// ── Lyric area ────────────────────────────────────────────────────────
+.lyric-area {
+  position: relative;
+  z-index: 1;
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
+  padding: 8px 24px;
+  box-sizing: border-box;
 }
 
-.no-lyrics-content {
+.lyric-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  justify-content: center;
+  width: 100%;
+  position: relative;
+}
+
+// ── Lyric line ────────────────────────────────────────────────────────
+.lyric-line {
+  pointer-events: auto;
   text-align: center;
-  padding: 24px;
+  white-space: nowrap;
+  overflow: hidden;
+  max-width: 100%;
+  cursor: default;
+  padding: 2px 0;
+  transition: opacity 0.3s ease;
+
+  &.current {
+    opacity: 1;
+  }
+
+  &:not(.current) {
+    opacity: 0.45;
+    filter: blur(0.5px);
+
+    &:hover {
+      opacity: 0.7;
+      filter: blur(0);
+    }
+  }
+}
+
+.lyric-inner {
+  display: inline;
+  // Text stroke (4-dir shadow) + drop shadow for readability
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.8),
+    1px -1px 0 rgba(0, 0, 0, 0.8),
+    -1px 1px 0 rgba(0, 0, 0, 0.8),
+    1px 1px 0 rgba(0, 0, 0, 0.8),
+    0 2px 8px rgba(0, 0, 0, 0.6),
+    0 0 20px rgba(0, 0, 0, 0.4);
+}
+
+// ── YRC Word gradient ─────────────────────────────────────────────────
+.lyric-word {
+  display: inline;
+  background: linear-gradient(
+    to right,
+    var(--active-color, rgb(255, 255, 255)) 50%,
+    var(--inactive-color, rgba(255, 255, 255, 0.35)) 50%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  // text-shadow doesn't work with background-clip:text in WebKit,
+  // so use -webkit-text-stroke for the outline
+  -webkit-text-stroke: 2px rgba(0, 0, 0, 0.5);
+  paint-order: stroke fill;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+
+// Plain text (non-YRC or next line)
+.lyric-text {
+  color: var(--active-color, rgb(255, 255, 255));
+
+  &:not(.current) {
+    color: rgba(255, 255, 255, 0.6);
+  }
+}
+
+// Translation line
+.lyric-tran {
+  text-align: center;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 2px;
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.6),
+    1px -1px 0 rgba(0, 0, 0, 0.6),
+    -1px 1px 0 rgba(0, 0, 0, 0.6),
+    1px 1px 0 rgba(0, 0, 0, 0.6),
+    0 1px 4px rgba(0, 0, 0, 0.4);
+  font-family:
+    "HarmonyOS Sans SC",
+    "Segoe UI",
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+// ── Lyric line transitions ────────────────────────────────────────────
+.lyric-slide-enter-active,
+.lyric-slide-leave-active {
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.lyric-slide-enter-from {
+  opacity: 0;
+  transform: translateY(100%);
+}
+
+.lyric-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+.lyric-slide-move {
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+// Leaving elements need absolute positioning for FLIP animation
+.lyric-slide-leave-active {
+  position: absolute;
+}
+
+// ── No lyrics state ───────────────────────────────────────────────────
+.no-lyrics {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
   animation: fadeIn 0.5s ease;
 }
 
@@ -592,38 +877,27 @@ onUnmounted(() => {
   }
 }
 
-.music-icon {
-  width: 56px;
-  height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(255, 255, 255, 0.08);
-  border-radius: 50%;
-  color: rgba(255, 255, 255, 0.5);
-  margin-bottom: 4px;
-}
-
 .song-title {
-  font-size: 22px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.95);
   text-shadow:
-    0 2px 8px rgba(0, 0, 0, 0.5),
-    0 0 20px rgba(0, 0, 0, 0.3);
-  font-family:
-    "HarmonyOS Sans SC",
-    "Segoe UI",
-    system-ui,
-    -apple-system,
-    sans-serif;
+    -1px -1px 0 rgba(0, 0, 0, 0.85),
+    1px -1px 0 rgba(0, 0, 0, 0.85),
+    -1px 1px 0 rgba(0, 0, 0, 0.85),
+    1px 1px 0 rgba(0, 0, 0, 0.85),
+    0 0 1px rgba(0, 0, 0, 0.9),
+    0 2px 8px rgba(0, 0, 0, 0.5);
   letter-spacing: 0.02em;
 }
 
 .artist-name {
   font-size: 14px;
   font-weight: 400;
-  color: rgba(255, 255, 255, 0.5);
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  color: rgba(255, 255, 255, 0.75);
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.6),
+    1px -1px 0 rgba(0, 0, 0, 0.6),
+    -1px 1px 0 rgba(0, 0, 0, 0.6),
+    1px 1px 0 rgba(0, 0, 0, 0.6),
+    0 1px 4px rgba(0, 0, 0, 0.4);
 }
 </style>

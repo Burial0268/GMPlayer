@@ -185,6 +185,13 @@ export const windowManager = {
   },
 
   /**
+   * Set window position to specific physical coordinates.
+   */
+  async setWindowPosition(label: WindowLabel, x: number, y: number): Promise<void> {
+    await invoke("set_window_position", { label, x, y });
+  },
+
+  /**
    * Listen for main window close-requested events.
    */
   async onMainCloseRequested(handler: () => void): Promise<() => void> {

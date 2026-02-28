@@ -507,7 +507,9 @@
         });
         document.getElementById("item-lyrics").addEventListener("click", function () {
           var tc = getTauri();
-          if (tc) tc.core.invoke("create_window", { label: "desktop-lyrics" });
+          if (tc) {
+            tc.core.invoke("create_window", { label: "desktop-lyrics" });
+          }
         });
         document.getElementById("item-settings").addEventListener("click", function () {
           var tc = getTauri();

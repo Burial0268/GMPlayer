@@ -174,7 +174,6 @@ import { CopyOutline, ShareSocialOutline } from "@vicons/ionicons5";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 
-
 const { t } = useI18n();
 const musicStore = useMusicDataStore();
 const userStore = useUserDataStore();

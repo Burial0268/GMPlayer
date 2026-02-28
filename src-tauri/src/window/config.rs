@@ -8,6 +8,7 @@ pub enum WindowLabel {
     Main,
     MiniPlayer,
     DesktopLyrics,
+    DesktopLyricsControls,
     Settings,
     About,
     TrayPopup,
@@ -20,6 +21,7 @@ impl WindowLabel {
             Self::Main => "main",
             Self::MiniPlayer => "mini-player",
             Self::DesktopLyrics => "desktop-lyrics",
+            Self::DesktopLyricsControls => "desktop-lyrics-controls",
             Self::Settings => "settings",
             Self::About => "about",
             Self::TrayPopup => "tray-popup",
@@ -32,6 +34,7 @@ impl WindowLabel {
             "main" => Self::Main,
             "mini-player" => Self::MiniPlayer,
             "desktop-lyrics" => Self::DesktopLyrics,
+            "desktop-lyrics-controls" => Self::DesktopLyricsControls,
             "settings" => Self::Settings,
             "about" => Self::About,
             "tray-popup" => Self::TrayPopup,
@@ -91,7 +94,10 @@ pub struct WindowConfig {
     pub shadow: bool,
     /// Additional args for window
     #[serde(default)]
-    pub additional_args: Option<String>
+    pub additional_args: Option<String>,
+    /// Parent window label (for child windows)
+    #[serde(default)]
+    pub parent_label: Option<String>,
 }
 
 fn default_true() -> bool {
@@ -124,7 +130,8 @@ impl WindowConfig {
             traffic_lights_inset: Some((12.0, 16.0)),
             window_effect: None,
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned())
+            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            parent_label: None,
         }
     }
 
@@ -153,7 +160,8 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: Some("acrylic".into()),
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned())
+            additional_args: None,
+            parent_label: None,
         }
     }
 
@@ -182,7 +190,38 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: None,
             shadow: false,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned())
+            additional_args: None,
+            parent_label: None,
+        }
+    }
+
+    /// Desktop lyrics controls preset — child window for controls.
+    pub fn desktop_lyrics_controls() -> Self {
+        Self {
+            label: "desktop-lyrics-controls".into(),
+            title: "Desktop Lyrics Controls".into(),
+            url: "/slave.html#/desktop-lyrics-controls".into(),
+            width: 220.0,
+            height: 40.0,
+            min_width: None,
+            min_height: None,
+            max_width: None,
+            max_height: None,
+            resizable: false,
+            decorations: false,
+            transparent: true,
+            always_on_top: true,
+            skip_taskbar: true,
+            center: false,
+            visible: false,
+            single_instance: true,
+            closeable_to_tray: false,
+            use_overlay_titlebar: false,
+            traffic_lights_inset: None,
+            window_effect: None,
+            shadow: false,
+            additional_args: None,
+            parent_label: Some("desktop-lyrics".into()),
         }
     }
 
@@ -211,7 +250,8 @@ impl WindowConfig {
             traffic_lights_inset: Some((12.0, 16.0)),
             window_effect: None,
             shadow: true,
-            additional_args: None
+            additional_args: None,
+            parent_label: None,
         }
     }
 
@@ -240,7 +280,8 @@ impl WindowConfig {
             traffic_lights_inset: Some((12.0, 16.0)),
             window_effect: None,
             shadow: true,
-            additional_args: None
+            additional_args: None,
+            parent_label: None,
         }
     }
 
@@ -270,7 +311,8 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: Some("acrylic".into()),
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned())
+            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            parent_label: None,
         }
     }
 
@@ -280,6 +322,7 @@ impl WindowConfig {
             "main" => Some(Self::main()),
             "mini-player" => Some(Self::mini_player()),
             "desktop-lyrics" => Some(Self::desktop_lyrics()),
+            "desktop-lyrics-controls" => Some(Self::desktop_lyrics_controls()),
             "settings" => Some(Self::settings()),
             "about" => Some(Self::about()),
             "tray-popup" => Some(Self::tray_popup()),

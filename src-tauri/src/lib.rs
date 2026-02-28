@@ -81,6 +81,8 @@ pub fn run() {
             window::commands::quit_app,
             window::commands::get_cursor_position,
             window::commands::get_window_bounds,
+            // Desktop lyrics commands
+            window::desktop_lyrics::commands::set_window_position,
             // Tray commands
             window::tray::set_tray_tooltip,
         ])
@@ -124,6 +126,9 @@ pub fn run() {
     app.run(|app_handle, event| {
         match &event {
             RunEvent::WindowEvent { label, event, .. } => {
+                // Handle desktop lyrics window events (moved/resized/destroyed)
+                window::desktop_lyrics::commands::handle_desktop_lyrics_event(app_handle, label, event);
+
                 match (label.as_str(), event) {
                     // Main window close → save state, emit to frontend for close-behavior decision
                     ("main", WindowEvent::CloseRequested { api, .. }) => {

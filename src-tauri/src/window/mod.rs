@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod config;
+pub mod desktop_lyrics;
 pub mod manager;
 pub mod payload;
 pub mod tray;

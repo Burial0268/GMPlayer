@@ -11,4 +11,10 @@ export const siteStore = () => useSiteDataStore();
 export const listenTogetherStore = () => useListenTogetherStore();
 
 // Re-export stores for direct import
-export { useSettingDataStore, useMusicDataStore, useUserDataStore, useSiteDataStore, useListenTogetherStore };
+export {
+  useSettingDataStore,
+  useMusicDataStore,
+  useUserDataStore,
+  useSiteDataStore,
+  useListenTogetherStore,
+};
