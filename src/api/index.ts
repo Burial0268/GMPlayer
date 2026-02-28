@@ -11,6 +11,7 @@ export { album } from "./album";
 export { artist } from "./artist";
 export { comment } from "./comment";
 export { home } from "./home";
+export { listenTogether } from "./listenTogether";
 export { login } from "./login";
 export { playlist } from "./playlist";
 export { search } from "./search";
@@ -23,6 +24,7 @@ import { album } from "./album";
 import { artist } from "./artist";
 import { comment } from "./comment";
 import { home } from "./home";
+import { listenTogether } from "./listenTogether";
 import { login } from "./login";
 import { playlist } from "./playlist";
 import { search } from "./search";
@@ -36,6 +38,7 @@ const api = {
   artist,
   comment,
   home,
+  listenTogether,
   login,
   playlist,
   search,
@@ -133,6 +136,19 @@ export const setCloudMatch = user.matchCloudSong;
 export const upCloudSong = user.uploadCloudSong;
 export const userDailySignin = user.dailySignin;
 export const userYunbeiSign = user.yunbeiSign;
+
+// Listen Together
+export {
+  createListenRoom,
+  checkListenRoom,
+  joinListenRoom,
+  getListenRoomPlaylist,
+  sendListenCommand,
+  syncListenPlaylist,
+  getListenRoomStatus,
+  endListenRoom,
+  leaveListenRoom,
+} from "./listenTogether";
 
 // Video
 export const getVideoDetail = video.getDetail;

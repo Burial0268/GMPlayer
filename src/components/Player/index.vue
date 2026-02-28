@@ -221,6 +221,8 @@
             </template>
             {{ $t("general.name.playlists") }}
           </n-popover>
+          <!-- 一起听歌 -->
+          <ListenTogetherStatus @click="showListenTogetherModal = true" />
           <div class="volume">
             <n-popover trigger="hover" placement="top-start" :keep-alive-on-hover="false">
               <template #trigger>
@@ -258,6 +260,8 @@
   <PlayListDrawer ref="PlayListDrawerRef" />
   <!-- 添加到歌单 -->
   <AddPlaylist ref="addPlayListRef" />
+  <!-- 一起听歌 -->
+  <ListenTogetherModal v-model:show="showListenTogetherModal" />
   <!-- 播放器 -->
   <BigPlayer />
 </template>
@@ -284,7 +288,7 @@ import {
 } from "@vicons/material";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { storeToRefs } from "pinia";
-import { musicStore, settingStore, siteStore } from "@/store";
+import { musicStore, settingStore, siteStore, listenTogetherStore } from "@/store";
 import {
   createSound,
   setVolume,
@@ -302,6 +306,8 @@ import { windowManager } from "@/utils/tauri/windowManager";
 import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
 import PlayListDrawer from "@/components/DataModal/PlayListDrawer.vue";
+import ListenTogetherModal from "@/components/DataModal/ListenTogetherModal.vue";
+import ListenTogetherStatus from "./ListenTogetherStatus.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import BigPlayer from "./BigPlayer/index.vue";
 import "vue-slider-component/theme/default.css";
@@ -313,9 +319,13 @@ const { t } = useI18n();
 const router = useRouter();
 const setting = settingStore();
 const music = musicStore();
+const listenTogether = listenTogetherStore();
 const { persistData } = storeToRefs(music);
 const addPlayListRef = ref(null);
 const PlayListDrawerRef = ref(null);
+
+// 一起听歌模态框
+const showListenTogetherModal = ref(false);
 
 // UNM 是否存在
 const useUnmServerHas = import.meta.env.VITE_UNM_API ? true : false;
@@ -472,6 +482,10 @@ const songTimeSliderUpdate = (val) => {
   if (player.value && music.getPlaySongTime?.duration) {
     const currentTime = (music.getPlaySongTime.duration / 100) * val;
     setSeek(player.value, currentTime);
+    // 一起听歌：房主发送进度跳转命令
+    if (listenTogether.isHost) {
+      listenTogether.sendPlayCommand("seek", Math.floor(currentTime * 1000));
+    }
   }
 };
 
@@ -817,6 +831,16 @@ const setupTrayListeners = async () => {
     }
   });
 
+  // Listen for lyrics font size changes from desktop lyrics controls
+  await tauri.event.listen("slave-set-lyrics-font-size", (e) => {
+    const { size } = e.payload;
+    if (typeof size === "number") {
+      setting.lyricsFontSize = Math.max(2, Math.min(6, size));
+      // Broadcast settings update to all slave windows
+      broadcastSettings();
+    }
+  });
+
   // Slave window opened — push full state snapshot
   await tauri.event.listen("slave-window-opened", () => {
     broadcastFullState();
@@ -835,6 +859,11 @@ onMounted(() => {
   if (isTauri()) {
     setupTrayListeners();
   }
+
+  // 一起听歌：从 URL 参数自动加入房间
+  setTimeout(() => {
+    listenTogether.joinFromUrl();
+  }, 1000);
 });
 
 // 监听当前音乐数据变化
@@ -851,6 +880,13 @@ watch(
       }
       songChange(val);
       broadcastPlayerState();
+
+      // 一起听歌：房主发送切歌命令
+      if (listenTogether.isHost && val?.id && !listenTogether.isProcessingRemoteCommand) {
+        listenTogether.sendPlayCommand("GOTO");
+        // 同步播放列表
+        listenTogether.syncCurrentPlaylist();
+      }
 
       // Update tray tooltip with current song info
       if (isTauri()) {
@@ -894,6 +930,10 @@ watch(
         currentTime: music.getPlaySongTime.currentTime,
         lyricIndex: music.playSongLyricIndex,
       });
+    }
+    // 一起听歌：房主发送播放状态同步
+    if (listenTogether.isHost && !listenTogether.isProcessingRemoteCommand) {
+      listenTogether.sendPlayCommand(val ? "PLAY" : "PAUSE");
     }
     nextTick().then(() => {
       // During AutoMix crossfade, CrossfadeManager controls gain scheduling.
