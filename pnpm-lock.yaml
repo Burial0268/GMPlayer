@@ -65,6 +65,9 @@ importers:
       '@tauri-apps/plugin-log':
         specifier: ~2.8.0
         version: 2.8.0
+      '@vicons/ionicons5':
+        specifier: ^0.13.0
+        version: 0.13.0
       add:
         specifier: ^2.0.6
         version: 2.0.6
@@ -1902,6 +1905,9 @@ packages:
 
   '@types/web-bluetooth@0.0.20':
     resolution: {integrity: sha512-g9gZnnXVq7gM7v3tJCWV/qw7w+KeOlSHAhgF9RytFyifW6AF61hdT2ucrYhPq9hLs5JIryeupHV3qGk95dH9ow==}
+
+  '@vicons/ionicons5@0.13.0':
+    resolution: {integrity: sha512-zvZKBPjEXKN7AXNo2Na2uy+nvuv6SP4KAMQxpKL2vfHMj0fSvuw7JZcOPCjQC3e7ayssKnaoFVAhbYcW6v41qQ==}
 
   '@vicons/material@0.13.0':
     resolution: {integrity: sha512-lKVxFNprM+CaBkUH3gt6VjIeiMsKQl2zARQMwTCZruQl2vRHzyeZiKeCflWS99CEfv2JzX/6y697smxlzyxcVw==}
@@ -5749,6 +5755,8 @@ snapshots:
   '@types/trusted-types@2.0.7': {}
 
   '@types/web-bluetooth@0.0.20': {}
+
+  '@vicons/ionicons5@0.13.0': {}
 
   '@vicons/material@0.13.0': {}
 
