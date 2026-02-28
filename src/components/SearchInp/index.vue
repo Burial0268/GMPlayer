@@ -384,6 +384,7 @@ watch(
     border-radius: 8px;
     width: 280px;
     z-index: 3;
+    pointer-events: auto; // 恢复点击事件，防止被父元素的 pointer-events: none 影响
 
     @media (max-width: 450px) {
       position: fixed;
