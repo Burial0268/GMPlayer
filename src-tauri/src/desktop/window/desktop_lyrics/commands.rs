@@ -1,7 +1,7 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 /// Set window position to specific physical coordinates.
-#[tauri::command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn set_window_position(
     app: AppHandle,
     label: String,

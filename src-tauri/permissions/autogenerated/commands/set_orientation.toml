@@ -1,9 +1,0 @@
-[[permission]]
-identifier = "allow-set-orientation"
-description = "Enables the setOrientation command without any pre-configured scope."
-commands.allow = ["setOrientation"]
-
-[[permission]]
-identifier = "deny-set-orientation"
-description = "Denies the setOrientation command without any pre-configured scope."
-commands.deny = ["setOrientation"]

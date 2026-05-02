@@ -96,7 +96,9 @@ onBeforeUnmount(() => {
   right: 0;
   z-index: 9999;
   display: flex;
-  height: 32px;
+  height: calc(54px + var(--app-safe-area-top, 0px));
+  align-items: center;
+  padding-right: 8px;
   user-select: none;
   -webkit-app-region: no-drag;
   transition: opacity 0.25s ease;
@@ -113,8 +115,8 @@ onBeforeUnmount(() => {
 
 // Match decorum's button styling exactly
 .decorum-tb-btn {
-  width: 58px;
-  height: 32px;
+  width: 46px;
+  height: 100%;
   border: none;
   padding: 0;
   outline: none;

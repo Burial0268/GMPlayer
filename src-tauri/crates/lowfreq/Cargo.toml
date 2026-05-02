@@ -1,0 +1,11 @@
+[package]
+name = "lowfreq"
+version = "0.1.0"
+edition = "2021"
+description = "FFT spectrum analysis + low-frequency volume detection matching AMLL reference implementation"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+microfft = { version = "0.6", features = ["size-2048"] }

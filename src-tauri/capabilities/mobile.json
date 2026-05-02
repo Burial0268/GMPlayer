@@ -12,6 +12,6 @@
     "http:default",
     "log:default",
     "media-session:default",
-    "allow-set-orientation"
+    "allow-set-screen-orientation"
   ]
 }

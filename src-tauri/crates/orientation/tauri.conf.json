@@ -1,0 +1,11 @@
+{
+  "productName": "gmplayer-orientation",
+  "version": "0.1.0",
+  "identifier": "com.gbclstudio.gmplayer.orientation",
+  "build": {
+    "frontendDist": "."
+  },
+  "app": {
+    "windows": []
+  }
+}

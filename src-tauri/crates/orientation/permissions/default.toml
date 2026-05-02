@@ -1,5 +1,4 @@
 [default]
+identifier = "default"
 description = "Default permissions for the orientation plugin"
-permissions = [
-  "allow-set-orientation",
-]
+permissions = ["allow-set-screen-orientation"]

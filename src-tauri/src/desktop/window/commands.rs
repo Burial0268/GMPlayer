@@ -15,7 +15,7 @@ pub struct WindowState {
 }
 
 /// Create a window from a preset label (e.g. "settings", "mini-player").
-#[command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn create_window(app: AppHandle, label: String) -> Result<(), String> {
     let config = WindowConfig::from_label(&label)
         .ok_or_else(|| format!("No preset found for label '{}'", label))?;
@@ -42,7 +42,7 @@ pub async fn create_window_with_payload(
 }
 
 /// Show a window by label.
-#[command]
+#[tauri::command(rename_all = "snake_case")]
 pub async fn show_window(app: AppHandle, label: String) -> Result<(), String> {
     manager::show_window(&app, &label)
 }

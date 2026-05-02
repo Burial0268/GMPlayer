@@ -2,6 +2,7 @@
 
 pub mod window;
 
+use crate::algorithms::audio_analysis;
 use crate::desktop::window::config::WindowConfig;
 use crate::desktop::window::manager as wm;
 use crate::shared;
@@ -56,6 +57,8 @@ pub fn run() {
             window::desktop_lyrics::commands::set_window_position,
             // Tray commands
             window::tray::set_tray_tooltip,
+            // Audio analysis (native Rust, bypasses JS Worker)
+            audio_analysis::analyze_audio_native,
         ])
         .setup(|app| {
             #[allow(unused_variables)]

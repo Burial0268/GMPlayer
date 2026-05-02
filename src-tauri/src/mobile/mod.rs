@@ -2,29 +2,6 @@
 
 use crate::shared;
 
-/// Set the screen orientation.
-/// On Android this is handled by the Kotlin side via the orientation plugin;
-/// this command is kept as a no-op fallback for desktop / compatibility.
-#[tauri::command]
-fn set_screen_orientation(_orientation: String) -> Result<(), String> {
-    Ok(())
-}
-
-/// Inline Tauri plugin that delegates screen-orientation control to the
-/// Android Kotlin side (`OrientationPlugin`).
-fn orientation_plugin<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    tauri::plugin::Builder::new("orientation")
-        .setup(|_app, api| {
-            #[cfg(target_os = "android")]
-            api.register_android_plugin(
-                "com.gbclstudio.gmplayer",
-                "OrientationPlugin",
-            )?;
-            Ok(())
-        })
-        .build()
-}
-
 pub fn run() {
     tauri::Builder::default()
         .plugin(
@@ -37,10 +14,9 @@ pub fn run() {
         // On non-Android targets this is compiled as a no-op plugin so the same
         // binary can be built for iOS and simulator targets without any changes.
         .plugin(tauri_plugin_media_session::init())
-        .plugin(orientation_plugin())
+        .plugin(gmplayer_orientation::init())
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
-            set_screen_orientation
         ])
         .setup(|_app| Ok(()))
         .build(tauri::generate_context!())

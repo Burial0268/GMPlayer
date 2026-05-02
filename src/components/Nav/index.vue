@@ -115,7 +115,7 @@ nav {
 
   // Tauri window controls reserved space
   &.tauri-app {
-    padding-right: 140px;
+    padding-right: 138px;
   }
 
   .left {
