@@ -1,0 +1,21 @@
+[package]
+name = "audio-analysis"
+version = "0.1.0"
+edition = "2021"
+description = "Unified FFT spectrum analysis + low-frequency volume detection (replaces AMLL FFTPlayer + WasmFFTManager + LowFreqVolumeAnalyzer)"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+spectrum-analyzer = "1.5"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

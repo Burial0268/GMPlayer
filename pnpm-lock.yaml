@@ -11,9 +11,6 @@ importers:
       '@applemusic-like-lyrics/core':
         specifier: link:deps\apoint-amll\packages\core
         version: link:deps/apoint-amll/packages/core
-      '@applemusic-like-lyrics/fft':
-        specifier: link:deps\apoint-amll\packages\fft
-        version: link:deps/apoint-amll/packages/fft
       '@applemusic-like-lyrics/lyric':
         specifier: link:deps\apoint-amll\packages\lyric
         version: link:deps/apoint-amll/packages/lyric
@@ -53,9 +50,9 @@ importers:
       '@pixi/sprite':
         specifier: ^7.4.3
         version: 7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))
-      '@player-helper/lowfreq-wasm':
+      '@player-helper/audio-analysis':
         specifier: workspace:*
-        version: link:src-tauri/crates/lowfreq-wasm/pkg
+        version: link:src-tauri/crates/audio-analysis/pkg
       '@tauri-apps/api':
         specifier: ^2.11.0
         version: 2.11.0
@@ -232,7 +229,7 @@ importers:
         specifier: ^0.14.0
         version: 0.14.0
 
-  src-tauri/crates/lowfreq-wasm/pkg: {}
+  src-tauri/crates/audio-analysis/pkg: {}
 
 packages:
 

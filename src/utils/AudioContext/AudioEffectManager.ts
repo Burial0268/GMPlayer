@@ -13,10 +13,10 @@
  *     (Blackman window cannot reproduce AMLL's official implementation)
  */
 
+import { AudioAnalysisProcessor } from "./AudioAnalysisProcessor";
 import { LowFreqVolumeAnalyzer } from "./LowFreqVolumeAnalyzer";
 import type { LowFreqVolumeOptions } from "./LowFreqVolumeAnalyzer";
 import { AudioContextManager } from "./AudioContextManager";
-import { WasmFFTManager } from "./WasmFFTManager";
 import { isPCMWorkletRegisteredFor } from "./pcm-capture-worklet";
 
 export interface EffectManagerOptions {
@@ -43,9 +43,12 @@ const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   smoothingTimeConstant: 0.85,
   minUpdateInterval: 16,
   fftOutputSize: 2048,
-  freqMin: 76,
+  // Lower freqMin so the AMLL FrequencyLimit::Range includes the actual
+  // sub-bass region. With 2048-pt FFT @ 44100 Hz, bin 2 (43 Hz) is the
+  // first bin above 40 Hz. 4 raw_bins × ~18 Hz/bin = 43–115 Hz.
+  freqMin: 40,
   freqMax: 2400,
-  lowFreqBinCount: 2,
+  lowFreqBinCount: 4,
   lowFreqOptions: {},
 };
 
@@ -73,11 +76,10 @@ const EMPTY_U8 = new Uint8Array(0);
 export class AudioEffectManager {
   private audioCtx: AudioContext;
   private analyserNode: AnalyserNode | null = null;
-  private lowFreqAnalyzer: LowFreqVolumeAnalyzer;
   private options: Required<EffectManagerOptions>;
 
-  // WASM FFT (for lowFreqVolume + getFFTData)
-  private _wasmFFT: WasmFFTManager | null = null;
+  // WASM audio analysis: FFT + peak normalization + lowFreq (replaces WasmFFTManager)
+  private _analysisProc: AudioAnalysisProcessor | null = null;
   private _workletNode: AudioWorkletNode | null = null;
 
   // AnalyserNode buffers (for spectrum display)
@@ -86,12 +88,9 @@ export class AudioEffectManager {
   // Average amplitude (computed during getFrequencyData)
   private _lastAverage: number = 0;
 
-  // WASM FFT cached spectrum (shared between getFFTData and getLowFrequencyVolume)
-  private _cachedWasmSpectrum: number[] = [];
-  private _wasmDirty: boolean = false;
-
-  // AnalyserNode fallback buffer for mobile lowFreqVolume (avoids WASM overhead)
+  // AnalyserNode fallback for mobile lowFreqVolume (avoids WASM overhead)
   private _analyserLowFreqBins: number[] = [0, 0, 0, 0];
+  private _fallbackAnalyzer: LowFreqVolumeAnalyzer;
 
   // Throttling for AnalyserNode
   private _lastUpdateTime: number = 0;
@@ -108,7 +107,7 @@ export class AudioEffectManager {
     const baseOptions = AudioContextManager.isMobile() ? MOBILE_OPTIONS : DEFAULT_OPTIONS;
     this.options = { ...baseOptions, ...options };
 
-    this.lowFreqAnalyzer = new LowFreqVolumeAnalyzer({
+    this._fallbackAnalyzer = new LowFreqVolumeAnalyzer({
       binCount: this.options.lowFreqBinCount,
       ...this.options.lowFreqOptions,
     });
@@ -126,17 +125,19 @@ export class AudioEffectManager {
       const bufferSize = this.analyserNode.frequencyBinCount;
       this._frequencyBuffer = new Uint8Array(bufferSize);
 
-      // WASM FFTPlayer for lowFreqVolume + detailed analysis (Hamming window — AMLL native)
-      // Skip on mobile: AudioWorklet + WASM FFT causes audio glitches due to
-      // main-thread congestion (~86 postMessage/s + WASM pushData calls + GC pressure).
+      // WASM audio analysis for lowFreqVolume + detailed FFT (Hamming window)
+      // Skip on mobile: AudioWorklet + WASM causes audio glitches.
       // Mobile uses AnalyserNode fallback for lowFreqVolume instead.
       if (!AudioContextManager.isMobile()) {
-        this._wasmFFT = new WasmFFTManager(this.options.fftOutputSize);
-        this._wasmFFT.setFreqRange(this.options.freqMin, this.options.freqMax);
-        if (!this._wasmFFT.isReady()) {
-          console.warn("AudioEffectManager: WasmFFTManager failed to initialize");
-        }
-        this._cachedWasmSpectrum = Array.from({ length: this.options.fftOutputSize }, () => 0);
+        this._analysisProc = new AudioAnalysisProcessor(
+          this.options.fftOutputSize,
+          this.options.freqMin,
+          this.options.freqMax,
+          this.options.lowFreqBinCount,
+          this.options.lowFreqOptions?.windowSize,
+          this.options.lowFreqOptions?.gradientThreshold,
+          this.options.lowFreqOptions?.smoothingFactor,
+        );
       }
     } catch (err) {
       console.error("AudioEffectManager: Failed to initialize nodes", err);
@@ -149,9 +150,6 @@ export class AudioEffectManager {
    * Audio graph:
    *   inputNode → analyserNode (Blackman, spectrum display)
    *   inputNode → workletNode  (PCM capture → WASM FFTPlayer, lowFreqVolume)
-   *
-   * @param inputNode The source audio node
-   * @returns The same inputNode for chaining
    */
   connect(inputNode: AudioNode): AudioNode {
     if (!this.analyserNode) {
@@ -164,22 +162,18 @@ export class AudioEffectManager {
       inputNode.connect(this.analyserNode);
 
       // AudioWorklet for PCM capture → WASM FFT (lowFreqVolume + getFFTData)
-      // Skip on mobile: AnalyserNode fallback is used for lowFreqVolume instead,
-      // avoiding AudioWorklet + WASM overhead that causes audio glitches on mobile
-      // (constant postMessage traffic + WASM calls + GC pressure from Float32Array transfers)
       if (
         !AudioContextManager.isMobile() &&
         isPCMWorkletRegisteredFor(this.audioCtx) &&
-        this._wasmFFT?.isReady()
+        this._analysisProc?.isReady()
       ) {
         try {
           this._workletNode = new AudioWorkletNode(this.audioCtx, "pcm-capture-processor");
 
           this._workletNode.port.onmessage = (e: MessageEvent<Float32Array>) => {
-            if (this._seekPending) return; // Discard stale PCM during seek
-            if (this._wasmFFT) {
-              this._wasmFFT.pushData(e.data, this.audioCtx.sampleRate, 1);
-              this._wasmDirty = true;
+            if (this._seekPending) return;
+            if (this._analysisProc) {
+              this._analysisProc.pushData(e.data, this.audioCtx.sampleRate, 1);
             }
           };
 
@@ -197,32 +191,20 @@ export class AudioEffectManager {
     }
   }
 
-  /**
-   * Check if connected to audio graph
-   */
   isConnected(): boolean {
     return this._isConnected;
   }
 
   /**
-   * Read WASM FFT spectrum once per frame when new data is available.
-   * Shared by getFFTData() and getLowFrequencyVolume().
+   * Process audio frame via WASM (FFT + lowFreq analysis).
+   * Called once per RAF frame — time-delta smoothing runs continuously.
    */
-  private _ensureWasmSpectrumFresh(): void {
-    if (!this._wasmDirty) return;
-    this._wasmDirty = false;
-
-    if (this._wasmFFT?.isReady()) {
-      this._cachedWasmSpectrum = this._wasmFFT.readSpectrum();
-    }
+  private _ensureFresh(): void {
+    this._analysisProc?.ensureFresh();
   }
 
   /**
    * Get frequency data from AnalyserNode for spectrum bar display.
-   * Uses Blackman window — sharper peaks, better visual contrast for bar visualization.
-   * Also computes average amplitude in the same pass.
-   * @param force Skip throttling check
-   * @returns Uint8Array containing byte frequency data (0-255)
    */
   getFrequencyData(force: boolean = false): Uint8Array<ArrayBuffer> {
     const buffer = this._frequencyBuffer;
@@ -248,32 +230,23 @@ export class AudioEffectManager {
     return buffer;
   }
 
-  /**
-   * Get the average amplitude computed during the last getFrequencyData() call.
-   * @returns Average amplitude value (0-255 range)
-   */
   getAverageAmplitude(): number {
     return this._lastAverage;
   }
 
   /**
-   * Get FFT data from WASM FFTPlayer (Hamming window, normalized 0-255).
-   * Higher precision, with dynamic peak normalization and configurable freq range.
-   * @returns number[] of spectrum values (0-255 range)
+   * Get FFT data from WASM audio analysis (Hamming window, normalized 0-255).
    */
   getFFTData(): number[] {
-    this._ensureWasmSpectrumFresh();
-    return this._cachedWasmSpectrum;
+    this._ensureFresh();
+    return this._analysisProc?.getSpectrum() ?? [];
   }
 
   /**
    * Get low frequency volume for background effects.
    *
-   * Two paths:
-   *   Desktop (WASM): raw magnitudes from WASM FFTPlayer (Hamming window — matches AMLL native)
-   *   Mobile (fallback): AnalyserNode byte frequency data scaled to approximate raw magnitude range
-   *
-   * @returns Smoothed low-frequency volume
+   * Desktop (WASM): FFT + lowFreq analysis runs in Rust via processFrame.
+   * Mobile (fallback): AnalyserNode byte frequency data via LowFreqVolumeAnalyzer.
    */
   getLowFrequencyVolume(): number {
     // Mobile or no worklet: use AnalyserNode byte frequency fallback
@@ -281,29 +254,17 @@ export class AudioEffectManager {
       return this._getLowFreqFromAnalyser();
     }
 
-    this._ensureWasmSpectrumFresh();
-    // Pass raw (un-normalized) FFT bins to match AMLL's native FFTPlayer output
-    const rawBins = this._wasmFFT?.getRawBins(this.options.lowFreqBinCount);
-    if (rawBins) {
-      return this.lowFreqAnalyzer.analyze(rawBins);
-    }
-    return this.lowFreqAnalyzer.analyze(this._cachedWasmSpectrum);
+    this._ensureFresh();
+    return this._analysisProc?.getLowFrequencyVolume() ?? 0;
   }
 
   /**
    * Fallback: compute low-frequency volume from AnalyserNode byte frequency data.
    * Used on mobile to avoid AudioWorklet + WASM FFT overhead.
-   *
-   * AnalyserNode returns dB-scaled bytes (0-255). Since LowFreqVolumeAnalyzer applies
-   * another log10 (amplitudeToLevel), the double-logarithm compresses dynamic range.
-   * Scale factor of 50 compensates, producing levels in the 0.15-0.80 range so the
-   * gradient algorithm (with mobile threshold 0.1) triggers on bass hits.
-   *
-   * Requires getFrequencyData() to have been called first to populate _frequencyBuffer.
    */
   private _getLowFreqFromAnalyser(): number {
     if (!this._frequencyBuffer || this._frequencyBuffer.length === 0) {
-      return this.lowFreqAnalyzer.analyze(new Uint8Array(0));
+      return this._fallbackAnalyzer.analyze(new Uint8Array(0));
     }
 
     const binCount = Math.min(this.options.lowFreqBinCount, this._frequencyBuffer.length);
@@ -311,156 +272,94 @@ export class AudioEffectManager {
       this._analyserLowFreqBins = Array.from({ length: binCount }, () => 0);
     }
     for (let i = 0; i < binCount; i++) {
-      // Scale 0-255 dB-compressed bytes to approximate raw FFT magnitude range
-      // 50x compensates for the double-log compression (dB + amplitudeToLevel)
       this._analyserLowFreqBins[i] = this._frequencyBuffer[i] * 50;
     }
 
-    return this.lowFreqAnalyzer.analyze(this._analyserLowFreqBins);
+    return this._fallbackAnalyzer.analyze(this._analyserLowFreqBins);
   }
 
-  /**
-   * Get current FFT size (AnalyserNode)
-   */
   getFFTSize(): number {
     return this.analyserNode?.fftSize || 2048;
   }
 
-  /**
-   * Get frequency bin count (AnalyserNode)
-   */
   getFrequencyBinCount(): number {
     return this.analyserNode?.frequencyBinCount || 0;
   }
 
-  /**
-   * Update FFT size dynamically (affects AnalyserNode spectrum display only)
-   */
   setFFTSize(size: number): void {
     if (!this.analyserNode) return;
-
     const validSize = Math.min(32768, Math.max(32, Math.pow(2, Math.round(Math.log2(size)))));
     this.analyserNode.fftSize = validSize;
     this.options.fftSize = validSize;
-
     const bufferSize = this.analyserNode.frequencyBinCount;
     this._frequencyBuffer = new Uint8Array(bufferSize);
   }
 
-  /**
-   * Update WASM FFT frequency range at runtime.
-   * @param min Min frequency in Hz (e.g. 20 for deeper bass)
-   * @param max Max frequency in Hz (e.g. 300 for kick-only)
-   */
   setFreqRange(min: number, max: number): void {
     this.options.freqMin = min;
     this.options.freqMax = max;
-    this._wasmFFT?.setFreqRange(min, max);
+    this._analysisProc?.setFreqRange(min, max);
   }
 
-  /**
-   * Get current WASM FFT frequency range.
-   */
   getFreqRange(): { min: number; max: number } {
     return { min: this.options.freqMin, max: this.options.freqMax };
   }
 
-  /**
-   * Update low frequency volume analyzer options at runtime.
-   */
   setLowFreqOptions(options: Partial<LowFreqVolumeOptions>): void {
     if (options.binCount !== undefined) this.options.lowFreqBinCount = options.binCount;
-    this.lowFreqAnalyzer.setOptions(options);
+    this._fallbackAnalyzer.setOptions(options);
+    this._analysisProc?.setLFOptions(options);
   }
 
-  /**
-   * Get current low frequency volume analyzer options.
-   */
   getLowFreqOptions(): Required<LowFreqVolumeOptions> {
-    return this.lowFreqAnalyzer.getOptions();
+    return this._fallbackAnalyzer.getOptions();
   }
 
-  /**
-   * Disconnect all nodes and cleanup
-   */
   disconnect(): void {
     if (this._workletNode) {
       try {
         this._workletNode.port.onmessage = null;
         this._workletNode.disconnect();
-      } catch {
-        // May already be disconnected
-      }
+      } catch { /* already disconnected */ }
       this._workletNode = null;
     }
 
     if (this.analyserNode) {
-      try {
-        this.analyserNode.disconnect();
-      } catch {
-        // May already be disconnected
-      }
+      try { this.analyserNode.disconnect(); } catch { /* already disconnected */ }
       this.analyserNode = null;
     }
 
-    if (this._wasmFFT) {
-      this._wasmFFT.free();
-      this._wasmFFT = null;
+    if (this._analysisProc) {
+      this._analysisProc.free();
+      this._analysisProc = null;
     }
 
     this._isConnected = false;
     this._frequencyBuffer = null;
-    this._cachedWasmSpectrum = [];
     this._lastAverage = 0;
-    this.lowFreqAnalyzer.reset();
+    this._fallbackAnalyzer.reset();
   }
 
-  /**
-   * Reset analyzer state without disconnecting
-   */
   reset(): void {
     this._lastUpdateTime = 0;
-    this._wasmDirty = false;
     this._lastAverage = 0;
-    this.lowFreqAnalyzer.reset();
+    this._fallbackAnalyzer.reset();
     if (this._frequencyBuffer) {
       this._frequencyBuffer.fill(0);
     }
-    this._cachedWasmSpectrum.fill(0);
-    if (this._wasmFFT) {
-      this._wasmFFT.reset();
-    }
+    this._analysisProc?.reset();
   }
 
-  /**
-   * Clear WASM FFT queue and reset all analysis state.
-   * Call on seek to flush stale PCM data from the old playback position.
-   * Sets a guard flag to block incoming PCM until onSeeked() is called.
-   */
   clearFFTState(): void {
     this._seekPending = true;
-    this._wasmDirty = false;
     this._lastAverage = 0;
-    this.lowFreqAnalyzer.reset();
-    this._cachedWasmSpectrum.fill(0);
-    if (this._wasmFFT) {
-      this._wasmFFT.clearQueue();
-    }
+    this._fallbackAnalyzer.reset();
+    this._analysisProc?.clearQueue();
   }
 
-  /**
-   * Lift the seek guard after HTMLAudioElement's 'seeked' event fires.
-   * Performs a final clear to flush any stale PCM that leaked through
-   * the Web Audio API's internal buffer during the seek transition.
-   */
   onSeeked(): void {
     if (!this._seekPending) return;
-    // Final clear: any stale data that was already in the worklet pipeline
-    // before the guard was set may have been pushed to the FFTPlayer
-    if (this._wasmFFT) {
-      this._wasmFFT.clearQueue();
-    }
-    this._cachedWasmSpectrum.fill(0);
+    this._analysisProc?.clearQueue();
     this._seekPending = false;
   }
 }

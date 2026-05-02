@@ -7,7 +7,7 @@
   "scripts": {
     "install:deps-amll": "cd deps/apoint-amll && pnpm install",
     "build:deps-amll": "cd deps/apoint-amll/packages/vue && pnpm nx run-many -t build --projects=vue,fft,core,lyric,ttml-processor",
-    "build:wasm": "wasm-pack build --release --scope player-helper src-tauri/crates/lowfreq-wasm",
+    "build:wasm": "wasm-pack build --release --scope player-helper src-tauri/crates/audio-analysis",
     "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
@@ -19,8 +19,7 @@
   },
   "dependencies": {
     "@applemusic-like-lyrics/core": "link:deps\\apoint-amll\\packages\\core",
-    "@applemusic-like-lyrics/fft": "link:deps\\apoint-amll\\packages\\fft",
-    "@applemusic-like-lyrics/lyric": "link:deps\\apoint-amll\\packages\\lyric",
+        "@applemusic-like-lyrics/lyric": "link:deps\\apoint-amll\\packages\\lyric",
     "@applemusic-like-lyrics/vue": "link:deps\\apoint-amll\\packages\\vue",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
@@ -33,7 +32,7 @@
     "@pixi/filter-bulge-pinch": "^5.1.1",
     "@pixi/filter-color-matrix": "^7.4.3",
     "@pixi/sprite": "^7.4.3",
-    "@player-helper/lowfreq-wasm": "workspace:*",
+    "@player-helper/audio-analysis": "workspace:*",
     "@tauri-apps/api": "^2.11.0",
     "@tauri-apps/plugin-http": "~2.5.8",
     "@tauri-apps/plugin-log": "~2.8.0",

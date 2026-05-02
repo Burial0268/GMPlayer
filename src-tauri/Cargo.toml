@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/lowfreq", "crates/lowfreq-wasm", "crates/orientation"]
+members = ["crates/audio-analysis", "crates/orientation"]
 resolver = "2"
 
 [package]
@@ -33,7 +33,6 @@ name = "gmplayer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-lowfreq = { path = "crates/lowfreq" }
 gmplayer-orientation = { path = "crates/orientation" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

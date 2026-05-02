@@ -49,9 +49,9 @@ export { NativeSound } from "./NativeSound";
 export { BufferedSound } from "./BufferedSound";
 export { SoundManager } from "./SoundManager";
 export { AudioEffectManager } from "./AudioEffectManager";
+export { AudioAnalysisProcessor } from "./AudioAnalysisProcessor";
 export { LowFreqVolumeAnalyzer } from "./LowFreqVolumeAnalyzer";
 export { AudioContextManager } from "./AudioContextManager";
-export { WasmFFTManager } from "./WasmFFTManager";
 
 // AudioPreloader
 export { AudioPreloader, getAudioPreloader } from "./AudioPreloader";

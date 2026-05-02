@@ -1,2 +1,2 @@
 packages:
-  - src-tauri/crates/lowfreq-wasm/pkg
+  - src-tauri/crates/audio-analysis/pkg

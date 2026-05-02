@@ -10,6 +10,7 @@
  */
 
 import { AudioEffectManager } from "./AudioEffectManager";
+import { ensureWasmReady } from "./AudioAnalysisProcessor";
 import { AudioContextManager } from "./AudioContextManager";
 import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from "./types";
 
@@ -134,10 +135,11 @@ export class NativeSound implements ISound {
         return false;
       }
 
-      // Register PCM capture worklet before creating AudioEffectManager
-      // Skip on mobile: worklet is not used (AnalyserNode fallback for lowFreqVolume)
+      // Register PCM capture worklet and ensure WASM is loaded before creating AudioEffectManager.
+      // Skip on mobile: worklet & WASM are not used (AnalyserNode fallback for lowFreqVolume).
       if (!AudioContextManager.isMobile()) {
         await AudioContextManager.registerWorklet();
+        await ensureWasmReady();
       }
 
       // CRITICAL: Only create MediaElementSourceNode once per audio element
