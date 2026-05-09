@@ -93,6 +93,8 @@ jobs:
 
       - name: 安装 PNPM
         uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
@@ -149,9 +151,15 @@ jobs:
         with:
           version: "v0.13.1"
 
-      - name: 预购建前端产物作为缓存
+      - name: 安装依赖 (包含子依赖和 WASM)
         run: |
-          pnpm install:with-deps
+          pnpm install:deps-amll
+          pnpm build:deps-amll
+          pnpm build:wasm
+          pnpm install
+
+      - name: 构建前端产物
+        run: |
           pnpm build
 
       - name: 构建 Player 程序
@@ -189,6 +197,8 @@ jobs:
 
       - name: 安装 PNPM
         uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
 
       - name: 安装 Node.js
         uses: actions/setup-node@v4
@@ -226,9 +236,15 @@ jobs:
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
-      - name: 预购建前端产物作为缓存
+      - name: 安装依赖 (包含子依赖和 WASM)
         run: |
-          pnpm install:with-deps
+          pnpm install:deps-amll
+          pnpm build:deps-amll
+          pnpm build:wasm
+          pnpm install
+
+      - name: 构建前端产物
+        run: |
           pnpm build
 
       - name: 全局安装 Tauri CLI
