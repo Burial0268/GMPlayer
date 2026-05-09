@@ -26,6 +26,7 @@
     "core:window:allow-is-visible",
     "core:window:allow-unminimize",
     "core:window:allow-is-minimized",
+    "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-create",
     "core:event:allow-emit",
     "core:event:allow-listen",

@@ -4,6 +4,7 @@ pub mod window;
 
 use crate::algorithms::audio_analysis;
 use crate::desktop::window::config::WindowConfig;
+use crate::desktop::window::desktop_lyrics::mouse_through::{HitRegionRegistry, MouseThroughState};
 use crate::desktop::window::manager as wm;
 use crate::shared;
 use log::warn;
@@ -30,6 +31,8 @@ pub fn run() {
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_decorum::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
+        .manage(MouseThroughState::default())
+        .manage(HitRegionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
             // Window management commands
@@ -55,6 +58,9 @@ pub fn run() {
             window::commands::get_window_bounds,
             // Desktop lyrics commands
             window::desktop_lyrics::commands::set_window_position,
+            window::desktop_lyrics::commands::start_mouse_through,
+            window::desktop_lyrics::commands::stop_mouse_through,
+            window::desktop_lyrics::commands::update_mouse_through_regions,
             // Tray commands
             window::tray::set_tray_tooltip,
             // Audio analysis (native Rust, bypasses JS Worker)

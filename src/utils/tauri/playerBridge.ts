@@ -181,37 +181,39 @@ export function usePlayerBridge() {
   }
 
   // ── Send commands to master ─────────────────────────────────────────
+  // Use emitTo to target the main window explicitly, since event.emit
+  // in Tauri v2 only broadcasts to the current window by default.
 
   function playPause(): void {
-    getTauri()?.event.emit("slave-play-pause", null);
+    getTauri()?.event.emitTo("main", "slave-play-pause", null);
   }
 
   function prevTrack(): void {
-    getTauri()?.event.emit("slave-prev-track", null);
+    getTauri()?.event.emitTo("main", "slave-prev-track", null);
   }
 
   function nextTrack(): void {
-    getTauri()?.event.emit("slave-next-track", null);
+    getTauri()?.event.emitTo("main", "slave-next-track", null);
   }
 
   function seek(time: number): void {
-    getTauri()?.event.emit("slave-seek", { time });
+    getTauri()?.event.emitTo("main", "slave-seek", { time });
   }
 
   function setVolume(volume: number): void {
-    getTauri()?.event.emit("slave-volume", { volume });
+    getTauri()?.event.emitTo("main", "slave-volume", { volume });
   }
 
   function cyclePlayMode(): void {
-    getTauri()?.event.emit("slave-cycle-play-mode", null);
+    getTauri()?.event.emitTo("main", "slave-cycle-play-mode", null);
   }
 
   function toggleLike(): void {
-    getTauri()?.event.emit("slave-like-song", null);
+    getTauri()?.event.emitTo("main", "slave-like-song", null);
   }
 
   function setLyricsFontSize(size: number): void {
-    getTauri()?.event.emit("slave-set-lyrics-font-size", { size });
+    getTauri()?.event.emitTo("main", "slave-set-lyrics-font-size", { size });
   }
 
   // ── Auto-connect lifecycle ──────────────────────────────────────────

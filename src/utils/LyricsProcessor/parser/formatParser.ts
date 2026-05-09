@@ -135,8 +135,11 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
     for (let j = 0; j < wordsLen; j++) {
       const word = words[j];
       const wordText = word.word;
+      // Preserve original word text including trailing spaces.
+      // TTML lyrics rely on trailing spaces to separate words;
+      // trimming here would cause words to be concatenated together.
       const endsWithSpace = wordText.endsWith(" ");
-      const processedWord = endsWithSpace ? wordText : wordText.trim();
+      const processedWord = wordText;
 
       content[j] = {
         time: msToS(word.startTime),

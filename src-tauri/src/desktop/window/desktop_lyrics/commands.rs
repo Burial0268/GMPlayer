@@ -1,5 +1,7 @@
 use tauri::{AppHandle, Emitter, Manager};
 
+use super::mouse_through::HitRegion;
+
 /// Set window position to specific physical coordinates.
 #[tauri::command(rename_all = "snake_case")]
 pub async fn set_window_position(
@@ -14,6 +16,37 @@ pub async fn set_window_position(
     window
         .set_position(tauri::Position::Physical(tauri::PhysicalPosition { x, y }))
         .map_err(|e| e.to_string())
+}
+
+/// Start global mouse-through detection for the desktop-lyrics window.
+///
+/// The frontend provides a list of hit regions (logical coordinates within the
+/// webview client area). A background thread listens to global mouse movement
+/// via `rdev` and emits `mouse-through-state` events to the window whenever
+/// the cursor enters or leaves any region.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn start_mouse_through(
+    app: AppHandle,
+    label: String,
+    regions: Vec<HitRegion>,
+) -> Result<(), String> {
+    super::mouse_through::start_mouse_through(&app, &label, regions)
+}
+
+/// Stop the global mouse-through listener.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn stop_mouse_through(app: AppHandle, label: String) -> Result<(), String> {
+    super::mouse_through::stop_mouse_through(&app, &label)
+}
+
+/// Update hit regions without restarting the listener.
+#[tauri::command(rename_all = "snake_case")]
+pub async fn update_mouse_through_regions(
+    app: AppHandle,
+    label: String,
+    regions: Vec<HitRegion>,
+) -> Result<(), String> {
+    super::mouse_through::update_hit_regions(&app, &label, regions)
 }
 
 /// Emit events when desktop lyrics window moves or resizes.

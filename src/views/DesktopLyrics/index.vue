@@ -12,6 +12,7 @@
     <Transition name="header-fade">
       <div
         v-if="showHeader"
+        ref="headerRef"
         class="header"
         :data-tauri-drag-region="!isLocked || undefined"
         @mouseenter="isHeaderHovering = true"
@@ -112,8 +113,8 @@
           </div>
         </template>
         <template v-else>
-          <!-- Locked mode: show unlock button -->
-          <div class="header-center locked-header">
+          <!-- Locked mode: show playback controls + unlock button -->
+          <div class="header-left locked-info">
             <svg
               viewBox="0 0 24 24"
               width="14"
@@ -126,6 +127,49 @@
               />
             </svg>
             <span class="locked-label">{{ $t("desktopLyrics.locked") }}</span>
+          </div>
+          <div class="header-center">
+            <button
+              class="ctrl-btn"
+              @pointerdown.stop
+              @click="bridge.prevTrack()"
+              :title="$t('desktopLyrics.prev')"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+              </svg>
+            </button>
+            <button
+              class="ctrl-btn play-btn"
+              @pointerdown.stop
+              @click="bridge.playPause()"
+              :title="$t('desktopLyrics.playPause')"
+            >
+              <svg
+                v-if="state.isPlaying"
+                viewBox="0 0 24 24"
+                width="22"
+                height="22"
+                fill="currentColor"
+              >
+                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+              </svg>
+              <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+              </svg>
+            </button>
+            <button
+              class="ctrl-btn"
+              @pointerdown.stop
+              @click="bridge.nextTrack()"
+              :title="$t('desktopLyrics.next')"
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+              </svg>
+            </button>
+          </div>
+          <div class="header-right">
             <button class="ctrl-btn unlock-btn" @click="handleUnlock">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
                 <path
@@ -151,6 +195,7 @@
         <div
           v-for="line in renderLyricLines"
           :key="line.key"
+          :ref="(el) => setLyricLineRef(el as HTMLElement, line.key)"
           class="lyric-line"
           :class="{ current: line.isCurrent, title: line.isTitle }"
           @click="seekToLine(line)"
@@ -188,10 +233,10 @@
           </div>
         </div>
       </TransitionGroup>
-      <div v-else-if="displayState === 'noLyrics'" class="no-lyrics" :style="lyricTextStyle">
+      <div v-else-if="displayState === 'noLyrics'" ref="noLyricsRef" class="no-lyrics" :style="lyricTextStyle">
         <span class="song-title">{{ $t("desktopLyrics.pureMusic") }}</span>
       </div>
-      <div v-else class="no-lyrics" :style="lyricTextStyle">
+      <div v-else ref="noLyricsRef" class="no-lyrics" :style="lyricTextStyle">
         <span class="song-title">{{ state.title || $t("desktopLyrics.noLyrics") }}</span>
         <span v-if="state.artist" class="artist-name">{{ state.artist }}</span>
       </div>
@@ -207,6 +252,7 @@ import {
   shallowRef,
   onMounted,
   onUnmounted,
+  nextTick,
   type ComponentPublicInstance,
 } from "vue";
 import { usePlayerBridge } from "@/utils/tauri/playerBridge";
@@ -580,18 +626,19 @@ function onHeaderLeave() {
 
 const isLocked = ref(false);
 const isTempUnlocked = ref(false);
-let cursorPollInterval: ReturnType<typeof setInterval> | null = null;
+// cursorPollInterval removed — replaced by rdev-based global mouse listener
 let reLockTimeout: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleReLock() {
   if (reLockTimeout) clearTimeout(reLockTimeout);
-  reLockTimeout = setTimeout(async () => {
+  reLockTimeout = setTimeout(() => {
     if (isLocked.value && isTempUnlocked.value && !isHeaderHovering.value) {
       isTempUnlocked.value = false;
       showHeader.value = false;
-      await windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
+      // Re-enable full click-through immediately
+      windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
     }
-  }, 500);
+  }, 1500);
 }
 
 async function toggleLock() {
@@ -599,8 +646,11 @@ async function toggleLock() {
   showHeader.value = false;
   isHovering.value = false;
   clearHeaderTimeout();
+  // Enter full click-through mode immediately.
+  // The rdev listener will detect when the cursor approaches the
+  // unlock-trigger zone and temporarily disable click-through.
   await windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
-  startCursorPolling();
+  await startMouseThrough();
 }
 
 async function handleUnlock() {
@@ -611,42 +661,24 @@ async function handleUnlock() {
     clearTimeout(reLockTimeout);
     reLockTimeout = null;
   }
+  // Cancel any pending mouse-through event listener
+  if (unlistenMouseThrough) {
+    unlistenMouseThrough();
+    unlistenMouseThrough = null;
+  }
+  await stopMouseThrough();
+  // In unlocked mode the window should NOT be click-through so normal
+  // mouseenter/leave/mousemove handlers can drive the UI.
   await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
 }
 
 function startCursorPolling() {
-  stopCursorPolling();
-  cursorPollInterval = setInterval(async () => {
-    if (!isLocked.value) return;
-
-    const cursor = await windowManager.getCursorPosition();
-    const bounds = await windowManager.getWindowBounds("desktop-lyrics");
-    if (!cursor || !bounds) return;
-
-    const [cx, cy] = cursor;
-    const [wx, wy, ww, wh] = bounds;
-    const margin = 30;
-
-    const isNear =
-      cx >= wx - margin && cx <= wx + ww + margin && cy >= wy - margin && cy <= wy + wh + margin;
-
-    if (isNear && !isTempUnlocked.value) {
-      isTempUnlocked.value = true;
-      await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
-      showHeader.value = true;
-    } else if (!isNear && isTempUnlocked.value && !isHeaderHovering.value) {
-      isTempUnlocked.value = false;
-      showHeader.value = false;
-      await windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
-    }
-  }, 150);
+  // Replaced by rdev-based global mouse listener (startMouseThrough).
+  // Kept as no-op for backward compatibility in case any caller remains.
 }
 
 function stopCursorPolling() {
-  if (cursorPollInterval) {
-    clearInterval(cursorPollInterval);
-    cursorPollInterval = null;
-  }
+  // Replaced by stopMouseThrough.
 }
 
 // ── Seek on Line Click ────────────────────────────────────────────────
@@ -661,6 +693,192 @@ function seekToLine(line: VisibleLine) {
 async function handleClose() {
   await windowManager.closeWindow("desktop-lyrics");
 }
+
+// ── Transparent-Through Mouse Tracking ────────────────────────────────
+
+/** Whether the native mouse-through listener is active */
+const mouseThroughActive = ref(false);
+let unlistenMouseThrough: (() => void) | null = null;
+
+/** DOM refs for hit regions that should capture mouse when locked */
+const headerRef = ref<HTMLElement | null>(null);
+const lyricLineMap = new Map<string, HTMLElement>();
+const noLyricsRef = ref<HTMLElement | null>(null);
+
+function setLyricLineRef(el: HTMLElement | null, key: string) {
+  if (el) {
+    lyricLineMap.set(key, el);
+  } else {
+    lyricLineMap.delete(key);
+  }
+}
+
+interface HitRegion {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Collect current interactive hit regions for the Rust listener */
+function collectHitRegions(): HitRegion[] {
+  const regions: HitRegion[] = [];
+
+  // In locked mode, the ONLY interactive element is the unlock header.
+  // We define a "trigger zone" at the top of the window — when the cursor
+  // enters this zone we show the header and temporarily disable click-through.
+  // The zone is always present (regardless of showHeader) so the user can
+  // trigger it without first being inside a hit region.
+  if (isLocked.value) {
+    // Trigger zone: full window width, top 40px
+    regions.push({
+      id: "unlock-trigger",
+      x: 0,
+      y: 0,
+      width: window.innerWidth,
+      height: 40,
+    });
+
+    // When header is actually shown, expand the hit region to cover the
+    // entire header so the user can reach the unlock button.
+    if (showHeader.value && headerRef.value) {
+      const rect = headerRef.value.getBoundingClientRect();
+      regions.push({
+        id: "header",
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+  }
+
+  // Lyric lines (clickable for seek) — only when NOT locked
+  if (!isLocked.value) {
+    for (const [key, el] of lyricLineMap) {
+      const rect = el.getBoundingClientRect();
+      regions.push({
+        id: `lyric-${key}`,
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+
+    // No-lyrics placeholder (also clickable)
+    if (noLyricsRef.value) {
+      const rect = noLyricsRef.value.getBoundingClientRect();
+      regions.push({
+        id: "no-lyrics",
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+  }
+
+  return regions;
+}
+
+/** Start the global mouse-through listener */
+async function startMouseThrough() {
+  const tauri = window.__TAURI__;
+  if (!tauri) return;
+
+  // Wait for DOM to settle so rects are accurate
+  await nextTick();
+  const regions = collectHitRegions();
+
+  await tauri.core.invoke("start_mouse_through", {
+    label: "desktop-lyrics",
+    regions,
+  });
+
+  mouseThroughActive.value = true;
+
+  // Listen for state changes from Rust
+  unlistenMouseThrough = await tauri.event.listen<boolean>(
+    "mouse-through-state",
+    (e) => {
+      // e.payload = true when cursor is inside a hit region
+      const inside = e.payload;
+
+      // ── Locked mode logic ──────────────────────────────────────────
+      if (isLocked.value) {
+        if (inside) {
+          // Cursor is in the unlock-trigger zone or the header itself.
+          // Disable click-through so the webview can receive mouse events.
+          windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
+
+          // Show the unlock header if not already visible.
+          if (!isTempUnlocked.value) {
+            isTempUnlocked.value = true;
+            showHeader.value = true;
+          }
+        } else {
+          // Cursor left all hit regions (trigger zone + header).
+          // Re-enable full click-through after a short grace period.
+          if (isTempUnlocked.value && !isHeaderHovering.value) {
+            scheduleReLock();
+          }
+        }
+        return;
+      }
+
+      // ── Unlocked mode logic ────────────────────────────────────────
+      // Only lyric lines / no-lyrics placeholder are interactive.
+      windowManager.setIgnoreCursorEvents("desktop-lyrics", !inside);
+    },
+  );
+}
+
+/** Stop the global mouse-through listener */
+async function stopMouseThrough() {
+  const tauri = window.__TAURI__;
+  if (!tauri) return;
+
+  await tauri.core.invoke("stop_mouse_through", {
+    label: "desktop-lyrics",
+  });
+
+  mouseThroughActive.value = false;
+
+  if (unlistenMouseThrough) {
+    unlistenMouseThrough();
+    unlistenMouseThrough = null;
+  }
+}
+
+/** Update hit regions without restarting the listener */
+async function updateMouseThroughRegions() {
+  const tauri = window.__TAURI__;
+  if (!tauri || !mouseThroughActive.value) return;
+
+  await nextTick();
+  const regions = collectHitRegions();
+
+  await tauri.core.invoke("update_mouse_through_regions", {
+    label: "desktop-lyrics",
+    regions,
+  });
+}
+
+// Watch for header visibility changes to update hit regions
+watch(showHeader, () => {
+  if (isLocked.value && mouseThroughActive.value) {
+    updateMouseThroughRegions();
+  }
+});
+
+// Watch for lyric content changes to update hit regions
+watch(renderLyricLines, () => {
+  if (isLocked.value && mouseThroughActive.value) {
+    nextTick(() => updateMouseThroughRegions());
+  }
+});
 
 // ── Lifecycle ─────────────────────────────────────────────────────────
 
@@ -702,6 +920,11 @@ onUnmounted(() => {
   if (reLockTimeout) clearTimeout(reLockTimeout);
   if (unlistenUnlock) unlistenUnlock();
   if (unlistenResized) unlistenResized();
+  if (unlistenMouseThrough) {
+    unlistenMouseThrough();
+    unlistenMouseThrough = null;
+  }
+  stopMouseThrough();
 });
 </script>
 
@@ -838,10 +1061,11 @@ onUnmounted(() => {
 }
 
 // Locked header
-.locked-header {
-  gap: 8px;
-  width: 100%;
-  justify-content: center;
+.locked-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .locked-label {
@@ -984,6 +1208,9 @@ onUnmounted(() => {
   position: relative;
   display: inline-block;
   vertical-align: baseline;
+  // Prevent HTML from collapsing trailing spaces inside each word.
+  // TTML lyrics rely on trailing spaces to separate words.
+  white-space: pre;
 }
 
 .word-bg {
