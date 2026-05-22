@@ -1,5 +1,8 @@
 <template>
-  <div class="lyric-player-wrapper">
+  <div
+    class="lyric-player-wrapper"
+    :style="{ '--lyrics-size-scale': setting.lyricsFontSize * 1.5 }"
+  >
     <LyricPlayer
       class="amll-lyric-player"
       :lyric-lines="amllLyricLines"
@@ -79,21 +82,16 @@ const mainColor = computed(() => {
   return `rgb(${site.songPicColor})`;
 });
 
-// 设置样式（直接设置，不使用 v-bind 转换）
-const lyricStyles = computed(() => {
-  const fontSizeVh = `${setting.lyricsFontSize * 1.5}vh`;
-  return {
-    "--amll-lp-color": mainColor.value,
-    "--amll-lyric-view-color": mainColor.value,
-    "--amll-lp-font-size": fontSizeVh,
-    "font-size": fontSizeVh,
-    "font-weight": setting.lyricFontWeight,
-    "font-family": setting.lyricFont,
-    "letter-spacing": setting.lyricLetterSpacing,
-    cursor: "pointer",
-    "-webkit-tap-highlight-color": "transparent",
-  };
-});
+// 设置样式（字号由 wrapper 的 container query + --lyrics-size-scale 控制，见下方 SCSS）
+const lyricStyles = computed(() => ({
+  "--amll-lp-color": mainColor.value,
+  "--amll-lyric-view-color": mainColor.value,
+  "font-weight": setting.lyricFontWeight,
+  "font-family": setting.lyricFont,
+  "letter-spacing": setting.lyricLetterSpacing,
+  cursor: "pointer",
+  "-webkit-tap-highlight-color": "transparent",
+}));
 
 // 处理歌词点击（参考 AMLL-Editor 的 jumpSeek）- 用于桌面端
 const handleLineClick = (evt: any) => {
@@ -174,9 +172,26 @@ watch(
   width: 100%;
   height: 100%;
   touch-action: pan-y;
+  /* 字号相对本容器高度缩放，适配大播放器分栏、窗口缩放等布局变化 */
+  container-type: size;
 }
 
 .amll-lyric-player {
+  /* vh 保底可读；cqh×1.85 在 ~1000px 容器高度时约等于旧的 scale×17px，并随容器缩放 */
+  --amll-lp-font-size: clamp(
+    18px,
+    max(
+      calc(var(--lyrics-size-scale, 3.6) * 1vh),
+      calc(var(--lyrics-size-scale, 3.6) * 1.85 * 1cqh)
+    ),
+    96px
+  );
+  font-size: var(--amll-lp-font-size);
+
+  @supports not (width: 1cqh) {
+    --amll-lp-font-size: clamp(18px, calc(var(--lyrics-size-scale, 3.6) * 1vh), 96px);
+  }
+
   mask-image: linear-gradient(
     to bottom,
     transparent,

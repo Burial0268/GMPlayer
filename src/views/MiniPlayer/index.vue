@@ -301,7 +301,6 @@
               :line-pos-x-spring-params="bridge.settings.springParams.posX"
               :line-pos-y-spring-params="bridge.settings.springParams.posY"
               :line-scale-spring-params="bridge.settings.springParams.scale"
-              :enable-interlude-dots="true"
               @line-click="handleLineClick"
               :style="amllStyles"
               :key="playerKey"
@@ -362,8 +361,9 @@ const amllLines = shallowRef<AMLLLine[]>([]);
 
 const handleLineClick = (evt: any) => {
   const targetTime = evt.line.getLine().startTime;
-  amllPlayerRef.value?.lyricPlayer.value?.setCurrentTime(targetTime, true);
-  amllPlayerRef.value?.lyricPlayer.value?.update();
+  const player = amllPlayerRef.value?.lyricPlayer.value;
+  player?.setCurrentTime(targetTime, true);
+  player?.resetScroll();
   bridge.seek(targetTime / 1000);
 };
 
@@ -405,7 +405,6 @@ watch(
     } else {
       amllPlayerRef.value?.lyricPlayer.value?.pause();
     }
-    amllPlayerRef.value?.lyricPlayer.value?.update();
   },
 );
 
@@ -892,10 +891,33 @@ onUnmounted(() => {
     .amll-lyric-player {
       width: 100%;
       height: 100%;
+      mask-image: linear-gradient(
+        to bottom,
+        transparent,
+        black 1rem,
+        black calc(100% - 1rem),
+        transparent
+      );
 
-      &.dom:deep(span[class^="_emphasizeWrapper"] span) {
+      &.dom:deep(span[class*="_emphasizeWrapper"] span) {
         padding: 0.5em;
         margin: -0.5em;
+      }
+
+      &.dom:deep([class*="_lyricMainLine"]) {
+        font-weight: bold;
+        line-height: 1.25;
+      }
+
+      &.dom:deep([class*="_lyricSubLine"]) {
+        margin-top: 0.5rem;
+        & + [class*="_lyricSubLine"] {
+          margin-top: 0;
+        }
+      }
+
+      &.dom:deep([class*="_interludeDots"]:not([style])) {
+        visibility: hidden;
       }
     }
 

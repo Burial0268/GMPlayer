@@ -210,8 +210,9 @@
             <template v-else>
               <span
                 class="scroll-content"
-                :ref="setContentRef(line.key)"
-                :style="getScrollStyle(line)"
+                :ref="(el) => setScrollContentRef(el as HTMLElement, line.key)"
+                :class="{ scrolling: scrollOverflowMap.get(line.key) && line.isCurrent }"
+                :data-line-key="line.key"
               >
                 <span class="lyric-text" :class="{ current: line.isCurrent }">{{ line.text }}</span>
               </span>
@@ -233,7 +234,12 @@
           </div>
         </div>
       </TransitionGroup>
-      <div v-else-if="displayState === 'noLyrics'" ref="noLyricsRef" class="no-lyrics" :style="lyricTextStyle">
+      <div
+        v-else-if="displayState === 'noLyrics'"
+        ref="noLyricsRef"
+        class="no-lyrics"
+        :style="lyricTextStyle"
+      >
         <span class="song-title">{{ $t("desktopLyrics.pureMusic") }}</span>
       </div>
       <div v-else ref="noLyricsRef" class="no-lyrics" :style="lyricTextStyle">
@@ -512,55 +518,59 @@ const displayState = computed(() => {
 
 // ── Horizontal Scroll for Long Lyrics ─────────────────────────────────
 
-const contentRefs = new Map<string, HTMLElement>();
+const scrollContentRefs = new Map<string, HTMLElement>();
+const scrollOverflowMap = shallowRef(new Map<string, boolean>());
+let resizeObserver: ResizeObserver | null = null;
 
-function setContentRef(key: string) {
-  return (el: Element | ComponentPublicInstance | null) => {
-    if (el instanceof HTMLElement) {
-      contentRefs.set(key, el);
-    } else {
-      contentRefs.delete(key);
-    }
-  };
+function setScrollContentRef(el: HTMLElement | null, key: string) {
+  if (el) {
+    scrollContentRefs.set(key, el);
+    checkOverflow(el, key);
+    observeScrollContent(el, key);
+  } else {
+    scrollContentRefs.delete(key);
+    const newMap = new Map(scrollOverflowMap.value);
+    newMap.delete(key);
+    scrollOverflowMap.value = newMap;
+  }
 }
 
-function getScrollStyle(line: VisibleLine) {
-  if (!line.isCurrent) return {};
-  const el = contentRefs.get(line.key);
-  if (!el) return {};
-  // Walk up to .lyric-line (the block-level clipping container)
-  // since .lyric-inner is display:inline and has no measurable clientWidth
+function checkOverflow(el: HTMLElement, key: string) {
   const container = el.closest(".lyric-line") as HTMLElement | null;
-  if (!container) return {};
-  const overflow = el.scrollWidth - container.clientWidth;
-  if (overflow <= 0) return {};
+  if (!container) return;
+  const overflowPx = el.scrollWidth - container.clientWidth;
+  const overflow = overflowPx > 0;
+  if (overflow) {
+    el.style.setProperty("--scroll-distance", `-${overflowPx}px`);
+  } else {
+    el.style.removeProperty("--scroll-distance");
+  }
+  const newMap = new Map(scrollOverflowMap.value);
+  newMap.set(key, overflow);
+  scrollOverflowMap.value = newMap;
+}
 
-  const lineDuration = line.lineEndTime - line.lineStartTime;
-  if (lineDuration <= 0) return {};
+function observeScrollContent(el: HTMLElement, key: string) {
+  if (!resizeObserver) {
+    resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const target = entry.target as HTMLElement;
+        const lineKey = target.dataset.lineKey;
+        if (!lineKey) continue;
+        checkOverflow(target, lineKey);
+      }
+    });
+  }
+  resizeObserver.observe(el);
+}
 
-  const lineProgress = clamp((interpolatedTimeMs.value - line.lineStartTime) / lineDuration, 0, 1);
-
-  // Start scrolling at 30% progress, finish 2s before line end
-  const scrollStartProgress = 0.3;
-  const scrollEndMs = Math.max(line.lineStartTime, line.lineEndTime - 2000);
-  const scrollEndProgress = clamp(
-    (scrollEndMs - line.lineStartTime) / lineDuration,
-    scrollStartProgress + 0.01,
-    1,
-  );
-
-  if (lineProgress < scrollStartProgress) return {};
-
-  const scrollProgress = clamp(
-    (lineProgress - scrollStartProgress) / (scrollEndProgress - scrollStartProgress),
-    0,
-    1,
-  );
-
-  return {
-    transform: `translateX(${-overflow * scrollProgress}px)`,
-    transition: "transform 0.1s linear",
-  };
+function unobserveAllScrollContents() {
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
+  scrollContentRefs.clear();
+  scrollOverflowMap.value = new Map();
 }
 
 // ── Drag Attrs (disabled when locked) ─────────────────────────────────
@@ -800,39 +810,36 @@ async function startMouseThrough() {
   mouseThroughActive.value = true;
 
   // Listen for state changes from Rust
-  unlistenMouseThrough = await tauri.event.listen<boolean>(
-    "mouse-through-state",
-    (e) => {
-      // e.payload = true when cursor is inside a hit region
-      const inside = e.payload;
+  unlistenMouseThrough = await tauri.event.listen<boolean>("mouse-through-state", (e) => {
+    // e.payload = true when cursor is inside a hit region
+    const inside = e.payload;
 
-      // ── Locked mode logic ──────────────────────────────────────────
-      if (isLocked.value) {
-        if (inside) {
-          // Cursor is in the unlock-trigger zone or the header itself.
-          // Disable click-through so the webview can receive mouse events.
-          windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
+    // ── Locked mode logic ──────────────────────────────────────────
+    if (isLocked.value) {
+      if (inside) {
+        // Cursor is in the unlock-trigger zone or the header itself.
+        // Disable click-through so the webview can receive mouse events.
+        windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
 
-          // Show the unlock header if not already visible.
-          if (!isTempUnlocked.value) {
-            isTempUnlocked.value = true;
-            showHeader.value = true;
-          }
-        } else {
-          // Cursor left all hit regions (trigger zone + header).
-          // Re-enable full click-through after a short grace period.
-          if (isTempUnlocked.value && !isHeaderHovering.value) {
-            scheduleReLock();
-          }
+        // Show the unlock header if not already visible.
+        if (!isTempUnlocked.value) {
+          isTempUnlocked.value = true;
+          showHeader.value = true;
         }
-        return;
+      } else {
+        // Cursor left all hit regions (trigger zone + header).
+        // Re-enable full click-through after a short grace period.
+        if (isTempUnlocked.value && !isHeaderHovering.value) {
+          scheduleReLock();
+        }
       }
+      return;
+    }
 
-      // ── Unlocked mode logic ────────────────────────────────────────
-      // Only lyric lines / no-lyrics placeholder are interactive.
-      windowManager.setIgnoreCursorEvents("desktop-lyrics", !inside);
-    },
-  );
+    // ── Unlocked mode logic ────────────────────────────────────────
+    // Only lyric lines / no-lyrics placeholder are interactive.
+    windowManager.setIgnoreCursorEvents("desktop-lyrics", !inside);
+  });
 }
 
 /** Stop the global mouse-through listener */
@@ -925,6 +932,7 @@ onUnmounted(() => {
     unlistenMouseThrough = null;
   }
   stopMouseThrough();
+  unobserveAllScrollContents();
 });
 </script>
 
@@ -1158,6 +1166,7 @@ onUnmounted(() => {
   pointer-events: auto;
   white-space: nowrap;
   overflow: hidden;
+  width: 100%;
   max-width: 100%;
   cursor: default;
   padding: 2px 0;
@@ -1199,6 +1208,25 @@ onUnmounted(() => {
 .scroll-content {
   display: inline-block;
   white-space: nowrap;
+
+  &.scrolling {
+    animation: lyric-scroll 8s linear infinite alternate;
+  }
+}
+
+@keyframes lyric-scroll {
+  0% {
+    transform: translateX(0);
+  }
+  30% {
+    transform: translateX(0);
+  }
+  70% {
+    transform: translateX(var(--scroll-distance, -100%));
+  }
+  100% {
+    transform: translateX(var(--scroll-distance, -100%));
+  }
 }
 
 // ── YRC Word dual-layer ──────────────────────────────────────────────
