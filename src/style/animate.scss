@@ -1,130 +1,141 @@
-// fade
+/* ═══════════════════════════════════════════════
+   Vue Transition Classes — shadcn/ui style
+   All use :root tokens defined in global.scss
+   ═══════════════════════════════════════════════ */
+
+// ── fade: simple crossfade ──
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.3s ease-in-out;
+  transition: opacity var(--duration-200) var(--ease-in-out);
 }
-
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
 }
 
-// fade-scale (main route transitions)
+// ── fade-scale: main route transition ──
+// Subtle fade + slight upward drift (instead of scale, to avoid layout flash)
 .fade-scale-enter-active,
 .fade-scale-leave-active {
   transition:
-    opacity 0.3s cubic-bezier(0.25, 1, 0.5, 1),
-    transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+    opacity var(--duration-300) var(--ease-out),
+    transform var(--duration-300) var(--ease-out);
 }
-
-.fade-scale-enter-from,
+.fade-scale-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
 .fade-scale-leave-to {
   opacity: 0;
-  transform: scale(0.98);
+  transform: translateY(-8px);
 }
 
-// fadeDown
+// ── fadeDown: dropdown / menu items ──
 .fadeDown-enter-active,
 .fadeDown-leave-active {
   transition:
-    opacity 0.3s ease,
-    transform 0.3s ease;
+    opacity var(--duration-200) var(--ease-out),
+    transform var(--duration-200) var(--ease-out);
 }
-
 .fadeDown-enter-from,
 .fadeDown-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
+  transform: translateY(-6px);
 }
 
-// router
+// ── router: legacy route transition ──
 .router-enter-active,
 .router-leave-active {
-  transition: all 0.2s ease;
+  transition: all var(--duration-200) var(--ease-in-out);
 }
-
 .router-enter-from,
 .router-leave-to {
   opacity: 0;
-  // transform: scale(0.98);
-  transform: translateX(10px);
+  transform: translateX(6px);
 }
 
-// shrink
+// ── shrink: popover / tooltip content ──
 .shrink-enter-active,
 .shrink-leave-active {
-  opacity: 1;
-  transform: scale(1);
   transition:
-    transform 0.3s,
-    opacity 0.3s;
+    opacity var(--duration-200) var(--ease-out),
+    transform var(--duration-200) var(--ease-out);
 }
-.shrink-enter-from,
+.shrink-enter-from {
+  opacity: 0;
+  transform: scale(0.92);
+}
 .shrink-leave-to {
   opacity: 0;
-  transform: scale(0.4);
+  transform: scale(0.96);
 }
 
-// up
+// ── up: bottom panel / sheet ──
 .up-enter-active,
 .up-leave-active {
-  transform: translateY(0);
-  transition: transform 0.5s cubic-bezier(0.65, 0.05, 0.36, 1);
+  transition: transform var(--duration-500) var(--ease-out);
 }
-.up-enter-from,
+.up-enter-from {
+  transform: translateY(100%);
+}
 .up-leave-to {
   transform: translateY(100%);
 }
 
-// left
+// ── left: side drawer ──
 .left-enter-active,
 .left-leave-active {
-  opacity: 1;
-  transform: translateX(0);
   transition:
-    transform 0.3s,
-    opacity 0.3s;
+    transform var(--duration-300) var(--ease-out),
+    opacity var(--duration-300) var(--ease-out);
 }
-.left-enter-from,
-.left-leave-to {
+.left-enter-from {
   transform: translateX(-100%);
 }
+.left-leave-to {
+  transform: translateX(-100%);
+  opacity: 0;
+}
 
-// Direction-aware slide transitions for tab sub-routes
+// ── Direction-aware slide transitions for tab sub-routes ──
 .slide-left-enter-active,
 .slide-left-leave-active,
 .slide-right-enter-active,
 .slide-right-leave-active {
   transition:
-    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    transform var(--duration-200) var(--ease-out),
+    opacity var(--duration-200) var(--ease-out);
 }
 
-// Slide left (navigating to a tab on the right)
+// Slide left (navigating forward/rightward)
 .slide-left-enter-from {
-  transform: translateX(30px);
+  transform: translateX(20px);
   opacity: 0;
 }
 .slide-left-leave-to {
-  transform: translateX(-30px);
+  transform: translateX(-20px);
   opacity: 0;
 }
 
-// Slide right (navigating to a tab on the left)
+// Slide right (navigating backward/leftward)
 .slide-right-enter-from {
-  transform: translateX(-30px);
+  transform: translateX(-20px);
   opacity: 0;
 }
 .slide-right-leave-to {
-  transform: translateX(30px);
+  transform: translateX(20px);
   opacity: 0;
 }
+
+
+/* ═══════════════════════════════════════════════
+   Keyframe Animations
+   ═══════════════════════════════════════════════ */
 
 @keyframes skeleton-loading {
   0% {
     background-position: 100% 50%;
   }
-
   100% {
     background-position: 0 50%;
   }

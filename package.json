@@ -19,9 +19,9 @@
     "fmt:check": "oxfmt --check src/"
   },
   "dependencies": {
-    "@applemusic-like-lyrics/core": "link:deps\\apoint-amll\\packages\\core",
-        "@applemusic-like-lyrics/lyric": "link:deps\\apoint-amll\\packages\\lyric",
-    "@applemusic-like-lyrics/vue": "link:deps\\apoint-amll\\packages\\vue",
+    "@applemusic-like-lyrics/core": "^0.5.1",
+    "@applemusic-like-lyrics/lyric": "^1.0.1",
+    "@applemusic-like-lyrics/vue": "^0.5.1",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
     "@lyrics-helper-rs/ttml-processor": "link:deps\\apoint-amll\\packages\\ttml-processor",

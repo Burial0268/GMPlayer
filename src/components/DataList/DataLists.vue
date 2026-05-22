@@ -614,7 +614,7 @@ const jumpLink = (id, type) => {
 <style lang="scss" scoped>
 .v-enter-active,
 .v-leave-active {
-  transition: opacity 0.3s ease;
+  transition: opacity var(--duration-200) var(--ease-in-out);
 }
 
 .v-enter-from,
@@ -626,7 +626,10 @@ const jumpLink = (id, type) => {
     border-radius: 8px;
     margin-bottom: 12px;
     overflow: hidden;
-    transition: all 0.3s;
+    transition:
+      background-color var(--duration-200) var(--ease-out),
+      border-color var(--duration-200) var(--ease-out),
+      box-shadow var(--duration-200) var(--ease-out);
     cursor: pointer;
     &:hover {
       border-color: var(--main-color);
@@ -696,7 +699,7 @@ const jumpLink = (id, type) => {
           -webkit-line-clamp: 2;
           line-clamp: 2;
           font-weight: bold;
-          transition: all 0.3s;
+          transition: color var(--duration-150) var(--ease-out);
           &:hover {
             color: var(--main-color);
           }
@@ -738,7 +741,7 @@ const jumpLink = (id, type) => {
       flex: 1;
       padding-right: 20px;
       .n-text {
-        transition: all 0.3s;
+        transition: color var(--duration-150) var(--ease-out);
         &:hover {
           color: var(--main-color);
         }
@@ -767,7 +770,9 @@ const jumpLink = (id, type) => {
         opacity: 0;
         transform: scale(0.8);
         color: var(--main-color);
-        transition: all 0.3s;
+        transition:
+          opacity var(--duration-150) var(--ease-out),
+          transform var(--duration-150) var(--ease-out);
         &:hover {
           transform: scale(1.1);
         }
@@ -800,7 +805,7 @@ const jumpLink = (id, type) => {
       align-items: center;
       flex-direction: row;
       cursor: pointer;
-      transition: all 0.3s;
+      transition: background-color var(--duration-150) var(--ease-out);
       &:hover {
         background-color: var(--n-close-color-hover);
       }

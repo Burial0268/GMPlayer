@@ -15,7 +15,6 @@
       :line-pos-x-spring-params="copyValue('springParams.posX')"
       :line-pos-y-spring-params="copyValue('springParams.posY')"
       :line-scale-spring-params="copyValue('springParams.scale')"
-      :enable-interlude-dots="true"
       :style="lyricStyles"
       @line-click="handleLineClick"
       :key="playerKey"
@@ -81,23 +80,27 @@ const mainColor = computed(() => {
 });
 
 // 设置样式（直接设置，不使用 v-bind 转换）
-const lyricStyles = computed(() => ({
-  "--amll-lp-color": mainColor.value,
-  "--amll-lyric-view-color": mainColor.value,
-  "font-weight": setting.lyricFontWeight,
-  "font-family": setting.lyricFont,
-  "letter-spacing": setting.lyricLetterSpacing,
-  "font-size": `${setting.lyricsFontSize * 3}px`,
-  cursor: "pointer",
-  "-webkit-tap-highlight-color": "transparent",
-}));
+const lyricStyles = computed(() => {
+  const fontSizeVh = `${setting.lyricsFontSize * 1.5}vh`;
+  return {
+    "--amll-lp-color": mainColor.value,
+    "--amll-lyric-view-color": mainColor.value,
+    "--amll-lp-font-size": fontSizeVh,
+    "font-size": fontSizeVh,
+    "font-weight": setting.lyricFontWeight,
+    "font-family": setting.lyricFont,
+    "letter-spacing": setting.lyricLetterSpacing,
+    cursor: "pointer",
+    "-webkit-tap-highlight-color": "transparent",
+  };
+});
 
 // 处理歌词点击（参考 AMLL-Editor 的 jumpSeek）- 用于桌面端
 const handleLineClick = (evt: any) => {
-  console.log("[LyricPlayer] line-click event", evt);
   const targetTime = evt.line.getLine().startTime;
-  amllPlayerRef.value?.lyricPlayer.value?.setCurrentTime(targetTime, true);
-  amllPlayerRef.value?.lyricPlayer.value?.update();
+  const player = amllPlayerRef.value?.lyricPlayer.value;
+  player?.setCurrentTime(targetTime, true);
+  player?.resetScroll();
   emit("lrcTextClick", targetTime / 1000);
   emit("line-click", evt);
 };
@@ -105,11 +108,10 @@ const handleLineClick = (evt: any) => {
 // 播放/暂停时更新歌词状态
 watch(
   () => music.playState,
-  (newVal) => {
+  (newVal: boolean) => {
     newVal
       ? amllPlayerRef.value?.lyricPlayer.value?.resume()
       : amllPlayerRef.value?.lyricPlayer.value?.pause();
-    amllPlayerRef.value?.lyricPlayer.value?.update();
   },
   { immediate: true },
 );
@@ -168,7 +170,6 @@ watch(
 </script>
 
 <style lang="scss" scoped>
-@import "@applemusic-like-lyrics/core/style.css";
 .lyric-player-wrapper {
   width: 100%;
   height: 100%;
@@ -176,14 +177,34 @@ watch(
 }
 
 .amll-lyric-player {
-  // Hover feedback color for lyric lines (core module CSS reads this variable)
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black 2rem,
+    black calc(100% - 2rem),
+    transparent
+  );
   --amll-lp-hover-bg-color: rgba(255, 255, 255, 0.067);
 
-  // Fix: emphasize span padding — letters like 'j' clipped
-  // Must use :deep() to penetrate scoped boundary into child component DOM
-  &.dom:deep(span[class^="_emphasizeWrapper"] span) {
+  &.dom:deep(span[class*="_emphasizeWrapper"] span) {
     padding: 1em;
     margin: -1em;
+  }
+
+  &.dom:deep([class*="_lyricMainLine"]) {
+    font-weight: bold;
+    line-height: 1.25;
+  }
+
+  &.dom:deep([class*="_lyricSubLine"]) {
+    margin-top: 0.65rem;
+    & + [class*="_lyricSubLine"] {
+      margin-top: 0;
+    }
+  }
+
+  &.dom:deep([class*="_interludeDots"]:not([style])) {
+    visibility: hidden;
   }
 }
 </style>

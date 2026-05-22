@@ -350,7 +350,7 @@ onMounted(() => {
 
 .n-layout-content {
   top: calc(54px + var(--app-safe-area-top, 0px));
-  transition: all 0.3s;
+  transition: all var(--duration-300) var(--ease-in-out);
   background-color: transparent !important;
 
   &.show {
@@ -380,7 +380,7 @@ onMounted(() => {
     margin: 0 auto;
 
     div:nth-of-type(2) {
-      transition: all 0.3s;
+      transition: all var(--duration-300) var(--ease-in-out);
 
       &::after {
         content: "";
@@ -389,7 +389,7 @@ onMounted(() => {
         height: 100%;
         top: 0;
         left: 0;
-        transition: all 0.3s;
+        transition: all var(--duration-300) var(--ease-in-out);
         pointer-events: none;
         z-index: 2;
       }
@@ -431,7 +431,7 @@ onMounted(() => {
     pointer-events: none;
     opacity: 0;
     background-color: #000;
-    transition: opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+    transition: opacity var(--duration-500) var(--ease-out);
     z-index: 1999;
   }
 
@@ -444,7 +444,7 @@ onMounted(() => {
   display: flex;
   height: 100vh;
   background-color: var(--layout-bg, #fff);
-  transition: scale 0.5s cubic-bezier(0.25, 1, 0.5, 1);
+  transition: scale var(--duration-500) var(--ease-out);
   scale: 1;
   transform-origin: center center;
 

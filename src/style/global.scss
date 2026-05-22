@@ -5,6 +5,27 @@
   user-select: none;
 }
 
+/* ═══════════════════════════════════════════════
+   Transition Tokens — modern, snappy, shadcn/ui style
+   ═══════════════════════════════════════════════ */
+:root {
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-linear: linear;
+
+  --duration-150: 150ms;
+  --duration-200: 200ms;
+  --duration-300: 300ms;
+  --duration-400: 400ms;
+  --duration-500: 500ms;
+
+  /* Precomposed shortcuts */
+  --transition-fast: 150ms var(--ease-out);
+  --transition-normal: 250ms var(--ease-out);
+  --transition-slow: 400ms var(--ease-out);
+  --transition-spring: 500ms var(--ease-out);
+}
+
 // HarmonyOS Sans
 html,
 body,
@@ -87,7 +108,7 @@ body,
   .n-tabs-tab {
     &.n-tabs-tab--active {
       font-weight: bold !important;
-      transition: all 0.3s;
+      transition: all var(--duration-200) var(--ease-in-out);
     }
   }
 }
@@ -120,9 +141,9 @@ body,
     -webkit-backdrop-filter: blur(12px) saturate(180%);
     backdrop-filter: blur(12px) saturate(180%);
     transition:
-      transform 0.4s ease,
-      opacity 0.4s ease,
-      box-shadow 0.2s ease;
+      transform var(--duration-400) var(--ease-out),
+      opacity var(--duration-400) var(--ease-out),
+      box-shadow var(--duration-200) var(--ease-out);
     .n-message__icon {
       margin-right: 8px;
     }
@@ -190,7 +211,7 @@ body,
 .n-drawer-container {
   .n-drawer {
     border-radius: 12px 0 0 12px;
-    transition: all 0.3s;
+    transition: all var(--duration-300) var(--ease-in-out);
     @media (max-width: 450px) {
       width: 100% !important;
       border-radius: 0;

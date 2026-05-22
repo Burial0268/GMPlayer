@@ -411,7 +411,7 @@ onMounted(() => {
 .coverlists {
   .v-enter-active,
   .v-leave-active {
-    transition: opacity 0.3s ease;
+    transition: opacity var(--duration-200) var(--ease-in-out);
   }
 
   .v-enter-from,
@@ -426,21 +426,22 @@ onMounted(() => {
       align-items: center;
       justify-content: center;
       position: relative;
-      // overflow: hidden;
       border-radius: 8px;
       cursor: pointer;
-      transition: all 0.3s;
-      position: relative;
+      transition:
+        transform var(--duration-200) var(--ease-out),
+        box-shadow var(--duration-200) var(--ease-out);
       .coverImg {
         border-radius: 8px;
         width: 100%;
         height: 100%;
         overflow: hidden;
-        transition: filter 0.3s;
+        filter: brightness(1);
+        transition: filter var(--duration-200) var(--ease-out);
         z-index: 1;
         :deep(img) {
           width: 100%;
-          transition: transform 0.3s;
+          transition: transform var(--duration-300) var(--ease-out);
         }
         .cover-loading {
           position: relative;
@@ -467,24 +468,26 @@ onMounted(() => {
         top: 12px;
         height: 100%;
         width: 100%;
-        filter: blur(16px) opacity(0.6);
+        filter: blur(20px) opacity(0.5);
         transform: scale(0.92, 0.96);
         z-index: 0;
         background-size: cover;
         aspect-ratio: 1/1;
-        transition: opacity 0.3s;
+        transition: opacity var(--duration-200) var(--ease-out);
       }
       .play {
         opacity: 0;
         position: absolute;
         color: #fff;
         padding: 0.5vw;
-        background-color: #00000010;
+        background-color: rgb(0 0 0 / 0.06);
         -webkit-backdrop-filter: blur(10px);
         backdrop-filter: blur(10px);
         border-radius: 50%;
         transform: scale(0.8);
-        transition: all 0.3s;
+        transition:
+          transform var(--duration-150) var(--ease-out),
+          opacity var(--duration-150) var(--ease-out);
         z-index: 1;
       }
       .description {
@@ -492,14 +495,16 @@ onMounted(() => {
         right: 0;
         bottom: 0;
         color: #fff;
-        background-color: #00000030;
+        background-color: rgb(0 0 0 / 0.18);
         font-size: 12px;
         -webkit-backdrop-filter: blur(4px);
         backdrop-filter: blur(4px);
         padding: 6px;
         border-top-left-radius: 8px;
         border-bottom-right-radius: 8px;
-        transition: all 0.3s;
+        transition:
+          opacity var(--duration-150) var(--ease-in-out),
+          transform var(--duration-150) var(--ease-in-out);
         z-index: 1;
         .num {
           display: flex;
@@ -514,10 +519,14 @@ onMounted(() => {
         }
       }
       &:hover {
+        transform: translateY(-2px);
+        box-shadow:
+          0 8px 24px rgb(0 0 0 / 0.12),
+          0 2px 6px rgb(0 0 0 / 0.08);
         .coverImg {
-          filter: brightness(0.8);
+          filter: brightness(0.72);
           :deep(img) {
-            transform: scale(1.1);
+            transform: scale(1.08);
           }
         }
         .play {
@@ -526,13 +535,17 @@ onMounted(() => {
         }
         .description {
           opacity: 0;
+          transform: translateY(4px);
         }
         .shadow {
           opacity: 1;
         }
       }
       &:active {
-        transform: scale(0.98);
+        transform: translateY(0) scale(0.98);
+        transition:
+          transform var(--duration-150) var(--ease-out),
+          box-shadow var(--duration-150) var(--ease-out);
       }
     }
     .title {
@@ -543,7 +556,7 @@ onMounted(() => {
         // font-size: 2vh;
         font-size: 15px;
         -webkit-line-clamp: 2;
-        transition: all 0.3s;
+        transition: color var(--duration-150) var(--ease-out);
         cursor: pointer;
         &:hover {
           opacity: 1;
@@ -553,7 +566,7 @@ onMounted(() => {
       .by {
         font-size: 12px;
         opacity: 0.6;
-        transition: all 0.3s;
+        transition: color var(--duration-150) var(--ease-out);
         cursor: pointer;
         &:hover {
           opacity: 1;

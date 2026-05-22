@@ -33,9 +33,10 @@ defineEmits(["navigate"]);
   text-decoration: none;
   color: var(--sidebar-text, var(--n-text-color));
   transition:
-    background-color 0.2s,
-    padding 0.3s ease,
-    gap 0.3s ease;
+    background-color var(--duration-150) var(--ease-out),
+    color var(--duration-150) var(--ease-out),
+    padding var(--duration-300) var(--ease-out),
+    gap var(--duration-300) var(--ease-out);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
@@ -51,7 +52,8 @@ defineEmits(["navigate"]);
   }
 
   &:active {
-    transform: scale(0.98);
+    transform: scale(0.97);
+    transition: transform var(--duration-150) var(--ease-out);
   }
 
   &.router-link-active {
@@ -68,8 +70,8 @@ defineEmits(["navigate"]);
 .sidebar-item-icon {
   flex-shrink: 0;
   transition:
-    color 0.2s,
-    font-size 0.3s ease;
+    color var(--duration-150) var(--ease-out),
+    font-size var(--duration-300) var(--ease-out);
 }
 
 .sidebar-item-label {
@@ -81,15 +83,15 @@ defineEmits(["navigate"]);
   text-align: left;
   opacity: 1;
   transition:
-    opacity 0.2s ease 0.1s,
-    flex 0.3s ease;
+    opacity var(--duration-200) var(--ease-out) var(--duration-100),
+    flex var(--duration-300) var(--ease-out);
 
   &.hidden {
     flex: 0;
     opacity: 0;
     transition:
-      opacity 0.1s ease,
-      flex 0.3s ease;
+      opacity var(--duration-100) var(--ease-out),
+      flex var(--duration-300) var(--ease-out);
   }
 }
 </style>
