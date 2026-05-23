@@ -1,36 +1,45 @@
 <template>
   <div
     class="lyric-player-wrapper"
-    :style="{ '--lyrics-size-scale': setting.lyricsFontSize * 1.5 }"
+    :style="{ '--lyrics-size-scale': setting.lyricsFontSize }"
+    @wheel.self="passToPlayer"
+    @touchstart.self="passToPlayer"
+    @touchmove.self="passToPlayer"
+    @touchend.self="passToPlayer"
   >
     <LyricPlayer
       class="amll-lyric-player"
       :lyric-lines="amllLyricLines"
       :current-time="currentTime"
       :playing="playState"
-      :enable-blur="copyValue('lyricsBlur')"
-      :enable-spring="copyValue('showYrcAnimation')"
-      :enable-scale="copyValue('showYrcAnimation')"
-      :word-fade-width="0.5"
-      :mask-obscene-words-mode="MaskObsceneWordsMode.Disabled"
+      :enable-blur="setting.lyricsBlur"
+      :enable-spring="setting.showYrcAnimation"
+      :enable-scale="setting.showYrcAnimation"
+      :word-fade-width="0.25"
       :align-anchor="alignAnchor"
       :align-position="alignPosition"
-      :line-pos-x-spring-params="copyValue('springParams.posX')"
-      :line-pos-y-spring-params="copyValue('springParams.posY')"
-      :line-scale-spring-params="copyValue('springParams.scale')"
+      :line-pos-x-spring-params="setting.springParams.posX"
+      :line-pos-y-spring-params="setting.springParams.posY"
+      :line-scale-spring-params="setting.springParams.scale"
       :style="lyricStyles"
-      @line-click="handleLineClick"
+      @line-click="jumpSeek"
       :key="playerKey"
-      ref="amllPlayerRef"
+      ref="playerRef"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, watchEffect, toRaw, shallowRef, onMounted, nextTick } from "vue";
+import {
+  computed,
+  watch,
+  toRaw,
+  shallowRef,
+  useTemplateRef,
+} from "vue";
 import { musicStore, settingStore, siteStore } from "../../store";
-import { LyricPlayer, LyricPlayerRef } from "@applemusic-like-lyrics/vue";
-import { MaskObsceneWordsMode } from "@applemusic-like-lyrics/core";
+import { LyricPlayer, type LyricPlayerRef } from "@applemusic-like-lyrics/vue";
+import type { DomLyricPlayer, LyricLineMouseEvent } from "@applemusic-like-lyrics/core";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
 import "@applemusic-like-lyrics/core/style.css";
 
@@ -38,41 +47,16 @@ const site = siteStore();
 const music = musicStore();
 const setting = settingStore();
 
-// 直接复制 AMLL-Editor 的实现模式
-const playerKey = ref(Symbol());
+const playerKey = shallowRef(Symbol());
+const playerRef = useTemplateRef<LyricPlayerRef>("playerRef");
 const amllLyricLines = shallowRef<AMLLLine[]>([]);
-const amllPlayerRef = ref<LyricPlayerRef>();
 
-const playState = shallowRef(false);
-const currentTime = shallowRef(0);
+const playState = computed(() => music.playState);
 
-onMounted(() => {
-  nextTick(() => {
-    // 强制触发 playState 更新
-    playState.value = music.playState;
-  });
-});
+const currentTime = computed(
+  () => music.persistData.playSongTime.currentTime * 1000 + (setting.lyricTimeOffset ?? 0),
+);
 
-watchEffect(() => {
-  playState.value = music.playState;
-});
-
-const copyValue = (value: any) => {
-  return setting[value];
-};
-
-const emit = defineEmits<{
-  "line-click": [e: { line: { getLine: () => { startTime: number } } }];
-  lrcTextClick: [time: number];
-}>();
-
-// 计算当前播放时间
-watchEffect(() => {
-  currentTime.value =
-    music.persistData.playSongTime.currentTime * 1000 + (setting.lyricTimeOffset ?? 0);
-});
-
-// 计算对齐方式
 const alignAnchor = computed(() => (setting.lyricsBlock === "center" ? "center" : "top"));
 
 const alignPosition = computed(() => (setting.lyricsBlock === "center" ? 0.5 : 0.2));
@@ -82,7 +66,6 @@ const mainColor = computed(() => {
   return `rgb(${site.songPicColor})`;
 });
 
-// 设置样式（字号由 wrapper 的 container query + --lyrics-size-scale 控制，见下方 SCSS）
 const lyricStyles = computed(() => ({
   "--amll-lp-color": mainColor.value,
   "--amll-lyric-view-color": mainColor.value,
@@ -93,28 +76,41 @@ const lyricStyles = computed(() => ({
   "-webkit-tap-highlight-color": "transparent",
 }));
 
-// 处理歌词点击（参考 AMLL-Editor 的 jumpSeek）- 用于桌面端
-const handleLineClick = (evt: any) => {
-  const targetTime = evt.line.getLine().startTime;
-  const player = amllPlayerRef.value?.lyricPlayer.value;
-  player?.setCurrentTime(targetTime, true);
+const emit = defineEmits<{
+  "line-click": [evt: LyricLineMouseEvent];
+  lrcTextClick: [time: number];
+}>();
+
+function getDomPlayer(): DomLyricPlayer | undefined {
+  const player = playerRef.value?.lyricPlayer;
+  if (!player) return undefined;
+  return ("value" in player ? player.value : player) as DomLyricPlayer | undefined;
+}
+
+function lineClickStartTime(evt: LyricLineMouseEvent): number | undefined {
+  const fromGetLine = evt.line?.getLine?.()?.startTime;
+  if (typeof fromGetLine === "number") return fromGetLine;
+  const fromLyricLine = (evt.line as { lyricLine?: { startTime: number } })?.lyricLine?.startTime;
+  if (typeof fromLyricLine === "number") return fromLyricLine;
+  return undefined;
+}
+
+const jumpSeek = (evt: LyricLineMouseEvent) => {
+  const time = lineClickStartTime(evt);
+  if (typeof time !== "number") return;
+  const player = getDomPlayer();
+  player?.setCurrentTime(time, true);
   player?.resetScroll();
-  emit("lrcTextClick", targetTime / 1000);
+  emit("lrcTextClick", time / 1000);
   emit("line-click", evt);
 };
 
-// 播放/暂停时更新歌词状态
-watch(
-  () => music.playState,
-  (newVal: boolean) => {
-    newVal
-      ? amllPlayerRef.value?.lyricPlayer.value?.resume()
-      : amllPlayerRef.value?.lyricPlayer.value?.pause();
-  },
-  { immediate: true },
-);
+function passToPlayer(event: Event) {
+  const playerEl = getDomPlayer()?.getElement();
+  if (!playerEl) return;
+  playerEl.dispatchEvent(new (event.constructor as typeof Event)(event.type, event));
+}
 
-// 更新歌词数据（直接复制 AMLL-Editor 的 watch 模式）
 watch(
   () => [music.songLyric, setting.showYrc, setting.showRoma, setting.showTransl],
   () => {
@@ -125,7 +121,6 @@ watch(
       return;
     }
 
-    // 预处理歌词（如果尚未处理）
     try {
       preprocessLyrics(rawSongLyric, {
         showYrc: setting.showYrc,
@@ -136,16 +131,12 @@ watch(
       console.error("[LyricPlayer] 预处理歌词失败", error);
     }
 
-    // 使用优化后的函数获取歌词，优先使用缓存数据
     const processed = getProcessedLyrics(rawSongLyric, {
       showYrc: setting.showYrc,
       showRoma: setting.showRoma,
       showTransl: setting.showTransl,
     });
 
-    // Ensure translation/roma are stripped when settings disable them.
-    // processLyrics should already handle this, but we sanitize here as a
-    // final guarantee so the AMLL renderer never receives stale sub-line data.
     if (!setting.showTransl || !setting.showRoma) {
       for (let i = 0; i < processed.length; i++) {
         const line = processed[i];
@@ -161,7 +152,7 @@ watch(
     }
 
     amllLyricLines.value = processed;
-    playerKey.value = Symbol(); // 强制重新渲染组件
+    playerKey.value = Symbol();
   },
   { immediate: true, deep: true },
 );
@@ -172,26 +163,23 @@ watch(
   width: 100%;
   height: 100%;
   touch-action: pan-y;
-  /* 字号相对本容器高度缩放，适配大播放器分栏、窗口缩放等布局变化 */
   container-type: size;
-}
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
 
-.amll-lyric-player {
-  /* vh 保底可读；cqh×1.85 在 ~1000px 容器高度时约等于旧的 scale×17px，并随容器缩放 */
-  --amll-lp-font-size: clamp(
-    18px,
-    max(
-      calc(var(--lyrics-size-scale, 3.6) * 1vh),
-      calc(var(--lyrics-size-scale, 3.6) * 1.85 * 1cqh)
-    ),
-    96px
-  );
-  font-size: var(--amll-lp-font-size);
-
-  @supports not (width: 1cqh) {
-    --amll-lp-font-size: clamp(18px, calc(var(--lyrics-size-scale, 3.6) * 1vh), 96px);
+  & > .amll-lyric-player {
+    width: 100%;
+    height: 100%;
+    max-width: max(1200px, 50vw);
+    overflow-x: visible;
   }
+}
+</style>
 
+<style lang="scss">
+/* AMLL DOM 播放器样式（对齐 AMLL-Editor Preview） */
+.lyric-player-wrapper .amll-lyric-player.dom {
   mask-image: linear-gradient(
     to bottom,
     transparent,
@@ -199,26 +187,32 @@ watch(
     black calc(100% - 2rem),
     transparent
   );
-  --amll-lp-hover-bg-color: rgba(255, 255, 255, 0.067);
+  --bright-mask-alpha: 1;
+  --dark-mask-alpha: 0.4;
+  --amll-lp-font-size: calc(
+    min(max(max(4.5vh, 2.3vw), 2.5rem), 3.5rem) * var(--lyrics-size-scale, 3.6) / 3.6
+  );
+  --amll-lp-hover-bg-color: color-mix(in srgb, var(--amll-lp-color), transparent 95%);
 
-  &.dom:deep(span[class*="_emphasizeWrapper"] span) {
-    padding: 1em;
-    margin: -1em;
-  }
-
-  &.dom:deep([class*="_lyricMainLine"]) {
+  [class^="_lyricMainLine"] {
     font-weight: bold;
     line-height: 1.25;
   }
 
-  &.dom:deep([class*="_lyricSubLine"]) {
+  [class^="_lyricSubLine"] {
     margin-top: 0.65rem;
-    & + [class*="_lyricSubLine"] {
+
+    & + [class^="_lyricSubLine"] {
       margin-top: 0;
     }
   }
 
-  &.dom:deep([class*="_interludeDots"]:not([style])) {
+  [class^="_emphasizeWrapper"] span {
+    padding: 1em;
+    margin: -1em;
+  }
+
+  [class^="_interludeDots"]:not([style]) {
     visibility: hidden;
   }
 }

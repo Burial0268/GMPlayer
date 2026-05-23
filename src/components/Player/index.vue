@@ -308,6 +308,7 @@ import { useRouter } from "vue-router";
 import { debounce, throttle } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
+import { isNativeAudioBackendAvailable } from "@/utils/tauri/NativeRustSound";
 import { windowManager } from "@/utils/tauri/windowManager";
 import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
@@ -368,9 +369,15 @@ const getPlaySongData = async (data, level = setting.songLevel) => {
       return;
     }
 
-    // Check audio preloader — if the next song was preloaded, use it directly
+    // Check audio preloader — if the next song was preloaded, use it directly.
+    // NOTE: When the native Rust audio backend is available, we skip the
+    // preloader because `NativeRustSound` handles download internally via
+    // `audioOpenUrl`.  Using a preloaded `BufferedSound` would silently
+    // switch the audio pipeline from native to Web Audio (src="" bypasses
+    // the native backend check in createSound).
     const preloader = getAudioPreloader();
-    const preloadedSound = preloader.consume(id);
+    const nativeAvailable = isNativeAudioBackendAvailable();
+    const preloadedSound = !nativeAvailable ? preloader.consume(id) : null;
     if (preloadedSound) {
       console.log(`[Player] Using preloaded audio for: ${id}`);
       player.value = createSound("", true, preloadedSound);
