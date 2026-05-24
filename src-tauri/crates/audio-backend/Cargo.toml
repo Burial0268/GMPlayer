@@ -1,0 +1,53 @@
+[package]
+name = "gmplayer-audio-backend"
+version = "0.1.0"
+edition = "2021"
+description = "Audio player backend using Symphonia + rodio, inspired by AMLL player-core"
+authors = ["GBCLStudio"]
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+name = "gmplayer_audio_backend"
+
+[dependencies]
+symphonia = { version = "0.5", default-features = false, features = [
+  "mp3",
+  "aac",
+  "alac",
+  "flac",
+  "vorbis",
+  "pcm",
+  "isomp4",
+  "ogg",
+  "wav",
+] }
+# Use Symphonia for rodio's decoding so we get reliable try_seek across
+# formats (the default minimp3/claxon decoders mostly can't seek). The
+# `symphonia-all` feature is additive — rodio prefers Symphonia when it
+# can decode a given file.
+rodio = { version = "0.20", features = ["symphonia-all"] }
+# Direct cpal dep for explicit output-stream config (force stereo so the
+# default 5.1/7.1 device layout on Windows doesn't burn CPU upmixing inside
+# the audio callback — that work gets deprioritised by EcoQoS when the app
+# is backgrounded and shows up as stutter). Version pinned to whatever
+# rodio 0.20 already brings in transitively.
+cpal = "0.15"
+rustfft = "6"
+thiserror = "2"
+parking_lot = "0.12"
+log = "0.4"
+tauri = { version = "2" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ureq = { version = "2", features = ["native-tls"] }
+audio-analysis = { path = "../audio-analysis" }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros", "net", "io-util"] }
+anyhow = "1"
+tracing = "0.1"
+tempfile = "3"
+tokio-tungstenite = "0.21"
+futures-util = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true

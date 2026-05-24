@@ -1,0 +1,33 @@
+[default]
+identifier = "default"
+description = "Default permissions for the native audio backend plugin"
+permissions = [
+  "allow-audio-open",
+  "allow-audio-open-url",
+  "allow-audio-open-crossfade",
+  "allow-audio-play",
+  "allow-audio-pause",
+  "allow-audio-stop",
+  "allow-audio-seek",
+  "allow-audio-set-volume",
+  "allow-audio-set-mute",
+  "allow-audio-get-state",
+  "allow-audio-get-info",
+  "allow-audio-get-spectrum",
+  "allow-audio-toggle-playback",
+  "allow-audio-set-spectrum-config",
+  "allow-audio-get-analysis-spectrum",
+  "allow-audio-get-analysis-raw-bins",
+  "allow-audio-get-analysis-low-freq",
+  "allow-audio-set-session",
+  "allow-audio-poll-events",
+  "allow-queue-add",
+  "allow-queue-remove",
+  "allow-queue-clear",
+  "allow-queue-get-all",
+  "allow-queue-set-index",
+  "allow-queue-next",
+  "allow-queue-prev",
+  "allow-queue-set-loop-mode",
+  "allow-queue-get-loop-mode",
+]

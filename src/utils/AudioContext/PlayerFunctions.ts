@@ -30,6 +30,7 @@ import { AudioContextManager } from "./AudioContextManager";
 import { getAutoMixEngine } from "./AutoMix";
 import { getAudioPreloader } from "./AudioPreloader";
 import type { ISound } from "./types";
+import { NativeRustSound, isNativeAudioBackendAvailable } from "../tauri/NativeRustSound";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -230,6 +231,209 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
 };
 
 /**
+ * Set up a NativeRustSound with all the standard event handlers and return it.
+ */
+const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => {
+  const music = musicStore();
+  const site = siteStore();
+  const settings = settingStore();
+  const user = userStore();
+
+  SoundManager.setCurrentSound(sound);
+  music.loadingStage = "buffering";
+
+  getCoverColor(music.getPlaySongData.album.picUrl)
+    .then((color) => {
+      site.songPicGradient = color;
+    })
+    .catch((err) => {
+      console.error("取色出错", err);
+    });
+
+  // Start download + decode in Rust (async). When `memoryLastPlaybackPosition`
+  // is on, hand the saved position to `load()` so the Rust side opens the
+  // source pre-seeked (via `decoder::open_source_with_fft_at`). This avoids
+  // a separate post-load `seek()` round-trip — that round-trip used to race
+  // with `SyncStatus` and overwrite the frontend's optimistic position
+  // with stale 0, so the progress bar would jump from 0 up to the resumed
+  // position instead of starting at it.
+  const isMemoryAtLoad = settings.memoryLastPlaybackPosition;
+  const savedPosAtLoad = isMemoryAtLoad
+    ? Number(music.persistData.playSongTime.currentTime) || 0
+    : 0;
+  sound.load(savedPosAtLoad);
+
+  // ── Load timeout guard ────────────────────────────────────────
+  let _loadClearTimeout: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+    _loadClearTimeout = null;
+    if (music.isLoadingSong) {
+      console.warn("[NativeSound] Audio load timeout — force-clearing loading state");
+      music.isLoadingSong = false;
+      music.loadingStage = "idle";
+    }
+  }, 15_000);
+
+  const _clearLoadTimeout = (): void => {
+    if (_loadClearTimeout !== null) {
+      clearTimeout(_loadClearTimeout);
+      _loadClearTimeout = null;
+    }
+  };
+
+  // ── Load ──────────────────────────────────────────────────────
+  sound.once("load", () => {
+    _clearLoadTimeout();
+    music.loadingStage = "idle";
+    const songId = music.getPlaySongData?.id;
+    const sourceId = music.getPlaySongData?.sourceId ? music.getPlaySongData.sourceId : 0;
+    const isLogin = user.userLogin;
+    const isMemory = settings.memoryLastPlaybackPosition;
+
+    if (IS_DEV) {
+      console.log("[Native] 首次缓冲完成：" + songId + " / 来源：" + sourceId);
+    }
+
+    if (!isMemory) {
+      // Saved position is disabled — wipe persisted time so subsequent
+      // sessions start fresh.
+      music.persistData.playSongTime = {
+        currentTime: 0,
+        duration: 0,
+        barMoveDistance: 0,
+        songTimePlayed: "00:00",
+        songTimeDuration: "00:00",
+      };
+    }
+    // When `isMemory` is true, the resumed position was already baked into
+    // the load via `jumpToSongAt` (see setupNativeSound's `sound.load(savedPos)`
+    // call). No extra `sound.seek()` here — that used to race with the
+    // first `SyncStatus` and overwrite the optimistic local position.
+    music.isLoadingSong = false;
+
+    if (isLogin) {
+      if (scrobbleTimeout) clearTimeout(scrobbleTimeout);
+      scrobbleTimeout = setTimeout(() => {
+        songScrobble(songId, sourceId)
+          .then((res) => {
+            if (IS_DEV) console.log("歌曲打卡完成", res);
+          })
+          .catch((err) => {
+            console.error("歌曲打卡失败：" + err);
+          });
+      }, 3000);
+    }
+
+    // Sync volume from the store. The Rust backend creates a fresh
+    // player with volume=1.0; we restore the user's setting.
+    const vol = music.persistData.playVolume;
+
+    // For native backend: the volume atomic doesn't click/pop on
+    // changes, so a fade-in from 0 is unnecessary.  Setting volume(0)
+    // then volume(vol) would only race two IPC calls — if the second
+    // arrives before the first the volume stays at 0 permanently.
+    // Just restore the user's volume directly.
+    sound.volume(vol);
+
+    if (autoPlay) {
+      sound.play();
+    } else {
+      sound.pause();
+    }
+  });
+
+  // ── Play ──────────────────────────────────────────────────────
+  sound.on("play", () => {
+    if (window.$player && window.$player !== sound) return;
+    const autoMixCheck = getAutoMixEngine();
+    if (autoMixCheck.isCrossfading()) return;
+
+    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+
+    const playSongData = music.getPlaySongData;
+    if (!Object.keys(playSongData).length) {
+      window.$message.error(getLanguageData("songLoadError"));
+      return;
+    }
+
+    const songName = playSongData?.name;
+    const songArtist = playSongData.artist[0]?.name;
+
+    testNumber = 0;
+    music.setPlayState(true);
+
+    if (typeof window.$message !== "undefined" && songArtist !== null) {
+      window.$message.info(`${songName} - ${songArtist}`, {
+        icon: () => h(NIcon, null, { default: () => h(MusicNoteFilled) }),
+      });
+    } else {
+      window.$message.warning(getLanguageData("songNotDetails"));
+    }
+
+    if (IS_DEV) console.log(`[Native] 开始播放：${songName} - ${songArtist}`);
+
+    setMediaSession(music);
+    getAudioPreloader().preloadNext();
+    music.preloadUpcomingSongs();
+
+    const songId = music.getPlaySongData?.id;
+    if (songId) {
+      getAutoMixEngine().onTrackStarted(sound, songId);
+    }
+
+    const timeLoop = (): void => {
+      checkAudioTime(sound, music);
+      timeupdateInterval = requestAnimationFrame(timeLoop);
+    };
+    timeLoop();
+
+    music.setPlayHistory(playSongData);
+    window.document.title = `${songName} - ${songArtist} - ${import.meta.env.VITE_SITE_TITLE}`;
+
+    if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
+      startSpectrumUpdate(sound, music);
+    }
+  });
+
+  // ── Pause ─────────────────────────────────────────────────────
+  sound.on("pause", () => {
+    if (window.$player && window.$player !== sound) return;
+    const autoMix = getAutoMixEngine();
+    if (autoMix.isCrossfading()) return;
+    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    if (IS_DEV) console.log("[Native] 音乐暂停");
+    music.setPlayState(false);
+    window.$setSiteTitle("");
+  });
+
+  // ── End ───────────────────────────────────────────────────────
+  sound.on("end", () => {
+    if (window.$player && window.$player !== sound) return;
+    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    stopSpectrumUpdate();
+    if (IS_DEV) console.log("[Native] 歌曲播放结束");
+    const autoMixEngine = getAutoMixEngine();
+    if (!autoMixEngine.isCrossfading()) {
+      music.setPlaySongIndex("next");
+    }
+  });
+
+  // ── Errors ────────────────────────────────────────────────────
+  sound.on("loaderror", () => {
+    _clearLoadTimeout();
+    music.loadingStage = "error";
+    if (testNumber < 4) {
+      testNumber++;
+      if (music.getPlaylists[0]) window.$getPlaySongData(music.getPlaySongData);
+    } else {
+      window.$message.error(getLanguageData("songLoadTest"), { closable: true, duration: 0 });
+      music.isLoadingSong = false;
+    }
+  });
+
+  return (window.$player = sound);
+};
+
+/**
  * 创建音频对象
  * @param src - 音频文件地址
  * @param autoPlay - 是否自动播放（默认为 true）
@@ -257,6 +461,30 @@ export const createSound = (
     if (!preloadedSound) {
       getAudioPreloader().cleanup();
     }
+
+    // ── Native Rust audio backend (Tauri only) ──────────────────
+    const nativeAvailable = isNativeAudioBackendAvailable();
+    if (IS_DEV) {
+      console.log(
+        "[createSound] nativeAvailable:",
+        nativeAvailable,
+        "src:",
+        !!src,
+        "preloaded:",
+        !!preloadedSound,
+        "isTauri:",
+        "__TAURI__" in window,
+        window.__TAURI__,
+      );
+    }
+    if (nativeAvailable && src) {
+      console.log("[createSound] Using NATIVE audio backend");
+      const sound = new NativeRustSound(src);
+      return setupNativeSound(sound, autoPlay);
+    }
+    console.log("[createSound] Using WEB audio backend");
+
+    // ── Web Audio backend (BufferedSound) ─────────────────────────────────────
 
     const music = musicStore();
     const site = siteStore();

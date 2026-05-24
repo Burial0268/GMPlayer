@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-queue_add"
+description = "Enables the queue_add command without any pre-configured scope."
+commands.allow = ["queue_add"]
+
+[[permission]]
+identifier = "deny-queue_add"
+description = "Denies the queue_add command without any pre-configured scope."
+commands.deny = ["queue_add"]

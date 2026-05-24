@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-queue_next"
+description = "Enables the queue_next command without any pre-configured scope."
+commands.allow = ["queue_next"]
+
+[[permission]]
+identifier = "deny-queue_next"
+description = "Denies the queue_next command without any pre-configured scope."
+commands.deny = ["queue_next"]

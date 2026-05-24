@@ -1,0 +1,11 @@
+{
+  "productName": "gmplayer-audio-backend",
+  "version": "0.1.0",
+  "identifier": "com.gbclstudio.gmplayer.audio-backend",
+  "build": {
+    "frontendDist": "."
+  },
+  "app": {
+    "windows": []
+  }
+}

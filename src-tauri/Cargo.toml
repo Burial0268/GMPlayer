@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/audio-analysis", "crates/orientation"]
+members = ["crates/audio-analysis", "crates/orientation", "crates/audio-backend"]
 resolver = "2"
 
 [package]
@@ -34,9 +34,10 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
 gmplayer-orientation = { path = "crates/orientation" }
+gmplayer-audio-backend = { path = "crates/audio-backend" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
 tauri-plugin-decorum = "1.1.1"
 tauri-plugin-http = { version = "2.5.7", features = ["charset", "cookies", "http2", "macos-system-configuration", "brotli", "gzip"] }
 tauri-plugin-window-state = "2"

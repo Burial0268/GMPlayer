@@ -320,12 +320,18 @@ export class AudioEffectManager {
       try {
         this._workletNode.port.onmessage = null;
         this._workletNode.disconnect();
-      } catch { /* already disconnected */ }
+      } catch {
+        /* already disconnected */
+      }
       this._workletNode = null;
     }
 
     if (this.analyserNode) {
-      try { this.analyserNode.disconnect(); } catch { /* already disconnected */ }
+      try {
+        this.analyserNode.disconnect();
+      } catch {
+        /* already disconnected */
+      }
       this.analyserNode = null;
     }
 

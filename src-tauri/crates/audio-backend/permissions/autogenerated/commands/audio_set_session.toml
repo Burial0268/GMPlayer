@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-audio-set-session"
+description = "Enables the audio_set_session command without any pre-configured scope."
+commands.allow = ["audio_set_session"]
+
+[[permission]]
+identifier = "deny-audio-set-session"
+description = "Denies the audio_set_session command without any pre-configured scope."
+commands.deny = ["audio_set_session"]

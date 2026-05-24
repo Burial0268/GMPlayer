@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-audio-get-analysis-raw-bins"
+description = "Enables the audio_get_analysis_raw_bins command without any pre-configured scope."
+commands.allow = ["audio_get_analysis_raw_bins"]
+
+[[permission]]
+identifier = "deny-audio-get-analysis-raw-bins"
+description = "Denies the audio_get_analysis_raw_bins command without any pre-configured scope."
+commands.deny = ["audio_get_analysis_raw_bins"]

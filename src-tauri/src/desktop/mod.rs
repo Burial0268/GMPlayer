@@ -7,6 +7,7 @@ use crate::desktop::window::config::WindowConfig;
 use crate::desktop::window::desktop_lyrics::mouse_through::{HitRegionRegistry, MouseThroughState};
 use crate::desktop::window::manager as wm;
 use crate::shared;
+use gmplayer_audio_backend::commands;
 use log::warn;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 #[cfg(target_os = "macos")]
@@ -26,6 +27,22 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
+                // Silence symphonia's MP3 bit-reservoir underflow WARN
+                // spam. These warnings fire on every track open and after
+                // every seek (the decoder's frame buffer needs a few
+                // frames to fill up) but are masked entirely by our
+                // pre-roll silence in `FFTFeedSource` — they never reach
+                // the speakers. The log lines were being mistaken for
+                // real glitches; silencing them at Error keeps real
+                // decode errors visible while dropping the noise.
+                .level_for(
+                    "symphonia_bundle_mp3",
+                    tauri_plugin_log::log::LevelFilter::Error,
+                )
+                .level_for(
+                    "symphonia_core",
+                    tauri_plugin_log::log::LevelFilter::Error,
+                )
                 .build(),
         )
         .plugin(tauri_plugin_http::init())
@@ -65,8 +82,19 @@ pub fn run() {
             window::tray::set_tray_tooltip,
             // Audio analysis (native Rust, bypasses JS Worker)
             audio_analysis::analyze_audio_native,
+            // AMLL-style: single message command for all playback control
+            commands::audio_send_msg,
+            // Sync query commands
+            commands::audio_get_state,
+            commands::audio_get_ws_url,
+            // Session-based event polling (backward compat)
+            commands::audio_set_session,
+            commands::audio_poll_events,
         ])
         .setup(|app| {
+            let app_handle = app.handle().clone();
+            app.manage(commands::PlayerState::new(app_handle));
+
             #[allow(unused_variables)]
             let main_window = app.get_webview_window("main").unwrap();
 

@@ -99,7 +99,15 @@ export class AudioAnalysisProcessor {
     this._lfOptions = { binCount, windowSize, gradientThreshold, smoothingFactor };
     this._cachedSpectrum = Array.from({ length: outputSize }, () => 0);
 
-    this._tryCreateProc(outputSize, freqMin, freqMax, binCount, windowSize, gradientThreshold, smoothingFactor);
+    this._tryCreateProc(
+      outputSize,
+      freqMin,
+      freqMax,
+      binCount,
+      windowSize,
+      gradientThreshold,
+      smoothingFactor,
+    );
   }
 
   private _tryCreateProc(
@@ -114,8 +122,13 @@ export class AudioAnalysisProcessor {
     if (!_WasmCtor) return;
     try {
       this._proc = new _WasmCtor(
-        outputSize, freqMin, freqMax,
-        binCount, windowSize, gradientThreshold, smoothingFactor,
+        outputSize,
+        freqMin,
+        freqMax,
+        binCount,
+        windowSize,
+        gradientThreshold,
+        smoothingFactor,
       );
     } catch (err) {
       console.error("AudioAnalysisProcessor: Failed to create processor", err);
@@ -127,7 +140,9 @@ export class AudioAnalysisProcessor {
     if (!this._proc) {
       // WASM not ready yet — try again (ctor may have completed since construction)
       this._tryCreateProc(
-        this._outputSize, 80, 2000,  // freq defaults, will be overridden if setFreqRange was called
+        this._outputSize,
+        80,
+        2000, // freq defaults, will be overridden if setFreqRange was called
         this._rawBinCount,
         this._lfOptions.windowSize,
         this._lfOptions.gradientThreshold,

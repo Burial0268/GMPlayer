@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-queue_set_index"
+description = "Enables the queue_set_index command without any pre-configured scope."
+commands.allow = ["queue_set_index"]
+
+[[permission]]
+identifier = "deny-queue_set_index"
+description = "Denies the queue_set_index command without any pre-configured scope."
+commands.deny = ["queue_set_index"]

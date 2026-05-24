@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-queue_prev"
+description = "Enables the queue_prev command without any pre-configured scope."
+commands.allow = ["queue_prev"]
+
+[[permission]]
+identifier = "deny-queue_prev"
+description = "Denies the queue_prev command without any pre-configured scope."
+commands.deny = ["queue_prev"]

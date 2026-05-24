@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-audio-get-state"
+description = "Enables the audio_get_state command without any pre-configured scope."
+commands.allow = ["audio_get_state"]
+
+[[permission]]
+identifier = "deny-audio-get-state"
+description = "Denies the audio_get_state command without any pre-configured scope."
+commands.deny = ["audio_get_state"]

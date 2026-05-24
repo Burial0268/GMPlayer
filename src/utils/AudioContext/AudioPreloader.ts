@@ -13,6 +13,7 @@
 import { BufferedSound } from "./BufferedSound";
 import { resolveSongUrl } from "./resolveSongUrl";
 import { getAutoMixEngine } from "./AutoMix";
+import { isNativeAudioBackendAvailable } from "@/utils/tauri/NativeRustSound";
 // Import store directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 
@@ -36,6 +37,11 @@ export class AudioPreloader {
   /** Called when current song starts playing — preloads the next song */
   preloadNext(): void {
     const music = musicStore();
+
+    // Guard: native Rust backend handles its own download + caching,
+    // so preloading a BufferedSound would be wasteful and would
+    // silently switch the audio pipeline back to Web Audio on consume.
+    if (isNativeAudioBackendAvailable()) return;
 
     // Guard: only normal mode, not FM, list >= 2, not already preloading
     if (music.persistData.personalFmMode) return;

@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-audio-set-spectrum-config"
+description = "Enables the audio_set_spectrum_config command without any pre-configured scope."
+commands.allow = ["audio_set_spectrum_config"]
+
+[[permission]]
+identifier = "deny-audio-set-spectrum-config"
+description = "Denies the audio_set_spectrum_config command without any pre-configured scope."
+commands.deny = ["audio_set_spectrum_config"]

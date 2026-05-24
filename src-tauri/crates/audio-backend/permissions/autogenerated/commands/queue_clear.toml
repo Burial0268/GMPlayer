@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-queue_clear"
+description = "Enables the queue_clear command without any pre-configured scope."
+commands.allow = ["queue_clear"]
+
+[[permission]]
+identifier = "deny-queue_clear"
+description = "Denies the queue_clear command without any pre-configured scope."
+commands.deny = ["queue_clear"]
