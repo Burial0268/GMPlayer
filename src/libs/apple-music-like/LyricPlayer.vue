@@ -1,7 +1,7 @@
 <template>
   <div
     class="lyric-player-wrapper"
-    :style="{ '--lyrics-size-scale': setting.lyricsFontSize }"
+    :style="{ '--lyrics-size-scale': setting.lyricsFontSize * 0.9625 }"
     @wheel.self="passToPlayer"
     @touchstart.self="passToPlayer"
     @touchmove.self="passToPlayer"
@@ -15,7 +15,7 @@
       :enable-blur="setting.lyricsBlur"
       :enable-spring="setting.showYrcAnimation"
       :enable-scale="setting.showYrcAnimation"
-      :word-fade-width="0.25"
+      :word-fade-width="0.5"
       :align-anchor="alignAnchor"
       :align-position="alignPosition"
       :line-pos-x-spring-params="setting.springParams.posX"
@@ -30,13 +30,7 @@
 </template>
 
 <script setup lang="ts">
-import {
-  computed,
-  watch,
-  toRaw,
-  shallowRef,
-  useTemplateRef,
-} from "vue";
+import { computed, watch, toRaw, shallowRef, useTemplateRef } from "vue";
 import { musicStore, settingStore, siteStore } from "../../store";
 import { LyricPlayer, type LyricPlayerRef } from "@applemusic-like-lyrics/vue";
 import type { DomLyricPlayer, LyricLineMouseEvent } from "@applemusic-like-lyrics/core";
@@ -193,27 +187,5 @@ watch(
     min(max(max(4.5vh, 2.3vw), 2.5rem), 3.5rem) * var(--lyrics-size-scale, 3.6) / 3.6
   );
   --amll-lp-hover-bg-color: color-mix(in srgb, var(--amll-lp-color), transparent 95%);
-
-  [class^="_lyricMainLine"] {
-    font-weight: bold;
-    line-height: 1.25;
-  }
-
-  [class^="_lyricSubLine"] {
-    margin-top: 0.65rem;
-
-    & + [class^="_lyricSubLine"] {
-      margin-top: 0;
-    }
-  }
-
-  [class^="_emphasizeWrapper"] span {
-    padding: 1em;
-    margin: -1em;
-  }
-
-  [class^="_interludeDots"]:not([style]) {
-    visibility: hidden;
-  }
 }
 </style>

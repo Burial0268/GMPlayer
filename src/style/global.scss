@@ -24,13 +24,18 @@
   --transition-normal: 250ms var(--ease-out);
   --transition-slow: 400ms var(--ease-out);
   --transition-spring: 500ms var(--ease-out);
+
+  font-synthesis: none;
+	text-rendering: optimizeLegibility;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	-webkit-text-size-adjust: 100%;
 }
 
 // HarmonyOS Sans
 html,
 body,
 #app {
-  -webkit-font-smoothing: subpixel-antialiased;
   font-smooth: subpixel-antialiased;
   font-family: "HarmonyOS_Regular", sans-serif !important;
 }
