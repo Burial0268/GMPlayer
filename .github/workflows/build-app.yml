@@ -86,11 +86,6 @@ jobs:
         with:
           fetch-depth: 0 # 为了正确生成开发版本号码
 
-      - name: 同步 Git SubModules
-        run: |
-          git submodule update --init --recursive
-          git submodule status
-
       - name: 安装 PNPM
         uses: pnpm/action-setup@v4
         with:
@@ -153,8 +148,6 @@ jobs:
 
       - name: 安装依赖 (包含子依赖和 WASM)
         run: |
-          pnpm install:deps-amll
-          pnpm build:deps-amll
           pnpm build:wasm
           pnpm install
 
@@ -189,11 +182,6 @@ jobs:
         name: 克隆仓库
         with:
           fetch-depth: 0 # 为了正确生成开发版本号码
-
-      - name: 同步 Git SubModules
-        run: |
-          git submodule update --init --recursive
-          git submodule status
 
       - name: 安装 PNPM
         uses: pnpm/action-setup@v4
@@ -238,8 +226,6 @@ jobs:
 
       - name: 安装依赖 (包含子依赖和 WASM)
         run: |
-          pnpm install:deps-amll
-          pnpm build:deps-amll
           pnpm build:wasm
           pnpm install
 
