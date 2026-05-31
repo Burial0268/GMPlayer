@@ -36,6 +36,7 @@ const canvasRef = ref(null);
 // Cached canvas dimensions — only update on resize, not every frame
 let cachedWidth = 0;
 let cachedHeight = 0;
+let displayPeak = 255;
 
 const updateCanvasSize = () => {
   const canvas = canvasRef.value;
@@ -75,6 +76,11 @@ const drawSpectrum = (data) => {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
     return;
   }
+  if (framePeak > displayPeak) {
+    displayPeak = displayPeak * 0.55 + framePeak * 0.45;
+  } else {
+    displayPeak = Math.max(255, displayPeak * 0.96);
+  }
 
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   ctx.fillStyle = "#efefef";
@@ -90,7 +96,7 @@ const drawSpectrum = (data) => {
     for (let j = start; j < end; j++) {
       if (data[j] > value) value = data[j];
     }
-    const barHeight = (value / framePeak) * canvasHeight;
+    const barHeight = Math.min(1, value / displayPeak) * canvasHeight;
     if (barHeight <= 0) continue;
 
     const x1 = i * barWidth + canvasWidth / 2;
