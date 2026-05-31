@@ -4,8 +4,8 @@
  */
 
 import request from "@/utils/request";
-// @ts-ignore
-import { parseLrc, parseQrc, parseYrc, LyricLine } from "@applemusic-like-lyrics/lyric";
+import { parseQrc, parseYrc } from "@applemusic-like-lyrics/lyric";
+import type { LyricLine } from "@applemusic-like-lyrics/lyric";
 import { ensureTTMLLoaded, parseTTML } from "./parseTTML";
 import { preprocessLyrics } from "./processor";
 import { detectYrcType } from "./timeUtils";
@@ -295,8 +295,6 @@ export class LyricService {
             }
           }
 
-          // 条件性跳过 syncLyricTimestamps
-          const skipTimestampSyncLrc = result.meta?.source === "repository"; // Main lyric source
           // For roma, we also check if the specific romaji lyric source (if distinguishable) is repository grade
           // Assuming for now that if meta.source is repository, associated roma is also repository grade.
           const skipTimestampSyncRoma = result.meta?.source === "repository";

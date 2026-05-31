@@ -135,23 +135,29 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
     // Skip spectrum computation when page is not visible
     if (isPageVisible) {
       if (needsSpectrum) {
-        // Full spectrum path: read AnalyserNode + copy to store
-        const frequencyData = sound.getFrequencyData();
-        const len = frequencyData.length;
+        // Native Rust backend: use the 2048-bin raw FFT frame delivered by
+        // the WebSocket IPC service. Do not call getFrequencyData() here:
+        // the web backend's AnalyserNode path is windowed/smoothed and only
+        // 1024 bins by default.
+        const spectrumData =
+          sound instanceof NativeRustSound ? sound.getFFTData() : sound.getFrequencyData();
+        const len = spectrumData.length;
 
         // Reuse array to avoid allocating a new one every frame (~60fps)
         if (spectrumReusableArray.length !== len) {
           spectrumReusableArray = new Array(len);
         }
         for (let i = 0; i < len; i++) {
-          spectrumReusableArray[i] = frequencyData[i];
+          spectrumReusableArray[i] = spectrumData[i];
         }
         music.spectrumsData = spectrumReusableArray;
 
         // 使用 AudioEffectManager 内部计算的平均振幅
         music.spectrumsScaleData = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
-      } else if (needsLowFreq) {
-        // Only lowFreqVolume needed — populate AnalyserNode buffer for mobile fallback
+      } else if (needsLowFreq && !(sound instanceof NativeRustSound)) {
+        // Web backend only: populate AnalyserNode buffer for mobile fallback.
+        // NativeRustSound receives lowFreqVolume from Rust over WS; normalizing
+        // its 2048-bin FFT here would be extra main-thread work per RAF.
         sound.getFrequencyData();
       }
 
@@ -805,6 +811,15 @@ export const fadePlayOrPause = (
   if (IS_DEV) {
     console.log("[fadePlayOrPause] type:", type, "sound:", !!sound, "playing:", sound?.playing());
   }
+  if (sound instanceof NativeRustSound) {
+    if (type === "play") {
+      sound.play();
+    } else {
+      sound.pause();
+    }
+    return;
+  }
+
   const settingData = JSON.parse(localStorage.getItem("settingData") || "{}");
   const isFade = settingData.songVolumeFade ?? true;
   if (isFade) {

@@ -3,21 +3,24 @@
  * 歌词解析主模块 (优化版)
  */
 
-import { parseLrc as parseCoreLrc, parseYrc as parseCoreYrc } from "@applemusic-like-lyrics/lyric";
+import {
+  parseLrc as parseAMLLLrc,
+  parseYrc as parseAMLLYrc,
+  type LyricLine as AMLLParsedLyricLine,
+} from "@applemusic-like-lyrics/lyric";
 import { musicStore } from "@/store";
-import { parseLrcLines, parseYrcLines, buildAMLLData } from "./parser/formatParser";
+import {
+  parseLrcLines as convertLrcLines,
+  parseYrcLines as convertYrcLines,
+  buildAMLLData,
+} from "./parser/formatParser";
 import { alignByIndex } from "./alignment";
-import type {
-  LyricLine,
-  RawLyricData,
-  ParsedLrcLine,
-  ParsedYrcLine,
-  ParsedLyricResult,
-  AMLLLine,
-} from "./types";
+import type { RawLyricData, ParsedLyricResult } from "./types";
 
-// Debug flag - disable in production
-const DEBUG = false;
+type ParsedSourceLine = AMLLParsedLyricLine;
+
+const parseLrcText = (lyricText: string): ParsedSourceLine[] => parseAMLLLrc(lyricText);
+const parseYrcText = (lyricText: string): ParsedSourceLine[] => parseAMLLYrc(lyricText);
 
 // Backward compat alias
 export type LyricData = RawLyricData;
@@ -70,27 +73,27 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
     };
 
     // --- LAAPI data parsing ---
-    let laapiTranslationLyricLines: LyricLine[] | null = null;
+    let laapiTranslationLyricLines: ParsedSourceLine[] | null = null;
     const laapiTranslation = (data as any).translation;
     if (laapiTranslation && typeof laapiTranslation === "string" && laapiTranslation.trim()) {
       try {
         const laapiTranslationText = laapiTranslation.replace(/\\n/g, "\n").replace(/\r/g, "");
-        const parsedLines = parseCoreLrc(laapiTranslationText);
+        const parsedLines = parseLrcText(laapiTranslationText);
         if (parsedLines && parsedLines.length > 0) {
           laapiTranslationLyricLines = parsedLines;
         }
-      } catch (e) {
+      } catch {
         // Silently fail for LAAPI parsing
       }
     }
 
-    let laapiRomajiLyricLines: LyricLine[] | null = null;
+    let laapiRomajiLyricLines: ParsedSourceLine[] | null = null;
     const laapiRomaji = (data as any).romaji;
     if (laapiRomaji && typeof laapiRomaji === "string" && laapiRomaji.trim()) {
       try {
         const laapiRomajiText = laapiRomaji.replace(/\\n/g, "\n").replace(/\r/g, "");
-        laapiRomajiLyricLines = parseCoreLrc(laapiRomajiText);
-      } catch (e) {
+        laapiRomajiLyricLines = parseLrcText(laapiRomajiText);
+      } catch {
         // Silently fail for LAAPI parsing
       }
     }
@@ -99,40 +102,40 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
     result.hasYrc = !!lrcData.yrc;
 
     // Effective LRC translation source
-    let effectiveLrcTranSource: LyricLine[] = [];
+    let effectiveLrcTranSource: ParsedSourceLine[] = [];
     if (lrcData.tlyric?.trim()) {
-      effectiveLrcTranSource = parseCoreLrc(lrcData.tlyric);
+      effectiveLrcTranSource = parseLrcText(lrcData.tlyric);
     } else if (laapiTranslationLyricLines?.length) {
       effectiveLrcTranSource = laapiTranslationLyricLines;
     }
     result.hasLrcTran = effectiveLrcTranSource.length > 0;
 
     // Effective LRC romaji source
-    let effectiveLrcRomaSource: LyricLine[] = [];
+    let effectiveLrcRomaSource: ParsedSourceLine[] = [];
     if (lrcData.romalrc?.trim()) {
-      effectiveLrcRomaSource = parseCoreLrc(lrcData.romalrc);
+      effectiveLrcRomaSource = parseLrcText(lrcData.romalrc);
     } else if (laapiRomajiLyricLines?.length) {
       effectiveLrcRomaSource = laapiRomajiLyricLines;
     }
     result.hasLrcRoma = effectiveLrcRomaSource.length > 0;
 
     // Effective YRC translation source
-    let effectiveYrcTranSource: LyricLine[] = [];
+    let effectiveYrcTranSource: ParsedSourceLine[] = [];
     if (lrcData.ytlrc?.trim()) {
-      effectiveYrcTranSource = parseCoreLrc(lrcData.ytlrc);
+      effectiveYrcTranSource = parseLrcText(lrcData.ytlrc);
     } else if (lrcData.tlyric?.trim()) {
-      effectiveYrcTranSource = parseCoreLrc(lrcData.tlyric);
+      effectiveYrcTranSource = parseLrcText(lrcData.tlyric);
     } else if (laapiTranslationLyricLines?.length) {
       effectiveYrcTranSource = laapiTranslationLyricLines;
     }
     result.hasYrcTran = effectiveYrcTranSource.length > 0;
 
     // Effective YRC romaji source
-    let effectiveYrcRomaSource: LyricLine[] = [];
+    let effectiveYrcRomaSource: ParsedSourceLine[] = [];
     if (lrcData.yromalrc?.trim()) {
-      effectiveYrcRomaSource = parseCoreLrc(lrcData.yromalrc);
+      effectiveYrcRomaSource = parseLrcText(lrcData.yromalrc);
     } else if (lrcData.romalrc?.trim()) {
-      effectiveYrcRomaSource = parseCoreLrc(lrcData.romalrc);
+      effectiveYrcRomaSource = parseLrcText(lrcData.romalrc);
     } else if (laapiRomajiLyricLines?.length) {
       effectiveYrcRomaSource = laapiRomajiLyricLines;
     }
@@ -141,14 +144,14 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
     // Parse normal lyrics (LRC)
     if (lrcData.lrc) {
       try {
-        const lrcParsedRaw = parseCoreLrc(lrcData.lrc);
-        result.lrc = parseLrcLines(lrcParsedRaw);
+        const lrcParsedRaw = parseLrcText(lrcData.lrc);
+        result.lrc = convertLrcLines(lrcParsedRaw);
 
         if (effectiveLrcTranSource.length > 0) {
-          result.lrc = alignByIndex(result.lrc, parseLrcLines(effectiveLrcTranSource), "tran");
+          result.lrc = alignByIndex(result.lrc, convertLrcLines(effectiveLrcTranSource), "tran");
         }
         if (effectiveLrcRomaSource.length > 0) {
-          result.lrc = alignByIndex(result.lrc, parseLrcLines(effectiveLrcRomaSource), "roma");
+          result.lrc = alignByIndex(result.lrc, convertLrcLines(effectiveLrcRomaSource), "roma");
         }
 
         result.lrcAMData = buildAMLLData(
@@ -156,7 +159,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
           effectiveLrcTranSource,
           effectiveLrcRomaSource,
         );
-      } catch (error) {
+      } catch {
         result.lrc = [
           { time: 0, content: "LRC解析出错" },
           { time: 999, content: "Error parsing LRC" },
@@ -166,31 +169,31 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
 
     // Parse YRC lyrics or handle pre-parsed TTML lyrics
     if (lrcData.yrc) {
-      let yrcParsedRawLines: LyricLine[] = [];
+      let yrcParsedRawLines: ParsedSourceLine[] = [];
       const TTML_PREFIX = "___PARSED_LYRIC_LINES___";
 
       if (lrcData.yrc.startsWith(TTML_PREFIX)) {
         try {
           const jsonPart = lrcData.yrc.substring(TTML_PREFIX.length);
-          yrcParsedRawLines = JSON.parse(jsonPart) as LyricLine[];
+          yrcParsedRawLines = JSON.parse(jsonPart) as ParsedSourceLine[];
           result.hasTTML = true;
           result.ttml = yrcParsedRawLines;
-        } catch (error) {
+        } catch {
           yrcParsedRawLines = [];
         }
       } else {
-        yrcParsedRawLines = parseCoreYrc(lrcData.yrc);
+        yrcParsedRawLines = parseYrcText(lrcData.yrc);
       }
 
-      result.yrc = parseYrcLines(yrcParsedRawLines);
+      result.yrc = convertYrcLines(yrcParsedRawLines);
 
       if (effectiveYrcTranSource.length > 0) {
         try {
-          result.yrc = alignByIndex(result.yrc, parseLrcLines(effectiveYrcTranSource), "tran");
-        } catch (error) {
+          result.yrc = alignByIndex(result.yrc, convertLrcLines(effectiveYrcTranSource), "tran");
+        } catch {
           // Fallback: simple index-based assignment
           if (result.yrc.length > 0 && effectiveYrcTranSource.length > 0) {
-            const parsedTran = parseLrcLines(effectiveYrcTranSource);
+            const parsedTran = convertLrcLines(effectiveYrcTranSource);
             const minLength = Math.min(result.yrc.length, parsedTran.length);
             for (let i = 0; i < minLength; i++) {
               result.yrc[i].tran = parsedTran[i].content;
@@ -201,11 +204,11 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
 
       if (effectiveYrcRomaSource.length > 0) {
         try {
-          result.yrc = alignByIndex(result.yrc, parseLrcLines(effectiveYrcRomaSource), "roma");
-        } catch (error) {
+          result.yrc = alignByIndex(result.yrc, convertLrcLines(effectiveYrcRomaSource), "roma");
+        } catch {
           // Fallback: simple index-based assignment
           if (result.yrc.length > 0 && effectiveYrcRomaSource.length > 0) {
-            const parsedRoma = parseLrcLines(effectiveYrcRomaSource);
+            const parsedRoma = convertLrcLines(effectiveYrcRomaSource);
             const minLength = Math.min(result.yrc.length, parsedRoma.length);
             for (let i = 0; i < minLength; i++) {
               result.yrc[i].roma = parsedRoma[i].content;
@@ -220,7 +223,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
         effectiveYrcRomaSource,
       );
     }
-  } catch (error) {
+  } catch {
     return createEmptyLyricResult();
   }
 
