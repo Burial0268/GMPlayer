@@ -1,7 +1,6 @@
 <template>
   <div
     class="lyric-player-wrapper"
-    :style="{ '--lyrics-size-scale': setting.lyricsFontSize * 0.9625 }"
     @wheel.self="passToPlayer"
     @touchstart.self="passToPlayer"
     @touchmove.self="passToPlayer"
@@ -161,5 +160,15 @@ watch(
   overflow: hidden;
   display: flex;
   justify-content: center;
+
+  // Inactive bg lines should not expand the measured lyric line height.
+  :deep(
+    .amll-lyric-player[class*="_playing"] [class*="_bgWrapper"]:not([class*="_bgWrapperActive"])
+  ) {
+    position: absolute !important;
+    top: 100% !important;
+    left: 0 !important;
+    pointer-events: none;
+  }
 }
 </style>
