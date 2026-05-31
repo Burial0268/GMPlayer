@@ -337,6 +337,37 @@ fn collect_forward_message(
     }
 }
 
+fn spawn_output_low_freq_forwarder(
+    output: &mut LowLatencyOutput,
+    evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
+) {
+    let Some(rx) = output.take_low_freq_rx() else {
+        return;
+    };
+
+    let _ = std::thread::Builder::new()
+        .name("audio-lowfreq".into())
+        .spawn(move || {
+            while let Ok(mut volume) = rx.recv() {
+                while let Ok(next) = rx.try_recv() {
+                    volume = next;
+                }
+
+                if evt_sender
+                    .send(AudioThreadEventMessage::new(
+                        String::new(),
+                        Some(AudioThreadEvent::LowFrequencyVolume {
+                            volume: volume as f64,
+                        }),
+                    ))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+}
+
 // ── Cloneable handle for sending messages ────────────────────────
 
 #[derive(Clone, Debug)]
@@ -506,8 +537,9 @@ impl AudioPlayer {
         seek_rx: mpsc::UnboundedReceiver<f64>,
         evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
     ) -> AudioResult<Self> {
-        let output = output::open_preferred_output(None).map_err(AudioError::Output)?;
+        let mut output = output::open_preferred_output(None).map_err(AudioError::Output)?;
         output.writer().set_paused(true);
+        spawn_output_low_freq_forwarder(&mut output, evt_sender.clone());
         let clock = Arc::new(parking_lot::Mutex::new(PlayerClock::new()));
 
         info!("音频输出设备 准备就绪");
@@ -606,11 +638,12 @@ impl AudioPlayer {
             return Ok(false);
         }
 
-        let output = output::open_preferred_output(Some(target)).map_err(AudioError::Output)?;
+        let mut output = output::open_preferred_output(Some(target)).map_err(AudioError::Output)?;
         output.writer().set_volume(self.volume as f32);
         output
             .writer()
             .set_paused(self.playback_intent == PlaybackIntent::Paused);
+        spawn_output_low_freq_forwarder(&mut output, self.evt_sender.clone());
         let changed =
             output.config() != self.output.config() || output.device() != self.output.device();
         self.output = output;

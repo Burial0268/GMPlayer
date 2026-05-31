@@ -1,4 +1,4 @@
-//! Audio analysis pipeline (FFT + lowFreq) running on a dedicated OS thread.
+//! Audio analysis pipeline (FFT) running on a dedicated OS thread.
 //!
 //! Previously `FFTFeedSource` (audio callback thread) and the FFT broadcast
 //! task (audio player tokio runtime) shared an
@@ -17,6 +17,10 @@
 //!   - `Clear` / `SetFreqRange` are control commands triggered by the
 //!     player thread on seek / track change / frequency-range updates.
 //!
+//! Realtime `LowFrequencyVolume` is intentionally computed in the CPAL output
+//! callback, not here, so background motion follows the actual output stream
+//! without waiting for this thread's analysis cadence.
+//!
 //! Events leave through the same `tokio::sync::mpsc::UnboundedSender` that
 //! every other player event uses, so the WS forwarder picks them up unchanged.
 
@@ -27,6 +31,10 @@ use audio_analysis::{AudioProcessor, LowFreqConfig};
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
+
+const FFT_SIZE: usize = 2048;
+const ANALYSIS_INTERVAL: Duration = Duration::from_millis(16);
+const FFT_EMIT_INTERVAL: Duration = Duration::from_millis(33);
 
 /// Commands from the audio callback / player thread to the analysis thread.
 /// `Pcm` carries interleaved samples — the downmix runs on this thread so
@@ -84,95 +92,94 @@ fn analysis_loop(
         cfg.smoothing_factor,
     );
 
-    // Scratch buffer for `process_frame`'s 0-255 normalized output. We do NOT
-    // emit it — it only exists because `process_frame` requires an output
-    // slice. The spectrum we actually broadcast is the RAW freq-sampled
-    // magnitudes from `proc.fft.raw_spectrum()` / `frame_buf` (length 2048):
-    // one unwindowed FFT per tick, no cross-frame EMA.
-    let mut scratch = vec![0.0f32; 2048];
-    let emit_interval = Duration::from_millis(50);
-    let mut last_emit = Instant::now();
-    let mut low_freq_smoothed = 0.0f32;
+    // AMLL emits a temporally-smoothed FFT buffer, not one raw FFT frame per
+    // tick. Sending raw magnitudes makes the frontend re-normalize against a
+    // different peak every event, which reads as flashing.
+    let mut spectrum = vec![0.0f32; 2048];
+    let mut last_analysis = Instant::now();
+    let mut last_fft_emit = Instant::now() - FFT_EMIT_INTERVAL;
+    let mut pending_mono_samples = 0usize;
+    let mut current_sample_rate = 44_100u32;
+
+    // LowFreqAnalyzer::new starts at 1.0 for WASM compatibility. Native IPC
+    // should start from silence so the first lowFreq event does not jump.
+    proc.clear();
 
     loop {
-        match rx.recv_timeout(emit_interval) {
+        let wait = ANALYSIS_INTERVAL.saturating_sub(last_analysis.elapsed());
+        match rx.recv_timeout(wait) {
             Ok(cmd) => {
-                handle_cmd(&mut proc, cmd);
+                apply_cmd_result(
+                    handle_cmd(&mut proc, cmd),
+                    &mut pending_mono_samples,
+                    &mut current_sample_rate,
+                );
                 while let Ok(more) = rx.try_recv() {
-                    handle_cmd(&mut proc, more);
+                    apply_cmd_result(
+                        handle_cmd(&mut proc, more),
+                        &mut pending_mono_samples,
+                        &mut current_sample_rate,
+                    );
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
-        if last_emit.elapsed() >= emit_interval {
-            // Update FFT once. `scratch` receives the internal display path
-            // and is intentionally not emitted.
-            let _ = proc.process_frame(50.0, &mut scratch);
-            let raw_spectrum = proc.fft.raw_spectrum();
-            let low_freq = amll_low_freq_from_raw(raw_spectrum, &mut low_freq_smoothed);
+        if last_analysis.elapsed() >= ANALYSIS_INTERVAL && pending_mono_samples >= FFT_SIZE {
+            let now = Instant::now();
+            let delta_ms = now.duration_since(last_analysis).as_secs_f32() * 1000.0;
+            let _ = proc.process_frame(delta_ms, &mut spectrum);
 
-            // IPC Service: emit RAW freq-sampled magnitudes (length 2048). The
-            // frontend normalizes once for display (getFrequencyData), and the
-            // lowFreq below is likewise derived from raw bins — no double-processing.
-            if evt
-                .send(AudioThreadEventMessage::new(
-                    String::new(),
-                    Some(AudioThreadEvent::FFTData {
-                        data: raw_spectrum.to_vec(),
-                    }),
-                ))
-                .is_err()
-            {
-                break;
+            let drained = ((delta_ms / 1000.0) * current_sample_rate.max(1) as f32) as usize;
+            pending_mono_samples = pending_mono_samples.saturating_sub(drained.max(1));
+            last_analysis = now;
+
+            if last_fft_emit.elapsed() >= FFT_EMIT_INTERVAL {
+                if evt
+                    .send(AudioThreadEventMessage::new(
+                        String::new(),
+                        Some(AudioThreadEvent::FFTData {
+                            data: spectrum.clone(),
+                        }),
+                    ))
+                    .is_err()
+                {
+                    break;
+                }
+                last_fft_emit = now;
             }
-            if evt
-                .send(AudioThreadEventMessage::new(
-                    String::new(),
-                    Some(AudioThreadEvent::LowFrequencyVolume {
-                        volume: low_freq as f64,
-                    }),
-                ))
-                .is_err()
-            {
-                break;
-            }
-            last_emit = Instant::now();
         }
     }
 }
 
-/// Low-frequency volume derived from the same raw FFT frame sent to the
-/// frontend. This preserves the AMLL-current threshold + 0.2 smoothing behavior
-/// but replaces the old 0-255 smoothed spectrum input with per-frame raw
-/// magnitudes, normalized only against the current raw frame peak.
-fn amll_low_freq_from_raw(raw: &[f32], smoothed: &mut f32) -> f32 {
-    const LOW_BINS: usize = 128;
-    const THRESHOLD: f32 = 0.08;
-    const BOOST_FLOOR: f32 = 0.4;
-    const SMOOTHING: f32 = 0.2;
-
-    let frame_peak = raw.iter().copied().fold(0.0f32, f32::max);
-    let target = if frame_peak > f32::EPSILON {
-        let end = LOW_BINS.min(raw.len());
-        let low_peak = raw[..end].iter().copied().fold(0.0f32, f32::max);
-        let mut value = (low_peak / frame_peak) * 2.0;
-        if value > THRESHOLD {
-            value = value.max(BOOST_FLOOR);
-        } else {
-            value = 0.0;
-        }
-        value
-    } else {
-        0.0
-    };
-
-    *smoothed += (target - *smoothed) * SMOOTHING;
-    smoothed.clamp(0.0, 1.0)
+enum HandleCmdResult {
+    Pushed { samples: usize, sample_rate: u32 },
+    Reset,
+    None,
 }
 
-fn handle_cmd(proc: &mut AudioProcessor, cmd: AnalysisCommand) {
+fn apply_cmd_result(
+    result: HandleCmdResult,
+    pending_mono_samples: &mut usize,
+    current_sample_rate: &mut u32,
+) {
+    match result {
+        HandleCmdResult::Pushed {
+            samples,
+            sample_rate,
+        } => {
+            *pending_mono_samples += samples;
+            *current_sample_rate = sample_rate.max(1);
+        }
+        HandleCmdResult::Reset => {
+            *pending_mono_samples = 0;
+        }
+        HandleCmdResult::None => {}
+    }
+}
+
+fn handle_cmd(proc: &mut AudioProcessor, cmd: AnalysisCommand) -> HandleCmdResult {
     match cmd {
         AnalysisCommand::Pcm {
             mut samples,
@@ -182,7 +189,16 @@ fn handle_cmd(proc: &mut AudioProcessor, cmd: AnalysisCommand) {
         } => {
             let ch = (channels as usize).max(1);
             if ch == 1 {
+                let len = samples.len();
                 proc.push_pcm(&samples, sample_rate);
+                if let Some(tx) = recycle {
+                    samples.clear();
+                    let _ = tx.send(samples);
+                }
+                HandleCmdResult::Pushed {
+                    samples: len,
+                    sample_rate,
+                }
             } else {
                 let inv = 1.0 / ch as f32;
                 let mut mono = Vec::with_capacity(samples.len() / ch);
@@ -190,19 +206,25 @@ fn handle_cmd(proc: &mut AudioProcessor, cmd: AnalysisCommand) {
                     let m: f32 = chunk.iter().sum::<f32>() * inv;
                     mono.push(m);
                 }
+                let len = mono.len();
                 proc.push_pcm(&mono, sample_rate);
-            }
-            // Return the buffer to the audio thread for reuse. If the source
-            // has been dropped (song change, app shutdown) the send fails
-            // silently — the Vec just gets dropped, no harm done.
-            if let Some(tx) = recycle {
-                samples.clear();
-                let _ = tx.send(samples);
+                if let Some(tx) = recycle {
+                    samples.clear();
+                    let _ = tx.send(samples);
+                }
+                HandleCmdResult::Pushed {
+                    samples: len,
+                    sample_rate,
+                }
             }
         }
-        AnalysisCommand::Clear => proc.clear(),
+        AnalysisCommand::Clear => {
+            proc.clear();
+            HandleCmdResult::Reset
+        }
         AnalysisCommand::SetFreqRange { from, to } => {
             proc.fft.set_freq_range(from, to);
+            HandleCmdResult::None
         }
     }
 }

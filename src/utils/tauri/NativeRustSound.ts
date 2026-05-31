@@ -567,10 +567,8 @@ export class NativeRustSound implements ISound {
   }
 
   getLowFrequencyVolume(): number {
-    // Rust computes this from the same FFT magnitudes used for FFTData
-    // (LowFreqAnalyzer, see audio-backend/src/low_freq.rs). The frontend
-    // used to redo the sliding-window + gradient gate per RAF — that
-    // duplicated work and broke when the WASM FFT module went away.
+    // Rust computes this from the realtime CPAL output stream. The frontend
+    // only reads the latest value; it does not re-run FFT-derived lowfreq work.
     return this._lowFreqVolume;
   }
 

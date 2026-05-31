@@ -198,12 +198,10 @@ pub enum AudioThreadEvent {
     // the frontend listener.
     #[serde(rename = "fftData", rename_all = "camelCase")]
     FFTData { data: Vec<f32> },
-    /// Smoothed low-frequency volume in `[0.0, ~1.0]`, computed in Rust
-    /// from the same FFT magnitudes used for `FFTData`. Replaces the
-    /// frontend's per-RAF calculation so all instances see the same value
-    /// and the heavy work happens on the audio thread (not the main
-    /// thread, which is what made the bars stutter when the window wasn't
-    /// hovered).
+    /// Smoothed low-frequency volume in `[0.0, ~1.0]`, computed in Rust from
+    /// the actual CPAL output stream using a realtime `70Hz..2kHz` band. This
+    /// keeps background motion tied to playback instead of the FFT analysis
+    /// thread's cadence.
     #[serde(rename_all = "camelCase")]
     LowFrequencyVolume { volume: f64 },
 }
