@@ -29,7 +29,16 @@
 </template>
 
 <script setup lang="ts">
-import { computed, watch, toRaw, shallowRef, useTemplateRef } from "vue";
+import {
+  computed,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  watch,
+  toRaw,
+  shallowRef,
+  useTemplateRef,
+} from "vue";
 import { musicStore, settingStore, siteStore } from "../../store";
 import { LyricPlayer, type LyricPlayerRef } from "@applemusic-like-lyrics/vue";
 import type { DomLyricPlayer, LyricLineMouseEvent } from "@applemusic-like-lyrics/core";
@@ -69,6 +78,11 @@ const lyricStyles = computed(() => ({
   "-webkit-tap-highlight-color": "transparent",
 }));
 
+type SyncableSound = {
+  seek?: () => unknown;
+  duration?: () => unknown;
+};
+
 const emit = defineEmits<{
   "line-click": [evt: LyricLineMouseEvent];
   lrcTextClick: [time: number];
@@ -88,6 +102,57 @@ function lineClickStartTime(evt: LyricLineMouseEvent): number | undefined {
   return undefined;
 }
 
+function getWindowPlayer(): SyncableSound | undefined {
+  return (window as Window & { $player?: SyncableSound }).$player;
+}
+
+function readCurrentPlaybackTime(): { currentTime: number; duration: number } {
+  const player = getWindowPlayer();
+  const seekValue = player?.seek?.();
+  const durationValue = player?.duration?.();
+  const currentTime =
+    typeof seekValue === "number" && Number.isFinite(seekValue)
+      ? seekValue
+      : music.persistData.playSongTime.currentTime;
+  const duration =
+    typeof durationValue === "number" && Number.isFinite(durationValue)
+      ? durationValue
+      : music.persistData.playSongTime.duration;
+
+  return { currentTime, duration };
+}
+
+function syncCurrentTimeFromPlayback() {
+  const { currentTime, duration } = readCurrentPlaybackTime();
+
+  if (Number.isFinite(currentTime)) {
+    music.setPlaySongTime({ currentTime, duration });
+  }
+
+  const player = getDomPlayer();
+  if (!player) return;
+
+  player.setCurrentTime(currentTime * 1000 + (setting.lyricTimeOffset ?? 0), true);
+  player.resetScroll();
+}
+
+let syncFrameId = 0;
+
+function scheduleCurrentTimeSync() {
+  if (syncFrameId) return;
+
+  syncFrameId = requestAnimationFrame(() => {
+    syncFrameId = 0;
+    syncCurrentTimeFromPlayback();
+  });
+}
+
+function handleVisibilityChange() {
+  if (document.visibilityState === "visible") {
+    scheduleCurrentTimeSync();
+  }
+}
+
 const jumpSeek = (evt: LyricLineMouseEvent) => {
   const time = lineClickStartTime(evt);
   if (typeof time !== "number") return;
@@ -103,6 +168,25 @@ function passToPlayer(event: Event) {
   if (!playerEl) return;
   playerEl.dispatchEvent(new (event.constructor as typeof Event)(event.type, event));
 }
+
+onMounted(() => {
+  window.addEventListener("focus", scheduleCurrentTimeSync);
+  window.addEventListener("pageshow", scheduleCurrentTimeSync);
+  document.addEventListener("visibilitychange", handleVisibilityChange);
+
+  nextTick(scheduleCurrentTimeSync);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("focus", scheduleCurrentTimeSync);
+  window.removeEventListener("pageshow", scheduleCurrentTimeSync);
+  document.removeEventListener("visibilitychange", handleVisibilityChange);
+
+  if (syncFrameId) {
+    cancelAnimationFrame(syncFrameId);
+    syncFrameId = 0;
+  }
+});
 
 watch(
   () => [music.songLyric, setting.showYrc, setting.showRoma, setting.showTransl],
