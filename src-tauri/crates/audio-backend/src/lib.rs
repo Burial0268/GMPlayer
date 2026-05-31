@@ -8,6 +8,7 @@
 //! alongside the four invoke handlers.
 
 pub mod analysis;
+pub mod commands;
 mod decoder;
 mod effects;
 mod error;
@@ -17,11 +18,10 @@ mod player;
 mod spectrum;
 mod types;
 mod ws_server;
-pub mod commands;
 
 pub use error::{AudioError, AudioResult};
 pub use player::Player;
 pub use types::{
-  AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
-  DisplayAudioInfo, PlaybackState, SongData, SpectrumConfig, TrackSource,
+    AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
+    DisplayAudioInfo, PlaybackState, SongData, SpectrumConfig, TrackSource,
 };

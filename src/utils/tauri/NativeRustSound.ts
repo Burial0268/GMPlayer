@@ -2,11 +2,11 @@
  * NativeRustSound — an ISound implementation backed by the Tauri audio-backend.
  *
  * v5: Local WebSocket primary transport.
- *   - Commands go via `AudioWsClient.send(msg)`; falls back to the Tauri
- *     `audio_send_msg` invoke when the socket is closed.
- *   - Events flow over the same WebSocket; the Tauri event channel
- *     (`audio-player://event`) is wired up as a backup so we never miss
- *     a state update during the initial connect / reconnect window.
+ *   - Playback commands go via a dedicated control WebSocket. Falling back
+ *     to Tauri invoke breaks realtime controls because it can queue behind
+ *     unrelated IPC work.
+ *   - Events flow over a separate event WebSocket. FFT/event backpressure
+ *     must never share transport state with play/pause/seek commands.
  *   - Play/pause/stop/seek are *optimistic*: the local `_playbackState`
  *     flips and the `play`/`pause` event fires synchronously, then the
  *     server confirmation arrives and is de-duped.
@@ -16,7 +16,7 @@
  */
 
 import type { ISound, SoundEventCallback, SoundEventType } from "../AudioContext/types";
-import { audioSendMsg, isTauri, listenPlayerEvents } from "./audioBridge";
+import { isTauri } from "./audioBridge";
 import type { AudioQuality, AudioThreadEvent, DisplayAudioInfo, SongData } from "./audioBridge";
 import { getAudioWs } from "./audioWs";
 
@@ -52,7 +52,6 @@ export class NativeRustSound implements ISound {
   private _events: EventMap = {};
   private _onceEvents: EventMap = {};
   private _unlistenWs: (() => void) | null = null;
-  private _unlistenTauri: (() => void) | null = null;
 
   private _path: string;
   private _volume: number = 1;
@@ -132,20 +131,11 @@ export class NativeRustSound implements ISound {
     const ws = getAudioWs();
     try {
       await ws.connect();
+      this._unlistenWs = ws.subscribe((evt, seq) => this._handleEvent(evt, seq));
     } catch (e) {
-      if (IS_DEV) console.warn("[NativeRustSound] WS connect failed, will use Tauri fallback", e);
-    }
-    this._unlistenWs = ws.subscribe((evt, seq) => this._handleEvent(evt, seq));
-
-    // Always also subscribe to the Tauri event channel — it's the safety
-    // net while the WS is reconnecting, and the seq-based dedup in
-    // `_handleEvent` keeps duplicate deliveries harmless.
-    try {
-      this._unlistenTauri = await listenPlayerEvents((evt, seq) => this._handleEvent(evt, seq));
-    } catch (e) {
-      // If even Tauri events fail to register, we still try to load —
-      // load() will eventually time out and emit loaderror.
-      console.warn("[NativeRustSound] Tauri event listen failed", e);
+      const err = e instanceof Error ? e : new Error(String(e));
+      this._emit("loaderror", err);
+      return;
     }
 
     // Pre-seed local state from `initialPosition` so seekers (e.g. the
@@ -171,10 +161,9 @@ export class NativeRustSound implements ISound {
       this._pendingLoad = { resolve, reject, timeout };
     });
 
-    // 3. Dispatch setPlaylist + jumpToSong / jumpToSongAt. setPlaylist uses
-    //    the invoke path because we benefit from awaiting the ack — if the
-    //    WS isn't fully open yet, the song would otherwise vanish. The
-    //    jump message can go through whichever transport is ready.
+    // 3. Dispatch setPlaylist + jumpToSong / jumpToSongAt over WebSocket.
+    //    Load completion is driven by LoadAudio / LoadError events, not by
+    //    invoke acks, so this stays on the realtime IPC path.
     //
     //    `jumpToSongAt` bundles the initial-position seek into the load,
     //    avoiding a separate `seekAudio` round-trip. The Rust side opens
@@ -187,7 +176,7 @@ export class NativeRustSound implements ISound {
         filePath: this._path,
         origOrder: 0,
       };
-      await audioSendMsg({ type: "setPlaylist", songs: [song] });
+      this._sendCommand({ type: "setPlaylist", songs: [song] });
       if (initPos > 0) {
         this._sendCommand({ type: "jumpToSongAt", songIndex: 0, position: initPos });
       } else {
@@ -217,21 +206,15 @@ export class NativeRustSound implements ISound {
   }
 
   // ═════════════════════════════════════════════════════════════╗
-  //  Transport: WS primary, invoke fallback                     ║
+  //  Transport: WebSocket-only control path                     ║
   // ═════════════════════════════════════════════════════════════╝
 
-  private _sendCommand(msg: import("./audioBridge").AudioThreadMessage): void {
-    const ws = getAudioWs();
-    if (ws.isConnected()) {
-      try {
-        ws.send(msg);
-        return;
-      } catch (e) {
-        if (IS_DEV) console.warn("[NativeRustSound] WS send failed, falling back", e);
-      }
+  private _sendCommand(msg: import("./audioBridge").AudioThreadMessage): boolean {
+    const sentNow = getAudioWs().sendOrQueue(msg);
+    if (!sentNow && IS_DEV) {
+      console.warn("[NativeRustSound] WS control command queued until reconnect", msg.type);
     }
-    // Fire-and-forget — audioSendMsg already catches errors internally.
-    void audioSendMsg(msg);
+    return sentNow;
   }
 
   // ═════════════════════════════════════════════════════════════╗
@@ -241,13 +224,10 @@ export class NativeRustSound implements ISound {
   private _handleEvent(evt: AudioThreadEvent, seq?: number): void {
     if (this._destroyed) return;
 
-    // Drop duplicates that arrive via the secondary transport. WebSocket
-    // and the Tauri event channel both deliver every event; without this
-    // dedup, a Pause → Seek → Resume burst arriving twice causes the
-    // second copy of `PlayStatus(false)` to undo the state flip that
-    // already landed (and the recovery `PlayStatus(true)` fires a second
-    // `play` event → duplicate toast). `seq === 0` or missing means the
-    // event isn't stamped — fall through without deduping.
+    // Keep seq-based dedup as a guard for legacy/reconnect paths. Normal
+    // native playback receives events from WebSocket only, but dropping a
+    // replayed `PlayStatus` prevents duplicate play/pause toasts if another
+    // transport is temporarily wired during diagnostics.
     if (seq !== undefined && seq > 0) {
       if (seq <= this._lastEventSeq) return;
       this._lastEventSeq = seq;
@@ -622,14 +602,6 @@ export class NativeRustSound implements ISound {
         /* ignore */
       }
       this._unlistenWs = null;
-    }
-    if (this._unlistenTauri) {
-      try {
-        this._unlistenTauri();
-      } catch {
-        /* ignore */
-      }
-      this._unlistenTauri = null;
     }
     this._sendCommand({ type: "pauseAudio" });
   }

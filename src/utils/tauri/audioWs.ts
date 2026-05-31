@@ -1,80 +1,105 @@
 /**
- * Local-loopback WebSocket transport for the Rust audio backend.
+ * Split local-loopback WebSocket transport for the Rust audio backend.
  *
- * Why: Tauri IPC on Windows has unbounded queueing that adds 10–40 ms per
- * round-trip and back-pressures when the webview isn't focused (causing
- * the user-visible stutter / spectrum dropouts). A 127.0.0.1 WebSocket is
- * sub-millisecond and decoupled from the webview's event loop.
+ * Events and controls intentionally use different sockets:
+ * - event socket: Rust → frontend, high-rate FFT/status/position events;
+ * - control socket: frontend → Rust, play/pause/seek/volume commands and
+ *   Rust → frontend priority status/control events.
  *
- * Lifecycle: `getAudioWs()` returns a lazy singleton. The first call
- * invokes `audio_get_ws_url` to discover the port (chosen by the OS),
- * opens the socket, and starts reading. If the connection drops, an
- * exponential-backoff reconnect kicks in. Pending outbound commands are
- * NOT queued — callers should fall back to `audioSendMsg` (Tauri invoke)
- * when `isConnected()` returns false.
+ * This keeps playback controls off the event stream. Event traffic may be
+ * coalesced or dropped under pressure; controls must stay hot and ordered by
+ * the latest user intent.
  */
 import type { AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage } from "./audioBridge";
 
 type EventListener = (evt: AudioThreadEvent, seq?: number) => void;
+type AudioWsUrls = { events: string; control: string };
+
+const CTRL_RESUME = 1;
+const CTRL_PAUSE = 2;
+const CTRL_TOGGLE = 3;
+const CTRL_SEEK = 4;
+const CTRL_SET_VOLUME = 5;
+const CTRL_SET_VOLUME_RELATIVE = 6;
 
 export class AudioWsClient {
-  private _ws: WebSocket | null = null;
-  private _wsUrl: string | null = null;
+  private _eventWs: WebSocket | null = null;
+  private _controlWs: WebSocket | null = null;
+  private _urls: AudioWsUrls | null = null;
   private _listeners: Set<EventListener> = new Set();
-  private _connectPromise: Promise<void> | null = null;
-  private _reconnectAttempt = 0;
-  private _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private _eventConnectPromise: Promise<void> | null = null;
+  private _controlConnectPromise: Promise<void> | null = null;
+  private _eventReconnectAttempt = 0;
+  private _controlReconnectAttempt = 0;
+  private _eventReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private _controlReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private _shuttingDown = false;
 
-  /** True when the socket is open and ready to send. */
+  private _pendingOrderedCommands: AudioThreadMessage[] = [];
+  private _pendingPlaybackState: boolean | null = null;
+  private _pendingSeekPosition: number | null = null;
+  private _pendingVolume: number | null = null;
+  private _flushingPending = false;
+
+  /** True when the control socket is open and ready to send. */
   isConnected(): boolean {
-    return this._ws !== null && this._ws.readyState === WebSocket.OPEN;
+    return this.controlsConnected();
   }
 
-  /**
-   * Resolve once the socket is OPEN. Returns the same in-flight promise
-   * if called concurrently. Caller MUST handle rejection by falling back
-   * to the Tauri invoke path.
-   */
-  connect(): Promise<void> {
-    if (this.isConnected()) return Promise.resolve();
-    if (this._connectPromise) return this._connectPromise;
-    this._connectPromise = this._doConnect().finally(() => {
-      this._connectPromise = null;
+  eventsConnected(): boolean {
+    return this._eventWs !== null && this._eventWs.readyState === WebSocket.OPEN;
+  }
+
+  controlsConnected(): boolean {
+    return this._controlWs !== null && this._controlWs.readyState === WebSocket.OPEN;
+  }
+
+  /** Resolve once both event and control sockets are OPEN. */
+  async connect(): Promise<void> {
+    await Promise.all([this.connectEvents(), this.connectControls()]);
+  }
+
+  connectEvents(): Promise<void> {
+    if (this.eventsConnected()) return Promise.resolve();
+    if (this._eventConnectPromise) return this._eventConnectPromise;
+    this._eventConnectPromise = this._doConnectEvents().finally(() => {
+      this._eventConnectPromise = null;
     });
-    return this._connectPromise;
+    return this._eventConnectPromise;
   }
 
-  private async _doConnect(): Promise<void> {
-    if (this._shuttingDown) throw new Error("AudioWsClient is shutting down");
+  connectControls(): Promise<void> {
+    if (this.controlsConnected()) return Promise.resolve();
+    if (this._controlConnectPromise) return this._controlConnectPromise;
+    this._controlConnectPromise = this._doConnectControls().finally(() => {
+      this._controlConnectPromise = null;
+    });
+    return this._controlConnectPromise;
+  }
 
-    if (!this._wsUrl) {
-      // Discover the URL exactly once. The Rust side picks a free port at
-      // startup; calling this multiple times returns the same URL.
-      const url = await this._fetchWsUrl();
-      if (!url) {
-        throw new Error("Audio backend did not expose a WebSocket URL");
-      }
-      this._wsUrl = url;
-    }
+  private async _doConnectEvents(): Promise<void> {
+    if (this._shuttingDown) throw new Error("AudioWsClient is shutting down");
+    await this._ensureUrls();
 
     return new Promise((resolve, reject) => {
       let ws: WebSocket;
       try {
-        ws = new WebSocket(this._wsUrl!);
+        ws = new WebSocket(this._urls!.events);
       } catch (e) {
         reject(e instanceof Error ? e : new Error(String(e)));
         return;
       }
+
       const onOpen = (): void => {
         ws.removeEventListener("open", onOpen);
         ws.removeEventListener("error", onError);
-        this._ws = ws;
-        this._reconnectAttempt = 0;
+        this._eventWs = ws;
+        this._eventReconnectAttempt = 0;
         ws.addEventListener("message", (e) => this._onMessage(e));
-        ws.addEventListener("close", () => this._onClose());
+        ws.addEventListener("close", () => this._onEventClose(ws));
         ws.addEventListener("error", () => {
-          // After OPEN, errors are surfaced via close; nothing to do here.
+          /* close handles reconnect */
         });
         resolve();
       };
@@ -86,7 +111,48 @@ export class AudioWsClient {
         } catch {
           /* ignore */
         }
-        reject(new Error("WebSocket failed to open"));
+        reject(new Error("Event WebSocket failed to open"));
+      };
+      ws.addEventListener("open", onOpen);
+      ws.addEventListener("error", onError);
+    });
+  }
+
+  private async _doConnectControls(): Promise<void> {
+    if (this._shuttingDown) throw new Error("AudioWsClient is shutting down");
+    await this._ensureUrls();
+
+    return new Promise((resolve, reject) => {
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(this._urls!.control);
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error(String(e)));
+        return;
+      }
+
+      const onOpen = (): void => {
+        ws.removeEventListener("open", onOpen);
+        ws.removeEventListener("error", onError);
+        this._controlWs = ws;
+        this._controlReconnectAttempt = 0;
+        ws.addEventListener("message", (e) => this._onMessage(e));
+        ws.addEventListener("close", () => this._onControlClose(ws));
+        ws.addEventListener("error", () => {
+          /* close handles reconnect */
+        });
+        this._flushPendingControls();
+        resolve();
+      };
+      const onError = (): void => {
+        ws.removeEventListener("open", onOpen);
+        ws.removeEventListener("error", onError);
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+        reject(new Error("Control WebSocket failed to open"));
       };
       ws.addEventListener("open", onOpen);
       ws.addEventListener("error", onError);
@@ -101,44 +167,179 @@ export class AudioWsClient {
     };
   }
 
-  /**
-   * Send a command. Throws if the socket isn't open — callers MUST catch
-   * and fall back to the Tauri invoke path. We deliberately don't queue:
-   * a queue would silently delay commands during connection blips, and
-   * the invoke fallback already guarantees no message is lost.
-   */
+  /** Send immediately over the control socket. Throws if it is not open. */
   send(msg: AudioThreadMessage): void {
-    if (!this.isConnected()) {
-      throw new Error("WebSocket not connected");
+    if (!this.controlsConnected()) {
+      throw new Error("Control WebSocket not connected");
     }
-    const envelope: AudioThreadEventMessage<AudioThreadMessage> = {
-      callbackId: this._newCallbackId(),
-      data: msg,
-    };
-    this._ws!.send(JSON.stringify(envelope));
+    this._sendNow(msg);
   }
 
-  /** Close the socket and stop reconnecting. */
+  /**
+   * Send immediately when possible; otherwise keep only the latest realtime
+   * intent and flush it as soon as the control socket reconnects.
+   */
+  sendOrQueue(msg: AudioThreadMessage): boolean {
+    if (this.controlsConnected()) {
+      try {
+        this._sendNow(msg);
+        return true;
+      } catch {
+        this._queueControl(msg);
+        this._closeControlSocket();
+      }
+    } else {
+      this._queueControl(msg);
+    }
+
+    void this.connectControls()
+      .then(() => this._flushPendingControls())
+      .catch((e) => {
+        console.error("[audioWs] control reconnect failed", e);
+      });
+    return false;
+  }
+
+  /** Close both sockets and stop reconnecting. */
   shutdown(): void {
     this._shuttingDown = true;
-    if (this._reconnectTimer !== null) {
-      clearTimeout(this._reconnectTimer);
-      this._reconnectTimer = null;
+    if (this._eventReconnectTimer !== null) {
+      clearTimeout(this._eventReconnectTimer);
+      this._eventReconnectTimer = null;
     }
-    if (this._ws) {
-      try {
-        this._ws.close();
-      } catch {
-        /* ignore */
+    if (this._controlReconnectTimer !== null) {
+      clearTimeout(this._controlReconnectTimer);
+      this._controlReconnectTimer = null;
+    }
+    this._closeEventSocket();
+    this._closeControlSocket();
+  }
+
+  private _sendNow(msg: AudioThreadMessage): void {
+    const hotFrame = this._encodeHotControl(msg);
+    if (hotFrame !== null) {
+      this._controlWs!.send(hotFrame);
+      return;
+    }
+
+    const envelope: AudioThreadEventMessage<AudioThreadMessage> = {
+      callbackId: "",
+      data: msg,
+    };
+    this._controlWs!.send(JSON.stringify(envelope));
+  }
+
+  private _encodeHotControl(msg: AudioThreadMessage): ArrayBuffer | null {
+    switch (msg.type) {
+      case "resumeAudio":
+        return this._opcodeFrame(CTRL_RESUME);
+      case "pauseAudio":
+        return this._opcodeFrame(CTRL_PAUSE);
+      case "resumeOrPauseAudio":
+        return this._opcodeFrame(CTRL_TOGGLE);
+      case "seekAudio":
+        return this._f64Frame(CTRL_SEEK, msg.position);
+      case "setVolume":
+        return this._f64Frame(CTRL_SET_VOLUME, msg.volume);
+      case "setVolumeRelative":
+        return this._f64Frame(CTRL_SET_VOLUME_RELATIVE, msg.volume);
+      default:
+        return null;
+    }
+  }
+
+  private _opcodeFrame(opcode: number): ArrayBuffer {
+    const buffer = new ArrayBuffer(1);
+    new DataView(buffer).setUint8(0, opcode);
+    return buffer;
+  }
+
+  private _f64Frame(opcode: number, value: number): ArrayBuffer {
+    const buffer = new ArrayBuffer(9);
+    const view = new DataView(buffer);
+    view.setUint8(0, opcode);
+    view.setFloat64(1, value, true);
+    return buffer;
+  }
+
+  private _queueControl(msg: AudioThreadMessage): void {
+    switch (msg.type) {
+      case "resumeAudio":
+        this._pendingPlaybackState = true;
+        break;
+      case "pauseAudio":
+        this._pendingPlaybackState = false;
+        break;
+      case "seekAudio":
+        this._pendingSeekPosition = msg.position;
+        break;
+      case "setVolume":
+        this._pendingVolume = msg.volume;
+        break;
+      default:
+        this._pendingOrderedCommands.push(msg);
+        break;
+    }
+  }
+
+  private _flushPendingControls(): void {
+    if (this._flushingPending || !this.controlsConnected()) return;
+    const messages = this._drainPendingControls();
+    if (messages.length === 0) return;
+
+    this._flushingPending = true;
+    try {
+      for (let i = 0; i < messages.length; i++) {
+        try {
+          this._sendNow(messages[i]);
+        } catch (e) {
+          for (let j = i; j < messages.length; j++) {
+            this._queueControl(messages[j]);
+          }
+          this._closeControlSocket();
+          void this.connectControls().catch((err) => {
+            console.error("[audioWs] control reconnect failed during flush", err, e);
+          });
+          break;
+        }
       }
-      this._ws = null;
+    } finally {
+      this._flushingPending = false;
     }
+  }
+
+  private _drainPendingControls(): AudioThreadMessage[] {
+    const messages = this._pendingOrderedCommands.splice(0);
+    const playbackState = this._pendingPlaybackState;
+    const seekPosition = this._pendingSeekPosition;
+    const volume = this._pendingVolume;
+
+    this._pendingPlaybackState = null;
+    this._pendingSeekPosition = null;
+    this._pendingVolume = null;
+
+    if (playbackState === false) {
+      messages.push({ type: "pauseAudio" });
+    }
+    if (seekPosition !== null) {
+      messages.push({ type: "seekAudio", position: seekPosition });
+    }
+    if (playbackState === true) {
+      messages.push({ type: "resumeAudio" });
+    }
+    if (volume !== null) {
+      messages.push({ type: "setVolume", volume });
+    }
+
+    return messages;
   }
 
   private _onMessage(e: MessageEvent): void {
+    if (typeof e.data !== "string") return;
+
     let envelope: AudioThreadEventMessage<AudioThreadEvent>;
     try {
-      envelope = JSON.parse(typeof e.data === "string" ? e.data : "");
+      envelope = JSON.parse(e.data);
     } catch {
       return;
     }
@@ -153,40 +354,89 @@ export class AudioWsClient {
     }
   }
 
-  private _onClose(): void {
-    this._ws = null;
+  private _onEventClose(ws: WebSocket): void {
+    if (this._eventWs !== ws) return;
+    this._eventWs = null;
     if (this._shuttingDown) return;
-    // Exponential backoff capped at 5 s — the Rust server only stops on
-    // process exit, so reconnects should succeed quickly unless the
-    // backend itself crashed.
-    const delay = Math.min(5000, 250 * 2 ** this._reconnectAttempt);
-    this._reconnectAttempt++;
-    this._reconnectTimer = setTimeout(() => {
-      this._reconnectTimer = null;
-      this.connect().catch(() => {
-        // _onClose will fire again, scheduling the next retry.
+    const delay = Math.min(5000, 250 * 2 ** this._eventReconnectAttempt);
+    this._eventReconnectAttempt++;
+    this._eventReconnectTimer = setTimeout(() => {
+      this._eventReconnectTimer = null;
+      this.connectEvents().catch(() => {
+        /* next close/error schedules another attempt */
       });
     }, delay);
   }
 
-  private async _fetchWsUrl(): Promise<string | null> {
-    if (!("__TAURI__" in window) || !window.__TAURI__) return null;
+  private _onControlClose(ws: WebSocket): void {
+    if (this._controlWs !== ws) return;
+    this._controlWs = null;
+    if (this._shuttingDown) return;
+    const delay = Math.min(1000, 50 * 2 ** this._controlReconnectAttempt);
+    this._controlReconnectAttempt++;
+    this._controlReconnectTimer = setTimeout(() => {
+      this._controlReconnectTimer = null;
+      this.connectControls()
+        .then(() => this._flushPendingControls())
+        .catch(() => {
+          /* next close/error schedules another attempt */
+        });
+    }, delay);
+  }
+
+  private _closeEventSocket(): void {
+    if (!this._eventWs) return;
+    const ws = this._eventWs;
+    this._eventWs = null;
     try {
-      const url = await window.__TAURI__.core.invoke<string | null>("audio_get_ws_url");
-      return url ?? null;
-    } catch (e) {
-      console.warn("[audioWs] audio_get_ws_url invoke failed", e);
-      return null;
+      ws.close();
+    } catch {
+      /* ignore */
     }
   }
 
-  private _callbackCounter = 0;
-  private _newCallbackId(): string {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
+  private _closeControlSocket(): void {
+    if (!this._controlWs) return;
+    const ws = this._controlWs;
+    this._controlWs = null;
+    try {
+      ws.close();
+    } catch {
+      /* ignore */
     }
-    this._callbackCounter = (this._callbackCounter + 1) >>> 0;
-    return `${Date.now()}-${this._callbackCounter}`;
+  }
+
+  private async _ensureUrls(): Promise<void> {
+    if (this._urls) return;
+    this._urls = await this._fetchWsUrls();
+  }
+
+  private async _fetchWsUrls(): Promise<AudioWsUrls> {
+    if (!("__TAURI__" in window) || !window.__TAURI__) {
+      throw new Error("Tauri runtime not available");
+    }
+
+    try {
+      const urls = await window.__TAURI__.core.invoke<{
+        events?: string;
+        control?: string;
+        eventUrl?: string;
+        controlUrl?: string;
+      } | null>("audio_get_ws_urls");
+      const events = urls?.events ?? urls?.eventUrl;
+      const control = urls?.control ?? urls?.controlUrl;
+      if (events && control) {
+        return { events, control };
+      }
+    } catch (e) {
+      console.warn("[audioWs] audio_get_ws_urls invoke failed", e);
+    }
+
+    const url = await window.__TAURI__.core.invoke<string | null>("audio_get_ws_url");
+    if (!url) {
+      throw new Error("Audio backend did not expose WebSocket URLs");
+    }
+    return { events: url, control: url };
   }
 }
 
