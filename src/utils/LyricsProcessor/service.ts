@@ -4,9 +4,8 @@
  */
 
 import request from "@/utils/request";
-import { parseQrc, parseYrc } from "@applemusic-like-lyrics/lyric";
-import type { LyricLine } from "@applemusic-like-lyrics/lyric";
-import { ensureTTMLLoaded, parseTTML } from "./parseTTML";
+import { parseQrc, parseTTML, parseYrc } from "@applemusic-like-lyrics/lyric";
+import type { TTMLLyric } from "@applemusic-like-lyrics/lyric";
 import { preprocessLyrics } from "./processor";
 import { detectYrcType } from "./timeUtils";
 
@@ -55,12 +54,6 @@ interface LyricProcessOptions {
   showYrc: boolean;
   showRoma: boolean;
   showTransl: boolean;
-}
-
-// TTML格式歌词的接口声明
-interface TTMLLyric {
-  lines: LyricLine[];
-  metadata: [string, string[]][];
 }
 
 // Define the Lyric Provider interface - now returns LyricData
@@ -152,8 +145,7 @@ class TTMLRepoProvider implements LyricProvider {
         return null;
       }
 
-      // Parse TTML using existing WASM parser
-      await ensureTTMLLoaded();
+      // Parse TTML using the parser bundled in @applemusic-like-lyrics/lyric.
       const ttmlLyric = parseTTML(ttmlContent) as TTMLLyric;
 
       if (!ttmlLyric || !ttmlLyric.lines || ttmlLyric.lines.length === 0) {
@@ -162,9 +154,6 @@ class TTMLRepoProvider implements LyricProvider {
       }
 
       console.log(`[TTMLRepoProvider] Parsed TTML for id ${id}: ${ttmlLyric.lines.length} lines`);
-
-      // Build serialized YRC from parsed TTML lines
-      const serializedYrc = `___PARSED_LYRIC_LINES___${JSON.stringify(ttmlLyric.lines)}`;
 
       // Build fallback LRC text from TTML lines
       let lrcText = "";
@@ -188,7 +177,7 @@ class TTMLRepoProvider implements LyricProvider {
         lrc: { lyric: lrcText },
         tlyric: null,
         romalrc: null,
-        yrc: { lyric: serializedYrc },
+        yrc: null,
         ytlrc: null,
         yromalrc: null,
         hasTTML: true,

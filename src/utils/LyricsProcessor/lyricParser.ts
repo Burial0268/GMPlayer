@@ -71,6 +71,10 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
       ytlrc: ytlrc?.lyric || null,
       yromalrc: yromalrc?.lyric || null,
     };
+    const directTTMLLines =
+      data.hasTTML && Array.isArray(data.ttml) && data.ttml.length > 0
+        ? (data.ttml as ParsedSourceLine[])
+        : [];
 
     // --- LAAPI data parsing ---
     let laapiTranslationLyricLines: ParsedSourceLine[] | null = null;
@@ -99,7 +103,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
     }
 
     // --- Determine effective sources and update flags ---
-    result.hasYrc = !!lrcData.yrc;
+    result.hasYrc = !!lrcData.yrc || directTTMLLines.length > 0;
 
     // Effective LRC translation source
     let effectiveLrcTranSource: ParsedSourceLine[] = [];
@@ -167,22 +171,29 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
       }
     }
 
-    // Parse YRC lyrics or handle pre-parsed TTML lyrics
-    if (lrcData.yrc) {
-      let yrcParsedRawLines: ParsedSourceLine[] = [];
-      const TTML_PREFIX = "___PARSED_LYRIC_LINES___";
+    // Parse YRC lyrics or handle pre-parsed TTML lyrics.
+    if (lrcData.yrc || directTTMLLines.length > 0) {
+      let yrcParsedRawLines: ParsedSourceLine[] = directTTMLLines;
 
-      if (lrcData.yrc.startsWith(TTML_PREFIX)) {
-        try {
-          const jsonPart = lrcData.yrc.substring(TTML_PREFIX.length);
-          yrcParsedRawLines = JSON.parse(jsonPart) as ParsedSourceLine[];
-          result.hasTTML = true;
-          result.ttml = yrcParsedRawLines;
-        } catch {
-          yrcParsedRawLines = [];
-        }
+      if (directTTMLLines.length > 0) {
+        result.hasTTML = true;
+        result.ttml = directTTMLLines;
       } else {
-        yrcParsedRawLines = parseYrcText(lrcData.yrc);
+        const TTML_PREFIX = "___PARSED_LYRIC_LINES___";
+        if (lrcData.yrc?.startsWith(TTML_PREFIX)) {
+          // Compatibility with old in-memory results that carried parsed TTML via yrc.lyric.
+          // New TTML data should arrive through data.ttml directly.
+          try {
+            const jsonPart = lrcData.yrc.substring(TTML_PREFIX.length);
+            yrcParsedRawLines = JSON.parse(jsonPart) as ParsedSourceLine[];
+            result.hasTTML = true;
+            result.ttml = yrcParsedRawLines;
+          } catch {
+            yrcParsedRawLines = [];
+          }
+        } else if (lrcData.yrc) {
+          yrcParsedRawLines = parseYrcText(lrcData.yrc);
+        }
       }
 
       result.yrc = convertYrcLines(yrcParsedRawLines);

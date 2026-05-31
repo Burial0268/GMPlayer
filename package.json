@@ -6,7 +6,7 @@
   "github": "https://github.com/Burial0268/SPlayer",
   "scripts": {
     "install:deps-amll": "cd deps/apoint-amll && pnpm install",
-    "build:deps-amll": "cd deps/apoint-amll/packages/vue && pnpm nx run-many -t build --projects=vue,fft,core,lyric,ttml-processor",
+    "build:deps-amll": "cd deps/apoint-amll/packages/vue && pnpm nx run-many -t build --projects=vue,fft,core,lyric",
     "build:wasm": "wasm-pack build --release --scope player-helper src-tauri/crates/audio-analysis",
     "prepare:wasm": "pnpm install && pnpm build:wasm",
     "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll && pnpm prepare:wasm && pnpm install",
@@ -24,7 +24,6 @@
     "@applemusic-like-lyrics/vue": "^0.5.1",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
-    "@lyrics-helper-rs/ttml-processor": "link:deps\\apoint-amll\\packages\\ttml-processor",
     "@material/material-color-utilities": "^0.4.0",
     "@pixi/app": "^7.4.3",
     "@pixi/core": "^7.4.3",
