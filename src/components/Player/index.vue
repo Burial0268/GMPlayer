@@ -10,10 +10,13 @@
         <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
         <vue-slider
           v-model="music.getPlaySongTime.barMoveDistance"
-          @drag-start="music.setPlayState(false)"
+          @drag-start="sliderDragStart"
+          @dragging="sliderDragging"
           @drag-end="sliderDragEnd"
-          @click.stop="songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance)"
+          @change="songTimeSliderUpdate"
+          @click.stop
           :tooltip="'active'"
+          :lazy="true"
           :use-keyboard="false"
         >
           <template v-slot:tooltip>
@@ -308,7 +311,7 @@ import { useRouter } from "vue-router";
 import { debounce, throttle } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
-import { isNativeAudioBackendAvailable } from "@/utils/tauri/NativeRustSound";
+import { NativeRustSound, isNativeAudioBackendAvailable } from "@/utils/tauri/NativeRustSound";
 import { windowManager } from "@/utils/tauri/windowManager";
 import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
@@ -427,13 +430,44 @@ const renderIcon = (icon) => {
 };
 
 // 歌曲进度条更新
+const isSliderDragging = ref(false);
+const pendingSliderPercent = ref(null);
+const normalizeSliderPercent = (val) => {
+  const raw = Array.isArray(val) ? val[0] : val;
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return null;
+  return Math.max(0, Math.min(100, num));
+};
+const previewSliderTime = (percent) => {
+  const duration = music.getPlaySongTime?.duration;
+  if (!duration) return;
+  music.setPlaySongTime({
+    currentTime: (duration / 100) * percent,
+    duration,
+  });
+};
+const sliderDragStart = () => {
+  isSliderDragging.value = true;
+  pendingSliderPercent.value = normalizeSliderPercent(music.getPlaySongTime.barMoveDistance);
+};
+const sliderDragging = (val) => {
+  const percent = normalizeSliderPercent(val);
+  if (percent === null) return;
+  pendingSliderPercent.value = percent;
+  previewSliderTime(percent);
+};
 const sliderDragEnd = () => {
-  songTimeSliderUpdate(music.getPlaySongTime.barMoveDistance);
-  music.setPlayState(true);
+  isSliderDragging.value = false;
 };
 const songTimeSliderUpdate = (val) => {
   if (player.value && music.getPlaySongTime?.duration) {
-    const currentTime = (music.getPlaySongTime.duration / 100) * val;
+    const percent = normalizeSliderPercent(
+      isSliderDragging.value ? (pendingSliderPercent.value ?? val) : val,
+    );
+    if (percent === null) return;
+    isSliderDragging.value = false;
+    pendingSliderPercent.value = null;
+    const currentTime = (music.getPlaySongTime.duration / 100) * percent;
     setSeek(player.value, currentTime);
     // 一起听歌：发送进度跳转命令（房主和房客均可）
     if (listenTogether.isInRoom) {
@@ -878,6 +912,24 @@ watch(
   () => music.getPlayState,
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
+    if (window.$player && player.value !== window.$player) {
+      player.value = window.$player;
+    }
+
+    let nativePlaybackHandled = false;
+    if (player.value instanceof NativeRustSound && !music.isLoadingSong) {
+      const autoMix = getAutoMixEngine();
+      if (!autoMix.isCrossfading() && typeof player.value.playing === "function") {
+        const isPlaying = player.value.playing();
+        if (val && !isPlaying) {
+          fadePlayOrPause(player.value, "play", persistData.value.playVolume);
+        } else if (!val && isPlaying) {
+          fadePlayOrPause(player.value, "pause", persistData.value.playVolume);
+        }
+        nativePlaybackHandled = true;
+      }
+    }
+
     broadcastPlayerState();
     // Also broadcast time on play state change for slave windows
     if (isTauri()) {
@@ -891,6 +943,8 @@ watch(
       listenTogether.sendPlayCommand(val ? "PLAY" : "PAUSE");
     }
     nextTick().then(() => {
+      if (music.getPlayState !== val) return;
+      if (nativePlaybackHandled) return;
       // During AutoMix crossfade, CrossfadeManager controls gain scheduling.
       // fadePlayOrPause's fade(0, volume, 300) would cancel CrossfadeManager's
       // scheduled gain ramp and do a fast 300ms ramp instead, breaking the crossfade.

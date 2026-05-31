@@ -161,31 +161,5 @@ watch(
   overflow: hidden;
   display: flex;
   justify-content: center;
-
-  & > .amll-lyric-player {
-    width: 100%;
-    height: 100%;
-    max-width: max(1200px, 50vw);
-    overflow-x: visible;
-  }
-}
-</style>
-
-<style lang="scss">
-/* AMLL DOM 播放器样式（对齐 AMLL-Editor Preview） */
-.lyric-player-wrapper .amll-lyric-player.dom {
-  mask-image: linear-gradient(
-    to bottom,
-    transparent,
-    black 2rem,
-    black calc(100% - 2rem),
-    transparent
-  );
-  --bright-mask-alpha: 1;
-  --dark-mask-alpha: 0.4;
-  --amll-lp-font-size: calc(
-    min(max(max(4.5vh, 2.3vw), 2.5rem), 3.5rem) * var(--lyrics-size-scale, 3.6) / 3.6
-  );
-  --amll-lp-hover-bg-color: color-mix(in srgb, var(--amll-lp-color), transparent 95%);
 }
 </style>

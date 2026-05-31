@@ -71,8 +71,6 @@
             :max="music.getPlaySongTime.duration || 1"
             :is-playing="music.getPlayState"
             @update:value="handleProgressSeek"
-            @seek-start="music.setPlayState(false)"
-            @seek-end="music.setPlayState(true)"
           />
         </div>
         <div class="time-info">

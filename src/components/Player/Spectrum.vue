@@ -63,17 +63,34 @@ const drawSpectrum = (data) => {
 
   const canvasWidth = cachedWidth;
   const canvasHeight = cachedHeight;
-  const numBars = Math.floor(data.length / 10);
+  const rawBinCount = data.length;
+  const numBars = Math.max(1, Math.min(rawBinCount, Math.floor(canvasWidth / (props.barWidth * 2))));
   const barWidth = canvasWidth / numBars / 2;
   const cornerRadius = props.radius;
+  let framePeak = 0;
+  for (let i = 0; i < rawBinCount; i++) {
+    if (data[i] > framePeak) framePeak = data[i];
+  }
+  if (framePeak <= 0) {
+    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+    return;
+  }
 
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
   ctx.fillStyle = "#efefef";
 
-  // Batch all bars into a single path to reduce draw calls
+  // Batch all bars into a single path. Each visual bar is a peak-reduced
+  // range over the full FFT frame, so a 2048-bin native frame keeps its
+  // precision instead of only drawing the first ~200 bins.
   ctx.beginPath();
   for (let i = 0; i < numBars; i++) {
-    const barHeight = (data[i + 10] / 255) * canvasHeight;
+    const start = Math.floor((i / numBars) * rawBinCount);
+    const end = Math.max(start + 1, Math.floor(((i + 1) / numBars) * rawBinCount));
+    let value = 0;
+    for (let j = start; j < end; j++) {
+      if (data[j] > value) value = data[j];
+    }
+    const barHeight = (value / framePeak) * canvasHeight;
     if (barHeight <= 0) continue;
 
     const x1 = i * barWidth + canvasWidth / 2;
