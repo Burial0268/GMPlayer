@@ -31,6 +31,12 @@ export type SoundEventType =
  */
 export type SoundEventCallback = (...args: unknown[]) => void;
 
+export interface AudioQualityInfo {
+  bitrate: number;
+  sampleRate: number;
+  channels: number;
+}
+
 /**
  * Interface for Sound instances
  */
@@ -50,6 +56,7 @@ export interface ISound {
   getFFTData(): number[];
   getLowFrequencyVolume(): number;
   getAverageAmplitude(): number;
+  getAudioQuality?(): AudioQualityInfo | null;
   getEffectManager(): import("./AudioEffectManager").AudioEffectManager | null;
   unload(): void;
 }

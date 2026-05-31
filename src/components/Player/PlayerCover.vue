@@ -72,7 +72,7 @@
           <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
           <div v-if="qualityText" class="quality-badge">
             <n-icon :component="IconLossless" />
-            {{ qualityText }}
+            <span class="quality-label">{{ qualityText }}</span>
           </div>
           <span class="time-text">{{ remainingTime }}</span>
         </div>
@@ -158,6 +158,7 @@ import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
+import { NativeRustSound } from "@/utils/tauri/NativeRustSound";
 import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
@@ -221,7 +222,7 @@ const handleMoreSelect = (key) => {
 };
 
 // 音质标签
-const qualityText = computed(() => {
+const qualityLevelText = computed(() => {
   const level = setting.songLevel;
   const qualityMap = {
     standard: "标准",
@@ -231,6 +232,36 @@ const qualityText = computed(() => {
     hires: "Hi-Res",
   };
   return qualityMap[level] || null;
+});
+
+const nativeAudioQuality = computed(() => {
+  if (!music.getPlaySongData || music.getLoadingState) return null;
+  const player = typeof window !== "undefined" ? window.$player : undefined;
+  if (!(player instanceof NativeRustSound)) return null;
+  return player.getAudioQuality();
+});
+
+const formatSampleRate = (sampleRate) => {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return null;
+  const khz = sampleRate / 1000;
+  return `${Number.isInteger(khz) ? khz.toFixed(0) : khz.toFixed(1)} kHz`;
+};
+
+const formatBitrate = (bitrate) => {
+  if (!Number.isFinite(bitrate) || bitrate <= 0) return null;
+  const kbps = bitrate / 1000;
+  return `${kbps >= 100 ? Math.round(kbps) : kbps.toFixed(1)} kbps`;
+};
+
+const qualityText = computed(() => {
+  const quality = nativeAudioQuality.value;
+  if (!quality) return qualityLevelText.value;
+
+  const details = [formatSampleRate(quality.sampleRate), formatBitrate(quality.bitrate)].filter(
+    Boolean,
+  );
+  if (!details.length) return qualityLevelText.value;
+  return [qualityLevelText.value, ...details].filter(Boolean).join(" · ");
 });
 
 // 剩余时间（负数格式）
@@ -427,6 +458,7 @@ onMounted(() => {
         display: flex;
         justify-content: space-between;
         align-items: center;
+        gap: 8px;
         color: var(--main-cover-color);
         .time-text {
           font-size: 0.75rem;
@@ -440,6 +472,9 @@ onMounted(() => {
           display: flex;
           align-items: center;
           gap: 4px;
+          flex: 0 1 auto;
+          min-width: 0;
+          max-width: calc(100% - 88px);
           background-color: rgba(255, 255, 255, 0.1);
           color: var(--main-cover-color);
           opacity: 0.8;
@@ -450,6 +485,12 @@ onMounted(() => {
           .wave-icon {
             width: 14px;
             height: 14px;
+          }
+          .quality-label {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
           }
         }
       }

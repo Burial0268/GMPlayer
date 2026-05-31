@@ -581,6 +581,10 @@ export class NativeRustSound implements ISound {
     return sum / this._fftData.length;
   }
 
+  getAudioQuality(): AudioQuality | null {
+    return this._quality ? { ...this._quality } : null;
+  }
+
   getEffectManager(): import("../AudioContext/AudioEffectManager").AudioEffectManager | null {
     return null;
   }
