@@ -243,6 +243,9 @@ jobs:
       - name: 构建 Player 安卓移动版程序
         env:
           CARGO_NDK_ANDROID_PLATFORM: 26
+          OPENSSL_STATIC: "1"
+          OPENSSL_VENDOR: "1"          # 强制 vendored
+          PKG_CONFIG_ALLOW_CROSS: "1"
         run: |
           export NDK_HOME=$ANDROID_NDK_HOME
           export JAVA_HOME=$JAVA_HOME_17_X64
