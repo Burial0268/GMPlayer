@@ -224,6 +224,9 @@ jobs:
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
+      - name: 配置系统环境依赖
+        run: sudo apt-get install -y pkg-config libssl-dev
+
       - name: 安装依赖 (包含子依赖和 WASM)
         run: |
           pnpm build:wasm
