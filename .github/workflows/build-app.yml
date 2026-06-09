@@ -111,6 +111,8 @@ jobs:
           sudo apt-get install -y \
             libasound2-dev \
             libappindicator3-dev \
+            libssl-dev \
+            pkg-config \
             libwebkit2gtk-4.1-dev \
             librsvg2-dev \
             patchelf \
@@ -176,6 +178,11 @@ jobs:
     name: 构建 Tauri 安卓移动版本
     needs: clean-pre-release
     runs-on: ubuntu-latest
+    env:
+      ANDROID_API_LEVEL: "24"
+      ANDROID_NDK_VERSION: "27.2.12479018"
+      OPENSSL_VERSION: "3.4.1"
+      ANDROID_OPENSSL_DIR: ${{ github.workspace }}/.android-openssl
 
     steps:
       - uses: actions/checkout@v4
@@ -220,12 +227,77 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: 安装 NDK
-        run: sdkmanager --install "ndk;27.2.12479018"
+        run: |
+          sdkmanager --install "ndk;${ANDROID_NDK_VERSION}"
+          NDK_PATH="${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "NDK_HOME=${NDK_PATH}" >> "$GITHUB_ENV"
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
-      - name: 配置系统环境依赖
-        run: sudo apt-get install -y pkg-config libssl-dev
+      - name: 安装 Android OpenSSL 构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl perl tar
+
+      - name: 缓存 Android OpenSSL
+        id: cache-android-openssl
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_OPENSSL_DIR }}
+          key: android-openssl-${{ env.OPENSSL_VERSION }}-ndk-${{ env.ANDROID_NDK_VERSION }}-api-${{ env.ANDROID_API_LEVEL }}
+
+      - name: 构建 Android OpenSSL
+        if: steps.cache-android-openssl.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          export PATH="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}"
+
+          work_dir="${RUNNER_TEMP}/openssl-android"
+          src_archive="${work_dir}/openssl.tar.gz"
+          src_dir="${work_dir}/openssl-${OPENSSL_VERSION}"
+          mkdir -p "${work_dir}" "${ANDROID_OPENSSL_DIR}"
+
+          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" -o "${src_archive}"
+          tar -xzf "${src_archive}" -C "${work_dir}"
+
+          build_openssl() {
+            local openssl_target="$1"
+            local install_name="$2"
+            local install_dir="${ANDROID_OPENSSL_DIR}/${install_name}"
+            local build_dir="${work_dir}/build-${install_name}"
+
+            rm -rf "${build_dir}" "${install_dir}"
+            cp -a "${src_dir}" "${build_dir}"
+            pushd "${build_dir}"
+            ./Configure "${openssl_target}" -D__ANDROID_API__="${ANDROID_API_LEVEL}" no-shared no-tests no-ui-console --prefix="${install_dir}" --openssldir="${install_dir}/ssl"
+            make -j"$(nproc)"
+            make install_sw
+            popd
+          }
+
+          build_openssl android-arm64 aarch64-linux-android
+          build_openssl android-arm armv7-linux-androideabi
+          build_openssl android-x86 i686-linux-android
+          build_openssl android-x86_64 x86_64-linux-android
+
+      - name: 配置 Android OpenSSL
+        shell: bash
+        run: |
+          {
+            echo "OPENSSL_STATIC=1"
+            echo "OPENSSL_NO_PKG_CONFIG=1"
+            echo "AARCH64_LINUX_ANDROID_OPENSSL_DIR=${ANDROID_OPENSSL_DIR}/aarch64-linux-android"
+            echo "ARMV7_LINUX_ANDROIDEABI_OPENSSL_DIR=${ANDROID_OPENSSL_DIR}/armv7-linux-androideabi"
+            echo "ARM_LINUX_ANDROIDEABI_OPENSSL_DIR=${ANDROID_OPENSSL_DIR}/armv7-linux-androideabi"
+            echo "THUMBV7NEON_LINUX_ANDROIDEABI_OPENSSL_DIR=${ANDROID_OPENSSL_DIR}/armv7-linux-androideabi"
+            echo "I686_LINUX_ANDROID_OPENSSL_DIR=${ANDROID_OPENSSL_DIR}/i686-linux-android"
+            echo "X86_64_LINUX_ANDROID_OPENSSL_DIR=${ANDROID_OPENSSL_DIR}/x86_64-linux-android"
+          } >> "$GITHUB_ENV"
 
       - name: 安装依赖 (包含子依赖和 WASM)
         run: |
@@ -242,10 +314,7 @@ jobs:
 
       - name: 构建 Player 安卓移动版程序
         env:
-          CARGO_NDK_ANDROID_PLATFORM: 26
-          OPENSSL_STATIC: "1"
-          OPENSSL_VENDOR: "1"          # 强制 vendored
-          PKG_CONFIG_ALLOW_CROSS: "1"
+          CARGO_NDK_ANDROID_PLATFORM: ${{ env.ANDROID_API_LEVEL }}
         run: |
           export NDK_HOME=$ANDROID_NDK_HOME
           export JAVA_HOME=$JAVA_HOME_17_X64
