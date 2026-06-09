@@ -1,16 +1,27 @@
 /**
  * Screen orientation control for Tauri mobile (Android).
  *
- * Uses the inline "orientation" Tauri plugin on Android, which delegates
- * to the Kotlin OrientationPlugin. On desktop the call falls back to a
- * no-op Rust command.
+ * Uses the inline "orientation" Tauri plugin on mobile. Android delegates
+ * to the Kotlin OrientationPlugin; other mobile targets use a no-op Rust
+ * command.
  *
- * All functions are safe to call outside Tauri (browser / desktop):
- * they check `isTauri()` first and return silently.
+ * All functions are safe to call outside Tauri or on desktop:
+ * they check the current target first and return silently.
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "./windowManager";
+
+async function isTauriMobile(): Promise<boolean> {
+  if (!isTauri()) return false;
+
+  try {
+    const isDesktop = await invoke<boolean>("detect_desktop");
+    return !isDesktop;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Lock the screen to a specific orientation.
@@ -23,7 +34,7 @@ import { isTauri } from "./windowManager";
 export async function setScreenOrientation(
   orientation: "landscape" | "portrait" | "auto",
 ): Promise<void> {
-  if (!isTauri()) return;
+  if (!(await isTauriMobile())) return;
 
   try {
     await invoke("plugin:orientation|setOrientation", { orientation });

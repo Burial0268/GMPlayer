@@ -52,7 +52,6 @@
   "version": "0.1.1",
   "identifier": "com.gbclstudio.gmplayer",
   "plugins": {
-    "orientation": {},
     "audio-backend": {}
   },
   "app": {

@@ -3,11 +3,10 @@ use tauri::{
     Runtime,
 };
 
-/// Set the screen orientation.
-/// On Android this is handled by the Kotlin side via the OrientationPlugin;
-/// on desktop / iOS this is a no-op.
-#[tauri::command]
-fn set_screen_orientation(_orientation: String) -> Result<(), String> {
+/// Set the screen orientation. Android handles this in Kotlin; other mobile
+/// targets use this no-op fallback so the frontend can call one command name.
+#[tauri::command(rename = "setOrientation")]
+fn set_orientation(_orientation: String) -> Result<(), String> {
     Ok(())
 }
 
@@ -15,7 +14,7 @@ fn set_screen_orientation(_orientation: String) -> Result<(), String> {
 /// Android Kotlin side (`OrientationPlugin`).
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("orientation")
-        .invoke_handler(tauri::generate_handler![set_screen_orientation])
+        .invoke_handler(tauri::generate_handler![set_orientation])
         .setup(|_app, _api| {
             #[cfg(target_os = "android")]
             _api.register_android_plugin("com.gbclstudio.gmplayer", "OrientationPlugin")?;

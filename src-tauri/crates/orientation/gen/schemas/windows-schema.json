@@ -183,16 +183,16 @@
           "markdownDescription": "Default permissions for the orientation plugin\n#### This default permission set includes:\n\n- `allow-set-screen-orientation`"
         },
         {
-          "description": "Enables the set_screen_orientation command without any pre-configured scope.",
+          "description": "Enables the setOrientation command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-screen-orientation",
-          "markdownDescription": "Enables the set_screen_orientation command without any pre-configured scope."
+          "markdownDescription": "Enables the setOrientation command without any pre-configured scope."
         },
         {
-          "description": "Denies the set_screen_orientation command without any pre-configured scope.",
+          "description": "Denies the setOrientation command without any pre-configured scope.",
           "type": "string",
           "const": "deny-set-screen-orientation",
-          "markdownDescription": "Denies the set_screen_orientation command without any pre-configured scope."
+          "markdownDescription": "Denies the setOrientation command without any pre-configured scope."
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
