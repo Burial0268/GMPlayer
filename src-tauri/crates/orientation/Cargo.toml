@@ -1,11 +1,12 @@
 [package]
-name = "gmplayer-orientation"
+name = "tauri-plugin-orientation"
 version = "0.1.0"
 edition = "2021"
 description = "Orientation plugin for GMPlayer - delegates screen orientation to Android Kotlin side."
+links = "tauri-plugin-orientation"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-plugin = { version = "2", features = ["build"] }
 
 [dependencies]
 tauri = { version = "2" }

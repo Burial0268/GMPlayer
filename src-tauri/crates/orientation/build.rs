@@ -1,3 +1,3 @@
 fn main() {
-    tauri_build::build()
+    tauri_plugin::Builder::new(&[]).build();
 }

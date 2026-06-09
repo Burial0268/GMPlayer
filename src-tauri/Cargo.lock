@@ -1678,7 +1678,6 @@ name = "gmplayer"
 version = "0.1.0"
 dependencies = [
  "gmplayer-audio-backend",
- "gmplayer-orientation",
  "jni",
  "log",
  "ndk-context",
@@ -1693,6 +1692,7 @@ dependencies = [
  "tauri-plugin-http",
  "tauri-plugin-log",
  "tauri-plugin-media-session",
+ "tauri-plugin-orientation",
  "tauri-plugin-window-state",
  "tikv-jemallocator",
 ]
@@ -1719,14 +1719,6 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "ureq",
-]
-
-[[package]]
-name = "gmplayer-orientation"
-version = "0.1.0"
-dependencies = [
- "tauri",
- "tauri-build",
 ]
 
 [[package]]
@@ -4945,6 +4937,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0c8a8691d65110989d7ec433690242ecf1762ad35fa6fd7aa7f5d2699d8d05"
 dependencies = [
  "serde",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
+name = "tauri-plugin-orientation"
+version = "0.1.0"
+dependencies = [
  "tauri",
  "tauri-plugin",
 ]

@@ -33,7 +33,7 @@ name = "gmplayer_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-gmplayer-orientation = { path = "crates/orientation" }
+gmplayer-orientation = { package = "tauri-plugin-orientation", path = "crates/orientation" }
 gmplayer-audio-backend = { path = "crates/audio-backend" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
