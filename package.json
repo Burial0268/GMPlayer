@@ -5,11 +5,9 @@
   "home": "https://gbclstudio.cn",
   "github": "https://github.com/Burial0268/SPlayer",
   "scripts": {
-    "install:deps-amll": "cd deps/apoint-amll && pnpm install",
-    "build:deps-amll": "cd deps/apoint-amll/packages/vue && pnpm nx run-many -t build --projects=vue,fft,core,lyric",
     "build:wasm": "wasm-pack build --release --scope player-helper src-tauri/crates/audio-analysis",
     "prepare:wasm": "pnpm install && pnpm build:wasm",
-    "install:with-deps": "pnpm install:deps-amll && pnpm build:deps-amll && pnpm prepare:wasm && pnpm install",
+    "install:with-deps": "pnpm prepare:wasm && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",

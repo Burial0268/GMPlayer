@@ -1,6 +1,8 @@
 //! Mobile (iOS / Android) backend: HTTP, logging, and native media session.
 
 use crate::shared;
+use gmplayer_audio_backend::commands;
+use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
@@ -17,8 +19,21 @@ pub fn run() {
         .plugin(gmplayer_orientation::init())
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
+            // AMLL-style native playback backend. Android uses cpal/rodio's
+            // native AAudio path plus Symphonia decoding, matching desktop's
+            // message/WebSocket transport surface.
+            commands::audio_send_msg,
+            commands::audio_get_state,
+            commands::audio_get_ws_url,
+            commands::audio_get_ws_urls,
+            commands::audio_set_session,
+            commands::audio_poll_events,
         ])
-        .setup(|_app| Ok(()))
+        .setup(|app| {
+            let app_handle = app.handle().clone();
+            app.manage(commands::PlayerState::new(app_handle));
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, _event| {});
