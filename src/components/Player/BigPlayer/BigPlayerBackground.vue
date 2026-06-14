@@ -1,6 +1,6 @@
 <template>
-  <Transition name="fade" mode="out-in">
-    <div :key="`bg--${songPicGradient}`" :class="['overlay', backgroundImageShow]">
+  <div class="big-player-background">
+    <div :class="['overlay', backgroundImageShow]">
       <template v-if="backgroundImageShow === 'blur'">
         <BlurBackgroundRender
           v-if="hasPlayData"
@@ -14,22 +14,22 @@
         />
       </template>
     </div>
-  </Transition>
 
-  <template v-if="backgroundImageShow === 'eplor'">
-    <BackgroundRender
-      :fps="isPlaying ? fps : 0"
-      :playing="actualPlaying"
-      :flowSpeed="isPlaying ? flowSpeed : 0"
-      :album="albumImageUrl === 'none' ? coverImageUrl : albumImageUrl"
-      :renderScale="renderScale"
-      :lowFreqVolume="lowFreqVolume"
-      :staticMode="staticMode"
-      class="overlay"
-    />
-  </template>
+    <template v-if="backgroundImageShow === 'eplor'">
+      <BackgroundRender
+        :fps="isPlaying ? fps : 0"
+        :playing="true"
+        :flowSpeed="isPlaying ? flowSpeed : 0"
+        :album="albumImageUrl === 'none' ? coverImageUrl : albumImageUrl"
+        :renderScale="renderScale"
+        :lowFreqVolume="lowFreqVolume"
+        :staticMode="staticMode"
+        class="overlay"
+      />
+    </template>
 
-  <div :class="grayClasses" :style="grayStyles" />
+    <div :class="grayClasses" :style="grayStyles" />
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -81,14 +81,23 @@ const grayStyles = computed(() => {
 </script>
 
 <style lang="scss" scoped>
-.overlay {
+.big-player-background {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
   overflow: hidden;
   z-index: -2;
+  pointer-events: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  z-index: 0;
   transition: filter 0.5s ease;
   will-change: filter, opacity;
 
@@ -145,11 +154,10 @@ const grayStyles = computed(() => {
 
 .gray {
   position: absolute;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
   height: 100%;
-  z-index: -1;
+  z-index: 1;
 }
 
 .fade-enter-active,

@@ -1,4 +1,4 @@
-import { ref, computed, type Ref, type ComputedRef } from "vue";
+import type { ComputedRef, Ref } from "vue";
 
 type MaybeComputedRef<T> = Ref<T> | ComputedRef<T>;
 
@@ -6,16 +6,7 @@ export function useMobileCoverFrame(
   bigPlayerRef: MaybeComputedRef<HTMLElement | null>,
   phonyBigCoverRef: MaybeComputedRef<HTMLElement | null>,
   phonySmallCoverRef: MaybeComputedRef<HTMLElement | null>,
-  mobileLayer: Ref<number>,
 ) {
-  const currentCoverStyle = ref<{
-    width: number;
-    height: number;
-    left: number;
-    top: number;
-    borderRadius: number;
-  } | null>(null);
-
   const calcCoverLayout = (hideLyric = true) => {
     const root = bigPlayerRef.value;
     if (!root) return undefined;
@@ -40,45 +31,7 @@ export function useMobileCoverFrame(
     };
   };
 
-  const updateCoverStyle = () => {
-    const hideLyric = mobileLayer.value === 1;
-    currentCoverStyle.value = calcCoverLayout(hideLyric);
-  };
-
-  const coverFrameStyle = computed(() => {
-    const s = currentCoverStyle.value;
-    if (!s) return {};
-    return {
-      width: s.width + "px",
-      height: s.height + "px",
-      left: s.left + "px",
-      top: s.top + "px",
-      borderRadius: s.borderRadius + "px",
-    };
-  });
-
-  let layoutResizeObserver: ResizeObserver | null = null;
-
-  const setupResizeObserver = () => {
-    cleanupResizeObserver();
-    updateCoverStyle();
-    layoutResizeObserver = new ResizeObserver(updateCoverStyle);
-    if (phonyBigCoverRef.value) layoutResizeObserver.observe(phonyBigCoverRef.value);
-    if (phonySmallCoverRef.value) layoutResizeObserver.observe(phonySmallCoverRef.value);
-    if (bigPlayerRef.value) layoutResizeObserver.observe(bigPlayerRef.value);
-  };
-
-  const cleanupResizeObserver = () => {
-    layoutResizeObserver?.disconnect();
-    layoutResizeObserver = null;
-  };
-
   return {
-    currentCoverStyle,
-    coverFrameStyle,
-    updateCoverStyle,
     calcCoverLayout,
-    setupResizeObserver,
-    cleanupResizeObserver,
   };
 }

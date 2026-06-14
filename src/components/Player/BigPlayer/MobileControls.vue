@@ -20,7 +20,7 @@
         @click.stop="music.setPlaySongIndex('prev')"
       >
         <template #icon>
-          <n-icon size="30" :component="IconRewind" />
+          <n-icon size="clamp(36px, 9.5vw, 42px)" :component="IconRewind" />
         </template>
       </n-button>
     </div>
@@ -60,7 +60,7 @@
         @click.stop="music.setPlaySongIndex('next')"
       >
         <template #icon>
-          <n-icon size="30" :component="IconForward" />
+          <n-icon size="clamp(36px, 9.5vw, 42px)" :component="IconForward" />
         </template>
       </n-button>
     </div>

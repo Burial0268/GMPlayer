@@ -1,154 +1,295 @@
 <template>
-  <!-- AMLL .thumb — 抽屉把手 -->
-  <div class="mobile-thumb" @click="$emit('close')">
-    <div class="handle-bar"></div>
-  </div>
+  <div :class="['mobile-pages', { 'queue-open': queueOpen }]">
+    <Motion class="mobile-player-page" :animate="playerPageAnimate" :transition="layoutTransition">
+      <div class="mobile-full-ui">
+        <!-- AMLL .thumb — 抽屉把手 -->
+        <Motion
+          class="mobile-thumb"
+          :style="contentUiMotionStyle"
+          @click="handleThumbClick"
+          @touchstart.passive="handlePlayerTouchStart"
+          @touchmove.passive="handlePlayerTouchMove"
+          @touchend.passive="handlePlayerTouchEnd"
+          @touchcancel="resetPlayerTouch"
+        >
+          <div class="handle-bar"></div>
+        </Motion>
 
-  <!-- AMLL .lyricLayout — Layer 2: 紧凑封面信息 + 歌词 -->
-  <div class="mobile-lyric-layout">
-    <div class="mobile-phony-small-cover" ref="phonySmallCoverRef" />
-    <div class="mobile-small-controls">
-      <div class="mobile-song-info">
-        <div class="name-wrapper">
-          <div class="name" :class="{ 'is-scrolling': isNameOverflow }">
-            <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
-            <span class="name-inner" v-if="isNameOverflow">{{
-              songName || $t("other.noSong")
-            }}</span>
+        <!-- AMLL .lyricLayout — Layer 2: 紧凑封面信息 + 歌词 -->
+        <div
+          :class="['mobile-lyric-layout', { active: activeMobileLayer === 2 }]"
+          @touchstart.passive="handlePlayerTouchStart"
+          @touchmove.passive="handlePlayerTouchMove"
+          @touchend.passive="handlePlayerTouchEnd"
+          @touchcancel="resetPlayerTouch"
+        >
+          <div class="mobile-phony-small-cover mobile-cover-slot" ref="phonySmallCoverRef"></div>
+          <div class="mobile-small-controls">
+            <Motion class="mobile-small-controls-inner" :style="contentUiMotionStyle">
+              <div class="mobile-song-info">
+                <div class="name-wrapper">
+                  <div class="name" :class="{ 'is-scrolling': isNameOverflow }">
+                    <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
+                    <span class="name-inner" v-if="isNameOverflow">{{
+                      songName || $t("other.noSong")
+                    }}</span>
+                  </div>
+                </div>
+                <div class="artists text-hidden" v-if="artistList.length">
+                  <span v-for="(item, index) in artistList" :key="'s' + index">
+                    {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                  </span>
+                </div>
+              </div>
+              <div class="mobile-header-actions">
+                <n-icon
+                  size="24"
+                  :component="
+                    music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
+                      ? StarRound
+                      : StarBorderRound
+                  "
+                  @click.stop="
+                    music.getPlaySongData &&
+                    (music.getSongIsLike(music.getPlaySongData.id)
+                      ? music.changeLikeList(music.getPlaySongData.id, false)
+                      : music.changeLikeList(music.getPlaySongData.id, true))
+                  "
+                />
+                <n-icon size="24" :component="QueueMusicRound" @click.stop="$emit('openQueue')" />
+                <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+              </div>
+            </Motion>
+          </div>
+          <div class="mobile-lyric" v-if="hasLyrics">
+            <Motion class="mobile-lyric-inner" :style="contentUiMotionStyle">
+              <RollingLyrics
+                @mouseenter="$emit('lrcMouseEnter')"
+                @mouseleave="$emit('lrcAllLeave')"
+                @lrcTextClick="$emit('lrcTextClick', $event)"
+                class="mobile-lyrics"
+              />
+              <LyricOffsetControl class="mobile-lyric-offset" />
+            </Motion>
+          </div>
+          <div v-else class="no-lyrics">
+            <Motion class="mobile-ui-empty" :style="contentUiMotionStyle">
+              <span>¯\_(ツ)_/¯</span>
+            </Motion>
           </div>
         </div>
-        <div class="artists text-hidden" v-if="artistList.length">
-          <span v-for="(item, index) in artistList" :key="'s' + index">
-            {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-          </span>
+
+        <!-- AMLL .noLyricLayout — Layer 1: 大封面 + 歌曲信息 + controls -->
+        <div
+          class="mobile-cover-layout"
+          @touchstart.passive="handlePlayerTouchStart"
+          @touchmove.passive="handlePlayerTouchMove"
+          @touchend.passive="handlePlayerTouchEnd"
+          @touchcancel="resetPlayerTouch"
+        >
+          <div class="mobile-phony-big-cover mobile-cover-slot" ref="phonyBigCoverRef"></div>
+          <div class="mobile-big-controls">
+            <Motion class="mobile-big-controls-inner" :style="contentUiMotionStyle">
+              <!-- 歌曲信息（展开） -->
+              <div class="mobile-song-info-row">
+                <div class="mobile-song-info">
+                  <div class="name-wrapper" ref="nameWrapperRef">
+                    <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
+                      <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
+                      <span class="name-inner" v-if="isNameOverflow">{{
+                        songName || $t("other.noSong")
+                      }}</span>
+                    </div>
+                  </div>
+                  <div class="artists text-hidden" v-if="artistList.length">
+                    <span v-for="(item, index) in artistList" :key="'b' + index">
+                      {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                    </span>
+                  </div>
+                </div>
+                <div class="mobile-header-actions">
+                  <n-icon
+                    size="24"
+                    :component="
+                      music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
+                        ? StarRound
+                        : StarBorderRound
+                    "
+                    @click.stop="
+                      music.getPlaySongData &&
+                      (music.getSongIsLike(music.getPlaySongData.id)
+                        ? music.changeLikeList(music.getPlaySongData.id, false)
+                        : music.changeLikeList(music.getPlaySongData.id, true))
+                    "
+                  />
+                  <n-icon size="24" :component="QueueMusicRound" @click.stop="$emit('openQueue')" />
+                  <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+                </div>
+              </div>
+              <Motion class="mobile-controls-motion" :style="controlsMotionStyle">
+                <!-- 进度条 -->
+                <div class="mobile-progress">
+                  <BouncingSlider
+                    :value="music.getPlaySongTime.currentTime || 0"
+                    :min="0"
+                    :max="music.getPlaySongTime.duration || 1"
+                    :is-playing="music.getPlayState"
+                    @update:value="handleProgressSeek"
+                  />
+                  <div class="time-display">
+                    <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+                    <span>-{{ remainingTime }}</span>
+                  </div>
+                </div>
+                <!-- 控制按钮 + 音量 -->
+                <MobileControls @toComment="$emit('toComment')" />
+              </Motion>
+            </Motion>
+          </div>
         </div>
       </div>
-      <div class="mobile-header-actions">
-        <n-icon
-          size="24"
-          :component="
-            music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
-              ? StarRound
-              : StarBorderRound
-          "
-          @click.stop="
-            music.getPlaySongData &&
-            (music.getSongIsLike(music.getPlaySongData.id)
-              ? music.changeLikeList(music.getPlaySongData.id, false)
-              : music.changeLikeList(music.getPlaySongData.id, true))
-          "
-        />
-        <n-icon size="24" :component="MoreVertRound" @click.stop="" />
-      </div>
-    </div>
-    <div class="mobile-lyric" v-if="hasLyrics">
-      <RollingLyrics
-        @mouseenter="$emit('lrcMouseEnter')"
-        @mouseleave="$emit('lrcAllLeave')"
-        @lrcTextClick="$emit('lrcTextClick', $event)"
-        class="mobile-lyrics"
-      />
-      <LyricOffsetControl class="mobile-lyric-offset" />
-    </div>
-    <div v-else class="no-lyrics"><span>¯\_(ツ)_/¯</span></div>
-  </div>
 
-  <!-- AMLL .noLyricLayout — Layer 1: 大封面 + 歌曲信息 + controls -->
-  <div class="mobile-cover-layout">
-    <div class="mobile-phony-big-cover" ref="phonyBigCoverRef" />
-    <div class="mobile-big-controls">
-      <!-- 歌曲信息（展开） -->
-      <div class="mobile-song-info-row">
-        <div class="mobile-song-info">
-          <div class="name-wrapper" ref="nameWrapperRef">
-            <div class="name" ref="nameTextRef" :class="{ 'is-scrolling': isNameOverflow }">
-              <span class="name-inner">{{ songName || $t("other.noSong") }}</span>
-              <span class="name-inner" v-if="isNameOverflow">{{
-                songName || $t("other.noSong")
-              }}</span>
+      <!-- Single visible album layer. The cover slots above are measurement anchors only. -->
+      <MobileCoverFrame
+        :visible="albumLayerVisible"
+        :motionStyle="albumLayerStyle"
+        :coverUrl="coverImageUrl500"
+        :layoutTransition="layoutTransition"
+        :layoutDependency="mobileLayer"
+        :layoutEnabled="false"
+        :layoutId="null"
+        :borderRadius="12"
+        interactive
+        @click="handleCoverClick"
+        @touchstart.passive="handlePlayerTouchStart"
+        @touchmove.passive="handlePlayerTouchMove"
+        @touchend.passive="handlePlayerTouchEnd"
+        @touchcancel="resetPlayerTouch"
+      />
+    </Motion>
+
+    <!-- 移动端待播清单 -->
+    <Motion
+      class="mobile-queue-layout"
+      :animate="queuePageAnimate"
+      :transition="layoutTransition"
+      :style="contentShellStyle"
+      @touchstart.passive="handleQueueTouchStart"
+      @touchmove.passive="handleQueueTouchMove"
+      @touchend.passive="handleQueueTouchEnd"
+      @touchcancel="resetQueueTouch"
+    >
+      <div class="mobile-queue-panel">
+        <div class="mobile-queue-header">
+          <div class="queue-title">
+            <n-icon size="22" :component="QueueMusicRound" />
+            <div class="queue-title-text">
+              <span class="title">{{ $t("general.name.playlists") }}</span>
+              <span class="count" v-if="music.getPlaylists.length">
+                {{ $t("general.name.songSize", { size: music.getPlaylists.length }) }}
+              </span>
             </div>
           </div>
-          <div class="artists text-hidden" v-if="artistList.length">
-            <span v-for="(item, index) in artistList" :key="'b' + index">
-              {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-            </span>
+        </div>
+
+        <div ref="queueListRef" class="mobile-queue-list">
+          <div
+            v-for="(item, index) in music.getPlaylists"
+            :id="`mobile-queue-${index}`"
+            :key="`${item.id}-${index}`"
+            :class="['queue-song', { 'is-current': index === music.persistData.playSongIndex }]"
+            role="button"
+            tabindex="0"
+            @click="changeQueueIndex(index)"
+            @keydown.enter.prevent="changeQueueIndex(index)"
+          >
+            <div class="queue-index">
+              <span v-if="index !== music.persistData.playSongIndex">{{ index + 1 }}</span>
+              <div v-else class="playing-bars">
+                <span class="line"></span>
+                <span class="line"></span>
+                <span class="line"></span>
+              </div>
+            </div>
+            <img class="queue-cover" :src="getQueueCover(item)" alt="cover" />
+            <div class="queue-info">
+              <div class="queue-name text-hidden">{{ item.name }}</div>
+              <div class="queue-artists text-hidden">{{ formatArtists(item.artist) }}</div>
+            </div>
+            <div class="queue-duration" v-if="item.time">{{ item.time }}</div>
+            <button class="queue-remove" type="button" @click.stop="music.removeSong(index)">
+              <n-icon size="20" :component="DeleteRound" />
+            </button>
+          </div>
+          <div class="queue-empty" v-if="!music.getPlaylists.length">
+            {{ $t("other.playlistEmpty") }}
           </div>
         </div>
-        <div class="mobile-header-actions">
-          <n-icon
-            size="24"
-            :component="
-              music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id)
-                ? StarRound
-                : StarBorderRound
-            "
-            @click.stop="
-              music.getPlaySongData &&
-              (music.getSongIsLike(music.getPlaySongData.id)
-                ? music.changeLikeList(music.getPlaySongData.id, false)
-                : music.changeLikeList(music.getPlaySongData.id, true))
-            "
-          />
-          <n-icon size="24" :component="MoreVertRound" @click.stop="" />
-        </div>
       </div>
-      <!-- 进度条 -->
-      <div class="mobile-progress">
-        <BouncingSlider
-          :value="music.getPlaySongTime.currentTime || 0"
-          :min="0"
-          :max="music.getPlaySongTime.duration || 1"
-          :is-playing="music.getPlayState"
-          @update:value="handleProgressSeek"
-        />
-        <div class="time-display">
-          <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-          <span>-{{ remainingTime }}</span>
-        </div>
-      </div>
-      <!-- 控制按钮 + 音量 -->
-      <MobileControls @toComment="$emit('toComment')" />
-    </div>
+    </Motion>
   </div>
-
-  <!-- AMLL .coverFrame — 唯一 spring 动画元素 -->
-  <MobileCoverFrame
-    :visible="!!currentCoverStyle"
-    :frameStyle="coverFrameStyle"
-    :coverUrl="coverImageUrl500"
-    @click="$emit('switchLayer')"
-  />
 </template>
 
 <script setup lang="ts">
-import { StarBorderRound, StarRound, MoreVertRound } from "@vicons/material";
-import { ref } from "vue";
+import {
+  DeleteRound,
+  MoreVertRound,
+  QueueMusicRound,
+  StarBorderRound,
+  StarRound,
+} from "@vicons/material";
+import { computed, nextTick, ref, watch } from "vue";
+import { Motion, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
+import { soundStop } from "@/utils/AudioContext";
 import RollingLyrics from "../RollingLyrics.vue";
 import BouncingSlider from "../BouncingSlider.vue";
 import MobileControls from "./MobileControls.vue";
 import MobileCoverFrame from "./MobileCoverFrame.vue";
 import LyricOffsetControl from "./LyricOffsetControl.vue";
 
-defineProps<{
+declare const $player: any;
+
+type Artist = { name: string };
+type QueueSong = {
+  id: number;
+  name: string;
+  artist?: Artist[];
+  album?: { picUrl?: string };
+  time?: string;
+};
+type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
+
+const props = defineProps<{
   songName: string;
-  artistList: { name: string }[];
+  artistList: Artist[];
   isNameOverflow: boolean;
   hasLyrics: boolean;
   remainingTime: string;
   coverImageUrl500: string;
-  currentCoverStyle: object | null;
-  coverFrameStyle: Record<string, string>;
   handleProgressSeek: (val: number) => void;
+  queueOpen: boolean;
+  mobileLayer: number;
+  layoutTransition: Record<string, unknown>;
+  contentShellStyle: MotionStyleRecord;
+  fullUiMotionStyle: MotionStyleRecord;
+  controlsMotionStyle: MotionStyleRecord;
+  albumLayerStyle: MotionStyleRecord;
+  albumLayerVisible: boolean;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   close: [];
+  openQueue: [];
+  closeQueue: [];
   switchLayer: [];
   lrcMouseEnter: [];
   lrcAllLeave: [];
   lrcTextClick: [time: number];
   toComment: [];
+  closeDragStart: [];
+  closeDragMove: [distance: number];
+  closeDragEnd: [];
 }>();
 
 const music = musicStore();
@@ -158,17 +299,259 @@ const phonyBigCoverRef = ref<HTMLElement | null>(null);
 const phonySmallCoverRef = ref<HTMLElement | null>(null);
 const nameWrapperRef = ref<HTMLElement | null>(null);
 const nameTextRef = ref<HTMLElement | null>(null);
+const queueListRef = ref<HTMLElement | null>(null);
+const suppressCoverClick = ref(false);
+const playerTouch = ref<{
+  x: number;
+  y: number;
+  dragging: boolean;
+  mode: "queue" | "close" | null;
+} | null>(null);
+const queueTouch = ref<{ x: number; y: number; dragging: boolean; scrollTop: number } | null>(null);
+
+const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
+const contentUiMotionStyle = computed<MotionStyleRecord>(() => ({
+  ...props.contentShellStyle,
+  ...props.fullUiMotionStyle,
+}));
+const playerPageAnimate = computed(() =>
+  props.queueOpen ? { y: -34, opacity: 0.58 } : { y: 0, opacity: 1 },
+);
+const queuePageAnimate = computed(() =>
+  props.queueOpen ? { y: "0%", opacity: 1 } : { y: "100%", opacity: 0 },
+);
+
+const shouldIgnorePlayerSwipe = (target: EventTarget | null) => {
+  if (!(target instanceof HTMLElement)) return false;
+  return Boolean(
+    target.closest(
+      ".mobile-progress, .mobile-control-buttons, .mobile-volume, .mobile-header-actions, button, .n-button, [role='slider']",
+    ),
+  );
+};
+
+const handleThumbClick = () => {
+  if (props.queueOpen) {
+    emit("closeQueue");
+    return;
+  }
+  emit("close");
+};
+
+const resetPlayerTouch = () => {
+  playerTouch.value = null;
+};
+
+const handlePlayerTouchStart = (event: TouchEvent) => {
+  if (props.queueOpen || shouldIgnorePlayerSwipe(event.target)) return;
+  const touch = event.changedTouches?.[0];
+  if (!touch) return;
+  playerTouch.value = {
+    x: touch.clientX,
+    y: touch.clientY,
+    dragging: false,
+    mode: null,
+  };
+};
+
+const handlePlayerTouchMove = (event: TouchEvent) => {
+  const start = playerTouch.value;
+  const touch = event.changedTouches?.[0];
+  if (!start || !touch || props.queueOpen) return;
+
+  const deltaX = touch.clientX - start.x;
+  const deltaY = touch.clientY - start.y;
+  if (!start.dragging) {
+    if (Math.abs(deltaY) < 8) return;
+    if (Math.abs(deltaY) < Math.abs(deltaX) * 1.15) {
+      resetPlayerTouch();
+      return;
+    }
+    start.dragging = true;
+    start.mode = deltaY > 0 ? "close" : "queue";
+    if (start.mode === "close") emit("closeDragStart");
+  }
+
+  if (start.mode === "close") {
+    emit("closeDragMove", Math.max(0, deltaY));
+    return;
+  }
+
+  if (start.y - touch.clientY > 58) {
+    suppressCoverClick.value = true;
+    emit("openQueue");
+    resetPlayerTouch();
+    window.setTimeout(() => {
+      suppressCoverClick.value = false;
+    }, 180);
+  }
+};
+
+const handlePlayerTouchEnd = () => {
+  if (playerTouch.value?.dragging && playerTouch.value.mode === "close") {
+    emit("closeDragEnd");
+  }
+  resetPlayerTouch();
+};
+
+const handleCoverClick = () => {
+  if (suppressCoverClick.value) {
+    suppressCoverClick.value = false;
+    return;
+  }
+  emit("switchLayer");
+};
+
+const resetQueueTouch = () => {
+  queueTouch.value = null;
+};
+
+const handleQueueTouchStart = (event: TouchEvent) => {
+  if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+  const touch = event.changedTouches?.[0];
+  if (!touch) return;
+  queueTouch.value = {
+    x: touch.clientX,
+    y: touch.clientY,
+    dragging: false,
+    scrollTop: queueListRef.value?.scrollTop ?? 0,
+  };
+};
+
+const handleQueueTouchMove = (event: TouchEvent) => {
+  const start = queueTouch.value;
+  const touch = event.changedTouches?.[0];
+  if (!start || !touch) return;
+
+  const deltaX = touch.clientX - start.x;
+  const deltaY = touch.clientY - start.y;
+  if (!start.dragging) {
+    if (Math.abs(deltaY) < 8) return;
+    const vertical = Math.abs(deltaY) > Math.abs(deltaX) * 1.15;
+    if (!vertical || start.scrollTop > 4 || deltaY <= 0) {
+      resetQueueTouch();
+      return;
+    }
+    start.dragging = true;
+  }
+
+  if (touch.clientY - start.y > 58) {
+    emit("closeQueue");
+    resetQueueTouch();
+  }
+};
+
+const handleQueueTouchEnd = () => {
+  resetQueueTouch();
+};
+
+const formatArtists = (artists: Artist[] = []) =>
+  artists
+    .filter(Boolean)
+    .map((item) => item.name)
+    .join(" / ");
+
+const getQueueCover = (item: QueueSong) => {
+  const picUrl = item.album?.picUrl;
+  return picUrl ? picUrl.replace(/^http:/, "https:") + "?param=96y96" : "/images/pic/default.png";
+};
+
+const scrollCurrentQueueSong = () => {
+  const list = queueListRef.value;
+  if (!list) return;
+  const current = list.querySelector<HTMLElement>(
+    `#mobile-queue-${music.persistData.playSongIndex}`,
+  );
+  current?.scrollIntoView({ behavior: "smooth", block: "center" });
+};
+
+const changeQueueIndex = (index: number) => {
+  if (music.persistData.playSongIndex === index) return;
+  if (typeof $player !== "undefined") soundStop($player);
+  music.persistData.playSongIndex = index;
+  music.isLoadingSong = true;
+  music.resetSongLyricState();
+  music.setPlayState(true);
+};
+
+watch(
+  () => props.queueOpen,
+  (val) => {
+    if (val) nextTick(scrollCurrentQueueSong);
+  },
+);
+
+watch(
+  () => music.persistData.playSongIndex,
+  () => {
+    if (props.queueOpen) nextTick(scrollCurrentQueueSong);
+  },
+);
 
 defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef });
 </script>
 
 <style lang="scss" scoped>
+.mobile-pages {
+  grid-row: 1 / -1;
+  grid-column: 1 / 2;
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.mobile-player-page,
+.mobile-queue-layout {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  will-change: transform, opacity;
+}
+
+.mobile-player-page {
+  transform-origin: center 22%;
+}
+
+.mobile-full-ui {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-rows: [thumb] calc(var(--app-safe-area-top, 0px) + 30px) [main-view] 1fr;
+  grid-template-columns: 1fr;
+  min-width: 0;
+  min-height: 0;
+  will-change: transform, opacity;
+}
+
+.mobile-queue-layout {
+  color: var(--main-cover-color);
+  pointer-events: none;
+  overflow: hidden;
+  background:
+    linear-gradient(rgb(0 0 0 / 18%), rgb(0 0 0 / 18%)),
+    color-mix(in srgb, var(--main-cover-color) 10%, rgb(22 22 24));
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
+}
+
+.mobile-pages.queue-open {
+  .mobile-player-page {
+    pointer-events: none;
+  }
+
+  .mobile-queue-layout {
+    pointer-events: auto;
+  }
+}
+
 // ── AMLL .thumb ──
 .mobile-thumb {
   grid-row: thumb;
   justify-self: center;
   align-self: end;
-  z-index: 1;
+  z-index: 80;
   mix-blend-mode: plus-lighter;
   cursor: pointer;
   width: 60px;
@@ -194,16 +577,25 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 .mobile-lyric-layout {
   grid-row: main-view;
   grid-column: 1 / 2;
+  position: relative;
+  z-index: 2;
   display: grid;
-  grid-template-rows: 8px [controls] 0fr [lyric-view] 1fr;
-  grid-template-columns: 16px [cover-side] 0fr [info-side] 1fr 16px;
+  grid-template-rows: 8px [controls] 56px [lyric-view] minmax(0, 1fr);
+  grid-template-columns: 16px [cover-side] 56px [info-side] minmax(0, 1fr) 16px;
   mix-blend-mode: plus-lighter;
+  pointer-events: none;
+
+  &.active {
+    pointer-events: auto;
+  }
 }
 
 // ── AMLL .noLyricLayout — Layer 1: 大封面 + controls ──
 .mobile-cover-layout {
   grid-row: main-view;
   grid-column: 1 / 2;
+  position: relative;
+  z-index: 1;
   overflow-y: hidden;
   display: grid;
   grid-template-rows: 1em [cover-view] 1fr [controls-view] 0fr;
@@ -212,15 +604,23 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 }
 
 // ── AMLL .phonySmallCover ──
+.mobile-cover-slot {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+  isolation: isolate;
+}
+
 .mobile-phony-small-cover {
   grid-row: controls;
   grid-column: cover-side;
-  justify-self: center;
+  justify-self: start;
   align-self: center;
   aspect-ratio: 1 / 1;
-  opacity: 0;
-  pointer-events: none;
   width: 56px;
+  height: 56px;
+  z-index: 5;
 }
 
 // ── AMLL .smallControls — 紧凑歌曲信息 ──
@@ -233,11 +633,20 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   min-width: 0;
   overflow: visible;
   height: fit-content;
-  z-index: 1;
+  z-index: 3;
   mix-blend-mode: plus-lighter;
   display: flex;
   align-items: center;
   justify-content: space-between;
+
+  .mobile-small-controls-inner {
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    will-change: transform, opacity;
+  }
 
   .mobile-song-info {
     flex: 1;
@@ -301,8 +710,15 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   opacity: 1;
   mix-blend-mode: plus-lighter;
   min-height: 0;
-  mask-image: linear-gradient(transparent 0%, black 8%, black 100%);
   position: relative;
+  z-index: 1;
+
+  .mobile-lyric-inner {
+    position: relative;
+    height: 100%;
+    min-height: 0;
+    will-change: transform, opacity;
+  }
 
   .mobile-lyric-offset {
     position: absolute;
@@ -333,6 +749,10 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   transition: opacity 0.5s 0.5s;
   opacity: 1;
 
+  .mobile-ui-empty {
+    will-change: transform, opacity;
+  }
+
   span {
     font-size: 1rem;
     color: var(--main-cover-color);
@@ -344,8 +764,12 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 .mobile-phony-big-cover {
   grid-row: cover-view;
   grid-column: 2 / 3;
-  opacity: 0;
-  pointer-events: none;
+  justify-self: center;
+  align-self: center;
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  max-height: 100%;
+  z-index: 3;
 }
 
 // ── AMLL .bigControls — 完整 controls ──
@@ -361,6 +785,12 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   // --app-safe-area-bottom is env(safe-area-inset-bottom) on Tauri mobile,
   // 0px everywhere else — so this is a no-op on desktop / browser.
   padding-bottom: calc(var(--app-safe-area-bottom, 0px) + 4rem);
+
+  .mobile-big-controls-inner {
+    display: block;
+    min-width: 0;
+    will-change: transform, opacity;
+  }
 
   // 歌曲信息（展开）
   .mobile-song-info-row {
@@ -438,6 +868,204 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   }
 }
 
+.mobile-controls-motion {
+  display: block;
+  will-change: transform, opacity;
+}
+
+.mobile-queue-panel {
+  height: 100%;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: calc(var(--app-safe-area-top, 0px) + 44px) 16px
+    calc(var(--app-safe-area-bottom, 0px) + 16px);
+}
+
+.mobile-queue-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  margin-bottom: 8px;
+}
+
+.queue-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+
+  > .n-icon {
+    flex-shrink: 0;
+    opacity: 0.9;
+  }
+}
+
+.queue-title-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+
+  .title {
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .count {
+    margin-top: 2px;
+    font-size: 0.78rem;
+    opacity: 0.62;
+  }
+}
+
+.mobile-queue-list {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 4px 0 12px;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+.queue-song {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 30px 48px minmax(0, 1fr) auto 36px;
+  align-items: center;
+  gap: 10px;
+  border-radius: 8px;
+  padding: 8px 8px 8px 4px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.075);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+
+  &:active {
+    transform: scale(0.985);
+  }
+
+  &.is-current {
+    background: color-mix(in srgb, var(--main-cover-color) 18%, transparent);
+    border-color: color-mix(in srgb, var(--main-cover-color) 42%, transparent);
+  }
+}
+
+.queue-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  opacity: 0.66;
+  font-variant-numeric: tabular-nums;
+}
+
+.playing-bars {
+  height: 18px;
+  width: 18px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+
+  .line {
+    width: 3px;
+    min-height: 7px;
+    border-radius: 3px;
+    background: var(--main-cover-color);
+    animation: queue-line-move 0.9s ease-in-out infinite;
+
+    &:nth-child(2) {
+      animation-delay: 0.12s;
+    }
+
+    &:nth-child(3) {
+      animation-delay: 0.24s;
+    }
+  }
+}
+
+.queue-cover {
+  width: 48px;
+  height: 48px;
+  border-radius: 7px;
+  object-fit: cover;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+}
+
+.queue-info {
+  min-width: 0;
+
+  .queue-name {
+    font-weight: 650;
+    font-size: 0.95rem;
+    line-height: 1.2;
+  }
+
+  .queue-artists {
+    margin-top: 5px;
+    font-size: 0.78rem;
+    opacity: 0.62;
+  }
+}
+
+.queue-duration {
+  font-size: 0.76rem;
+  opacity: 0.54;
+  font-variant-numeric: tabular-nums;
+}
+
+.queue-remove {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--main-cover-color);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.56;
+  cursor: pointer;
+
+  &:active {
+    opacity: 1;
+    background: rgba(255, 255, 255, 0.12);
+    transform: scale(0.94);
+  }
+}
+
+.queue-empty {
+  height: 40vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  opacity: 0.56;
+  font-size: 0.95rem;
+}
+
+@media (max-width: 380px) {
+  .queue-song {
+    grid-template-columns: 26px 44px minmax(0, 1fr) 34px;
+    gap: 8px;
+  }
+
+  .queue-cover {
+    width: 44px;
+    height: 44px;
+  }
+
+  .queue-duration {
+    display: none;
+  }
+}
+
 @keyframes marquee-scroll {
   0% {
     transform: translateX(0);
@@ -445,6 +1073,17 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 
   100% {
     transform: translateX(-50%);
+  }
+}
+
+@keyframes queue-line-move {
+  0%,
+  100% {
+    height: 8px;
+  }
+
+  50% {
+    height: 18px;
   }
 }
 

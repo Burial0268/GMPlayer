@@ -112,6 +112,8 @@ const currentLyrics = computed(() => {
 
   @media (max-width: 768px) {
     height: 70vh;
+    mask: none;
+    -webkit-mask: none;
   }
 
   &.loading {

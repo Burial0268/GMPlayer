@@ -2,8 +2,8 @@
   <svg
     id="vector"
     xmlns="http://www.w3.org/2000/svg"
-    width="32"
-    height="32"
+    width="1em"
+    height="1em"
     viewBox="0 0 134 134"
     fill="currentColor"
   >

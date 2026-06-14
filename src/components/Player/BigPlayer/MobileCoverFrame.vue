@@ -1,28 +1,53 @@
 <template>
-  <div v-if="visible" class="mobile-cover-frame" :style="frameStyle" @click="$emit('click')">
-    <!-- Shimmer overlay: shown while the artwork image is still loading.
-         Fades out the moment the <img> fires its load event. -->
+  <Motion
+    v-if="visible"
+    :class="['mobile-cover-frame', { 'is-interactive': interactive }]"
+    :layout="frameLayoutEnabled"
+    :layout-id="frameLayoutId"
+    :layout-dependency="layoutDependency"
+    :transition="layoutTransition"
+    :style="mergedFrameStyle"
+    @click="$emit('click')"
+  >
+    <!-- Optional loading treatment. Disabled for player handoff so album art
+         never appears to reload after a shared transition. -->
     <Transition name="shimmer-fade">
-      <div v-if="!imgLoaded" class="shimmer-overlay" />
+      <div v-if="loadAnimationEnabled && !imgLoaded" class="shimmer-overlay" />
     </Transition>
 
     <img
       :src="coverUrl"
       alt="cover"
       :class="{ loaded: imgLoaded }"
+      loading="eager"
+      decoding="async"
       @load="onImgLoad"
       @error="onImgError"
     />
-  </div>
+  </Motion>
 </template>
 
+<script lang="ts">
+const loadedCoverUrls = new Set<string>();
+</script>
+
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
+import { Motion, type MotionValue } from "motion-v";
+
+type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
 const props = defineProps<{
   visible: boolean;
-  frameStyle: Record<string, string>;
+  motionStyle?: MotionStyleRecord | null;
   coverUrl: string;
+  layoutTransition: Record<string, unknown>;
+  layoutDependency?: unknown;
+  layoutEnabled?: boolean;
+  layoutId?: string | null;
+  borderRadius?: number;
+  interactive?: boolean;
+  loadAnimation?: boolean;
 }>();
 
 defineEmits<{
@@ -36,43 +61,57 @@ defineEmits<{
  * Reset to `false` whenever the URL changes so the shimmer re-appears for the
  * next artwork before it finishes downloading.
  */
-const imgLoaded = ref(false);
+const mergedFrameStyle = computed(() => {
+  const style: MotionStyleRecord = {
+    borderRadius: `${props.borderRadius ?? 12}px`,
+  };
+  if (props.motionStyle) Object.assign(style, props.motionStyle);
+  return style;
+});
+const frameLayoutEnabled = computed(() => props.layoutEnabled ?? true);
+const frameLayoutId = computed(() =>
+  props.layoutId === null ? undefined : props.layoutId ?? "splayer-mobile-album",
+);
+const loadAnimationEnabled = computed(() => props.loadAnimation ?? false);
+const imgLoaded = ref(!loadAnimationEnabled.value || loadedCoverUrls.has(props.coverUrl));
 
 watch(
-  () => props.coverUrl,
-  (newUrl, oldUrl) => {
-    if (newUrl !== oldUrl) {
-      imgLoaded.value = false;
-    }
+  [() => props.coverUrl, loadAnimationEnabled],
+  ([newUrl]) => {
+    imgLoaded.value = !loadAnimationEnabled.value || loadedCoverUrls.has(newUrl);
   },
 );
 
 function onImgLoad(): void {
+  loadedCoverUrls.add(props.coverUrl);
   imgLoaded.value = true;
 }
 
 /** Treat a broken image the same as a successful load — hide the shimmer. */
 function onImgError(): void {
+  loadedCoverUrls.add(props.coverUrl);
   imgLoaded.value = true;
 }
 </script>
 
 <style lang="scss" scoped>
 .mobile-cover-frame {
-  position: absolute;
-  width: 0px;
-  height: 0px;
+  position: relative;
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   cursor: pointer;
   pointer-events: auto;
-  z-index: 60;
+  z-index: 1;
   box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.35);
-  transition:
-    width 0.4s ease,
-    height 0.4s ease,
-    left 0.4s ease,
-    top 0.4s ease,
-    border-radius 0.4s ease;
+  will-change: transform, width, height, left, top, border-radius;
+
+  &.is-interactive {
+    position: absolute;
+    width: 0px;
+    height: 0px;
+    z-index: 60;
+  }
 
   &:active {
     opacity: 0.9;

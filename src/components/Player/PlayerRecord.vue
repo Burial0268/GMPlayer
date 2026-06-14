@@ -88,7 +88,7 @@
         />
         <n-icon
           v-if="!music.getPersonalFmMode"
-          class="button-icon"
+          class="button-icon skip-icon"
           :component="IconRewind"
           @click.stop="music.setPlaySongIndex('prev')"
         />
@@ -110,7 +110,7 @@
           </n-button>
         </div>
         <n-icon
-          class="button-icon"
+          class="button-icon skip-icon"
           :component="IconForward"
           @click.stop="music.setPlaySongIndex('next')"
         />
@@ -454,16 +454,33 @@ const goToComment = () => {
       }
     }
     .buttons {
-      display: flex;
-      justify-content: space-around;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       align-items: center;
+      justify-items: center;
+      column-gap: clamp(0.25rem, calc(var(--cover-size) * 0.025), 0.75rem);
+
+      > * {
+        min-width: 0;
+        justify-self: center;
+      }
+
       .play-state {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+
         .n-button {
           font-size: 3rem;
           color: var(--main-cover-color);
         }
       }
       .button-icon {
+        width: clamp(2.25rem, calc(var(--cover-size) * 0.1), 3rem);
+        height: clamp(2.25rem, calc(var(--cover-size) * 0.1), 3rem);
+        display: flex;
+        align-items: center;
+        justify-content: center;
         font-size: 1.5rem;
         color: var(--main-cover-color);
         opacity: 0.8;
@@ -477,6 +494,10 @@ const goToComment = () => {
         &.active {
           opacity: 1;
           color: var(--primary-color);
+        }
+
+        &.skip-icon {
+          font-size: clamp(1.95rem, calc(var(--cover-size) * 0.09), 2.45rem);
         }
       }
     }

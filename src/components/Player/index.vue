@@ -1,286 +1,294 @@
 <template>
-  <Transition name="show">
-    <n-card
-      v-show="music.getPlaylists[0] && music.showPlayBar"
-      class="player"
-      content-style="padding: 0"
-      @click.stop="setting.bottomClick ? music.setBigPlayerState(true) : null"
-    >
-      <div class="slider">
-        <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-        <vue-slider
-          v-model="music.getPlaySongTime.barMoveDistance"
-          @drag-start="sliderDragStart"
-          @dragging="sliderDragging"
-          @drag-end="sliderDragEnd"
-          @change="songTimeSliderUpdate"
-          @click.stop
-          :tooltip="'active'"
-          :lazy="true"
-          :use-keyboard="false"
-        >
-          <template v-slot:tooltip>
-            <div class="slider-tooltip">
-              {{
-                getSongPlayingTime(
-                  (music.getPlaySongTime.duration / 100) * music.getPlaySongTime.barMoveDistance,
-                )
-              }}
-            </div>
-          </template>
-        </vue-slider>
-        <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
-      </div>
-      <div class="all">
-        <div class="data">
-          <div class="pic" @click.stop="music.setBigPlayerState(true)">
-            <img
-              :src="
-                music.getPlaySongData
-                  ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=50y50'
-                  : '/images/pic/default.png'
-              "
-              alt="pic"
-            />
-            <n-icon class="open" size="30" :component="KeyboardArrowUpFilled" />
-          </div>
-          <div class="name">
-            <div
-              class="song text-hidden"
-              @click.stop="router.push(`/song?id=${music.getPlaySongData.id}`)"
-            >
-              {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
-            </div>
-            <!-- 显示歌手或歌词 -->
-            <div class="artisrOrLrc" v-if="music.getPlaySongData">
-              <Transition name="fade" mode="out-in">
-                <template v-if="setting.bottomLyricShow">
-                  <Transition name="fade" mode="out-in">
-                    <n-text
-                      v-if="
-                        music.getPlaySongLyric?.lrc?.length &&
-                        setting.showYrc &&
-                        music.getPlaySongLyricIndex != -1 &&
-                        music.getPlaySongLyric.hasYrc
-                      "
-                      :key="'yrc-' + music.getPlaySongLyricIndex"
-                      class="lrc text-hidden"
-                      :depth="3"
-                    >
-                      <span ref="lrcScrollRef" class="lrc-scroll-content" :style="lrcScrollStyle">
-                        <span
-                          v-for="item in music.getPlaySongLyric.yrc[music.getPlaySongLyricIndex]
-                            .content"
-                          :key="item.time"
-                          class="lrc-word"
-                        >
-                          {{ item.content }}
-                        </span>
-                      </span>
-                    </n-text>
-                    <n-text
-                      v-else-if="
-                        music.getPlaySongLyric?.lrc?.length && music.getPlaySongLyricIndex != -1
-                      "
-                      :key="'lrc-' + music.getPlaySongLyricIndex"
-                      class="lrc text-hidden"
-                      :depth="3"
-                    >
-                      <span ref="lrcScrollRef" class="lrc-scroll-content" :style="lrcScrollStyle">
-                        {{ music.getPlaySongLyric.lrc[music.getPlaySongLyricIndex]?.content }}
-                      </span>
-                    </n-text>
-                    <AllArtists
-                      v-else
-                      key="artists"
-                      class="text-hidden"
-                      :artistsData="music.getPlaySongData.artist"
-                    />
-                  </Transition>
-                </template>
-                <template v-else>
-                  <AllArtists class="text-hidden" :artistsData="music.getPlaySongData.artist" />
-                </template>
-              </Transition>
-            </div>
-          </div>
-        </div>
-        <div class="control">
-          <n-icon
-            v-if="!music.getPersonalFmMode"
-            class="prev"
-            size="30"
-            :component="SkipPreviousRound"
-            @click.stop="music.setPlaySongIndex('prev')"
-          />
-          <n-icon
-            v-else
-            class="dislike"
-            size="20"
-            :component="ThumbDownRound"
-            @click="music.setFmDislike(music.getPersonalFmData.id)"
-          />
-          <div
-            class="play-state"
-            @click.stop="music.getLoadingState ? null : music.setPlayState(!music.getPlayState)"
+  <LayoutGroup id="mobile-player-layout">
+    <Transition name="show">
+      <n-card
+        v-show="music.getPlaylists[0] && music.showPlayBar"
+        class="player"
+        data-mobile-player-bg
+        content-style="padding: 0"
+        @click.stop="handleMiniPlayerClick"
+        @touchstart.passive="handleMiniTouchStart"
+        @touchmove.passive="handleMiniTouchMove"
+        @touchend.passive="handleMiniTouchEnd"
+        @touchcancel="resetMiniTouch"
+      >
+        <div class="slider">
+          <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+          <vue-slider
+            v-model="music.getPlaySongTime.barMoveDistance"
+            @drag-start="sliderDragStart"
+            @dragging="sliderDragging"
+            @drag-end="sliderDragEnd"
+            @change="songTimeSliderUpdate"
+            @click.stop
+            :tooltip="'active'"
+            :lazy="true"
+            :use-keyboard="false"
           >
-            <AnimatePresence mode="wait">
-              <Motion
-                v-if="music.getLoadingState"
-                key="loading"
-                :initial="{ opacity: 0, scale: 0.8 }"
-                :animate="{ opacity: 1, scale: 1 }"
-                :exit="{ opacity: 0, scale: 0.8 }"
-                :transition="{ duration: 0.2 }"
-                class="play-state-inner"
-              >
-                <n-spin :size="28" stroke="var(--main-color)" />
-              </Motion>
-              <Motion
-                v-else
-                :key="music.getPlayState ? 'pause' : 'play'"
-                :initial="{ opacity: 0, scale: 0.8 }"
-                :animate="{ opacity: 1, scale: 1 }"
-                :exit="{ opacity: 0, scale: 0.8 }"
-                :transition="{ duration: 0.2 }"
-                class="play-state-inner"
-              >
-                <n-icon
-                  size="46"
-                  :component="music.getPlayState ? PauseCircleFilled : PlayCircleFilled"
-                />
-              </Motion>
-            </AnimatePresence>
-          </div>
-          <n-icon
-            class="next"
-            size="30"
-            :component="SkipNextRound"
-            @click.stop="music.setPlaySongIndex('next')"
-          />
-        </div>
-        <div :class="music.getPersonalFmMode ? 'menu fm' : 'menu'">
-          <n-popover v-if="music.getPlaySongData" trigger="hover" :keep-alive-on-hover="false">
-            <template #trigger>
-              <div class="like">
-                <n-icon
-                  class="like-icon"
-                  size="24"
-                  :component="
-                    music.getSongIsLike(music.getPlaySongData.id)
-                      ? FavoriteRound
-                      : FavoriteBorderRound
-                  "
-                  @click.stop="
-                    music.getSongIsLike(music.getPlaySongData.id)
-                      ? music.changeLikeList(music.getPlaySongData.id, false)
-                      : music.changeLikeList(music.getPlaySongData.id, true)
-                  "
-                />
+            <template v-slot:tooltip>
+              <div class="slider-tooltip">
+                {{
+                  getSongPlayingTime(
+                    (music.getPlaySongTime.duration / 100) * music.getPlaySongTime.barMoveDistance,
+                  )
+                }}
               </div>
             </template>
-            {{
-              music.getSongIsLike(music.getPlaySongData.id)
-                ? $t("menu.cancelCollection")
-                : $t("menu.collection")
-            }}
-          </n-popover>
-          <n-popover trigger="hover" :keep-alive-on-hover="false">
-            <template #trigger>
-              <div class="add-playlist">
-                <n-icon
-                  class="add-icon"
-                  size="30"
-                  :component="PlaylistAddRound"
-                  @click.stop="addPlayListRef.openAddToPlaylist(music.getPlaySongData.id)"
-                />
-              </div>
-            </template>
-            {{ $t("menu.add") }}
-          </n-popover>
-          <n-dropdown
-            trigger="hover"
-            :options="patternOptions"
-            :show-arrow="true"
-            @select="patternClick"
-          >
-            <div class="pattern">
-              <n-icon
-                :component="
-                  persistData.playSongMode === 'normal'
-                    ? PlayCycle
-                    : persistData.playSongMode === 'random'
-                      ? ShuffleOne
-                      : PlayOnce
+          </vue-slider>
+          <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
+        </div>
+        <div class="all">
+          <div class="data">
+            <div class="pic" data-mobile-player-artwork @click.stop="handleMiniArtworkClick">
+              <img
+                :src="
+                  music.getPlaySongData
+                    ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
+                      '?param=50y50'
+                    : '/images/pic/default.png'
                 "
-                @click.stop="music.setPlaySongMode()"
+                alt="pic"
               />
             </div>
-          </n-dropdown>
-          <n-popover trigger="hover" :keep-alive-on-hover="false">
-            <template #trigger>
-              <div :class="music.showPlayList ? 'playlist open' : 'playlist'">
-                <n-icon
-                  size="30"
-                  :component="PlaylistPlayRound"
-                  @click.stop="music.showPlayList = !music.showPlayList"
-                />
+            <div class="name">
+              <div
+                class="song text-hidden"
+                @click.stop="router.push(`/song?id=${music.getPlaySongData.id}`)"
+              >
+                {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
               </div>
-            </template>
-            {{ $t("general.name.playlists") }}
-          </n-popover>
-          <!-- 一起听歌 -->
-          <ListenTogetherStatus @click="showListenTogetherModal = true" />
-          <div class="volume">
-            <n-popover trigger="hover" placement="top-start" :keep-alive-on-hover="false">
-              <template #trigger>
-                <n-icon
-                  size="28"
-                  :component="
-                    persistData.playVolume == 0
-                      ? VolumeOffRound
-                      : persistData.playVolume < 0.4
-                        ? VolumeMuteRound
-                        : persistData.playVolume < 0.7
-                          ? VolumeDownRound
-                          : VolumeUpRound
-                  "
-                  @click.stop="volumeMute"
-                />
-              </template>
-              {{ persistData.playVolume > 0 ? $t("general.name.mute") : $t("general.name.unmute") }}
-            </n-popover>
-            <n-slider
-              class="volmePg"
-              v-model:value="persistData.playVolume"
-              :tooltip="false"
-              :min="0"
-              :max="1"
-              :step="0.01"
-              @click.stop
+              <!-- 显示歌手或歌词 -->
+              <div class="artisrOrLrc" v-if="music.getPlaySongData">
+                <Transition name="fade" mode="out-in">
+                  <template v-if="setting.bottomLyricShow">
+                    <Transition name="fade" mode="out-in">
+                      <n-text
+                        v-if="
+                          music.getPlaySongLyric?.lrc?.length &&
+                          setting.showYrc &&
+                          music.getPlaySongLyricIndex != -1 &&
+                          music.getPlaySongLyric.hasYrc
+                        "
+                        :key="'yrc-' + music.getPlaySongLyricIndex"
+                        class="lrc text-hidden"
+                        :depth="3"
+                      >
+                        <span ref="lrcScrollRef" class="lrc-scroll-content" :style="lrcScrollStyle">
+                          <span
+                            v-for="item in music.getPlaySongLyric.yrc[music.getPlaySongLyricIndex]
+                              .content"
+                            :key="item.time"
+                            class="lrc-word"
+                          >
+                            {{ item.content }}
+                          </span>
+                        </span>
+                      </n-text>
+                      <n-text
+                        v-else-if="
+                          music.getPlaySongLyric?.lrc?.length && music.getPlaySongLyricIndex != -1
+                        "
+                        :key="'lrc-' + music.getPlaySongLyricIndex"
+                        class="lrc text-hidden"
+                        :depth="3"
+                      >
+                        <span ref="lrcScrollRef" class="lrc-scroll-content" :style="lrcScrollStyle">
+                          {{ music.getPlaySongLyric.lrc[music.getPlaySongLyricIndex]?.content }}
+                        </span>
+                      </n-text>
+                      <AllArtists
+                        v-else
+                        key="artists"
+                        class="text-hidden"
+                        :artistsData="music.getPlaySongData.artist"
+                      />
+                    </Transition>
+                  </template>
+                  <template v-else>
+                    <AllArtists class="text-hidden" :artistsData="music.getPlaySongData.artist" />
+                  </template>
+                </Transition>
+              </div>
+            </div>
+          </div>
+          <div class="control">
+            <n-icon
+              v-if="!music.getPersonalFmMode"
+              class="prev"
+              size="30"
+              :component="SkipPreviousRound"
+              @click.stop="music.setPlaySongIndex('prev')"
+            />
+            <n-icon
+              v-else
+              class="dislike"
+              size="20"
+              :component="ThumbDownRound"
+              @click="music.setFmDislike(music.getPersonalFmData.id)"
+            />
+            <div
+              class="play-state"
+              @click.stop="music.getLoadingState ? null : music.setPlayState(!music.getPlayState)"
+            >
+              <AnimatePresence mode="wait">
+                <Motion
+                  v-if="music.getLoadingState"
+                  key="loading"
+                  :initial="{ opacity: 0, scale: 0.8 }"
+                  :animate="{ opacity: 1, scale: 1 }"
+                  :exit="{ opacity: 0, scale: 0.8 }"
+                  :transition="{ duration: 0.2 }"
+                  class="play-state-inner"
+                >
+                  <n-spin :size="28" stroke="var(--main-color)" />
+                </Motion>
+                <Motion
+                  v-else
+                  :key="music.getPlayState ? 'pause' : 'play'"
+                  :initial="{ opacity: 0, scale: 0.8 }"
+                  :animate="{ opacity: 1, scale: 1 }"
+                  :exit="{ opacity: 0, scale: 0.8 }"
+                  :transition="{ duration: 0.2 }"
+                  class="play-state-inner"
+                >
+                  <n-icon
+                    size="46"
+                    :component="music.getPlayState ? PauseCircleFilled : PlayCircleFilled"
+                  />
+                </Motion>
+              </AnimatePresence>
+            </div>
+            <n-icon
+              class="next"
+              size="30"
+              :component="SkipNextRound"
+              @click.stop="music.setPlaySongIndex('next')"
             />
           </div>
+          <div :class="music.getPersonalFmMode ? 'menu fm' : 'menu'">
+            <n-popover v-if="music.getPlaySongData" trigger="hover" :keep-alive-on-hover="false">
+              <template #trigger>
+                <div class="like">
+                  <n-icon
+                    class="like-icon"
+                    size="24"
+                    :component="
+                      music.getSongIsLike(music.getPlaySongData.id)
+                        ? FavoriteRound
+                        : FavoriteBorderRound
+                    "
+                    @click.stop="
+                      music.getSongIsLike(music.getPlaySongData.id)
+                        ? music.changeLikeList(music.getPlaySongData.id, false)
+                        : music.changeLikeList(music.getPlaySongData.id, true)
+                    "
+                  />
+                </div>
+              </template>
+              {{
+                music.getSongIsLike(music.getPlaySongData.id)
+                  ? $t("menu.cancelCollection")
+                  : $t("menu.collection")
+              }}
+            </n-popover>
+            <n-popover trigger="hover" :keep-alive-on-hover="false">
+              <template #trigger>
+                <div class="add-playlist">
+                  <n-icon
+                    class="add-icon"
+                    size="30"
+                    :component="PlaylistAddRound"
+                    @click.stop="addPlayListRef.openAddToPlaylist(music.getPlaySongData.id)"
+                  />
+                </div>
+              </template>
+              {{ $t("menu.add") }}
+            </n-popover>
+            <n-dropdown
+              trigger="hover"
+              :options="patternOptions"
+              :show-arrow="true"
+              @select="patternClick"
+            >
+              <div class="pattern">
+                <n-icon
+                  :component="
+                    persistData.playSongMode === 'normal'
+                      ? PlayCycle
+                      : persistData.playSongMode === 'random'
+                        ? ShuffleOne
+                        : PlayOnce
+                  "
+                  @click.stop="music.setPlaySongMode()"
+                />
+              </div>
+            </n-dropdown>
+            <n-popover trigger="hover" :keep-alive-on-hover="false">
+              <template #trigger>
+                <div :class="music.showPlayList ? 'playlist open' : 'playlist'">
+                  <n-icon
+                    size="30"
+                    :component="PlaylistPlayRound"
+                    @click.stop="music.showPlayList = !music.showPlayList"
+                  />
+                </div>
+              </template>
+              {{ $t("general.name.playlists") }}
+            </n-popover>
+            <!-- 一起听歌 -->
+            <ListenTogetherStatus @click="showListenTogetherModal = true" />
+            <div class="volume">
+              <n-popover trigger="hover" placement="top-start" :keep-alive-on-hover="false">
+                <template #trigger>
+                  <n-icon
+                    size="28"
+                    :component="
+                      persistData.playVolume == 0
+                        ? VolumeOffRound
+                        : persistData.playVolume < 0.4
+                          ? VolumeMuteRound
+                          : persistData.playVolume < 0.7
+                            ? VolumeDownRound
+                            : VolumeUpRound
+                    "
+                    @click.stop="volumeMute"
+                  />
+                </template>
+                {{
+                  persistData.playVolume > 0 ? $t("general.name.mute") : $t("general.name.unmute")
+                }}
+              </n-popover>
+              <n-slider
+                class="volmePg"
+                v-model:value="persistData.playVolume"
+                :tooltip="false"
+                :min="0"
+                :max="1"
+                :step="0.01"
+                @click.stop
+              />
+            </div>
+          </div>
         </div>
-      </div>
-    </n-card>
-  </Transition>
-  <!-- 播放列表 -->
-  <PlayListDrawer ref="PlayListDrawerRef" />
-  <!-- 添加到歌单 -->
-  <AddPlaylist ref="addPlayListRef" />
-  <!-- 一起听歌 -->
-  <ListenTogetherModal v-model:show="showListenTogetherModal" />
-  <!-- 播放器 -->
-  <BigPlayer />
+      </n-card>
+    </Transition>
+    <!-- 播放列表 -->
+    <PlayListDrawer ref="PlayListDrawerRef" />
+    <!-- 添加到歌单 -->
+    <AddPlaylist ref="addPlayListRef" />
+    <!-- 一起听歌 -->
+    <ListenTogetherModal v-model:show="showListenTogetherModal" />
+    <!-- 播放器 -->
+    <BigPlayer ref="bigPlayerRef" />
+  </LayoutGroup>
 </template>
 
 <script setup>
 import { getMusicDetail } from "@/api/song";
 import { resolveSongUrl } from "@/utils/AudioContext/resolveSongUrl";
-import { Motion, AnimatePresence } from "motion-v";
+import { Motion, AnimatePresence, LayoutGroup } from "motion-v";
 import { NIcon } from "naive-ui";
 import {
-  KeyboardArrowUpFilled,
   PlayCircleFilled,
   PauseCircleFilled,
   SkipNextRound,
@@ -330,11 +338,120 @@ const { t } = useI18n();
 const router = useRouter();
 const setting = settingStore();
 const music = musicStore();
+const site = siteStore();
 const listenTogether = listenTogetherStore();
 const { persistData } = storeToRefs(music);
 const addPlayListRef = ref(null);
 const PlayListDrawerRef = ref(null);
 const lrcScrollRef = ref(null);
+const bigPlayerRef = ref(null);
+
+let miniTouchState = null;
+let suppressMiniClick = false;
+
+const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const getMobilePlayerTransitionDistance = () =>
+  Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
+const MINI_OPEN_FLING_VELOCITY = -0.42;
+
+const getMiniSharedFrames = () => {
+  const artworkEl = document.querySelector("[data-mobile-player-artwork]");
+  const backgroundEl = document.querySelector("[data-mobile-player-bg]");
+  return {
+    artwork: artworkEl?.getBoundingClientRect(),
+    background: backgroundEl?.getBoundingClientRect(),
+  };
+};
+
+const openBigPlayerFromMini = () => {
+  if (music.showBigPlayer) return;
+  const frames = getMiniSharedFrames();
+  const result = bigPlayerRef.value?.openMobileFromMini?.(frames);
+  if (result && typeof result.then === "function") return;
+  music.setBigPlayerState(true);
+};
+
+const openMiniPlayer = () => {
+  if (setting.bottomClick) openBigPlayerFromMini();
+};
+
+const handleMiniPlayerClick = () => {
+  if (suppressMiniClick) {
+    suppressMiniClick = false;
+    return;
+  }
+  openMiniPlayer();
+};
+
+const handleMiniArtworkClick = () => {
+  if (suppressMiniClick) {
+    suppressMiniClick = false;
+    return;
+  }
+  openBigPlayerFromMini();
+};
+
+const resetMiniTouch = () => {
+  miniTouchState = null;
+};
+
+const releaseMiniClickSuppression = () => {
+  window.setTimeout(() => {
+    suppressMiniClick = false;
+  }, 240);
+};
+
+const handleMiniTouchStart = (event) => {
+  if (music.showBigPlayer || !music.getPlaylists[0] || !music.showPlayBar) return;
+  const touch = event.changedTouches?.[0];
+  if (!touch) return;
+  miniTouchState = {
+    x: touch.clientX,
+    y: touch.clientY,
+    lastY: touch.clientY,
+    lastTime: performance.now(),
+    velocityY: 0,
+    dragging: false,
+  };
+};
+
+const handleMiniTouchMove = (event) => {
+  const start = miniTouchState;
+  const touch = event.changedTouches?.[0];
+  if (!start || !touch) return;
+
+  const deltaX = touch.clientX - start.x;
+  const deltaY = touch.clientY - start.y;
+  const now = performance.now();
+  const elapsed = Math.max(1, now - start.lastTime);
+  start.velocityY = (touch.clientY - start.lastY) / elapsed;
+  start.lastY = touch.clientY;
+  start.lastTime = now;
+  if (!start.dragging) {
+    if (Math.abs(deltaY) < 8) return;
+    if (deltaY >= 0 || Math.abs(deltaY) < Math.abs(deltaX) * 1.15) {
+      resetMiniTouch();
+      return;
+    }
+    start.dragging = true;
+    suppressMiniClick = true;
+    const frames = getMiniSharedFrames();
+    bigPlayerRef.value?.beginMobileInteractiveOpen(frames);
+  }
+
+  const progress = clamp(-deltaY / getMobilePlayerTransitionDistance(), 0, 1);
+  bigPlayerRef.value?.updateMobileInteractiveProgress(progress);
+};
+
+const handleMiniTouchEnd = () => {
+  const start = miniTouchState;
+  if (start?.dragging) {
+    const forceOpen = start.velocityY < MINI_OPEN_FLING_VELOCITY;
+    bigPlayerRef.value?.finishMobileInteractiveOpen(forceOpen ? true : undefined);
+    releaseMiniClickSuppression();
+  }
+  resetMiniTouch();
+};
 
 // 一起听歌模态框
 const showListenTogetherModal = ref(false);
@@ -523,7 +640,6 @@ const songChange = debounce(500, (val) => {
 const broadcastPlayerState = () => {
   if (!isTauri()) return;
   const songData = music.getPlaySongData;
-  const site = siteStore();
   const playTime = music.getPlaySongTime;
   const payload = {
     title: songData?.name || "",
@@ -1209,19 +1325,57 @@ watch(
   z-index: 2;
   transition:
     left 0.3s ease,
-    width 0.3s ease;
+    width 0.3s ease,
+    opacity 0.18s ease,
+    translate 0.22s ease;
 
   // Acrylic background — override Naive UI card bg
-  background-color: var(--acrylic-bg, rgba(255, 255, 255, 0.45)) !important;
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  border-top: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.04));
+  background-color: var(
+    --mobile-mini-player-surface-bg,
+    var(--acrylic-bg, rgba(255, 255, 255, 0.45))
+  ) !important;
+  border-top: 1px solid
+    var(--mobile-mini-player-surface-border, var(--acrylic-border, rgba(0, 0, 0, 0.04)));
+  box-shadow: var(--mobile-mini-player-surface-shadow, none);
 
   // Mobile: player sits above tab bar, no sidebar
   @media (max-width: 768px) {
     bottom: 56px;
     left: 0;
     width: 100%;
+    --n-border-color: transparent !important;
+    --n-border-radius: 0 !important;
+    z-index: var(--mobile-mini-player-z-index, 2);
+    pointer-events: var(--mobile-mini-player-pointer-events, auto);
+    touch-action: pan-x;
+    isolation: isolate;
+    background-color: transparent !important;
+    border: none !important;
+    outline: none !important;
+    box-shadow: none;
+    overflow: visible !important;
+
+    &::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      z-index: -1;
+      background-color: var(
+        --mobile-mini-player-surface-bg,
+        var(--acrylic-bg, rgba(255, 255, 255, 0.45))
+      );
+      box-shadow: var(--mobile-mini-player-surface-shadow, 0 -10px 28px rgb(0 0 0 / 10%));
+      opacity: var(--mobile-mini-player-surface-opacity, 1);
+      transform: translate3d(0, var(--mobile-mini-player-mask-y, 0px), 0);
+      pointer-events: none;
+      will-change: opacity, transform;
+    }
+
+    :deep(.n-card__content) {
+      position: static;
+      border: none !important;
+      outline: none !important;
+    }
   }
 
   .slider {
@@ -1232,6 +1386,10 @@ watch(
     display: flex;
     align-items: center;
     justify-content: space-between;
+    z-index: 2;
+    opacity: var(--mobile-mini-player-chrome-opacity, var(--mobile-mini-player-ui-opacity, 1));
+    transform: translateY(var(--mobile-mini-player-ui-y, 0px));
+    will-change: opacity, transform;
 
     @media (max-width: 640px) {
       top: -8px;
@@ -1296,6 +1454,8 @@ watch(
     align-items: center;
     max-width: 1400px;
     margin: 0 auto;
+    position: relative;
+    z-index: 1;
 
     .data {
       display: flex;
@@ -1303,54 +1463,43 @@ watch(
       align-items: center;
       min-width: 0;
       overflow: hidden;
+      position: relative;
+      z-index: 4;
+      transform: translate3d(0, var(--mobile-mini-player-root-y, 0px), 0);
+      will-change: transform;
 
       .pic {
         width: 50px;
         height: 50px;
         min-width: 50px;
-        border-radius: 8px;
+        border-radius: 8px !important;
+        clip-path: inset(0 round 8px);
         overflow: hidden;
         margin-right: 12px;
         position: relative;
+        z-index: 4;
         box-shadow: 0 6px 8px -2px rgb(0 0 0 / 16%);
         cursor: pointer;
+        opacity: var(--mobile-mini-player-artwork-opacity, 1);
+        will-change: opacity;
 
         img {
           width: 100%;
           height: 100%;
-          transform: scale(1);
-          filter: blur(0) brightness(1);
-          transition: all 0.3s;
-        }
-
-        .open {
-          position: absolute;
-          top: calc(50% - 15px);
-          left: calc(50% - 15px);
-          width: 30px;
-          height: 30px;
-          color: #fff;
-          opacity: 0;
-          transform: scale(0.6);
-          transition: all 0.3s;
-        }
-
-        &:hover {
-          img {
-            transform: scale(1.1);
-            filter: blur(6px) brightness(0.8);
-          }
-
-          .open {
-            opacity: 1;
-            transform: scale(1);
-          }
+          border-radius: inherit;
+          object-fit: cover;
+          display: block;
         }
       }
 
       .name {
         min-width: 0;
         overflow: hidden;
+        position: relative;
+        z-index: 4;
+        opacity: var(--mobile-mini-player-text-opacity, var(--mobile-mini-player-ui-opacity, 1));
+        transform: translateY(var(--mobile-mini-player-text-y, 0px));
+        will-change: opacity, transform;
 
         .song {
           font-size: 16px;
@@ -1365,8 +1514,11 @@ watch(
 
         .artisrOrLrc {
           font-size: 12px;
-          margin-top: 2px;
+          margin-top: var(--mobile-mini-player-detail-margin, 2px);
+          max-height: var(--mobile-mini-player-detail-height, 1.2em);
+          opacity: var(--mobile-mini-player-detail-opacity, 1);
           overflow: hidden;
+          will-change: opacity, max-height, margin-top;
 
           .lrc {
             display: block;
@@ -1393,6 +1545,11 @@ watch(
       flex-direction: row;
       align-items: center;
       justify-content: center;
+      position: relative;
+      z-index: 3;
+      opacity: var(--mobile-mini-player-chrome-opacity, var(--mobile-mini-player-ui-opacity, 1));
+      transform: translateY(var(--mobile-mini-player-ui-y, 0px));
+      will-change: opacity, transform;
 
       .next,
       .prev,
@@ -1456,6 +1613,10 @@ watch(
       align-items: center;
       justify-content: flex-end;
       color: var(--main-color);
+      z-index: 3;
+      opacity: var(--mobile-mini-player-chrome-opacity, var(--mobile-mini-player-ui-opacity, 1));
+      transform: translateY(var(--mobile-mini-player-ui-y, 0px));
+      will-change: opacity, transform;
 
       @media (max-width: 640px) {
         .volume,

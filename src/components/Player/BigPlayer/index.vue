@@ -6,76 +6,134 @@
         'bplayer',
         `bplayer-${setting.backgroundImageShow}`,
         isMobile ? 'mobile-player' : 'desktop-player',
-        music.showBigPlayer ? 'opened' : '',
+        isMobile && mobileOverlayVisible ? 'mobile-visible' : '',
+        isMobile && !mobileOverlayVisible ? 'mobile-closed' : '',
+        mobilePlayerOpened ? 'opened' : '',
+        isMobile && mobileTransitionActive && !music.showBigPlayer ? 'mobile-transitioning' : '',
+        isMobile && mobileExiting ? 'mobile-exiting' : '',
         isMobile && mobileLayer === 2 ? 'layer2-active' : '',
+        isMobile && mobileQueueOpen ? 'queue-active' : '',
       ]"
       :style="{
         '--cover-bg': songPicGradient,
         '--main-cover-color': `rgb(${setting.immersivePlayer ? songPicColor : '255,255,255'})`,
       }"
     >
-      <!-- 共用部分: 背景和顶部菜单 -->
-      <BigPlayerBackground
-        :songPicGradient="songPicGradient"
-        :backgroundImageShow="setting.backgroundImageShow"
-        :hasPlayData="!!music.getPlaySongData"
-        :isPlaying="music.getPlayState"
-        :actualPlaying="actualPlayingProp"
-        :fps="setting.fps"
-        :blurAmount="setting.blurAmount"
-        :contrastAmount="setting.contrastAmount"
-        :renderScale="setting.renderScale"
-        :coverImageUrl="coverImageUrl"
-        :albumImageUrl="setting.albumImageUrl"
-        :flowSpeed="setting.flowSpeed"
-        :lowFreqVolume="computedLowFreqVolume"
-        :staticMode="!music.showBigPlayer"
-      />
-
-      <BigPlayerTopBar
-        :showLyricSetting="setting.showLyricSetting"
-        :screenfullIcon="screenfullIcon"
-        @openSettings="LyricSettingRef.openLyricSetting()"
-        @toggleFullscreen="screenfullChange"
-        @close="closeBigPlayer"
-      />
-
       <!-- 移动端布局 -->
-      <MobilePlayerLayout
-        v-if="isMobile"
-        ref="mobileLayoutRef"
-        :songName="songName"
-        :artistList="artistList"
-        :isNameOverflow="isNameOverflow"
-        :hasLyrics="hasLyrics"
-        :remainingTime="remainingTime"
-        :coverImageUrl500="coverImageUrl500"
-        :currentCoverStyle="currentCoverStyle"
-        :coverFrameStyle="coverFrameStyle"
-        :handleProgressSeek="handleProgressSeek"
-        @close="closeBigPlayer"
-        @switchLayer="switchMobileLayer(mobileLayer === 1 ? 2 : 1)"
-        @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
-        @lrcAllLeave="lrcAllLeave"
-        @lrcTextClick="lrcTextClick"
-        @toComment="toComment"
-      />
+      <template v-if="isMobile">
+        <Motion as-child :style="mobileShellMotionStyle">
+          <div
+            ref="mobileShellRef"
+            :class="[
+              'mobile-player-shell',
+              mobileInteractive ? 'interactive-transition' : '',
+              `mobile-phase-${mobileTransitionPhase}`,
+            ]"
+          >
+            <Motion
+              class="mobile-background-visual"
+              :transition="backgroundLayoutTransition"
+              :style="mobileBackgroundVisualStyle"
+            >
+              <BigPlayerBackground
+                :songPicGradient="songPicGradient"
+                :backgroundImageShow="setting.backgroundImageShow"
+                :hasPlayData="!!music.getPlaySongData"
+                :isPlaying="music.getPlayState"
+                :actualPlaying="actualPlayingProp"
+                :fps="setting.fps"
+                :blurAmount="setting.blurAmount"
+                :contrastAmount="setting.contrastAmount"
+                :renderScale="setting.renderScale"
+                :coverImageUrl="coverImageUrl"
+                :albumImageUrl="setting.albumImageUrl"
+                :flowSpeed="setting.flowSpeed"
+                :lowFreqVolume="computedLowFreqVolume"
+                :staticMode="false"
+              />
+            </Motion>
+
+            <MobilePlayerLayout
+              ref="mobileLayoutRef"
+              :songName="songName"
+              :artistList="artistList"
+              :isNameOverflow="isNameOverflow"
+              :hasLyrics="hasLyrics"
+              :remainingTime="remainingTime"
+              :coverImageUrl500="coverImageUrl500"
+              :handleProgressSeek="handleProgressSeek"
+              :queueOpen="mobileQueueOpen"
+              :mobileLayer="mobileLayer"
+              :layoutTransition="sharedLayoutTransition"
+              :contentShellStyle="mobileContentShellStyle"
+              :fullUiMotionStyle="mobileFullUiMotionStyle"
+              :controlsMotionStyle="mobileControlsMotionStyle"
+              :albumLayerStyle="mobileArtworkMotionStyle"
+              :albumLayerVisible="mobileAlbumLayerVisible"
+              @close="handleMobileClose"
+              @openQueue="openMobileQueue"
+              @closeQueue="closeMobileQueue"
+              @closeDragStart="beginMobileInteractiveClose"
+              @closeDragMove="updateMobileInteractiveClose"
+              @closeDragEnd="finishMobileInteractiveClose"
+              @switchLayer="switchMobileLayer(mobileLayer === 1 ? 2 : 1)"
+              @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
+              @lrcAllLeave="lrcAllLeave"
+              @lrcTextClick="lrcTextClick"
+              @toComment="toComment"
+            />
+
+            <Spectrum
+              v-if="setting.musicFrequency && !mobileQueueOpen && mobileContentReady"
+              :height="60"
+              :show="music.showBigPlayer"
+            />
+          </div>
+        </Motion>
+      </template>
 
       <!-- 桌面端布局 -->
-      <DesktopPlayerLayout
-        v-else
-        ref="desktopLayoutRef"
-        :lrcMouseStatus="lrcMouseStatus"
-        :menuShow="menuShow"
-        :hasLyrics="hasLyrics"
-        :handleProgressSeek="handleProgressSeek"
-        @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
-        @lrcAllLeave="lrcAllLeave"
-        @lrcTextClick="lrcTextClick"
-      />
+      <template v-else>
+        <BigPlayerBackground
+          :songPicGradient="songPicGradient"
+          :backgroundImageShow="setting.backgroundImageShow"
+          :hasPlayData="!!music.getPlaySongData"
+          :isPlaying="music.getPlayState"
+          :actualPlaying="actualPlayingProp"
+          :fps="setting.fps"
+          :blurAmount="setting.blurAmount"
+          :contrastAmount="setting.contrastAmount"
+          :renderScale="setting.renderScale"
+          :coverImageUrl="coverImageUrl"
+          :albumImageUrl="setting.albumImageUrl"
+          :flowSpeed="setting.flowSpeed"
+          :lowFreqVolume="computedLowFreqVolume"
+          :staticMode="!music.showBigPlayer"
+        />
+
+        <BigPlayerTopBar
+          :showLyricSetting="setting.showLyricSetting"
+          :screenfullIcon="screenfullIcon"
+          @openSettings="LyricSettingRef.openLyricSetting()"
+          @toggleFullscreen="screenfullChange"
+          @close="closeBigPlayer"
+        />
+
+        <DesktopPlayerLayout
+          ref="desktopLayoutRef"
+          :lrcMouseStatus="lrcMouseStatus"
+          :menuShow="menuShow"
+          :hasLyrics="hasLyrics"
+          :handleProgressSeek="handleProgressSeek"
+          @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
+          @lrcAllLeave="lrcAllLeave"
+          @lrcTextClick="lrcTextClick"
+        />
+
+        <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
+      </template>
 
       <!-- 共用组件 -->
-      <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
       <LyricSetting ref="LyricSettingRef" />
     </div>
   </Teleport>
@@ -88,6 +146,7 @@ import LyricSetting from "@/components/DataModal/LyricSetting.vue";
 import { storeToRefs } from "pinia";
 import gsap from "gsap";
 import { onMounted, nextTick, watch, ref, computed, onBeforeUnmount } from "vue";
+import { Motion, animate, useMotionValue, type MotionValue } from "motion-v";
 import "../icons/icon-animations.css";
 
 // 导入 composables
@@ -134,12 +193,16 @@ const {
 
 // --- Template refs ---
 const bigPlayerRef = ref<HTMLElement | null>(null);
+const mobileShellRef = ref<HTMLElement | null>(null);
 const mobileLayoutRef = ref<InstanceType<typeof MobilePlayerLayout> | null>(null);
 const desktopLayoutRef = ref<InstanceType<typeof DesktopPlayerLayout> | null>(null);
 
 // Proxy refs for mobile cover frame composable (read from child component)
 const phonyBigCoverRef = computed(() => mobileLayoutRef.value?.phonyBigCoverRef ?? null);
 const phonySmallCoverRef = computed(() => mobileLayoutRef.value?.phonySmallCoverRef ?? null);
+const mobileCoverRootRef = computed(() =>
+  isMobile.value ? mobileShellRef.value : bigPlayerRef.value,
+);
 
 // 全屏切换
 const { screenfullIcon, screenfullChange, cleanupFullscreen } = useFullscreen(bigPlayerRef, () => {
@@ -149,14 +212,136 @@ const { screenfullIcon, screenfullChange, cleanupFullscreen } = useFullscreen(bi
 
 // 移动端层级 & 封面帧
 const mobileLayer = ref(1);
+const mobileQueueOpen = ref(false);
+const mobileExiting = ref(false);
+const mobileTransitionActive = ref(false);
+const mobileAlbumLayerReady = ref(false);
+const mobileOverlayVisible = computed(() =>
+  isMobile.value
+    ? music.showBigPlayer || mobileExiting.value || mobileTransitionActive.value
+    : music.showBigPlayer,
+);
+const mobilePlayerOpened = computed(() =>
+  isMobile.value ? music.showBigPlayer || mobileExiting.value : music.showBigPlayer,
+);
+const sharedLayoutTransition = {
+  type: "spring",
+  stiffness: 560,
+  damping: 23,
+  mass: 0.78,
+  restDelta: 0.001,
+  restSpeed: 0.02,
+};
+const drawerProgressTransition = {
+  type: "tween",
+  duration: 0.34,
+  ease: [0.22, 1, 0.36, 1],
+};
+const backgroundLayoutTransition = {
+  type: "tween",
+  duration: 0.24,
+  ease: [0.22, 1, 0.36, 1],
+};
+const albumLayoutTransition = {
+  type: "spring",
+  stiffness: 380,
+  damping: 42,
+  mass: 0.95,
+  restDelta: 0.001,
+  restSpeed: 0.02,
+};
+let mobileExitFallbackTimer: number | null = null;
+let mobileSkipNextStoreCloseAnimation = false;
+type SharedFrame = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  borderRadius: number;
+};
+type MiniSharedFrames = {
+  artwork?: DOMRect;
+  background?: DOMRect;
+};
+type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
-const {
-  currentCoverStyle,
-  coverFrameStyle,
-  updateCoverStyle,
-  setupResizeObserver,
-  cleanupResizeObserver,
-} = useMobileCoverFrame(bigPlayerRef, phonyBigCoverRef, phonySmallCoverRef, mobileLayer);
+const { calcCoverLayout } = useMobileCoverFrame(
+  mobileCoverRootRef,
+  phonyBigCoverRef,
+  phonySmallCoverRef,
+);
+
+const mobileInteractive = ref(false);
+const playerProgress = useMotionValue(0);
+const fullUiOpacity = useMotionValue(0);
+const fullUiY = useMotionValue(20);
+const controlsOpacity = useMotionValue(0);
+const controlsY = useMotionValue(18);
+const backgroundVisualOpacity = useMotionValue(0);
+const backgroundGrayOpacity = useMotionValue(0);
+const backgroundLeft = useMotionValue(0);
+const backgroundTop = useMotionValue(0);
+const backgroundWidth = useMotionValue(0);
+const backgroundHeight = useMotionValue(0);
+const backgroundRadius = useMotionValue(0);
+const artworkLeft = useMotionValue(0);
+const artworkTop = useMotionValue(0);
+const artworkWidth = useMotionValue(0);
+const artworkHeight = useMotionValue(0);
+const artworkRadius = useMotionValue(12);
+const artworkOpacity = useMotionValue(1);
+let progressAnimation: ReturnType<typeof animate> | null = null;
+let artworkFrameAnimations: ReturnType<typeof animate>[] = [];
+let interactiveFrames: {
+  miniArtwork: SharedFrame;
+  fullArtwork: SharedFrame;
+  miniBg: SharedFrame;
+  fullBg: SharedFrame;
+} | null = null;
+let pendingInteractiveProgress = 0;
+let progressUnsubscribe: (() => void) | null = null;
+const mobileContentReady = ref(false);
+const mobileContentVisible = ref(false);
+const mobileTransitionPhase = ref<"mini" | "shared-expand" | "full-content">("mini");
+const mobileTransitionDirection = ref<"opening" | "closing" | null>(null);
+
+const mobileShellMotionStyle = computed<MotionStyleRecord>(() => ({}));
+const mobileArtworkMotionStyle = computed<MotionStyleRecord>(() => ({
+  left: artworkLeft,
+  top: artworkTop,
+  width: artworkWidth,
+  height: artworkHeight,
+  borderRadius: artworkRadius,
+  opacity: artworkOpacity,
+}));
+const mobileAlbumLayerVisible = computed(
+  () => isMobile.value && mobileOverlayVisible.value && mobileAlbumLayerReady.value,
+);
+const mobileBackgroundVisualStyle = computed<MotionStyleRecord>(() => ({
+  opacity: backgroundVisualOpacity,
+  "--mobile-player-bg-reveal-y": backgroundTop,
+  "--mobile-player-gray-opacity": backgroundGrayOpacity,
+  ...(mobileInteractive.value
+    ? {
+        y: backgroundTop,
+        borderTopLeftRadius: backgroundRadius,
+        borderTopRightRadius: backgroundRadius,
+        borderBottomLeftRadius: 0,
+        borderBottomRightRadius: 0,
+      }
+    : {}),
+}));
+const mobileContentShellStyle = computed<MotionStyleRecord>(() => ({
+  visibility: mobileContentVisible.value ? "visible" : "hidden",
+}));
+const mobileFullUiMotionStyle = computed<MotionStyleRecord>(() => ({
+  opacity: fullUiOpacity,
+  y: fullUiY,
+}));
+const mobileControlsMotionStyle = computed<MotionStyleRecord>(() => ({
+  opacity: controlsOpacity,
+  y: controlsY,
+}));
 
 // --- 仅本组件需要的局部状态 ---
 const forcePlaying = ref(true);
@@ -164,10 +349,757 @@ const actualPlayingProp = computed(() => forcePlaying.value || music.getPlayStat
 const menuShow = ref(false);
 const LyricSettingRef = ref(null);
 
+const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+const mix = (from: number, to: number, progress: number) => from + (to - from) * progress;
+const easeOutCubic = (value: number) => 1 - Math.pow(1 - clamp(value), 3);
+const rangeProgress = (value: number, from: number, to: number) =>
+  clamp((value - from) / (to - from));
+
+const MOBILE_MINI_BAR_HANDOFF_END = 0.1;
+const MOBILE_MINI_CHROME_FADE_END = 0.1;
+const MOBILE_MINI_UI_FADE_END = 0.32;
+const MOBILE_MINI_SURFACE_FADE_START = 0.0;
+const MOBILE_MINI_SURFACE_FADE_END = MOBILE_MINI_BAR_HANDOFF_END;
+const MOBILE_BACKGROUND_EXPAND_END = 0.94;
+const MOBILE_ARTWORK_MID_END = 0.64;
+const MOBILE_ARTWORK_EXPAND_END = MOBILE_BACKGROUND_EXPAND_END;
+const MOBILE_BACKGROUND_GRAY_END = 0.72;
+const MOBILE_CONTENT_REVEAL_START = 0.76;
+const MOBILE_CONTENT_REVEAL_END = 0.98;
+const MOBILE_CONTROLS_REVEAL_START = 0.88;
+const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
+const MOBILE_DRAG_DAMPING_POWER = 1.14;
+
+const getTransitionDistance = () => Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
+const getMiniBarMaxLift = () => Math.min(44, Math.max(28, getTransitionDistance() * 0.11));
+const getMiniBarY = (progress: number) =>
+  -Math.min(getMiniBarMaxLift(), Math.max(0, progress) * getTransitionDistance());
+const getCurrentMiniBarY = () => {
+  const value = Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue("--mobile-mini-player-root-y"),
+  );
+  return Number.isFinite(value) ? value : 0;
+};
+const untranslateMiniRect = (rect: DOMRect | undefined | null) => {
+  if (!rect) return null;
+  return new DOMRect(rect.x, rect.y - getCurrentMiniBarY(), rect.width, rect.height);
+};
+
+const readRadius = (el: Element | null, fallback: number) => {
+  if (!(el instanceof HTMLElement)) return fallback;
+  const value = Number.parseFloat(getComputedStyle(el).borderTopLeftRadius);
+  return Number.isFinite(value) ? value : fallback;
+};
+
+const frameFromRect = (rect: DOMRect, rootRect: DOMRect, borderRadius: number): SharedFrame => ({
+  left: rect.left - rootRect.left,
+  top: rect.top - rootRect.top,
+  width: rect.width,
+  height: rect.height,
+  borderRadius,
+});
+
+const frameFromCoverLayout = (borderRadius: number): SharedFrame | null => {
+  const layout = calcCoverLayout(mobileLayer.value === 1);
+  if (!layout) return null;
+  return {
+    left: layout.left,
+    top: layout.top,
+    width: layout.width,
+    height: layout.height,
+    borderRadius: layout.borderRadius ?? borderRadius,
+  };
+};
+
+const stopArtworkFrameAnimations = () => {
+  artworkFrameAnimations.forEach((animation) => animation.stop());
+  artworkFrameAnimations = [];
+};
+
+const applyArtworkFrame = (frame: SharedFrame) => {
+  artworkLeft.set(frame.left);
+  artworkTop.set(frame.top);
+  artworkWidth.set(frame.width);
+  artworkHeight.set(frame.height);
+  artworkRadius.set(frame.borderRadius);
+  mobileAlbumLayerReady.value = true;
+};
+
+const setArtworkFrame = (frame: SharedFrame) => {
+  stopArtworkFrameAnimations();
+  applyArtworkFrame(frame);
+};
+
+const readCurrentArtworkFrame = (): SharedFrame => ({
+  left: artworkLeft.get(),
+  top: artworkTop.get(),
+  width: artworkWidth.get(),
+  height: artworkHeight.get(),
+  borderRadius: artworkRadius.get(),
+});
+
+const animateArtworkFrameTo = (frame: SharedFrame) => {
+  stopArtworkFrameAnimations();
+  mobileAlbumLayerReady.value = true;
+  artworkFrameAnimations = [
+    animate(artworkLeft, frame.left, albumLayoutTransition),
+    animate(artworkTop, frame.top, albumLayoutTransition),
+    animate(artworkWidth, frame.width, albumLayoutTransition),
+    animate(artworkHeight, frame.height, albumLayoutTransition),
+    animate(artworkRadius, frame.borderRadius, albumLayoutTransition),
+  ];
+};
+
+const syncArtworkToCurrentLayer = () => {
+  const frame = frameFromCoverLayout(mobileLayer.value === 1 ? 12 : 8);
+  if (!frame) return false;
+  setArtworkFrame(frame);
+  return true;
+};
+
+const scheduleArtworkLayerSync = () => {
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      if (mobileInteractive.value) return;
+      if (music.showBigPlayer) syncArtworkToCurrentLayer();
+    });
+  });
+};
+
+const readMiniSharedFrames = (frames?: MiniSharedFrames) => {
+  const artworkEl = document.querySelector("[data-mobile-player-artwork]");
+  const backgroundEl = document.querySelector("[data-mobile-player-bg]");
+  return {
+    artworkRect: frames?.artwork ?? untranslateMiniRect(artworkEl?.getBoundingClientRect()),
+    backgroundRect: frames?.background ?? backgroundEl?.getBoundingClientRect() ?? null,
+    artworkRadius: readRadius(artworkEl, 8),
+    backgroundRadius: readRadius(backgroundEl, 16),
+  };
+};
+
+const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
+  const mini = readMiniSharedFrames(frames);
+  const shellRect = mobileShellRef.value?.getBoundingClientRect();
+  const rootLeft = shellRect?.left ?? 0;
+  const rootTop = shellRect?.top ?? 0;
+  if (mini.backgroundRect) {
+    const backgroundTopValue = mini.backgroundRect.top - rootTop;
+    backgroundLeft.set(0);
+    backgroundTop.set(backgroundTopValue);
+    backgroundWidth.set(shellRect?.width ?? mini.backgroundRect.width);
+    backgroundHeight.set(
+      Math.max(0, (shellRect?.height ?? window.innerHeight) - backgroundTopValue),
+    );
+    backgroundRadius.set(0);
+  }
+  if (mini.artworkRect) {
+    setArtworkFrame({
+      left: mini.artworkRect.left - rootLeft,
+      top: mini.artworkRect.top - rootTop,
+      width: mini.artworkRect.width,
+      height: mini.artworkRect.height,
+      borderRadius: mini.artworkRadius,
+    });
+  }
+};
+
+const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
+  const shell = mobileShellRef.value;
+  if (!shell) return false;
+  const shellRect = shell.getBoundingClientRect();
+  const mini = readMiniSharedFrames(frames);
+  const miniArtwork = mini.artworkRect
+    ? frameFromRect(mini.artworkRect, shellRect, mini.artworkRadius)
+    : null;
+  const miniBg = mini.backgroundRect
+    ? frameFromRect(mini.backgroundRect, shellRect, mini.backgroundRadius)
+    : null;
+  const fullArtwork = frameFromCoverLayout(12);
+  if (!miniArtwork || !miniBg || !fullArtwork) return false;
+
+  interactiveFrames = {
+    miniArtwork,
+    fullArtwork,
+    miniBg,
+    fullBg: {
+      left: 0,
+      top: 0,
+      width: shellRect.width,
+      height: shellRect.height,
+      borderRadius: 0,
+    },
+  };
+  return true;
+};
+
+const applyFrame = (
+  from: SharedFrame,
+  to: SharedFrame,
+  progress: number,
+  setters: {
+    left: ReturnType<typeof useMotionValue>;
+    top: ReturnType<typeof useMotionValue>;
+    width: ReturnType<typeof useMotionValue>;
+    height: ReturnType<typeof useMotionValue>;
+    radius: ReturnType<typeof useMotionValue>;
+  },
+) => {
+  setters.left.set(mix(from.left, to.left, progress));
+  setters.top.set(mix(from.top, to.top, progress));
+  setters.width.set(mix(from.width, to.width, progress));
+  setters.height.set(mix(from.height, to.height, progress));
+  setters.radius.set(mix(from.borderRadius, to.borderRadius, progress));
+};
+
+const interpolateFrame = (from: SharedFrame, to: SharedFrame, progress: number): SharedFrame => ({
+  left: mix(from.left, to.left, progress),
+  top: mix(from.top, to.top, progress),
+  width: mix(from.width, to.width, progress),
+  height: mix(from.height, to.height, progress),
+  borderRadius: mix(from.borderRadius, to.borderRadius, progress),
+});
+
+const getLiftedMiniFrame = (
+  frame: SharedFrame,
+  progress = MOBILE_MINI_BAR_HANDOFF_END,
+): SharedFrame => ({
+  ...frame,
+  top: frame.top + getMiniBarY(progress),
+});
+
+const getMiniSheetBackgroundFrame = (
+  frames: NonNullable<typeof interactiveFrames>,
+  progress = MOBILE_MINI_BAR_HANDOFF_END,
+): SharedFrame => {
+  const top = frames.miniBg.top + getMiniBarY(progress);
+  return {
+    left: 0,
+    top,
+    width: frames.fullBg.width,
+    height: Math.max(0, frames.fullBg.height - top),
+    borderRadius: frames.miniBg.borderRadius || 12,
+  };
+};
+
+const getArtworkMidFrame = (frames: NonNullable<typeof interactiveFrames>): SharedFrame => {
+  const from = getLiftedMiniFrame(frames.miniArtwork);
+  const compactTarget =
+    frames.fullArtwork.width <= Math.max(from.width * 1.6, frames.fullBg.width * 0.28);
+  if (compactTarget) {
+    const size = mix(from.width, frames.fullArtwork.width, 0.46);
+    return {
+      left: mix(from.left, frames.fullArtwork.left, 0.44),
+      top: mix(from.top, frames.fullArtwork.top, 0.48),
+      width: size,
+      height: size,
+      borderRadius: mix(from.borderRadius, frames.fullArtwork.borderRadius, 0.46),
+    };
+  }
+
+  const size = mix(from.width, frames.fullArtwork.width, 0.38);
+  const centeredLeft = (frames.fullBg.width - size) / 2;
+  return {
+    left: mix(from.left, centeredLeft, 0.56),
+    top: mix(from.top, frames.fullArtwork.top + Math.min(42, frames.fullBg.height * 0.05), 0.46),
+    width: size,
+    height: size,
+    borderRadius: mix(from.borderRadius, frames.fullArtwork.borderRadius, 0.34),
+  };
+};
+
+const keepArtworkInsideMovingBackground = (
+  frames: NonNullable<typeof interactiveFrames>,
+  frame: SharedFrame,
+): SharedFrame => {
+  const miniArtworkInsetTop = Math.max(0, frames.miniArtwork.top - frames.miniBg.top);
+  const minTop = backgroundTop.get() + miniArtworkInsetTop;
+  if (frame.top >= minTop) return frame;
+  return {
+    ...frame,
+    top: minTop,
+  };
+};
+
+const applyBackgroundFrame = (frames: NonNullable<typeof interactiveFrames>, progress: number) => {
+  const sheetHandoffBg = getMiniSheetBackgroundFrame(frames);
+  const setters = {
+    left: backgroundLeft,
+    top: backgroundTop,
+    width: backgroundWidth,
+    height: backgroundHeight,
+    radius: backgroundRadius,
+  };
+
+  if (progress <= MOBILE_MINI_BAR_HANDOFF_END) {
+    applyFrame(sheetHandoffBg, getMiniSheetBackgroundFrame(frames, progress), 1, setters);
+    return;
+  }
+
+  applyFrame(
+    sheetHandoffBg,
+    frames.fullBg,
+    rangeProgress(progress, MOBILE_MINI_BAR_HANDOFF_END, MOBILE_BACKGROUND_EXPAND_END),
+    setters,
+  );
+};
+
+const applyInteractiveFrame = (progress: number) => {
+  if (!interactiveFrames) return;
+  applyBackgroundFrame(interactiveFrames, progress);
+  if (progress <= MOBILE_MINI_BAR_HANDOFF_END) {
+    applyArtworkFrame(
+      keepArtworkInsideMovingBackground(
+        interactiveFrames,
+        getLiftedMiniFrame(interactiveFrames.miniArtwork, progress),
+      ),
+    );
+    mobileAlbumLayerReady.value = true;
+    return;
+  }
+
+  const liftedMiniArtwork = getLiftedMiniFrame(interactiveFrames.miniArtwork);
+  const midArtwork = getArtworkMidFrame(interactiveFrames);
+
+  if (progress <= MOBILE_ARTWORK_MID_END) {
+    const artworkFrame = interpolateFrame(
+      liftedMiniArtwork,
+      midArtwork,
+      rangeProgress(progress, MOBILE_MINI_BAR_HANDOFF_END, MOBILE_ARTWORK_MID_END),
+    );
+    applyArtworkFrame(keepArtworkInsideMovingBackground(interactiveFrames, artworkFrame));
+    mobileAlbumLayerReady.value = true;
+    return;
+  }
+
+  const artworkFrame = interpolateFrame(
+    midArtwork,
+    interactiveFrames.fullArtwork,
+    rangeProgress(progress, MOBILE_ARTWORK_MID_END, MOBILE_ARTWORK_EXPAND_END),
+  );
+  applyArtworkFrame(keepArtworkInsideMovingBackground(interactiveFrames, artworkFrame));
+  mobileAlbumLayerReady.value = true;
+};
+
+const clearMiniUiVars = () => {
+  document.documentElement.style.removeProperty("--mobile-mini-player-root-y");
+  document.documentElement.style.removeProperty("--mobile-mini-player-z-index");
+  document.documentElement.style.removeProperty("--mobile-mini-player-pointer-events");
+  document.documentElement.style.removeProperty("--mobile-mini-player-surface-bg");
+  document.documentElement.style.removeProperty("--mobile-mini-player-surface-opacity");
+  document.documentElement.style.removeProperty("--mobile-mini-player-mask-y");
+  document.documentElement.style.removeProperty("--mobile-mini-player-surface-border");
+  document.documentElement.style.removeProperty("--mobile-mini-player-surface-shadow");
+  document.documentElement.style.removeProperty("--mobile-mini-player-ui-opacity");
+  document.documentElement.style.removeProperty("--mobile-mini-player-chrome-opacity");
+  document.documentElement.style.removeProperty("--mobile-mini-player-text-opacity");
+  document.documentElement.style.removeProperty("--mobile-mini-player-detail-opacity");
+  document.documentElement.style.removeProperty("--mobile-mini-player-detail-height");
+  document.documentElement.style.removeProperty("--mobile-mini-player-detail-margin");
+  document.documentElement.style.removeProperty("--mobile-mini-player-ui-y");
+  document.documentElement.style.removeProperty("--mobile-mini-player-text-y");
+  document.documentElement.style.removeProperty("--mobile-mini-player-artwork-opacity");
+  document.documentElement.style.removeProperty("--mobile-mini-player-bottom-y");
+  document.documentElement.style.removeProperty("--mobile-mini-player-bottom-z-index");
+  document.documentElement.style.removeProperty("--mobile-mini-player-bottom-pointer-events");
+};
+
+const applyMiniUiVars = (progress: number) => {
+  const miniLift = rangeProgress(progress, 0, MOBILE_MINI_BAR_HANDOFF_END);
+  const miniTransitioning =
+    progress > 0.001 || mobileTransitionActive.value || music.showBigPlayer;
+  const miniChromeExit = miniTransitioning ? 1 : 0;
+  const miniDetailExit = miniTransitioning ? 1 : 0;
+  const miniTextExit = miniTransitioning ? 1 : 0;
+  const bottomExit = rangeProgress(progress, 0, MOBILE_MINI_BAR_HANDOFF_END);
+  const miniSurfaceExit = rangeProgress(
+    progress,
+    MOBILE_MINI_SURFACE_FADE_START,
+    MOBILE_MINI_SURFACE_FADE_END,
+  );
+  const miniArtworkOpacity = miniTransitioning ? 0 : 1;
+  const miniSurfaceOpacity = miniTransitioning ? 1 - easeOutCubic(miniSurfaceExit) : 1;
+  const miniMaskY = miniTransitioning ? getMiniBarY(progress) : 0;
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-root-y",
+    `${getMiniBarY(progress)}px`,
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-z-index",
+    progress < MOBILE_MINI_UI_FADE_END ? "2102" : "2",
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-pointer-events",
+    miniTransitioning ? "none" : "auto",
+  );
+  if (miniTransitioning) {
+    document.documentElement.style.setProperty("--mobile-mini-player-surface-border", "transparent");
+    document.documentElement.style.setProperty("--mobile-mini-player-surface-shadow", "none");
+  } else {
+    document.documentElement.style.removeProperty("--mobile-mini-player-surface-bg");
+    document.documentElement.style.removeProperty("--mobile-mini-player-surface-border");
+    document.documentElement.style.removeProperty("--mobile-mini-player-surface-shadow");
+  }
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-surface-opacity",
+    String(miniSurfaceOpacity),
+  );
+  document.documentElement.style.setProperty("--mobile-mini-player-mask-y", `${miniMaskY}px`);
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-ui-opacity",
+    String(1 - miniChromeExit),
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-chrome-opacity",
+    String(1 - miniChromeExit),
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-text-opacity",
+    String(1 - miniTextExit),
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-detail-opacity",
+    String(1 - miniDetailExit),
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-detail-height",
+    `${mix(1.2, 0, miniDetailExit)}em`,
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-detail-margin",
+    `${mix(2, 0, miniDetailExit)}px`,
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-ui-y",
+    `${mix(0, -4, miniLift)}px`,
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-text-y",
+    `${mix(0, -8, miniLift)}px`,
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-artwork-opacity",
+    String(miniArtworkOpacity),
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-bottom-y",
+    `${mix(0, 110, bottomExit)}%`,
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-bottom-z-index",
+    progress < MOBILE_MINI_BAR_HANDOFF_END ? "2101" : "1000",
+  );
+  document.documentElement.style.setProperty(
+    "--mobile-mini-player-bottom-pointer-events",
+    miniTransitioning ? "none" : "auto",
+  );
+};
+
+const applyProgressState = (value: number) => {
+  if (!isMobile.value) {
+    clearMiniUiVars();
+    backgroundVisualOpacity.set(0);
+    backgroundGrayOpacity.set(0);
+    artworkOpacity.set(1);
+    mobileAlbumLayerReady.value = false;
+    return;
+  }
+  const progress = clamp(value);
+  const fullUiEnter = rangeProgress(
+    progress,
+    MOBILE_CONTENT_REVEAL_START,
+    MOBILE_CONTENT_REVEAL_END,
+  );
+  const controlsEnter = rangeProgress(progress, MOBILE_CONTROLS_REVEAL_START, 1);
+  const backgroundVisible = progress > 0.001 || music.showBigPlayer || mobileTransitionActive.value;
+  const backgroundGrayEnter = rangeProgress(progress, 0, MOBILE_BACKGROUND_GRAY_END);
+  const albumLayerOpacity = backgroundVisible ? 1 : 0;
+  const contentVisible = progress >= MOBILE_CONTENT_REVEAL_START;
+  const contentReady = progress >= MOBILE_CONTENT_INTERACTIVE_START;
+  const nextPhase =
+    progress <= 0.001
+      ? "mini"
+      : progress < MOBILE_CONTENT_REVEAL_START
+        ? "shared-expand"
+        : "full-content";
+  if (mobileContentVisible.value !== contentVisible) {
+    mobileContentVisible.value = contentVisible;
+  }
+  if (mobileContentReady.value !== contentReady) mobileContentReady.value = contentReady;
+  if (mobileTransitionPhase.value !== nextPhase) {
+    mobileTransitionPhase.value = nextPhase;
+  }
+  fullUiOpacity.set(fullUiEnter);
+  fullUiY.set(mix(14, 0, easeOutCubic(fullUiEnter)));
+  controlsOpacity.set(controlsEnter);
+  controlsY.set(mix(14, 0, easeOutCubic(controlsEnter)));
+  backgroundVisualOpacity.set(backgroundVisible ? 1 : 0);
+  backgroundGrayOpacity.set(
+    backgroundVisible ? mix(0, 0.32, easeOutCubic(backgroundGrayEnter)) : 0,
+  );
+  artworkOpacity.set(albumLayerOpacity);
+  applyMiniUiVars(progress);
+
+  if (!mobileInteractive.value || !interactiveFrames) return;
+  applyInteractiveFrame(progress);
+};
+
+const dampInteractiveDragProgress = (progress: number) => {
+  const nextProgress = clamp(progress);
+  if (mobileTransitionDirection.value === "closing") {
+    return 1 - Math.pow(1 - nextProgress, MOBILE_DRAG_DAMPING_POWER);
+  }
+  return Math.pow(nextProgress, MOBILE_DRAG_DAMPING_POWER);
+};
+
+const animateProgressTo = (target: number, onComplete?: () => void) => {
+  progressAnimation?.stop();
+  progressAnimation = animate(playerProgress, clamp(target), {
+    ...drawerProgressTransition,
+    onComplete: () => {
+      progressAnimation = null;
+      onComplete?.();
+    },
+  });
+};
+
 const switchMobileLayer = (targetLayer: number) => {
+  if (targetLayer !== 1 && targetLayer !== 2) return;
   if (targetLayer === mobileLayer.value) return;
+  if (mobileInteractive.value) return;
   mobileLayer.value = targetLayer;
-  updateCoverStyle();
+  nextTick(() => {
+    requestAnimationFrame(() => {
+      const frame = frameFromCoverLayout(targetLayer === 1 ? 12 : 8);
+      if (frame) animateArtworkFrameTo(frame);
+    });
+  });
+};
+
+const cleanupClosedMobileTransition = () => {
+  stopArtworkFrameAnimations();
+  mobileInteractive.value = false;
+  mobileTransitionActive.value = false;
+  mobileTransitionDirection.value = null;
+  mobileExiting.value = false;
+  interactiveFrames = null;
+  mobileAlbumLayerReady.value = false;
+  applyProgressState(0);
+};
+
+const completeClosedMobileTransition = (updateStore: boolean) => {
+  playerProgress.set(0);
+  restoreMiniSharedAlbum();
+  if (updateStore) {
+    mobileSkipNextStoreCloseAnimation = true;
+    music.setBigPlayerState(false);
+  }
+  cleanupClosedMobileTransition();
+};
+
+const seedInteractiveFromFull = () => {
+  const captured = captureInteractiveFrames();
+  if (!captured) return false;
+  if (mobileAlbumLayerReady.value && interactiveFrames) {
+    interactiveFrames.fullArtwork = readCurrentArtworkFrame();
+  }
+  applyInteractiveFrame(1);
+  return true;
+};
+
+const clearMobileExitFallback = () => {
+  if (mobileExitFallbackTimer === null) return;
+  window.clearTimeout(mobileExitFallbackTimer);
+  mobileExitFallbackTimer = null;
+};
+
+const finishMobileExit = () => {
+  clearMobileExitFallback();
+  mobileExiting.value = false;
+  if (!music.showBigPlayer) {
+    mobileTransitionActive.value = false;
+    mobileTransitionDirection.value = null;
+  }
+};
+
+const scheduleMobileExitFallback = () => {
+  clearMobileExitFallback();
+  mobileExitFallbackTimer = window.setTimeout(finishMobileExit, 700);
+};
+
+const openMobileQueue = () => {
+  mobileQueueOpen.value = true;
+  music.showPlayList = false;
+};
+
+const closeMobileQueue = () => {
+  mobileQueueOpen.value = false;
+};
+
+const detachMiniSharedAlbum = () => {
+  window.dispatchEvent(new Event("splayer-mobile-player-detach-mini-album"));
+};
+
+const restoreMiniSharedAlbum = () => {
+  window.dispatchEvent(new Event("splayer-mobile-player-restore-mini-album"));
+};
+
+const prepareMiniAlbumCloseHandoff = () => {
+  restoreMiniSharedAlbum();
+};
+
+const beginMobileInteractive = async (
+  frames: MiniSharedFrames | undefined,
+  initialProgress: number,
+) => {
+  if (!isMobile.value) return;
+  progressAnimation?.stop();
+  progressAnimation = null;
+  stopArtworkFrameAnimations();
+  pendingInteractiveProgress = clamp(initialProgress);
+  mobileTransitionDirection.value = pendingInteractiveProgress >= 0.999 ? "closing" : "opening";
+  if (pendingInteractiveProgress <= 0.001) {
+    detachMiniSharedAlbum();
+    seedInteractiveFromMini(frames);
+  } else if (pendingInteractiveProgress >= 0.999) {
+    prepareMiniAlbumCloseHandoff();
+    seedInteractiveFromFull();
+  }
+  mobileInteractive.value = true;
+  mobileTransitionActive.value = true;
+  mobileExiting.value = false;
+  clearMobileExitFallback();
+  playerProgress.set(pendingInteractiveProgress);
+  applyProgressState(pendingInteractiveProgress);
+
+  await nextTick();
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      if (
+        captureInteractiveFrames(frames) &&
+        pendingInteractiveProgress >= 0.999 &&
+        interactiveFrames
+      ) {
+        interactiveFrames.fullArtwork = readCurrentArtworkFrame();
+      }
+      playerProgress.set(pendingInteractiveProgress);
+      applyProgressState(pendingInteractiveProgress);
+      resolve();
+    });
+  });
+};
+
+const beginMobileInteractiveOpen = (frames?: MiniSharedFrames) => {
+  return beginMobileInteractive(frames, 0);
+};
+
+const beginMobileInteractiveClose = () => {
+  if (mobileQueueOpen.value) return;
+  beginMobileInteractive(undefined, 1);
+};
+
+const updateMobileInteractiveProgress = (progress: number) => {
+  const nextProgress = clamp(progress);
+  pendingInteractiveProgress = nextProgress;
+  if (!mobileInteractive.value) return;
+  playerProgress.set(dampInteractiveDragProgress(nextProgress));
+};
+
+const updateMobileInteractiveClose = (distance: number) => {
+  updateMobileInteractiveProgress(1 - clamp(distance / getTransitionDistance()));
+};
+
+const beginStoreCloseHandoff = () => {
+  if (!music.showBigPlayer) return;
+  mobileExiting.value = true;
+  mobileSkipNextStoreCloseAnimation = true;
+  music.setBigPlayerState(false);
+};
+
+const finishMobileInteractive = (forceOpen?: boolean) =>
+  new Promise<boolean>((resolve) => {
+    const shouldOpen = forceOpen ?? pendingInteractiveProgress >= 0.5;
+    mobileTransitionDirection.value = shouldOpen ? "opening" : "closing";
+    if (shouldOpen) detachMiniSharedAlbum();
+    else {
+      restoreMiniSharedAlbum();
+      beginStoreCloseHandoff();
+    }
+    animateProgressTo(shouldOpen ? 1 : 0, () => {
+      if (!shouldOpen) {
+        completeClosedMobileTransition(music.showBigPlayer);
+      } else {
+        if (!music.showBigPlayer) {
+          music.setBigPlayerState(true);
+        }
+        mobileInteractive.value = false;
+        mobileTransitionActive.value = false;
+        mobileTransitionDirection.value = null;
+        interactiveFrames = null;
+        syncArtworkToCurrentLayer();
+        applyProgressState(1);
+      }
+      resolve(shouldOpen);
+    });
+  });
+
+const finishMobileInteractiveOpen = (forceOpen?: boolean) => {
+  return finishMobileInteractive(forceOpen);
+};
+
+const finishMobileInteractiveClose = () => {
+  return finishMobileInteractive();
+};
+
+const openMobileFromMini = async (frames?: MiniSharedFrames) => {
+  if (!isMobile.value) {
+    music.setBigPlayerState(true);
+    return true;
+  }
+  await beginMobileInteractiveOpen(frames);
+  return finishMobileInteractive(true);
+};
+
+const closeMobileWithProgress = async () => {
+  if (!isMobile.value) {
+    closeBigPlayer();
+    return;
+  }
+  if (mobileInteractive.value) return;
+
+  prepareMiniAlbumCloseHandoff();
+  progressAnimation?.stop();
+  progressAnimation = null;
+  stopArtworkFrameAnimations();
+  pendingInteractiveProgress = 1;
+  mobileTransitionDirection.value = "closing";
+  seedInteractiveFromFull();
+  mobileInteractive.value = true;
+  mobileTransitionActive.value = true;
+  mobileExiting.value = true;
+  beginStoreCloseHandoff();
+  clearMobileExitFallback();
+  playerProgress.set(1);
+  applyProgressState(1);
+
+  await nextTick();
+  requestAnimationFrame(() => {
+    if (captureInteractiveFrames() && interactiveFrames) {
+      interactiveFrames.fullArtwork = readCurrentArtworkFrame();
+    }
+    playerProgress.set(1);
+    applyProgressState(1);
+    animateProgressTo(0, () => {
+      completeClosedMobileTransition(music.showBigPlayer);
+    });
+  });
+};
+
+const handleMobileClose = () => {
+  if (mobileQueueOpen.value) {
+    closeMobileQueue();
+    return;
+  }
+  closeMobileWithProgress();
 };
 
 const initMobileElements = () => {
@@ -220,17 +1152,27 @@ const animatePlayerIn = () => {
 onMounted(() => {
   gsap.config({ force3D: true, nullTargetWarn: false });
   initMobileElements();
+  progressUnsubscribe = playerProgress.on("change", applyProgressState);
+  if (isMobile.value) {
+    applyProgressState(music.showBigPlayer ? 1 : 0);
+    if (music.showBigPlayer) scheduleArtworkLayerSync();
+  } else {
+    clearMiniUiVars();
+  }
 
   nextTick(() => {
-    setupResizeObserver();
     forcePlaying.value = false;
     lyricsScroll(music.getPlaySongLyricIndex);
   });
 });
 
 onBeforeUnmount(() => {
+  progressAnimation?.stop();
+  stopArtworkFrameAnimations();
+  progressUnsubscribe?.();
+  clearMiniUiVars();
+  clearMobileExitFallback();
   cleanupFullscreen();
-  cleanupResizeObserver();
 });
 
 // --- Watchers ---
@@ -239,23 +1181,59 @@ watch(
   (val) => {
     changePwaColor();
     if (val) {
-      initMobileElements();
+      music.showPlayList = false;
+      if (isMobile.value) {
+        mobileExiting.value = false;
+        clearMobileExitFallback();
+        initMobileElements();
+        if (!mobileInteractive.value && playerProgress.get() < 0.999) {
+          void openMobileFromMini();
+        } else {
+          scheduleArtworkLayerSync();
+          applyProgressState(1);
+        }
+        nextTick(() => lyricsScroll(music.getPlaySongLyricIndex));
+        return;
+      }
+      clearMiniUiVars();
       requestAnimationFrame(() => {
-        updateCoverStyle();
-        music.showPlayList = false;
         lyricsScroll(music.getPlaySongLyricIndex);
         animatePlayerIn();
       });
+    } else if (isMobile.value) {
+      if (mobileSkipNextStoreCloseAnimation) {
+        mobileSkipNextStoreCloseAnimation = false;
+        mobileQueueOpen.value = false;
+        clearMobileExitFallback();
+        return;
+      }
+      mobileQueueOpen.value = false;
+      mobileExiting.value = true;
+      if (!mobileInteractive.value) animateProgressTo(0, finishMobileExit);
+      scheduleMobileExitFallback();
     }
   },
 );
 
 watch(
   () => isMobile.value,
-  () => {
+  (val) => {
+    if (!val) {
+      progressAnimation?.stop();
+      progressAnimation = null;
+      mobileQueueOpen.value = false;
+      mobileExiting.value = false;
+      mobileTransitionActive.value = false;
+      mobileTransitionDirection.value = null;
+      mobileAlbumLayerReady.value = false;
+      stopArtworkFrameAnimations();
+      clearMiniUiVars();
+      clearMobileExitFallback();
+    } else {
+      applyProgressState(music.showBigPlayer ? 1 : 0);
+      if (music.showBigPlayer) scheduleArtworkLayerSync();
+    }
     nextTick(() => {
-      setupResizeObserver();
-      updateCoverStyle();
       lyricsScroll(music.getPlaySongLyricIndex);
     });
   },
@@ -271,9 +1249,21 @@ watch(
 );
 watch(
   () => music.getPlaySongData,
-  () => checkNameOverflow(),
+  () => {
+    checkNameOverflow();
+    if (isMobile.value) {
+      if (music.showBigPlayer) scheduleArtworkLayerSync();
+    }
+  },
   { immediate: true },
 );
+
+defineExpose({
+  openMobileFromMini,
+  beginMobileInteractiveOpen,
+  updateMobileInteractiveProgress,
+  finishMobileInteractiveOpen,
+});
 </script>
 
 <style lang="scss" scoped>
@@ -314,16 +1304,98 @@ watch(
      移动端样式 — grid 结构 + layer2 状态切换
      ═══════════════════════════════════════════════════════ */
   &.mobile-player {
-    // AMLL .verticalLayout
-    display: grid;
+    z-index: 2100;
+    display: block;
     min-height: 0;
     min-width: 0;
-    justify-content: stretch;
-    // --app-safe-area-top is env(safe-area-inset-top) on Tauri mobile, 0px everywhere else.
-    // Using the CSS var keeps this in sync with useMobileSafeAreaVars and avoids
-    // the html.is-mobile-device class hack.
-    grid-template-rows: [thumb] calc(var(--app-safe-area-top, 0px) + 30px) [main-view] 1fr;
-    grid-template-columns: 1fr;
+    transform: none;
+    border-radius: 0;
+    opacity: 1;
+    visibility: visible;
+    transition: none;
+    background-color: transparent !important;
+    pointer-events: none;
+
+    &.mobile-visible {
+      opacity: 1;
+      visibility: visible;
+      transform: none;
+      border-radius: 0;
+      transition: none;
+    }
+
+    &.mobile-closed {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: none;
+    }
+
+    &.opened {
+      pointer-events: auto;
+    }
+
+    &.mobile-transitioning {
+      pointer-events: none;
+    }
+
+    &.mobile-exiting {
+      pointer-events: none;
+    }
+
+    .mobile-player-shell {
+      position: absolute;
+      inset: 0;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      isolation: isolate;
+      display: grid;
+      grid-template-rows: [thumb] calc(var(--app-safe-area-top, 0px) + 30px) [main-view] 1fr;
+      grid-template-columns: 1fr;
+      border-radius: 0;
+      background-color: transparent;
+      transform: translateZ(0);
+      transform-origin: bottom center;
+      will-change: transform, opacity;
+
+      .mobile-background-visual {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+        overflow: hidden;
+        isolation: isolate;
+        background: transparent;
+        pointer-events: none;
+        transform: translateZ(0);
+        will-change: opacity, border-radius;
+
+        :deep(.big-player-background) {
+          z-index: 0;
+          transform: translate3d(
+            0,
+            calc(var(--mobile-player-bg-reveal-y, 0) * -1px),
+            0
+          );
+          will-change: transform, opacity;
+        }
+
+        :deep(.gray) {
+          background-color: rgb(0 0 0) !important;
+          opacity: var(--mobile-player-gray-opacity, 0);
+          transition: none !important;
+          -webkit-backdrop-filter: none !important;
+          backdrop-filter: none !important;
+          will-change: opacity;
+        }
+      }
+    }
+
+    :deep(.mobile-pages) {
+      z-index: 2;
+    }
 
     // ═══ 状态切换 (AMLL .hideLyric 模式反转) ═══
     // 默认: Layer 1 可见 (= AMLL hideLyric)
@@ -372,11 +1444,24 @@ watch(
         pointer-events: none;
       }
     }
+
+    &.queue-active {
+      :deep(.mobile-cover-frame),
+      :deep(.mobile-cover-layout),
+      :deep(.mobile-lyric-layout) {
+        pointer-events: none;
+      }
+    }
   }
 
   &.bplayer-eplor,
   &.bplayer-blur {
     background-color: gray !important;
+  }
+
+  &.mobile-player.bplayer-eplor,
+  &.mobile-player.bplayer-blur {
+    background-color: transparent !important;
   }
 }
 
