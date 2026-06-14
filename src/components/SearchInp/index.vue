@@ -265,7 +265,7 @@ const toSearch = (val, type) => {
 
 // 回车搜索
 const inputkeydown = (e) => {
-  if (e.key === "Enter" && inputValue.value != null) {
+  if (e.key === "Enter" && inputValue.value !== null) {
     console.log("执行搜索" + inputValue.value.trim());
     searchInpRef.value?.blur();
     site.searchInputActive = false;
@@ -278,6 +278,11 @@ const inputkeydown = (e) => {
       },
     });
   }
+};
+
+const closeSearchPanel = () => {
+  searchInpRef.value?.blur();
+  site.searchInputActive = false;
 };
 
 // 删除搜索历史
@@ -299,17 +304,11 @@ onMounted(() => {
   // 获取热搜
   getSearchHotData();
   // 搜索框失焦
-  document.addEventListener("click", () => {
-    searchInpRef.value?.blur();
-    site.searchInputActive = false;
-  });
+  document.addEventListener("click", closeSearchPanel);
 });
 
 onUnmounted(() => {
-  document.removeEventListener("click", () => {
-    searchInpRef.value?.blur();
-    site.searchInputActive = false;
-  });
+  document.removeEventListener("click", closeSearchPanel);
 });
 
 // 监听输入框内容
@@ -340,32 +339,76 @@ watch(
 <style lang="scss" scoped>
 .searchInp {
   position: relative;
-  width: 100%;
+  width: clamp(180px, 22vw, 260px);
   display: flex;
   justify-content: flex-start;
   pointer-events: none;
+
+  @media (max-width: 450px) {
+    width: auto;
+  }
+
   .input {
+    --n-color: var(--layout-bg, #fff);
+    --n-color-focus: var(--layout-bg, #fff);
+    --n-color-hover: var(--layout-bg, #fff);
+    --n-border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.08));
+    --n-border-hover: 1px solid var(--main-color);
+    --n-border-focus: 1px solid var(--main-color);
+    --n-box-shadow-focus: 0 0 0 2px var(--main-second-color);
     pointer-events: auto;
     width: 100%;
-    transition: all 0.3s;
+    height: 32px;
+    overflow: hidden;
+    background-color: var(--layout-bg, #fff);
+    -webkit-backdrop-filter: blur(18px) saturate(160%);
+    backdrop-filter: blur(18px) saturate(160%);
+    box-shadow:
+      0 8px 24px rgb(0 0 0 / 8%),
+      inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.16));
+    transition:
+      width 0.3s,
+      background-color 0.2s,
+      box-shadow 0.2s;
+
     @media (max-width: 450px) {
-      width: 40px;
+      width: 36px;
     }
+
     &.focus {
       width: 100%;
+      background-color: var(--layout-bg, #fff);
+
       :deep(input) {
         color: var(--main-color);
       }
+
       @media (max-width: 450px) {
-        width: 60vw;
+        width: min(54vw, 220px);
       }
+
       @media (max-width: 380px) {
-        width: 54vw;
-      }
-      @media (max-width: 320px) {
         width: 50vw;
       }
+
+      @media (max-width: 320px) {
+        width: 48vw;
+      }
     }
+
+    :deep(.n-input-wrapper) {
+      padding-inline: 10px;
+    }
+
+    :deep(.n-input__input-el) {
+      height: 32px;
+      font-size: 13px;
+    }
+
+    :deep(.n-input__prefix) {
+      margin-right: 4px;
+    }
+
     :deep(.n-input__prefix) {
       .n-icon {
         transition: color 0.3s;
@@ -376,38 +419,41 @@ watch(
     }
   }
   .list {
+    --n-color: var(--layout-bg, #fff);
+    --n-border-color: var(--acrylic-border, rgba(0, 0, 0, 0.08));
     position: absolute;
-    top: calc(var(--app-safe-area-top, 0px) + 40px);
+    top: calc(var(--app-safe-area-top, 0px) + 38px);
     left: 0;
-    border-radius: 12px;
-    width: 300px;
+    border-radius: 10px;
+    width: 280px;
     z-index: 3;
     pointer-events: auto;
+    overflow: hidden;
+    background-color: var(--layout-bg, #fff);
+    -webkit-backdrop-filter: blur(24px) saturate(160%);
+    backdrop-filter: blur(24px) saturate(160%);
+    box-shadow:
+      0 18px 46px rgb(0 0 0 / 14%),
+      inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
 
     @media (max-width: 450px) {
       position: fixed;
-      width: 100%;
-      top: calc(var(--app-safe-area-top, 0px) + 64px);
-      right: 0;
-      left: 0;
-      border-radius: 0 0 8px 8px;
+      width: auto;
+      top: calc(var(--app-safe-area-top, 0px) + 56px);
+      right: 12px;
+      left: 12px;
+      border-radius: 14px;
       z-index: 2006;
-      &::after {
-        position: absolute;
-        right: 0;
-        top: 0;
-        content: "×";
-        padding: 4px 12px;
-        font-size: 12px;
-        background-color: var(--n-action-color);
-        border-radius: 0 0 0 14px;
-      }
     }
+
+    :deep(.n-card__content) {
+      background-color: var(--layout-bg, #fff);
+    }
+
     :deep(.n-scrollbar) {
-      max-height: 80vh;
+      max-height: 68vh;
       @media (max-width: 450px) {
-        max-height: calc(100vh - 60px);
-        min-height: calc(100vh - 60px);
+        max-height: min(58vh, calc(100vh - var(--app-safe-area-top, 0px) - 148px));
         box-sizing: border-box;
       }
       .n-scrollbar-rail {
@@ -418,25 +464,25 @@ watch(
           padding-top: 8px;
         }
         .n-scrollbar-content {
-          padding: 12px;
+          padding: 10px;
           .list-title {
             color: var(--main-color);
             display: flex;
             align-items: center;
-            margin-bottom: 8px;
+            margin-bottom: 6px;
             .n-text {
               margin-left: 4px;
-              font-size: 14px;
+              font-size: 13px;
               color: var(--main-color);
               line-height: 0;
             }
           }
           .history-list {
-            margin-bottom: 18px;
+            margin-bottom: 14px;
             .n-space {
-              margin: 12px 0;
+              margin: 10px 0;
               .n-tag {
-                font-size: 13px;
+                font-size: 12px;
                 cursor: pointer;
                 transition: all 0.3s;
                 &:hover {
@@ -452,7 +498,7 @@ watch(
               display: flex;
               align-items: center;
               justify-content: center;
-              font-size: 13px;
+              font-size: 12px;
               cursor: pointer;
               .n-icon {
                 margin-right: 4px;
@@ -460,15 +506,15 @@ watch(
             }
           }
           .hot-list {
-            margin-top: 6px;
+            margin-top: 4px;
             .hot-item {
               display: flex;
               flex-direction: row;
               align-items: center;
-              margin-bottom: 8px;
+              margin-bottom: 6px;
               cursor: pointer;
-              border-radius: 10px;
-              padding: 6px;
+              border-radius: 8px;
+              padding: 5px;
               transition: all 0.3s;
 
               &:nth-last-of-type(1) {
@@ -479,14 +525,14 @@ watch(
                 background-color: var(--n-border-color);
               }
               .num {
-                width: 30px;
-                height: 30px;
-                min-width: 30px;
+                width: 26px;
+                height: 26px;
+                min-width: 26px;
                 text-align: center;
-                line-height: 30px;
-                font-size: 16px;
+                line-height: 26px;
+                font-size: 14px;
                 font-weight: bold;
-                margin-right: 8px;
+                margin-right: 6px;
                 &.hot {
                   color: var(--main-color);
                 }
@@ -495,7 +541,7 @@ watch(
                 display: flex;
                 flex-direction: column;
                 .name {
-                  font-size: 16px;
+                  font-size: 14px;
                   display: flex;
                   flex-direction: row;
                   align-items: center;
@@ -540,7 +586,7 @@ watch(
               }
             }
             .suggest-item {
-              margin-bottom: 12px;
+              margin-bottom: 10px;
               &:nth-last-of-type(1) {
                 margin-bottom: 0;
               }
@@ -554,15 +600,17 @@ watch(
                   margin-bottom: 2px;
                 }
                 .name {
+                  font-size: 13px;
                   margin-left: 4px;
                 }
               }
               .names {
                 display: block;
-                padding: 14px 18px 14px 22px;
+                padding: 10px 12px 10px 16px;
+                font-size: 13px;
                 cursor: pointer;
                 transition: all 0.3s;
-                border-radius: 10px;
+                border-radius: 8px;
                 &:hover {
                   background-color: var(--n-border-color);
                 }

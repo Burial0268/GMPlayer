@@ -48,17 +48,19 @@ const isActive = (tab) => {
   // 0px everywhere else — so this is a no-op on desktop / browser.
   height: calc(56px + var(--app-safe-area-bottom, 0px));
   padding-bottom: var(--app-safe-area-bottom, 0px);
-  background-color: var(--acrylic-bg, rgba(255, 255, 255, 0.45));
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  border-top: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.04));
-  z-index: 1000;
+  background-color: #fff;
+  border-top: 1px solid #e8e8e8;
+  z-index: var(--mobile-mini-player-bottom-z-index, 1000);
   justify-content: space-around;
   align-items: center;
+  pointer-events: var(--mobile-mini-player-bottom-pointer-events, auto);
+  transform: translate3d(0, var(--mobile-mini-player-bottom-y, 0%), 0);
   transition: background-color 0.3s;
+  will-change: transform;
 
   &.dark {
-    border-top-color: var(--acrylic-border, rgba(255, 255, 255, 0.04));
+    background-color: #18181c;
+    border-top-color: #2a2a30;
   }
 
   @media (max-width: 768px) {
@@ -79,7 +81,7 @@ const isActive = (tab) => {
   transition: color 0.3s;
 
   .dark & {
-    color: rgba(255, 255, 255, 0.4);
+    color: #777;
   }
 
   &.active {

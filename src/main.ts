@@ -5,7 +5,7 @@ import { useMobileSafeAreaVars } from "./composables/useMobileSafeAreaVars";
 import piniaPluginPersistedstate from "pinia-plugin-persistedstate";
 
 import App from "@/App.vue";
-import router from "@/router";
+import router from "@/router/index";
 
 // 全局样式
 import "@/style/global.scss";

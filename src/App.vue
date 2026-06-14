@@ -27,7 +27,6 @@
               id="mainContent"
               :class="{
                 playlist: music.showPlayList,
-                search: site.searchInputActive,
               }"
             >
               <n-back-top
@@ -164,7 +163,11 @@ const signIn = () => {
 
 // 系统重置
 const cleanAll = () => {
-  $message ? $message.success(t("other.cleanAll")) : alert(t("other.cleanAll"));
+  if ($message) {
+    $message.success(t("other.cleanAll"));
+  } else {
+    alert(t("other.cleanAll"));
+  }
   localStorage.clear();
   document.location.reload();
 };
@@ -381,32 +384,11 @@ onMounted(() => {
 
     div:nth-of-type(2) {
       transition: all var(--duration-300) var(--ease-in-out);
-
-      &::after {
-        content: "";
-        position: absolute;
-        width: 100%;
-        height: 100%;
-        top: 0;
-        left: 0;
-        transition: all var(--duration-300) var(--ease-in-out);
-        pointer-events: none;
-        z-index: 2;
-      }
     }
 
     &.playlist {
       div:nth-of-type(2) {
         transform: scale(0.98);
-      }
-    }
-
-    &.search {
-      div:nth-of-type(2) {
-        &::after {
-          pointer-events: all;
-          background-color: #00000040;
-        }
       }
     }
   }
@@ -444,13 +426,8 @@ onMounted(() => {
   display: flex;
   height: 100vh;
   background-color: var(--layout-bg, #fff);
-  transition: scale var(--duration-500) var(--ease-out);
-  scale: 1;
-  transform-origin: center center;
 
   .bigplayer-open & {
-    scale: 0.95;
-    border-radius: 0.75em;
     overflow: hidden;
   }
 }
