@@ -19,18 +19,13 @@ import { VocalActivityGuard } from "./VocalActivityGuard";
 import { CompatibilityScorer } from "./CompatibilityScorer";
 import { TransitionEffects } from "./TransitionEffects";
 import { getOutroTypeCrossfadeProfile } from "./types";
-import {
-  analyzeTrack,
-  spectralSimilarity,
-  type TrackAnalysis,
-  type OutroType,
-} from "./TrackAnalyzer";
+import { analyzeTrack, type OutroType } from "./TrackAnalyzer";
 import { findNearestBeat } from "./BPMDetector";
 import { AudioContextManager } from "../AudioContextManager";
 import { BufferedSound } from "../BufferedSound";
 import { SoundManager } from "../SoundManager";
-import { adoptIncomingSound } from "../PlayerFunctions";
-import { getMusicUrl } from "@/api/song";
+import { adoptIncomingSound, handoffAutoMixToNativeBackend } from "../PlayerFunctions";
+import { resolveSongUrl } from "../resolveSongUrl";
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
 import type { ISound } from "../types";
@@ -40,7 +35,6 @@ import type {
   CrossfadeCurve,
   CrossfadeParams,
   SpectralCrossfadeData,
-  CompatibilityScore,
   TransitionStrategy,
 } from "./types";
 
@@ -54,6 +48,9 @@ const MIN_CROSSFADE_DURATION = 2;
 
 /** Maximum entries in analysis cache */
 const MAX_CACHE_SIZE = 10;
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.max(min, Math.min(max, value));
 
 export class TransitionStateMachine {
   private _state: AutoMixState = "idle";
@@ -81,6 +78,7 @@ export class TransitionStateMachine {
 
   // Incoming sound during crossfade
   private _incomingSound: ISound | null = null;
+  private _incomingSourceUrl: string | null = null;
 
   // Settings cache (refreshed from store)
   private _enabled: boolean = false;
@@ -321,10 +319,10 @@ export class TransitionStateMachine {
     // Analyze current track if not cached
     const currentSong = playlist[currentIndex];
     if (currentSong && !this._analysisCache.has(currentSong.id)) {
-      const blobUrl = this._getSoundBlobUrl(SoundManager.getCurrentSound());
-      if (blobUrl) {
+      const analysisUrl = this._getSoundAnalysisUrl(SoundManager.getCurrentSound());
+      if (analysisUrl) {
         try {
-          const analysis = await analyzeTrack(blobUrl, {
+          const analysis = await analyzeTrack(analysisUrl, {
             analyzeBPM: this._settingsBpmMatch,
           });
           this._currentAnalysis = { songId: currentSong.id, analysis };
@@ -350,10 +348,14 @@ export class TransitionStateMachine {
     this._computeCrossfadeParams();
   }
 
-  private _getSoundBlobUrl(sound: ISound | null): string | null {
+  private _getSoundAnalysisUrl(sound: ISound | null): string | null {
     if (!sound) return null;
     if (sound instanceof BufferedSound) {
       return sound.getBlobUrl();
+    }
+    const sourceUrl = (sound as { getSourceUrl?: () => string | null }).getSourceUrl?.();
+    if (sourceUrl) {
+      return sourceUrl;
     }
     return null;
   }
@@ -628,6 +630,61 @@ export class TransitionStateMachine {
     return { outTargetDb, inInitialDb, bassSwapLow };
   }
 
+  private _computeIncomingGainAdjustment(energyContrast: number): number {
+    if (!this._settingsVolumeNorm) return 1;
+
+    const nextVolume = this._nextAnalysis?.analysis.volume;
+    if (!nextVolume) return 1;
+
+    const absoluteAdjustment = clamp(nextVolume.gainAdjustment ?? 1, 0.55, 1.8);
+    const currentVolume = this._currentAnalysis?.analysis.volume;
+    let adjustment = absoluteAdjustment;
+
+    if (currentVolume) {
+      const currentEffectiveLufs =
+        currentVolume.estimatedLUFS + 20 * Math.log10(Math.max(0.001, this._activeGainAdjustment));
+      const relativeAdjustment = Math.pow(
+        10,
+        (currentEffectiveLufs - nextVolume.estimatedLUFS) / 20,
+      );
+
+      // Relative matching keeps the handoff level stable; absolute targeting
+      // gently pulls the playlist toward the configured loudness over time.
+      adjustment =
+        Math.pow(clamp(relativeAdjustment, 0.5, 2.0), 0.75) * Math.pow(absoluteAdjustment, 0.25);
+    }
+
+    if (energyContrast > 3) {
+      adjustment *= energyContrast > 6 ? 0.86 : 0.92;
+    } else if (energyContrast < 0.33) {
+      adjustment *= 1.08;
+    }
+
+    return clamp(adjustment, 0.55, 1.8);
+  }
+
+  private _computeOverlapHeadroomDb(
+    energyContrast: number,
+    loudnessScore: number,
+    fadeInOnly: boolean,
+  ): number {
+    let headroom = fadeInOnly ? -1.2 : -0.8;
+
+    if (energyContrast > 6 || energyContrast < 0.2) {
+      headroom -= 1.1;
+    } else if (energyContrast > 3 || energyContrast < 0.33) {
+      headroom -= 0.6;
+    }
+
+    if (loudnessScore < 0.35) {
+      headroom -= 0.8;
+    } else if (loudnessScore < 0.55) {
+      headroom -= 0.4;
+    }
+
+    return clamp(headroom, -2.8, 0);
+  }
+
   // ─── Consolidated crossfade parameter finalization ──────────────
 
   private _finalizeCrossfadeParams(volume: number, outgoingSound: ISound): CrossfadeParams {
@@ -704,12 +761,12 @@ export class TransitionStateMachine {
       crossfadeDuration = Math.max(0.5, remainingContent);
     }
 
-    // Compute persistent gain adjustment for incoming track
-    let incomingGainAdjustment = 1;
-    if (this._settingsVolumeNorm) {
-      const inAdj = this._nextAnalysis?.analysis.volume.gainAdjustment ?? 1;
-      incomingGainAdjustment = Math.max(0.5, Math.min(2.0, inAdj));
-    }
+    const incomingGainAdjustment = this._computeIncomingGainAdjustment(energyContrast);
+    const overlapHeadroomDb = this._computeOverlapHeadroomDb(
+      energyContrast,
+      compatScore.loudness,
+      effectiveFadeInOnly,
+    );
 
     // Filter sweep replaces spectral EQ (both serve frequency-domain smoothing;
     // filter sweep is far more aggressive for truly incompatible tracks)
@@ -743,6 +800,7 @@ export class TransitionStateMachine {
           `curve=${effectiveCurve}, inShape=${effectiveInShape.toFixed(2)}, ` +
           `outShape=${effectiveOutShape.toFixed(2)}, ` +
           `gainAdj=${incomingGainAdjustment.toFixed(3)}, ` +
+          `headroom=${overlapHeadroomDb.toFixed(1)}dB, ` +
           `compat=${compatScore.overall.toFixed(2)}, ` +
           `spectral=${spectralCrossfade !== false}`,
       );
@@ -758,6 +816,7 @@ export class TransitionStateMachine {
       inShape: effectiveInShape,
       outShape: effectiveOutShape,
       incomingGainAdjustment,
+      overlapHeadroomDb,
       spectralCrossfade,
     };
   }
@@ -915,11 +974,13 @@ export class TransitionStateMachine {
     if (!nextSong) throw new Error("No next song");
 
     let incomingSound: BufferedSound;
+    let incomingSourceUrl: string | null = null;
 
     // ★ Fast path: use pre-buffered sound
     const preBuffered = this._preBufferManager.consume(nextIndex);
     if (preBuffered) {
       incomingSound = preBuffered.sound;
+      incomingSourceUrl = preBuffered.sourceUrl;
       this._nextAnalysis = preBuffered.analysis;
 
       if (IS_DEV) {
@@ -929,12 +990,13 @@ export class TransitionStateMachine {
       // Slow path: fallback
       this._preBufferManager.cleanup();
 
-      const res = await getMusicUrl(nextSong.id);
-      if (!res?.data?.[0]?.url) throw new Error("Failed to get music URL");
+      const resolved = await resolveSongUrl(nextSong);
+      if (!resolved?.url) throw new Error("Failed to resolve music URL");
 
       if (this._state !== "crossfading") return;
 
-      const url = res.data[0].url.replace(/^http:/, "https:");
+      const url = resolved.url;
+      incomingSourceUrl = url;
 
       incomingSound = new BufferedSound({
         src: [url],
@@ -983,6 +1045,7 @@ export class TransitionStateMachine {
     }
 
     this._incomingSound = incomingSound;
+    this._incomingSourceUrl = incomingSourceUrl;
 
     const outgoingSound = SoundManager.getCurrentSound();
     if (!outgoingSound) throw new Error("No outgoing sound");
@@ -1037,6 +1100,8 @@ export class TransitionStateMachine {
 
         if (audioCtx && strategy && strategy.useEffects) {
           const now = audioCtx.currentTime;
+          const bpm = this._currentAnalysis?.analysis.bpm?.bpm;
+          const advancedIntensity = strategy.advancedIntensity;
 
           // Filter sweep (replaces spectral EQ for low-compat transitions)
           if (strategy.useFilterSweep && outgoingGain && incomingGain) {
@@ -1063,9 +1128,48 @@ export class TransitionStateMachine {
             );
           }
 
+          if (strategy.useEchoThrow && outgoingGain) {
+            const echoDuration = Math.min(4.0, Math.max(1.0, params.duration * 0.55));
+            this._transitionEffects.createEchoThrow(
+              audioCtx,
+              outgoingGain,
+              echoDuration,
+              now,
+              bpm,
+              advancedIntensity,
+            );
+          }
+
+          if (strategy.useReverseSwell) {
+            const swellDuration = Math.min(2.5, Math.max(0.8, params.duration * 0.35));
+            this._transitionEffects.createReverseSwell(
+              audioCtx,
+              swellDuration,
+              now,
+              bpm,
+              advancedIntensity,
+            );
+          }
+
+          if (
+            strategy.useBeatGate &&
+            !strategy.useFilterSweep &&
+            params.spectralCrossfade === false &&
+            incomingGain
+          ) {
+            const gateDuration = Math.min(2.5, Math.max(0.6, params.duration * 0.35));
+            this._transitionEffects.createBeatGate(
+              audioCtx,
+              incomingGain,
+              gateDuration,
+              now,
+              bpm,
+              Math.min(0.75, advancedIntensity),
+            );
+          }
+
           // Noise riser (with enhanced duration for low compat)
           if (strategy.useNoiseRiser) {
-            const bpm = this._currentAnalysis?.analysis.bpm?.bpm;
             const maxRiser = 1.5 + strategy.filterSweepIntensity * 1.0;
             const riserDuration = Math.min(maxRiser, params.duration * 0.25);
             this._transitionEffects.createNoiseRiser(audioCtx, riserDuration, now, bpm);
@@ -1240,9 +1344,15 @@ export class TransitionStateMachine {
       this._pendingNextIndex = -1;
     }
 
+    const nativeHandoffUrl = this._incomingSourceUrl;
+    if (currentSound && nativeHandoffUrl) {
+      void handoffAutoMixToNativeBackend(currentSound, nativeHandoffUrl);
+    }
+
     this._currentAnalysis = this._nextAnalysis;
     this._nextAnalysis = null;
     this._incomingSound = null;
+    this._incomingSourceUrl = null;
     this._lastStrategy = null;
     this._phraseMixOutTime = null;
     this._evictCache();
@@ -1310,6 +1420,7 @@ export class TransitionStateMachine {
 
       this._incomingSound = null;
     }
+    this._incomingSourceUrl = null;
 
     this._analyzingInFlight = false;
     this._nextAnalysis = null;
@@ -1408,26 +1519,30 @@ export class TransitionStateMachine {
     this._lastFailureTime = 0;
     this._updateStoreState();
 
-    if (this._enabled && sound instanceof BufferedSound) {
+    if (
+      this._enabled &&
+      (sound instanceof BufferedSound ||
+        !!(sound as { getSourceUrl?: () => string | null }).getSourceUrl?.())
+    ) {
       this._preAnalyzeTrack(sound, songId);
     }
   }
 
-  private _preAnalyzeTrack(sound: BufferedSound, songId: number): void {
+  private _preAnalyzeTrack(sound: ISound, songId: number): void {
     if (this._analysisCache.has(songId)) return;
 
     const doAnalysis = async () => {
-      let blobUrl = sound.getBlobUrl();
-      if (!blobUrl) {
+      let analysisUrl = this._getSoundAnalysisUrl(sound);
+      if (!analysisUrl && sound instanceof BufferedSound) {
         await new Promise<void>((resolve) => {
           sound.once("load", resolve);
           setTimeout(resolve, 30000);
         });
-        blobUrl = sound.getBlobUrl();
+        analysisUrl = this._getSoundAnalysisUrl(sound);
       }
-      if (!blobUrl) return;
+      if (!analysisUrl) return;
 
-      const analysis = await analyzeTrack(blobUrl, {
+      const analysis = await analyzeTrack(analysisUrl, {
         analyzeBPM: this._settingsBpmMatch,
       });
       this._addToCache({ songId, analysis });
@@ -1476,7 +1591,7 @@ export class TransitionStateMachine {
     if (this._state === "crossfading" || this._state === "waiting") {
       const playlist = this._musicStoreRef.persistData?.playlists;
       const currentIndex = this._musicStoreRef.persistData?.playSongIndex;
-      if (playlist && currentIndex != null) {
+      if (playlist && currentIndex !== null && currentIndex !== undefined) {
         const nextIndex =
           this._musicStoreRef.persistData.playSongMode === "random"
             ? -1

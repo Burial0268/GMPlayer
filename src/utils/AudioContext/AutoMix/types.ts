@@ -44,6 +44,9 @@ export interface CrossfadeParams {
    *  Applied as a flat multiplier on the incoming gain throughout the crossfade
    *  and persisted after completion — no mid-crossfade bumps. */
   incomingGainAdjustment?: number;
+  /** Center-overlap attenuation in dB. Negative values reduce summed loudness
+   *  around the middle while preserving start/end target gains. */
+  overlapHeadroomDb?: number;
   /** Data-driven spectral EQ crossfade. false or undefined to disable. */
   spectralCrossfade?: SpectralCrossfadeData | false;
 }
@@ -107,8 +110,16 @@ export interface TransitionStrategy {
   useNoiseRiser: boolean;
   /** Enable LPF/HPF frequency sweep for style-different tracks */
   useFilterSweep: boolean;
+  /** Synthetic reverse swell before the incoming track lands */
+  useReverseSwell: boolean;
+  /** Beat-synced echo send on the outgoing track */
+  useEchoThrow: boolean;
+  /** Rhythmic gate on incoming track during the first part of the mix */
+  useBeatGate: boolean;
   /** 0-1, controls cutoff aggressiveness (higher = more aggressive sweep) */
   filterSweepIntensity: number;
+  /** 0-1, controls advanced effect wetness/aggressiveness */
+  advancedIntensity: number;
   /** Override curve for low compatibility transitions (null = use default) */
   recommendedCurve: CrossfadeCurve | null;
   /** Override shapes for low compatibility transitions (null = use default) */

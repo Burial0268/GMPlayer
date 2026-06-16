@@ -29,7 +29,7 @@ export const transformSongData = (songs: any[], options: TransformOptions = {}) 
       fee: v.fee,
       pc: v.pc || null,
       mv: v.mv || null,
-      ...(sourceId != null ? { sourceId } : {}),
+      ...(sourceId !== null && sourceId !== undefined ? { sourceId } : {}),
     };
   });
 };

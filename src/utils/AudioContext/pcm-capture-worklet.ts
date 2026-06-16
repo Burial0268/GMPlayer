@@ -1,7 +1,7 @@
 /**
  * PCM Capture AudioWorklet - Inline blob approach
  *
- * Captures mono PCM (Float32Array, 128 samples/block) from audio graph
+ * Captures downmixed mono PCM (Float32Array, 128 samples/block) from audio graph
  * and sends to main thread via MessagePort for WASM FFTPlayer consumption.
  *
  * Buffer: accumulates 512 samples (~11.6ms at 44100Hz) before posting,
@@ -19,13 +19,20 @@ class PCMCaptureProcessor extends AudioWorkletProcessor {
     const input = inputs[0];
     if (!input || !input[0] || input[0].length === 0) return true;
 
-    const data = input[0];
+    const channelCount = input.length;
+    const frameCount = input[0].length;
     let pos = 0;
 
-    while (pos < data.length) {
+    while (pos < frameCount) {
       const space = 512 - this._offset;
-      const count = Math.min(space, data.length - pos);
-      this._buffer.set(data.subarray(pos, pos + count), this._offset);
+      const count = Math.min(space, frameCount - pos);
+      for (let i = 0; i < count; i++) {
+        let sum = 0;
+        for (let ch = 0; ch < channelCount; ch++) {
+          sum += input[ch][pos + i] || 0;
+        }
+        this._buffer[this._offset + i] = sum / channelCount;
+      }
       this._offset += count;
       pos += count;
 

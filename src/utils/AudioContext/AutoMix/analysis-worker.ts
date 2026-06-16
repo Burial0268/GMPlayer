@@ -157,7 +157,7 @@ const SILENCE_THRESHOLD = 0.003;
 function analyzeEnergy(data: Float32Array, sampleRate: number, duration: number): EnergyAnalysis {
   const length = data.length;
   const secondCount = Math.ceil(duration);
-  const energyPerSecond: number[] = new Array(secondCount);
+  const energyPerSecond: number[] = Array.from({ length: secondCount });
 
   for (let sec = 0; sec < secondCount; sec++) {
     const start = (sec * sampleRate) | 0;
@@ -602,7 +602,7 @@ function computeFingerprint(data: Float32Array, sampleRate: number): SpectralFin
   ];
 
   const bandCount = bandEdges.length;
-  const bands = new Array<number>(bandCount).fill(0);
+  const bands = Array.from({ length: bandCount }, () => 0);
 
   if (windowCount === 0) return { bands };
 
@@ -778,11 +778,11 @@ function analyzeOutroMultiband(
   }
 
   // Allocate window arrays
-  const low: number[] = new Array(totalWindows);
-  const mid: number[] = new Array(totalWindows);
-  const high: number[] = new Array(totalWindows);
-  const loudness: number[] = new Array(totalWindows);
-  const flux: number[] = new Array(totalWindows);
+  const low: number[] = Array.from({ length: totalWindows });
+  const mid: number[] = Array.from({ length: totalWindows });
+  const high: number[] = Array.from({ length: totalWindows });
+  const loudness: number[] = Array.from({ length: totalWindows });
+  const flux: number[] = Array.from({ length: totalWindows });
 
   let accumLow = 0,
     accumMid = 0,
@@ -1044,7 +1044,7 @@ function classifyOutro(
   const windowDuration = OUTRO_WINDOW_MS / 1000; // 0.25s
 
   // Compute aggregate stats
-  const totalEnergy: number[] = new Array(windowCount);
+  const totalEnergy: number[] = Array.from({ length: windowCount });
   let avgEnergy = 0;
   for (let i = 0; i < windowCount; i++) {
     totalEnergy[i] = bands.low[i] + bands.mid[i] + bands.high[i];
@@ -1886,9 +1886,9 @@ function analyzeIntroMultiband(
     designBiquadBandpass(4000, Math.min(16000, sampleRate / 2 - 100), sampleRate),
   );
 
-  const low: number[] = new Array(totalWindows);
-  const mid: number[] = new Array(totalWindows);
-  const high: number[] = new Array(totalWindows);
+  const low: number[] = Array.from({ length: totalWindows });
+  const mid: number[] = Array.from({ length: totalWindows });
+  const high: number[] = Array.from({ length: totalWindows });
 
   let accumLow = 0,
     accumMid = 0,

@@ -1,4 +1,5 @@
 import { fileURLToPath, URL } from "node:url";
+import { Readable } from "node:stream";
 import { defineConfig, loadEnv } from "vite";
 import { NaiveUiResolver } from "unplugin-vue-components/resolvers";
 import { VitePWA } from "vite-plugin-pwa";
@@ -14,6 +15,105 @@ import MotionResolver from "motion-v/resolver";
 import OptimizationPersist from 'vite-plugin-optimize-persist'
 import PkgConfig from 'vite-plugin-package-config'
 
+const AUDIO_PROXY_PATH = "/api/audio-proxy";
+
+function isBlockedAudioProxyHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    host === "0.0.0.0" ||
+    host === "127.0.0.1" ||
+    host === "::1"
+  ) {
+    return true;
+  }
+  if (/^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)) {
+    return true;
+  }
+  const private172 = /^172\.(1[6-9]|2\d|3[0-1])\./;
+  return private172.test(host);
+}
+
+function audioProxyPlugin() {
+  return {
+    name: "gmplayer-audio-proxy",
+    configureServer(server) {
+      server.middlewares.use(AUDIO_PROXY_PATH, async (req, res) => {
+        const requestUrl = new URL(req.url || "", "http://localhost");
+        const rawTarget = requestUrl.searchParams.get("url");
+        if (!rawTarget) {
+          res.statusCode = 400;
+          res.end("missing url");
+          return;
+        }
+
+        let target: URL;
+        try {
+          target = new URL(rawTarget);
+        } catch {
+          res.statusCode = 400;
+          res.end("invalid url");
+          return;
+        }
+
+        if (
+          (target.protocol !== "http:" && target.protocol !== "https:") ||
+          isBlockedAudioProxyHost(target.hostname)
+        ) {
+          res.statusCode = 400;
+          res.end("unsupported url");
+          return;
+        }
+
+        try {
+          const headers = new Headers({
+            Accept: "audio/*,*/*;q=0.8",
+            Referer: `${target.origin}/`,
+            "User-Agent":
+              req.headers["user-agent"] ||
+              "Mozilla/5.0 AppleWebKit/537.36 Chrome Safari",
+          });
+          const range = req.headers.range;
+          if (range) headers.set("Range", range);
+
+          const upstream = await fetch(target, {
+            headers,
+            method: req.method === "HEAD" ? "HEAD" : "GET",
+            redirect: "follow",
+          });
+
+          res.statusCode = upstream.status;
+          for (const header of [
+            "accept-ranges",
+            "cache-control",
+            "content-length",
+            "content-range",
+            "content-type",
+            "etag",
+            "last-modified",
+          ]) {
+            const value = upstream.headers.get(header);
+            if (value) res.setHeader(header, value);
+          }
+          res.setHeader("x-audio-source-url", upstream.url || target.href);
+
+          if (req.method === "HEAD" || !upstream.body) {
+            res.end();
+            return;
+          }
+
+          Readable.fromWeb(upstream.body as any).pipe(res);
+        } catch (err) {
+          res.statusCode = 502;
+          res.end(err instanceof Error ? err.message : String(err));
+        }
+      });
+    },
+  };
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd());
   const isTauriDebug = !!process.env.TAURI_DEBUG;
@@ -23,6 +123,7 @@ export default defineConfig(({ mode }) => {
     plugins: [
       vue(),
       VueMcp(),
+      audioProxyPlugin(),
       vueDevTools(),
       wasm(),
       PkgConfig(),

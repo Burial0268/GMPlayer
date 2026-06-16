@@ -286,7 +286,7 @@ class AudioContextManagerClass {
     try {
       this._ctx.removeEventListener("statechange", this._boundHandlers!.stateChange);
       await this._ctx.close();
-    } catch (e) {
+    } catch {
       // Ignore close errors
     }
     this._ctx = null;

@@ -12,7 +12,7 @@
  */
 
 import { AudioContextManager } from "../AudioContextManager";
-import { getCrossfadeValues, buildCurveArray } from "./curves";
+import { buildBalancedCurveArray, getBalancedCrossfadeGains } from "./curves";
 import { SpectralEQ } from "./SpectralEQ";
 import type { CrossfadeCurve, CrossfadeParams, SpectralCrossfadeData } from "./types";
 
@@ -41,6 +41,7 @@ export class CrossfadeScheduler {
   private _inShape: number = 1;
   private _outShape: number = 1;
   private _incomingGainAdjustment: number = 1;
+  private _overlapHeadroomDb: number = 0;
   private _isPaused: boolean = false;
   private _pausedProgress: number = 0;
   private _completionTimerId: ReturnType<typeof setTimeout> | null = null;
@@ -73,6 +74,7 @@ export class CrossfadeScheduler {
     this._inShape = params.inShape ?? 1;
     this._outShape = params.outShape ?? 1;
     this._incomingGainAdjustment = params.incomingGainAdjustment ?? 1;
+    this._overlapHeadroomDb = params.overlapHeadroomDb ?? 0;
     this._incomingTargetGain = params.incomingGain * this._incomingGainAdjustment;
     this._spectralData = params.spectralCrossfade || null;
     this._isActive = true;
@@ -142,21 +144,23 @@ export class CrossfadeScheduler {
     const resolution = Math.max(64, Math.ceil(effectiveDuration * 48));
 
     // Schedule incoming curve (always)
-    const inCurve = buildCurveArray(
+    const inCurve = buildBalancedCurveArray(
       resolution,
       startProgress,
       endProgress,
       this._curve,
       this._inShape,
       this._outShape,
+      this._outgoingTargetGain,
       this._incomingTargetGain,
+      this._overlapHeadroomDb,
       "incoming",
     );
     this._incomingGain!.gain.setValueCurveAtTime(inCurve, startTime, effectiveDuration);
 
     // Schedule outgoing curve (unless fadeInOnly)
     if (!this._fadeInOnly && this._outgoingGain) {
-      const outCurve = buildCurveArray(
+      const outCurve = buildBalancedCurveArray(
         resolution,
         startProgress,
         endProgress,
@@ -164,6 +168,8 @@ export class CrossfadeScheduler {
         this._inShape,
         this._outShape,
         this._outgoingTargetGain,
+        this._incomingTargetGain,
+        this._overlapHeadroomDb,
         "outgoing",
       );
       this._outgoingGain.gain.setValueCurveAtTime(outCurve, startTime, effectiveDuration);
@@ -281,11 +287,14 @@ export class CrossfadeScheduler {
     // Compute current progress and expected gain values from the curve function
     const elapsed = audioCtx.currentTime - this._startTime;
     this._pausedProgress = Math.min(elapsed / this._duration, 1);
-    const [outVol, inVol] = getCrossfadeValues(
+    const [outGain, inGain] = getBalancedCrossfadeGains(
       this._pausedProgress,
       this._curve,
       this._inShape,
       this._outShape,
+      this._outgoingTargetGain,
+      this._incomingTargetGain,
+      this._overlapHeadroomDb,
     );
 
     const now = audioCtx.currentTime;
@@ -293,11 +302,11 @@ export class CrossfadeScheduler {
     // Cancel all scheduled automation and freeze at computed values
     if (this._outgoingGain && !this._fadeInOnly) {
       this._outgoingGain.gain.cancelScheduledValues(now);
-      this._outgoingGain.gain.setValueAtTime(outVol * this._outgoingTargetGain, now);
+      this._outgoingGain.gain.setValueAtTime(outGain, now);
     }
     if (this._incomingGain) {
       this._incomingGain.gain.cancelScheduledValues(now);
-      this._incomingGain.gain.setValueAtTime(inVol * this._incomingTargetGain, now);
+      this._incomingGain.gain.setValueAtTime(inGain, now);
     }
 
     // Pause spectral EQ
@@ -436,22 +445,25 @@ export class CrossfadeScheduler {
       const now = audioCtx.currentTime;
       const elapsed = now - this._startTime;
       const progress = Math.min(elapsed / this._duration, 1);
-      const [outVol, inVol] = getCrossfadeValues(
+      const [outGain, inGain] = getBalancedCrossfadeGains(
         progress,
         this._curve,
         this._inShape,
         this._outShape,
+        this._outgoingTargetGain,
+        this._incomingTargetGain,
+        this._overlapHeadroomDb,
       );
 
       // Fast fade using computed values as starting points
       if (this._outgoingGain) {
         this._outgoingGain.gain.cancelScheduledValues(now);
-        this._outgoingGain.gain.setValueAtTime(outVol * this._outgoingTargetGain, now);
+        this._outgoingGain.gain.setValueAtTime(outGain, now);
         this._outgoingGain.gain.linearRampToValueAtTime(0, now + 0.1);
       }
       if (this._incomingGain) {
         this._incomingGain.gain.cancelScheduledValues(now);
-        this._incomingGain.gain.setValueAtTime(inVol * this._incomingTargetGain, now);
+        this._incomingGain.gain.setValueAtTime(inGain, now);
         this._incomingGain.gain.linearRampToValueAtTime(this._incomingTargetGain, now + 0.1);
       }
 

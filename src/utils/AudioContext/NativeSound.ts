@@ -645,7 +645,7 @@ export class NativeSound implements ISound {
     if (this._sourceNode) {
       try {
         this._sourceNode.disconnect();
-      } catch (e) {
+      } catch {
         // May already be disconnected
       }
       this._sourceNode = null;
@@ -653,7 +653,7 @@ export class NativeSound implements ISound {
     if (this._gainNode) {
       try {
         this._gainNode.disconnect();
-      } catch (e) {
+      } catch {
         // May already be disconnected
       }
       this._gainNode = null;

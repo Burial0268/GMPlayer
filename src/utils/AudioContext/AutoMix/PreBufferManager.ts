@@ -7,7 +7,7 @@
  */
 
 import { BufferedSound } from "../BufferedSound";
-import { analyzeTrack, type TrackAnalysis } from "./TrackAnalyzer";
+import { analyzeTrack } from "./TrackAnalyzer";
 import { resolveSongUrl } from "../resolveSongUrl";
 import type { CachedAnalysis } from "./types";
 
@@ -16,6 +16,7 @@ const IS_DEV = import.meta.env?.DEV ?? false;
 interface PreBufferState {
   sound: BufferedSound;
   songIndex: number;
+  sourceUrl: string;
   analysis: CachedAnalysis | null;
 }
 
@@ -133,6 +134,7 @@ export class PreBufferManager {
       this._preBuffered = {
         sound,
         songIndex: nextIndex,
+        sourceUrl: url,
         analysis: preBufferedAnalysis,
       };
 

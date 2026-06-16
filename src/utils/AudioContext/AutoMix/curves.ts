@@ -81,6 +81,42 @@ export function getCrossfadeValues(
 }
 
 /**
+ * Convert the normalized crossfade shape into actual GainNode values while
+ * keeping overlap power controlled when incoming/outgoing target gains differ.
+ */
+export function getBalancedCrossfadeGains(
+  progress: number,
+  curve: CrossfadeCurve,
+  inShape: number,
+  outShape: number,
+  outgoingTargetGain: number,
+  incomingTargetGain: number,
+  overlapHeadroomDb: number = 0,
+): [number, number] {
+  const t = Math.max(0, Math.min(1, progress));
+  const [outVol, inVol] = getCrossfadeValues(t, curve, inShape, outShape);
+
+  let outGain = outVol * outgoingTargetGain;
+  let inGain = inVol * incomingTargetGain;
+
+  const currentPower = outGain * outGain + inGain * inGain;
+  if (currentPower > 1e-8) {
+    const targetPower =
+      outgoingTargetGain * outgoingTargetGain * (1 - t) +
+      incomingTargetGain * incomingTargetGain * t;
+    const powerScale = Math.sqrt(Math.max(0, targetPower) / currentPower);
+    const overlapShape = Math.sin(t * Math.PI);
+    const headroomScale = Math.pow(10, (overlapHeadroomDb * overlapShape) / 20);
+    const scale = Math.min(1.1, powerScale) * headroomScale;
+
+    outGain *= scale;
+    inGain *= scale;
+  }
+
+  return [outGain, inGain];
+}
+
+/**
  * Build a Float32Array representing the gain curve from startProgress to endProgress.
  * Each sample is the gain value at that point in the crossfade.
  */
@@ -100,6 +136,39 @@ export function buildCurveArray(
     const progress = startProgress + (i / (resolution - 1)) * range;
     const [outVol, inVol] = getCrossfadeValues(progress, curve, inShape, outShape);
     arr[i] = (channel === "outgoing" ? outVol : inVol) * targetGain;
+  }
+  return arr;
+}
+
+/**
+ * Build a Float32Array of actual gain values with overlap loudness compensation.
+ */
+export function buildBalancedCurveArray(
+  resolution: number,
+  startProgress: number,
+  endProgress: number,
+  curve: CrossfadeCurve,
+  inShape: number,
+  outShape: number,
+  outgoingTargetGain: number,
+  incomingTargetGain: number,
+  overlapHeadroomDb: number,
+  channel: "outgoing" | "incoming",
+): Float32Array {
+  const arr = new Float32Array(resolution);
+  const range = endProgress - startProgress;
+  for (let i = 0; i < resolution; i++) {
+    const progress = startProgress + (i / (resolution - 1)) * range;
+    const [outGain, inGain] = getBalancedCrossfadeGains(
+      progress,
+      curve,
+      inShape,
+      outShape,
+      outgoingTargetGain,
+      incomingTargetGain,
+      overlapHeadroomDb,
+    );
+    arr[i] = channel === "outgoing" ? outGain : inGain;
   }
   return arr;
 }

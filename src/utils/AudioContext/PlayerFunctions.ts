@@ -30,18 +30,24 @@ import { AudioContextManager } from "./AudioContextManager";
 import { getAutoMixEngine } from "./AutoMix";
 import { getAudioPreloader } from "./AudioPreloader";
 import type { ISound } from "./types";
-import { NativeRustSound, isNativeAudioBackendAvailable } from "../tauri/NativeRustSound";
+import {
+  NativeRustSound,
+  isAudioBackendRuntimeAvailable,
+  isNativeAudioBackendAvailable,
+} from "../tauri/NativeRustSound";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
 // 歌曲信息更新定时器
 let timeupdateInterval: number | null = null;
+let timeupdateGeneration = 0;
 // 听歌打卡延时器
 let scrobbleTimeout: ReturnType<typeof setTimeout> | null = null;
 // 重试次数
 let testNumber = 0;
 // 频谱更新动画帧 ID
 let spectrumAnimationId: number | null = null;
+let spectrumUpdateGeneration = 0;
 // 页面可见性状态
 let isPageVisible = true;
 // Reusable spectrum array to avoid Array.from() allocation every frame
@@ -78,6 +84,34 @@ const stopBackgroundMonitor = (): void => {
   }
 };
 
+const stopTimeUpdate = (): void => {
+  timeupdateGeneration++;
+  if (timeupdateInterval !== null) {
+    cancelAnimationFrame(timeupdateInterval);
+    timeupdateInterval = null;
+  }
+};
+
+const startTimeUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
+  stopTimeUpdate();
+  const generation = timeupdateGeneration;
+
+  const timeLoop = (): void => {
+    if (
+      generation !== timeupdateGeneration ||
+      SoundManager.getCurrentSound() !== sound ||
+      (window.$player && window.$player !== sound)
+    ) {
+      return;
+    }
+
+    checkAudioTime(sound, music);
+    timeupdateInterval = requestAnimationFrame(timeLoop);
+  };
+
+  timeLoop();
+};
+
 // Track page visibility for spectrum throttling
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
@@ -96,7 +130,8 @@ if (typeof document !== "undefined") {
  * 停止频谱更新
  */
 const stopSpectrumUpdate = (): void => {
-  if (spectrumAnimationId) {
+  spectrumUpdateGeneration++;
+  if (spectrumAnimationId !== null) {
     cancelAnimationFrame(spectrumAnimationId);
     spectrumAnimationId = null;
   }
@@ -112,6 +147,7 @@ const stopSpectrumUpdate = (): void => {
  */
 const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   stopSpectrumUpdate();
+  const generation = spectrumUpdateGeneration;
 
   // If page is already hidden, start background monitor immediately
   if (!isPageVisible) {
@@ -124,8 +160,11 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
   const autoMix = getAutoMixEngine();
 
   const updateLoop = (): void => {
-    if (!sound) {
-      spectrumAnimationId = null;
+    if (
+      generation !== spectrumUpdateGeneration ||
+      SoundManager.getCurrentSound() !== sound ||
+      (window.$player && window.$player !== sound)
+    ) {
       return;
     }
 
@@ -145,7 +184,7 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
 
         // Reuse array to avoid allocating a new one every frame (~60fps)
         if (spectrumReusableArray.length !== len) {
-          spectrumReusableArray = new Array(len);
+          spectrumReusableArray = Array.from({ length: len });
         }
         for (let i = 0; i < len; i++) {
           spectrumReusableArray[i] = spectrumData[i];
@@ -229,7 +268,7 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
             setSeek(window.$player, details.seekTime);
           }
         });
-      } catch (e) {
+      } catch {
         // seekto not supported
       }
     }
@@ -353,7 +392,7 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     const autoMixCheck = getAutoMixEngine();
     if (autoMixCheck.isCrossfading()) return;
 
-    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    stopTimeUpdate();
 
     const playSongData = music.getPlaySongData;
     if (!Object.keys(playSongData).length) {
@@ -386,11 +425,7 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
       getAutoMixEngine().onTrackStarted(sound, songId);
     }
 
-    const timeLoop = (): void => {
-      checkAudioTime(sound, music);
-      timeupdateInterval = requestAnimationFrame(timeLoop);
-    };
-    timeLoop();
+    startTimeUpdate(sound, music);
 
     music.setPlayHistory(playSongData);
     window.document.title = `${songName} - ${songArtist} - ${import.meta.env.VITE_SITE_TITLE}`;
@@ -405,7 +440,7 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     if (window.$player && window.$player !== sound) return;
     const autoMix = getAutoMixEngine();
     if (autoMix.isCrossfading()) return;
-    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    stopTimeUpdate();
     if (IS_DEV) console.log("[Native] 音乐暂停");
     music.setPlayState(false);
     window.$setSiteTitle("");
@@ -414,7 +449,7 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
   // ── End ───────────────────────────────────────────────────────
   sound.on("end", () => {
     if (window.$player && window.$player !== sound) return;
-    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    stopTimeUpdate();
     stopSpectrumUpdate();
     if (IS_DEV) console.log("[Native] 歌曲播放结束");
     const autoMixEngine = getAutoMixEngine();
@@ -434,6 +469,15 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
       window.$message.error(getLanguageData("songLoadTest"), { closable: true, duration: 0 });
       music.isLoadingSong = false;
     }
+  });
+
+  sound.on("playerror", () => {
+    _clearLoadTimeout();
+    music.loadingStage = "error";
+    music.setPlayState(false);
+    music.isLoadingSong = false;
+    window.$message.error(getLanguageData("songPlayError"));
+    console.error(getLanguageData("songPlayError"));
   });
 
   return (window.$player = sound);
@@ -468,12 +512,12 @@ export const createSound = (
       getAudioPreloader().cleanup();
     }
 
-    // ── Native Rust audio backend (Tauri only) ──────────────────
-    const nativeAvailable = isNativeAudioBackendAvailable();
+    // ── Rust audio backend (native Tauri or WebAssembly runtime) ────────────
+    const backendAvailable = isAudioBackendRuntimeAvailable();
     if (IS_DEV) {
       console.log(
-        "[createSound] nativeAvailable:",
-        nativeAvailable,
+        "[createSound] audioBackendAvailable:",
+        backendAvailable,
         "src:",
         !!src,
         "preloaded:",
@@ -483,8 +527,12 @@ export const createSound = (
         window.__TAURI__,
       );
     }
-    if (nativeAvailable && src) {
-      console.log("[createSound] Using NATIVE audio backend");
+    if (backendAvailable && src) {
+      console.log(
+        isNativeAudioBackendAvailable()
+          ? "[createSound] Using NATIVE audio backend"
+          : "[createSound] Using WASM audio backend",
+      );
       const sound = new NativeRustSound(src);
       return setupNativeSound(sound, autoPlay);
     }
@@ -607,9 +655,7 @@ export const createSound = (
         }
         return;
       }
-      if (timeupdateInterval) {
-        cancelAnimationFrame(timeupdateInterval);
-      }
+      stopTimeUpdate();
       const playSongData = music.getPlaySongData;
       if (!Object.keys(playSongData).length) {
         window.$message.error(getLanguageData("songLoadError"));
@@ -649,12 +695,7 @@ export const createSound = (
         getAutoMixEngine().onTrackStarted(sound, songId);
       }
 
-      // 获取播放器信息
-      const timeLoop = (): void => {
-        checkAudioTime(sound, music);
-        timeupdateInterval = requestAnimationFrame(timeLoop);
-      };
-      timeLoop();
+      startTimeUpdate(sound, music);
 
       // 写入播放历史
       music.setPlayHistory(playSongData);
@@ -680,7 +721,7 @@ export const createSound = (
         }
         return;
       }
-      if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+      stopTimeUpdate();
       if (IS_DEV) {
         console.log("音乐暂停");
       }
@@ -693,7 +734,7 @@ export const createSound = (
       // If this sound is no longer the active player (e.g., AutoMix transitioned
       // to a new sound), don't cancel the current player's time/spectrum loops
       if (window.$player && window.$player !== sound) return;
-      if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+      stopTimeUpdate();
       stopSpectrumUpdate();
       if (IS_DEV) {
         console.log("歌曲播放结束");
@@ -838,7 +879,11 @@ export const fadePlayOrPause = (
       });
     }
   } else {
-    type === "play" ? sound?.play() : sound?.pause();
+    if (type === "play") {
+      sound?.play();
+    } else {
+      sound?.pause();
+    }
   }
 };
 
@@ -863,10 +908,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
 
   // Stop any existing tracking from outgoing sound
   stopSpectrumUpdate();
-  if (timeupdateInterval) {
-    cancelAnimationFrame(timeupdateInterval);
-    timeupdateInterval = null;
-  }
+  stopTimeUpdate();
 
   // Ensure play state is true (incoming is already playing)
   music.setPlayState(true);
@@ -896,11 +938,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   }
 
   // Start time tracking immediately
-  const timeLoop = (): void => {
-    checkAudioTime(incomingSound, music);
-    timeupdateInterval = requestAnimationFrame(timeLoop);
-  };
-  timeLoop();
+  startTimeUpdate(incomingSound, music);
 
   // Start spectrum update (also handles AutoMix monitorPlayback per frame)
   if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
@@ -935,7 +973,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
       }
       return;
     }
-    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    stopTimeUpdate();
     if (IS_DEV) {
       console.log("音乐暂停 (adopted sound)");
     }
@@ -947,18 +985,12 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   // Without this, pausing and resuming after AutoMix crossfade permanently
   // kills time tracking (pause handler cancels timeupdateInterval but nothing restarts it).
   incomingSound.on("play", () => {
-    if (timeupdateInterval) {
-      cancelAnimationFrame(timeupdateInterval);
-    }
+    if (window.$player && window.$player !== incomingSound) return;
 
     music.setPlayState(true);
 
     // Restart time tracking
-    const tLoop = (): void => {
-      checkAudioTime(incomingSound, music);
-      timeupdateInterval = requestAnimationFrame(tLoop);
-    };
-    tLoop();
+    startTimeUpdate(incomingSound, music);
 
     // Restart spectrum + AutoMix monitoring
     if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
@@ -970,7 +1002,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   incomingSound.on("end", () => {
     // If this sound is no longer the active player, don't cancel current loops
     if (window.$player && window.$player !== incomingSound) return;
-    if (timeupdateInterval) cancelAnimationFrame(timeupdateInterval);
+    stopTimeUpdate();
     stopSpectrumUpdate();
     if (IS_DEV) {
       console.log("歌曲播放结束 (adopted sound)");
@@ -999,7 +1031,65 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
  * @deprecated Use NativeSound.getFrequencyData() instead
  * @param sound - NativeSound 音频对象
  */
-export const processSpectrum = (sound: ISound | undefined): void => {
+/**
+ * After WebAudio AutoMix crossfade, switch the already-playing incoming track
+ * back to the native backend so Rust FFT/lowfreq events resume.
+ */
+export const handoffAutoMixToNativeBackend = async (
+  currentSound: ISound,
+  sourceUrl: string | null | undefined,
+): Promise<boolean> => {
+  if (!sourceUrl || !isNativeAudioBackendAvailable()) return false;
+  if (currentSound instanceof NativeRustSound) return false;
+  if (!currentSound.playing()) return false;
+
+  const music = musicStore();
+  const position = Math.max(0, (currentSound.seek() as number) || 0);
+  const volume = music.persistData.playVolume;
+  const nativeSound = new NativeRustSound(sourceUrl);
+
+  try {
+    await nativeSound.load(position);
+
+    if (SoundManager.getCurrentSound() !== currentSound || window.$player !== currentSound) {
+      nativeSound.unload();
+      return false;
+    }
+
+    const latestPosition = Math.max(0, (currentSound.seek() as number) || position);
+    nativeSound.seek(latestPosition);
+    nativeSound.volume(volume);
+
+    SoundManager.setCurrentSound(nativeSound);
+    window.$player = nativeSound;
+    adoptIncomingSound(nativeSound);
+    nativeSound.play();
+
+    currentSound.stop();
+    currentSound.unload();
+
+    if (IS_DEV) {
+      console.log(
+        `[AutoMix handoff] Restored native backend at ${latestPosition.toFixed(2)}s for FFT/lowfreq`,
+      );
+    }
+    return true;
+  } catch (err) {
+    nativeSound.unload();
+    SoundManager.setCurrentSound(currentSound);
+    window.$player = currentSound;
+    if (IS_DEV) {
+      console.warn("[AutoMix handoff] Native backend restore failed", err);
+    }
+    return false;
+  }
+};
+
+/**
+ * Generate spectrum data.
+ * @deprecated Use NativeSound.getFrequencyData() instead.
+ */
+export const processSpectrum = (_sound: ISound | undefined): void => {
   // No longer needed - spectrum is handled internally by NativeSound
   if (IS_DEV) {
     console.log("processSpectrum called - now handled internally by NativeSound");

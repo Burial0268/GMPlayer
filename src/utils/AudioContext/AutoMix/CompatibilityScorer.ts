@@ -87,7 +87,9 @@ export class CompatibilityScorer {
    * @returns 0-1 score (1 = similar loudness)
    */
   scoreLoudness(lufs1: number | undefined, lufs2: number | undefined): number {
-    if (lufs1 == null || lufs2 == null) return 0.5;
+    if (lufs1 === null || lufs1 === undefined || lufs2 === null || lufs2 === undefined) {
+      return 0.5;
+    }
 
     const diff = Math.abs(lufs1 - lufs2);
     // <2dB = great, >8dB = poor
@@ -161,7 +163,11 @@ export class CompatibilityScorer {
       useReverbTail: false,
       useNoiseRiser: false,
       useFilterSweep: false,
+      useReverseSwell: false,
+      useEchoThrow: false,
+      useBeatGate: false,
       filterSweepIntensity: 0,
+      advancedIntensity: 0,
       recommendedCurve: null,
       shapeOverride: null,
     };
@@ -169,6 +175,7 @@ export class CompatibilityScorer {
     // Duration adjustment based on compatibility
     // Similar tracks → shorter crossfade (0.85x), different → longer (1.3x)
     strategy.durationMultiplier = 0.85 + (1 - score.overall) * 0.45;
+    strategy.advancedIntensity = Math.min(1, Math.max(0, 1 - score.overall));
 
     // Reverb tail for hard endings, sustained, musical outro with sufficient energy
     if (outroType === "hard" || outroType === "musicalOutro" || outroType === "sustained") {
@@ -192,6 +199,26 @@ export class CompatibilityScorer {
       strategy.useReverbTail = true;
     }
 
+    if (outroType === "hard" || outroType === "noiseEnd" || score.overall < 0.5) {
+      strategy.useReverseSwell = true;
+      strategy.useEffects = true;
+    }
+
+    if (
+      outroType === "hard" ||
+      outroType === "sustained" ||
+      outroType === "reverbTail" ||
+      score.loudness < 0.45
+    ) {
+      strategy.useEchoThrow = true;
+      strategy.useEffects = true;
+    }
+
+    if (score.bpm > 0.65 && score.overall < 0.55 && score.spectral < 0.7) {
+      strategy.useBeatGate = true;
+      strategy.useEffects = true;
+    }
+
     // Curve override for very low compatibility (sCurve is smoother)
     if (score.overall < 0.3) {
       strategy.recommendedCurve = "sCurve" as CrossfadeCurve;
@@ -205,6 +232,9 @@ export class CompatibilityScorer {
           (strategy.useFilterSweep
             ? `, filterSweep=true, intensity=${strategy.filterSweepIntensity.toFixed(2)}`
             : "") +
+          (strategy.useReverseSwell ? ", reverseSwell=true" : "") +
+          (strategy.useEchoThrow ? ", echoThrow=true" : "") +
+          (strategy.useBeatGate ? ", beatGate=true" : "") +
           (strategy.recommendedCurve ? `, curve=${strategy.recommendedCurve}` : ""),
       );
     }

@@ -1,2 +1,3 @@
 packages:
   - src-tauri/crates/audio-analysis/pkg
+  - src-tauri/crates/audio-backend/pkg

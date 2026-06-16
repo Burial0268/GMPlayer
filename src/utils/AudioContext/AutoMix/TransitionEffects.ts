@@ -27,6 +27,18 @@ export class TransitionEffects {
   private _noiseFilter: BiquadFilterNode | null = null;
   private _riserGain: GainNode | null = null;
 
+  // Advanced effect nodes
+  private _reverseSource: AudioBufferSourceNode | null = null;
+  private _reverseFilter: BiquadFilterNode | null = null;
+  private _reverseGain: GainNode | null = null;
+  private _echoDelay: DelayNode | null = null;
+  private _echoFeedback: GainNode | null = null;
+  private _echoFilter: BiquadFilterNode | null = null;
+  private _echoGain: GainNode | null = null;
+  private _echoConnectedTo: GainNode | null = null;
+  private _gateGain: GainNode | null = null;
+  private _gateConnectedTo: GainNode | null = null;
+
   // Filter sweep nodes
   private _outSweepFilter: BiquadFilterNode | null = null;
   private _inSweepFilter: BiquadFilterNode | null = null;
@@ -310,6 +322,183 @@ export class TransitionEffects {
   }
 
   /**
+   * Create a synthetic reverse-cymbal style swell that rises into the transition.
+   */
+  createReverseSwell(
+    ctx: AudioContext,
+    duration: number,
+    startTime: number,
+    bpm?: number,
+    intensity: number = 0.5,
+  ): void {
+    if (bpm && bpm > 0) {
+      const beatDuration = 60 / bpm;
+      const beats = Math.max(1, Math.round(duration / beatDuration));
+      duration = beats * beatDuration;
+    }
+    duration = Math.max(0.6, Math.min(2.5, duration));
+    intensity = Math.max(0, Math.min(1, intensity));
+
+    const length = Math.ceil(ctx.sampleRate * duration);
+    const buffer = ctx.createBuffer(2, length, ctx.sampleRate);
+    for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+      const data = buffer.getChannelData(channel);
+      let last = 0;
+      for (let i = 0; i < length; i++) {
+        const p = i / Math.max(1, length - 1);
+        const envelope = Math.pow(p, 2.4);
+        const noise = Math.random() * 2 - 1;
+        last = last * 0.72 + noise * 0.28;
+        data[i] = last * envelope;
+      }
+    }
+
+    this._reverseSource = ctx.createBufferSource();
+    this._reverseSource.buffer = buffer;
+
+    this._reverseFilter = ctx.createBiquadFilter();
+    this._reverseFilter.type = "highpass";
+    this._reverseFilter.Q.value = 0.8;
+    this._reverseFilter.frequency.setValueAtTime(500, startTime);
+    this._reverseFilter.frequency.exponentialRampToValueAtTime(
+      2800 + intensity * 5200,
+      startTime + duration,
+    );
+
+    this._reverseGain = ctx.createGain();
+    const peakGain = Math.pow(10, (-20 + intensity * 8) / 20);
+    this._reverseGain.gain.setValueAtTime(0.0001, startTime);
+    this._reverseGain.gain.exponentialRampToValueAtTime(
+      peakGain,
+      startTime + duration * 0.92,
+    );
+    this._reverseGain.gain.linearRampToValueAtTime(0, startTime + duration);
+
+    this._reverseSource.connect(this._reverseFilter);
+    this._reverseFilter.connect(this._reverseGain);
+    this._reverseGain.connect(ctx.destination);
+    this._reverseSource.start(startTime);
+    this._reverseSource.stop(startTime + duration);
+
+    this._isActive = true;
+
+    if (IS_DEV) {
+      console.log(
+        `TransitionEffects: Reverse swell created - duration=${duration.toFixed(1)}s, ` +
+          `intensity=${intensity.toFixed(2)}`,
+      );
+    }
+  }
+
+  /**
+   * Add a parallel beat-synced echo send from the outgoing track.
+   */
+  createEchoThrow(
+    ctx: AudioContext,
+    outgoingGain: GainNode,
+    duration: number,
+    startTime: number,
+    bpm?: number,
+    intensity: number = 0.5,
+  ): void {
+    duration = Math.max(0.8, Math.min(4.0, duration));
+    intensity = Math.max(0, Math.min(1, intensity));
+
+    const delayTime = bpm && bpm > 0 ? Math.max(0.16, Math.min(0.55, 30 / bpm)) : 0.32;
+    const feedback = 0.22 + intensity * 0.18;
+    const wetGain = Math.pow(10, (-22 + intensity * 8) / 20);
+
+    this._echoDelay = ctx.createDelay(1.0);
+    this._echoDelay.delayTime.setValueAtTime(delayTime, startTime);
+
+    this._echoFeedback = ctx.createGain();
+    this._echoFeedback.gain.setValueAtTime(feedback, startTime);
+
+    this._echoFilter = ctx.createBiquadFilter();
+    this._echoFilter.type = "lowpass";
+    this._echoFilter.frequency.setValueAtTime(4200 - intensity * 1800, startTime);
+    this._echoFilter.Q.value = 0.7;
+
+    this._echoGain = ctx.createGain();
+    this._echoGain.gain.setValueAtTime(0, startTime);
+    this._echoGain.gain.linearRampToValueAtTime(wetGain, startTime + duration * 0.15);
+    this._echoGain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+
+    outgoingGain.connect(this._echoDelay);
+    this._echoDelay.connect(this._echoFeedback);
+    this._echoFeedback.connect(this._echoDelay);
+    this._echoDelay.connect(this._echoFilter);
+    this._echoFilter.connect(this._echoGain);
+    this._echoGain.connect(ctx.destination);
+    this._echoConnectedTo = outgoingGain;
+
+    this._isActive = true;
+
+    if (IS_DEV) {
+      console.log(
+        `TransitionEffects: Echo throw created - delay=${delayTime.toFixed(2)}s, ` +
+          `feedback=${feedback.toFixed(2)}, duration=${duration.toFixed(1)}s`,
+      );
+    }
+  }
+
+  /**
+   * Insert a short rhythmic gate after the incoming gain node.
+   * This is only safe when no other effect has inserted an incoming filter chain.
+   */
+  createBeatGate(
+    ctx: AudioContext,
+    incomingGain: GainNode,
+    duration: number,
+    startTime: number,
+    bpm?: number,
+    intensity: number = 0.5,
+  ): void {
+    duration = Math.max(0.5, Math.min(3.0, duration));
+    intensity = Math.max(0, Math.min(1, intensity));
+
+    if (this._gateGain) {
+      return;
+    }
+
+    this._gateGain = ctx.createGain();
+    this._gateGain.gain.setValueAtTime(1, startTime);
+
+    try {
+      incomingGain.disconnect(ctx.destination);
+    } catch {
+      /* not directly connected */
+    }
+    incomingGain.connect(this._gateGain);
+    this._gateGain.connect(ctx.destination);
+    this._gateConnectedTo = incomingGain;
+
+    const beatDuration = bpm && bpm > 0 ? 60 / bpm : 0.5;
+    const step = Math.max(0.06, beatDuration / 4);
+    const floorGain = 1 - intensity * 0.45;
+    const endTime = startTime + duration;
+
+    for (let t = startTime; t < endTime; t += step) {
+      const onEnd = Math.min(t + step * 0.58, endTime);
+      const offEnd = Math.min(t + step, endTime);
+      this._gateGain.gain.setValueAtTime(1, t);
+      this._gateGain.gain.linearRampToValueAtTime(1, onEnd);
+      this._gateGain.gain.setValueAtTime(floorGain, onEnd);
+      this._gateGain.gain.linearRampToValueAtTime(floorGain, offEnd);
+    }
+    this._gateGain.gain.linearRampToValueAtTime(1, endTime + 0.08);
+
+    this._isActive = true;
+
+    if (IS_DEV) {
+      console.log(
+        `TransitionEffects: Beat gate created - duration=${duration.toFixed(1)}s, ` +
+          `step=${step.toFixed(2)}s, floor=${floorGain.toFixed(2)}`,
+      );
+    }
+  }
+
+  /**
    * Pause all active effects.
    * Note: ConvolverNode doesn't support pausing directly —
    * we reduce gain to 0 as a workaround.
@@ -326,6 +515,18 @@ export class TransitionEffects {
     if (this._riserGain) {
       this._riserGain.gain.cancelScheduledValues(now);
       this._riserGain.gain.setValueAtTime(0, now);
+    }
+    if (this._reverseGain) {
+      this._reverseGain.gain.cancelScheduledValues(now);
+      this._reverseGain.gain.setValueAtTime(0, now);
+    }
+    if (this._echoGain) {
+      this._echoGain.gain.cancelScheduledValues(now);
+      this._echoGain.gain.setValueAtTime(0, now);
+    }
+    if (this._gateGain) {
+      this._gateGain.gain.cancelScheduledValues(now);
+      this._gateGain.gain.setValueAtTime(1, now);
     }
     // Freeze filter sweep automation
     if (this._outSweepFilter) {
@@ -353,6 +554,15 @@ export class TransitionEffects {
       // Resume at a mid-level gain (exact scheduled ramp is lost)
       const midGain = Math.pow(10, -18 / 20); // ~0.125
       this._riserGain.gain.setValueAtTime(midGain, now);
+    }
+    if (this._reverseGain) {
+      this._reverseGain.gain.setValueAtTime(Math.pow(10, -18 / 20), now);
+    }
+    if (this._echoGain) {
+      this._echoGain.gain.setValueAtTime(Math.pow(10, -24 / 20), now);
+    }
+    if (this._gateGain) {
+      this._gateGain.gain.setValueAtTime(1, now);
     }
     // Re-ramp filter sweep from current position to target
     if (this._sweepTargets) {
@@ -425,6 +635,99 @@ export class TransitionEffects {
       }
       this._riserGain = null;
     }
+
+    if (this._reverseSource) {
+      try {
+        this._reverseSource.stop();
+      } catch {
+        /* already stopped */
+      }
+      try {
+        this._reverseSource.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._reverseSource = null;
+    }
+    if (this._reverseFilter) {
+      try {
+        this._reverseFilter.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._reverseFilter = null;
+    }
+    if (this._reverseGain) {
+      try {
+        this._reverseGain.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._reverseGain = null;
+    }
+
+    if (this._echoConnectedTo && this._echoDelay) {
+      try {
+        this._echoConnectedTo.disconnect(this._echoDelay);
+      } catch {
+        /* ok */
+      }
+    }
+    this._echoConnectedTo = null;
+    if (this._echoDelay) {
+      try {
+        this._echoDelay.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._echoDelay = null;
+    }
+    if (this._echoFeedback) {
+      try {
+        this._echoFeedback.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._echoFeedback = null;
+    }
+    if (this._echoFilter) {
+      try {
+        this._echoFilter.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._echoFilter = null;
+    }
+    if (this._echoGain) {
+      try {
+        this._echoGain.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._echoGain = null;
+    }
+
+    if (this._gateGain) {
+      try {
+        this._gateGain.disconnect();
+      } catch {
+        /* ok */
+      }
+      this._gateGain = null;
+    }
+    if (this._gateConnectedTo && ctx) {
+      try {
+        this._gateConnectedTo.disconnect();
+      } catch {
+        /* ok */
+      }
+      try {
+        this._gateConnectedTo.connect(ctx.destination);
+      } catch {
+        /* ok */
+      }
+    }
+    this._gateConnectedTo = null;
 
     // Clean up filter sweep: disconnect filters and reconnect gain nodes → destination
     // Note: outgoing gain is NOT reconnected — it's about to be stopped/unloaded

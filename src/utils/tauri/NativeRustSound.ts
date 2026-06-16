@@ -18,7 +18,11 @@
 import type { ISound, SoundEventCallback, SoundEventType } from "../AudioContext/types";
 import { isTauri } from "./audioBridge";
 import type { AudioQuality, AudioThreadEvent, DisplayAudioInfo, SongData } from "./audioBridge";
-import { getAudioWs } from "./audioWs";
+import {
+  getAudioBackendTransport,
+  isWasmAudioBackendAvailable,
+  type AudioBackendTransport,
+} from "./audioIpc";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 const LOAD_TIMEOUT_MS = 10_000;
@@ -41,6 +45,10 @@ export function isNativeAudioBackendAvailable(): boolean {
   return isTauri();
 }
 
+export function isAudioBackendRuntimeAvailable(): boolean {
+  return isTauri() || isWasmAudioBackendAvailable();
+}
+
 /** Resolved/rejected when the load completes — or rejected on timeout. */
 type LoadPromise = {
   resolve: () => void;
@@ -51,7 +59,8 @@ type LoadPromise = {
 export class NativeRustSound implements ISound {
   private _events: EventMap = {};
   private _onceEvents: EventMap = {};
-  private _unlistenWs: (() => void) | null = null;
+  private _transport: AudioBackendTransport | null = null;
+  private _unlistenTransport: (() => void) | null = null;
 
   private _path: string;
   private _volume: number = 1;
@@ -97,6 +106,7 @@ export class NativeRustSound implements ISound {
   private _loaded: boolean = false;
   private _destroyed: boolean = false;
   private _playbackState: "stopped" | "playing" | "paused" | "ended" = "stopped";
+  private _optimisticPlayback: boolean = isTauri();
 
   /** Pending load() promise so we can resolve from event handlers. */
   private _pendingLoad: LoadPromise | null = null;
@@ -121,17 +131,18 @@ export class NativeRustSound implements ISound {
   async load(initialPosition?: number): Promise<void> {
     if (this._loaded || this._destroyed) return;
 
-    if (!isTauri()) {
-      this._emit("loaderror", new Error("Tauri runtime not available"));
+    if (!isAudioBackendRuntimeAvailable()) {
+      this._emit("loaderror", new Error("Audio backend runtime not available"));
       return;
     }
 
     // 1. Open the WebSocket (best-effort) and register listeners BEFORE
     //    sending any messages so we can't miss the LoadAudio event.
-    const ws = getAudioWs();
+    const transport = getAudioBackendTransport();
     try {
-      await ws.connect();
-      this._unlistenWs = ws.subscribe((evt, seq) => this._handleEvent(evt, seq));
+      await transport.connect();
+      this._transport = transport;
+      this._unlistenTransport = transport.subscribe((evt, seq) => this._handleEvent(evt, seq));
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       this._emit("loaderror", err);
@@ -210,9 +221,11 @@ export class NativeRustSound implements ISound {
   // ═════════════════════════════════════════════════════════════╝
 
   private _sendCommand(msg: import("./audioBridge").AudioThreadMessage): boolean {
-    const sentNow = getAudioWs().sendOrQueue(msg);
+    const transport = this._transport ?? getAudioBackendTransport();
+    this._transport = transport;
+    const sentNow = transport.sendOrQueue(msg);
     if (!sentNow && IS_DEV) {
-      console.warn("[NativeRustSound] WS control command queued until reconnect", msg.type);
+      console.warn("[NativeRustSound] audio control command queued until reconnect", msg.type);
     }
     return sentNow;
   }
@@ -283,6 +296,7 @@ export class NativeRustSound implements ISound {
 
       case "playStatus": {
         const wantPlaying = evt.data.isPlaying;
+        this._state.isPlaying = wantPlaying;
         const isCurrentlyPlaying = this._playbackState === "playing";
         if (wantPlaying === isCurrentlyPlaying) {
           // Already in this state (likely from an optimistic flip) —
@@ -349,6 +363,12 @@ export class NativeRustSound implements ISound {
             this._emit("loaderror", err);
           }
         } else {
+          const wasPlaying = this._playbackState === "playing";
+          this._playbackState = "paused";
+          this._state.isPlaying = false;
+          if (wasPlaying) {
+            this._emit("pause");
+          }
           this._emit("playerror", err);
         }
         break;
@@ -382,6 +402,10 @@ export class NativeRustSound implements ISound {
 
   private _armNoFFTWarning(): void {
     if (!IS_DEV) return;
+    // Web/WASM does not use the native WS/CPAL FFT event stream. It may add
+    // analysis later through a WASM decoder/PCM path, but absence of `fftData`
+    // there is not a WebSocket/backend failure.
+    if (!isTauri()) return;
     if (this._noFFTWarnTimer !== null) clearTimeout(this._noFFTWarnTimer);
     this._noFFTWarnTimer = setTimeout(() => {
       this._noFFTWarnTimer = null;
@@ -405,8 +429,9 @@ export class NativeRustSound implements ISound {
   play(): this {
     if (this._destroyed) return this;
     this._sendCommand({ type: "resumeAudio" });
-    if (this._playbackState !== "playing") {
+    if (this._optimisticPlayback && this._playbackState !== "playing") {
       this._playbackState = "playing";
+      this._state.isPlaying = true;
       this._lastPositionEvent = { position: this._state.position, receivedAt: Date.now() };
       // Defer via microtask so `sound.play(); sound.once("play", ...)` —
       // the pattern PlayerFunctions.fadePlayOrPause uses — has time to
@@ -420,8 +445,9 @@ export class NativeRustSound implements ISound {
   pause(): this {
     if (this._destroyed) return this;
     this._sendCommand({ type: "pauseAudio" });
-    if (this._playbackState !== "paused") {
+    if (this._optimisticPlayback && this._playbackState !== "paused") {
       this._playbackState = "paused";
+      this._state.isPlaying = false;
       this._lastPositionEvent = { position: this._state.position, receivedAt: Date.now() };
       this._emitDeferred("pause");
     }
@@ -433,8 +459,9 @@ export class NativeRustSound implements ISound {
     this._sendCommand({ type: "pauseAudio" });
     this._sendCommand({ type: "seekAudio", position: 0 });
     this._state.position = 0;
+    this._state.isPlaying = false;
     this._lastPositionEvent = { position: 0, receivedAt: Date.now() };
-    if (this._playbackState !== "stopped") {
+    if (this._optimisticPlayback && this._playbackState !== "stopped") {
       this._playbackState = "stopped";
       this._emitDeferred("pause");
     }
@@ -583,6 +610,18 @@ export class NativeRustSound implements ISound {
     return this._quality ? { ...this._quality } : null;
   }
 
+  getSourceUrl(): string {
+    return this._path;
+  }
+
+  getGainNode(): GainNode | null {
+    return this._transport?.getGainNode?.() ?? null;
+  }
+
+  async ensureAudioGraph(): Promise<boolean> {
+    return (await this._transport?.ensureAudioGraph?.()) ?? false;
+  }
+
   getEffectManager(): import("../AudioContext/AudioEffectManager").AudioEffectManager | null {
     return null;
   }
@@ -597,13 +636,13 @@ export class NativeRustSound implements ISound {
       clearTimeout(this._noFFTWarnTimer);
       this._noFFTWarnTimer = null;
     }
-    if (this._unlistenWs) {
+    if (this._unlistenTransport) {
       try {
-        this._unlistenWs();
+        this._unlistenTransport();
       } catch {
         /* ignore */
       }
-      this._unlistenWs = null;
+      this._unlistenTransport = null;
     }
     this._sendCommand({ type: "pauseAudio" });
   }

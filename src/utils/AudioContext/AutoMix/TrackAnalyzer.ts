@@ -248,7 +248,7 @@ function analyzeEnergyFallback(
   duration: number,
 ): EnergyAnalysis {
   const secondCount = Math.ceil(duration);
-  const energyPerSecond: number[] = new Array(secondCount);
+  const energyPerSecond: number[] = Array.from({ length: secondCount });
   const length = data.length;
   const SILENCE_THRESHOLD = 0.003; // ~-50dB
 
@@ -359,7 +359,7 @@ async function analyzeOnMainThread(
   monoData: Float32Array,
   sampleRate: number,
   duration: number,
-  analyzeBPM: boolean,
+  _analyzeBPM: boolean,
 ): Promise<TrackAnalysis> {
   const volume = analyzeVolumeFallback(monoData);
   await yieldToMain();
@@ -377,7 +377,7 @@ async function analyzeOnMainThread(
     volume,
     energy,
     bpm: null,
-    fingerprint: { bands: new Array(24).fill(0) },
+    fingerprint: { bands: Array.from({ length: 24 }, () => 0) },
     outro: null,
     intro,
     phrases: null,
@@ -427,17 +427,17 @@ function analyzeIntroFallback(
  * Falls back to main-thread execution with periodic yields if Worker is unavailable.
  */
 export async function analyzeTrack(
-  blobUrl: string,
+  sourceUrl: string,
   options?: AnalyzeOptions,
 ): Promise<TrackAnalysis> {
   const analyzeBPM = options?.analyzeBPM ?? true;
 
   if (IS_DEV) {
-    console.log("TrackAnalyzer: Starting analysis for", blobUrl.substring(0, 50));
+    console.log("TrackAnalyzer: Starting analysis for", sourceUrl.substring(0, 50));
   }
 
   // Step 1: decode on main thread using global AudioContext
-  const buffer = await decodeBlob(blobUrl);
+  const buffer = await decodeBlob(sourceUrl);
 
   // Step 2: mix to mono
   const monoData = mixToMono(buffer);
