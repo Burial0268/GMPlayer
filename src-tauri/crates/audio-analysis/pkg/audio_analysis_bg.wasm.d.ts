@@ -1,0 +1,29 @@
+/* tslint:disable */
+/* eslint-disable */
+export const memory: WebAssembly.Memory;
+export const __wbg_get_lfoptionsjs_bin_count: (a: number) => number;
+export const __wbg_get_lfoptionsjs_gradient_threshold: (a: number) => number;
+export const __wbg_get_lfoptionsjs_smoothing_factor: (a: number) => number;
+export const __wbg_get_lfoptionsjs_window_size: (a: number) => number;
+export const __wbg_lfoptionsjs_free: (a: number, b: number) => void;
+export const __wbg_set_lfoptionsjs_bin_count: (a: number, b: number) => void;
+export const __wbg_set_lfoptionsjs_gradient_threshold: (a: number, b: number) => void;
+export const __wbg_set_lfoptionsjs_smoothing_factor: (a: number, b: number) => void;
+export const __wbg_set_lfoptionsjs_window_size: (a: number, b: number) => void;
+export const __wbg_wasmaudioprocessor_free: (a: number, b: number) => void;
+export const wasmaudioprocessor_clear: (a: number) => void;
+export const wasmaudioprocessor_free: (a: number) => void;
+export const wasmaudioprocessor_getLFOptions: (a: number) => number;
+export const wasmaudioprocessor_getLowFreq: (a: number) => number;
+export const wasmaudioprocessor_getRawBins: (a: number, b: number, c: number) => void;
+export const wasmaudioprocessor_getSpectrum: (a: number, b: number) => void;
+export const wasmaudioprocessor_isReady: (a: number) => number;
+export const wasmaudioprocessor_new: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
+export const wasmaudioprocessor_processFrame: (a: number, b: number, c: number, d: number, e: number) => number;
+export const wasmaudioprocessor_pushPCM: (a: number, b: number, c: number, d: number) => void;
+export const wasmaudioprocessor_reset: (a: number) => void;
+export const wasmaudioprocessor_setFreqRange: (a: number, b: number, c: number) => void;
+export const wasmaudioprocessor_setLFOptions: (a: number, b: number, c: number, d: number, e: number) => void;
+export const __wbindgen_add_to_stack_pointer: (a: number) => number;
+export const __wbindgen_export: (a: number, b: number, c: number) => void;
+export const __wbindgen_export2: (a: number, b: number) => number;

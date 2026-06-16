@@ -1,0 +1,21 @@
+{
+  "name": "@player-helper/gmplayer-audio-backend",
+  "type": "module",
+  "collaborators": [
+    "GBCLStudio"
+  ],
+  "description": "Audio player backend using Symphonia + rodio, inspired by AMLL player-core",
+  "version": "0.1.0",
+  "files": [
+    "gmplayer_audio_backend_bg.wasm",
+    "gmplayer_audio_backend.js",
+    "gmplayer_audio_backend_bg.js",
+    "gmplayer_audio_backend.d.ts"
+  ],
+  "main": "gmplayer_audio_backend.js",
+  "types": "gmplayer_audio_backend.d.ts",
+  "sideEffects": [
+    "./gmplayer_audio_backend.js",
+    "./snippets/*"
+  ]
+}
