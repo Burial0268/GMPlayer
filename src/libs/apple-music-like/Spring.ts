@@ -96,7 +96,7 @@ export class Spring {
   updateParams(params: Partial<SpringParams>, delay = 0) {
     if (delay > 0) {
       this.queueParams = {
-        ...(this.queuePosition ?? {}),
+        ...this.queuePosition,
         ...params,
         time: delay,
       };
@@ -112,7 +112,7 @@ export class Spring {
   setTargetPosition(targetPosition: number, delay = 0) {
     if (delay > 0) {
       this.queuePosition = {
-        ...(this.queuePosition ?? {}),
+        ...this.queuePosition,
         position: targetPosition,
         time: delay,
       };

@@ -1,21 +1,31 @@
 <template>
   <div class="player-cover-container">
-    <Transition name="fade" mode="out-in">
-      <div
-        :key="`cover_pic--${music.getPlaySongData?.album?.pic ?? defaultCover}`"
-        :class="['pic', !music.getPlayState ? 'pause' : '', music.getLoadingState ? 'loading' : '']"
-      >
-        <img
-          class="album"
-          :src="
-            music.getPlaySongData && music.getPlaySongData.album
-              ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=1024y1024'
-              : '/images/pic/default.png'
-          "
-          alt="cover"
-        />
+    <div class="cover-stage">
+      <div class="amll-close-action">
+        <ControlThumb aria-label="Close player" @click="closeBigPlayer" />
       </div>
-    </Transition>
+      <Transition name="fade" mode="out-in">
+        <div
+          :key="`cover_pic--${music.getPlaySongData?.album?.pic ?? defaultCover}`"
+          :class="[
+            'pic',
+            !music.getPlayState ? 'pause' : '',
+            music.getLoadingState ? 'loading' : '',
+          ]"
+        >
+          <img
+            class="album"
+            :src="
+              music.getPlaySongData && music.getPlaySongData.album
+                ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
+                  '?param=1024y1024'
+                : '/images/pic/default.png'
+            "
+            alt="cover"
+          />
+        </div>
+      </Transition>
+    </div>
     <div class="controls">
       <div class="song-info">
         <div class="text">
@@ -98,16 +108,12 @@
           :component="ThumbDownRound"
           @click="music.setFmDislike(music.getPersonalFmData.id)"
         />
-        <div class="play-state">
-          <n-button text :focusable="false" :loading="music.getLoadingState">
-            <template #icon>
-              <n-icon
-                :component="music.getPlayState ? IconPause : IconPlay"
-                @click.stop="music.setPlayState(!music.getPlayState)"
-              />
-            </template>
-          </n-button>
-        </div>
+        <n-icon
+          class="button-icon"
+          :class="{ loading: music.getLoadingState }"
+          :component="music.getPlayState ? IconPause : IconPlay"
+          @click.stop="!music.getLoadingState && music.setPlayState(!music.getPlayState)"
+        />
         <n-icon
           class="button-icon skip-icon"
           :component="IconForward"
@@ -160,6 +166,7 @@ import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
 import { NativeRustSound } from "@/utils/tauri/NativeRustSound";
 import BouncingSlider from "./BouncingSlider.vue";
+import ControlThumb from "./ControlThumb.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
 import { NIcon } from "naive-ui";
@@ -322,9 +329,13 @@ const goToComment = () => {
   }
 };
 
+const closeBigPlayer = () => {
+  music.setBigPlayerState(false);
+};
+
 // GSAP 动画
 onMounted(() => {
-  const buttons = document.querySelectorAll(".button-icon, .play-state");
+  const buttons = document.querySelectorAll(".button-icon");
   buttons.forEach((button) => {
     // 悬停动画
     button.addEventListener("mouseenter", () => {
@@ -373,10 +384,26 @@ onMounted(() => {
     gap: 1.5rem;
   }
 
-  .pic {
+  .cover-stage {
     position: relative;
     width: var(--cover-size);
     height: var(--cover-size);
+  }
+
+  .amll-close-action {
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 1.5rem);
+    width: 0;
+    height: 0;
+    z-index: 3;
+    mix-blend-mode: plus-lighter;
+  }
+
+  .pic {
+    position: relative;
+    width: 100%;
+    height: 100%;
     border-radius: 12px;
     transition:
       transform 0.5s ease-out,
@@ -500,6 +527,7 @@ onMounted(() => {
       grid-template-columns: repeat(5, minmax(0, 1fr));
       align-items: center;
       justify-items: center;
+      mix-blend-mode: plus-lighter;
       column-gap: clamp(0.25rem, calc(var(--cover-size) * 0.025), 0.75rem);
 
       > * {
@@ -507,23 +535,13 @@ onMounted(() => {
         justify-self: center;
       }
 
-      .play-state {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-
-        .n-button {
-          font-size: 3rem;
-          color: var(--main-cover-color);
-        }
-      }
       .button-icon {
         width: clamp(2.25rem, calc(var(--cover-size) * 0.1), 3rem);
         height: clamp(2.25rem, calc(var(--cover-size) * 0.1), 3rem);
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 1.5rem;
+        font-size: clamp(1.65rem, calc(var(--cover-size) * 0.072), 1.95rem);
         color: var(--main-cover-color);
         opacity: 0.8;
         cursor: pointer;
@@ -533,13 +551,17 @@ onMounted(() => {
         &:hover {
           opacity: 1;
         }
+        &.loading {
+          opacity: 0.35;
+          pointer-events: none;
+        }
         &.active {
           opacity: 1;
           color: var(--primary-color);
         }
 
         &.skip-icon {
-          font-size: clamp(1.95rem, calc(var(--cover-size) * 0.09), 2.45rem);
+          font-size: clamp(2.25rem, calc(var(--cover-size) * 0.105), 2.85rem);
         }
       }
     }

@@ -1,4 +1,4 @@
-import { ref, onMounted, onBeforeUnmount, nextTick } from "vue";
+import { ref, onMounted, onBeforeUnmount } from "vue";
 
 export function useResponsiveLayout(breakpoint = 768) {
   const isMobile = ref(false);

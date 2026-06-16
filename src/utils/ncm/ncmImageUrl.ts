@@ -44,7 +44,7 @@ function encryptId(idStr: string): string {
       }
  */
 export function ncmImageUrl(picStr?: string, pic?: number): string | undefined {
-  const id = picStr ?? (pic != null ? String(pic) : "");
+  const id = picStr ?? (pic !== null && pic !== undefined ? String(pic) : "");
   if (!id) return undefined;
   return `https://p1.music.126.net/${encryptId(id)}/${id}.jpg`;
 }

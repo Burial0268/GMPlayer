@@ -61,7 +61,7 @@ const themeOverrides = ref(null);
 const theme = ref(null);
 const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 const changeTheme = () => {
-  if (setting.getSiteTheme == "light") {
+  if (setting.getSiteTheme === "light") {
     theme.value = null;
     themeColorMeta.setAttribute("content", "#ffffff");
     setCssVariable("--message-bg", "rgba(255, 255, 255, 0.72)");
@@ -69,7 +69,7 @@ const changeTheme = () => {
     setCssVariable("--acrylic-bg", "rgba(255, 255, 255, 0.45)");
     setCssVariable("--acrylic-border", "rgba(0, 0, 0, 0.04)");
     setCssVariable("--layout-bg", "#fff");
-  } else if (setting.getSiteTheme == "dark") {
+  } else if (setting.getSiteTheme === "dark") {
     theme.value = darkTheme;
     themeColorMeta.setAttribute("content", "#18181c");
     setCssVariable("--message-bg", "rgba(48, 48, 51, 0.72)");
@@ -83,7 +83,7 @@ const changeTheme = () => {
 // 根据系统决定明暗切换
 const osThemeChange = (val) => {
   if (setting.themeAuto) {
-    val == "dark" ? (setting.theme = "dark") : (setting.theme = "light");
+    setting.theme = val === "dark" ? "dark" : "light";
   }
 };
 

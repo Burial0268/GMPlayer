@@ -7,13 +7,11 @@ import type { LyricLine, AMLLLine, ParsedLrcLine, ParsedYrcLine, InputLyricLine 
 import { msToS } from "@/utils/timeTools";
 
 // Pre-compiled regex for interlude detection
-const INTERLUDE_CHARS_REGEX = /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～]/g;
+const INTERLUDE_CHARS_REGEX = /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～]/gu;
 
 // Pre-compiled regex for splitting roma text
 const ROMA_SPLIT_REGEX = /\s+/;
 
-// Debug flag - set to false in production for better performance
-const DEBUG = false;
 
 /**
  * 判断是否为间奏行
@@ -52,7 +50,7 @@ export function splitRomaToWords(
     return null;
   }
 
-  const result = new Array<string>(words.length).fill("");
+  const result = Array.from<string>({ length: words.length }).fill("");
   for (let i = 0; i < contentIndices.length; i++) {
     result[contentIndices[i]] = segments[i];
   }

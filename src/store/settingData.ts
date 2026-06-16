@@ -186,7 +186,7 @@ const useSettingDataStore = defineStore("settingData", {
             if ("useLyricAtlasAPI" in parsed && !("useTTMLRepo" in parsed)) {
               store.useTTMLRepo = parsed.useLyricAtlasAPI;
             }
-          } catch (_) {
+          } catch {
             /* ignore */
           }
         }

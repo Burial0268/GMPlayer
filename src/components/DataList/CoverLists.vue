@@ -350,16 +350,20 @@ const toChangeLike = async (id) => {
     if (res.code === 200) {
       $message.success(
         `${likeMsg + isThereASpace}${
-          type == 1
+          type === 1
             ? t("menu.collection", { name: t("general.dialog.success") })
             : t("menu.cancelCollection", { name: t("general.dialog.success") })
         }`,
       );
-      listType === "playlist" ? user.setUserPlayLists() : user.setUserAlbumLists();
+      if (listType === "playlist") {
+        user.setUserPlayLists();
+      } else {
+        user.setUserAlbumLists();
+      }
     } else {
       $message.error(
         `${likeMsg + isThereASpace}${
-          type == 1
+          type === 1
             ? t("menu.collection", { name: t("general.dialog.failed") })
             : t("menu.cancelCollection", { name: t("general.dialog.failed") })
         }`,
@@ -368,14 +372,14 @@ const toChangeLike = async (id) => {
   } catch (err) {
     $message.error(
       `${likeMsg + isThereASpace}${
-        type == 1
+        type === 1
           ? t("menu.collection", { name: t("general.dialog.failed") })
           : t("menu.cancelCollection", { name: t("general.dialog.failed") })
       }`,
     );
     console.error(
       `${likeMsg + isThereASpace}${
-        type == 1
+        type === 1
           ? t("menu.collection", { name: t("general.dialog.failed") })
           : t("menu.cancelCollection", { name: t("general.dialog.failed") })
       }`,

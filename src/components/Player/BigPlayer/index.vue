@@ -1,6 +1,7 @@
 <template>
   <Teleport to="body">
     <div
+      v-if="!isMobile || mobileOverlayVisible"
       ref="bigPlayerRef"
       :class="[
         'bplayer',
@@ -18,6 +19,7 @@
         '--cover-bg': songPicGradient,
         '--main-cover-color': `rgb(${setting.immersivePlayer ? songPicColor : '255,255,255'})`,
       }"
+      @mousedown="handleDesktopWindowDrag"
     >
       <!-- 移动端布局 -->
       <template v-if="isMobile">
@@ -113,10 +115,7 @@
 
         <BigPlayerTopBar
           :showLyricSetting="setting.showLyricSetting"
-          :screenfullIcon="screenfullIcon"
           @openSettings="LyricSettingRef.openLyricSetting()"
-          @toggleFullscreen="screenfullChange"
-          @close="closeBigPlayer"
         />
 
         <DesktopPlayerLayout
@@ -124,10 +123,20 @@
           :lrcMouseStatus="lrcMouseStatus"
           :menuShow="menuShow"
           :hasLyrics="hasLyrics"
+          :lyricsVisible="desktopLyricsVisible"
+          :queueOpen="music.showPlayList"
           :handleProgressSeek="handleProgressSeek"
           @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
           @lrcAllLeave="lrcAllLeave"
           @lrcTextClick="lrcTextClick"
+        />
+
+        <DesktopToggleControls
+          :lyricsVisible="desktopLyricsVisible && hasLyrics"
+          :queueOpen="music.showPlayList"
+          :hasLyrics="hasLyrics"
+          @toggleLyrics="desktopLyricsVisible = !desktopLyricsVisible"
+          @toggleQueue="music.showPlayList = !music.showPlayList"
         />
 
         <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
@@ -147,13 +156,13 @@ import { storeToRefs } from "pinia";
 import gsap from "gsap";
 import { onMounted, nextTick, watch, ref, computed, onBeforeUnmount } from "vue";
 import { Motion, animate, useMotionValue, type MotionValue } from "motion-v";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "../icons/icon-animations.css";
 
 // 导入 composables
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { usePwaThemeColor } from "@/composables/usePwaThemeColor";
 import { useBigPlayerCommon } from "@/composables/useBigPlayerCommon";
-import { useFullscreen } from "@/composables/useFullscreen";
 import { useMobileCoverFrame } from "@/composables/useMobileCoverFrame";
 
 // 导入子组件
@@ -161,6 +170,7 @@ import BigPlayerBackground from "./BigPlayerBackground.vue";
 import BigPlayerTopBar from "./BigPlayerTopBar.vue";
 import MobilePlayerLayout from "./MobilePlayerLayout.vue";
 import DesktopPlayerLayout from "./DesktopPlayerLayout.vue";
+import DesktopToggleControls from "./DesktopToggleControls.vue";
 
 const music = musicStore();
 const site = siteStore();
@@ -204,18 +214,13 @@ const mobileCoverRootRef = computed(() =>
   isMobile.value ? mobileShellRef.value : bigPlayerRef.value,
 );
 
-// 全屏切换
-const { screenfullIcon, screenfullChange, cleanupFullscreen } = useFullscreen(bigPlayerRef, () => {
-  lrcMouseStatus.value = false;
-  lyricsScroll(music.getPlaySongLyricIndex);
-});
-
 // 移动端层级 & 封面帧
 const mobileLayer = ref(1);
 const mobileQueueOpen = ref(false);
 const mobileExiting = ref(false);
 const mobileTransitionActive = ref(false);
 const mobileAlbumLayerReady = ref(false);
+const desktopLyricsVisible = ref(true);
 const mobileOverlayVisible = computed(() =>
   isMobile.value
     ? music.showBigPlayer || mobileExiting.value || mobileTransitionActive.value
@@ -279,10 +284,7 @@ const controlsOpacity = useMotionValue(0);
 const controlsY = useMotionValue(18);
 const backgroundVisualOpacity = useMotionValue(0);
 const backgroundGrayOpacity = useMotionValue(0);
-const backgroundLeft = useMotionValue(0);
 const backgroundTop = useMotionValue(0);
-const backgroundWidth = useMotionValue(0);
-const backgroundHeight = useMotionValue(0);
 const backgroundRadius = useMotionValue(0);
 const artworkLeft = useMotionValue(0);
 const artworkTop = useMotionValue(0);
@@ -391,6 +393,20 @@ const readRadius = (el: Element | null, fallback: number) => {
   return Number.isFinite(value) ? value : fallback;
 };
 
+const miniUiStyleCache = new Map<string, string>();
+
+const setMiniUiVar = (name: string, value: string) => {
+  if (miniUiStyleCache.get(name) === value) return;
+  document.documentElement.style.setProperty(name, value);
+  miniUiStyleCache.set(name, value);
+};
+
+const removeMiniUiVar = (name: string) => {
+  if (!miniUiStyleCache.has(name) && !document.documentElement.style.getPropertyValue(name)) return;
+  document.documentElement.style.removeProperty(name);
+  miniUiStyleCache.delete(name);
+};
+
 const frameFromRect = (rect: DOMRect, rootRect: DOMRect, borderRadius: number): SharedFrame => ({
   left: rect.left - rootRect.left,
   top: rect.top - rootRect.top,
@@ -484,12 +500,7 @@ const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   const rootTop = shellRect?.top ?? 0;
   if (mini.backgroundRect) {
     const backgroundTopValue = mini.backgroundRect.top - rootTop;
-    backgroundLeft.set(0);
     backgroundTop.set(backgroundTopValue);
-    backgroundWidth.set(shellRect?.width ?? mini.backgroundRect.width);
-    backgroundHeight.set(
-      Math.max(0, (shellRect?.height ?? window.innerHeight) - backgroundTopValue),
-    );
     backgroundRadius.set(0);
   }
   if (mini.artworkRect) {
@@ -567,20 +578,6 @@ const getLiftedMiniFrame = (
   top: frame.top + getMiniBarY(progress),
 });
 
-const getMiniSheetBackgroundFrame = (
-  frames: NonNullable<typeof interactiveFrames>,
-  progress = MOBILE_MINI_BAR_HANDOFF_END,
-): SharedFrame => {
-  const top = frames.miniBg.top + getMiniBarY(progress);
-  return {
-    left: 0,
-    top,
-    width: frames.fullBg.width,
-    height: Math.max(0, frames.fullBg.height - top),
-    borderRadius: frames.miniBg.borderRadius || 12,
-  };
-};
-
 const getArtworkMidFrame = (frames: NonNullable<typeof interactiveFrames>): SharedFrame => {
   const from = getLiftedMiniFrame(frames.miniArtwork);
   const compactTarget =
@@ -621,26 +618,21 @@ const keepArtworkInsideMovingBackground = (
 };
 
 const applyBackgroundFrame = (frames: NonNullable<typeof interactiveFrames>, progress: number) => {
-  const sheetHandoffBg = getMiniSheetBackgroundFrame(frames);
-  const setters = {
-    left: backgroundLeft,
-    top: backgroundTop,
-    width: backgroundWidth,
-    height: backgroundHeight,
-    radius: backgroundRadius,
-  };
-
   if (progress <= MOBILE_MINI_BAR_HANDOFF_END) {
-    applyFrame(sheetHandoffBg, getMiniSheetBackgroundFrame(frames, progress), 1, setters);
+    backgroundTop.set(frames.miniBg.top + getMiniBarY(progress));
+    backgroundRadius.set(frames.miniBg.borderRadius || 12);
     return;
   }
 
-  applyFrame(
-    sheetHandoffBg,
-    frames.fullBg,
-    rangeProgress(progress, MOBILE_MINI_BAR_HANDOFF_END, MOBILE_BACKGROUND_EXPAND_END),
-    setters,
+  const sheetHandoffTop = frames.miniBg.top + getMiniBarY(MOBILE_MINI_BAR_HANDOFF_END);
+  const sheetHandoffRadius = frames.miniBg.borderRadius || 12;
+  const expandProgress = rangeProgress(
+    progress,
+    MOBILE_MINI_BAR_HANDOFF_END,
+    MOBILE_BACKGROUND_EXPAND_END,
   );
+  backgroundTop.set(mix(sheetHandoffTop, frames.fullBg.top, expandProgress));
+  backgroundRadius.set(mix(sheetHandoffRadius, frames.fullBg.borderRadius, expandProgress));
 };
 
 const applyInteractiveFrame = (progress: number) => {
@@ -653,7 +645,6 @@ const applyInteractiveFrame = (progress: number) => {
         getLiftedMiniFrame(interactiveFrames.miniArtwork, progress),
       ),
     );
-    mobileAlbumLayerReady.value = true;
     return;
   }
 
@@ -667,7 +658,6 @@ const applyInteractiveFrame = (progress: number) => {
       rangeProgress(progress, MOBILE_MINI_BAR_HANDOFF_END, MOBILE_ARTWORK_MID_END),
     );
     applyArtworkFrame(keepArtworkInsideMovingBackground(interactiveFrames, artworkFrame));
-    mobileAlbumLayerReady.value = true;
     return;
   }
 
@@ -677,30 +667,29 @@ const applyInteractiveFrame = (progress: number) => {
     rangeProgress(progress, MOBILE_ARTWORK_MID_END, MOBILE_ARTWORK_EXPAND_END),
   );
   applyArtworkFrame(keepArtworkInsideMovingBackground(interactiveFrames, artworkFrame));
-  mobileAlbumLayerReady.value = true;
 };
 
 const clearMiniUiVars = () => {
-  document.documentElement.style.removeProperty("--mobile-mini-player-root-y");
-  document.documentElement.style.removeProperty("--mobile-mini-player-z-index");
-  document.documentElement.style.removeProperty("--mobile-mini-player-pointer-events");
-  document.documentElement.style.removeProperty("--mobile-mini-player-surface-bg");
-  document.documentElement.style.removeProperty("--mobile-mini-player-surface-opacity");
-  document.documentElement.style.removeProperty("--mobile-mini-player-mask-y");
-  document.documentElement.style.removeProperty("--mobile-mini-player-surface-border");
-  document.documentElement.style.removeProperty("--mobile-mini-player-surface-shadow");
-  document.documentElement.style.removeProperty("--mobile-mini-player-ui-opacity");
-  document.documentElement.style.removeProperty("--mobile-mini-player-chrome-opacity");
-  document.documentElement.style.removeProperty("--mobile-mini-player-text-opacity");
-  document.documentElement.style.removeProperty("--mobile-mini-player-detail-opacity");
-  document.documentElement.style.removeProperty("--mobile-mini-player-detail-height");
-  document.documentElement.style.removeProperty("--mobile-mini-player-detail-margin");
-  document.documentElement.style.removeProperty("--mobile-mini-player-ui-y");
-  document.documentElement.style.removeProperty("--mobile-mini-player-text-y");
-  document.documentElement.style.removeProperty("--mobile-mini-player-artwork-opacity");
-  document.documentElement.style.removeProperty("--mobile-mini-player-bottom-y");
-  document.documentElement.style.removeProperty("--mobile-mini-player-bottom-z-index");
-  document.documentElement.style.removeProperty("--mobile-mini-player-bottom-pointer-events");
+  removeMiniUiVar("--mobile-mini-player-root-y");
+  removeMiniUiVar("--mobile-mini-player-z-index");
+  removeMiniUiVar("--mobile-mini-player-pointer-events");
+  removeMiniUiVar("--mobile-mini-player-surface-bg");
+  removeMiniUiVar("--mobile-mini-player-surface-opacity");
+  removeMiniUiVar("--mobile-mini-player-mask-y");
+  removeMiniUiVar("--mobile-mini-player-surface-border");
+  removeMiniUiVar("--mobile-mini-player-surface-shadow");
+  removeMiniUiVar("--mobile-mini-player-ui-opacity");
+  removeMiniUiVar("--mobile-mini-player-chrome-opacity");
+  removeMiniUiVar("--mobile-mini-player-text-opacity");
+  removeMiniUiVar("--mobile-mini-player-detail-opacity");
+  removeMiniUiVar("--mobile-mini-player-detail-height");
+  removeMiniUiVar("--mobile-mini-player-detail-margin");
+  removeMiniUiVar("--mobile-mini-player-ui-y");
+  removeMiniUiVar("--mobile-mini-player-text-y");
+  removeMiniUiVar("--mobile-mini-player-artwork-opacity");
+  removeMiniUiVar("--mobile-mini-player-bottom-y");
+  removeMiniUiVar("--mobile-mini-player-bottom-z-index");
+  removeMiniUiVar("--mobile-mini-player-bottom-pointer-events");
 };
 
 const applyMiniUiVars = (progress: number) => {
@@ -719,76 +708,76 @@ const applyMiniUiVars = (progress: number) => {
   const miniArtworkOpacity = miniTransitioning ? 0 : 1;
   const miniSurfaceOpacity = miniTransitioning ? 1 - easeOutCubic(miniSurfaceExit) : 1;
   const miniMaskY = miniTransitioning ? getMiniBarY(progress) : 0;
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-root-y",
     `${getMiniBarY(progress)}px`,
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-z-index",
     progress < MOBILE_MINI_UI_FADE_END ? "2102" : "2",
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-pointer-events",
     miniTransitioning ? "none" : "auto",
   );
   if (miniTransitioning) {
-    document.documentElement.style.setProperty("--mobile-mini-player-surface-border", "transparent");
-    document.documentElement.style.setProperty("--mobile-mini-player-surface-shadow", "none");
+    setMiniUiVar("--mobile-mini-player-surface-border", "transparent");
+    setMiniUiVar("--mobile-mini-player-surface-shadow", "none");
   } else {
-    document.documentElement.style.removeProperty("--mobile-mini-player-surface-bg");
-    document.documentElement.style.removeProperty("--mobile-mini-player-surface-border");
-    document.documentElement.style.removeProperty("--mobile-mini-player-surface-shadow");
+    removeMiniUiVar("--mobile-mini-player-surface-bg");
+    removeMiniUiVar("--mobile-mini-player-surface-border");
+    removeMiniUiVar("--mobile-mini-player-surface-shadow");
   }
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-surface-opacity",
     String(miniSurfaceOpacity),
   );
-  document.documentElement.style.setProperty("--mobile-mini-player-mask-y", `${miniMaskY}px`);
-  document.documentElement.style.setProperty(
+  setMiniUiVar("--mobile-mini-player-mask-y", `${miniMaskY}px`);
+  setMiniUiVar(
     "--mobile-mini-player-ui-opacity",
     String(1 - miniChromeExit),
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-chrome-opacity",
     String(1 - miniChromeExit),
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-text-opacity",
     String(1 - miniTextExit),
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-detail-opacity",
     String(1 - miniDetailExit),
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-detail-height",
     `${mix(1.2, 0, miniDetailExit)}em`,
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-detail-margin",
     `${mix(2, 0, miniDetailExit)}px`,
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-ui-y",
     `${mix(0, -4, miniLift)}px`,
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-text-y",
     `${mix(0, -8, miniLift)}px`,
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-artwork-opacity",
     String(miniArtworkOpacity),
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-bottom-y",
     `${mix(0, 110, bottomExit)}%`,
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-bottom-z-index",
     progress < MOBILE_MINI_BAR_HANDOFF_END ? "2101" : "1000",
   );
-  document.documentElement.style.setProperty(
+  setMiniUiVar(
     "--mobile-mini-player-bottom-pointer-events",
     miniTransitioning ? "none" : "auto",
   );
@@ -875,15 +864,52 @@ const switchMobileLayer = (targetLayer: number) => {
   });
 };
 
+const desktopDragBlockSelector = [
+  ".icon-menu",
+  ".player-cover-container",
+  ".record",
+  ".right",
+  ".tip",
+  ".desktop-toggle-controls",
+  ".desktop-queue-panel",
+  ".amll-close-action",
+  ".control-thumb",
+  ".controls",
+  ".lrcShow",
+  ".desktop-lyric-offset",
+  ".bouncing-slider",
+  ".n-slider",
+  ".vue-slider",
+  ".n-icon",
+  "button",
+  "a",
+  "input",
+  "textarea",
+  "select",
+  "[role='button']",
+  "[role='slider']",
+].join(",");
+
+const handleDesktopWindowDrag = (event: MouseEvent) => {
+  if (isMobile.value || event.button !== 0 || event.detail > 1 || !music.showBigPlayer) return;
+  if (typeof window === "undefined" || !("__TAURI__" in window)) return;
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(desktopDragBlockSelector)) return;
+  event.preventDefault();
+  void getCurrentWindow().startDragging().catch(() => {});
+};
+
 const cleanupClosedMobileTransition = () => {
   stopArtworkFrameAnimations();
   mobileInteractive.value = false;
   mobileTransitionActive.value = false;
   mobileTransitionDirection.value = null;
   mobileExiting.value = false;
+  resetMobileQueueState();
   interactiveFrames = null;
   mobileAlbumLayerReady.value = false;
   applyProgressState(0);
+  clearMiniUiVars();
 };
 
 const completeClosedMobileTransition = (updateStore: boolean) => {
@@ -914,11 +940,13 @@ const clearMobileExitFallback = () => {
 
 const finishMobileExit = () => {
   clearMobileExitFallback();
-  mobileExiting.value = false;
   if (!music.showBigPlayer) {
-    mobileTransitionActive.value = false;
-    mobileTransitionDirection.value = null;
+    playerProgress.set(0);
+    restoreMiniSharedAlbum();
+    cleanupClosedMobileTransition();
+    return;
   }
+  mobileExiting.value = false;
 };
 
 const scheduleMobileExitFallback = () => {
@@ -933,6 +961,11 @@ const openMobileQueue = () => {
 
 const closeMobileQueue = () => {
   mobileQueueOpen.value = false;
+};
+
+const resetMobileQueueState = () => {
+  mobileQueueOpen.value = false;
+  music.showPlayList = false;
 };
 
 const detachMiniSharedAlbum = () => {
@@ -957,6 +990,11 @@ const beginMobileInteractive = async (
   stopArtworkFrameAnimations();
   pendingInteractiveProgress = clamp(initialProgress);
   mobileTransitionDirection.value = pendingInteractiveProgress >= 0.999 ? "closing" : "opening";
+  mobileInteractive.value = true;
+  mobileTransitionActive.value = true;
+  mobileExiting.value = false;
+  clearMobileExitFallback();
+  await nextTick();
   if (pendingInteractiveProgress <= 0.001) {
     detachMiniSharedAlbum();
     seedInteractiveFromMini(frames);
@@ -964,10 +1002,6 @@ const beginMobileInteractive = async (
     prepareMiniAlbumCloseHandoff();
     seedInteractiveFromFull();
   }
-  mobileInteractive.value = true;
-  mobileTransitionActive.value = true;
-  mobileExiting.value = false;
-  clearMobileExitFallback();
   playerProgress.set(pendingInteractiveProgress);
   applyProgressState(pendingInteractiveProgress);
 
@@ -1055,6 +1089,7 @@ const openMobileFromMini = async (frames?: MiniSharedFrames) => {
     music.setBigPlayerState(true);
     return true;
   }
+  resetMobileQueueState();
   await beginMobileInteractiveOpen(frames);
   return finishMobileInteractive(true);
 };
@@ -1066,6 +1101,7 @@ const closeMobileWithProgress = async () => {
   }
   if (mobileInteractive.value) return;
 
+  resetMobileQueueState();
   prepareMiniAlbumCloseHandoff();
   progressAnimation?.stop();
   progressAnimation = null;
@@ -1172,7 +1208,6 @@ onBeforeUnmount(() => {
   progressUnsubscribe?.();
   clearMiniUiVars();
   clearMobileExitFallback();
-  cleanupFullscreen();
 });
 
 // --- Watchers ---
@@ -1183,6 +1218,7 @@ watch(
     if (val) {
       music.showPlayList = false;
       if (isMobile.value) {
+        resetMobileQueueState();
         mobileExiting.value = false;
         clearMobileExitFallback();
         initMobileElements();
@@ -1203,11 +1239,11 @@ watch(
     } else if (isMobile.value) {
       if (mobileSkipNextStoreCloseAnimation) {
         mobileSkipNextStoreCloseAnimation = false;
-        mobileQueueOpen.value = false;
+        resetMobileQueueState();
         clearMobileExitFallback();
         return;
       }
-      mobileQueueOpen.value = false;
+      resetMobileQueueState();
       mobileExiting.value = true;
       if (!mobileInteractive.value) animateProgressTo(0, finishMobileExit);
       scheduleMobileExitFallback();
@@ -1221,7 +1257,7 @@ watch(
     if (!val) {
       progressAnimation?.stop();
       progressAnimation = null;
-      mobileQueueOpen.value = false;
+      resetMobileQueueState();
       mobileExiting.value = false;
       mobileTransitionActive.value = false;
       mobileTransitionDirection.value = null;
@@ -1348,13 +1384,11 @@ defineExpose({
       min-width: 0;
       min-height: 0;
       overflow: hidden;
-      isolation: isolate;
       display: grid;
       grid-template-rows: [thumb] calc(var(--app-safe-area-top, 0px) + 30px) [main-view] 1fr;
       grid-template-columns: 1fr;
       border-radius: 0;
       background-color: transparent;
-      transform: translateZ(0);
       transform-origin: bottom center;
       will-change: transform, opacity;
 
@@ -1366,10 +1400,8 @@ defineExpose({
         height: 100%;
         z-index: 1;
         overflow: hidden;
-        isolation: isolate;
         background: transparent;
         pointer-events: none;
-        transform: translateZ(0);
         will-change: opacity, border-radius;
 
         :deep(.big-player-background) {

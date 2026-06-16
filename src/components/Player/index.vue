@@ -61,40 +61,37 @@
               <div class="artisrOrLrc" v-if="music.getPlaySongData">
                 <Transition name="fade" mode="out-in">
                   <template v-if="setting.bottomLyricShow">
-                    <Transition name="fade" mode="out-in">
+                    <Transition name="mini-lyric" mode="out-in">
                       <n-text
-                        v-if="
-                          music.getPlaySongLyric?.lrc?.length &&
-                          setting.showYrc &&
-                          music.getPlaySongLyricIndex != -1 &&
-                          music.getPlaySongLyric.hasYrc
-                        "
-                        :key="'yrc-' + music.getPlaySongLyricIndex"
-                        class="lrc text-hidden"
+                        v-if="miniLyricLine"
+                        :key="miniLyricLine.key"
+                        :class="['lrc', { 'is-marquee': miniLrcOverflow }]"
                         :depth="3"
                       >
-                        <span ref="lrcScrollRef" class="lrc-scroll-content" :style="lrcScrollStyle">
+                        <span ref="lrcMeasureRef" class="lrc-measure-content">
                           <span
-                            v-for="item in music.getPlaySongLyric.yrc[music.getPlaySongLyricIndex]
-                              .content"
-                            :key="item.time"
+                            v-for="item in miniLyricLine.words"
+                            :key="item.key"
                             class="lrc-word"
                           >
                             {{ item.content }}
                           </span>
                         </span>
-                      </n-text>
-                      <n-text
-                        v-else-if="
-                          music.getPlaySongLyric?.lrc?.length && music.getPlaySongLyricIndex != -1
-                        "
-                        :key="'lrc-' + music.getPlaySongLyricIndex"
-                        class="lrc text-hidden"
-                        :depth="3"
-                      >
-                        <span ref="lrcScrollRef" class="lrc-scroll-content" :style="lrcScrollStyle">
-                          {{ music.getPlaySongLyric.lrc[music.getPlaySongLyricIndex]?.content }}
-                        </span>
+                        <n-marquee
+                          v-if="miniLrcOverflow"
+                          class="mini-lrc-marquee"
+                          :speed="34"
+                        >
+                          <span class="lrc-marquee-content">
+                            <span
+                              v-for="item in miniLyricLine.words"
+                              :key="item.key"
+                              class="lrc-word"
+                            >
+                              {{ item.content }}
+                            </span>
+                          </span>
+                        </n-marquee>
                       </n-text>
                       <AllArtists
                         v-else
@@ -319,7 +316,10 @@ import { useRouter } from "vue-router";
 import { debounce, throttle } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
-import { NativeRustSound, isNativeAudioBackendAvailable } from "@/utils/tauri/NativeRustSound";
+import {
+  NativeRustSound,
+  isAudioBackendRuntimeAvailable,
+} from "@/utils/tauri/NativeRustSound";
 import { windowManager } from "@/utils/tauri/windowManager";
 import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
@@ -343,7 +343,8 @@ const listenTogether = listenTogetherStore();
 const { persistData } = storeToRefs(music);
 const addPlayListRef = ref(null);
 const PlayListDrawerRef = ref(null);
-const lrcScrollRef = ref(null);
+const lrcMeasureRef = ref(null);
+const miniLrcOverflow = ref(false);
 const bigPlayerRef = ref(null);
 
 let miniTouchState = null;
@@ -353,6 +354,40 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const getMobilePlayerTransitionDistance = () =>
   Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
 const MINI_OPEN_FLING_VELOCITY = -0.42;
+
+const miniLyricLine = computed(() => {
+  const lyric = music.getPlaySongLyric;
+  const index = music.getPlaySongLyricIndex;
+  if (!lyric?.lrc?.length || index === -1) return null;
+
+  if (setting.showYrc && lyric.hasYrc && lyric.yrc?.[index]?.content?.length) {
+    return {
+      key: `yrc-${index}`,
+      words: lyric.yrc[index].content.map((item, wordIndex) => ({
+        key: item.time ?? wordIndex,
+        content: item.content,
+      })),
+    };
+  }
+
+  const content = lyric.lrc?.[index]?.content;
+  if (!content) return null;
+
+  return {
+    key: `lrc-${index}`,
+    words: [{ key: index, content }],
+  };
+});
+
+const updateMiniLrcOverflow = () => {
+  const textEl = lrcMeasureRef.value;
+  const containerEl = textEl?.parentElement;
+  if (!textEl || !containerEl) {
+    miniLrcOverflow.value = false;
+    return;
+  }
+  miniLrcOverflow.value = textEl.scrollWidth > containerEl.clientWidth + 1;
+};
 
 const getMiniSharedFrames = () => {
   const artworkEl = document.querySelector("[data-mobile-player-artwork]");
@@ -490,14 +525,12 @@ const getPlaySongData = async (data, level = setting.songLevel) => {
     }
 
     // Check audio preloader — if the next song was preloaded, use it directly.
-    // NOTE: When the native Rust audio backend is available, we skip the
-    // preloader because `NativeRustSound` handles download internally via
-    // `audioOpenUrl`.  Using a preloaded `BufferedSound` would silently
-    // switch the audio pipeline from native to Web Audio (src="" bypasses
-    // the native backend check in createSound).
+    // NOTE: When the Rust audio backend is available (native or WASM), skip
+    // the preloader. Consuming a preloaded `BufferedSound` would silently
+    // switch the audio pipeline back to the legacy Web Audio path.
     const preloader = getAudioPreloader();
-    const nativeAvailable = isNativeAudioBackendAvailable();
-    const preloadedSound = !nativeAvailable ? preloader.consume(id) : null;
+    const backendAvailable = isAudioBackendRuntimeAvailable();
+    const preloadedSound = !backendAvailable ? preloader.consume(id) : null;
     if (preloadedSound) {
       console.log(`[Player] Using preloaded audio for: ${id}`);
       player.value = createSound("", true, preloadedSound);
@@ -1180,118 +1213,21 @@ const fetchAndParseLyric = async (id) => {
   }
 };
 
-// 歌词滚动逻辑：按播放进度水平滚动，避免挤占其他布局区域
-// 借鉴 DesktopLyrics 的实现：.lrc-scroll-content 作为 inline-block 在 .lrc 容器内滚动
-const lrcScrollStyle = ref({});
-
-const updateLrcScroll = () => {
-  const scrollEl = lrcScrollRef.value;
-  if (!scrollEl) return;
-
-  // scrollEl 是 .lrc-scroll-content，它的父元素是 .lrc (n-text)
-  const containerEl = scrollEl.parentElement;
-  if (!containerEl) return;
-
-  const containerWidth = containerEl.clientWidth;
-  const scrollWidth = scrollEl.scrollWidth;
-
-  // 如果内容没有溢出，不需要滚动
-  if (scrollWidth <= containerWidth) {
-    lrcScrollStyle.value = {};
-    return;
-  }
-
-  const lyric = music.getPlaySongLyric;
-  const index = music.getPlaySongLyricIndex;
-  const currentTime = music.getPlaySongTime.currentTime;
-
-  if (!lyric || index === -1) return;
-
-  let progress = 0;
-
-  // YRC 逐字歌词：按当前字的时间进度计算
-  if (setting.showYrc && lyric.hasYrc && lyric.yrc?.[index]?.content?.length) {
-    const yrcLine = lyric.yrc[index];
-    const words = yrcLine.content;
-    const lineStart = yrcLine.time;
-    const lineEnd = yrcLine.endTime || words[words.length - 1]?.endTime || lineStart + 5;
-    const lineDuration = lineEnd - lineStart;
-
-    if (lineDuration > 0) {
-      // 找到当前正在播放的字，计算累计进度
-      for (let i = 0; i < words.length; i++) {
-        const w = words[i];
-        if (currentTime >= w.endTime) {
-          // 这个字已播完
-          progress = (w.endTime - lineStart) / lineDuration;
-        } else if (currentTime >= w.time && currentTime < w.endTime) {
-          // 当前正在播放这个字
-          const wordElapsed = currentTime - w.time;
-          const wordProgress = w.duration > 0 ? wordElapsed / w.duration : 1;
-          progress = (w.time - lineStart + wordProgress * (w.endTime - w.time)) / lineDuration;
-          break;
-        }
-      }
-      progress = Math.min(1, Math.max(0, progress));
-    }
-  } else if (lyric.lrc?.[index]) {
-    // 普通 LRC：按行内时间进度计算
-    const lrcLine = lyric.lrc[index];
-    const lineStart = lrcLine.time;
-    // 尝试获取下一行的时间作为结束时间
-    const nextLine = lyric.lrc[index + 1];
-    const lineEnd = nextLine ? nextLine.time : lineStart + 5;
-    const lineDuration = lineEnd - lineStart;
-
-    if (lineDuration > 0) {
-      progress = Math.min(1, Math.max(0, (currentTime - lineStart) / lineDuration));
-    }
-  }
-
-  // 计算滚动偏移：总溢出宽度 * 进度
-  // 起始停顿：前 30% 进度保持不滚动，让文字在开头停留一段时间
-  const scrollStartProgress = 0.3;
-  let scrollProgress = 0;
-  if (progress > scrollStartProgress) {
-    scrollProgress = (progress - scrollStartProgress) / (1 - scrollStartProgress);
-  }
-  scrollProgress = Math.min(1, Math.max(0, scrollProgress));
-
-  const overflow = scrollWidth - containerWidth;
-  const offset = overflow * scrollProgress;
-
-  lrcScrollStyle.value = {
-    transform: `translateX(-${offset}px)`,
-    transition: "transform 0.1s linear",
-  };
-};
-
-// 监听歌词索引变化，重置滚动位置
 watch(
-  () => music.getPlaySongLyricIndex,
+  () => [
+    miniLyricLine.value?.key,
+    miniLyricLine.value?.words.map((item) => item.content).join(""),
+    setting.bottomLyricShow,
+    setting.showYrc,
+  ],
   () => {
-    lrcScrollStyle.value = {};
-    nextTick(() => {
-      updateLrcScroll();
-    });
+    miniLrcOverflow.value = false;
+    nextTick(updateMiniLrcOverflow);
   },
+  { immediate: true },
 );
 
-// 监听播放时间变化，更新歌词滚动
-watch(
-  () => music.getPlaySongTime.currentTime,
-  () => {
-    updateLrcScroll();
-  },
-);
-
-// 监听播放时间变化，更新歌词滚动
-watch(
-  () => music.getPlaySongTime.currentTime,
-  () => {
-    updateLrcScroll();
-  },
-);
+watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
 </script>
 
 <style lang="scss" scoped>
@@ -1311,8 +1247,15 @@ watch(
   transition: opacity 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+.mini-lyric-enter-active,
+.mini-lyric-leave-active {
+  transition: opacity 0.08s linear;
+}
+
 .fade-enter-from,
-.fade-leave-to {
+.fade-leave-to,
+.mini-lyric-enter-from,
+.mini-lyric-leave-to {
   opacity: 0;
 }
 
@@ -1515,21 +1458,55 @@ watch(
         .artisrOrLrc {
           font-size: 12px;
           margin-top: var(--mobile-mini-player-detail-margin, 2px);
-          max-height: var(--mobile-mini-player-detail-height, 1.2em);
+          line-height: 1.3;
+          max-height: var(--mobile-mini-player-detail-height, 1.3em);
           opacity: var(--mobile-mini-player-detail-opacity, 1);
           overflow: hidden;
           will-change: opacity, max-height, margin-top;
 
           .lrc {
-            display: block;
+            display: block !important;
+            position: relative;
+            width: 100%;
+            height: 1.3em;
+            line-height: 1.3;
             white-space: nowrap;
             overflow: hidden;
+            word-break: normal;
 
-            .lrc-scroll-content {
+            .lrc-measure-content {
               display: inline-block;
               white-space: nowrap;
-              transition: transform 0.1s linear;
-              will-change: transform;
+            }
+
+            &.is-marquee {
+              .lrc-measure-content {
+                position: absolute;
+                visibility: hidden;
+                pointer-events: none;
+              }
+            }
+
+            .mini-lrc-marquee {
+              width: 100%;
+              height: 1.3em;
+              line-height: 1.3;
+              color: inherit;
+
+              :deep(.n-marquee__group),
+              :deep(.n-marquee__item) {
+                align-items: center;
+                height: 1.3em;
+                line-height: 1.3;
+                min-width: max-content;
+                white-space: nowrap;
+              }
+            }
+
+            .lrc-marquee-content {
+              display: inline-block;
+              padding-right: 2em;
+              white-space: nowrap;
             }
 
             .lrc-word {

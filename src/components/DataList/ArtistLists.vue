@@ -206,7 +206,7 @@ const toLikeArtist = (data) => {
     if (res.code === 200) {
       $message.success(
         `${data.name + isThereASpace}${
-          type == 1
+          type === 1
             ? t("menu.collection", { name: t("general.dialog.success") })
             : t("menu.cancelCollection", { name: t("general.dialog.success") })
         }`,
@@ -215,7 +215,7 @@ const toLikeArtist = (data) => {
     } else {
       $message.error(
         `${data.name + isThereASpace}${
-          type == 1
+          type === 1
             ? t("menu.collection", { name: t("general.dialog.failed") })
             : t("menu.cancelCollection", { name: t("general.dialog.failed") })
         }`,

@@ -1,5 +1,5 @@
 import { BaseRenderer } from "@applemusic-like-lyrics/core";
-import { GLProgram, createOffscreenCanvas, GLTexture } from "./GLProgram";
+import { GLProgram, GLTexture } from "./GLProgram";
 import { vec2 } from "gl-matrix";
 import { vertexShader as mainVertexShader } from "./glsl/duplicate.vert";
 import { fragmentShader as mainFragmentShader } from "./glsl/duplicate.frag";
@@ -140,7 +140,7 @@ export class FbmRenderer extends BaseRenderer {
   }
 
   // This method is kept for API consistency but is no longer used by the metaball shader.
-  setWarp(amount: number) {}
+  setWarp(_amount: number) {}
 
   private setImage(imageData: ImageData) {
     if (this.texture) {
@@ -378,7 +378,7 @@ export class FbmRenderer extends BaseRenderer {
     if (this.indexBuffer) gl.deleteBuffer(this.indexBuffer);
   }
 
-  async setAlbum(albumSource: string | HTMLImageElement | HTMLVideoElement, isVideo?: boolean) {
+  async setAlbum(albumSource: string | HTMLImageElement | HTMLVideoElement, _isVideo?: boolean) {
     let imageData: ImageData;
 
     if (typeof albumSource === "string") {
@@ -415,7 +415,7 @@ export class FbmRenderer extends BaseRenderer {
     this.setImage(imageData);
   }
 
-  setLowFreqVolume(volume: number) {
+  setLowFreqVolume(_volume: number) {
     // This method is required by the base class.
     // It can be implemented to allow external control over the animation intensity
     // based on low-frequency audio input, similar to the internal dynamic flow.

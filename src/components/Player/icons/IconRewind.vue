@@ -4,7 +4,7 @@
     xmlns="http://www.w3.org/2000/svg"
     width="1em"
     height="1em"
-    viewBox="0 0 134 134"
+    viewBox="20 20 94 94"
     fill="currentColor"
   >
     <path

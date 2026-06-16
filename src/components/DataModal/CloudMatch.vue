@@ -82,7 +82,7 @@ const cloudMatchValue = ref({
 
 // 歌曲纠正
 const setCloudMatchBtn = (data) => {
-  if (data.sid == data.asid) {
+  if (data.sid === data.asid) {
     $message.error(t("other.noNeedMatch"));
   } else {
     if (!smallSongDataRef.value) {

@@ -1,5 +1,5 @@
 <template>
-  <div :class="[hasLyrics && !music.getLoadingState ? 'all' : 'all noLrc']">
+  <div :class="['all', { noLrc: !showLyrics }]">
     <div class="tip" ref="tipRef" v-show="lrcMouseStatus">
       <n-text>{{ $t("other.lrcClicks") }}</n-text>
     </div>
@@ -9,7 +9,11 @@
       <PlayerRecord v-else-if="setting.playerStyle === 'record'" />
     </div>
 
-    <div class="right" ref="rightContentRef" v-if="hasLyrics && !music.getLoadingState">
+    <div
+      v-if="lyricsReady"
+      ref="rightContentRef"
+      :class="['right', { 'lyrics-hidden': !showLyrics }]"
+    >
       <DesktopLyricsPanel
         :menuShow="menuShow"
         :handleProgressSeek="handleProgressSeek"
@@ -18,20 +22,25 @@
         @lrcTextClick="$emit('lrcTextClick', $event)"
       />
     </div>
+
+    <DesktopQueuePanel :show="queueOpen" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { musicStore, settingStore } from "@/store";
 import PlayerCover from "../PlayerCover.vue";
 import PlayerRecord from "../PlayerRecord.vue";
 import DesktopLyricsPanel from "./DesktopLyricsPanel.vue";
+import DesktopQueuePanel from "./DesktopQueuePanel.vue";
 
-defineProps<{
+const props = defineProps<{
   lrcMouseStatus: boolean;
   menuShow: boolean;
   hasLyrics: boolean;
+  lyricsVisible: boolean;
+  queueOpen: boolean;
   handleProgressSeek: (val: number) => void;
 }>();
 
@@ -47,6 +56,8 @@ const setting = settingStore();
 const tipRef = ref<HTMLElement | null>(null);
 const leftContentRef = ref<HTMLElement | null>(null);
 const rightContentRef = ref<HTMLElement | null>(null);
+const lyricsReady = computed(() => props.hasLyrics && !music.getLoadingState);
+const showLyrics = computed(() => lyricsReady.value && props.lyricsVisible);
 
 defineExpose({ tipRef, leftContentRef, rightContentRef });
 </script>
@@ -61,12 +72,14 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
   position: relative;
 
   &.noLrc {
-    justify-content: center;
+    justify-content: flex-start;
 
     .left {
+      flex-basis: 100%;
+      width: 100%;
       padding-right: 0;
-      width: auto;
-      transform: none;
+      padding-left: 0;
+      transform: translateX(0) scale(1);
       align-items: center;
     }
   }
@@ -93,6 +106,7 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
   }
 
   .left {
+    flex: 0 0 40%;
     width: 40%;
     display: flex;
     flex-direction: column;
@@ -100,14 +114,39 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
     justify-content: center;
     padding-left: 2rem;
     box-sizing: border-box;
+    transition:
+      flex-basis 0.34s cubic-bezier(0.25, 1, 0.5, 1),
+      width 0.34s cubic-bezier(0.25, 1, 0.5, 1),
+      padding 0.34s cubic-bezier(0.25, 1, 0.5, 1),
+      transform 0.34s cubic-bezier(0.25, 1, 0.5, 1),
+      opacity 0.24s ease;
+    will-change: width, transform, opacity;
   }
 
   .right {
-    flex: 1;
+    flex: 0 1 60%;
+    min-width: 0;
     height: 100%;
     mix-blend-mode: plus-lighter;
     padding-right: 1rem;
+    opacity: 1;
+    overflow: hidden;
+    transition:
+      flex-basis 0.34s cubic-bezier(0.25, 1, 0.5, 1),
+      padding 0.34s cubic-bezier(0.25, 1, 0.5, 1),
+      transform 0.3s cubic-bezier(0.25, 1, 0.5, 1),
+      opacity 0.24s ease;
+    will-change: flex-basis, transform, opacity;
+
+    &.lyrics-hidden {
+      flex-basis: 0;
+      padding-right: 0;
+      opacity: 0;
+      transform: translateX(16px);
+      pointer-events: none;
+    }
   }
+
 }
 
 /* 桌面端左侧控制区 plus-lighter — :global 绕过 scoped 组件边界 */

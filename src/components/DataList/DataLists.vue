@@ -387,7 +387,7 @@ const openRightMenu = (e, data) => {
         key: "nextPlay",
         label: t("menu.nextPlay"),
         icon: renderIcon(AddMusic),
-        show: music.getPersonalFmMode || music.getPlaySongData?.id == data.id ? false : true,
+        show: !(music.getPersonalFmMode || music.getPlaySongData?.id === data.id),
         props: {
           onClick: () => {
             music.addSongToNext(data);
@@ -429,7 +429,7 @@ const openRightMenu = (e, data) => {
         key: "mv",
         label: t("menu.mv"),
         icon: renderIcon(Video, false),
-        show: data.mv && data.mv != 0 ? true : false,
+        show: Boolean(data.mv && data.mv !== 0),
         props: {
           onClick: () => {
             router.push(`/video?id=${data.mv}`);
@@ -548,10 +548,10 @@ const delCloudSong = (data) => {
     negativeText: t("general.dialog.cancel"),
     onPositiveClick: () => {
       setCloudDel(data.id).then((res) => {
-        if (res.code == 200) {
+        if (res.code === 200) {
           $message.success(t("general.message.deleteSuccess"));
           props.listData.forEach((v, i) => {
-            if (v.id == data.id) props.listData.splice(i, 1);
+            if (v.id === data.id) props.listData.splice(i, 1);
           });
         } else {
           $message.error(t("general.message.deleteFailure"));
@@ -588,11 +588,9 @@ const playSong = (data, song) => {
 
 // 检查是否可执行双击
 const checkCanClick = (listData, item) => {
-  window.innerWidth > 768
-    ? setting.listClickMode === "click"
-      ? playSong(listData, item)
-      : null
-    : playSong(listData, item);
+  if (window.innerWidth <= 768 || setting.listClickMode === "click") {
+    playSong(listData, item);
+  }
 };
 
 // 跳转链接

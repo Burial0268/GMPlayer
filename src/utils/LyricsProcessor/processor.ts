@@ -13,15 +13,11 @@ import type {
   SongLyric,
   ProcessingSettings,
   InputLyricLine,
-  TimeTextEntry,
   StoredLyricLine,
 } from "./types";
 import { parseLrcToEntries } from "./parser/entryParser";
-import { isInterludeLine, buildIndexMatching } from "./alignment";
+import { buildIndexMatching } from "./alignment";
 import { convertToAMLL, splitRomaToWords } from "./parser/formatParser";
-
-// Debug flag - disable in production for better performance
-const DEBUG = false;
 
 /**
  * 生成设置状态的哈希值

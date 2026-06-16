@@ -1,5 +1,5 @@
 <template>
-  <div class="icon-menu" data-tauri-drag-region>
+  <div class="icon-menu">
     <div class="menu-left">
       <div v-if="showLyricSetting" class="icon">
         <n-icon
@@ -10,43 +10,18 @@
         />
       </div>
     </div>
-    <div class="menu-right">
-      <div class="icon">
-        <n-icon class="screenfull" :component="screenfullIcon" @click="$emit('toggleFullscreen')" />
-      </div>
-      <div class="icon">
-        <n-icon class="close" :component="KeyboardArrowDownFilled" @click="$emit('close')" />
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import {
-  KeyboardArrowDownFilled,
-  SettingsRound,
-  PictureInPictureAltRound,
-  SubtitlesRound,
-} from "@vicons/material";
-import type { Component } from "vue";
-import { ref, onMounted } from "vue";
-import { windowManager } from "@/utils/tauri/windowManager";
-
-const isTauriEnv = ref(false);
-
-onMounted(() => {
-  isTauriEnv.value = typeof window !== "undefined" && "__TAURI__" in window;
-});
+import { SettingsRound } from "@vicons/material";
 
 defineProps<{
   showLyricSetting: boolean;
-  screenfullIcon: Component;
 }>();
 
 defineEmits<{
   openSettings: [];
-  toggleFullscreen: [];
-  close: [];
 }>();
 </script>
 
@@ -67,15 +42,18 @@ defineEmits<{
   justify-content: space-between;
   z-index: 5;
   box-sizing: border-box;
+  pointer-events: none;
 
   @media (max-width: 768px) {
     display: none;
   }
 
-  .menu-left,
-  .menu-right {
+  .menu-left {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
+    pointer-events: auto;
 
     .icon {
       width: 40px;
@@ -100,7 +78,6 @@ defineEmits<{
         transform: scale(1);
       }
 
-      .screenfull,
       .setting {
         @media (max-width: 768px) {
           display: none;
@@ -115,10 +92,5 @@ defineEmits<{
     }
   }
 
-  .menu-right {
-    .icon {
-      margin-left: 12px;
-    }
-  }
 }
 </style>

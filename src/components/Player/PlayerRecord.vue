@@ -1,25 +1,30 @@
 <template>
   <div class="record">
-    <img
-      :class="music.getPlayState ? 'pointer play' : 'pointer'"
-      src="/images/ico/pointer.png"
-      alt="pointer"
-    />
-    <div
-      class="pic"
-      :style="{
-        animationPlayState: music.getPlayState ? 'running' : 'paused',
-      }"
-    >
+    <div class="record-stage">
+      <div class="amll-close-action">
+        <ControlThumb aria-label="Close player" @click="closeBigPlayer" />
+      </div>
       <img
-        class="album"
-        :src="
-          music.getPlaySongData
-            ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500'
-            : '/images/pic/default.png'
-        "
-        alt="cover"
+        :class="music.getPlayState ? 'pointer play' : 'pointer'"
+        src="/images/ico/pointer.png"
+        alt="pointer"
       />
+      <div
+        class="pic"
+        :style="{
+          animationPlayState: music.getPlayState ? 'running' : 'paused',
+        }"
+      >
+        <img
+          class="album"
+          :src="
+            music.getPlaySongData
+              ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500'
+              : '/images/pic/default.png'
+          "
+          alt="cover"
+        />
+      </div>
     </div>
     <div class="controls">
       <div class="song-info">
@@ -99,16 +104,12 @@
           :component="ThumbDownRound"
           @click="music.setFmDislike(music.getPersonalFmData.id)"
         />
-        <div class="play-state">
-          <n-button text :focusable="false" :loading="music.getLoadingState">
-            <template #icon>
-              <n-icon
-                :component="music.getPlayState ? IconPause : IconPlay"
-                @click.stop="music.setPlayState(!music.getPlayState)"
-              />
-            </template>
-          </n-button>
-        </div>
+        <n-icon
+          class="button-icon"
+          :class="{ loading: music.getLoadingState }"
+          :component="music.getPlayState ? IconPause : IconPlay"
+          @click.stop="!music.getLoadingState && music.setPlayState(!music.getPlayState)"
+        />
         <n-icon
           class="button-icon skip-icon"
           :component="IconForward"
@@ -138,8 +139,6 @@
 
 <script setup>
 import {
-  SkipPreviousRound,
-  SkipNextRound,
   ThumbDownRound,
   StarBorderRound,
   StarRound,
@@ -161,6 +160,7 @@ import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
 import BouncingSlider from "./BouncingSlider.vue";
+import ControlThumb from "./ControlThumb.vue";
 import { NIcon } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { windowManager } from "@/utils/tauri/windowManager";
@@ -273,6 +273,10 @@ const goToComment = () => {
     });
   }
 };
+
+const closeBigPlayer = () => {
+  music.setBigPlayerState(false);
+};
 </script>
 
 <style lang="scss" scoped>
@@ -293,91 +297,109 @@ const goToComment = () => {
       opacity: 1;
     }
   }
-  .pointer {
-    position: absolute;
-    width: calc(var(--cover-size) * 0.35);
-    left: calc(50% - var(--cover-size) * 0.045);
-    top: calc(var(--cover-size) * -0.35);
-    transform: rotate(-20deg);
-    transform-origin: calc(var(--cover-size) * 0.045) calc(var(--cover-size) * 0.045);
-    z-index: 1;
-    transition: all 0.3s;
-    &.play {
-      transform: rotate(0);
-    }
-  }
-  .pic {
-    animation: rotate 18s linear infinite;
-    border-radius: 50%;
-    border: calc(var(--cover-size) * 0.025) solid #ffffff30;
-    background:
-      linear-gradient(black 0%, transparent, black 98%),
-      radial-gradient(
-        #000 52%,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555,
-        #000,
-        #555
-      );
-    background-clip: content-box;
+  .record-stage {
+    position: relative;
     width: var(--cover-size);
-    height: var(--cover-size);
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    .album {
-      border: calc(var(--cover-size) * 0.025) solid #ffffff40;
+    height: calc(var(--cover-size) * 1.25);
+    display: grid;
+    place-items: end center;
+
+    .amll-close-action {
+      position: absolute;
+      left: 50%;
+      bottom: calc(100% + 1.5rem);
+      width: 0;
+      height: 0;
+      z-index: 3;
+      mix-blend-mode: plus-lighter;
+    }
+
+    .pointer {
+      position: absolute;
+      width: calc(var(--cover-size) * 0.35);
+      left: calc(50% - var(--cover-size) * 0.045);
+      top: calc(var(--cover-size) * 0.02);
+      transform: rotate(-20deg);
+      transform-origin: calc(var(--cover-size) * 0.045) calc(var(--cover-size) * 0.045);
+      z-index: 1;
+      transition: all 0.3s;
+      &.play {
+        transform: rotate(0);
+      }
+    }
+    .pic {
+      animation: rotate 18s linear infinite;
       border-radius: 50%;
-      width: 70%;
-      height: 70%;
-      object-fit: cover;
+      border: calc(var(--cover-size) * 0.025) solid #ffffff30;
+      background:
+        linear-gradient(black 0%, transparent, black 98%),
+        radial-gradient(
+          #000 52%,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555,
+          #000,
+          #555
+        );
+      background-clip: content-box;
+      width: var(--cover-size);
+      height: var(--cover-size);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      .album {
+        border: calc(var(--cover-size) * 0.025) solid #ffffff40;
+        border-radius: 50%;
+        width: 64%;
+        height: 64%;
+        object-fit: cover;
+      }
     }
   }
   .controls {
@@ -465,23 +487,13 @@ const goToComment = () => {
         justify-self: center;
       }
 
-      .play-state {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-
-        .n-button {
-          font-size: 3rem;
-          color: var(--main-cover-color);
-        }
-      }
       .button-icon {
         width: clamp(2.25rem, calc(var(--cover-size) * 0.1), 3rem);
         height: clamp(2.25rem, calc(var(--cover-size) * 0.1), 3rem);
         display: flex;
         align-items: center;
         justify-content: center;
-        font-size: 1.5rem;
+        font-size: clamp(1.65rem, calc(var(--cover-size) * 0.072), 1.95rem);
         color: var(--main-cover-color);
         opacity: 0.8;
         cursor: pointer;
@@ -491,13 +503,17 @@ const goToComment = () => {
         &:hover {
           opacity: 1;
         }
+        &.loading {
+          opacity: 0.35;
+          pointer-events: none;
+        }
         &.active {
           opacity: 1;
           color: var(--primary-color);
         }
 
         &.skip-icon {
-          font-size: clamp(1.95rem, calc(var(--cover-size) * 0.09), 2.45rem);
+          font-size: clamp(2.25rem, calc(var(--cover-size) * 0.105), 2.85rem);
         }
       }
     }

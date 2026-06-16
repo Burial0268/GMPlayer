@@ -238,10 +238,17 @@ const handleClick = (event: MouseEvent) => {
   display: flex;
   justify-content: stretch;
   align-items: center;
-  gap: 8px;
+  gap: var(--bouncing-slider-icon-gap, 10px);
   width: 100%;
   min-height: 24px;
   transform: translateZ(0);
+}
+
+.bouncing-slider :deep(.n-icon) {
+  width: var(--bouncing-slider-icon-size, 22px) !important;
+  height: var(--bouncing-slider-icon-size, 22px) !important;
+  font-size: var(--bouncing-slider-icon-size, 22px) !important;
+  flex-shrink: 0;
 }
 
 .inner-wrapper {

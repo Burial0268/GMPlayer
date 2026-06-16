@@ -27,8 +27,8 @@ export const rgb2Hsl = ([r, g, b]: RGB): HSL => {
   const min = Math.min(r, g, b);
   // 初始化色调（H）、饱和度（S）、亮度（L）
   let h = 0,
-    s = 0,
-    l = (max + min) / 2;
+    s = 0;
+  const l = (max + min) / 2;
   if (max === min) {
     // 如果最大和最小通道值相等，颜色为灰色
     h = s = 0;
@@ -61,7 +61,7 @@ export const rgb2Hsl = ([r, g, b]: RGB): HSL => {
  */
 export const hsl2Rgb = ([h, s, l]: HSL): RGB => {
   let r: number, g: number, b: number;
-  if (s == 0) {
+  if (s === 0) {
     // 如果饱和度为0，将RGB三个分量都设置为亮度
     r = g = b = l;
   } else {
@@ -105,10 +105,10 @@ export const normalizeColor = ([r, g, b]: RGB): RGB => {
     [r, g, b] = [r, g, b].map((c) => mix(c, 0, 0.5 * ((luminance - 180) / 76))) as RGB;
   }
   // 将RGB颜色值转换为HSL颜色值
-  let [h, s, l] = rgb2Hsl([r, g, b]);
+  const [h, initialS, initialL] = rgb2Hsl([r, g, b]);
   // 限制饱和度和亮度的范围
-  s = Math.max(0.3, Math.min(0.8, s));
-  l = Math.max(0.5, Math.min(0.8, l));
+  const s = Math.max(0.3, Math.min(0.8, initialS));
+  const l = Math.max(0.5, Math.min(0.8, initialL));
   // 将HSL颜色值转换回RGB颜色值
   [r, g, b] = hsl2Rgb([h, s, l]);
   // 返回规范化后的RGB颜色值数组
@@ -228,9 +228,9 @@ export const getGradientFromPalette = (palette: RGB[]): string => {
   // 选择最饱和的6个颜色
   palette = palette.slice(0, 6);
   // 计算颜色之间的差异
-  const differences: number[][] = new Array(6);
+  const differences: number[][] = Array.from({ length: 6 });
   for (let i = 0; i < differences.length; i++) {
-    differences[i] = new Array(6).fill(0);
+    differences[i] = Array.from({ length: 6 }, () => 0);
   }
   for (let i = 0; i < palette.length; i++) {
     for (let j = i + 1; j < palette.length; j++) {
@@ -239,7 +239,7 @@ export const getGradientFromPalette = (palette: RGB[]): string => {
     }
   }
   // 使用深度优先搜索找到最佳颜色序列
-  const used = new Array(6).fill(false);
+  const used = Array.from({ length: 6 }, () => false);
   let min = 10000000,
     ansSeq: number[] = [];
   const dfs = (depth: number, seq: number[] = [], currentMax = -1): void => {

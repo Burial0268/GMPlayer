@@ -7,8 +7,8 @@ import type { AMLLLine, ParsedLrcLine, ParsedYrcLine } from "./types";
 
 // Pre-compiled regex for interlude detection (avoid recompilation)
 const INTERLUDE_CHARS_REGEX =
-  /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～\u200B\u00A0]/g;
-const INTERLUDE_CHARS_SIMPLE = /[\s♪♩♫♬🎵🎶🎼·…\-_—─]/g;
+  /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆◇○■□▲△▼▽★☆♥♡❤💕、。，,.!！?？~～\u200B\u00A0]/gu;
+const INTERLUDE_CHARS_SIMPLE = /[\s♪♩♫♬🎵🎶🎼·…\-_—─]/gu;
 
 /**
  * 判断歌词行是否是间奏/空白行

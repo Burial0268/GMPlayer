@@ -20,7 +20,6 @@ import {
   type SongLyric,
   type ParsedLrcLine,
   type ParsedYrcLine,
-  type StoredLyricLine,
 } from "@/utils/LyricsProcessor";
 
 declare const $message: any;
@@ -758,7 +757,7 @@ const useMusicDataStore = defineStore("musicData", {
         this.persistData.playlists.push(value);
         this.persistData.playSongIndex = this.persistData.playlists.length - 1;
       }
-      play ? this.setPlayState(true) : null;
+      if (play) this.setPlayState(true);
     },
 
     addSongToNext(value: SongData) {

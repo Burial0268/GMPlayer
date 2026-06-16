@@ -5,7 +5,7 @@
         <BlurBackgroundRender
           v-if="hasPlayData"
           :fps="isPlaying ? fps || 30 : 0"
-          :playing="actualPlaying"
+          :playing="true"
           :album="coverImageUrl"
           :blurLevel="blurAmount || 30"
           :saturation="contrastAmount || 1.2"
