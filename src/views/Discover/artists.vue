@@ -116,7 +116,7 @@ const getArtistListData = (
   getArtistList(type, area, limit, offset, initial).then((res) => {
     if (res.artists[0]) {
       // 是否还有更多
-      res.more ? (hasMore.value = true) : (hasMore.value = false);
+      hasMore.value = Boolean(res.more);
       loading.value = false;
       // 遍历数据
       const newItems = res.artists.map((v: any) => ({
@@ -179,7 +179,7 @@ watch(
     artistTypeNamesChoose.value = Number(val.query.type ? val.query.type : 0);
     artistInitialChoose.value = val.query.initial ? val.query.initial : artistInitials[0].key;
     artistsOffset.value = 0;
-    if (val.name == "dsc-artists") {
+    if (val.name === "dsc-artists") {
       artistsData.value = [];
       getArtistListData(
         artistType[artistTypeNamesChoose.value] as ArtistType,

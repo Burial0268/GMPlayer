@@ -53,7 +53,7 @@ watch(
   () => router.currentRoute.value,
   (val) => {
     searchKeywords.value = val.query.keywords;
-    if (val.name == "s-artists") {
+    if (val.name === "s-artists") {
       getSearchDataList(
         searchKeywords.value,
         pagelimit.value,

@@ -14,6 +14,36 @@ use crate::analysis::AnalysisCommand;
 use crate::error::{AudioError, AudioResult};
 use crate::output::OutputWriter;
 
+pub trait PlaybackSink: Clone + Send + 'static {
+    fn push_block(&self, block: Vec<f32>, cancel: &AtomicBool) -> bool;
+    fn clear(&self);
+    fn set_paused(&self, paused: bool);
+    fn queued_samples(&self) -> usize;
+    fn generation(&self) -> u64;
+}
+
+impl PlaybackSink for OutputWriter {
+    fn push_block(&self, block: Vec<f32>, cancel: &AtomicBool) -> bool {
+        OutputWriter::push_block(self, block, cancel)
+    }
+
+    fn clear(&self) {
+        OutputWriter::clear(self);
+    }
+
+    fn set_paused(&self, paused: bool) {
+        OutputWriter::set_paused(self, paused);
+    }
+
+    fn queued_samples(&self) -> usize {
+        OutputWriter::queued_samples(self)
+    }
+
+    fn generation(&self) -> u64 {
+        OutputWriter::generation(self)
+    }
+}
+
 // ── URL / remote source helpers ──────────────────────────────────
 
 /// Whether this path looks like an HTTP(S) URL that needs to be
@@ -98,17 +128,20 @@ const DECODE_BLOCK_FRAMES: usize = 512;
 const PRE_ROLL_SILENCE_FRAMES: usize = 1024;
 
 #[allow(clippy::too_many_arguments)]
-pub fn spawn_playback_decoder(
+pub fn spawn_playback_decoder<S>(
     path: &Path,
     initial_position: Option<f64>,
-    output: OutputWriter,
+    output: S,
     output_channels: u16,
     output_sample_rate: u32,
     analysis_tx: mpsc::Sender<AnalysisCommand>,
     event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
     playback_id: u64,
     start_paused: bool,
-) -> AudioResult<DecoderHandle> {
+) -> AudioResult<DecoderHandle>
+where
+    S: PlaybackSink,
+{
     let file = std::io::BufReader::new(std::fs::File::open(path)?);
     let decoder = Decoder::new(file).map_err(|e| AudioError::Decode(e.to_string()))?;
     let mut source = decoder.convert_samples::<f32>();
@@ -154,9 +187,9 @@ pub fn spawn_playback_decoder(
     })
 }
 
-struct DecodeWorker {
+struct DecodeWorker<S: PlaybackSink> {
     frames: FrameConverter,
-    output: OutputWriter,
+    output: S,
     output_channels: u16,
     output_sample_rate: u32,
     analysis_tx: mpsc::Sender<AnalysisCommand>,
@@ -169,12 +202,12 @@ struct DecodeWorker {
 }
 
 #[allow(clippy::too_many_arguments)]
-impl DecodeWorker {
+impl<S: PlaybackSink> DecodeWorker<S> {
     fn new(
         source: Box<dyn Source<Item = f32> + Send>,
         input_channels: u16,
         input_sample_rate: u32,
-        output: OutputWriter,
+        output: S,
         output_channels: u16,
         output_sample_rate: u32,
         analysis_tx: mpsc::Sender<AnalysisCommand>,

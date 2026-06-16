@@ -193,7 +193,7 @@ const toLikeArtist = (data: { id: number; name: any }) => {
     if (res.code === 200) {
       $message.success(
         `${data.name} ${
-          type == 1
+          type === 1
             ? t("menu.collection", { name: t("general.dialog.success") })
             : t("menu.cancelCollection", { name: t("general.dialog.success") })
         }`,
@@ -204,7 +204,7 @@ const toLikeArtist = (data: { id: number; name: any }) => {
     } else {
       $message.error(
         `${data.name} ${
-          type == 1
+          type === 1
             ? t("menu.collection", { name: t("general.dialog.failed") })
             : t("menu.cancelCollection", { name: t("general.dialog.failed") })
         }`,
@@ -232,7 +232,7 @@ watch(
     tabValue.value = val.path.split("/")[2];
     syncIndex(tabValue.value);
     artistLikeBtn.value = isLikeOrDislike(artistId.value);
-    if (val.path.split("/")[1] == "artist") {
+    if (val.path.split("/")[1] === "artist") {
       getArtistDetailData(artistId.value);
     }
   },

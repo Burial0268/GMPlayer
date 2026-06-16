@@ -20,7 +20,11 @@ const { t } = useI18n();
 // 程序重置
 const resetApp = () => {
   const cleanAll = () => {
-    $message ? $message.success(t("other.cleanAll")) : alert(t("other.cleanAll"));
+    if ($message) {
+      $message.success(t("other.cleanAll"));
+    } else {
+      alert(t("other.cleanAll"));
+    }
     localStorage.clear();
     window.location.href = "/";
   };
@@ -31,7 +35,11 @@ const resetApp = () => {
     positiveText: t("setting.resetApp"),
     negativeText: t("general.dialog.cancel"),
     onPositiveClick: () => {
-      $cleanAll ? $cleanAll() : cleanAll();
+      if ($cleanAll) {
+        $cleanAll();
+      } else {
+        cleanAll();
+      }
     },
   });
 };

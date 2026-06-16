@@ -43,7 +43,7 @@ watch(
   () => router.currentRoute.value,
   (val) => {
     artistId.value = val.query.id;
-    if (val.name == "ar-songs") {
+    if (val.name === "ar-songs") {
       getArtistSongsData(artistId.value);
     }
   },

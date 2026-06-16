@@ -1,6 +1,7 @@
 use serde::Serialize;
 use tauri::{Runtime, State};
 
+use crate::automix::{self, AutomixAnalyzeRequest, TrackAnalysis};
 use crate::player::Player;
 use crate::types::*;
 
@@ -117,4 +118,15 @@ pub fn audio_poll_events(
     session_id: u64,
 ) -> Result<Vec<AudioThreadEvent>, String> {
     Ok(state.player.poll_events(session_id))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  AutoMix analysis
+// ═══════════════════════════════════════════════════════════════════
+
+#[tauri::command]
+pub async fn audio_analyze_automix(req: AutomixAnalyzeRequest) -> Result<TrackAnalysis, String> {
+    tauri::async_runtime::spawn_blocking(move || automix::analyze_audio_bytes(req))
+        .await
+        .map_err(|e| e.to_string())?
 }

@@ -212,12 +212,7 @@ impl Default for HitRegionRegistry {
 ///
 /// The global coordinate is translated into the webview's client coordinate
 /// space using the window's inner position.
-fn is_inside_regions<R: Runtime>(
-    app: &AppHandle<R>,
-    label: &str,
-    gx: f64,
-    gy: f64,
-) -> bool {
+fn is_inside_regions<R: Runtime>(app: &AppHandle<R>, label: &str, gx: f64, gy: f64) -> bool {
     let Some(window) = app.get_webview_window(label) else {
         return false;
     };
@@ -253,7 +248,7 @@ fn is_inside_regions<R: Runtime>(
     };
     let regions = registry.0.lock().unwrap();
 
-    regions.iter().any(|r| {
-        cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height
-    })
+    regions
+        .iter()
+        .any(|r| cx >= r.x && cx <= r.x + r.width && cy >= r.y && cy <= r.y + r.height)
 }

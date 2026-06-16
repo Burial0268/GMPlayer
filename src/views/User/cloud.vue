@@ -223,7 +223,7 @@ provide("cloudDataLoad", cloudDataLoad);
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "user-cloud") {
+    if (val.name === "user-cloud") {
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getCloudData(pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
     }

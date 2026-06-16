@@ -25,7 +25,10 @@ use crate::output::{self, LowLatencyOutput};
 use crate::types::*;
 use crate::ws_server::WsServer;
 
+mod mixer;
 pub mod queue;
+
+use mixer::DeckMixer;
 
 // ── EventBuffer for session-scoped polling (kept for compat) ──
 
@@ -415,8 +418,9 @@ struct AudioPlayer {
     self_msg_rx: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
 
     // CPAL playback. Decoding runs on a worker thread and pushes PCM blocks
-    // into this output queue; the CPAL callback only reads queued samples.
+    // into the deck mixer; the mixer pushes mixed PCM blocks to this output queue.
     output: LowLatencyOutput,
+    deck_mixer: DeckMixer,
     volume: f64,
     /// What the user wants the sink to be doing. Used so auto-advance and
     /// seek transitions preserve the playing/paused state even though the
@@ -540,6 +544,7 @@ impl AudioPlayer {
         let mut output = output::open_preferred_output(None).map_err(AudioError::Output)?;
         output.writer().set_paused(true);
         spawn_output_low_freq_forwarder(&mut output, evt_sender.clone());
+        let deck_mixer = DeckMixer::new(output.writer(), output.config().channels);
         let clock = Arc::new(parking_lot::Mutex::new(PlayerClock::new()));
 
         info!("音频输出设备 准备就绪");
@@ -605,6 +610,7 @@ impl AudioPlayer {
             self_msg_tx,
             self_msg_rx,
             output,
+            deck_mixer,
             volume: 1.0,
             playback_intent: PlaybackIntent::Paused,
             clock,
@@ -647,6 +653,7 @@ impl AudioPlayer {
         let changed =
             output.config() != self.output.config() || output.device() != self.output.device();
         self.output = output;
+        self.deck_mixer = DeckMixer::new(self.output.writer(), self.output.config().channels);
         Ok(changed)
     }
 
@@ -785,7 +792,7 @@ impl AudioPlayer {
     async fn process_seek_position(&mut self, position: f64) -> anyhow::Result<()> {
         let seek_pos = normalize_seek_position(position);
         if let Some(handle) = &self.current_decoder_handle {
-            self.output.writer().clear();
+            self.deck_mixer.clear_all();
             handle.seek(Duration::from_secs_f64(seek_pos))?;
             let _ = self.analysis_tx.send(AnalysisCommand::Clear);
             let is_playing = self.playback_intent == PlaybackIntent::Playing;
@@ -996,10 +1003,10 @@ impl AudioPlayer {
             .await;
 
         if clear_sink {
-            self.output.writer().clear();
             if let Some(handle) = self.current_decoder_handle.take() {
                 handle.stop();
             }
+            self.deck_mixer.clear_all();
 
             let _ = self.analysis_tx.send(AnalysisCommand::Clear);
 
@@ -1077,7 +1084,7 @@ impl AudioPlayer {
         // starts pushing PCM, avoiding a separate post-load seek round trip.
         let analysis_tx_for_open = self.analysis_tx.clone();
         let path_for_open = local_path.clone();
-        let output_writer = self.output.writer();
+        let output_writer = self.deck_mixer.primary_writer();
         let output_config = self.output.config();
         self.decoder_playback_id = self.decoder_playback_id.wrapping_add(1);
         let playback_id = self.decoder_playback_id;

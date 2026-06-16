@@ -52,9 +52,7 @@
                     round
                     class="tag"
                     size="large"
-                    v-for="item in music.catList.sub.filter(
-                      (v: { category: string | number }) => v.category == key,
-                    )"
+                    v-for="item in music.catList.sub.filter((v) => v.category === key)"
                     :key="item"
                     :bordered="false"
                     :type="item.name == catName ? 'primary' : 'default'"
@@ -144,7 +142,7 @@ const pageNumber = ref(
 // 精品歌单数据
 const hqPLayListOpen = ref(
   router.currentRoute.value.query.hq
-    ? router.currentRoute.value.query.hq == "true"
+    ? router.currentRoute.value.query.hq === "true"
       ? true
       : false
     : false,
@@ -154,11 +152,11 @@ const loading = ref(false);
 
 // 获取是否有精品歌单
 const getHaveHqPlaylists = (array: any[], name: string) => {
-  if (name == "全部歌单") {
+  if (name === "全部歌单") {
     return true;
   } else {
     return array.some((item: { name: any }) => {
-      return item.name == name;
+      return item.name === name;
     });
   }
 };
@@ -262,9 +260,9 @@ const pageNumberChange = (val: number) => {
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "dsc-playlists") {
+    if (val.name === "dsc-playlists") {
       catName.value = val.query.cat ? val.query.cat : "全部歌单";
-      hqPLayListOpen.value = val.query.hq ? (val.query.hq == "true" ? true : false) : false;
+      hqPLayListOpen.value = val.query.hq ? (val.query.hq === "true" ? true : false) : false;
       if (hqPLayListOpen.value) {
         playlistsData.value = [];
         getHqPlaylistData(catName.value.toString());

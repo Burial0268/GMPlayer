@@ -65,7 +65,7 @@ const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "s-playlists") {
+    if (val.name === "s-playlists") {
       searchKeywords.value = val.query.keywords;
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getSearchDataList(

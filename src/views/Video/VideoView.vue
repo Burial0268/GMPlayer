@@ -264,7 +264,7 @@ onBeforeUnmount(() => {
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "video") {
+    if (val.name === "video") {
       videoId.value = val.query.id;
       getVideoData(val.query.id);
       getCommentData(val.query.id);

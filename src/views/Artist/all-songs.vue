@@ -92,7 +92,7 @@ const getArtistAllSongsData = (
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "all-songs") {
+    if (val.name === "all-songs") {
       artistId.value = val.query.id;
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getArtistAllSongsData(

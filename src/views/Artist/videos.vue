@@ -97,7 +97,7 @@ onMounted(() => {
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "ar-videos") {
+    if (val.name === "ar-videos") {
       artistId.value = val.query.id;
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getArtistVideosData(

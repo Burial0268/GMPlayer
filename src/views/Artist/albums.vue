@@ -87,7 +87,7 @@ onMounted(() => {
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "ar-albums") {
+    if (val.name === "ar-albums") {
       artistId.value = val.query.id;
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getArtistAblumsData(

@@ -264,7 +264,7 @@ watch(
   () => router.currentRoute.value,
   (val) => {
     albumId.value = val.query.id;
-    if (val.name == "album") {
+    if (val.name === "album") {
       getAlbumData(albumId.value);
     }
   },

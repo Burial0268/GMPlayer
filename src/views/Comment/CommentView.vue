@@ -132,7 +132,7 @@ onMounted(() => {
 watch(
   () => router.currentRoute.value,
   (val) => {
-    if (val.name == "comment") {
+    if (val.name === "comment") {
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       songId.value = val.query.id;
       getCommentData(val.query.id, (pageNumber.value - 1) * 20);

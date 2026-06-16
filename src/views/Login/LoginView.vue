@@ -170,7 +170,7 @@ const getQrKeyData = async () => {
       clearInterval(qrCheckInterval);
       const qrRes = await getQrKey();
       if (isUnmounted) return;
-      if (qrRes.code == 200) {
+      if (qrRes.code === 200) {
         qrImg.value = `https://music.163.com/login?codekey=${qrRes.data.unikey}`;
         checkQrState(qrRes.data.unikey);
       } else {
@@ -188,21 +188,21 @@ const checkQrState = (key) => {
     if (!key || isUnmounted) return false;
     checkQr(key).then((res) => {
       if (isUnmounted) return;
-      if (res.code == 800) {
+      if (res.code === 800) {
         getQrKeyData();
         loginStateMessage.value = null;
         loginStatus.value = t("login.loginStatus2");
-      } else if (res.code == 801) {
+      } else if (res.code === 801) {
         loginStateMessage.value = null;
         loginStatus.value = t("login.loginStatus1");
-      } else if (res.code == 802) {
+      } else if (res.code === 802) {
         loginStatus.value = t("login.loginStatus3");
         if (!loginStateMessage.value) {
           loginStateMessage.value = $message.loading(t("login.loginStatus3"), {
             duration: 0,
           });
         }
-      } else if (res.code == 803) {
+      } else if (res.code === 803) {
         loginStateMessage.value.destroy();
         saveLoginData(res);
       }
@@ -219,7 +219,7 @@ const getCaptcha = (data) => {
         $message.error(t("general.message.needCheck"));
       } else {
         sentCaptcha(data).then((res) => {
-          if (res.code == 200) {
+          if (res.code === 200) {
             $message.success(t("login.codeSuccess"));
             let countDown = 60;
             captchaDisabled.value = true;
@@ -255,7 +255,7 @@ const phoneLogin = async (e) => {
           phoneFormData.value.captcha,
         );
         if (isUnmounted) return;
-        if (verifyRes.code == 200) {
+        if (verifyRes.code === 200) {
           const loginRes = await toLogin(phoneFormData.value.phone, phoneFormData.value.captcha);
           if (isUnmounted) return;
           if (loginRes.profile) {
@@ -286,7 +286,7 @@ const phoneLogin = async (e) => {
 
 // Tab 切换
 const tabChange = (val) => {
-  if (val == "qr") {
+  if (val === "qr") {
     getQrKeyData();
   } else {
     clearInterval(qrCheckInterval);

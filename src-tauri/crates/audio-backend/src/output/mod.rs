@@ -462,7 +462,9 @@ fn fill_output<T>(
     }
 
     if paused.load(Ordering::Acquire) {
-        state.low_freq.push_silence(data.len(), state.output_channels);
+        state
+            .low_freq
+            .push_silence(data.len(), state.output_channels);
         send_low_freq(&state.low_freq_tx, state.low_freq.envelope);
         data.fill(T::from_sample(0.0));
         return;

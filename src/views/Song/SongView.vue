@@ -215,7 +215,7 @@ watch(
   () => router.currentRoute.value,
   (val) => {
     musicId.value = val.query.id;
-    if (val.name == "song") {
+    if (val.name === "song") {
       getMusicDetailData(musicId.value);
     }
   },

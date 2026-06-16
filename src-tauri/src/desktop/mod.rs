@@ -2,7 +2,6 @@
 
 pub mod window;
 
-use crate::algorithms::audio_analysis;
 use crate::desktop::window::config::WindowConfig;
 use crate::desktop::window::desktop_lyrics::mouse_through::{HitRegionRegistry, MouseThroughState};
 use crate::desktop::window::manager as wm;
@@ -39,10 +38,7 @@ pub fn run() {
                     "symphonia_bundle_mp3",
                     tauri_plugin_log::log::LevelFilter::Error,
                 )
-                .level_for(
-                    "symphonia_core",
-                    tauri_plugin_log::log::LevelFilter::Error,
-                )
+                .level_for("symphonia_core", tauri_plugin_log::log::LevelFilter::Error)
                 .build(),
         )
         .plugin(tauri_plugin_http::init())
@@ -80,8 +76,8 @@ pub fn run() {
             window::desktop_lyrics::commands::update_mouse_through_regions,
             // Tray commands
             window::tray::set_tray_tooltip,
-            // Audio analysis (native Rust, bypasses JS Worker)
-            audio_analysis::analyze_audio_native,
+            // AutoMix analysis (native Rust, shared by desktop/mobile)
+            commands::audio_analyze_automix,
             // AMLL-style: single message command for all playback control
             commands::audio_send_msg,
             // Sync query commands
