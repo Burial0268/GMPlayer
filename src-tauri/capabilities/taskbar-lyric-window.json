@@ -1,0 +1,16 @@
+{
+  "identifier": "taskbar-lyric-window",
+  "description": "Windows-only permissions for the taskbar lyric webview",
+  "local": true,
+  "platforms": ["windows"],
+  "windows": ["taskbar-lyric"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-emit",
+    "core:event:allow-emit-to",
+    "core:event:allow-unlisten",
+    "taskbar-lyric:allow-set-click-interception",
+    "taskbar-lyric:allow-set-forwarding-enabled",
+    "taskbar-lyric:allow-stop-mouse-hook"
+  ]
+}

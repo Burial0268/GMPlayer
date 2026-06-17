@@ -1,0 +1,12 @@
+{
+  "identifier": "taskbar-lyric-manager",
+  "description": "Windows-only permissions for opening and closing the taskbar lyric window",
+  "local": true,
+  "platforms": ["windows"],
+  "windows": ["main", "mini-player", "settings", "tray-popup"],
+  "permissions": [
+    "taskbar-lyric:allow-open-taskbar-lyric",
+    "taskbar-lyric:allow-close-taskbar-lyric",
+    "taskbar-lyric:allow-open-taskbar-lyric-devtools"
+  ]
+}
