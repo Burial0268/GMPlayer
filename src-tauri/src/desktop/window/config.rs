@@ -9,6 +9,8 @@ pub enum WindowLabel {
     MiniPlayer,
     DesktopLyrics,
     DesktopLyricsControls,
+    #[cfg(windows)]
+    TaskbarLyric,
     Settings,
     About,
     TrayPopup,
@@ -22,6 +24,8 @@ impl WindowLabel {
             Self::MiniPlayer => "mini-player",
             Self::DesktopLyrics => "desktop-lyrics",
             Self::DesktopLyricsControls => "desktop-lyrics-controls",
+            #[cfg(windows)]
+            Self::TaskbarLyric => "taskbar-lyric",
             Self::Settings => "settings",
             Self::About => "about",
             Self::TrayPopup => "tray-popup",
@@ -35,6 +39,8 @@ impl WindowLabel {
             "mini-player" => Self::MiniPlayer,
             "desktop-lyrics" => Self::DesktopLyrics,
             "desktop-lyrics-controls" => Self::DesktopLyricsControls,
+            #[cfg(windows)]
+            "taskbar-lyric" => Self::TaskbarLyric,
             "settings" => Self::Settings,
             "about" => Self::About,
             "tray-popup" => Self::TrayPopup,
@@ -225,6 +231,42 @@ impl WindowConfig {
         }
     }
 
+    /// Taskbar lyric preset — Windows-only webview embedded into the taskbar.
+    ///
+    /// This preset registers the label and basic webview shape with the normal
+    /// window registry. The actual creation path still lives in the taskbar
+    /// lyric plugin because it must embed the native HWND and manage taskbar
+    /// watchers/mouse forwarding around the window lifecycle.
+    #[cfg(windows)]
+    pub fn taskbar_lyric() -> Self {
+        Self {
+            label: "taskbar-lyric".into(),
+            title: "Taskbar Lyric".into(),
+            url: "/slave.html#/taskbar-lyric".into(),
+            width: 320.0,
+            height: 48.0,
+            min_width: None,
+            min_height: None,
+            max_width: None,
+            max_height: None,
+            resizable: false,
+            decorations: true,
+            transparent: true,
+            always_on_top: true,
+            skip_taskbar: false,
+            center: false,
+            visible: true,
+            single_instance: true,
+            closeable_to_tray: false,
+            use_overlay_titlebar: false,
+            traffic_lights_inset: None,
+            window_effect: None,
+            shadow: false,
+            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            parent_label: None,
+        }
+    }
+
     /// Settings window preset.
     pub fn settings() -> Self {
         Self {
@@ -323,6 +365,8 @@ impl WindowConfig {
             "mini-player" => Some(Self::mini_player()),
             "desktop-lyrics" => Some(Self::desktop_lyrics()),
             "desktop-lyrics-controls" => Some(Self::desktop_lyrics_controls()),
+            #[cfg(windows)]
+            "taskbar-lyric" => Some(Self::taskbar_lyric()),
             "settings" => Some(Self::settings()),
             "about" => Some(Self::about()),
             "tray-popup" => Some(Self::tray_popup()),
