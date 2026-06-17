@@ -1,0 +1,11 @@
+[default]
+identifier = "default"
+description = "Default permissions for the Windows taskbar lyric plugin"
+permissions = [
+  "allow-close-taskbar-lyric",
+  "allow-open-taskbar-lyric",
+  "allow-open-taskbar-lyric-devtools",
+  "allow-set-click-interception",
+  "allow-set-forwarding-enabled",
+  "allow-stop-mouse-hook",
+]

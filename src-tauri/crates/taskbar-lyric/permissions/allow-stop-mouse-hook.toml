@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-stop-mouse-hook"
+description = "Enables stopping the taskbar lyric mouse hook."
+commands.allow = ["stop_mouse_hook"]

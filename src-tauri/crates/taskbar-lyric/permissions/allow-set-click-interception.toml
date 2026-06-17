@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-set-click-interception"
+description = "Enables toggling click interception for forwarded taskbar lyric mouse events."
+commands.allow = ["set_click_interception"]

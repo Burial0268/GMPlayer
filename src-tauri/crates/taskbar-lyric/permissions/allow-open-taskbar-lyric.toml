@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-open-taskbar-lyric"
+description = "Enables opening the taskbar lyric window."
+commands.allow = ["open_taskbar_lyric"]

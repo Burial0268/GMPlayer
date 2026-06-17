@@ -1,0 +1,31 @@
+[package]
+name = "tauri-plugin-taskbar-lyric"
+version = "0.1.0"
+edition = "2021"
+description = "Windows taskbar lyric plugin for GMPlayer"
+links = "tauri-plugin-taskbar-lyric"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+name = "gmplayer_taskbar_lyric"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2" }
+tracing = "0.1"
+
+[target.'cfg(windows)'.dependencies]
+taskbar-lyric = { git = "https://github.com/apoint123/taskbar-lyric.git", features = [
+  "tracing",
+] }
+tokio = { version = "1", features = ["time"] }
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_Controls",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_Threading",
+] }

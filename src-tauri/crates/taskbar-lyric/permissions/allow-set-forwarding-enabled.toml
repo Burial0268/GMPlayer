@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-set-forwarding-enabled"
+description = "Enables toggling mouse forwarding for the taskbar lyric webview."
+commands.allow = ["set_forwarding_enabled"]

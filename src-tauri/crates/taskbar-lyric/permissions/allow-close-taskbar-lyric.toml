@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-close-taskbar-lyric"
+description = "Enables closing the taskbar lyric window."
+commands.allow = ["close_taskbar_lyric"]

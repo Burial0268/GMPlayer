@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-open-taskbar-lyric-devtools"
+description = "Enables opening devtools for the taskbar lyric window."
+commands.allow = ["open_taskbar_lyric_devtools"]
