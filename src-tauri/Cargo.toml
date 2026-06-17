@@ -1,5 +1,10 @@
 [workspace]
-members = ["crates/audio-analysis", "crates/orientation", "crates/audio-backend"]
+members = [
+  "crates/audio-analysis",
+  "crates/orientation",
+  "crates/audio-backend",
+  "crates/taskbar-lyric",
+]
 resolver = "2"
 
 [package]
@@ -53,6 +58,7 @@ tikv-jemallocator = "0.6.0"
 rdev = "0.5"
 
 [target.'cfg(windows)'.dependencies]
+gmplayer-taskbar-lyric = { package = "tauri-plugin-taskbar-lyric", path = "crates/taskbar-lyric" }
 rpmalloc = { version = "0.2.2", features = ["adaptive_thread_cache", "statistics"] }
 
 [target.'cfg(target_os = "android")'.dependencies]

@@ -6,6 +6,8 @@ export type WindowLabel =
   | "main"
   | "mini-player"
   | "desktop-lyrics"
+  | "desktop-lyrics-controls"
+  | "taskbar-lyric"
   | "settings"
   | "about"
   | "tray-popup"

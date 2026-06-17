@@ -13,17 +13,15 @@ import { songScrobble } from "@/api/song";
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
-import useSiteDataStore from "@/store/siteData";
 import useUserDataStore from "@/store/userData";
 
 const musicStore = () => useMusicDataStore();
 const settingStore = () => useSettingDataStore();
-const siteStore = () => useSiteDataStore();
 const userStore = () => useUserDataStore();
 import { NIcon } from "naive-ui";
 import { MusicNoteFilled } from "@vicons/material";
 import getLanguageData from "@/utils/getLanguageData";
-import { getCoverColor } from "@/utils/ncm/getCoverColor";
+import { applyGlobalCoverPalette } from "@/utils/color/coverPalette";
 import { BufferedSound } from "./BufferedSound";
 import { SoundManager } from "./SoundManager";
 import { AudioContextManager } from "./AudioContextManager";
@@ -35,8 +33,11 @@ import {
   isAudioBackendRuntimeAvailable,
   isNativeAudioBackendAvailable,
 } from "../tauri/NativeRustSound";
+import { getAudioBackendTransport } from "../tauri/audioIpc";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
+const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
+const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
 
 // 歌曲信息更新定时器
 let timeupdateInterval: number | null = null;
@@ -54,6 +55,65 @@ let isPageVisible = true;
 let spectrumReusableArray: number[] = [];
 // Background monitor interval ID (setInterval fallback when RAF is paused)
 let backgroundMonitorId: ReturnType<typeof setInterval> | null = null;
+let lastBackendSyncRequestAt = 0;
+let lastBackendStateAuditAt = 0;
+
+const requestNativeBackendSync = (): void => {
+  const sound = SoundManager.getCurrentSound();
+  if (!isNativeRustSoundLike(sound)) return;
+
+  const now = Date.now();
+  if (now - lastBackendSyncRequestAt < 250) return;
+  lastBackendSyncRequestAt = now;
+  getAudioBackendTransport().sendOrQueue({ type: "syncStatus" });
+};
+
+const isNativeRustSoundLike = (sound: ISound | undefined | null): sound is NativeRustSound => {
+  return !!sound && typeof (sound as NativeRustSound).requestStatusSync === "function";
+};
+
+const getActiveNativeSound = (): NativeRustSound | null => {
+  const currentSound = SoundManager.getCurrentSound();
+  if (isNativeRustSoundLike(currentSound)) return currentSound;
+  const windowPlayer = window.$player as ISound | undefined;
+  if (isNativeRustSoundLike(windowPlayer)) return windowPlayer;
+  return null;
+};
+
+const applyNativeAutoMixCompletion = (
+  currentIndex: number,
+  playback?: { position?: number; duration?: number },
+): void => {
+  const music = musicStore();
+  const sound = getActiveNativeSound();
+  if (!sound) return;
+
+  const playlists = music.persistData.playlists;
+  if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= playlists.length) {
+    return;
+  }
+
+  const changed = music.persistData.playSongIndex !== currentIndex;
+  if (changed) {
+    music.persistData.playSongIndex = currentIndex;
+    if (typeof music.resetSongLyricState === "function") {
+      music.resetSongLyricState();
+    }
+  }
+
+  const position = playback?.position;
+  const duration = playback?.duration;
+  if (
+    typeof position === "number" &&
+    position >= 0 &&
+    typeof duration === "number" &&
+    duration > 0
+  ) {
+    music.setPlaySongTime({ currentTime: position, duration });
+  }
+
+  void syncNativeAutoMixCurrentSound(sound);
+};
 
 /**
  * Start a setInterval(1000) fallback for when the page is hidden.
@@ -110,19 +170,44 @@ const startTimeUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): v
   };
 
   timeLoop();
+  if (!isPageVisible) {
+    startBackgroundMonitor();
+  }
 };
 
 // Track page visibility for spectrum throttling
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     isPageVisible = document.visibilityState === "visible";
-    if (!isPageVisible && spectrumAnimationId !== null) {
-      // Page hidden while spectrum loop is active — start background fallback
+    if (!isPageVisible) {
+      // RAF is paused while hidden; keep playback time and AutoMix monitoring
+      // on a low-rate timer independent of visual spectrum settings.
       startBackgroundMonitor();
-    } else if (isPageVisible) {
-      // Page visible again — RAF loop resumes naturally, stop interval
+    } else {
+      requestNativeBackendSync();
+      const sound = SoundManager.getCurrentSound();
+      if (sound) {
+        checkAudioTime(sound, musicStore());
+      }
       stopBackgroundMonitor();
     }
+  });
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener(NATIVE_AUTOMIX_COMPLETE_EVENT, (event) => {
+    const detail =
+      (event as CustomEvent<{ currentIndex?: number; position?: number; duration?: number }>)
+        .detail ?? {};
+    const currentIndex = Number(detail.currentIndex);
+    applyNativeAutoMixCompletion(currentIndex, detail);
+  });
+  window.addEventListener(NATIVE_AUTOMIX_SYNC_EVENT, (event) => {
+    const detail =
+      (event as CustomEvent<{ currentIndex?: number; position?: number; duration?: number }>)
+        .detail ?? {};
+    const currentIndex = Number(detail.currentIndex);
+    applyNativeAutoMixCompletion(currentIndex, detail);
   });
 }
 
@@ -219,6 +304,13 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
  */
 const checkAudioTime = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   if (sound.playing()) {
+    if (isNativeRustSoundLike(sound)) {
+      const now = Date.now();
+      if (now - lastBackendStateAuditAt >= 2000) {
+        lastBackendStateAuditAt = now;
+        requestNativeBackendSync();
+      }
+    }
     const currentTime = sound.seek() as number;
     const duration = sound.duration();
     music.setPlaySongTime({ currentTime, duration });
@@ -280,20 +372,15 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
  */
 const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => {
   const music = musicStore();
-  const site = siteStore();
   const settings = settingStore();
   const user = userStore();
 
   SoundManager.setCurrentSound(sound);
   music.loadingStage = "buffering";
 
-  getCoverColor(music.getPlaySongData.album.picUrl)
-    .then((color) => {
-      site.songPicGradient = color;
-    })
-    .catch((err) => {
-      console.error("取色出错", err);
-    });
+  applyGlobalCoverPalette(music.getPlaySongData.album.picUrl).catch((err) => {
+    console.error("取色出错", err);
+  });
 
   // Start download + decode in Rust (async). When `memoryLastPlaybackPosition`
   // is on, hand the saved position to `load()` so the Rust side opens the
@@ -497,9 +584,9 @@ export const createSound = (
   try {
     // If AutoMix is crossfading, it handles sound creation — skip normal flow
     const autoMix = getAutoMixEngine();
-    if (autoMix.isCrossfading()) {
+    if (autoMix.isHandoffActive()) {
       if (IS_DEV) {
-        console.log("[createSound] AutoMix crossfade active, skipping normal sound creation");
+        console.log("[createSound] AutoMix handoff active, skipping normal sound creation");
       }
       return window.$player;
     }
@@ -541,7 +628,6 @@ export const createSound = (
     // ── Web Audio backend (BufferedSound) ─────────────────────────────────────
 
     const music = musicStore();
-    const site = siteStore();
     const settings = settingStore();
     const user = userStore();
 
@@ -562,13 +648,9 @@ export const createSound = (
     music.loadingStage = "buffering";
 
     // 更新取色
-    getCoverColor(music.getPlaySongData.album.picUrl)
-      .then((color) => {
-        site.songPicGradient = color;
-      })
-      .catch((err) => {
-        console.error("取色出错", err);
-      });
+    applyGlobalCoverPalette(music.getPlaySongData.album.picUrl).catch((err) => {
+      console.error("取色出错", err);
+    });
 
     if (IS_DEV) {
       console.log("[createSound] autoPlay:", autoPlay, "getPlayState:", music.getPlayState);
@@ -925,16 +1007,11 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   });
 
   // Update cover color for the new track (AutoMix bypasses createSound, so do it here)
-  const site = siteStore();
   const coverUrl = music.getPlaySongData?.album?.picUrl;
   if (coverUrl) {
-    getCoverColor(coverUrl)
-      .then((color) => {
-        site.songPicGradient = color;
-      })
-      .catch((err) => {
-        console.error("取色出错 (AutoMix)", err);
-      });
+    applyGlobalCoverPalette(coverUrl).catch((err) => {
+      console.error("取色出错 (AutoMix)", err);
+    });
   }
 
   // Start time tracking immediately
@@ -1027,6 +1104,60 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
 };
 
 /**
+ * Sync frontend state after the native backend has promoted its prepared deck.
+ * This intentionally does not register sound event handlers because the
+ * NativeRustSound instance is still the same backend controller.
+ */
+export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void> => {
+  const music = musicStore();
+  const settings = settingStore();
+
+  if (isNativeRustSoundLike(sound)) {
+    await sound.requestStatusSync();
+  }
+
+  stopSpectrumUpdate();
+  stopTimeUpdate();
+
+  music.setPlayState(true);
+  music.isLoadingSong = false;
+
+  const duration = sound.duration();
+  const currentTime = (sound.seek() as number) || 0;
+  music.setPlaySongTime({
+    currentTime,
+    duration: duration > 0 ? duration : 0,
+  });
+
+  const coverUrl = music.getPlaySongData?.album?.picUrl;
+  if (coverUrl) {
+    applyGlobalCoverPalette(coverUrl).catch((err) => {
+      console.error("取色出错 (Native AutoMix)", err);
+    });
+  }
+
+  startTimeUpdate(sound, music);
+  if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
+    startSpectrumUpdate(sound, music);
+  }
+
+  setMediaSession(music);
+
+  const playSongData = music.getPlaySongData;
+  if (playSongData) {
+    music.setPlayHistory(playSongData);
+    const songName = playSongData.name;
+    const songArtist = playSongData.artist?.[0]?.name;
+    if (songName && songArtist) {
+      window.document.title = `${songName} - ${songArtist} - ${import.meta.env.VITE_SITE_TITLE}`;
+    }
+  }
+
+  getAudioPreloader().preloadNext();
+  music.preloadUpcomingSongs();
+};
+
+/**
  * 生成频谱数据 - 快速傅里叶变换（ FFT ）
  * @deprecated Use NativeSound.getFrequencyData() instead
  * @param sound - NativeSound 音频对象
@@ -1102,9 +1233,14 @@ export const processSpectrum = (_sound: ISound | undefined): void => {
  */
 export const setPageVisible = (visible: boolean): void => {
   isPageVisible = visible;
-  if (!visible && spectrumAnimationId !== null) {
+  if (!visible) {
     startBackgroundMonitor();
   } else if (visible) {
+    requestNativeBackendSync();
+    const sound = SoundManager.getCurrentSound();
+    if (sound) {
+      checkAudioTime(sound, musicStore());
+    }
     stopBackgroundMonitor();
   }
 };

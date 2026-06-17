@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "./windowManager";
 
-export { windowManager, isTauri } from "./windowManager";
+export { windowManager, isTauri, isWindowsTauri } from "./windowManager";
 export type { WindowConfig, WindowLabel, WindowState } from "./types";
 export { usePlayerBridge } from "./playerBridge";
 export type {

@@ -2007,7 +2007,7 @@ self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
 
     // Phrase analysis for beat-aligned DJ-style transitions
     const energyCurve = getEnergyCurve(monoData, sampleRate);
-    const phrases = analyzePhrases(bpm, energyCurve, intro?.introEndOffset ?? 0);
+    const phrases = analyzePhrases(bpm, energyCurve, energy.introEndOffset);
 
     const response: AnalysisResponse = {
       type: "result",

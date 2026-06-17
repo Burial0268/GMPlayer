@@ -28,6 +28,9 @@ const IS_DEV = import.meta.env?.DEV ?? false;
 const LOAD_TIMEOUT_MS = 10_000;
 const FFT_LOG_INTERVAL_MS = 1000;
 const NO_FFT_WARN_MS = 5000;
+const SEEN_EVENT_SEQ_LIMIT = 512;
+const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
+const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
 
 interface LocalState {
   musicId: string;
@@ -53,6 +56,11 @@ export function isAudioBackendRuntimeAvailable(): boolean {
 type LoadPromise = {
   resolve: () => void;
   reject: (err: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+type SyncPromise = {
+  resolve: () => void;
   timeout: ReturnType<typeof setTimeout>;
 };
 
@@ -84,13 +92,14 @@ export class NativeRustSound implements ISound {
   private _lastPositionEvent: { position: number; receivedAt: number } | null = null;
 
   /**
-   * Highest event `seq` we've processed. Both transports deliver the same
-   * stamped event; the second arrival is dropped here so a late-arriving
-   * Tauri replay of `PlayStatus(false)` can't undo a state flip that the
-   * faster WebSocket already settled. Events without `seq` (legacy or
-   * unsequenced) bypass the check.
+   * Recently processed event sequence ids. Priority status events are sent on
+   * the control socket while FFT/visual events are sent on the event socket, so
+   * cross-socket delivery can be out of order after background throttling. We
+   * only drop the exact same seq twice; lower seq is still valid if it was not
+   * seen yet.
    */
-  private _lastEventSeq: number = 0;
+  private _seenEventSeq: Set<number> = new Set();
+  private _seenEventSeqOrder: number[] = [];
 
   /** Track metadata from SyncStatus / LoadAudio. */
   private _musicInfo: DisplayAudioInfo | null = null;
@@ -107,9 +116,13 @@ export class NativeRustSound implements ISound {
   private _destroyed: boolean = false;
   private _playbackState: "stopped" | "playing" | "paused" | "ended" = "stopped";
   private _optimisticPlayback: boolean = isTauri();
+  private _adoptNextBackendMusicId: boolean = false;
+  private _nativeAutoMixSyncPending: boolean = false;
+  private _allowInitialBackendAttach: boolean = false;
 
   /** Pending load() promise so we can resolve from event handlers. */
   private _pendingLoad: LoadPromise | null = null;
+  private _pendingSyncs: SyncPromise[] = [];
 
   // ── Diagnostics ─────────────────────────────────────────────────
   private _lastFFTLogAt: number = 0;
@@ -147,6 +160,19 @@ export class NativeRustSound implements ISound {
       const err = e instanceof Error ? e : new Error(String(e));
       this._emit("loaderror", err);
       return;
+    }
+
+    const canAttachExistingBackend = !window.$player;
+    if (canAttachExistingBackend) {
+      this._allowInitialBackendAttach = true;
+      await this.requestStatusSync(400);
+      this._allowInitialBackendAttach = false;
+      if (this._state.musicId && this._state.duration > 0) {
+        this._loaded = true;
+        this._armNoFFTWarning();
+        this._emit("load");
+        return;
+      }
     }
 
     // Pre-seed local state from `initialPosition` so seekers (e.g. the
@@ -237,18 +263,23 @@ export class NativeRustSound implements ISound {
   private _handleEvent(evt: AudioThreadEvent, seq?: number): void {
     if (this._destroyed) return;
 
-    // Keep seq-based dedup as a guard for legacy/reconnect paths. Normal
-    // native playback receives events from WebSocket only, but dropping a
-    // replayed `PlayStatus` prevents duplicate play/pause toasts if another
-    // transport is temporarily wired during diagnostics.
-    if (seq !== undefined && seq > 0) {
-      if (seq <= this._lastEventSeq) return;
-      this._lastEventSeq = seq;
-    }
+    if (seq !== undefined && seq > 0 && this._markSeqSeen(seq)) return;
 
     switch (evt.type) {
       case "syncStatus": {
         const d = evt.data;
+        const expectedBefore = this._expectedMusicId;
+        const expectingNativeAutoMixAdoption =
+          this._adoptNextBackendMusicId || this._nativeAutoMixSyncPending;
+        if (
+          !this._acceptMusicId(
+            d.musicId,
+            this._isActiveController() || this._allowInitialBackendAttach,
+          )
+        )
+          return;
+        const adoptedBackendTrack = !!d.musicId && d.musicId !== expectedBefore;
+        const pendingNativeAutoMixIndex = this._state.currentPlayIndex;
         this._state = {
           musicId: d.musicId,
           position: d.position,
@@ -261,8 +292,25 @@ export class NativeRustSound implements ISound {
         this._musicInfo = d.musicInfo;
         this._quality = d.quality;
         this._lastPositionEvent = { position: d.position, receivedAt: Date.now() };
-        if (d.musicId && d.musicId !== this._expectedMusicId) {
-          return;
+        this._resolvePendingSyncs();
+        const shouldNotifyNativeAutoMixSync = this._nativeAutoMixSyncPending
+          ? adoptedBackendTrack || d.currentPlayIndex === pendingNativeAutoMixIndex
+          : (expectingNativeAutoMixAdoption ||
+              this._isActiveController() ||
+              this._allowInitialBackendAttach) &&
+            adoptedBackendTrack;
+        if (shouldNotifyNativeAutoMixSync) {
+          this._nativeAutoMixSyncPending = false;
+          window.dispatchEvent(
+            new CustomEvent(NATIVE_AUTOMIX_SYNC_EVENT, {
+              detail: {
+                currentIndex: d.currentPlayIndex,
+                musicId: d.musicId,
+                position: d.position,
+                duration: d.duration,
+              },
+            }),
+          );
         }
         // NOTE: do NOT update `_playbackState` from syncStatus. State
         // transitions belong to `PlayStatus` events only. SyncStatus is
@@ -276,7 +324,7 @@ export class NativeRustSound implements ISound {
       }
 
       case "loadAudio": {
-        if (evt.data.musicId === this._expectedMusicId) {
+        if (this._acceptMusicId(evt.data.musicId)) {
           this._musicInfo = evt.data.musicInfo;
           this._quality = evt.data.quality;
           this._state.duration = evt.data.musicInfo.duration;
@@ -318,6 +366,15 @@ export class NativeRustSound implements ISound {
           this._playbackState = "ended";
           this._state.position = this._state.duration;
           this._emit("end");
+        } else if (this._isActiveController()) {
+          this._adoptNextBackendMusicId = true;
+          this._nativeAutoMixSyncPending = true;
+          void this.requestStatusSync().then(() => {
+            if (this._destroyed) return;
+            this._playbackState = "ended";
+            this._state.position = this._state.duration;
+            this._emit("end");
+          });
         }
         break;
       }
@@ -326,6 +383,53 @@ export class NativeRustSound implements ISound {
         this._state.volume = evt.data.volume;
         break;
       }
+
+      case "automixCrossfadeComplete": {
+        this._adoptNextBackendMusicId = true;
+        this._nativeAutoMixSyncPending = true;
+        this._state.currentPlayIndex = evt.data.currentIndex;
+        if (evt.data.musicId) {
+          if (this._acceptMusicId(evt.data.musicId)) {
+            this._state.musicId = evt.data.musicId;
+          }
+          this._adoptNextBackendMusicId = false;
+        }
+        if (typeof evt.data.duration === "number" && evt.data.duration > 0) {
+          this._state.duration = evt.data.duration;
+          if (this._musicInfo) {
+            this._musicInfo = { ...this._musicInfo, duration: evt.data.duration };
+          }
+        }
+        if (typeof evt.data.position === "number" && evt.data.position >= 0) {
+          this._state.position = evt.data.position;
+          this._lastPositionEvent = { position: evt.data.position, receivedAt: Date.now() };
+          if (this._musicInfo) {
+            this._musicInfo = { ...this._musicInfo, position: evt.data.position };
+          }
+        }
+        this._sendCommand({ type: "syncStatus" });
+        window.dispatchEvent(
+          new CustomEvent(NATIVE_AUTOMIX_COMPLETE_EVENT, {
+            detail: {
+              currentIndex: evt.data.currentIndex,
+              musicId: evt.data.musicId,
+              position: evt.data.position,
+              duration: evt.data.duration,
+              transitionId: evt.data.transitionId,
+            },
+          }),
+        );
+        break;
+      }
+
+      case "automixCrossfadeStarted":
+        this._adoptNextBackendMusicId = true;
+        break;
+
+      case "automixError":
+        this._adoptNextBackendMusicId = false;
+        this._nativeAutoMixSyncPending = false;
+        break;
 
       case "fftData": {
         this._fftData = evt.data.data;
@@ -376,7 +480,42 @@ export class NativeRustSound implements ISound {
 
       case "playListChanged":
       case "loadProgress":
+      case "automixStatus":
+      case "automixAnalysisReady":
         break;
+    }
+  }
+
+  private _markSeqSeen(seq: number): boolean {
+    if (this._seenEventSeq.has(seq)) return true;
+
+    this._seenEventSeq.add(seq);
+    this._seenEventSeqOrder.push(seq);
+    while (this._seenEventSeqOrder.length > SEEN_EVENT_SEQ_LIMIT) {
+      const oldSeq = this._seenEventSeqOrder.shift();
+      if (oldSeq !== undefined) this._seenEventSeq.delete(oldSeq);
+    }
+    return false;
+  }
+
+  private _isActiveController(): boolean {
+    return window.$player === this;
+  }
+
+  private _acceptMusicId(musicId: string, allowBackendAdoption = false): boolean {
+    if (!musicId || musicId === this._expectedMusicId) return true;
+    if (!this._adoptNextBackendMusicId && !allowBackendAdoption) return false;
+
+    this._adoptMusicId(musicId);
+    return true;
+  }
+
+  private _adoptMusicId(musicId: string): void {
+    if (!musicId) return;
+    this._expectedMusicId = musicId;
+    this._adoptNextBackendMusicId = false;
+    if (musicId.startsWith("local:")) {
+      this._path = musicId.slice("local:".length);
     }
   }
 
@@ -398,6 +537,15 @@ export class NativeRustSound implements ISound {
     if (!this._pendingLoad) return;
     clearTimeout(this._pendingLoad.timeout);
     this._pendingLoad = null;
+  }
+
+  private _resolvePendingSyncs(): void {
+    if (this._pendingSyncs.length === 0) return;
+    const pending = this._pendingSyncs.splice(0);
+    for (const sync of pending) {
+      clearTimeout(sync.timeout);
+      sync.resolve();
+    }
   }
 
   private _armNoFFTWarning(): void {
@@ -614,6 +762,19 @@ export class NativeRustSound implements ISound {
     return this._path;
   }
 
+  requestStatusSync(timeoutMs = 500): Promise<void> {
+    if (this._destroyed) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        this._pendingSyncs = this._pendingSyncs.filter((sync) => sync.resolve !== resolve);
+        resolve();
+      }, timeoutMs);
+      this._pendingSyncs.push({ resolve, timeout });
+      this._sendCommand({ type: "syncStatus" });
+    });
+  }
+
   getGainNode(): GainNode | null {
     return this._transport?.getGainNode?.() ?? null;
   }
@@ -632,6 +793,10 @@ export class NativeRustSound implements ISound {
     if (this._destroyed) return;
     this._destroyed = true;
     this._clearPendingLoad();
+    for (const sync of this._pendingSyncs.splice(0)) {
+      clearTimeout(sync.timeout);
+      sync.resolve();
+    }
     if (this._noFFTWarnTimer !== null) {
       clearTimeout(this._noFFTWarnTimer);
       this._noFFTWarnTimer = null;

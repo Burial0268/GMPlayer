@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tauri::{Emitter, Runtime};
 use tokio::sync::mpsc;
@@ -19,16 +19,19 @@ use tokio::sync::RwLock as TokioRwLock;
 use tracing::{info, warn};
 
 use crate::analysis::{self, AnalysisCommand};
-use crate::decoder;
+use crate::decoder::{self, PlaybackSink};
 use crate::error::{AudioError, AudioResult};
-use crate::output::{self, LowLatencyOutput};
+use crate::output::{self, LowLatencyOutput, OutputRenderClock};
 use crate::types::*;
 use crate::ws_server::WsServer;
 
+mod automix;
 mod mixer;
 pub mod queue;
 
-use mixer::DeckMixer;
+use automix::AutoMixManager;
+use mixer::{CrossfadeParams, DeckId, DeckMixer};
+use queue::PlaybackQueue;
 
 // ── EventBuffer for session-scoped polling (kept for compat) ──
 
@@ -421,6 +424,8 @@ struct AudioPlayer {
     // into the deck mixer; the mixer pushes mixed PCM blocks to this output queue.
     output: LowLatencyOutput,
     deck_mixer: DeckMixer,
+    active_deck: DeckId,
+    automix: AutoMixManager,
     volume: f64,
     /// What the user wants the sink to be doing. Used so auto-advance and
     /// seek transitions preserve the playing/paused state even though the
@@ -437,11 +442,26 @@ struct AudioPlayer {
     /// loads, which deletes the temp file from disk.
     current_temp_file: Option<tempfile::TempPath>,
     current_decoder_handle: Option<decoder::DecoderHandle>,
+    secondary_decoder_handle: Option<decoder::DecoderHandle>,
+    secondary_temp_file: Option<tempfile::TempPath>,
+    secondary_local_path: Option<PathBuf>,
+    secondary_song: Option<SongData>,
+    secondary_duration: f64,
+    secondary_display_info: Option<DisplayAudioInfo>,
+    secondary_quality: Option<AudioQuality>,
+    secondary_playback_id: Option<u64>,
     decoder_event_tx: mpsc::UnboundedSender<decoder::DecoderEvent>,
     decoder_event_rx: mpsc::UnboundedReceiver<decoder::DecoderEvent>,
+    automix_prepare_tx: mpsc::UnboundedSender<automix::AutoMixPrepareResult>,
+    automix_prepare_rx: mpsc::UnboundedReceiver<automix::AutoMixPrepareResult>,
     decoder_playback_id: u64,
+    native_crossfade_generation: u64,
+    native_crossfade_active: bool,
+    native_crossfade_transition_id: Option<u64>,
+    automix_prepare_generation: u64,
 
     // Playlist
+    playback_queue: PlaybackQueue,
     playlist: Vec<SongData>,
     playlist_inited: bool,
     current_play_index: usize,
@@ -476,19 +496,39 @@ enum PlaybackIntent {
 #[derive(Debug)]
 struct PlayerClock {
     base_position: f64,
-    base_instant: Instant,
+    base_rendered_samples: u64,
     is_playing: bool,
     duration: f64,
+    render_clock: Option<OutputRenderClock>,
+    sample_rate: u32,
+    channels: u16,
 }
 
 impl PlayerClock {
     fn new() -> Self {
         Self {
             base_position: 0.0,
-            base_instant: Instant::now(),
+            base_rendered_samples: 0,
             is_playing: false,
             duration: 0.0,
+            render_clock: None,
+            sample_rate: 44_100,
+            channels: 2,
         }
+    }
+
+    fn set_render_clock(
+        &mut self,
+        render_clock: OutputRenderClock,
+        sample_rate: u32,
+        channels: u16,
+    ) {
+        let position = self.position();
+        self.render_clock = Some(render_clock);
+        self.sample_rate = sample_rate.max(1);
+        self.channels = channels.max(1);
+        self.base_position = self.clamp_position(position);
+        self.base_rendered_samples = self.rendered_samples();
     }
 
     fn set_duration(&mut self, duration: f64) {
@@ -499,14 +539,18 @@ impl PlayerClock {
     fn set_anchor(&mut self, is_playing: bool, position: f64) -> f64 {
         let position = self.clamp_position(position);
         self.base_position = position;
-        self.base_instant = Instant::now();
+        self.base_rendered_samples = self.rendered_samples();
         self.is_playing = is_playing;
         position
     }
 
     fn position(&self) -> f64 {
         let position = if self.is_playing {
-            self.base_position + self.base_instant.elapsed().as_secs_f64()
+            let rendered_delta = self
+                .rendered_samples()
+                .saturating_sub(self.base_rendered_samples);
+            let samples_per_second = self.sample_rate.max(1) as f64 * self.channels.max(1) as f64;
+            self.base_position + rendered_delta as f64 / samples_per_second
         } else {
             self.base_position
         };
@@ -524,6 +568,13 @@ impl PlayerClock {
         } else {
             position
         }
+    }
+
+    fn rendered_samples(&self) -> u64 {
+        self.render_clock
+            .as_ref()
+            .map(OutputRenderClock::rendered_samples)
+            .unwrap_or(self.base_rendered_samples)
     }
 }
 
@@ -545,7 +596,17 @@ impl AudioPlayer {
         output.writer().set_paused(true);
         spawn_output_low_freq_forwarder(&mut output, evt_sender.clone());
         let deck_mixer = DeckMixer::new(output.writer(), output.config().channels);
+        let automix = AutoMixManager::new();
         let clock = Arc::new(parking_lot::Mutex::new(PlayerClock::new()));
+        {
+            let writer = output.writer();
+            let config = output.config();
+            clock.lock().set_render_clock(
+                writer.render_clock(),
+                config.sample_rate,
+                config.channels,
+            );
+        }
 
         info!("音频输出设备 准备就绪");
 
@@ -602,6 +663,7 @@ impl AudioPlayer {
 
         let (self_msg_tx, self_msg_rx) = mpsc::unbounded_channel();
         let (decoder_event_tx, decoder_event_rx) = mpsc::unbounded_channel();
+        let (automix_prepare_tx, automix_prepare_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             msg_receiver,
@@ -611,6 +673,8 @@ impl AudioPlayer {
             self_msg_rx,
             output,
             deck_mixer,
+            active_deck: DeckId::Primary,
+            automix,
             volume: 1.0,
             playback_intent: PlaybackIntent::Paused,
             clock,
@@ -618,9 +682,24 @@ impl AudioPlayer {
             current_local_path: None,
             current_temp_file: None,
             current_decoder_handle: None,
+            secondary_decoder_handle: None,
+            secondary_temp_file: None,
+            secondary_local_path: None,
+            secondary_song: None,
+            secondary_duration: 0.0,
+            secondary_display_info: None,
+            secondary_quality: None,
+            secondary_playback_id: None,
             decoder_event_tx,
             decoder_event_rx,
+            automix_prepare_tx,
+            automix_prepare_rx,
             decoder_playback_id: 0,
+            native_crossfade_generation: 0,
+            native_crossfade_active: false,
+            native_crossfade_transition_id: None,
+            automix_prepare_generation: 0,
+            playback_queue: PlaybackQueue::new(),
             playlist: Vec::new(),
             playlist_inited: false,
             current_play_index: 0,
@@ -653,7 +732,21 @@ impl AudioPlayer {
         let changed =
             output.config() != self.output.config() || output.device() != self.output.device();
         self.output = output;
+        {
+            let writer = self.output.writer();
+            let config = self.output.config();
+            self.clock.lock().set_render_clock(
+                writer.render_clock(),
+                config.sample_rate,
+                config.channels,
+            );
+        }
         self.deck_mixer = DeckMixer::new(self.output.writer(), self.output.config().channels);
+        self.active_deck = DeckId::Primary;
+        self.secondary_playback_id = None;
+        self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
+        self.native_crossfade_active = false;
+        self.native_crossfade_transition_id = None;
         Ok(changed)
     }
 
@@ -741,6 +834,12 @@ impl AudioPlayer {
                   self.handle_decoder_finished(playback_id).await;
                 }
               }
+
+              result = self.automix_prepare_rx.recv() => {
+                if let Some(result) = result {
+                  self.handle_automix_prepare_result(result).await;
+                }
+              }
             }
         }
 
@@ -762,6 +861,13 @@ impl AudioPlayer {
     }
 
     async fn handle_decoder_finished(&mut self, playback_id: u64) {
+        if self.native_crossfade_active
+            && (playback_id == self.decoder_playback_id
+                || Some(playback_id) == self.secondary_playback_id)
+        {
+            return;
+        }
+
         if playback_id != self.decoder_playback_id || self.current_song.is_none() {
             return;
         }
@@ -791,6 +897,10 @@ impl AudioPlayer {
 
     async fn process_seek_position(&mut self, position: f64) -> anyhow::Result<()> {
         let seek_pos = normalize_seek_position(position);
+        self.cancel_native_automix_runtime().await;
+        self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
+        let events = self.automix.cancel(self.current_play_index);
+        self.emit_many(events).await;
         if let Some(handle) = &self.current_decoder_handle {
             self.deck_mixer.clear_all();
             handle.seek(Duration::from_secs_f64(seek_pos))?;
@@ -816,6 +926,9 @@ impl AudioPlayer {
                     if let Some(handle) = &self.current_decoder_handle {
                         let _ = handle.set_paused(false);
                     }
+                    if let Some(handle) = &self.secondary_decoder_handle {
+                        let _ = handle.set_paused(false);
+                    }
                     let current_pos = self.clock_position();
                     self.publish_position_anchor(true, current_pos).await;
                     let _ = emitter
@@ -827,6 +940,9 @@ impl AudioPlayer {
                     let current_pos = self.clock_position();
                     self.output.writer().set_paused(true);
                     if let Some(handle) = &self.current_decoder_handle {
+                        let _ = handle.set_paused(true);
+                    }
+                    if let Some(handle) = &self.secondary_decoder_handle {
                         let _ = handle.set_paused(true);
                     }
                     self.publish_position_anchor(false, current_pos).await;
@@ -843,10 +959,16 @@ impl AudioPlayer {
                         if let Some(handle) = &self.current_decoder_handle {
                             let _ = handle.set_paused(false);
                         }
+                        if let Some(handle) = &self.secondary_decoder_handle {
+                            let _ = handle.set_paused(false);
+                        }
                     } else {
                         self.playback_intent = PlaybackIntent::Paused;
                         self.output.writer().set_paused(true);
                         if let Some(handle) = &self.current_decoder_handle {
+                            let _ = handle.set_paused(true);
+                        }
+                        if let Some(handle) = &self.secondary_decoder_handle {
                             let _ = handle.set_paused(true);
                         }
                     }
@@ -879,36 +1001,27 @@ impl AudioPlayer {
                         .await;
                 }
                 AudioThreadMessage::NextSong => {
-                    if self.playlist.is_empty() {
+                    if self.playback_queue.next().is_none() || !self.sync_current_from_queue() {
                         return self.finish_message(msg).await;
                     }
-                    self.current_play_index = (self.current_play_index + 1) % self.playlist.len();
-                    self.current_song = self.playlist.get(self.current_play_index).cloned();
                     self.start_playing_song(true, None).await?;
                 }
                 AudioThreadMessage::NextSongGapless => {
-                    if self.playlist.is_empty() {
+                    if self.playback_queue.next().is_none() || !self.sync_current_from_queue() {
                         return self.finish_message(msg).await;
                     }
-                    self.current_play_index = (self.current_play_index + 1) % self.playlist.len();
-                    self.current_song = self.playlist.get(self.current_play_index).cloned();
                     self.start_playing_song(true, None).await?;
                 }
                 AudioThreadMessage::PrevSong => {
-                    if self.playlist.is_empty() {
+                    if self.playback_queue.prev().is_none() || !self.sync_current_from_queue() {
                         return self.finish_message(msg).await;
                     }
-                    self.current_play_index = self
-                        .current_play_index
-                        .checked_sub(1)
-                        .unwrap_or(self.playlist.len() - 1);
-                    self.current_song = self.playlist.get(self.current_play_index).cloned();
                     self.start_playing_song(true, None).await?;
                 }
                 AudioThreadMessage::JumpToSong { song_index } => {
-                    if let Some(song) = self.playlist.get(*song_index).cloned() {
-                        self.current_play_index = *song_index;
-                        self.current_song = Some(song);
+                    if self.playback_queue.set_index(*song_index).is_some()
+                        && self.sync_current_from_queue()
+                    {
                         self.start_playing_song(true, None).await?;
                     }
                 }
@@ -916,14 +1029,16 @@ impl AudioPlayer {
                     song_index,
                     position,
                 } => {
-                    if let Some(song) = self.playlist.get(*song_index).cloned() {
-                        self.current_play_index = *song_index;
-                        self.current_song = Some(song);
+                    if self.playback_queue.set_index(*song_index).is_some()
+                        && self.sync_current_from_queue()
+                    {
                         self.start_playing_song(true, Some(*position)).await?;
                     }
                 }
                 AudioThreadMessage::SetPlaylist { songs } => {
-                    self.playlist = songs.clone();
+                    self.playback_queue.set_playlist(songs.clone());
+                    self.playlist = self.playback_queue.playlist_cloned();
+                    self.sync_current_from_queue();
                     self.playlist_inited = true;
                     let _ = emitter
                         .emit(AudioThreadEvent::PlayListChanged {
@@ -958,9 +1073,390 @@ impl AudioPlayer {
                     // OS media controls require platform-specific glue (SMTC etc.) —
                     // not yet wired into this backend.
                 }
+                AudioThreadMessage::AutomixSetEnabled { enabled } => {
+                    let events = self.automix.set_enabled(*enabled, self.current_play_index);
+                    if !enabled {
+                        self.automix_prepare_generation =
+                            self.automix_prepare_generation.wrapping_add(1);
+                        self.cancel_native_automix_runtime().await;
+                    }
+                    self.emit_many(events).await;
+                }
+                AudioThreadMessage::AutomixConfigure { config } => {
+                    let events = self
+                        .automix
+                        .configure(config.clone(), self.current_play_index);
+                    if !config.enabled {
+                        self.automix_prepare_generation =
+                            self.automix_prepare_generation.wrapping_add(1);
+                        self.cancel_native_automix_runtime().await;
+                    }
+                    self.emit_many(events).await;
+                }
+                AudioThreadMessage::AutomixPrepareNext {
+                    current_index,
+                    next_index,
+                    next_song,
+                    transition_id,
+                } => {
+                    self.automix_prepare_generation =
+                        self.automix_prepare_generation.wrapping_add(1);
+                    let generation = self.automix_prepare_generation;
+                    let current_song = self.current_song.clone();
+                    let current_duration = Some(self.current_audio_info.read().await.duration)
+                        .filter(|duration| *duration > 0.0);
+                    let (events, request) = self.automix.begin_prepare_next(
+                        generation,
+                        *transition_id,
+                        *current_index,
+                        *next_index,
+                        current_song,
+                        current_duration,
+                        next_song.clone(),
+                    );
+                    if let Some(request) = request {
+                        self.spawn_automix_prepare_task(request);
+                    }
+                    self.emit_many(events).await;
+                }
+                AudioThreadMessage::AutomixCancel => {
+                    self.automix_prepare_generation =
+                        self.automix_prepare_generation.wrapping_add(1);
+                    self.cancel_native_automix_runtime().await;
+                    let events = self.automix.cancel(self.current_play_index);
+                    self.emit_many(events).await;
+                }
+                AudioThreadMessage::AutomixForceStart { generation } => {
+                    if let Some(generation) = generation {
+                        if *generation != self.native_crossfade_generation {
+                            return self.finish_message(msg).await;
+                        }
+                    }
+                    if self.native_crossfade_active {
+                        return self.finish_message(msg).await;
+                    }
+                    if let Err(err) = self.start_native_automix_crossfade().await {
+                        let events = self
+                            .automix
+                            .mark_failed(err.to_string(), self.current_play_index);
+                        self.emit_many(events).await;
+                    }
+                }
+                AudioThreadMessage::AutomixCompleteNative {
+                    generation,
+                    current_index,
+                    position,
+                } => {
+                    if *generation != self.native_crossfade_generation {
+                        return self.finish_message(msg).await;
+                    }
+                    self.complete_native_automix(*current_index, *position)
+                        .await;
+                }
             }
         }
         self.finish_message(msg).await
+    }
+
+    async fn emit_many(&self, events: Vec<AudioThreadEvent>) {
+        let emitter = self.emitter();
+        for event in events {
+            let _ = emitter.emit(event).await;
+        }
+    }
+
+    fn sync_current_from_queue(&mut self) -> bool {
+        let Some(song) = self.playback_queue.current_song() else {
+            self.current_song = None;
+            self.current_play_index = 0;
+            return false;
+        };
+        self.current_play_index = self.playback_queue.current_index();
+        self.current_song = Some(song);
+        true
+    }
+
+    fn spawn_automix_prepare_task(&self, request: automix::AutoMixPrepareRequest) {
+        let tx = self.automix_prepare_tx.clone();
+        tokio::spawn(async move {
+            let generation = request.generation;
+            let transition_id = request.transition_id;
+            let current_index = request.current_index;
+            let current_id = request.current_id.clone();
+            let task =
+                tokio::task::spawn_blocking(move || automix::run_prepare_request_blocking(request));
+            let result = match tokio::time::timeout(Duration::from_secs(10), task).await {
+                Ok(Ok(result)) => result,
+                Ok(Err(err)) => automix::AutoMixPrepareResult {
+                    generation,
+                    transition_id,
+                    current_index,
+                    current_id,
+                    result: Err(format!("AutoMix prepare task failed: {err}")),
+                },
+                Err(_) => automix::AutoMixPrepareResult {
+                    generation,
+                    transition_id,
+                    current_index,
+                    current_id,
+                    result: Err("AutoMix prepare timed out".to_string()),
+                },
+            };
+            let _ = tx.send(result);
+        });
+    }
+
+    async fn handle_automix_prepare_result(&mut self, result: automix::AutoMixPrepareResult) {
+        if result.generation != self.automix_prepare_generation {
+            return;
+        }
+
+        let status_index = result.current_index;
+        let events = self.automix.finish_prepare(result, status_index);
+        if let Some(start_time) = self.automix.status(status_index).crossfade_start {
+            self.schedule_native_automix_trigger(start_time);
+        }
+        self.emit_many(events).await;
+    }
+
+    fn inactive_deck(&self) -> DeckId {
+        match self.active_deck {
+            DeckId::Primary => DeckId::Secondary,
+            DeckId::Secondary => DeckId::Primary,
+        }
+    }
+
+    async fn cancel_native_automix_runtime(&mut self) {
+        self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
+        self.native_crossfade_active = false;
+        self.native_crossfade_transition_id = None;
+        self.secondary_playback_id = None;
+
+        if let Some(handle) = self.secondary_decoder_handle.take() {
+            handle.stop();
+        }
+        self.secondary_local_path = None;
+        self.secondary_temp_file = None;
+        self.secondary_song = None;
+        self.secondary_duration = 0.0;
+        self.secondary_display_info = None;
+        self.secondary_quality = None;
+
+        self.deck_mixer.clear_deck(self.inactive_deck());
+        self.deck_mixer.set_deck_gain(self.active_deck, 1.0);
+        self.deck_mixer.set_deck_gain(self.inactive_deck(), 0.0);
+    }
+
+    fn schedule_native_automix_trigger(&mut self, start_time: f64) {
+        self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
+        let generation = self.native_crossfade_generation;
+        let clock = Arc::clone(&self.clock);
+        let tx = self.self_msg_tx.clone();
+        tokio::spawn(async move {
+            loop {
+                let position = clock.lock().position();
+                if position + 0.025 >= start_time {
+                    let _ = tx.send(AudioThreadEventMessage::new(
+                        String::new(),
+                        Some(AudioThreadMessage::AutomixForceStart {
+                            generation: Some(generation),
+                        }),
+                    ));
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        });
+    }
+
+    fn schedule_native_automix_complete(
+        &self,
+        generation: u64,
+        current_index: usize,
+        position: f64,
+    ) {
+        let tx = self.self_msg_tx.clone();
+        let delay = Duration::from_secs_f64(position.max(0.05));
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let _ = tx.send(AudioThreadEventMessage::new(
+                String::new(),
+                Some(AudioThreadMessage::AutomixCompleteNative {
+                    generation,
+                    current_index,
+                    position,
+                }),
+            ));
+        });
+    }
+
+    async fn start_native_automix_crossfade(&mut self) -> anyhow::Result<()> {
+        let prepared = self
+            .automix
+            .take_prepared_for_start()
+            .ok_or_else(|| anyhow::anyhow!("AutoMix has no prepared next track"))?;
+
+        let incoming_deck = self.inactive_deck();
+        let incoming_writer = match incoming_deck {
+            DeckId::Primary => self.deck_mixer.primary_writer(),
+            DeckId::Secondary => self.deck_mixer.secondary_writer(),
+        };
+        incoming_writer.set_paused(self.playback_intent == PlaybackIntent::Paused);
+        self.deck_mixer.set_deck_gain(incoming_deck, 0.0);
+
+        if let Some(handle) = self.secondary_decoder_handle.take() {
+            handle.stop();
+        }
+
+        let analysis_tx_for_open = self.analysis_tx.clone();
+        let path_for_open = prepared.local_path.clone();
+        let output_config = self.output.config();
+        let playback_id = self.decoder_playback_id.wrapping_add(1);
+        let decoder_event_tx = self.decoder_event_tx.clone();
+        let start_paused = self.playback_intent == PlaybackIntent::Paused;
+
+        let open_result = tokio::task::spawn_blocking(move || {
+            decoder::spawn_playback_decoder(
+                &path_for_open,
+                Some(0.0),
+                incoming_writer,
+                output_config.channels,
+                output_config.sample_rate,
+                analysis_tx_for_open,
+                decoder_event_tx,
+                playback_id,
+                start_paused,
+            )
+        })
+        .await?;
+
+        let incoming_handle = open_result.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let duration = prepared.plan.as_ref().map(|p| p.duration).unwrap_or(2.0);
+
+        self.secondary_decoder_handle = Some(incoming_handle);
+        self.secondary_local_path = Some(prepared.local_path.clone());
+        self.secondary_temp_file = prepared._temp_file;
+        self.secondary_song = Some(prepared.song.clone());
+        self.secondary_duration = prepared.analysis_duration;
+        self.secondary_display_info = Some(prepared.display_info.clone());
+        self.secondary_quality = Some(prepared.quality.clone());
+        self.secondary_playback_id = Some(playback_id);
+        self.native_crossfade_active = true;
+        self.native_crossfade_transition_id = prepared.transition_id;
+
+        let crossfade_params = prepared
+            .plan
+            .as_ref()
+            .map(|plan| CrossfadeParams {
+                curve: plan.curve,
+                incoming_gain: plan.incoming_gain_adjustment as f32,
+                outgoing_gain: 1.0,
+                overlap_headroom_db: plan.overlap_headroom_db as f32,
+            })
+            .unwrap_or_default();
+
+        self.deck_mixer.start_crossfade(
+            self.active_deck,
+            incoming_deck,
+            duration,
+            output_config.sample_rate,
+            output_config.channels,
+            crossfade_params,
+        );
+
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::AutomixCrossfadeStarted {
+                from_id: self
+                    .current_song
+                    .as_ref()
+                    .map(SongData::get_id)
+                    .unwrap_or_default(),
+                to_id: prepared.song.get_id(),
+                duration,
+                transition_id: prepared.transition_id,
+            })
+            .await;
+
+        let finish_index = prepared.next_index;
+        self.schedule_native_automix_complete(
+            self.native_crossfade_generation,
+            finish_index,
+            duration,
+        );
+
+        Ok(())
+    }
+
+    async fn complete_native_automix(&mut self, current_index: usize, position: f64) {
+        if !self.native_crossfade_active || self.secondary_decoder_handle.is_none() {
+            return;
+        }
+
+        if let Some(handle) = self.current_decoder_handle.take() {
+            handle.stop();
+        }
+
+        self.current_decoder_handle = self.secondary_decoder_handle.take();
+        self.current_local_path = self.secondary_local_path.take();
+        self.current_temp_file = self.secondary_temp_file.take();
+        let promoted_song = self.secondary_song.take();
+        self.current_song = promoted_song.clone();
+        if let Some(playback_id) = self.secondary_playback_id.take() {
+            self.decoder_playback_id = playback_id;
+        }
+        self.current_play_index = current_index;
+        if let Some(song) = promoted_song {
+            self.playback_queue
+                .replace_or_set_current(current_index, song);
+            self.playlist = self.playback_queue.playlist_cloned();
+            self.sync_current_from_queue();
+        }
+        let incoming_duration = self.secondary_duration;
+        self.secondary_duration = 0.0;
+        self.native_crossfade_active = false;
+        let transition_id = self.native_crossfade_transition_id.take();
+        self.active_deck = match self.active_deck {
+            DeckId::Primary => DeckId::Secondary,
+            DeckId::Secondary => DeckId::Primary,
+        };
+
+        let mut display_info = self.secondary_display_info.take().unwrap_or_default();
+        display_info.duration = if display_info.duration > 0.0 {
+            display_info.duration
+        } else {
+            incoming_duration
+        };
+        display_info.position = position;
+        let duration = display_info.duration;
+        *self.current_audio_info.write().await = display_info;
+        if let Some(quality) = self.secondary_quality.take() {
+            *self.current_audio_quality.write().await = quality;
+        }
+
+        let is_playing = self.playback_intent == PlaybackIntent::Playing;
+        self.clock.lock().set_duration(incoming_duration);
+        self.publish_position_anchor(is_playing, position).await;
+
+        let music_id = self
+            .current_song
+            .as_ref()
+            .map(SongData::get_id)
+            .unwrap_or_default();
+
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::AutomixCrossfadeComplete {
+                current_index: self.current_play_index,
+                music_id,
+                position,
+                duration,
+                transition_id,
+            })
+            .await;
+        let events = self.automix.complete(self.current_play_index);
+        self.emit_many(events).await;
+        self.sync_ui().await;
     }
 
     /// Ack the request (so the frontend's callback_id pairing resolves) and
@@ -1003,7 +1499,11 @@ impl AudioPlayer {
             .await;
 
         if clear_sink {
+            self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
             if let Some(handle) = self.current_decoder_handle.take() {
+                handle.stop();
+            }
+            if let Some(handle) = self.secondary_decoder_handle.take() {
                 handle.stop();
             }
             self.deck_mixer.clear_all();
@@ -1015,6 +1515,16 @@ impl AudioPlayer {
             // bounded.
             self.current_local_path = None;
             self.current_temp_file = None;
+            self.secondary_local_path = None;
+            self.secondary_temp_file = None;
+            self.secondary_song = None;
+            self.secondary_duration = 0.0;
+            self.secondary_display_info = None;
+            self.secondary_quality = None;
+            self.secondary_playback_id = None;
+            self.active_deck = DeckId::Primary;
+            self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
+            self.native_crossfade_active = false;
         }
 
         self.current_file_path = Some(file_path.clone());

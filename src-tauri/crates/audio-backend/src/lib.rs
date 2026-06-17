@@ -37,7 +37,7 @@ pub use error::{AudioError, AudioResult};
 pub use player::Player;
 pub use types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
-    DisplayAudioInfo, PlaybackState, SongData, SpectrumConfig, TrackSource,
+    DisplayAudioInfo, PlaybackState, SongData, SpectrumConfig,
 };
 #[cfg(target_arch = "wasm32")]
 pub use wasm::WasmAudioBackend;

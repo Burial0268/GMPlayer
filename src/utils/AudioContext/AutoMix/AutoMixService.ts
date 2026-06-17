@@ -45,6 +45,10 @@ export class AutoMixService {
     return this._stateMachine.isCrossfading();
   }
 
+  isHandoffActive(): boolean {
+    return this._stateMachine.isHandoffActive();
+  }
+
   getCrossfadeProgress(): number {
     return this._stateMachine.getCrossfadeProgress();
   }

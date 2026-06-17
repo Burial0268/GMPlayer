@@ -166,13 +166,22 @@ export function usePlayerBridge() {
     unlisteners.push(u5);
 
     // Notify master that we're ready
-    const windowLabel = window.location.pathname.includes("mini-player")
+    const routePath = window.location.hash || window.location.pathname;
+    const windowLabel = routePath.includes("mini-player")
       ? "mini-player"
-      : window.location.pathname.includes("desktop-lyrics")
+      : routePath.includes("desktop-lyrics")
         ? "desktop-lyrics"
-        : "unknown";
+        : routePath.includes("taskbar-lyric")
+          ? "taskbar-lyric"
+          : "unknown";
 
-    await tauri.event.emit("slave-window-opened", { label: windowLabel });
+    const notifyMaster = () => {
+      tauri.event.emitTo("main", "slave-window-opened", { label: windowLabel }).catch(() => {});
+    };
+
+    notifyMaster();
+    const retryTimers = [150, 600, 1200].map((delay) => window.setTimeout(notifyMaster, delay));
+    unlisteners.push(() => retryTimers.forEach((timer) => window.clearTimeout(timer)));
   }
 
   function disconnect(): void {

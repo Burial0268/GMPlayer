@@ -521,7 +521,13 @@ impl WasmAudioBackend {
                 self.reply(Vec::new(), Vec::new())
             }
             AudioThreadMessage::SetAudioOutput { .. }
-            | AudioThreadMessage::SetMediaControlsEnabled { .. } => {
+            | AudioThreadMessage::SetMediaControlsEnabled { .. }
+            | AudioThreadMessage::AutomixSetEnabled { .. }
+            | AudioThreadMessage::AutomixConfigure { .. }
+            | AudioThreadMessage::AutomixPrepareNext { .. }
+            | AudioThreadMessage::AutomixCancel
+            | AudioThreadMessage::AutomixForceStart { .. }
+            | AudioThreadMessage::AutomixCompleteNative { .. } => {
                 self.reply(Vec::new(), Vec::new())
             }
             AudioThreadMessage::SyncStatus => {

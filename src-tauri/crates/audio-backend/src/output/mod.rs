@@ -13,7 +13,7 @@ const PREFERRED_FORMATS: [cpal::SampleFormat; 3] = [
     cpal::SampleFormat::I16,
     cpal::SampleFormat::U16,
 ];
-const DEFAULT_QUEUE_BLOCKS: usize = 12;
+const DEFAULT_QUEUE_BLOCKS: usize = 16;
 const LOW_FREQ_MIN_HZ: f32 = 70.0;
 const LOW_FREQ_MAX_HZ: f32 = 2_000.0;
 const LOW_FREQ_GAIN: f32 = 3.2;
@@ -70,6 +70,18 @@ pub struct OutputWriter {
     volume_bits: Arc<AtomicU32>,
     generation: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
+    rendered_samples: Arc<AtomicU64>,
+}
+
+#[derive(Clone, Debug)]
+pub struct OutputRenderClock {
+    rendered_samples: Arc<AtomicU64>,
+}
+
+impl OutputRenderClock {
+    pub fn rendered_samples(&self) -> u64 {
+        self.rendered_samples.load(Ordering::Acquire)
+    }
 }
 
 impl OutputWriter {
@@ -129,6 +141,12 @@ impl OutputWriter {
 
     pub fn queued_samples(&self) -> usize {
         self.queued_samples.load(Ordering::Acquire)
+    }
+
+    pub fn render_clock(&self) -> OutputRenderClock {
+        OutputRenderClock {
+            rendered_samples: Arc::clone(&self.rendered_samples),
+        }
     }
 
     pub fn generation(&self) -> u64 {
@@ -209,6 +227,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
     let volume_bits = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let generation = Arc::new(AtomicU64::new(0));
     let queued_samples = Arc::new(AtomicUsize::new(0));
+    let rendered_samples = Arc::new(AtomicU64::new(0));
 
     let writer = OutputWriter {
         data_tx,
@@ -217,6 +236,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
         volume_bits: Arc::clone(&volume_bits),
         generation: Arc::clone(&generation),
         queued_samples: Arc::clone(&queued_samples),
+        rendered_samples: Arc::clone(&rendered_samples),
     };
 
     let stream = match config_key.sample_format {
@@ -228,6 +248,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         cpal::SampleFormat::I16 => build_stream::<i16>(
@@ -238,6 +259,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         cpal::SampleFormat::I32 => build_stream::<i32>(
@@ -248,6 +270,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         cpal::SampleFormat::U8 => build_stream::<u8>(
@@ -258,6 +281,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         cpal::SampleFormat::U16 => build_stream::<u16>(
@@ -268,6 +292,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         cpal::SampleFormat::U32 => build_stream::<u32>(
@@ -278,6 +303,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         cpal::SampleFormat::F32 => build_stream::<f32>(
@@ -288,6 +314,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         cpal::SampleFormat::F64 => build_stream::<f64>(
@@ -298,6 +325,7 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             paused,
             volume_bits,
             queued_samples,
+            rendered_samples,
             low_freq_tx,
         ),
         other => Err(format!("unsupported output sample format: {other:?}")),
@@ -324,6 +352,7 @@ fn build_stream<T>(
     paused: Arc<AtomicBool>,
     volume_bits: Arc<AtomicU32>,
     queued_samples: Arc<AtomicUsize>,
+    rendered_samples: Arc<AtomicU64>,
     low_freq_tx: mpsc::SyncSender<f32>,
 ) -> Result<Stream, String>
 where
@@ -344,7 +373,14 @@ where
         .build_output_stream(
             config,
             move |data: &mut [T], _info| {
-                fill_output(data, &mut state, &paused, &volume_bits, &queued_samples)
+                fill_output(
+                    data,
+                    &mut state,
+                    &paused,
+                    &volume_bits,
+                    &queued_samples,
+                    &rendered_samples,
+                )
             },
             err_fn,
             None,
@@ -446,6 +482,7 @@ fn fill_output<T>(
     paused: &AtomicBool,
     volume_bits: &AtomicU32,
     queued_samples: &AtomicUsize,
+    rendered_samples: &AtomicU64,
 ) where
     T: Sample + FromSample<f32>,
 {
@@ -498,6 +535,7 @@ fn fill_output<T>(
 
     if written > 0 {
         saturating_sub(queued_samples, written);
+        rendered_samples.fetch_add(written as u64, Ordering::AcqRel);
     }
     send_low_freq(&state.low_freq_tx, state.low_freq.envelope);
 }

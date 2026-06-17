@@ -126,6 +126,7 @@ pub enum DecoderEvent {
 
 const DECODE_BLOCK_FRAMES: usize = 512;
 const PRE_ROLL_SILENCE_FRAMES: usize = 1024;
+const START_RAMP_FRAMES: usize = 2048;
 
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_playback_decoder<S>(
@@ -199,6 +200,7 @@ struct DecodeWorker<S: PlaybackSink> {
     stop_flag: Arc<AtomicBool>,
     paused: bool,
     pre_roll_frames_remaining: usize,
+    start_ramp_frames_remaining: usize,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -235,6 +237,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             stop_flag,
             paused,
             pre_roll_frames_remaining: PRE_ROLL_SILENCE_FRAMES,
+            start_ramp_frames_remaining: START_RAMP_FRAMES,
         }
     }
 
@@ -269,6 +272,15 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                     self.pre_roll_frames_remaining -= 1;
                     block.extend(std::iter::repeat(0.0).take(self.output_channels as usize));
                 } else {
+                    if self.start_ramp_frames_remaining > 0 {
+                        let elapsed = START_RAMP_FRAMES - self.start_ramp_frames_remaining;
+                        let t = (elapsed as f32 / START_RAMP_FRAMES as f32).clamp(0.0, 1.0);
+                        let gain = t * t * (3.0 - 2.0 * t);
+                        for sample in &mut frame {
+                            *sample *= gain;
+                        }
+                        self.start_ramp_frames_remaining -= 1;
+                    }
                     block.extend_from_slice(&frame);
                     analysis_block.extend_from_slice(&frame);
                 }
@@ -360,6 +372,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                 match self.frames.seek(pos) {
                     Ok(()) => {
                         self.pre_roll_frames_remaining = PRE_ROLL_SILENCE_FRAMES;
+                        self.start_ramp_frames_remaining = START_RAMP_FRAMES;
                         let _ = self.analysis_tx.send(AnalysisCommand::Clear);
                     }
                     Err(e) => warn!("decoder seek failed: {e}"),

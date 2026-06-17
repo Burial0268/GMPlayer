@@ -52,7 +52,31 @@ export type AudioThreadMessage =
   | { type: "setFFTRange"; fromFreq: number; toFreq: number }
   | { type: "syncStatus" }
   | { type: "close" }
-  | { type: "setMediaControlsEnabled"; enabled: boolean };
+  | { type: "setMediaControlsEnabled"; enabled: boolean }
+  | { type: "automixSetEnabled"; enabled: boolean }
+  | { type: "automixConfigure"; config: AutoMixConfig }
+  | {
+      type: "automixPrepareNext";
+      currentIndex: number;
+      nextIndex: number;
+      nextSong: SongData;
+      transitionId?: number | null;
+    }
+  | { type: "automixCancel" }
+  | { type: "automixForceStart"; generation?: number | null }
+  | { type: "automixCompleteNative"; generation: number; currentIndex: number; position: number };
+
+export interface AutoMixConfig {
+  enabled: boolean;
+  crossfadeDuration: number;
+  bpmMatch: boolean;
+  beatAlign: boolean;
+  volumeNorm: boolean;
+  smartCurve: boolean;
+  transitionStyle: "linear" | "equalPower" | "sCurve";
+  transitionEffects: boolean;
+  vocalGuard: boolean;
+}
 
 export interface SongData {
   type: "local" | "custom";
@@ -139,7 +163,48 @@ export type AudioThreadEvent =
   | { type: "playError"; data: { error: string } }
   | { type: "volumeChanged"; data: { volume: number } }
   | { type: "fftData"; data: { data: number[] } }
-  | { type: "lowFrequencyVolume"; data: { volume: number } };
+  | { type: "lowFrequencyVolume"; data: { volume: number } }
+  | { type: "automixStatus"; data: { status: AutoMixNativeStatus } }
+  | {
+      type: "automixAnalysisReady";
+      data: { currentId: string; nextId: string; transitionId?: number | null };
+    }
+  | {
+      type: "automixCrossfadeStarted";
+      data: { fromId: string; toId: string; duration: number; transitionId?: number | null };
+    }
+  | {
+      type: "automixCrossfadeComplete";
+      data: {
+        currentIndex: number;
+        musicId?: string;
+        position?: number;
+        duration?: number;
+        transitionId?: number | null;
+      };
+    }
+  | { type: "automixError"; data: { error: string; recoverable: boolean } };
+
+export type AutoMixNativeState =
+  | "idle"
+  | "preparing"
+  | "waiting"
+  | "crossfading"
+  | "finishing"
+  | "failed";
+
+export interface AutoMixNativeStatus {
+  state: AutoMixNativeState;
+  enabled: boolean;
+  transitionId?: number | null;
+  currentIndex: number;
+  nextIndex?: number | null;
+  currentId?: string | null;
+  nextId?: string | null;
+  crossfadeStart?: number | null;
+  crossfadeDuration?: number | null;
+  error?: string | null;
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  Query types (sync reads, no round-trip through message loop)

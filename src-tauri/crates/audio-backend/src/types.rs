@@ -13,23 +13,69 @@ pub enum PlaybackState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum LoopMode {
-    #[serde(rename = "off")]
-    Off,
-    #[serde(rename = "single")]
-    Single,
-    #[serde(rename = "all")]
-    All,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrossfadeCurve {
     #[serde(rename = "linear")]
     Linear,
-    #[serde(rename = "equal_power")]
+    #[serde(rename = "equalPower", alias = "equal_power")]
     EqualPower,
-    #[serde(rename = "s_curve")]
+    #[serde(rename = "sCurve", alias = "s_curve")]
     SCurve,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoMixConfig {
+    pub enabled: bool,
+    pub crossfade_duration: f64,
+    pub bpm_match: bool,
+    pub beat_align: bool,
+    pub volume_norm: bool,
+    pub smart_curve: bool,
+    pub transition_style: CrossfadeCurve,
+    pub transition_effects: bool,
+    pub vocal_guard: bool,
+}
+
+impl Default for AutoMixConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            crossfade_duration: 8.0,
+            bpm_match: true,
+            beat_align: true,
+            volume_norm: true,
+            smart_curve: true,
+            transition_style: CrossfadeCurve::EqualPower,
+            transition_effects: true,
+            vocal_guard: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AutoMixNativeState {
+    Idle,
+    Preparing,
+    Waiting,
+    Crossfading,
+    Finishing,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoMixStatus {
+    pub state: AutoMixNativeState,
+    pub enabled: bool,
+    pub transition_id: Option<u64>,
+    pub current_index: usize,
+    pub next_index: Option<usize>,
+    pub current_id: Option<String>,
+    pub next_id: Option<String>,
+    pub crossfade_start: Option<f64>,
+    pub crossfade_duration: Option<f64>,
+    pub error: Option<String>,
 }
 
 impl PlaybackState {
@@ -69,21 +115,6 @@ pub struct SpectrumConfig {
     pub fft_size: usize,
     pub smoothing: f32,
     pub max_freq: Option<f32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TrackSource {
-    File(String),
-    Url(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueItem {
-    pub id: u64,
-    pub source: TrackSource,
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub duration_secs: Option<f64>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -141,6 +172,31 @@ pub enum AudioThreadMessage {
     Close,
     #[serde(rename_all = "camelCase")]
     SetMediaControlsEnabled { enabled: bool },
+    #[serde(rename_all = "camelCase")]
+    AutomixSetEnabled { enabled: bool },
+    #[serde(rename_all = "camelCase")]
+    AutomixConfigure { config: AutoMixConfig },
+    #[serde(rename_all = "camelCase")]
+    AutomixPrepareNext {
+        current_index: usize,
+        next_index: usize,
+        next_song: SongData,
+        #[serde(default)]
+        transition_id: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    AutomixCancel,
+    #[serde(rename_all = "camelCase")]
+    AutomixForceStart {
+        #[serde(default)]
+        generation: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    AutomixCompleteNative {
+        generation: u64,
+        current_index: usize,
+        position: f64,
+    },
 }
 
 /// Events emitted from player → frontend (via Tauri event emit).
@@ -204,6 +260,31 @@ pub enum AudioThreadEvent {
     /// thread's cadence.
     #[serde(rename_all = "camelCase")]
     LowFrequencyVolume { volume: f64 },
+    #[serde(rename_all = "camelCase")]
+    AutomixStatus { status: AutoMixStatus },
+    #[serde(rename_all = "camelCase")]
+    AutomixAnalysisReady {
+        current_id: String,
+        next_id: String,
+        transition_id: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    AutomixCrossfadeStarted {
+        from_id: String,
+        to_id: String,
+        duration: f64,
+        transition_id: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    AutomixCrossfadeComplete {
+        current_index: usize,
+        music_id: String,
+        position: f64,
+        duration: f64,
+        transition_id: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    AutomixError { error: String, recoverable: bool },
 }
 
 /// Wrapper message that carries a `callback_id` for request/response

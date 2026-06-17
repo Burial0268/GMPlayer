@@ -2511,6 +2511,60 @@
           "markdownDescription": "Denies the setOrientation command without any pre-configured scope."
         },
         {
+          "description": "Default permissions for the Windows taskbar lyric plugin\n#### This default permission set includes:\n\n- `allow-close-taskbar-lyric`\n- `allow-open-taskbar-lyric`\n- `allow-open-taskbar-lyric-devtools`\n- `allow-set-click-interception`\n- `allow-set-forwarding-enabled`\n- `allow-stop-mouse-hook`",
+          "type": "string",
+          "const": "taskbar-lyric:default",
+          "markdownDescription": "Default permissions for the Windows taskbar lyric plugin\n#### This default permission set includes:\n\n- `allow-close-taskbar-lyric`\n- `allow-open-taskbar-lyric`\n- `allow-open-taskbar-lyric-devtools`\n- `allow-set-click-interception`\n- `allow-set-forwarding-enabled`\n- `allow-stop-mouse-hook`"
+        },
+        {
+          "description": "Enables closing the taskbar lyric window.",
+          "type": "string",
+          "const": "taskbar-lyric:allow-close-taskbar-lyric",
+          "markdownDescription": "Enables closing the taskbar lyric window."
+        },
+        {
+          "description": "Enables opening the taskbar lyric window.",
+          "type": "string",
+          "const": "taskbar-lyric:allow-open-taskbar-lyric",
+          "markdownDescription": "Enables opening the taskbar lyric window."
+        },
+        {
+          "description": "Enables opening devtools for the taskbar lyric window.",
+          "type": "string",
+          "const": "taskbar-lyric:allow-open-taskbar-lyric-devtools",
+          "markdownDescription": "Enables opening devtools for the taskbar lyric window."
+        },
+        {
+          "description": "Enables the permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "taskbar-lyric:allow-permissions",
+          "markdownDescription": "Enables the permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables toggling click interception for forwarded taskbar lyric mouse events.",
+          "type": "string",
+          "const": "taskbar-lyric:allow-set-click-interception",
+          "markdownDescription": "Enables toggling click interception for forwarded taskbar lyric mouse events."
+        },
+        {
+          "description": "Enables toggling mouse forwarding for the taskbar lyric webview.",
+          "type": "string",
+          "const": "taskbar-lyric:allow-set-forwarding-enabled",
+          "markdownDescription": "Enables toggling mouse forwarding for the taskbar lyric webview."
+        },
+        {
+          "description": "Enables stopping the taskbar lyric mouse hook.",
+          "type": "string",
+          "const": "taskbar-lyric:allow-stop-mouse-hook",
+          "markdownDescription": "Enables stopping the taskbar lyric mouse hook."
+        },
+        {
+          "description": "Denies the permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "taskbar-lyric:deny-permissions",
+          "markdownDescription": "Denies the permissions command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures what kind of\noperations are available from the window state plugin.\n\n#### Granted Permissions\n\nAll operations are enabled by default.\n\n\n#### This default permission set includes:\n\n- `allow-filename`\n- `allow-restore-state`\n- `allow-save-window-state`",
           "type": "string",
           "const": "window-state:default",

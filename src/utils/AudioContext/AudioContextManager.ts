@@ -45,6 +45,24 @@ class AudioContextManagerClass {
     );
   }
 
+  private _isNativeTauriRuntime(): boolean {
+    return (
+      typeof window !== "undefined" &&
+      "__TAURI__" in window &&
+      window.__TAURI__ !== null &&
+      typeof window.__TAURI__ === "object"
+    );
+  }
+
+  private _isWasmAudioBackendRuntimeAvailable(): boolean {
+    return (
+      typeof window !== "undefined" &&
+      typeof Audio !== "undefined" &&
+      typeof Worker !== "undefined" &&
+      !this._isNativeTauriRuntime()
+    );
+  }
+
   private _setupGlobalListeners(): void {
     if (typeof document === "undefined") return;
 
@@ -98,6 +116,10 @@ class AudioContextManagerClass {
    * Note: On mobile, creation may fail without user interaction
    */
   getContext(): AudioContext | null {
+    if (this._isNativeTauriRuntime() || this._isWasmAudioBackendRuntimeAvailable()) {
+      return null;
+    }
+
     if (this._ctx && this._ctx.state !== "closed") {
       return this._ctx;
     }

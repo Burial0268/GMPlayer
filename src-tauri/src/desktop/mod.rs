@@ -22,7 +22,7 @@ const WINDOW_STATE_FLAGS: StateFlags = StateFlags::SIZE
     .union(StateFlags::DECORATIONS);
 
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
@@ -43,7 +43,12 @@ pub fn run() {
         )
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_decorum::init())
-        .plugin(tauri_plugin_window_state::Builder::new().build())
+        .plugin(tauri_plugin_window_state::Builder::new().build());
+
+    #[cfg(windows)]
+    let builder = builder.plugin(gmplayer_taskbar_lyric::init());
+
+    let app = builder
         .manage(MouseThroughState::default())
         .manage(HitRegionRegistry::default())
         .invoke_handler(tauri::generate_handler![
@@ -78,6 +83,7 @@ pub fn run() {
             window::tray::set_tray_tooltip,
             // AutoMix analysis (native Rust, shared by desktop/mobile)
             commands::audio_analyze_automix,
+            commands::audio_analyze_automix_source,
             // AMLL-style: single message command for all playback control
             commands::audio_send_msg,
             // Sync query commands
@@ -132,6 +138,11 @@ pub fn run() {
         if let RunEvent::WindowEvent { label, event, .. } = &event {
             // Handle desktop lyrics window events (moved/resized/destroyed)
             window::desktop_lyrics::commands::handle_desktop_lyrics_event(app_handle, label, event);
+
+            #[cfg(windows)]
+            if label == "main" && matches!(event, WindowEvent::Destroyed) {
+                gmplayer_taskbar_lyric::close_taskbar_lyric(app_handle.clone());
+            }
 
             match (label.as_str(), event) {
                 // Main window close → save state, emit to frontend for close-behavior decision

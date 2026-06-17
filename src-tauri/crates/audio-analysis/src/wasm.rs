@@ -10,7 +10,6 @@
 /// const lowFreq = proc.processFrame(deltaMs, spectrum); // per RAF frame
 /// const rawBins = proc.getRawBins(2);     // raw magnitudes for debug
 /// ```
-
 use wasm_bindgen::prelude::*;
 
 use crate::{AudioProcessor, LowFreqOptions};
@@ -47,9 +46,13 @@ impl WasmAudioProcessor {
         smoothing_factor: f32,
     ) -> Self {
         let inner = AudioProcessor::new(
-            output_size, freq_min, freq_max,
-            bin_count, window_size,
-            gradient_threshold, smoothing_factor,
+            output_size,
+            freq_min,
+            freq_max,
+            bin_count,
+            window_size,
+            gradient_threshold,
+            smoothing_factor,
         );
         let out_size = output_size.max(1);
         Self {
@@ -94,7 +97,11 @@ impl WasmAudioProcessor {
     /// Returns a new Float32Array of aggregated raw magnitudes, or empty if not available.
     #[wasm_bindgen(js_name = "getRawBins")]
     pub fn get_raw_bins(&mut self, count: usize) -> Vec<f32> {
-        self.inner.fft.get_raw_bins(count).map(|b| b.to_vec()).unwrap_or_default()
+        self.inner
+            .fft
+            .get_raw_bins(count)
+            .map(|b| b.to_vec())
+            .unwrap_or_default()
     }
 
     /// Get the cached normalized spectrum (0-255) from the last `processFrame` call.

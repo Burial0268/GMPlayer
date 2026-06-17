@@ -9,6 +9,7 @@
 use rodio::{Decoder, Source};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
+use std::path::Path;
 
 // ─── Input ───────────────────────────────────────────────────────────
 
@@ -18,6 +19,15 @@ pub struct AutomixAnalyzeRequest {
     /// Encoded audio file bytes.
     pub audio_data: Vec<u8>,
     /// Whether to run BPM detection
+    pub analyze_bpm: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomixAnalyzeSourceRequest {
+    /// Local file path or already-downloaded temp path.
+    pub source: String,
+    /// Whether to run BPM detection.
     pub analyze_bpm: Option<bool>,
 }
 
@@ -1138,4 +1148,22 @@ pub fn analyze_audio_bytes(req: AutomixAnalyzeRequest) -> Result<TrackAnalysis, 
         duration,
         analyze_bpm,
     ))
+}
+
+pub fn analyze_audio_file(
+    path: impl AsRef<Path>,
+    analyze_bpm: bool,
+) -> Result<TrackAnalysis, String> {
+    let audio_data = std::fs::read(path.as_ref()).map_err(|e| format!("read audio source: {e}"))?;
+    let (samples, sample_rate, duration) = decode_audio_to_mono(audio_data)?;
+    Ok(analyze_mono_samples(
+        &samples,
+        sample_rate,
+        duration,
+        analyze_bpm,
+    ))
+}
+
+pub fn analyze_audio_source(req: AutomixAnalyzeSourceRequest) -> Result<TrackAnalysis, String> {
+    analyze_audio_file(req.source, req.analyze_bpm.unwrap_or(true))
 }

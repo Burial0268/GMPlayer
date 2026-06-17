@@ -1,7 +1,7 @@
 use serde::Serialize;
 use tauri::{Runtime, State};
 
-use crate::automix::{self, AutomixAnalyzeRequest, TrackAnalysis};
+use crate::automix::{self, AutomixAnalyzeRequest, AutomixAnalyzeSourceRequest, TrackAnalysis};
 use crate::player::Player;
 use crate::types::*;
 
@@ -127,6 +127,15 @@ pub fn audio_poll_events(
 #[tauri::command]
 pub async fn audio_analyze_automix(req: AutomixAnalyzeRequest) -> Result<TrackAnalysis, String> {
     tauri::async_runtime::spawn_blocking(move || automix::analyze_audio_bytes(req))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn audio_analyze_automix_source(
+    req: AutomixAnalyzeSourceRequest,
+) -> Result<TrackAnalysis, String> {
+    tauri::async_runtime::spawn_blocking(move || automix::analyze_audio_source(req))
         .await
         .map_err(|e| e.to_string())?
 }

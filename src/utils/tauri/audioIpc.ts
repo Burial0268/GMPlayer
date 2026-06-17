@@ -6,15 +6,8 @@ import type {
 } from "./audioBridge";
 import { audioSendMsg, isTauri, listenPlayerEvents } from "./audioBridge";
 import { getAudioWs } from "./audioWs";
-import { registerPCMCaptureWorklet } from "../AudioContext/pcm-capture-worklet";
 
-const WASM_ANALYSIS_INTERVAL_MS = 33;
-const LOW_FREQ_MIN_HZ = 70;
-const LOW_FREQ_MAX_HZ = 2000;
-const LOW_FREQ_GAIN = 3.2;
-const LOW_FREQ_ATTACK_MS = 35;
-const LOW_FREQ_RELEASE_MS = 160;
-const LOW_FREQ_EMIT_INTERVAL_MS = 33;
+const WASM_ANALYSIS_INTERVAL_MS = 66;
 
 export interface AudioBackendTransport {
   connect(): Promise<void>;
@@ -26,7 +19,9 @@ export interface AudioBackendTransport {
 }
 
 export function isWasmAudioBackendAvailable(): boolean {
-  return typeof window !== "undefined" && typeof Audio !== "undefined" && typeof Worker !== "undefined";
+  return (
+    typeof window !== "undefined" && typeof Audio !== "undefined" && typeof Worker !== "undefined"
+  );
 }
 
 class TauriInvokeAudioIpc implements AudioBackendTransport {
@@ -98,7 +93,10 @@ class TauriHybridAudioIpc implements AudioBackendTransport {
       this._active = ws;
       return;
     } catch (err) {
-      console.warn("[audioIpc] WebSocket audio transport unavailable, falling back to Tauri IPC", err);
+      console.warn(
+        "[audioIpc] WebSocket audio transport unavailable, falling back to Tauri IPC",
+        err,
+      );
     }
 
     this._fallback = new TauriInvokeAudioIpc();
@@ -146,83 +144,6 @@ interface WasmReply {
   events?: AudioThreadEventMessage<AudioThreadEvent>[];
   effects?: WasmEffect[];
   error?: string;
-}
-
-class WebLowFrequencyAnalyzer {
-  private _sampleRate = 44100;
-  private _channelIndex = 0;
-  private _frameSum = 0;
-  private _prevInput = 0;
-  private _highpass = 0;
-  private _band = 0;
-  private _envelope = 0;
-  private _highpassAlpha = 0;
-  private _lowpassAlpha = 0;
-  private _attackAlpha = 0;
-  private _releaseAlpha = 0;
-
-  constructor(sampleRate: number) {
-    this.setSampleRate(sampleRate);
-  }
-
-  get envelope(): number {
-    return this._envelope;
-  }
-
-  setSampleRate(sampleRate: number): void {
-    const rate = Number.isFinite(sampleRate) ? Math.max(1, sampleRate) : 44100;
-    if (rate === this._sampleRate && this._highpassAlpha > 0) return;
-
-    this._sampleRate = rate;
-    this._highpassAlpha = Math.exp((-2 * Math.PI * LOW_FREQ_MIN_HZ) / rate);
-    this._lowpassAlpha = 1 - Math.exp((-2 * Math.PI * LOW_FREQ_MAX_HZ) / rate);
-    this._attackAlpha = 1 - Math.exp(-1000 / (LOW_FREQ_ATTACK_MS * rate));
-    this._releaseAlpha = 1 - Math.exp(-1000 / (LOW_FREQ_RELEASE_MS * rate));
-  }
-
-  pushMono(samples: Float32Array): number {
-    for (let i = 0; i < samples.length; i++) {
-      this._pushSample(samples[i] || 0, 1);
-    }
-    return this._envelope;
-  }
-
-  pushSilence(frameCount: number): number {
-    const count = Math.max(0, Math.floor(frameCount));
-    for (let i = 0; i < count; i++) {
-      this._pushSample(0, 1);
-    }
-    return this._envelope;
-  }
-
-  reset(): void {
-    this._channelIndex = 0;
-    this._frameSum = 0;
-    this._prevInput = 0;
-    this._highpass = 0;
-    this._band = 0;
-    this._envelope = 0;
-  }
-
-  private _pushSample(sample: number, channels: number): void {
-    this._frameSum += Number.isFinite(sample) ? sample : 0;
-    this._channelIndex += 1;
-    if (this._channelIndex < channels) return;
-
-    const mono = this._frameSum / channels;
-    this._frameSum = 0;
-    this._channelIndex = 0;
-
-    this._highpass = this._highpassAlpha * (this._highpass + mono - this._prevInput);
-    this._prevInput = mono;
-    this._band += (this._highpass - this._band) * this._lowpassAlpha;
-
-    let target = Math.min(1, Math.max(0, Math.abs(this._band) * LOW_FREQ_GAIN));
-    if (target < 0.01) target = 0;
-    const alpha = target > this._envelope ? this._attackAlpha : this._releaseAlpha;
-    this._envelope += (target - this._envelope) * alpha;
-    this._envelope = Math.min(1, Math.max(0, this._envelope));
-  }
 }
 
 type WasmBackendWorkerRequest =
@@ -303,15 +224,10 @@ class WasmAudioBackendWorkerHost {
     return this._callReply({ type: "sendMessage", envelope });
   }
 
-  loadAnalysisBytes(
-    bytes: Uint8Array,
-    extension: string,
-    musicId: string,
-  ): Promise<WasmReply> {
-    return this._callReply(
-      { type: "loadAnalysisBytes", bytes, extension, musicId },
-      [bytes.buffer],
-    );
+  loadAnalysisBytes(bytes: Uint8Array, extension: string, musicId: string): Promise<WasmReply> {
+    return this._callReply({ type: "loadAnalysisBytes", bytes, extension, musicId }, [
+      bytes.buffer,
+    ]);
   }
 
   processAnalysisFrame(position: number, deltaMs: number): Promise<WasmReply> {
@@ -513,16 +429,12 @@ class WasmAudioAnalysisWorkerHost {
     this._worker.terminate();
   }
 
-  private async _callReply(
-    request: WasmAnalysisWorkerRequestPayload,
-  ): Promise<WasmReply> {
+  private async _callReply(request: WasmAnalysisWorkerRequestPayload): Promise<WasmReply> {
     const value = await this._call(request);
     return value && typeof value === "object" ? value : {};
   }
 
-  private _call(
-    request: WasmAnalysisWorkerRequestPayload,
-  ): Promise<WasmReply | undefined> {
+  private _call(request: WasmAnalysisWorkerRequestPayload): Promise<WasmReply | undefined> {
     const id = this._newRequestId();
     const message = { id, ...request } as WasmAnalysisWorkerRequest;
     return new Promise((resolve, reject) => {
@@ -569,18 +481,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _connectPromise: Promise<void> | null = null;
   private _audio: HTMLAudioElement | null = null;
   private _boundAudio: HTMLAudioElement | null = null;
-  private _audioContext: AudioContext | null = null;
-  private _mediaSource: MediaElementAudioSourceNode | null = null;
-  private _gainNode: GainNode | null = null;
-  private _lowFreqWorkletNode: AudioWorkletNode | null = null;
-  private _lowFreqWorkletSink: GainNode | null = null;
-  private _lowFreqAnalyzer: WebLowFrequencyAnalyzer | null = null;
-  private _playbackGraphPromise: Promise<boolean> | null = null;
-  private _lowFreqSilenceTimer: ReturnType<typeof setInterval> | null = null;
-  private _lastLowFreqEmitAt = 0;
-  private _playbackGraphReady = false;
-  private _lowFreqGraphReady = false;
-  private _lowFreqWorkletUnavailable = false;
   private _syncingElementVolume = false;
   private _positionTimer: ReturnType<typeof setInterval> | null = null;
   private _analysisTimer: ReturnType<typeof setInterval> | null = null;
@@ -646,13 +546,11 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   }
 
   getGainNode(): GainNode | null {
-    return this._gainNode;
+    return null;
   }
 
   async ensureAudioGraph(): Promise<boolean> {
-    const audio = this._audio;
-    if (!audio) return false;
-    return this._ensurePlaybackGraph(audio);
+    return false;
   }
 
   shutdown(): void {
@@ -670,9 +568,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     }
     for (const event of reply.events ?? []) {
       if (event.data) {
-        if (event.data.type === "lowFrequencyVolume" && this._lowFreqGraphReady) {
-          continue;
-        }
         this._dispatch(event.data, preserveSeq ? event.seq : undefined);
       }
     }
@@ -710,7 +605,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
       case "pause":
         this._audio?.pause();
         this._stopAnalysisTimer();
-        this._startLowFreqSilenceDecay();
         break;
       case "seek":
         this._seek(effect.position);
@@ -740,7 +634,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     this._audio = audio;
     this._bindAudio(audio, effect.initialPosition);
     audio.load();
-    void this._ensurePlaybackGraph(audio);
 
     void this._loadAnalysis(
       effect.src,
@@ -765,8 +658,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
 
     audio.addEventListener("play", () => {
       if (this._audio !== audio) return;
-      this._stopLowFreqSilenceDecay();
-      void this._ensurePlaybackGraph(audio);
       this._handleReplyPromise(this._backend?.applyPlaybackState(true));
       this._startPositionTimer();
       this._startAnalysisTimer();
@@ -775,7 +666,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     audio.addEventListener("pause", () => {
       if (this._audio !== audio || this._isClosing || audio.ended) return;
       this._stopAnalysisTimer();
-      this._startLowFreqSilenceDecay();
       this._handleReplyPromise(this._backend?.applyPlaybackState(false));
     });
 
@@ -790,12 +680,8 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     audio.addEventListener("volumechange", () => {
       if (this._audio !== audio) return;
       if (this._syncingElementVolume) return;
-      if (this._playbackGraphReady) {
-        this._setElementVolumeForCurrentGraph(audio);
-      } else {
-        this._currentVolume = audio.volume;
-        this._handleReplyPromise(this._backend?.applyVolume(audio.volume));
-      }
+      this._currentVolume = audio.volume;
+      this._handleReplyPromise(this._backend?.applyVolume(audio.volume));
     });
 
     audio.addEventListener("error", () => {
@@ -808,12 +694,10 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _play(): void {
     const audio = this._audio;
     if (!audio) return;
-    void this._ensurePlaybackGraph(audio)
-      .then(() => audio.play())
-      .catch((err) => {
-        const message = err instanceof Error ? err.message : String(err);
-        this._handleReplyPromise(this._backend?.applyPlayError(message));
-      });
+    void audio.play().catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this._handleReplyPromise(this._backend?.applyPlayError(message));
+    });
   }
 
   private _seek(position: number): void {
@@ -831,128 +715,14 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     }
   }
 
-  private async _ensurePlaybackGraph(audio: HTMLAudioElement): Promise<boolean> {
-    if (this._audio !== audio) return false;
-    if (this._playbackGraphReady) {
-      await this._resumeAudioContext();
-      if (!this._lowFreqGraphReady) {
-        await this._ensureLowFreqWorklet(audio);
-      }
-      return true;
-    }
-    if (typeof AudioContext === "undefined") return false;
-    if (this._playbackGraphPromise) return this._playbackGraphPromise;
-
-    this._playbackGraphPromise = this._createPlaybackGraph(audio).finally(() => {
-      this._playbackGraphPromise = null;
-    });
-    return this._playbackGraphPromise;
-  }
-
-  private async _createPlaybackGraph(audio: HTMLAudioElement): Promise<boolean> {
-    try {
-      const ctx = this._audioContext ?? new AudioContext();
-      this._audioContext = ctx;
-      await this._resumeAudioContext();
-      if (this._audio !== audio) return false;
-
-      const source = this._mediaSource ?? ctx.createMediaElementSource(audio);
-      this._mediaSource = source;
-
-      const gain = this._gainNode ?? ctx.createGain();
-      this._gainNode = gain;
-      gain.gain.value = this._currentVolume;
-
-      try {
-        source.disconnect();
-      } catch {
-        /* node may not be connected yet */
-      }
-      source.connect(gain);
-      gain.connect(ctx.destination);
-
-      this._playbackGraphReady = true;
-      this._setElementVolumeForCurrentGraph(audio);
-      this._lowFreqAnalyzer = new WebLowFrequencyAnalyzer(ctx.sampleRate);
-      await this._ensureLowFreqWorklet(audio);
-      return true;
-    } catch (err) {
-      console.warn("[audioIpc] Web audio playback graph unavailable", err);
-      this._teardownPlaybackGraph();
-      this._setElementVolumeForCurrentGraph(audio);
-      return false;
-    }
-  }
-
-  private async _ensureLowFreqWorklet(audio: HTMLAudioElement): Promise<void> {
-    const ctx = this._audioContext;
-    const source = this._mediaSource;
-    if (
-      !ctx ||
-      !source ||
-      this._lowFreqWorkletNode ||
-      this._lowFreqGraphReady ||
-      this._lowFreqWorkletUnavailable
-    ) {
-      return;
-    }
-
-    try {
-      await registerPCMCaptureWorklet(ctx);
-      const worklet = new AudioWorkletNode(ctx, "pcm-capture-processor");
-      if (this._audio !== audio || this._audioContext !== ctx || this._mediaSource !== source) {
-        try {
-          worklet.disconnect();
-        } catch {
-          /* already disconnected */
-        }
-        return;
-      }
-      worklet.port.onmessage = (event: MessageEvent<Float32Array>) => {
-        if (this._audio !== audio || audio.paused || audio.ended) return;
-        this._stopLowFreqSilenceDecay();
-        const samples = event.data;
-        if (!(samples instanceof Float32Array)) return;
-        this._lowFreqAnalyzer?.pushMono(samples);
-        this._emitLowFreq(false);
-      };
-      source.connect(worklet);
-      const sink = ctx.createGain();
-      sink.gain.value = 0;
-      worklet.connect(sink);
-      sink.connect(ctx.destination);
-      this._lowFreqWorkletNode = worklet;
-      this._lowFreqWorkletSink = sink;
-
-      this._lowFreqGraphReady = true;
-    } catch (err) {
-      console.warn("[audioIpc] Web low-frequency audio graph unavailable", err);
-      this._lowFreqGraphReady = false;
-      this._lowFreqWorkletUnavailable = true;
-    }
-  }
-
-  private async _resumeAudioContext(): Promise<void> {
-    const ctx = this._audioContext;
-    if (!ctx || ctx.state !== "suspended") return;
-    try {
-      await ctx.resume();
-    } catch {
-      /* resume can be rejected outside a user gesture */
-    }
-  }
-
   private _applyOutputVolume(): void {
-    if (this._gainNode) {
-      this._gainNode.gain.value = this._currentVolume;
-    }
     if (this._audio) {
       this._setElementVolumeForCurrentGraph(this._audio);
     }
   }
 
   private _setElementVolumeForCurrentGraph(audio: HTMLAudioElement): void {
-    const nextVolume = this._playbackGraphReady ? 1 : this._currentVolume;
+    const nextVolume = this._currentVolume;
     if (Math.abs(audio.volume - nextVolume) < 0.0001) return;
     this._syncingElementVolume = true;
     try {
@@ -964,92 +734,11 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     }
   }
 
-  private _emitLowFreq(force: boolean): void {
-    const analyzer = this._lowFreqAnalyzer;
-    if (!analyzer) return;
-
-    const now = this._nowMs();
-    if (!force && now - this._lastLowFreqEmitAt < LOW_FREQ_EMIT_INTERVAL_MS) return;
-    this._lastLowFreqEmitAt = now;
-    this._dispatch({
-      type: "lowFrequencyVolume",
-      data: { volume: analyzer.envelope },
-    });
-  }
-
   private _resetLowFreq(): void {
-    this._stopLowFreqSilenceDecay();
-    this._lowFreqAnalyzer?.reset();
-    this._lastLowFreqEmitAt = 0;
     this._dispatch({
       type: "lowFrequencyVolume",
       data: { volume: 0 },
     });
-  }
-
-  private _startLowFreqSilenceDecay(): void {
-    const analyzer = this._lowFreqAnalyzer;
-    const ctx = this._audioContext;
-    if (!analyzer || !ctx || this._lowFreqSilenceTimer !== null) return;
-
-    this._lowFreqSilenceTimer = setInterval(() => {
-      const frames = Math.ceil((ctx.sampleRate * LOW_FREQ_EMIT_INTERVAL_MS) / 1000);
-      analyzer.pushSilence(frames);
-      this._emitLowFreq(true);
-      if (analyzer.envelope <= 0.0005) {
-        this._stopLowFreqSilenceDecay();
-      }
-    }, LOW_FREQ_EMIT_INTERVAL_MS);
-  }
-
-  private _stopLowFreqSilenceDecay(): void {
-    if (this._lowFreqSilenceTimer !== null) {
-      clearInterval(this._lowFreqSilenceTimer);
-      this._lowFreqSilenceTimer = null;
-    }
-  }
-
-  private _teardownPlaybackGraph(): void {
-    this._playbackGraphPromise = null;
-    this._stopLowFreqSilenceDecay();
-    if (this._lowFreqWorkletNode) {
-      try {
-        this._lowFreqWorkletNode.port.onmessage = null;
-        this._lowFreqWorkletNode.disconnect();
-      } catch {
-        /* already disconnected */
-      }
-      this._lowFreqWorkletNode = null;
-    }
-    if (this._lowFreqWorkletSink) {
-      try {
-        this._lowFreqWorkletSink.disconnect();
-      } catch {
-        /* already disconnected */
-      }
-      this._lowFreqWorkletSink = null;
-    }
-    if (this._mediaSource) {
-      try {
-        this._mediaSource.disconnect();
-      } catch {
-        /* already disconnected */
-      }
-      this._mediaSource = null;
-    }
-    if (this._gainNode) {
-      try {
-        this._gainNode.disconnect();
-      } catch {
-        /* already disconnected */
-      }
-      this._gainNode = null;
-    }
-    this._lowFreqAnalyzer = null;
-    this._playbackGraphReady = false;
-    this._lowFreqGraphReady = false;
-    this._lowFreqWorkletUnavailable = false;
-    this._lastLowFreqEmitAt = 0;
   }
 
   private _startPositionTimer(): void {
@@ -1182,7 +871,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _releaseAudio(): void {
     if (!this._audio) return;
     this._stopAnalysisTimer();
-    this._teardownPlaybackGraph();
     const audio = this._audio;
     this._isClosing = true;
     try {

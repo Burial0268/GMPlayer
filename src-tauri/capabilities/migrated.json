@@ -29,6 +29,7 @@
     "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-create",
     "core:event:allow-emit",
+    "core:event:allow-emit-to",
     "core:event:allow-listen",
     "decorum:allow-show-snap-overlay",
     {

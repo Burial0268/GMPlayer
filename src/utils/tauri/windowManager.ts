@@ -12,6 +12,7 @@ declare global {
         emitTo: (target: string, event: string, payload?: unknown) => Promise<void>;
       };
     };
+    open_taskbar_lyric_devtools?: () => Promise<void>;
   }
 }
 
@@ -20,6 +21,16 @@ declare global {
  */
 export function isTauri(): boolean {
   return "__TAURI__" in window;
+}
+
+/**
+ * Check whether the app is running in Tauri on Windows.
+ */
+export function isWindowsTauri(): boolean {
+  if (!isTauri()) return false;
+  const platform = window.navigator?.platform ?? "";
+  const userAgent = window.navigator?.userAgent ?? "";
+  return /Win/i.test(platform) || /Windows/i.test(userAgent);
 }
 
 /**
@@ -193,6 +204,28 @@ export const windowManager = {
   },
 
   /**
+   * Open the Windows taskbar lyric window.
+   */
+  async openTaskbarLyrics(): Promise<void> {
+    await invoke("plugin:taskbar-lyric|open_taskbar_lyric");
+  },
+
+  /**
+   * Close the Windows taskbar lyric window.
+   */
+  async closeTaskbarLyrics(): Promise<void> {
+    await invoke("plugin:taskbar-lyric|close_taskbar_lyric");
+  },
+
+  /**
+   * Open devtools for the Windows taskbar lyric window. Dev builds only.
+   */
+  async openTaskbarLyricsDevtools(): Promise<void> {
+    if (!import.meta.env.DEV) return;
+    await invoke("plugin:taskbar-lyric|open_taskbar_lyric_devtools");
+  },
+
+  /**
    * Listen for main window close-requested events.
    */
   async onMainCloseRequested(handler: () => void): Promise<() => void> {
@@ -227,3 +260,7 @@ export const windowManager = {
     await invoke("set_tray_tooltip", { text });
   },
 };
+
+if (import.meta.env.DEV && typeof window !== "undefined") {
+  window.open_taskbar_lyric_devtools = () => windowManager.openTaskbarLyricsDevtools();
+}

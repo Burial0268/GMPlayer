@@ -27,6 +27,7 @@ pub fn run() {
             commands::audio_get_ws_url,
             commands::audio_get_ws_urls,
             commands::audio_analyze_automix,
+            commands::audio_analyze_automix_source,
             commands::audio_set_session,
             commands::audio_poll_events,
         ])
