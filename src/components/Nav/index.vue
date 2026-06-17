@@ -1,17 +1,13 @@
 <template>
-  <nav
-    :class="{ 'tauri-app': isTauri() && !isMobileState }"
-    :data-tauri-drag-region="isTauri() || undefined"
-  >
-    <div class="left" :data-tauri-drag-region="(isTauri() && !isMobileState) || undefined">
+  <nav :class="{ 'tauri-app': isTauri() && !isMobileState, dark: setting.getSiteTheme === 'dark' }">
+    <div class="left">
       <div class="controls">
         <n-icon size="22" :component="Left" @click="router.go(-1)" />
         <n-icon size="22" :component="Right" @click="router.go(1)" />
       </div>
-      <span v-if="routeTitle" class="route-title">{{ routeTitle }}</span>
     </div>
-    <div class="right" :data-tauri-drag-region="(isTauri() && !isMobileState) || undefined">
-      <SearchInp />
+    <div class="right">
+      <SearchInp v-if="showNavSearch" class="nav-search" />
       <!-- Theme toggle -->
       <n-icon
         class="action-icon"
@@ -27,65 +23,33 @@
 import { NIcon } from "naive-ui";
 import { Left, Right, Moon, SunOne } from "@icon-park/vue-next";
 import { settingStore } from "@/store";
-import { useRouter, useRoute } from "vue-router";
-import { useI18n } from "vue-i18n";
-import AboutSite from "@/components/DataModal/AboutSite.vue";
+import { useRouter } from "vue-router";
 import SearchInp from "@/components/SearchInp/index.vue";
 import { isTauri, isMobile } from "@/utils/tauri";
-import { ref, onMounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed } from "vue";
 
 const router = useRouter();
-const route = useRoute();
 const setting = settingStore();
-const { t } = useI18n();
-const aboutSiteRef = ref(null);
 const isMobileState = ref(false);
+const isCompactViewport = ref(false);
+let compactViewportQuery = null;
 
 onMounted(async () => {
   isMobileState.value = await isMobile();
+  compactViewportQuery = window.matchMedia("(max-width: 768px)");
+  isCompactViewport.value = compactViewportQuery.matches;
+  compactViewportQuery.addEventListener("change", updateCompactViewport);
 });
 
-// Route name → i18n key mapping
-const routeTitleMap = {
-  home: "nav.home",
-  discover: "nav.discover",
-  "dsc-playlists": "nav.discover",
-  "dsc-toplists": "nav.discover",
-  "dsc-artists": "nav.discover",
-  search: "nav.search.placeholder",
-  "s-songs": "nav.search.placeholder",
-  "s-artists": "nav.search.placeholder",
-  "s-albums": "nav.search.placeholder",
-  "s-videos": "nav.search.placeholder",
-  "s-playlists": "nav.search.placeholder",
-  "mobile-search": "sidebar.tab.search",
-  setting: "nav.avatar.setting",
-  "setting-main": "nav.avatar.setting",
-  "setting-player": "nav.avatar.setting",
-  "setting-other": "nav.avatar.setting",
-  history: "nav.avatar.history",
-  login: "nav.avatar.login",
-  playlist: "general.name.playlist",
-  album: "general.name.album",
-  artist: "general.name.artists",
-  "ar-songs": "general.name.artists",
-  "ar-albums": "general.name.artists",
-  "ar-videos": "general.name.artists",
-  song: "general.name.song",
-  dailySongs: "sidebar.dailySongs",
-  user: "nav.user",
-  "user-playlists": "nav.user",
-  "user-like": "nav.user",
-  "user-album": "nav.user",
-  "user-artists": "nav.user",
-  "user-cloud": "nav.user",
+onUnmounted(() => {
+  compactViewportQuery?.removeEventListener("change", updateCompactViewport);
+});
+
+const updateCompactViewport = (event) => {
+  isCompactViewport.value = event.matches;
 };
 
-const routeTitle = computed(() => {
-  const name = route.name;
-  const key = routeTitleMap[name];
-  return key ? t(key) : "";
-});
+const showNavSearch = computed(() => isMobileState.value || isCompactViewport.value);
 
 // Tauri detection
 const toggleTheme = () => {
@@ -100,23 +64,20 @@ const toggleTheme = () => {
 
 <style lang="scss" scoped>
 nav {
+  --nav-control-height: 32px;
+  --nav-icon-button-size: 26px;
+
   width: 100%;
-  height: 100%;
+  height: 34px;
+  min-height: 34px;
   display: flex;
   flex-direction: row;
   justify-content: space-between;
   align-items: center;
-  max-width: 1400px;
-  margin: 0 auto;
-  // Push nav content below the status-bar / notch on Tauri mobile.
-  // --app-safe-area-top is 0px on all non-tauri-mobile platforms so
-  // this is a no-op in every other environment.
-  padding-top: var(--app-safe-area-top, 0px);
-
-  // Tauri window controls reserved space
-  &.tauri-app {
-    padding-right: 138px;
-  }
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  pointer-events: none;
 
   .left {
     display: flex;
@@ -127,14 +88,33 @@ nav {
     min-width: 0;
 
     .controls {
+      pointer-events: auto;
       display: flex;
       flex-direction: row;
       align-items: center;
+      gap: 2px;
+      height: var(--nav-control-height);
+      box-sizing: border-box;
+      padding: 2px;
+      border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.06));
+      border-radius: var(--radius-pill);
+      background-color: var(--floating-control-bg, rgba(255, 255, 255, 0.48));
+      box-shadow:
+        0 8px 22px rgb(0 0 0 / 10%),
+        inset 0 1px 0 rgb(255 255 255 / 24%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      backdrop-filter: blur(18px) saturate(160%);
 
       .n-icon {
-        margin: 0 4px;
-        border-radius: 8px;
-        padding: 4px;
+        width: var(--nav-icon-button-size);
+        height: var(--nav-icon-button-size);
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+        border-radius: var(--radius-pill);
+        padding: 3px;
         cursor: pointer;
         transition:
           background-color 0.2s,
@@ -151,28 +131,36 @@ nav {
         }
       }
     }
-
-    .route-title {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--n-text-color-3, #999);
-      max-width: 200px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
   }
 
   .right {
     display: flex;
     flex-direction: row;
     align-items: center;
+    justify-content: flex-end;
     gap: 8px;
+    min-width: 0;
+    flex: 0 1 auto;
 
     .action-icon {
+      flex: 0 0 auto;
+      width: var(--nav-control-height);
+      height: var(--nav-control-height);
+      box-sizing: border-box;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: auto;
       cursor: pointer;
-      padding: 6px;
-      border-radius: 8px;
+      padding: 0;
+      border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.06));
+      border-radius: var(--radius-pill);
+      background-color: var(--floating-control-bg, rgba(255, 255, 255, 0.48));
+      box-shadow:
+        0 8px 22px rgb(0 0 0 / 8%),
+        inset 0 1px 0 rgb(255 255 255 / 20%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      backdrop-filter: blur(18px) saturate(160%);
       transition:
         background-color 0.2s,
         transform 0.2s,
@@ -185,6 +173,55 @@ nav {
       &:active {
         transform: scale(0.95);
       }
+    }
+
+    .nav-search {
+      pointer-events: auto;
+      min-width: 0;
+      flex: 0 1 clamp(128px, 36vw, 220px);
+      width: clamp(128px, 36vw, 220px);
+
+      @media (min-width: 769px) {
+        display: none;
+      }
+
+      @media (max-width: 450px) {
+        flex: 0 0 auto;
+        width: auto;
+      }
+    }
+  }
+
+  &.tauri-app {
+    --nav-control-height: 30px;
+    --nav-icon-button-size: 24px;
+
+    height: 30px;
+    min-height: 30px;
+    --floating-control-bg: rgba(255, 255, 255, 0.42);
+  }
+
+  &.dark {
+    --floating-control-bg: rgba(24, 24, 24, 0.5);
+
+    .controls .n-icon:hover,
+    .right .action-icon:hover {
+      background-color: rgba(255, 255, 255, 0.12);
+    }
+  }
+
+  @media (max-width: 768px) {
+    height: calc(42px + var(--app-safe-area-top, 0px));
+    min-height: calc(42px + var(--app-safe-area-top, 0px));
+    padding-top: var(--app-safe-area-top, 0px);
+    box-sizing: border-box;
+
+    .left {
+      flex: 0 0 auto;
+    }
+
+    .right {
+      flex: 1 1 auto;
     }
   }
 }

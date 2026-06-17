@@ -1,5 +1,5 @@
 <template>
-  <div class="searchInp">
+  <div :class="['searchInp', { active: site.searchInputActive }]">
     <n-input
       :class="site.searchInputActive ? 'input focus' : 'input'"
       :input-props="{ autoComplete: false }"
@@ -339,20 +339,39 @@ watch(
 <style lang="scss" scoped>
 .searchInp {
   position: relative;
+  z-index: 1;
   width: clamp(180px, 22vw, 260px);
   display: flex;
   justify-content: flex-start;
   pointer-events: none;
+  --search-surface-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.58);
+  --search-surface-bg-focus: rgba(var(--app-shell-rgb, 242, 242, 244), 0.72);
+  --search-dropdown-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.78);
+  --search-surface-border: var(--acrylic-border, rgba(0, 0, 0, 0.08));
+  --search-chip-bg: color-mix(in srgb, var(--content-panel-bg, #fff) 90%, var(--main-color) 10%);
+  --search-chip-bg-hover: color-mix(
+    in srgb,
+    var(--content-panel-bg, #fff) 82%,
+    var(--main-color) 18%
+  );
+  --search-chip-border: color-mix(in srgb, var(--main-color) 24%, transparent);
+  --search-chip-text: var(--n-text-color-2, inherit);
+  --search-backdrop-filter: blur(18px) saturate(180%);
+  --search-dropdown-backdrop-filter: blur(26px) saturate(180%);
 
   @media (max-width: 450px) {
     width: auto;
   }
 
+  &.active {
+    z-index: var(--z-search-overlay, 1900);
+  }
+
   .input {
-    --n-color: var(--layout-bg, #fff);
-    --n-color-focus: var(--layout-bg, #fff);
-    --n-color-hover: var(--layout-bg, #fff);
-    --n-border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.08));
+    --n-color: transparent;
+    --n-color-focus: transparent;
+    --n-color-hover: transparent;
+    --n-border: 1px solid var(--search-surface-border);
     --n-border-hover: 1px solid var(--main-color);
     --n-border-focus: 1px solid var(--main-color);
     --n-box-shadow-focus: 0 0 0 2px var(--main-second-color);
@@ -360,9 +379,9 @@ watch(
     width: 100%;
     height: 32px;
     overflow: hidden;
-    background-color: var(--layout-bg, #fff);
-    -webkit-backdrop-filter: blur(18px) saturate(160%);
-    backdrop-filter: blur(18px) saturate(160%);
+    background-color: var(--search-surface-bg);
+    -webkit-backdrop-filter: var(--search-backdrop-filter);
+    backdrop-filter: var(--search-backdrop-filter);
     box-shadow:
       0 8px 24px rgb(0 0 0 / 8%),
       inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.16));
@@ -373,11 +392,16 @@ watch(
 
     @media (max-width: 450px) {
       width: 36px;
+      height: 36px;
+      border-radius: var(--radius-pill);
+      box-shadow:
+        0 8px 20px rgb(0 0 0 / 8%),
+        inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.16));
     }
 
     &.focus {
       width: 100%;
-      background-color: var(--layout-bg, #fff);
+      background-color: var(--search-surface-bg-focus);
 
       :deep(input) {
         color: var(--main-color);
@@ -385,6 +409,8 @@ watch(
 
       @media (max-width: 450px) {
         width: min(54vw, 220px);
+        height: 32px;
+        border-radius: var(--radius-pill);
       }
 
       @media (max-width: 380px) {
@@ -397,16 +423,34 @@ watch(
     }
 
     :deep(.n-input-wrapper) {
+      background-color: transparent !important;
       padding-inline: 10px;
+
+      @media (max-width: 450px) {
+        padding-inline: 0;
+        justify-content: center;
+      }
     }
 
     :deep(.n-input__input-el) {
+      background-color: transparent !important;
       height: 32px;
       font-size: 13px;
     }
 
+    :deep(.n-input__input),
+    :deep(.n-input__suffix),
+    :deep(.n-input__border),
+    :deep(.n-input__state-border) {
+      background-color: transparent !important;
+    }
+
     :deep(.n-input__prefix) {
       margin-right: 4px;
+
+      @media (max-width: 450px) {
+        margin-right: 0;
+      }
     }
 
     :deep(.n-input__prefix) {
@@ -417,21 +461,41 @@ watch(
         }
       }
     }
+
+    @media (max-width: 450px) {
+      &:not(.focus) {
+        :deep(.n-input__input),
+        :deep(.n-input__suffix) {
+          display: none;
+        }
+      }
+
+      &.focus {
+        :deep(.n-input-wrapper) {
+          padding-inline: 10px;
+          justify-content: flex-start;
+        }
+
+        :deep(.n-input__prefix) {
+          margin-right: 4px;
+        }
+      }
+    }
   }
   .list {
-    --n-color: var(--layout-bg, #fff);
-    --n-border-color: var(--acrylic-border, rgba(0, 0, 0, 0.08));
+    --n-color: transparent;
+    --n-border-color: var(--search-surface-border);
     position: absolute;
     top: calc(var(--app-safe-area-top, 0px) + 38px);
     left: 0;
-    border-radius: 10px;
+    border-radius: var(--radius-panel);
     width: 280px;
-    z-index: 3;
+    z-index: var(--z-search-overlay, 1900);
     pointer-events: auto;
     overflow: hidden;
-    background-color: var(--layout-bg, #fff);
-    -webkit-backdrop-filter: blur(24px) saturate(160%);
-    backdrop-filter: blur(24px) saturate(160%);
+    background-color: var(--search-dropdown-bg);
+    -webkit-backdrop-filter: var(--search-dropdown-backdrop-filter);
+    backdrop-filter: var(--search-dropdown-backdrop-filter);
     box-shadow:
       0 18px 46px rgb(0 0 0 / 14%),
       inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
@@ -442,15 +506,16 @@ watch(
       top: calc(var(--app-safe-area-top, 0px) + 56px);
       right: 12px;
       left: 12px;
-      border-radius: 14px;
-      z-index: 2006;
+      border-radius: var(--radius-panel);
+      z-index: var(--z-search-overlay, 1900);
     }
 
     :deep(.n-card__content) {
-      background-color: var(--layout-bg, #fff);
+      background-color: transparent;
     }
 
     :deep(.n-scrollbar) {
+      background-color: transparent;
       max-height: 68vh;
       @media (max-width: 450px) {
         max-height: min(58vh, calc(100vh - var(--app-safe-area-top, 0px) - 148px));
@@ -460,10 +525,12 @@ watch(
         width: 4px;
       }
       .n-scrollbar-container {
+        background-color: transparent;
         @media (max-width: 450px) {
           padding-top: 8px;
         }
         .n-scrollbar-content {
+          background-color: transparent;
           padding: 10px;
           .list-title {
             color: var(--main-color);
@@ -482,11 +549,23 @@ watch(
             .n-space {
               margin: 10px 0;
               .n-tag {
+                --n-color: var(--search-chip-bg);
+                --n-color-hover: var(--search-chip-bg-hover);
+                --n-text-color: var(--search-chip-text);
+                --n-border: 1px solid var(--search-chip-border);
+                background-color: var(--search-chip-bg);
+                box-shadow:
+                  inset 0 0 0 1px var(--search-chip-border),
+                  0 1px 2px rgb(0 0 0 / 4%);
+                color: var(--search-chip-text);
                 font-size: 12px;
                 cursor: pointer;
                 transition: all 0.3s;
                 &:hover {
-                  background-color: var(--main-second-color);
+                  background-color: var(--search-chip-bg-hover);
+                  box-shadow:
+                    inset 0 0 0 1px color-mix(in srgb, var(--main-color) 34%, transparent),
+                    0 3px 8px rgb(0 0 0 / 8%);
                   color: var(--main-color);
                 }
                 &:active {
@@ -513,7 +592,7 @@ watch(
               align-items: center;
               margin-bottom: 6px;
               cursor: pointer;
-              border-radius: 8px;
+              border-radius: var(--radius-md);
               padding: 5px;
               transition: all 0.3s;
 
@@ -610,7 +689,7 @@ watch(
                 font-size: 13px;
                 cursor: pointer;
                 transition: all 0.3s;
-                border-radius: 8px;
+                border-radius: var(--radius-md);
                 &:hover {
                   background-color: var(--n-border-color);
                 }

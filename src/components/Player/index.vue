@@ -77,7 +77,7 @@
                             {{ item.content }}
                           </span>
                         </span>
-                        <n-marquee
+                        <OverflowMarquee
                           v-if="miniLrcOverflow"
                           class="mini-lrc-marquee"
                           :speed="34"
@@ -91,7 +91,7 @@
                               {{ item.content }}
                             </span>
                           </span>
-                        </n-marquee>
+                        </OverflowMarquee>
                       </n-text>
                       <AllArtists
                         v-else
@@ -222,12 +222,13 @@
             </n-dropdown>
             <n-popover trigger="hover" :keep-alive-on-hover="false">
               <template #trigger>
-                <div :class="music.showPlayList ? 'playlist open' : 'playlist'">
-                  <n-icon
-                    size="30"
-                    :component="PlaylistPlayRound"
-                    @click.stop="music.showPlayList = !music.showPlayList"
-                  />
+                <div
+                  :class="music.showPlayList ? 'playlist open' : 'playlist'"
+                  @pointerdown.stop="armPlaylistToggle"
+                  @pointercancel="clearPlaylistToggleIntent"
+                  @click.stop="togglePlaylist"
+                >
+                  <n-icon size="30" :component="PlaylistPlayRound" />
                 </div>
               </template>
               {{ $t("general.name.playlists") }}
@@ -316,10 +317,7 @@ import { useRouter } from "vue-router";
 import { debounce, throttle } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
-import {
-  NativeRustSound,
-  isAudioBackendRuntimeAvailable,
-} from "@/utils/tauri/NativeRustSound";
+import { NativeRustSound, isAudioBackendRuntimeAvailable } from "@/utils/tauri/NativeRustSound";
 import { windowManager } from "@/utils/tauri/windowManager";
 import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
@@ -327,6 +325,7 @@ import PlayListDrawer from "@/components/DataModal/PlayListDrawer.vue";
 import ListenTogetherModal from "@/components/DataModal/ListenTogetherModal.vue";
 import ListenTogetherStatus from "./ListenTogetherStatus.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import BigPlayer from "./BigPlayer/index.vue";
 import "vue-slider-component/theme/default.css";
 import { watch, toRaw } from "vue";
@@ -351,6 +350,42 @@ let miniTouchState = null;
 let suppressMiniClick = false;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
+const PLAYER_BRIDGE_TARGETS = ["mini-player", "desktop-lyrics", "taskbar-lyric"];
+let playlistToggleIntent = null;
+let playlistToggleIntentTimer = null;
+
+const clearPlaylistToggleIntent = () => {
+  playlistToggleIntent = null;
+  if (playlistToggleIntentTimer !== null) {
+    window.clearTimeout(playlistToggleIntentTimer);
+    playlistToggleIntentTimer = null;
+  }
+};
+
+const armPlaylistToggle = () => {
+  clearPlaylistToggleIntent();
+  playlistToggleIntent = !music.showPlayList;
+  playlistToggleIntentTimer = window.setTimeout(clearPlaylistToggleIntent, 800);
+};
+
+const togglePlaylist = () => {
+  const nextShowState = playlistToggleIntent ?? !music.showPlayList;
+  clearPlaylistToggleIntent();
+  music.showPlayList = nextShowState;
+};
+
+function emitPlayerBridgeEvent(eventName, payload, targetLabel) {
+  const tauriEvent = window.__TAURI__?.event;
+  if (!tauriEvent) return;
+
+  tauriEvent.emit(eventName, payload).catch(() => {});
+
+  const targets = targetLabel ? [targetLabel] : PLAYER_BRIDGE_TARGETS;
+  for (const label of targets) {
+    tauriEvent.emitTo(label, eventName, payload).catch(() => {});
+  }
+}
+
 const getMobilePlayerTransitionDistance = () =>
   Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
 const MINI_OPEN_FLING_VELOCITY = -0.42;
@@ -514,7 +549,7 @@ const getPlaySongData = async (data, level = setting.songLevel) => {
 
     // If AutoMix is crossfading, it already handles sound creation — only fetch lyrics
     const autoMix = getAutoMixEngine();
-    if (autoMix.isCrossfading()) {
+    if (autoMix.isHandoffActive()) {
       console.log("[Player] AutoMix crossfade active, only fetching lyrics");
       // Sync player ref to the incoming sound set by AutoMix
       if (window.$player) {
@@ -694,7 +729,7 @@ const broadcastPlayerState = () => {
     volume: persistData.value.playVolume,
     playMode: music.persistData.playSongMode || "normal",
   };
-  window.__TAURI__?.event.emit("player-state-update", payload);
+  emitPlayerBridgeEvent("player-state-update", payload);
 
   // Update native window effect tint color with accent blend
   if (site.songPicColor) {
@@ -713,7 +748,7 @@ const broadcastPlayerState = () => {
 // Tauri: broadcast time update to slave windows (~20fps, throttled 50ms)
 const broadcastTimeUpdate = throttle(50, () => {
   if (!isTauri() || !music.getPlayState) return;
-  window.__TAURI__?.event.emit("player-time-update", {
+  emitPlayerBridgeEvent("player-time-update", {
     currentTime: music.getPlaySongTime.currentTime,
     lyricIndex: music.playSongLyricIndex,
   });
@@ -768,7 +803,7 @@ const broadcastLyricData = () => {
     hasLrcTran: rawSongLyric.hasLrcTran || false,
     hasLrcRoma: rawSongLyric.hasLrcRoma || false,
   };
-  window.__TAURI__?.event.emit("player-lyric-update", payload);
+  emitPlayerBridgeEvent("player-lyric-update", payload);
 };
 
 // Tauri: broadcast settings to slave windows
@@ -790,11 +825,11 @@ const broadcastSettings = () => {
     showRoma: setting.showRoma,
     springParams: setting.springParams,
   };
-  window.__TAURI__?.event.emit("player-settings-update", payload);
+  emitPlayerBridgeEvent("player-settings-update", payload);
 };
 
 // Tauri: push full state snapshot to a newly opened slave window
-const broadcastFullState = () => {
+const broadcastFullState = (targetLabel) => {
   if (!isTauri()) return;
   const statePayload = {
     title: music.getPlaySongData?.name || "",
@@ -876,7 +911,7 @@ const broadcastFullState = () => {
     springParams: setting.springParams,
   };
 
-  window.__TAURI__?.event.emit("player-full-state", {
+  const payload = {
     state: statePayload,
     time: {
       currentTime: music.getPlaySongTime.currentTime,
@@ -884,7 +919,9 @@ const broadcastFullState = () => {
     },
     lyric: lyricPayload,
     settings: settingsPayload,
-  });
+  };
+
+  emitPlayerBridgeEvent("player-full-state", payload, targetLabel);
 };
 
 // Tauri: set up tray + slave control event listeners
@@ -978,8 +1015,9 @@ const setupTrayListeners = async () => {
   });
 
   // Slave window opened — push full state snapshot
-  await tauri.event.listen("slave-window-opened", () => {
-    broadcastFullState();
+  await tauri.event.listen("slave-window-opened", (event) => {
+    const payload = event.payload || {};
+    broadcastFullState(payload.label);
   });
 };
 
@@ -1011,7 +1049,7 @@ watch(
       // Resetting here causes duration=0 because the incoming sound's play() is async
       // and checkAudioTime only updates when playing() returns true.
       const autoMix = getAutoMixEngine();
-      if (!autoMix.isCrossfading()) {
+      if (!autoMix.isHandoffActive()) {
         music.setPlaySongTime({ currentTime: 0, duration: 0 });
       }
       songChange(val);
@@ -1082,7 +1120,7 @@ watch(
     broadcastPlayerState();
     // Also broadcast time on play state change for slave windows
     if (isTauri()) {
-      window.__TAURI__?.event.emit("player-time-update", {
+      emitPlayerBridgeEvent("player-time-update", {
         currentTime: music.getPlaySongTime.currentTime,
         lyricIndex: music.playSongLyricIndex,
       });
@@ -1227,7 +1265,10 @@ watch(
   { immediate: true },
 );
 
-watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
+watch(
+  () => music.showBigPlayer,
+  () => nextTick(updateMiniLrcOverflow),
+);
 </script>
 
 <style lang="scss" scoped>
@@ -1260,11 +1301,14 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
 }
 
 .player {
+  --player-data-edge-inset: 14px;
+  --player-control-edge-inset: 14px;
+
   height: 70px;
   position: fixed;
   bottom: 0;
   left: var(--sidebar-width, 240px);
-  width: calc(100% - var(--sidebar-width, 240px));
+  width: calc(100% - var(--sidebar-width, 240px) - var(--player-right-inset, 0px));
   z-index: 2;
   transition:
     left 0.3s ease,
@@ -1274,8 +1318,8 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
 
   // Acrylic background — override Naive UI card bg
   background-color: var(
-    --mobile-mini-player-surface-bg,
-    var(--acrylic-bg, rgba(255, 255, 255, 0.45))
+    --player-surface-bg,
+    var(--app-shell-bg, var(--layout-bg, #fff))
   ) !important;
   border-top: 1px solid
     var(--mobile-mini-player-surface-border, var(--acrylic-border, rgba(0, 0, 0, 0.04)));
@@ -1292,6 +1336,8 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
     pointer-events: var(--mobile-mini-player-pointer-events, auto);
     touch-action: pan-x;
     isolation: isolate;
+    --player-data-edge-inset: 0px;
+    --player-control-edge-inset: 0px;
     background-color: transparent !important;
     border: none !important;
     outline: none !important;
@@ -1351,7 +1397,7 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
         background-color: var(--n-color);
         outline: 1px solid var(--n-border-color);
         padding: 2px 8px;
-        border-radius: 25px;
+        border-radius: var(--radius-pill);
         margin: 0 2px;
       }
     }
@@ -1367,12 +1413,12 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
         background-color: var(--n-color);
         outline: 1px solid var(--n-border-color);
         padding: 2px 8px;
-        border-radius: 25px;
+        border-radius: var(--radius-pill);
       }
 
       :deep(.vue-slider-rail) {
         background-color: var(--n-border-color);
-        border-radius: 25px;
+        border-radius: var(--radius-pill);
 
         .vue-slider-process {
           background-color: var(--main-color);
@@ -1408,6 +1454,8 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
       overflow: hidden;
       position: relative;
       z-index: 4;
+      box-sizing: border-box;
+      padding-left: var(--player-data-edge-inset, 14px);
       transform: translate3d(0, var(--mobile-mini-player-root-y, 0px), 0);
       will-change: transform;
 
@@ -1415,8 +1463,8 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
         width: 50px;
         height: 50px;
         min-width: 50px;
-        border-radius: 8px !important;
-        clip-path: inset(0 round 8px);
+        border-radius: var(--radius-md) !important;
+        clip-path: inset(0 round var(--radius-md));
         overflow: hidden;
         margin-right: 12px;
         position: relative;
@@ -1493,8 +1541,7 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
               line-height: 1.3;
               color: inherit;
 
-              :deep(.n-marquee__group),
-              :deep(.n-marquee__item) {
+              :deep(.overflow-marquee__group) {
                 align-items: center;
                 height: 1.3em;
                 line-height: 1.3;
@@ -1534,7 +1581,7 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
         color: var(--main-color);
         cursor: pointer;
         padding: 4px;
-        border-radius: 50%;
+        border-radius: var(--radius-pill);
         transform: scale(1);
         transition: all 0.3s;
 
@@ -1591,6 +1638,8 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
       justify-content: flex-end;
       color: var(--main-color);
       z-index: 3;
+      box-sizing: border-box;
+      padding-right: var(--player-control-edge-inset, 14px);
       opacity: var(--mobile-mini-player-chrome-opacity, var(--mobile-mini-player-ui-opacity, 1));
       transform: translateY(var(--mobile-mini-player-ui-y, 0px));
       will-change: opacity, transform;
@@ -1613,7 +1662,7 @@ watch(() => music.showBigPlayer, () => nextTick(updateMiniLrcOverflow));
 
       .n-icon {
         padding: 4px;
-        border-radius: 8px;
+        border-radius: var(--radius-md);
         cursor: pointer;
         transition: all 0.3s;
 

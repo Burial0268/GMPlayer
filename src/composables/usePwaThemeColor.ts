@@ -8,12 +8,18 @@ export function usePwaThemeColor() {
   const site = siteStore();
   const { songPicColor } = storeToRefs(site);
 
+  const formatThemeColor = (color: string) => {
+    const value = color.trim();
+    if (value.startsWith("#") || value.startsWith("rgb")) return value;
+    return `rgb(${value})`;
+  };
+
   const changePwaColor = () => {
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (!themeColorMeta) return;
 
     if (music.showBigPlayer) {
-      themeColorMeta.setAttribute("content", songPicColor.value);
+      themeColorMeta.setAttribute("content", formatThemeColor(songPicColor.value));
     } else {
       if (setting.getSiteTheme === "light") {
         themeColorMeta.setAttribute("content", "#ffffff");

@@ -2,14 +2,16 @@
   <n-tooltip placement="right" :disabled="!collapsed" :delay="300">
     <template #trigger>
       <div :class="['sidebar-playlist-item', { collapsed }]" @click="$emit('navigate', id)">
-        <img
-          class="sidebar-playlist-cover"
-          :src="
-            cover ? cover.replace(/^http:/, 'https:') + '?param=50y50' : '/images/pic/default.png'
-          "
-          alt="cover"
-          loading="lazy"
-        />
+        <span class="sidebar-playlist-cover-slot">
+          <img
+            class="sidebar-playlist-cover"
+            :src="
+              cover ? cover.replace(/^http:/, 'https:') + '?param=50y50' : '/images/pic/default.png'
+            "
+            alt="cover"
+            loading="lazy"
+          />
+        </span>
         <span :class="['sidebar-playlist-name text-hidden', { hidden: collapsed }]">{{
           name
         }}</span>
@@ -34,23 +36,24 @@ defineEmits(["navigate"]);
 
 <style lang="scss" scoped>
 .sidebar-playlist-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--sidebar-item-slot, 40px) minmax(0, 1fr);
   align-items: center;
-  gap: 10px;
-  padding: 7px 14px;
-  border-radius: 10px;
+  width: 100%;
+  min-height: 31px;
+  padding: 0;
+  border-radius: var(--radius-sm);
   cursor: pointer;
   transition:
     background-color 0.2s,
-    padding 0.3s ease,
-    gap 0.3s ease;
+    width 0.3s ease;
   overflow: hidden;
   white-space: nowrap;
 
   &.collapsed {
-    justify-content: center;
-    padding: 4px 0;
-    gap: 0;
+    width: var(--sidebar-item-slot, 40px);
+    min-height: 34px;
+    margin-inline: auto;
   }
 
   &:hover {
@@ -62,38 +65,49 @@ defineEmits(["navigate"]);
   }
 }
 
+.sidebar-playlist-cover-slot {
+  width: var(--sidebar-item-slot, 40px);
+  min-width: var(--sidebar-item-slot, 40px);
+  height: 31px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .sidebar-playlist-cover {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  border-radius: 8px;
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
   transition: border-radius 0.2s;
 
   .collapsed & {
-    border-radius: 50%;
+    border-radius: var(--radius-pill);
   }
 }
 
 .sidebar-playlist-name {
-  flex: 1;
   min-width: 0;
-  font-size: 13px;
+  padding-right: 10px;
+  font-size: 12.5px;
+  line-height: 18px;
   color: var(--sidebar-text, var(--n-text-color));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 1;
+  transform: translateX(0);
   transition:
     opacity 0.2s ease 0.1s,
-    flex 0.3s ease;
+    transform 0.3s ease;
 
   &.hidden {
-    flex: 0;
     opacity: 0;
+    transform: translateX(-4px);
     transition:
       opacity 0.1s ease,
-      flex 0.3s ease;
+      transform 0.3s ease;
   }
 }
 </style>

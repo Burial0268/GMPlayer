@@ -124,7 +124,7 @@
           :menuShow="menuShow"
           :hasLyrics="hasLyrics"
           :lyricsVisible="desktopLyricsVisible"
-          :queueOpen="music.showPlayList"
+          :queueOpen="desktopQueueOpen"
           :handleProgressSeek="handleProgressSeek"
           @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
           @lrcAllLeave="lrcAllLeave"
@@ -133,10 +133,10 @@
 
         <DesktopToggleControls
           :lyricsVisible="desktopLyricsVisible && hasLyrics"
-          :queueOpen="music.showPlayList"
+          :queueOpen="desktopQueueOpen"
           :hasLyrics="hasLyrics"
           @toggleLyrics="desktopLyricsVisible = !desktopLyricsVisible"
-          @toggleQueue="music.showPlayList = !music.showPlayList"
+          @toggleQueue="desktopQueueOpen = !desktopQueueOpen"
         />
 
         <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
@@ -217,6 +217,7 @@ const mobileCoverRootRef = computed(() =>
 // 移动端层级 & 封面帧
 const mobileLayer = ref(1);
 const mobileQueueOpen = ref(false);
+const desktopQueueOpen = ref(false);
 const mobileExiting = ref(false);
 const mobileTransitionActive = ref(false);
 const mobileAlbumLayerReady = ref(false);
@@ -694,8 +695,7 @@ const clearMiniUiVars = () => {
 
 const applyMiniUiVars = (progress: number) => {
   const miniLift = rangeProgress(progress, 0, MOBILE_MINI_BAR_HANDOFF_END);
-  const miniTransitioning =
-    progress > 0.001 || mobileTransitionActive.value || music.showBigPlayer;
+  const miniTransitioning = progress > 0.001 || mobileTransitionActive.value || music.showBigPlayer;
   const miniChromeExit = miniTransitioning ? 1 : 0;
   const miniDetailExit = miniTransitioning ? 1 : 0;
   const miniTextExit = miniTransitioning ? 1 : 0;
@@ -708,18 +708,9 @@ const applyMiniUiVars = (progress: number) => {
   const miniArtworkOpacity = miniTransitioning ? 0 : 1;
   const miniSurfaceOpacity = miniTransitioning ? 1 - easeOutCubic(miniSurfaceExit) : 1;
   const miniMaskY = miniTransitioning ? getMiniBarY(progress) : 0;
-  setMiniUiVar(
-    "--mobile-mini-player-root-y",
-    `${getMiniBarY(progress)}px`,
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-z-index",
-    progress < MOBILE_MINI_UI_FADE_END ? "2102" : "2",
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-pointer-events",
-    miniTransitioning ? "none" : "auto",
-  );
+  setMiniUiVar("--mobile-mini-player-root-y", `${getMiniBarY(progress)}px`);
+  setMiniUiVar("--mobile-mini-player-z-index", progress < MOBILE_MINI_UI_FADE_END ? "2102" : "2");
+  setMiniUiVar("--mobile-mini-player-pointer-events", miniTransitioning ? "none" : "auto");
   if (miniTransitioning) {
     setMiniUiVar("--mobile-mini-player-surface-border", "transparent");
     setMiniUiVar("--mobile-mini-player-surface-shadow", "none");
@@ -728,59 +719,23 @@ const applyMiniUiVars = (progress: number) => {
     removeMiniUiVar("--mobile-mini-player-surface-border");
     removeMiniUiVar("--mobile-mini-player-surface-shadow");
   }
-  setMiniUiVar(
-    "--mobile-mini-player-surface-opacity",
-    String(miniSurfaceOpacity),
-  );
+  setMiniUiVar("--mobile-mini-player-surface-opacity", String(miniSurfaceOpacity));
   setMiniUiVar("--mobile-mini-player-mask-y", `${miniMaskY}px`);
-  setMiniUiVar(
-    "--mobile-mini-player-ui-opacity",
-    String(1 - miniChromeExit),
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-chrome-opacity",
-    String(1 - miniChromeExit),
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-text-opacity",
-    String(1 - miniTextExit),
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-detail-opacity",
-    String(1 - miniDetailExit),
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-detail-height",
-    `${mix(1.2, 0, miniDetailExit)}em`,
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-detail-margin",
-    `${mix(2, 0, miniDetailExit)}px`,
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-ui-y",
-    `${mix(0, -4, miniLift)}px`,
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-text-y",
-    `${mix(0, -8, miniLift)}px`,
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-artwork-opacity",
-    String(miniArtworkOpacity),
-  );
-  setMiniUiVar(
-    "--mobile-mini-player-bottom-y",
-    `${mix(0, 110, bottomExit)}%`,
-  );
+  setMiniUiVar("--mobile-mini-player-ui-opacity", String(1 - miniChromeExit));
+  setMiniUiVar("--mobile-mini-player-chrome-opacity", String(1 - miniChromeExit));
+  setMiniUiVar("--mobile-mini-player-text-opacity", String(1 - miniTextExit));
+  setMiniUiVar("--mobile-mini-player-detail-opacity", String(1 - miniDetailExit));
+  setMiniUiVar("--mobile-mini-player-detail-height", `${mix(1.2, 0, miniDetailExit)}em`);
+  setMiniUiVar("--mobile-mini-player-detail-margin", `${mix(2, 0, miniDetailExit)}px`);
+  setMiniUiVar("--mobile-mini-player-ui-y", `${mix(0, -4, miniLift)}px`);
+  setMiniUiVar("--mobile-mini-player-text-y", `${mix(0, -8, miniLift)}px`);
+  setMiniUiVar("--mobile-mini-player-artwork-opacity", String(miniArtworkOpacity));
+  setMiniUiVar("--mobile-mini-player-bottom-y", `${mix(0, 110, bottomExit)}%`);
   setMiniUiVar(
     "--mobile-mini-player-bottom-z-index",
     progress < MOBILE_MINI_BAR_HANDOFF_END ? "2101" : "1000",
   );
-  setMiniUiVar(
-    "--mobile-mini-player-bottom-pointer-events",
-    miniTransitioning ? "none" : "auto",
-  );
+  setMiniUiVar("--mobile-mini-player-bottom-pointer-events", miniTransitioning ? "none" : "auto");
 };
 
 const applyProgressState = (value: number) => {
@@ -896,7 +851,9 @@ const handleDesktopWindowDrag = (event: MouseEvent) => {
   const target = event.target;
   if (!(target instanceof Element) || target.closest(desktopDragBlockSelector)) return;
   event.preventDefault();
-  void getCurrentWindow().startDragging().catch(() => {});
+  void getCurrentWindow()
+    .startDragging()
+    .catch(() => {});
 };
 
 const cleanupClosedMobileTransition = () => {
@@ -966,6 +923,10 @@ const closeMobileQueue = () => {
 const resetMobileQueueState = () => {
   mobileQueueOpen.value = false;
   music.showPlayList = false;
+};
+
+const resetDesktopQueueState = () => {
+  desktopQueueOpen.value = false;
 };
 
 const detachMiniSharedAlbum = () => {
@@ -1216,7 +1177,6 @@ watch(
   (val) => {
     changePwaColor();
     if (val) {
-      music.showPlayList = false;
       if (isMobile.value) {
         resetMobileQueueState();
         mobileExiting.value = false;
@@ -1231,6 +1191,7 @@ watch(
         nextTick(() => lyricsScroll(music.getPlaySongLyricIndex));
         return;
       }
+      resetDesktopQueueState();
       clearMiniUiVars();
       requestAnimationFrame(() => {
         lyricsScroll(music.getPlaySongLyricIndex);
@@ -1247,6 +1208,8 @@ watch(
       mobileExiting.value = true;
       if (!mobileInteractive.value) animateProgressTo(0, finishMobileExit);
       scheduleMobileExitFallback();
+    } else {
+      resetDesktopQueueState();
     }
   },
 );
@@ -1258,6 +1221,7 @@ watch(
       progressAnimation?.stop();
       progressAnimation = null;
       resetMobileQueueState();
+      desktopQueueOpen.value = false;
       mobileExiting.value = false;
       mobileTransitionActive.value = false;
       mobileTransitionDirection.value = null;
@@ -1406,11 +1370,7 @@ defineExpose({
 
         :deep(.big-player-background) {
           z-index: 0;
-          transform: translate3d(
-            0,
-            calc(var(--mobile-player-bg-reveal-y, 0) * -1px),
-            0
-          );
+          transform: translate3d(0, calc(var(--mobile-player-bg-reveal-y, 0) * -1px), 0);
           will-change: transform, opacity;
         }
 

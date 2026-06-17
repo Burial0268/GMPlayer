@@ -27,6 +27,16 @@
         </svg>
       </button>
     </div>
+    <div v-if="showTaskbarLyricsEntry" class="actions">
+      <button class="action-btn" type="button" @click="openTaskbarLyrics">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor">
+          <path
+            d="M5 5h14a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-5.4l-3.1 3.1a1 1 0 0 1-1.7-.7V16H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v7h5.8v2l2-2H19V7H5Zm2 2h4v2H7V9Zm6 0h4v2h-4V9Z"
+          />
+        </svg>
+        <span>Taskbar Lyric</span>
+      </button>
+    </div>
     <button class="quit-btn" @click="quitApp" :title="'Quit'">
       <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
         <path
@@ -44,12 +54,37 @@ const title = ref("");
 const artist = ref("");
 const coverUrl = ref("");
 const isPlaying = ref(false);
+const showTaskbarLyricsEntry = ref(false);
 
 const unlisteners: (() => void)[] = [];
 
 const getTauri = () => window.__TAURI__;
 
+function isWindowsTauri() {
+  if (!getTauri()) return false;
+  const platform = window.navigator?.platform ?? "";
+  const userAgent = window.navigator?.userAgent ?? "";
+  return /Win/i.test(platform) || /Windows/i.test(userAgent);
+}
+
+function getTaskbarLyricsEnabled() {
+  const raw = localStorage.getItem("settingData");
+  if (!raw) return true;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed.taskbarLyrics !== false;
+  } catch {
+    return true;
+  }
+}
+
+function refreshTaskbarLyricsEntry() {
+  showTaskbarLyricsEntry.value = isWindowsTauri() && getTaskbarLyricsEnabled();
+}
+
 onMounted(async () => {
+  refreshTaskbarLyricsEntry();
+
   const tauri = getTauri();
   if (!tauri) return;
 
@@ -69,6 +104,7 @@ onMounted(async () => {
 
   // Listen for popup opened event (triggers fresh state push from main)
   const unlisten2 = await tauri.event.listen("tray-popup-opened", () => {
+    refreshTaskbarLyricsEntry();
     // Main window will push fresh state in response
   });
   unlisteners.push(unlisten2);
@@ -88,6 +124,10 @@ const prevTrack = () => {
 
 const nextTrack = () => {
   getTauri()?.event.emit("tray-next-track", null);
+};
+
+const openTaskbarLyrics = () => {
+  getTauri()?.core.invoke("plugin:taskbar-lyric|open_taskbar_lyric");
 };
 
 const quitApp = () => {
@@ -166,6 +206,38 @@ const quitApp = () => {
   justify-content: center;
   gap: 16px;
   padding-top: 12px;
+}
+
+.actions {
+  display: flex;
+  justify-content: center;
+  padding-top: 10px;
+}
+
+.action-btn {
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.16);
+    color: #fff;
+  }
+
+  &:active {
+    transform: scale(0.97);
+  }
 }
 
 .ctrl-btn {

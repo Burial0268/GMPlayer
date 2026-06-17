@@ -695,7 +695,7 @@ const useMusicDataStore = defineStore("musicData", {
       if (typeof $player === "undefined") return false;
       // Cancel AutoMix crossfade on manual skip
       const autoMix = getAutoMixEngine();
-      if (autoMix.isCrossfading()) {
+      if (autoMix.isHandoffActive()) {
         autoMix.cancelCrossfade();
       }
       soundStop($player);

@@ -92,16 +92,31 @@ onBeforeUnmount(() => {
 <style lang="scss" scoped>
 .titlebar {
   position: fixed;
-  top: 0;
-  right: 0;
+  top: var(--app-floating-control-top);
+  right: var(--app-floating-control-inset, 14px);
   z-index: 9999;
   display: flex;
-  height: calc(54px + var(--app-safe-area-top, 0px));
+  height: 30px;
   align-items: center;
-  padding-right: 8px;
+  overflow: hidden;
+  border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.06));
+  border-radius: var(--radius-lg);
+  background-color: var(--titlebar-bg, rgba(255, 255, 255, 0.52));
+  box-shadow:
+    0 8px 20px rgb(0 0 0 / 8%),
+    inset 0 1px 0 rgb(255 255 255 / 26%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
   user-select: none;
   -webkit-app-region: no-drag;
-  transition: opacity 0.25s ease;
+  transition:
+    opacity 0.25s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+
+  &.dark-mode {
+    --titlebar-bg: rgba(24, 24, 24, 0.56);
+  }
 
   // When BigPlayer is open: hidden by default, visible on hover
   &.bigplayer-mode {
@@ -115,7 +130,7 @@ onBeforeUnmount(() => {
 
 // Match decorum's button styling exactly
 .decorum-tb-btn {
-  width: 46px;
+  width: 38px;
   height: 100%;
   border: none;
   padding: 0;
@@ -128,14 +143,16 @@ onBeforeUnmount(() => {
   border-radius: 0;
   align-items: center;
   justify-content: center;
-  transition: background 0.1s;
+  transition:
+    background-color 0.12s ease,
+    color 0.12s ease;
   background-color: transparent;
   text-rendering: optimizeLegibility;
   font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
   color: var(--n-text-color, #333);
 
   &:hover {
-    background-color: rgba(0, 0, 0, 0.06);
+    background-color: rgba(0, 0, 0, 0.08);
   }
 
   &.close:hover {
@@ -148,7 +165,7 @@ onBeforeUnmount(() => {
     color: rgba(255, 255, 255, 0.85);
 
     &:hover {
-      background-color: rgba(255, 255, 255, 0.08);
+      background-color: rgba(255, 255, 255, 0.12);
     }
 
     &.close:hover {

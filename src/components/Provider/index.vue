@@ -63,20 +63,48 @@ const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 const changeTheme = () => {
   if (setting.getSiteTheme === "light") {
     theme.value = null;
-    themeColorMeta.setAttribute("content", "#ffffff");
+    themeColorMeta.setAttribute("content", "#f2f2f4");
     setCssVariable("--message-bg", "rgba(255, 255, 255, 0.72)");
     setCssVariable("--message-border", "rgba(0, 0, 0, 0.06)");
     setCssVariable("--acrylic-bg", "rgba(255, 255, 255, 0.45)");
     setCssVariable("--acrylic-border", "rgba(0, 0, 0, 0.04)");
-    setCssVariable("--layout-bg", "#fff");
+    setCssVariable("--app-shell-bg", "#f2f2f4");
+    setCssVariable("--app-shell-rgb", "242, 242, 244");
+    setCssVariable("--layout-bg", "#f2f2f4");
+    setCssVariable("--content-panel-bg", "#fff");
+    setCssVariable("--content-panel-border-base", "rgba(0, 0, 0, 0.12)");
+    setCssVariable("--content-panel-edge-shadow", "rgba(0, 0, 0, 0.08)");
+    setCssVariable("--content-panel-gradient-overlay", "rgba(255, 255, 255, 0.86)");
+    setCssVariable("--content-panel-hero-wash-opacity", "0.16");
+    setCssVariable("--content-panel-mid-wash-opacity", "0.075");
+    setCssVariable("--content-panel-side-wash-opacity", "0.045");
+    setCssVariable("--content-panel-wash-opacity", "0.04");
+    setCssVariable(
+      "--content-panel-shadow",
+      "inset 0 1px 0 rgba(255, 255, 255, 0.72), inset 1px 0 0 rgba(255, 255, 255, 0.28)",
+    );
   } else if (setting.getSiteTheme === "dark") {
     theme.value = darkTheme;
-    themeColorMeta.setAttribute("content", "#18181c");
+    themeColorMeta.setAttribute("content", "#121216");
     setCssVariable("--message-bg", "rgba(48, 48, 51, 0.72)");
     setCssVariable("--message-border", "rgba(255, 255, 255, 0.08)");
     setCssVariable("--acrylic-bg", "rgba(24, 24, 28, 0.45)");
     setCssVariable("--acrylic-border", "rgba(255, 255, 255, 0.04)");
-    setCssVariable("--layout-bg", "#18181c");
+    setCssVariable("--app-shell-bg", "#121216");
+    setCssVariable("--app-shell-rgb", "18, 18, 22");
+    setCssVariable("--layout-bg", "#121216");
+    setCssVariable("--content-panel-bg", "#18181c");
+    setCssVariable("--content-panel-border-base", "rgba(255, 255, 255, 0.14)");
+    setCssVariable("--content-panel-edge-shadow", "rgba(0, 0, 0, 0.42)");
+    setCssVariable("--content-panel-gradient-overlay", "rgba(24, 24, 28, 0.62)");
+    setCssVariable("--content-panel-hero-wash-opacity", "0.58");
+    setCssVariable("--content-panel-mid-wash-opacity", "0.34");
+    setCssVariable("--content-panel-side-wash-opacity", "0.22");
+    setCssVariable("--content-panel-wash-opacity", "0.24");
+    setCssVariable(
+      "--content-panel-shadow",
+      "inset 0 1px 0 rgba(255, 255, 255, 0.08), inset 1px 0 0 rgba(255, 255, 255, 0.035)",
+    );
   }
 };
 

@@ -147,6 +147,7 @@ import {
   MessageRound,
   MoreHorizRound,
   PictureInPictureAltRound,
+  ClosedCaptionRound,
   SubtitlesRound,
 } from "@vicons/material";
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
@@ -155,7 +156,7 @@ import IconForward from "./icons/IconForward.vue";
 import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
 import IconPause from "./icons/IconPause.vue";
-import { musicStore, userStore } from "@/store";
+import { musicStore, settingStore, userStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
@@ -163,11 +164,12 @@ import BouncingSlider from "./BouncingSlider.vue";
 import ControlThumb from "./ControlThumb.vue";
 import { NIcon } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { windowManager } from "@/utils/tauri/windowManager";
+import { isWindowsTauri, windowManager } from "@/utils/tauri/windowManager";
 
 const router = useRouter();
 const music = musicStore();
 const user = userStore();
+const setting = settingStore();
 const { persistData } = storeToRefs(music);
 const { t } = useI18n();
 const isTauriEnv = ref(typeof window !== "undefined" && "__TAURI__" in window);
@@ -196,6 +198,10 @@ const toggleDesktopLyrics = async () => {
   }
 };
 
+const openTaskbarLyrics = async () => {
+  await windowManager.openTaskbarLyrics();
+};
+
 // 更多菜单
 const renderIcon = (icon) => () => h(NIcon, { size: 18 }, { default: () => h(icon) });
 
@@ -210,6 +216,13 @@ const moreOptions = computed(() => {
       },
       { label: t("setting.desktopLyrics"), key: "desktopLyrics", icon: renderIcon(SubtitlesRound) },
     );
+    if (setting.taskbarLyrics && isWindowsTauri()) {
+      options.push({
+        label: t("setting.taskbarLyrics"),
+        key: "taskbarLyrics",
+        icon: renderIcon(ClosedCaptionRound),
+      });
+    }
   }
   return options;
 });
@@ -217,6 +230,7 @@ const moreOptions = computed(() => {
 const handleMoreSelect = (key) => {
   if (key === "miniPlayer") toggleMiniPlayer();
   else if (key === "desktopLyrics") toggleDesktopLyrics();
+  else if (key === "taskbarLyrics") openTaskbarLyrics();
 };
 
 // 剩余时间（负数格式）

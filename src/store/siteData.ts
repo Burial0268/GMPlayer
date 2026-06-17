@@ -11,7 +11,7 @@ const useSiteDataStore = defineStore("siteData", {
   state: (): SiteDataState => {
     return {
       siteTitle: import.meta.env.VITE_SITE_TITLE as string,
-      songPicColor: "rgb(128,128,128)",
+      songPicColor: "128, 128, 128",
       songPicGradient: "linear-gradient(-45deg, #666, #fff)",
       searchInputActive: false,
     };
@@ -22,6 +22,15 @@ const useSiteDataStore = defineStore("siteData", {
     {
       storage: localStorage,
       pick: ["siteTitle", "songPicColor", "songPicGradient"],
+      afterHydrate(ctx: { store: any }) {
+        const match = String(ctx.store.songPicColor).match(/rgb\(([^)]+)\)/);
+        if (match) {
+          ctx.store.songPicColor = match[1]
+            .split(",")
+            .map((channel) => String(Number(channel.trim()) || 0))
+            .join(", ");
+        }
+      },
     },
   ],
 });

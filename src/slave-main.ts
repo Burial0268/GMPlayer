@@ -57,6 +57,11 @@ const router = createRouter({
       component: () => import("@/views/DesktopLyrics/index.vue"),
     },
     {
+      path: "/taskbar-lyric",
+      name: "taskbar-lyric",
+      component: () => import("@/views/TaskbarLyrics/index.vue"),
+    },
+    {
       path: "/:pathMatch(.*)",
       redirect: "/mini-player",
     },

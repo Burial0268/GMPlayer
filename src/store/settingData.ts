@@ -29,6 +29,7 @@ interface SettingDataState {
   showYrcTransform: boolean;
   showTransl: boolean;
   showRoma: boolean;
+  taskbarLyrics: boolean;
   songLevel: string;
   lyricsPosition: string;
   lyricsBlock: string;
@@ -101,6 +102,7 @@ const useSettingDataStore = defineStore("settingData", {
       showYrcTransform: false,
       showTransl: false,
       showRoma: false,
+      taskbarLyrics: true,
       songLevel: "exhigh",
       lyricsPosition: "left",
       lyricsBlock: "top",

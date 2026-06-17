@@ -19,6 +19,31 @@
   --duration-400: 400ms;
   --duration-500: 500ms;
 
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-panel: 12px;
+  --radius-pill: 999px;
+  --app-shell-bg: #f2f2f4;
+  --app-shell-rgb: 242, 242, 244;
+  --layout-bg: var(--app-shell-bg);
+  --content-panel-bg: #fff;
+  --content-panel-edge-shadow: rgba(0, 0, 0, 0.08);
+  --content-panel-gradient-overlay: rgba(255, 255, 255, 0.86);
+  --content-panel-hero-wash-opacity: 0.16;
+  --content-panel-mid-wash-opacity: 0.075;
+  --content-panel-side-wash-opacity: 0.045;
+  --content-panel-wash-opacity: 0.04;
+  --app-shell-top-gap: 6px;
+  --app-shell-side-gap: 8px;
+  --app-floating-control-top: calc(var(--app-shell-top-gap) + 6px);
+  --app-floating-control-inset: calc(var(--app-shell-side-gap) + 6px);
+  --app-drag-region-height: 42px;
+  --app-titlebar-width: 114px;
+  --app-titlebar-gap: 10px;
+  --z-search-overlay: 1900;
+
   /* Precomposed shortcuts */
   --transition-fast: 150ms var(--ease-out);
   --transition-normal: 250ms var(--ease-out);
@@ -26,10 +51,10 @@
   --transition-spring: 500ms var(--ease-out);
 
   font-synthesis: none;
-	text-rendering: optimizeLegibility;
-	-webkit-font-smoothing: antialiased;
-	-moz-osx-font-smoothing: grayscale;
-	-webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
 }
 
 // HarmonyOS Sans
@@ -42,7 +67,7 @@ body,
 
 // Dialog
 .s-dialog {
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   .n-dialog__close {
     margin: 16px 26px 0 0;
   }
@@ -64,7 +89,7 @@ body,
   width: 60vw;
   max-width: 700px;
   min-width: min(24rem, 100vw);
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   &.close {
     .n-card-header {
       .n-base-close {
@@ -105,7 +130,7 @@ body,
 
 // Dropdown
 .n-dropdown-menu {
-  border-radius: 12px !important;
+  border-radius: var(--radius-panel) !important;
 }
 
 // Tab
@@ -135,7 +160,7 @@ body,
     margin-bottom: 8px;
   }
   .n-message {
-    border-radius: 12px;
+    border-radius: var(--radius-panel);
     padding: 10px 14px;
     font-size: 13px;
     background: var(--message-bg, rgba(255, 255, 255, 0.72)) !important;
@@ -195,7 +220,7 @@ body,
 
 // Notification
 .n-notification {
-  border-radius: 12px !important;
+  border-radius: var(--radius-panel) !important;
   box-shadow:
     0 8px 32px rgba(0, 0, 0, 0.12),
     0 2px 8px rgba(0, 0, 0, 0.08);
@@ -209,13 +234,13 @@ body,
 
 // Nalert
 .n-alert {
-  border-radius: 12px !important;
+  border-radius: var(--radius-panel) !important;
 }
 
 // Drawer
 .n-drawer-container {
   .n-drawer {
-    border-radius: 12px 0 0 12px;
+    border-radius: var(--radius-panel) 0 0 var(--radius-panel);
     transition: all var(--duration-300) var(--ease-in-out);
     @media (max-width: 450px) {
       width: 100% !important;

@@ -316,6 +316,10 @@ export default {
   },
   // Player
   player: {
+    queue: {
+      nowPlaying: "Now Playing",
+      playingNext: "Playing Next",
+    },
     loading: {
       resolving: "Fetching audio",
       buffering: "Buffering",
@@ -462,6 +466,8 @@ export default {
     autoMixOutroLoopFade: "Loop Fade",
     miniPlayer: "Mini Player",
     desktopLyrics: "Desktop Lyrics",
+    taskbarLyrics: "Taskbar Lyrics",
+    taskbarLyricsTip: "Show the taskbar lyrics entry on the player page. Windows desktop only.",
     listenTogether: "Listen Together",
     listenTogetherTip: "Listen to music synchronously with friends",
   },

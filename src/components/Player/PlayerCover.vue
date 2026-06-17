@@ -151,6 +151,7 @@ import {
   VolumeUpRound,
   MessageRound,
   PictureInPictureAltRound,
+  ClosedCaptionRound,
   SubtitlesRound,
 } from "@vicons/material";
 import { computed, h, onMounted, ref } from "vue";
@@ -171,7 +172,7 @@ import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
 import { NIcon } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { windowManager } from "@/utils/tauri/windowManager";
+import { isWindowsTauri, windowManager } from "@/utils/tauri/windowManager";
 
 const router = useRouter();
 const music = musicStore();
@@ -205,6 +206,10 @@ const toggleDesktopLyrics = async () => {
   }
 };
 
+const openTaskbarLyrics = async () => {
+  await windowManager.openTaskbarLyrics();
+};
+
 // 更多菜单
 const renderIcon = (icon) => () => h(NIcon, { size: 18 }, { default: () => h(icon) });
 
@@ -219,6 +224,13 @@ const moreOptions = computed(() => {
       },
       { label: t("setting.desktopLyrics"), key: "desktopLyrics", icon: renderIcon(SubtitlesRound) },
     );
+    if (setting.taskbarLyrics && isWindowsTauri()) {
+      options.push({
+        label: t("setting.taskbarLyrics"),
+        key: "taskbarLyrics",
+        icon: renderIcon(ClosedCaptionRound),
+      });
+    }
   }
   return options;
 });
@@ -226,6 +238,7 @@ const moreOptions = computed(() => {
 const handleMoreSelect = (key) => {
   if (key === "miniPlayer") toggleMiniPlayer();
   else if (key === "desktopLyrics") toggleDesktopLyrics();
+  else if (key === "taskbarLyrics") openTaskbarLyrics();
 };
 
 // 音质标签

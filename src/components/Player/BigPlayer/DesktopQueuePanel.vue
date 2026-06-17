@@ -65,7 +65,7 @@ type QueueSong = {
   time?: string;
 };
 
-defineProps<{
+const props = defineProps<{
   show: boolean;
 }>();
 
@@ -103,7 +103,7 @@ const changeQueueIndex = (index: number) => {
 };
 
 watch(
-  () => [music.showPlayList, music.persistData.playSongIndex] as const,
+  () => [props.show, music.persistData.playSongIndex] as const,
   ([show]) => {
     if (scrollTimer.value) window.clearTimeout(scrollTimer.value);
     if (!show) return;

@@ -8,47 +8,54 @@
     <div :class="['app-body', music.showBigPlayer ? 'bigplayer-open' : '']">
       <div
         class="app-layout-wrapper"
-        :style="{ '--sidebar-width': setting.sidebarCollapsed ? '64px' : '240px' }"
+        :style="{ '--sidebar-width': setting.sidebarCollapsed ? '56px' : '208px' }"
       >
         <Sidebar />
-        <n-layout class="app-layout" style="height: 100vh">
-          <n-layout-header :data-tauri-drag-region="isTauri() || undefined">
-            <Nav />
-          </n-layout-header>
+        <n-layout
+          :class="[
+            'app-layout',
+            {
+              'player-visible': hasPlayBar,
+              'queue-open': showInlineQueue,
+            },
+          ]"
+          style="height: 100vh"
+        >
+          <div v-if="isTauri()" class="nav-drag-layer" data-tauri-drag-region />
+          <Nav :class="['app-nav-overlay', { 'tauri-nav': isTauri() }]" />
+          <div class="content-panel-frame" aria-hidden="true" />
           <n-layout-content
             position="absolute"
-            :class="music.getPlaylists[0] && music.showPlayBar ? 'show' : ''"
+            :class="hasPlayBar ? 'show' : ''"
             :native-scrollbar="false"
             embedded
           >
-            <main
-              ref="mainContent"
-              class="main"
-              id="mainContent"
-              :class="{
-                playlist: music.showPlayList,
-              }"
-            >
-              <n-back-top
-                :bottom="music.getPlaylists[0] && music.showPlayBar ? 100 : 40"
-                style="transition: all 0.3s; z-index: 999"
-              />
-              <router-view v-slot="{ Component, route }">
-                <transition name="fade-scale" mode="out-in">
-                  <keep-alive :max="15">
-                    <component
-                      :is="Component"
-                      :key="
-                        (route.matched[0]?.path ?? route.path) +
-                        (route.query.id ? `_${route.query.id}` : '')
-                      "
-                    />
-                  </keep-alive>
-                </transition>
-              </router-view>
-              <Player />
-            </main>
+            <div ref="contentStage" :class="['content-stage', { 'queue-open': showInlineQueue }]">
+              <main ref="mainContent" class="main" id="mainContent">
+                <n-back-top
+                  :bottom="music.getPlaylists[0] && music.showPlayBar ? 100 : 40"
+                  style="transition: all 0.3s; z-index: 999"
+                />
+                <router-view v-slot="{ Component, route }">
+                  <transition name="fade-scale" mode="out-in">
+                    <keep-alive :max="15">
+                      <component
+                        :is="Component"
+                        :key="
+                          (route.matched[0]?.path ?? route.path) +
+                          (route.query.id ? `_${route.query.id}` : '')
+                        "
+                      />
+                    </keep-alive>
+                  </transition>
+                </router-view>
+              </main>
+              <aside class="queue-column" :aria-hidden="!showInlineQueue">
+                <QueuePanel v-if="isInlineQueueLayout" />
+              </aside>
+            </div>
           </n-layout-content>
+          <Player />
         </n-layout>
       </div>
       <MobileTabBar />
@@ -72,6 +79,7 @@ import Player from "@/components/Player/index.vue";
 import TitleBar from "@/components/TitleBar/index.vue";
 import Sidebar from "@/components/Sidebar/index.vue";
 import MobileTabBar from "@/components/Sidebar/MobileTabBar.vue";
+import QueuePanel from "@/components/QueuePanel/index.vue";
 import packageJson from "@/../package.json";
 import { ref, watch, computed, h } from "vue";
 
@@ -82,7 +90,21 @@ const setting = settingStore();
 const site = siteStore();
 const router = useRouter();
 const route = useRoute();
-const mainContent = ref(null);
+const contentStage = ref<HTMLElement | null>(null);
+const mainContent = ref<HTMLElement | null>(null);
+const isInlineQueueLayout = ref(false);
+let inlineQueueMediaQuery: MediaQueryList | null = null;
+
+const showInlineQueue = computed(() => isInlineQueueLayout.value && music.showPlayList);
+const hasPlayBar = computed(() => Boolean(music.getPlaylists[0] && music.showPlayBar));
+
+const syncInlineQueueLayout = (event?: MediaQueryListEvent) => {
+  if (event) {
+    isInlineQueueLayout.value = event.matches;
+    return;
+  }
+  isInlineQueueLayout.value = inlineQueueMediaQuery?.matches ?? false;
+};
 
 // Standalone window detection (tray popup, etc.)
 const isStandaloneWindow = computed(() => !!route.meta.standalone);
@@ -175,8 +197,8 @@ const cleanAll = () => {
 // 滚动至顶部
 const scrollToTop = () => {
   nextTick().then(() => {
-    if (mainContent.value) {
-      mainContent.value?.scrollIntoView({ behavior: "smooth" });
+    if (contentStage.value || mainContent.value) {
+      (contentStage.value ?? mainContent.value)?.scrollIntoView({ behavior: "smooth" });
     } else {
       const mainContent = document.getElementById("mainContent");
       mainContent?.scrollIntoView({ behavior: "smooth" });
@@ -210,8 +232,8 @@ const handleCloseRequested = () => {
               h("input", {
                 type: "checkbox",
                 checked: rememberClose.value,
-                onChange: (e) => {
-                  rememberClose.value = e.target.checked;
+                onChange: (e: Event) => {
+                  rememberClose.value = (e.target as HTMLInputElement | null)?.checked ?? false;
                 },
               }),
               t("closeDialog.remember"),
@@ -234,6 +256,12 @@ const handleCloseRequested = () => {
 };
 
 onMounted(() => {
+  if (typeof window !== "undefined") {
+    inlineQueueMediaQuery = window.matchMedia("(min-width: 1041px)");
+    syncInlineQueueLayout();
+    inlineQueueMediaQuery.addEventListener("change", syncInlineQueueLayout);
+  }
+
   // 挂载方法至全局
   window.$scrollToTop = scrollToTop;
   window.$cleanAll = cleanAll;
@@ -323,23 +351,13 @@ onMounted(() => {
     windowManager.showWindow("main");
   }
 });
+
+onBeforeUnmount(() => {
+  inlineQueueMediaQuery?.removeEventListener("change", syncInlineQueueLayout);
+});
 </script>
 
 <style lang="scss" scoped>
-.n-layout-header {
-  height: calc(54px + var(--app-safe-area-top, 0px));
-  display: flex;
-  flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
-  background-color: var(--acrylic-bg, rgba(255, 255, 255, 0.45));
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  backdrop-filter: blur(20px) saturate(180%);
-  border-bottom: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.04));
-  position: relative;
-  z-index: 10;
-}
-
 .main-content {
   transition:
     transform 0.3s,
@@ -352,44 +370,103 @@ onMounted(() => {
 }
 
 .n-layout-content {
-  top: calc(54px + var(--app-safe-area-top, 0px));
+  top: 0;
+  bottom: var(--layout-content-bottom);
+  scroll-padding-top: var(--content-stage-padding-top);
+  clip-path: inset(
+    var(--content-stage-padding-top) var(--content-stage-padding-right)
+      var(--content-stage-padding-y) var(--content-stage-padding-x) round var(--radius-panel)
+  );
   transition: all var(--duration-300) var(--ease-in-out);
   background-color: transparent !important;
+  z-index: 1;
 
-  &.show {
-    bottom: 70px;
+  :deep(.n-scrollbar-rail--vertical) {
+    right: var(--content-scrollbar-right) !important;
+  }
 
-    @media (max-width: 768px) {
-      // 70px player + 56px tab bar + safe-area-bottom (home indicator).
-      // --app-safe-area-bottom is env(safe-area-inset-bottom) on Tauri mobile,
-      // 0px everywhere else — so this calc is a no-op on desktop / browser.
-      bottom: calc(126px + var(--app-safe-area-bottom, 0px));
+  .main {
+    position: relative;
+    z-index: 2;
+    flex: 1 1 auto;
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--content-panel-height);
+    margin: 0;
+    padding-top: 48px;
+    scroll-margin-top: var(--content-stage-padding-top);
+    background: transparent;
+    transition:
+      min-height var(--duration-300) var(--ease-in-out),
+      background-color var(--duration-200) var(--ease-out);
+  }
+
+  .content-stage {
+    position: relative;
+    min-height: 100%;
+    box-sizing: border-box;
+    display: flex;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 0;
+    padding: var(--content-stage-padding-y) var(--content-stage-padding-right)
+      var(--content-stage-padding-y) var(--content-stage-padding-x);
+    padding-top: var(--content-stage-padding-top);
+    scroll-margin-top: 0;
+    transition: gap var(--duration-300) var(--ease-in-out);
+
+    &.queue-open {
+      gap: 0;
+
+      .queue-column {
+        flex-basis: var(--queue-column-width);
+        width: var(--queue-column-width);
+        opacity: 1;
+        transform: translateX(0);
+        pointer-events: auto;
+      }
+    }
+  }
+
+  .queue-column {
+    flex: 0 0 0;
+    z-index: 0;
+    width: 0;
+    min-width: 0;
+    height: var(--content-panel-height);
+    position: sticky;
+    top: var(--content-stage-padding-top);
+    overflow: hidden;
+    opacity: 0;
+    transform: translateX(16px);
+    pointer-events: none;
+    transition:
+      flex-basis var(--duration-300) var(--ease-in-out),
+      width var(--duration-300) var(--ease-in-out),
+      opacity var(--duration-200) var(--ease-out),
+      transform var(--duration-300) var(--ease-in-out);
+
+    :deep(.queue-panel) {
+      height: 100%;
     }
   }
 
   @media (max-width: 768px) {
-    &:not(.show) {
-      // 56px tab bar only + safe-area-bottom (home indicator).
-      bottom: calc(56px + var(--app-safe-area-bottom, 0px));
-    }
-  }
+    clip-path: none;
 
-  :deep(.n-scrollbar-rail--vertical) {
-    right: 0;
-  }
-
-  .main {
-    max-width: 1400px;
-    margin: 0 auto;
-
-    div:nth-of-type(2) {
-      transition: all var(--duration-300) var(--ease-in-out);
+    .queue-column {
+      display: none;
     }
 
-    &.playlist {
-      div:nth-of-type(2) {
-        transform: scale(0.98);
-      }
+    .content-stage,
+    .content-stage.queue-open {
+      padding: 0;
+    }
+
+    .main {
+      min-height: 100%;
+      padding-top: calc(52px + var(--app-safe-area-top, 0px));
     }
   }
 }
@@ -399,7 +476,7 @@ onMounted(() => {
 .app-body {
   height: 100vh;
   overflow: hidden;
-  background-color: #000;
+  background-color: var(--app-shell-bg, var(--layout-bg, #fff));
 
   // Dark overlay — on the non-transformed wrapper so position:fixed covers the full viewport
   &::after {
@@ -425,7 +502,7 @@ onMounted(() => {
 .app-layout-wrapper {
   display: flex;
   height: 100vh;
-  background-color: var(--layout-bg, #fff);
+  background-color: var(--app-shell-bg, var(--layout-bg, #fff));
 
   .bigplayer-open & {
     overflow: hidden;
@@ -433,8 +510,171 @@ onMounted(() => {
 }
 
 .app-layout {
+  position: relative;
   flex: 1;
   min-width: 0;
-  background-color: transparent !important;
+  --content-stage-padding-x: 0px;
+  --content-stage-padding-right: 8px;
+  --content-stage-padding-y: 0px;
+  --content-stage-padding-top: var(--app-shell-top-gap);
+  --content-scrollbar-right: calc(var(--content-stage-padding-right) + 2px);
+  --player-right-inset: var(--content-stage-padding-right);
+  --layout-content-bottom: 0px;
+  --queue-column-width: clamp(292px, 23vw, 342px);
+  --content-panel-height: calc(
+    100vh - var(--layout-content-bottom) - var(--content-stage-padding-top) - var(
+        --content-stage-padding-y
+      )
+  );
+  --content-panel-border-color: var(
+    --content-panel-border,
+    color-mix(
+      in srgb,
+      rgb(var(--content-panel-accent-rgb, 128, 128, 128))
+        var(--content-panel-border-accent-strength, 18%),
+      var(--content-panel-border-base, rgba(0, 0, 0, 0.12))
+    )
+  );
+  background-color: var(--app-shell-bg, var(--layout-bg, #fff)) !important;
+
+  &.player-visible {
+    --layout-content-bottom: 70px;
+  }
+
+  &.queue-open {
+    --content-stage-padding-right: 0px;
+    --content-scrollbar-right: calc(var(--queue-column-width) + 2px);
+    --player-right-inset: calc(var(--queue-column-width) + 8px);
+  }
+
+  @media (min-width: 1041px) and (max-width: 1180px) {
+    --content-stage-padding-x: 0px;
+    --content-stage-padding-right: 8px;
+    --content-stage-padding-y: 0px;
+    --queue-column-width: clamp(252px, 24vw, 292px);
+
+    &.queue-open {
+      --content-stage-padding-right: 0px;
+      --content-scrollbar-right: calc(var(--queue-column-width) + 2px);
+      --player-right-inset: calc(var(--queue-column-width) + 8px);
+    }
+  }
+
+  @media (max-width: 768px) {
+    --content-stage-padding-top: 0px;
+    --content-stage-padding-right: 0px;
+    --content-scrollbar-right: 0px;
+    --player-right-inset: 0px;
+    // 56px tab bar only + safe-area-bottom (home indicator).
+    --layout-content-bottom: calc(56px + var(--app-safe-area-bottom, 0px));
+
+    &.player-visible {
+      // 70px player + 56px tab bar + safe-area-bottom.
+      --layout-content-bottom: calc(126px + var(--app-safe-area-bottom, 0px));
+    }
+  }
+}
+
+.content-panel-frame {
+  position: absolute;
+  top: var(--content-stage-padding-top);
+  right: var(--content-stage-padding-right);
+  bottom: calc(var(--layout-content-bottom) + var(--content-stage-padding-y));
+  left: var(--content-stage-padding-x);
+  z-index: 0;
+  pointer-events: none;
+  border: 1px solid var(--content-panel-border-color);
+  border-radius: var(--radius-panel);
+  background:
+    var(--content-panel-stage-gradient, linear-gradient(transparent, transparent)),
+    var(--content-panel-bg, var(--app-shell-bg, #fff));
+  box-shadow: var(
+    --content-panel-shadow,
+    inset 0 1px 0 rgba(255, 255, 255, 0.32),
+    inset 1px 0 0 rgba(255, 255, 255, 0.18)
+  );
+  transition:
+    right var(--duration-300) var(--ease-in-out),
+    bottom var(--duration-300) var(--ease-in-out),
+    border-color var(--duration-200) var(--ease-out),
+    border-radius var(--duration-300) var(--ease-in-out),
+    background-color var(--duration-200) var(--ease-out),
+    box-shadow var(--duration-200) var(--ease-out);
+
+  &::before,
+  &::after {
+    content: "";
+    position: absolute;
+    top: 18px;
+    bottom: var(--radius-panel);
+    width: 18px;
+    pointer-events: none;
+    transition: opacity var(--duration-200) var(--ease-out);
+  }
+
+  &::before {
+    left: -18px;
+    background: linear-gradient(to right, transparent, var(--content-panel-edge-shadow));
+  }
+
+  &::after {
+    right: -18px;
+    opacity: 0;
+    background: linear-gradient(to left, transparent, var(--content-panel-edge-shadow));
+  }
+
+  .app-layout.queue-open & {
+    right: calc(var(--content-stage-padding-right) + var(--queue-column-width));
+    border-radius: var(--radius-panel);
+
+    &::after {
+      opacity: 1;
+    }
+  }
+
+  @media (max-width: 768px) {
+    display: none;
+  }
+}
+
+.nav-drag-layer {
+  position: fixed;
+  top: 0;
+  left: var(--sidebar-width, 208px);
+  right: calc(
+    var(--app-floating-control-inset, 14px) + var(--app-titlebar-width, 114px) +
+      var(--app-titlebar-gap, 10px)
+  );
+  height: var(--app-drag-region-height);
+  z-index: 1500;
+  pointer-events: auto;
+
+  @media (max-width: 768px) {
+    display: none;
+  }
+}
+
+.app-nav-overlay {
+  position: fixed;
+  top: var(--app-floating-control-top);
+  left: calc(var(--sidebar-width, 208px) + var(--app-floating-control-inset, 14px));
+  right: var(--app-floating-control-inset, 14px);
+  width: auto;
+  z-index: 1600;
+  pointer-events: none;
+
+  &.tauri-nav {
+    right: calc(
+      var(--app-floating-control-inset, 14px) + var(--app-titlebar-width, 114px) +
+        var(--app-titlebar-gap, 10px)
+    );
+  }
+
+  @media (max-width: 768px) {
+    top: 0;
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
 }
 </style>

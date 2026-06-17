@@ -1,9 +1,11 @@
 <template>
   <n-drawer
+    v-if="useDrawerLayout"
     class="playlist-drawer"
-    v-model:show="playListShow"
+    :show="playListShow"
     :z-index="1"
     :width="400"
+    :show-mask="false"
     :trap-focus="false"
     :block-scroll="false"
     :style="{
@@ -12,8 +14,8 @@
     }"
     placement="right"
     to="#mainContent"
-    @after-leave="music.showPlayList = false"
-    @mask-click="music.showPlayList = false"
+    @update:show="handleDrawerShowUpdate"
+    @after-leave="handleDrawerAfterLeave"
   >
     <n-drawer-content :native-scrollbar="false" closable>
       <template #header>
@@ -87,7 +89,25 @@ const music = musicStore();
 const site = siteStore();
 
 // 播放列表显隐
+const useDrawerLayout = ref(false);
+let drawerMediaQuery = null;
 const playListShow = ref(false);
+
+const handleDrawerAfterLeave = () => {
+  if (useDrawerLayout.value && !playListShow.value && music.showPlayList) {
+    music.showPlayList = false;
+  }
+};
+
+const handleDrawerShowUpdate = (show) => {
+  if (!show) {
+    playListShow.value = false;
+    return;
+  }
+  if (useDrawerLayout.value && music.showPlayList) {
+    playListShow.value = true;
+  }
+};
 
 // 改变播放索引
 const changeIndex = (index) => {
@@ -106,42 +126,65 @@ const changeIndex = (index) => {
 
 // 监听播放列表显隐
 const timeOut = ref(null);
+const scrollToCurrentSong = () => {
+  nextTick().then(() => {
+    if (playListShow.value && music.getPlaylists[0]) {
+      const el = document.getElementById(`playlist${music.persistData.playSongIndex}`);
+      if (el) {
+        timeOut.value = setTimeout(() => {
+          el.scrollIntoView({
+            behavior: "smooth",
+            block: "center",
+          });
+        }, 500);
+      }
+    } else {
+      clearTimeout(timeOut.value);
+    }
+  });
+};
+
+const syncDrawerLayout = (event) => {
+  useDrawerLayout.value = event?.matches ?? drawerMediaQuery?.matches ?? true;
+};
+
 watch(
   () => music.showPlayList,
-  (val) => {
-    playListShow.value = val;
-    nextTick().then(() => {
-      if (val && music.getPlaylists[0]) {
-        const el = document.getElementById(`playlist${music.persistData.playSongIndex}`);
-        if (el) {
-          timeOut.value = setTimeout(() => {
-            el.scrollIntoView({
-              behavior: "smooth",
-              block: "center",
-            });
-          }, 500);
-        }
-      } else {
-        clearTimeout(timeOut.value);
-      }
-    });
+  (show) => {
+    if (useDrawerLayout.value) {
+      playListShow.value = show;
+    } else {
+      playListShow.value = false;
+    }
+    scrollToCurrentSong();
+  },
+);
+
+watch(
+  () => useDrawerLayout.value,
+  (isDrawerLayout) => {
+    playListShow.value = isDrawerLayout ? music.showPlayList : false;
+    scrollToCurrentSong();
   },
 );
 
 onMounted(() => {
-  playListShow.value = music.showPlayList;
+  if (typeof window !== "undefined") {
+    drawerMediaQuery = window.matchMedia("(max-width: 1040px)");
+    syncDrawerLayout();
+    drawerMediaQuery.addEventListener("change", syncDrawerLayout);
+  } else {
+    useDrawerLayout.value = true;
+  }
 });
 
 onBeforeUnmount(() => {
+  drawerMediaQuery?.removeEventListener("change", syncDrawerLayout);
   clearTimeout(timeOut.value);
 });
 </script>
 
 <style lang="scss">
-.n-drawer-mask {
-  backdrop-filter: blur(20px);
-}
-
 .playlist-drawer {
   width: 400px !important;
   border-radius: 0;
@@ -215,7 +258,7 @@ onBeforeUnmount(() => {
   }
 
   .songs {
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     cursor: pointer;
     margin-bottom: 12px;
     transition: all 0.3s;
@@ -282,7 +325,7 @@ onBeforeUnmount(() => {
           width: 3px;
           height: 16px;
           background-color: var(--cover-main-color);
-          border-radius: 4px;
+          border-radius: var(--radius-xs);
           transition: all 0.3s;
           animation: lineMove 1s ease-in-out infinite;
         }
@@ -324,7 +367,7 @@ onBeforeUnmount(() => {
 
       .remove {
         position: absolute;
-        border-radius: 8px;
+        border-radius: var(--radius-md);
         right: 0;
         opacity: 0;
         transition: all 0.3s;

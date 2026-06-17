@@ -5,9 +5,15 @@
         v-for="(item, index) in listData"
         :key="item"
         :id="'song' + index"
-        :class="
-          music.getPlaySongData && music.getPlaySongData?.id == item?.id ? 'songs play' : 'songs'
-        "
+        :class="[
+          'songs',
+          {
+            play: music.getPlaySongData && music.getPlaySongData?.id == item?.id,
+            'song-row-first': index === 0,
+            'song-row-last': index === listData.length - 1,
+            'song-row-single': listData.length === 1,
+          },
+        ]"
         :content-style="{
           padding: '16px',
           display: 'flex',

@@ -316,6 +316,10 @@ export default {
   },
   // 播放器
   player: {
+    queue: {
+      nowPlaying: "正在播放",
+      playingNext: "接下来播放",
+    },
     loading: {
       resolving: "获取音频资源中",
       buffering: "缓冲中",
@@ -475,6 +479,8 @@ export default {
     autoMixOutroLoopFade: "循环渐弱",
     miniPlayer: "迷你播放器",
     desktopLyrics: "桌面歌词",
+    taskbarLyrics: "任务栏歌词",
+    taskbarLyricsTip: "是否在播放页显示任务栏歌词入口，仅 Windows 桌面端可用",
     listenTogether: "一起听歌",
     listenTogetherTip: "与好友一起同步听歌",
   },

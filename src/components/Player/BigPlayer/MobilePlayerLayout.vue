@@ -31,11 +31,15 @@
                       <span class="name-inner name-measure">{{
                         songName || $t("other.noSong")
                       }}</span>
-                      <n-marquee v-if="isNameOverflow" class="mobile-name-marquee" :speed="36">
+                      <OverflowMarquee
+                        v-if="isNameOverflow"
+                        class="mobile-name-marquee"
+                        :speed="36"
+                      >
                         <span class="mobile-name-marquee-content">
                           {{ songName || $t("other.noSong") }}
                         </span>
-                      </n-marquee>
+                      </OverflowMarquee>
                     </div>
                   </div>
                   <div class="artists text-hidden" v-if="artistList.length">
@@ -95,11 +99,15 @@
                         <span class="name-inner name-measure">{{
                           songName || $t("other.noSong")
                         }}</span>
-                        <n-marquee v-if="isNameOverflow" class="mobile-name-marquee" :speed="36">
+                        <OverflowMarquee
+                          v-if="isNameOverflow"
+                          class="mobile-name-marquee"
+                          :speed="36"
+                        >
                           <span class="mobile-name-marquee-content">
                             {{ songName || $t("other.noSong") }}
                           </span>
-                        </n-marquee>
+                        </OverflowMarquee>
                       </div>
                     </div>
                     <div class="artists text-hidden" v-if="artistList.length">
@@ -257,6 +265,7 @@ import BouncingSlider from "../BouncingSlider.vue";
 import MobileControls from "./MobileControls.vue";
 import MobileCoverFrame from "./MobileCoverFrame.vue";
 import LyricOffsetControl from "./LyricOffsetControl.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 declare const $player: any;
 
@@ -713,8 +722,7 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
           line-height: 1.25;
           color: inherit;
 
-          :deep(.n-marquee__group),
-          :deep(.n-marquee__item) {
+          :deep(.overflow-marquee__group) {
             align-items: center;
             height: 1.25em;
             line-height: 1.25;
@@ -890,8 +898,7 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
             line-height: 1.25;
             color: inherit;
 
-            :deep(.n-marquee__group),
-            :deep(.n-marquee__item) {
+            :deep(.overflow-marquee__group) {
               align-items: center;
               height: 1.25em;
               line-height: 1.25;

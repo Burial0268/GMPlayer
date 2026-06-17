@@ -2,7 +2,9 @@
   <n-tooltip placement="right" :disabled="!collapsed" :delay="300">
     <template #trigger>
       <router-link :to="to" :class="['sidebar-item', { collapsed }]" @click="$emit('navigate')">
-        <n-icon class="sidebar-item-icon" :size="collapsed ? 22 : 20" :component="icon" />
+        <span class="sidebar-item-icon-slot">
+          <n-icon class="sidebar-item-icon" :size="16" :component="icon" />
+        </span>
         <span :class="['sidebar-item-label', { hidden: collapsed }]">{{ label }}</span>
       </router-link>
     </template>
@@ -25,26 +27,27 @@ defineEmits(["navigate"]);
 
 <style lang="scss" scoped>
 .sidebar-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--sidebar-item-slot, 40px) minmax(0, 1fr);
   align-items: center;
-  gap: 12px;
-  padding: 9px 14px;
-  border-radius: 10px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0;
+  border-radius: var(--radius-sm);
   text-decoration: none;
   color: var(--sidebar-text, var(--n-text-color));
   transition:
     background-color var(--duration-150) var(--ease-out),
     color var(--duration-150) var(--ease-out),
-    padding var(--duration-300) var(--ease-out),
-    gap var(--duration-300) var(--ease-out);
+    width var(--duration-300) var(--ease-out);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
 
   &.collapsed {
-    justify-content: center;
-    padding: 10px;
-    gap: 0;
+    width: var(--sidebar-item-slot, 40px);
+    min-height: 34px;
+    margin-inline: auto;
   }
 
   &:hover {
@@ -57,41 +60,54 @@ defineEmits(["navigate"]);
   }
 
   &.router-link-active {
-    color: var(--main-color);
-    background-color: var(--main-second-color);
+    color: var(--sidebar-accent, var(--main-color));
+    background-color: var(
+      --sidebar-active-bg,
+      color-mix(in srgb, var(--main-color) 14%, transparent)
+    );
     font-weight: 600;
 
     .sidebar-item-icon {
-      color: var(--main-color);
+      color: var(--sidebar-accent, var(--main-color));
     }
   }
 }
 
+.sidebar-item-icon-slot {
+  width: var(--sidebar-item-slot, 40px);
+  min-width: var(--sidebar-item-slot, 40px);
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .sidebar-item-icon {
-  flex-shrink: 0;
   transition:
     color var(--duration-150) var(--ease-out),
-    font-size var(--duration-300) var(--ease-out);
+    transform var(--duration-300) var(--ease-out);
 }
 
 .sidebar-item-label {
-  flex: 1;
   min-width: 0;
-  font-size: 14px;
+  padding-right: 10px;
+  font-size: 12.5px;
+  line-height: 18px;
   overflow: hidden;
   text-overflow: ellipsis;
   text-align: left;
   opacity: 1;
+  transform: translateX(0);
   transition:
     opacity var(--duration-200) var(--ease-out) var(--duration-100),
-    flex var(--duration-300) var(--ease-out);
+    transform var(--duration-300) var(--ease-out);
 
   &.hidden {
-    flex: 0;
     opacity: 0;
+    transform: translateX(-4px);
     transition:
       opacity var(--duration-100) var(--ease-out),
-      flex var(--duration-300) var(--ease-out);
+      transform var(--duration-300) var(--ease-out);
   }
 }
 </style>

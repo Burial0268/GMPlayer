@@ -131,6 +131,13 @@
       </div>
       <n-switch v-model:value="showRoma" :round="false" />
     </n-card>
+    <n-card v-if="showTaskbarLyricsSetting" class="set-item">
+      <div class="name">
+        {{ $t("setting.taskbarLyrics") }}
+        <span class="tip">{{ $t("setting.taskbarLyricsTip") }}</span>
+      </div>
+      <n-switch v-model:value="taskbarLyrics" :round="false" />
+    </n-card>
     <n-card class="set-item">
       <div class="name">
         <div class="dev">
@@ -443,7 +450,8 @@ import { storeToRefs } from "pinia";
 import { settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import { Code, Help } from "@icon-park/vue-next";
-import { watch } from "vue";
+import { computed, watch } from "vue";
+import { isWindowsTauri, windowManager } from "@/utils/tauri/windowManager";
 
 const { t } = useI18n();
 
@@ -466,6 +474,7 @@ const {
   lrcMousePause,
   showYrc,
   showRoma,
+  taskbarLyrics,
   backgroundImageShow,
   countDownShow,
   showYrcAnimation,
@@ -491,10 +500,17 @@ const {
 console.log("SETTING", fps);
 const isModalOn = ref(false);
 const isBlurModalOn = ref(false);
+const showTaskbarLyricsSetting = computed(() => isWindowsTauri());
 
 // 监听 TTML 仓库歌词设置变化
 watch(useTTMLRepo, (newValue, oldValue) => {
   console.log(`[Setting] useTTMLRepo changed from ${oldValue} to ${newValue}`);
+});
+
+watch(taskbarLyrics, (enabled) => {
+  if (!enabled) {
+    windowManager.closeTaskbarLyrics();
+  }
 });
 
 // 歌词位置
