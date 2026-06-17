@@ -17,6 +17,16 @@ import PkgConfig from 'vite-plugin-package-config'
 
 const AUDIO_PROXY_PATH = "/api/audio-proxy";
 
+function wasmBuildPlugins() {
+  return [
+    wasm(),
+    topLevelAwait({
+      promiseExportName: "__tla",
+      promiseImportName: (i: number) => `__tla_${i}`,
+    }),
+  ];
+}
+
 function isBlockedAudioProxyHost(hostname: string): boolean {
   const host = hostname.toLowerCase();
   if (
@@ -125,13 +135,9 @@ export default defineConfig(({ mode }) => {
       VueMcp(),
       audioProxyPlugin(),
       vueDevTools(),
-      wasm(),
+      ...wasmBuildPlugins(),
       PkgConfig(),
       OptimizationPersist(),
-      topLevelAwait({
-        promiseExportName: "__tla",
-        promiseImportName: (i: number) => `__tla_${i}`,
-      }),
       AutoImport({
         imports: [
           "vue",
@@ -190,6 +196,10 @@ export default defineConfig(({ mode }) => {
         algorithms: ["gzip", "brotliCompress"],
       }),
     ].filter(Boolean),
+    worker: {
+      format: "es",
+      plugins: wasmBuildPlugins,
+    },
     server: {
       strictPort: true,
       port: 25536,
