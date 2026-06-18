@@ -17,6 +17,13 @@ pub use taskbar::{
 
 #[cfg(windows)]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
+    init_with_browser_args(None)
+}
+
+#[cfg(windows)]
+pub fn init_with_browser_args<R: Runtime>(
+    additional_browser_args: Option<String>,
+) -> TauriPlugin<R> {
     Builder::new("taskbar-lyric")
         .invoke_handler(tauri::generate_handler![
             close_taskbar_lyric,
@@ -26,8 +33,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             mouse_forward::set_forwarding_enabled,
             mouse_forward::stop_mouse_hook,
         ])
-        .setup(|app, _api| {
-            app.manage(TaskbarLyricState::default());
+        .setup(move |app, _api| {
+            app.manage(TaskbarLyricState::new(additional_browser_args.clone()));
             Ok(())
         })
         .build()
@@ -36,4 +43,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
 #[cfg(not(windows))]
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("taskbar-lyric").build()
+}
+
+#[cfg(not(windows))]
+pub fn init_with_browser_args<R: Runtime>(
+    _additional_browser_args: Option<String>,
+) -> TauriPlugin<R> {
+    init()
 }

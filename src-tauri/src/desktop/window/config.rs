@@ -339,14 +339,14 @@ impl WindowConfig {
     }
 
     /// Tray popup preset — small borderless popup shown near the system tray.
-    /// Uses a standalone HTML file (not the SPA) to avoid loading Vue/Pinia/AudioContext.
+    /// Uses the lightweight slave Vue entry to avoid loading the main app stores/player.
     pub fn tray_popup() -> Self {
         Self {
             label: "tray-popup".into(),
             title: "Tray Popup".into(),
-            url: "/tray-popup.html".into(),
+            url: "/slave.html#/tray-popup".into(),
             width: 260.0,
-            height: 310.0,
+            height: 370.0,
             min_width: None,
             min_height: None,
             max_width: None,

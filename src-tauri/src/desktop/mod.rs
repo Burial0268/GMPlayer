@@ -5,6 +5,8 @@ mod linux_graphics;
 pub mod window;
 
 use crate::desktop::window::config::WindowConfig;
+#[cfg(windows)]
+use crate::desktop::window::config::DEFAULT_ADDITIONAL_WINDOW_ARGS;
 use crate::desktop::window::desktop_lyrics::mouse_through::{HitRegionRegistry, MouseThroughState};
 use crate::desktop::window::manager as wm;
 use crate::shared;
@@ -58,7 +60,9 @@ pub fn run() {
         );
 
     #[cfg(windows)]
-    let builder = builder.plugin(gmplayer_taskbar_lyric::init());
+    let builder = builder.plugin(gmplayer_taskbar_lyric::init_with_browser_args(Some(
+        DEFAULT_ADDITIONAL_WINDOW_ARGS.to_owned(),
+    )));
 
     let app = builder
         .manage(MouseThroughState::default())
