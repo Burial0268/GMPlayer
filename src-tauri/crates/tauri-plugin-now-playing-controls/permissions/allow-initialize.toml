@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-initialize"
+description = "Enables the initialize command."
+commands.allow = ["initialize"]

@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-set-enabled"
+description = "Enables the set_enabled command."
+commands.allow = ["set_enabled"]

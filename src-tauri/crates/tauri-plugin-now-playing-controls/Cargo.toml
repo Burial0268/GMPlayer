@@ -1,0 +1,21 @@
+[package]
+name = "tauri-plugin-now-playing-controls"
+version = "0.1.0"
+edition = "2021"
+description = "Desktop system media controls plugin for GMPlayer"
+links = "tauri-plugin-now-playing-controls"
+
+[lib]
+crate-type = ["staticlib", "cdylib", "rlib"]
+name = "gmplayer_now_playing_controls"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dependencies]
+now-playing-controls = { path = "../now-playing-controls" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2" }
+tracing = "0.1"
+ureq = "2"
+

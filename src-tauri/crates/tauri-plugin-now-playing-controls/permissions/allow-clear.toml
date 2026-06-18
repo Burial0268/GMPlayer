@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-clear"
+description = "Enables the clear command."
+commands.allow = ["clear"]

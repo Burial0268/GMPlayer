@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-update-timeline"
+description = "Enables the update_timeline command."
+commands.allow = ["update_timeline"]

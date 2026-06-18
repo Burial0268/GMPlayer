@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-update-state"
+description = "Enables the update_state command."
+commands.allow = ["update_state"]

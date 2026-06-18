@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-update-play-mode"
+description = "Enables the update_play_mode command."
+commands.allow = ["update_play_mode"]

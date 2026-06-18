@@ -1,0 +1,12 @@
+[default]
+identifier = "default"
+description = "Default permissions for GMPlayer desktop now playing controls"
+permissions = [
+  "allow-clear",
+  "allow-initialize",
+  "allow-set-enabled",
+  "allow-update-play-mode",
+  "allow-update-state",
+  "allow-update-timeline",
+]
+
