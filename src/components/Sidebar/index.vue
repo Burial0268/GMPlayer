@@ -194,6 +194,7 @@
         :icon="SettingTwo"
         :label="$t('sidebar.settings')"
         :collapsed="setting.sidebarCollapsed"
+        :badge="hasUpdate"
       />
       <n-tooltip placement="right" :disabled="!setting.sidebarCollapsed" :delay="300">
         <template #trigger>
@@ -244,11 +245,13 @@ import { useRouter } from "vue-router";
 import SidebarItem from "./SidebarItem.vue";
 import SidebarPlaylistItem from "./SidebarPlaylistItem.vue";
 import SearchInp from "@/components/SearchInp/index.vue";
+import { useAppUpdater } from "@/composables/useAppUpdater";
 
 const router = useRouter();
 const setting = settingStore();
 const site = siteStore();
 const user = userStore();
+const { hasUpdate, checkForUpdate } = useAppUpdater();
 
 const sidebarWidth = computed(() => (setting.sidebarCollapsed ? "56px" : "208px"));
 const sectionOpen = reactive({
@@ -265,6 +268,7 @@ const toggleSection = (key: "library" | "own" | "liked") => {
 const isTauri = ref(false);
 onMounted(() => {
   isTauri.value = typeof window !== "undefined" && "__TAURI__" in window;
+  if (isTauri.value) checkForUpdate({ silent: true });
   // Load playlists if logged in
   if (user.userLogin && !user.getUserPlayLists.has) {
     user.setUserPlayLists();

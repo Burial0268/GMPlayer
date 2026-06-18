@@ -4,6 +4,7 @@
       <router-link :to="to" :class="['sidebar-item', { collapsed }]" @click="$emit('navigate')">
         <span class="sidebar-item-icon-slot">
           <n-icon class="sidebar-item-icon" :size="16" :component="icon" />
+          <span v-if="badge" class="sidebar-item-badge" />
         </span>
         <span :class="['sidebar-item-label', { hidden: collapsed }]">{{ label }}</span>
       </router-link>
@@ -20,6 +21,7 @@ defineProps({
   icon: { type: Object, required: true },
   label: { type: String, required: true },
   collapsed: { type: Boolean, default: false },
+  badge: { type: Boolean, default: false },
 });
 
 defineEmits(["navigate"]);
@@ -74,12 +76,24 @@ defineEmits(["navigate"]);
 }
 
 .sidebar-item-icon-slot {
+  position: relative;
   width: var(--sidebar-item-slot, 40px);
   min-width: var(--sidebar-item-slot, 40px);
   height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.sidebar-item-badge {
+  position: absolute;
+  top: 7px;
+  right: 10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background-color: #f53f3f;
+  box-shadow: 0 0 0 2px var(--app-shell-bg, var(--layout-bg, #fff));
 }
 
 .sidebar-item-icon {

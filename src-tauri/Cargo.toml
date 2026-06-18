@@ -52,9 +52,7 @@ parking_lot = "0.12"
 log = "0.4"
 tauri-plugin-log = "2"
 tauri-plugin-media-session = "0.2.4"
-
-[target.'cfg(all(not(windows), not(target_os = "android"), not(target_os = "macos"), not(target_os = "freebsd"), not(target_os = "openbsd"), not(target_os = "illumos"), not(all(target_env = "musl", target_pointer_width = "32")), not(target_arch = "riscv64")))'.dependencies]
-tikv-jemallocator = "0.6.0"
+mimalloc = "*"
 
 [target.'cfg(all(not(target_os = "android"), not(target_os = "ios")))'.dependencies]
 rdev = "0.5"
@@ -62,7 +60,6 @@ gmplayer-now-playing-controls = { package = "tauri-plugin-now-playing-controls",
 
 [target.'cfg(windows)'.dependencies]
 gmplayer-taskbar-lyric = { package = "tauri-plugin-taskbar-lyric", path = "crates/taskbar-lyric" }
-rpmalloc = { version = "0.2.2", features = ["adaptive_thread_cache", "statistics"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

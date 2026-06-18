@@ -1,6 +1,7 @@
 {
   "identifier": "migrated",
   "description": "permissions that were migrated from v1",
+  "platforms": ["windows", "macOS", "linux"],
   "local": true,
   "windows": [
     "main",
