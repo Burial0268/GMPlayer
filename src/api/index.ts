@@ -55,6 +55,7 @@ export default api;
 export const getAlbum = album.get;
 export const getAlbumNew = album.getNew;
 export const getNewAlbum = album.getNewest;
+export const getArtistAlbums = album.getArtistAlbums;
 export const getToplist = home.getToplist;
 export const likeAlbum = album.subscribe;
 
@@ -63,7 +64,7 @@ export const getArtistList = artist.getList;
 export const getArtistDetail = artist.getDetail;
 export const getArtistSongs = artist.getSongs;
 export const getArtistAllSongs = artist.getAllSongs;
-export const getArtistAblums = artist.getAlbums;
+export const getArtistAblums = album.getArtistAlbums;
 export const getArtistVideos = artist.getVideos;
 export const likeArtist = artist.subscribe;
 export const getTopArtists = artist.getTop;

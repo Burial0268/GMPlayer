@@ -36,6 +36,19 @@ export const album = {
     }),
 
   /**
+   * 获取歌手专辑列表
+   *
+   * NCM 返回字段名为 hotAlbums，但接口默认排序更接近发布时间倒序；
+   * 页面层按展示语义决定是否过滤 Single。
+   */
+  getArtistAlbums: (id: number, limit = 30, offset = 0) =>
+    request<any>({
+      method: "GET",
+      url: "/artist/album",
+      params: { id, limit, offset, timestamp: Date.now() },
+    }),
+
+  /**
    * 收藏/取消收藏专辑
    * @param t - 1为收藏，2为取消收藏
    */
@@ -63,6 +76,7 @@ export default album;
 export const getAlbum = album.get;
 export const getAlbumNew = album.getNew;
 export const getNewAlbum = album.getNewest;
+export const getArtistAlbums = album.getArtistAlbums;
 export const likeAlbum = album.subscribe;
 export const getUserAlbum = album.getSublist;
 
