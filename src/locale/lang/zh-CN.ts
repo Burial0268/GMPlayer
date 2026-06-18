@@ -1,4 +1,4 @@
-export default {
+const messages: Record<string, unknown> = {
   // 导航栏
   nav: {
     home: "首页",
@@ -149,6 +149,8 @@ export default {
     name: {
       song: "歌曲",
       hotSong: "热门歌曲",
+      latestRelease: "最新发布",
+      songRanking: "歌曲排行",
       playlist: "歌单",
       videos: "视频",
       playlists: "播放列表",
@@ -523,3 +525,5 @@ export default {
     },
   },
 };
+
+export default messages;

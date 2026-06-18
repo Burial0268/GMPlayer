@@ -277,6 +277,7 @@ type QueueSong = {
   album?: { picUrl?: string };
   time?: string;
 };
+type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
 const props = defineProps<{
@@ -290,7 +291,7 @@ const props = defineProps<{
   queueOpen: boolean;
   mobileLayer: number;
   layoutTransition: Record<string, unknown>;
-  contentShellStyle: MotionStyleRecord;
+  contentShellStyle: StaticStyleRecord;
   fullUiMotionStyle: MotionStyleRecord;
   controlsMotionStyle: MotionStyleRecord;
   albumLayerStyle: MotionStyleRecord;

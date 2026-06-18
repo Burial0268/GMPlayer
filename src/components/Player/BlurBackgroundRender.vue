@@ -159,7 +159,7 @@ watchEffect(async () => {
 });
 
 watchEffect(() => {
-  if (bgRenderRef.value && props.fps) bgRenderRef.value.setFPS(props.fps);
+  if (bgRenderRef.value && props.fps !== undefined) bgRenderRef.value.setFPS(props.fps);
 });
 
 watchEffect(() => {
@@ -172,16 +172,17 @@ watchEffect(() => {
 });
 
 watchEffect(() => {
-  if (bgRenderRef.value && props.flowSpeed) bgRenderRef.value.setFlowSpeed(props.flowSpeed);
+  if (bgRenderRef.value && props.flowSpeed !== undefined)
+    bgRenderRef.value.setFlowSpeed(props.flowSpeed);
 });
 
 watchEffect(() => {
-  if (bgRenderRef.value && props.renderScale)
+  if (bgRenderRef.value && props.renderScale !== undefined)
     bgRenderRef.value.setRenderScale(props.renderScale ?? 0.5);
 });
 
 watchEffect(() => {
-  if (bgRenderRef.value && props.lowFreqVolume)
+  if (bgRenderRef.value && props.lowFreqVolume !== undefined)
     bgRenderRef.value.setLowFreqVolume(props.lowFreqVolume ?? 1.0);
 });
 

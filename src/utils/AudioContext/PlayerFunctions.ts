@@ -27,6 +27,7 @@ import { SoundManager } from "./SoundManager";
 import { AudioContextManager } from "./AudioContextManager";
 import { getAutoMixEngine } from "./AutoMix";
 import { getAudioPreloader } from "./AudioPreloader";
+import { clearSpectrumFrame, setSpectrumFrame } from "./SpectrumFrame";
 import type { ISound } from "./types";
 import {
   NativeRustSound,
@@ -51,12 +52,29 @@ let spectrumAnimationId: number | null = null;
 let spectrumUpdateGeneration = 0;
 // 页面可见性状态
 let isPageVisible = true;
-// Reusable spectrum array to avoid Array.from() allocation every frame
-let spectrumReusableArray: number[] = [];
+let lastLowFreqStoreValue = 0;
+let lastLowFreqStoreAt = 0;
 // Background monitor interval ID (setInterval fallback when RAF is paused)
 let backgroundMonitorId: ReturnType<typeof setInterval> | null = null;
 let lastBackendSyncRequestAt = 0;
 let lastBackendStateAuditAt = 0;
+
+const LOW_FREQ_STORE_INTERVAL_MS = 33;
+const LOW_FREQ_STORE_EPSILON = 0.005;
+
+const updateLowFreqStore = (music: ReturnType<typeof musicStore>, value: number): void => {
+  const nextValue = Number.isFinite(value) ? value : 0;
+  const now = performance.now();
+  if (
+    now - lastLowFreqStoreAt < LOW_FREQ_STORE_INTERVAL_MS &&
+    Math.abs(nextValue - lastLowFreqStoreValue) < LOW_FREQ_STORE_EPSILON
+  ) {
+    return;
+  }
+  lastLowFreqStoreAt = now;
+  lastLowFreqStoreValue = nextValue;
+  music.lowFreqVolume = nextValue;
+};
 
 const requestNativeBackendSync = (): void => {
   const sound = SoundManager.getCurrentSound();
@@ -220,6 +238,7 @@ const stopSpectrumUpdate = (): void => {
     cancelAnimationFrame(spectrumAnimationId);
     spectrumAnimationId = null;
   }
+  clearSpectrumFrame();
   stopBackgroundMonitor();
 };
 
@@ -240,8 +259,6 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
   }
 
   const settings = settingStore();
-  const needsSpectrum = settings.musicFrequency;
-  const needsLowFreq = settings.dynamicFlowSpeed;
   const autoMix = getAutoMixEngine();
 
   const updateLoop = (): void => {
@@ -256,6 +273,14 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
     // AutoMix: monitor playback position per frame
     autoMix.monitorPlayback(sound);
 
+    const needsSpectrum = settings.musicFrequency;
+    const needsLowFreq = settings.dynamicFlowSpeed;
+    const needsAutoMix = settings.autoMixEnabled;
+    if (!needsSpectrum && !needsLowFreq && !needsAutoMix) {
+      stopSpectrumUpdate();
+      return;
+    }
+
     // Skip spectrum computation when page is not visible
     if (isPageVisible) {
       if (needsSpectrum) {
@@ -265,19 +290,8 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
         // 1024 bins by default.
         const spectrumData =
           sound instanceof NativeRustSound ? sound.getFFTData() : sound.getFrequencyData();
-        const len = spectrumData.length;
-
-        // Reuse array to avoid allocating a new one every frame (~60fps)
-        if (spectrumReusableArray.length !== len) {
-          spectrumReusableArray = Array.from({ length: len });
-        }
-        for (let i = 0; i < len; i++) {
-          spectrumReusableArray[i] = spectrumData[i];
-        }
-        music.spectrumsData = spectrumReusableArray;
-
-        // 使用 AudioEffectManager 内部计算的平均振幅
-        music.spectrumsScaleData = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
+        const scale = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
+        setSpectrumFrame(spectrumData, scale);
       } else if (needsLowFreq && !(sound instanceof NativeRustSound)) {
         // Web backend only: populate AnalyserNode buffer for mobile fallback.
         // NativeRustSound receives lowFreqVolume from Rust over WS; normalizing
@@ -287,7 +301,7 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
 
       if (needsLowFreq) {
         // 获取低频音量 (直接从 effectManager 计算，已内置平滑处理)
-        music.lowFreqVolume = sound.getLowFrequencyVolume();
+        updateLowFreqStore(music, sound.getLowFrequencyVolume());
       }
     }
 
@@ -295,6 +309,16 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
   };
 
   updateLoop();
+};
+
+export const ensureSpectrumUpdate = (): void => {
+  const settings = settingStore();
+  if (!settings.musicFrequency && !settings.dynamicFlowSpeed && !settings.autoMixEnabled) return;
+
+  const sound = SoundManager.getCurrentSound() ?? (window.$player as ISound | undefined);
+  if (!sound) return;
+
+  startSpectrumUpdate(sound, musicStore());
 };
 
 /**

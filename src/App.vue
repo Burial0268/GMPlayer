@@ -346,9 +346,6 @@ onMounted(() => {
     windowManager.onMainWindowVisibility((visible) => {
       setPageVisible(visible);
     });
-
-    // Show main window now that the frontend is mounted (starts hidden to avoid blank flash)
-    windowManager.showWindow("main");
   }
 });
 

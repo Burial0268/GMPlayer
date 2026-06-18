@@ -5,6 +5,8 @@ import { vertexShader as mainVertexShader } from "./glsl/duplicate.vert";
 import { fragmentShader as mainFragmentShader } from "./glsl/duplicate.frag";
 import { fragmentShader as flowMapFragmentShader } from "./glsl/flowmap.frag";
 
+const MAX_ALBUM_TEXTURE_SIZE = 512;
+
 export interface AppleBackgroundRenderOptions {
   rotationSpeed?: number;
   saturation?: number;
@@ -18,7 +20,7 @@ export interface AppleBackgroundRenderOptions {
 export class FbmRenderer extends BaseRenderer {
   private gl: WebGL2RenderingContext;
   private frameTime = 0;
-  private currentImageData?: ImageData;
+  private hasImage = false;
   private lastTickTime = 0;
   private tickHandle = 0;
   private maxFPS = 60;
@@ -47,6 +49,7 @@ export class FbmRenderer extends BaseRenderer {
   private brightness = 1.28;
   private baseColor: [number, number, number] = [0.5, 0.5, 0.5];
   private isSmallScreen = false;
+  private albumRequestId = 0;
 
   setFlowSpeed(speed: number) {
     this.baseFlowSpeed = speed;
@@ -154,21 +157,28 @@ export class FbmRenderer extends BaseRenderer {
     gl.generateMipmap(gl.TEXTURE_2D);
     gl.bindTexture(gl.TEXTURE_2D, null);
 
-    this.currentImageData = imageData;
+    this.hasImage = true;
     this.isNoCover = false;
     this.baseColor = this.computeDominantColor(imageData);
   }
 
   setFPS(fps: number) {
-    this.maxFPS = fps;
+    this.maxFPS = Math.max(1, fps);
   }
 
   pause() {
     this.isPaused = true;
+    if (!this.tickHandle && !this.isNoCover && !this._disposed) {
+      this.tickHandle = requestAnimationFrame(this.tick);
+    }
   }
 
   resume() {
     this.isPaused = false;
+    if (!this.tickHandle && !this.isNoCover && !this.isStatic && !this._disposed) {
+      this.lastTickTime = performance.now();
+      this.tickHandle = requestAnimationFrame(this.tick);
+    }
   }
 
   constructor(canvas: HTMLCanvasElement, options: AppleBackgroundRenderOptions = {}) {
@@ -267,7 +277,7 @@ export class FbmRenderer extends BaseRenderer {
   }
 
   private render() {
-    if (!this.texture || !this.currentImageData || !this.flowMapTexture) return;
+    if (!this.texture || !this.hasImage || !this.flowMapTexture) return;
 
     const gl = this.gl;
     this.updateFramebufferSize();
@@ -334,6 +344,7 @@ export class FbmRenderer extends BaseRenderer {
   }
 
   private tick = () => {
+    this.tickHandle = 0;
     if (this._disposed) return;
     if (this.isPaused || this.isStatic) {
       this.tickHandle = requestAnimationFrame(this.tick);
@@ -342,7 +353,6 @@ export class FbmRenderer extends BaseRenderer {
 
     const now = performance.now();
     const delta = now - this.lastTickTime;
-    this.lastTickTime = now;
 
     const frameInterval = 1000 / this.maxFPS;
     if (delta < frameInterval) {
@@ -350,6 +360,7 @@ export class FbmRenderer extends BaseRenderer {
       return;
     }
 
+    this.lastTickTime = now;
     this.frameTime += delta / 1000;
     this.render();
 
@@ -357,9 +368,9 @@ export class FbmRenderer extends BaseRenderer {
   };
 
   start() {
-    if (this.isNoCover) return;
+    if (this.isNoCover || this.tickHandle || this._disposed) return;
     this.lastTickTime = performance.now();
-    this.tick();
+    this.tickHandle = requestAnimationFrame(this.tick);
   }
 
   dispose() {
@@ -376,43 +387,62 @@ export class FbmRenderer extends BaseRenderer {
     if (this.positionBuffer) gl.deleteBuffer(this.positionBuffer);
     if (this.texCoordBuffer) gl.deleteBuffer(this.texCoordBuffer);
     if (this.indexBuffer) gl.deleteBuffer(this.indexBuffer);
+    this.hasImage = false;
   }
 
   async setAlbum(albumSource: string | HTMLImageElement | HTMLVideoElement, _isVideo?: boolean) {
-    let imageData: ImageData;
+    const requestId = ++this.albumRequestId;
 
     if (typeof albumSource === "string") {
       const img = new Image();
       img.crossOrigin = "anonymous";
+      img.decoding = "async";
       await new Promise((resolve, reject) => {
         img.onload = resolve;
         img.onerror = reject;
         img.src = albumSource;
       });
-
-      const canvas = document.createElement("canvas");
-      canvas.width = img.width;
-      canvas.height = img.height;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(img, 0, 0);
-      imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      if (this._disposed || requestId !== this.albumRequestId) return;
+      this.setImage(
+        this.createScaledImageData(
+          img,
+          img.naturalWidth || img.width,
+          img.naturalHeight || img.height,
+        ),
+      );
     } else if (albumSource instanceof HTMLImageElement) {
-      const canvas = document.createElement("canvas");
-      canvas.width = albumSource.width;
-      canvas.height = albumSource.height;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(albumSource, 0, 0);
-      imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      if (this._disposed || requestId !== this.albumRequestId) return;
+      this.setImage(
+        this.createScaledImageData(
+          albumSource,
+          albumSource.naturalWidth || albumSource.width,
+          albumSource.naturalHeight || albumSource.height,
+        ),
+      );
     } else {
-      const canvas = document.createElement("canvas");
-      canvas.width = albumSource.videoWidth;
-      canvas.height = albumSource.videoHeight;
-      const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(albumSource, 0, 0);
-      imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      if (this._disposed || requestId !== this.albumRequestId) return;
+      this.setImage(
+        this.createScaledImageData(albumSource, albumSource.videoWidth, albumSource.videoHeight),
+      );
     }
+  }
 
-    this.setImage(imageData);
+  private createScaledImageData(
+    source: CanvasImageSource,
+    sourceWidth: number,
+    sourceHeight: number,
+  ): ImageData {
+    const safeWidth = Math.max(1, sourceWidth || 1);
+    const safeHeight = Math.max(1, sourceHeight || 1);
+    const scale = Math.min(1, MAX_ALBUM_TEXTURE_SIZE / Math.max(safeWidth, safeHeight));
+    const width = Math.max(1, Math.round(safeWidth * scale));
+    const height = Math.max(1, Math.round(safeHeight * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(source, 0, 0, width, height);
+    return ctx.getImageData(0, 0, width, height);
   }
 
   setLowFreqVolume(_volume: number) {
@@ -435,6 +465,11 @@ export class FbmRenderer extends BaseRenderer {
     if (staticMode) {
       // Render one final frame to show the static state
       this.render();
+      if (!this.tickHandle && !this.isNoCover && !this._disposed) {
+        this.tickHandle = requestAnimationFrame(this.tick);
+      }
+    } else if (!this.isPaused) {
+      this.resume();
     }
   }
 }

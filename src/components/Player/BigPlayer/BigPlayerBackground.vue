@@ -4,7 +4,7 @@
       <template v-if="backgroundImageShow === 'blur'">
         <BlurBackgroundRender
           v-if="hasPlayData"
-          :fps="isPlaying ? fps || 30 : 0"
+          :fps="fps || 30"
           :playing="true"
           :album="coverImageUrl"
           :blurLevel="blurAmount || 30"
@@ -17,9 +17,9 @@
 
     <template v-if="backgroundImageShow === 'eplor'">
       <BackgroundRender
-        :fps="isPlaying ? fps : 0"
+        :fps="fps"
         :playing="true"
-        :flowSpeed="isPlaying ? flowSpeed : 0"
+        :flowSpeed="actualPlaying ? flowSpeed : 0"
         :album="albumImageUrl === 'none' ? coverImageUrl : albumImageUrl"
         :renderScale="renderScale"
         :lowFreqVolume="lowFreqVolume"

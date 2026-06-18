@@ -14,6 +14,7 @@ import {
   getAutoMixEngine,
   getAudioPreloader,
 } from "@/utils/AudioContext";
+import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/NativeRustSound";
 import getLanguageData from "@/utils/getLanguageData";
 import {
   preprocessLyrics,
@@ -256,6 +257,15 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     preloadUpcomingSongs() {
+      if (isAudioBackendRuntimeAvailable()) {
+        console.log("预加载已跳过：audio-backend runtime 已接管播放");
+        return;
+      }
+      const audioPreloader = getAudioPreloader();
+      if (audioPreloader.isPreloading) {
+        console.log("预加载已跳过：AudioPreloader 正在处理下一首");
+        return;
+      }
       if (!(this.preloadedSongIds instanceof Set)) {
         console.warn("preloadedSongIds 类型不正确，已重置。");
         this.preloadedSongIds = new Set();

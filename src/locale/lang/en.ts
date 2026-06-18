@@ -1,4 +1,4 @@
-export default {
+const messages: Record<string, unknown> = {
   // Navigation
   nav: {
     home: "Home",
@@ -150,6 +150,8 @@ export default {
     name: {
       song: "Song",
       hotSong: "Top Songs",
+      latestRelease: "Latest Release",
+      songRanking: "Song Ranking",
       playlist: "Playlist",
       playlists: "Playlists",
       videos: "Videos",
@@ -510,3 +512,5 @@ export default {
     },
   },
 };
+
+export default messages;

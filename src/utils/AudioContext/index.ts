@@ -16,6 +16,7 @@ export {
   processSpectrum,
   adoptIncomingSound,
   setPageVisible,
+  ensureSpectrumUpdate,
 } from "./PlayerFunctions";
 
 // Export types
@@ -52,6 +53,14 @@ export { AudioEffectManager } from "./AudioEffectManager";
 export { AudioAnalysisProcessor } from "./AudioAnalysisProcessor";
 export { LowFreqVolumeAnalyzer } from "./LowFreqVolumeAnalyzer";
 export { AudioContextManager } from "./AudioContextManager";
+export {
+  clearSpectrumFrame,
+  getSpectrumFrame,
+  getSpectrumScale,
+  getSpectrumVersion,
+  setSpectrumFrame,
+} from "./SpectrumFrame";
+export type { SpectrumFrame } from "./SpectrumFrame";
 
 // AudioPreloader
 export { AudioPreloader, getAudioPreloader } from "./AudioPreloader";

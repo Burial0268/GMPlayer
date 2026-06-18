@@ -199,8 +199,8 @@ export class AudioEffectManager {
    * Process audio frame via WASM (FFT + lowFreq analysis).
    * Called once per RAF frame — time-delta smoothing runs continuously.
    */
-  private _ensureFresh(): void {
-    this._analysisProc?.ensureFresh();
+  private _ensureFresh(updateSpectrum: boolean = true): void {
+    this._analysisProc?.ensureFresh(updateSpectrum);
   }
 
   /**
@@ -238,7 +238,7 @@ export class AudioEffectManager {
    * Get FFT data from WASM audio analysis (Hamming window, normalized 0-255).
    */
   getFFTData(): number[] {
-    this._ensureFresh();
+    this._ensureFresh(true);
     return this._analysisProc?.getSpectrum() ?? [];
   }
 
@@ -254,7 +254,7 @@ export class AudioEffectManager {
       return this._getLowFreqFromAnalyser();
     }
 
-    this._ensureFresh();
+    this._ensureFresh(false);
     return this._analysisProc?.getLowFrequencyVolume() ?? 0;
   }
 

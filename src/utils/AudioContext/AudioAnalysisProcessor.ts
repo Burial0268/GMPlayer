@@ -75,6 +75,7 @@ export class AudioAnalysisProcessor {
   // Cached results from last processFrame
   private _cachedSpectrum: number[] = [];
   private _cachedLowFreq: number = 1;
+  private _rawBinsCache: number[] = [];
 
   // Delta tracking
   private _lastTime: number = 0;
@@ -98,6 +99,7 @@ export class AudioAnalysisProcessor {
     this._rawBinCount = binCount;
     this._lfOptions = { binCount, windowSize, gradientThreshold, smoothingFactor };
     this._cachedSpectrum = Array.from({ length: outputSize }, () => 0);
+    this._rawBinsCache = Array.from({ length: binCount }, () => 0);
 
     this._tryCreateProc(
       outputSize,
@@ -154,7 +156,7 @@ export class AudioAnalysisProcessor {
     this._dirty = true;
   }
 
-  ensureFresh(): void {
+  ensureFresh(updateSpectrum: boolean = true): void {
     if (!this._proc) return;
 
     const now = performance.now();
@@ -164,8 +166,10 @@ export class AudioAnalysisProcessor {
     const lowFreq = this._proc.processFrame(delta, this._outputBuf);
     this._cachedLowFreq = lowFreq;
 
-    if (this._dirty) {
-      this._cachedSpectrum = Array.from(this._outputBuf);
+    if (updateSpectrum && this._dirty) {
+      for (let i = 0; i < this._outputBuf.length; i++) {
+        this._cachedSpectrum[i] = this._outputBuf[i];
+      }
       this._dirty = false;
     }
   }
@@ -179,11 +183,21 @@ export class AudioAnalysisProcessor {
   }
 
   getRawBins(count: number): number[] {
-    if (!this._proc) return Array.from({ length: count }, () => 0);
+    if (this._rawBinsCache.length !== count) {
+      this._rawBinsCache = Array.from({ length: count }, () => 0);
+    }
+    if (!this._proc) {
+      this._rawBinsCache.fill(0);
+      return this._rawBinsCache;
+    }
     if (count !== this._rawBinCount) {
       this._rawBinCount = count;
     }
-    return Array.from(this._proc.getRawBins(count));
+    const bins = this._proc.getRawBins(count);
+    for (let i = 0; i < count; i++) {
+      this._rawBinsCache[i] = bins[i] ?? 0;
+    }
+    return this._rawBinsCache;
   }
 
   isReady(): boolean {

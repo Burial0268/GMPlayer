@@ -6,8 +6,8 @@
 </template>
 
 <script setup>
-import { storeToRefs } from "pinia";
-import { musicStore } from "@/store";
+import { ensureSpectrumUpdate } from "@/utils/AudioContext";
+import { getSpectrumFrame } from "@/utils/AudioContext/SpectrumFrame";
 
 const props = defineProps({
   show: {
@@ -27,8 +27,6 @@ const props = defineProps({
     default: 2.5,
   },
 });
-
-const { spectrumsData } = storeToRefs(musicStore());
 
 // canvas
 const canvasRef = ref(null);
@@ -127,13 +125,14 @@ const addRoundRect = (ctx, x, y, width, height, radius) => {
   ctx.closePath();
 };
 
-// Managed RAF loop — only runs when BigPlayer is visible (show === true)
+// Managed RAF loop. Keep it alive while mounted so opening BigPlayer can draw
+// the latest frame immediately after the user toggles spectrum display.
 let rafId = null;
 
 const startDraw = () => {
   if (rafId) return;
   const loop = () => {
-    drawSpectrum(spectrumsData.value);
+    drawSpectrum(getSpectrumFrame());
     rafId = requestAnimationFrame(loop);
   };
   loop();
@@ -149,21 +148,17 @@ const stopDraw = () => {
 // ResizeObserver to track canvas size changes
 let resizeObserver = null;
 
-// Control RAF loop based on visibility
 watch(
   () => props.show,
-  (visible) => {
-    if (visible) {
-      updateCanvasSize();
-      startDraw();
-    } else {
-      stopDraw();
-    }
+  () => {
+    updateCanvasSize();
+    ensureSpectrumUpdate();
   },
 );
 
 onMounted(() => {
   updateCanvasSize();
+  ensureSpectrumUpdate();
 
   // Watch for container/window resize
   if (typeof ResizeObserver !== "undefined" && canvasRef.value?.parentElement) {
@@ -171,10 +166,7 @@ onMounted(() => {
     resizeObserver.observe(canvasRef.value.parentElement);
   }
 
-  // Only start drawing if already visible
-  if (props.show) {
-    startDraw();
-  }
+  startDraw();
 });
 
 onBeforeUnmount(() => {

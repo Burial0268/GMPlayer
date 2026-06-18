@@ -237,17 +237,17 @@ const sharedLayoutTransition = {
   mass: 0.78,
   restDelta: 0.001,
   restSpeed: 0.02,
-};
+} as const;
 const drawerProgressTransition = {
   type: "tween",
   duration: 0.34,
   ease: [0.22, 1, 0.36, 1],
-};
+} as const;
 const backgroundLayoutTransition = {
   type: "tween",
   duration: 0.24,
   ease: [0.22, 1, 0.36, 1],
-};
+} as const;
 const albumLayoutTransition = {
   type: "spring",
   stiffness: 380,
@@ -255,7 +255,7 @@ const albumLayoutTransition = {
   mass: 0.95,
   restDelta: 0.001,
   restSpeed: 0.02,
-};
+} as const;
 let mobileExitFallbackTimer: number | null = null;
 let mobileSkipNextStoreCloseAnimation = false;
 type SharedFrame = {
@@ -269,6 +269,7 @@ type MiniSharedFrames = {
   artwork?: DOMRect;
   background?: DOMRect;
 };
+type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
 const { calcCoverLayout } = useMobileCoverFrame(
@@ -334,7 +335,7 @@ const mobileBackgroundVisualStyle = computed<MotionStyleRecord>(() => ({
       }
     : {}),
 }));
-const mobileContentShellStyle = computed<MotionStyleRecord>(() => ({
+const mobileContentShellStyle = computed<StaticStyleRecord>(() => ({
   visibility: mobileContentVisible.value ? "visible" : "hidden",
 }));
 const mobileFullUiMotionStyle = computed<MotionStyleRecord>(() => ({

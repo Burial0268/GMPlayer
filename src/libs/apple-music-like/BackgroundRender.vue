@@ -40,8 +40,8 @@ onMounted(() => {
 
   // Set initial values
   if (props.album) coreBGRenderRef.value?.setAlbum(props.album);
-  if (props.fps) coreBGRenderRef.value?.setFPS(props.fps);
-  if (props.flowSpeed) coreBGRenderRef.value?.setFlowSpeed(props.flowSpeed);
+  if (props.fps !== undefined) coreBGRenderRef.value?.setFPS(props.fps);
+  if (props.flowSpeed !== undefined) coreBGRenderRef.value?.setFlowSpeed(props.flowSpeed);
   coreBGRenderRef.value?.setStaticMode(props.staticMode);
   coreBGRenderRef.value?.setRenderScale(props.renderScale);
   coreBGRenderRef.value?.setLowFreqVolume(props.lowFreqVolume);
@@ -108,7 +108,7 @@ watch(
 watch(
   () => props.renderScale,
   (newValue) => {
-    if (newValue) coreBGRenderRef.value?.setRenderScale(newValue);
+    if (newValue !== undefined) coreBGRenderRef.value?.setRenderScale(newValue);
   },
 );
 

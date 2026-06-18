@@ -12,8 +12,8 @@ import { createI18n } from "vue-i18n";
 import SlaveApp from "@/SlaveApp.vue";
 
 // i18n messages (same source files as main app)
-import en from "@/locale/lang/en.js";
-import zhCN from "@/locale/lang/zh-CN.js";
+import en from "@/locale/lang/en";
+import zhCN from "@/locale/lang/zh-CN";
 
 // ── Standalone i18n (no Pinia dependency) ──────────────────────────────
 
