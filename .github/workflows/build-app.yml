@@ -153,6 +153,14 @@ jobs:
           pnpm build:wasm
           pnpm install
 
+      - name: 生成开发构建版本号
+        shell: bash
+        run: |
+          if [[ "${{ runner.os }}" == "macOS" ]]; then
+            export PATH="/usr/bin:$PATH"
+          fi
+          node ./scripts/gen-dev-version.mjs
+
       - name: 构建前端产物
         run: |
           pnpm build
@@ -320,6 +328,10 @@ jobs:
         run: |
           pnpm build:wasm
           pnpm install
+
+      - name: 生成开发构建版本号
+        run: |
+          node ./scripts/gen-dev-version.mjs
 
       - name: 构建前端产物
         run: |
