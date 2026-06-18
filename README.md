@@ -135,6 +135,17 @@ pnpm dev
 对于其他 Coding Agents，也可以进行一样的适配操作
 这里为精简项目根目录，故不进行配置，也请勿提交，可在本地自行进行软链接。
 
+### Linux Wayland 图形兼容
+
+Tauri Linux 端使用 WebKitGTK。部分 Wayland 组合器、显卡驱动或混合显卡环境下，WebKitGTK 的 DMABUF renderer 可能导致 WebGL/Canvas 加速异常、黑屏或渲染卡顿。应用默认会在 Wayland 会话下启用较保守的 WebKitGTK 图形策略；如需排查，可通过启动环境变量覆盖：
+
+```bash
+GMPLAYER_LINUX_GRAPHICS=default ./GMPlayer   # 不应用任何内置图形策略
+GMPLAYER_LINUX_GRAPHICS=wayland ./GMPlayer   # 优先原生 Wayland
+GMPLAYER_LINUX_GRAPHICS=x11 ./GMPlayer       # 通过 XWayland 运行
+GMPLAYER_LINUX_GRAPHICS=software ./GMPlayer  # 最后兜底的软件渲染
+```
+
 ### 构建
 
 ```bash
