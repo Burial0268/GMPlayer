@@ -107,9 +107,10 @@ export class NativeRustSound implements ISound {
 
   /** Raw FFT magnitudes from the `fftData` event. */
   private _fftData: number[] = [];
-  private _spectrum: number[] = [];
+  private _frequencyData: Uint8Array<ArrayBuffer> = new Uint8Array(0);
+  private _averageAmplitude: number = 0;
   /** Rust-computed low-frequency volume from the `lowFrequencyVolume`
-   * event. Single value in `[0, ~1]`; replaces the per-RAF JS calculation. */
+   * event, derived from the same raw FFT frame as `fftData`. */
   private _lowFreqVolume: number = 0;
 
   private _loaded: boolean = false;
@@ -433,7 +434,11 @@ export class NativeRustSound implements ISound {
 
       case "fftData": {
         this._fftData = evt.data.data;
-        this._spectrum = evt.data.data;
+        let sum = 0;
+        for (let i = 0; i < this._fftData.length; i++) {
+          sum += this._fftData[i];
+        }
+        this._averageAmplitude = this._fftData.length > 0 ? sum / this._fftData.length : 0;
         this._fftReceived = true;
         if (this._noFFTWarnTimer !== null) {
           clearTimeout(this._noFFTWarnTimer);
@@ -726,32 +731,39 @@ export class NativeRustSound implements ISound {
 
   getFrequencyData(): Uint8Array<ArrayBuffer> {
     const raw = this._fftData;
-    if (raw.length === 0) return new Uint8Array(0);
+    if (raw.length === 0) {
+      if (this._frequencyData.length !== 0) {
+        this._frequencyData = new Uint8Array(0);
+      }
+      return this._frequencyData;
+    }
+    if (this._frequencyData.length !== raw.length) {
+      this._frequencyData = new Uint8Array(raw.length);
+    }
     let max = 0;
     for (const v of raw) if (v > max) max = v;
-    if (max <= 0) return new Uint8Array(raw.length);
-    const output = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) {
-      output[i] = Math.min(255, Math.round((raw[i] / max) * 255));
+    if (max <= 0) {
+      this._frequencyData.fill(0);
+      return this._frequencyData;
     }
-    return output;
+    for (let i = 0; i < raw.length; i++) {
+      this._frequencyData[i] = Math.min(255, Math.round((raw[i] / max) * 255));
+    }
+    return this._frequencyData;
   }
 
   getFFTData(): number[] {
-    return this._spectrum;
+    return this._fftData;
   }
 
   getLowFrequencyVolume(): number {
-    // Rust computes this from the realtime CPAL output stream. The frontend
-    // only reads the latest value; it does not re-run FFT-derived lowfreq work.
+    // Rust computes this from raw FFT bins; the frontend only reads the latest
+    // value and does not re-run FFT-derived lowfreq work per RAF.
     return this._lowFreqVolume;
   }
 
   getAverageAmplitude(): number {
-    if (this._fftData.length === 0) return 0;
-    let sum = 0;
-    for (const v of this._fftData) sum += v;
-    return sum / this._fftData.length;
+    return this._averageAmplitude;
   }
 
   getAudioQuality(): AudioQuality | null {
@@ -809,6 +821,10 @@ export class NativeRustSound implements ISound {
       }
       this._unlistenTransport = null;
     }
+    this._fftData = [];
+    this._frequencyData = new Uint8Array(0);
+    this._averageAmplitude = 0;
+    this._lowFreqVolume = 0;
     this._sendCommand({ type: "pauseAudio" });
   }
 }

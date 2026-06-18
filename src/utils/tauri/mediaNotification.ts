@@ -1,9 +1,9 @@
 /**
  * JS/TS bridge to `tauri-plugin-media-session`.
  *
- * This module keeps the same external interface that `useAndroidMediaSession.ts`
- * already relies on so that no call-site changes are needed.  Internally it
- * translates between our ms-based API and the plugin's seconds-based API.
+ * This module is the mobile adapter used by `useNativeMediaControls.ts`.
+ * Internally it translates between our ms-based API and the plugin's
+ * seconds-based API.
  *
  * Plugin identifier : "media-session"
  * Repo             : https://github.com/sak96/tauri-plugin-media-session
@@ -94,6 +94,14 @@ async function call<T = void>(
 // ═══════════════════════════════════════════════════════════════════════════════
 // Commands  (JS → Android / iOS)
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Initialize the native MediaSession bridge when the plugin exposes an explicit
+ * lifecycle command. Older plugin builds may no-op here through `call`.
+ */
+export function initializeMediaNotification(): Promise<void | undefined> {
+  return call("initialize");
+}
 
 /**
  * Push a full metadata + playback-state update to the native MediaSession.

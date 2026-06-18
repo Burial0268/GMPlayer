@@ -13,6 +13,7 @@ export type {
 
 // Android media notification plugin bridge
 export {
+  initializeMediaNotification,
   updateMediaNotification,
   updateMediaProgress,
   hideMediaNotification,
@@ -21,6 +22,21 @@ export {
   type UpdateProgressRequest,
   type MediaActionPayload,
 } from "./mediaNotification";
+
+// Desktop now playing controls bridge
+export {
+  initializeNowPlayingControls,
+  updateNowPlayingState,
+  updateNowPlayingTimeline,
+  updateNowPlayingPlayMode,
+  setNowPlayingEnabled,
+  clearNowPlayingControls,
+  listenNowPlayingAction,
+  type NowPlayingStateRequest,
+  type NowPlayingTimelineRequest,
+  type NowPlayingPlayModeRequest,
+  type NowPlayingActionPayload,
+} from "./nowPlayingControls";
 
 // Screen orientation control (Android)
 export {
