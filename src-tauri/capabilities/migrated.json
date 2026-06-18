@@ -46,6 +46,7 @@
     },
     "http:default",
     "log:default",
+    "updater:default",
     "now-playing-controls:default"
   ]
 }

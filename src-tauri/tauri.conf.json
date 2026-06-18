@@ -11,11 +11,15 @@
     "category": "Music",
     "copyright": "",
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "externalBin": [],
     "icon": [
       "../public/images/logo/favicon.png",
       "../public/favicon.ico"
     ],
+    "android": {
+			"minSdkVersion": 26
+		},
     "windows": {
       "certificateThumbprint": null,
       "digestAlgorithm": "sha256",
@@ -52,7 +56,13 @@
   "version": "0.1.1",
   "identifier": "com.gbclstudio.gmplayer",
   "plugins": {
-    "audio-backend": {}
+    "audio-backend": {},
+    "updater": {
+			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0ODJDNzZGMTI4NjYxQjUKUldTMVlZWVNiOGVDcERETzFZc1U2ME13dTQvRGhwZGJLbWlkc1ZTeDJ6L0M3ckwwdHpLNkUxUXIK",
+			"endpoints": [
+				"https://github.com/Burial0268/GMPlayer/releases/download/master-player-dev/latest.json"
+			]
+		}
   },
   "app": {
     "withGlobalTauri": true,
