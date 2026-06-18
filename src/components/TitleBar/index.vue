@@ -4,18 +4,46 @@
     class="titlebar"
     :class="{ 'bigplayer-mode': music.showBigPlayer, 'dark-mode': isDark }"
   >
-    <button class="decorum-tb-btn" aria-label="Minimize window" @click="minimizeWindow">
-      &#xE921;
+    <button
+      class="decorum-tb-btn"
+      type="button"
+      aria-label="Minimize window"
+      @click="minimizeWindow"
+    >
+      <svg class="titlebar-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M3.5 8h9" />
+      </svg>
     </button>
     <button
       class="decorum-tb-btn"
+      type="button"
       :aria-label="isMaximized ? 'Restore window size' : 'Maximize window size'"
       @click="toggleMaximize"
     >
-      {{ isMaximized ? "\uE923" : "\uE922" }}
+      <svg
+        v-if="isMaximized"
+        class="titlebar-icon restore-icon"
+        viewBox="0 0 16 16"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <path d="M5.5 4.5h6v6h-6z" />
+        <path d="M4.5 6.5h-1v6h6v-1" />
+      </svg>
+      <svg v-else class="titlebar-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M4.5 4.5h7v7h-7z" />
+      </svg>
     </button>
-    <button class="decorum-tb-btn close" aria-label="Close window" @click="closeWindow">
-      &#xE8BB;
+    <button
+      class="decorum-tb-btn close"
+      type="button"
+      aria-label="Close window"
+      @click="closeWindow"
+    >
+      <svg class="titlebar-icon close-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M4.5 4.5l7 7" />
+        <path d="M11.5 4.5l-7 7" />
+      </svg>
     </button>
   </div>
 </template>
@@ -147,8 +175,6 @@ onBeforeUnmount(() => {
     background-color 0.12s ease,
     color 0.12s ease;
   background-color: transparent;
-  text-rendering: optimizeLegibility;
-  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets";
   color: var(--n-text-color, #333);
 
   &:hover {
@@ -187,5 +213,26 @@ onBeforeUnmount(() => {
       color: #fff;
     }
   }
+}
+
+.titlebar-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.restore-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.close-icon {
+  stroke-width: 1.65;
 }
 </style>

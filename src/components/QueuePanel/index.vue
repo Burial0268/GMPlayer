@@ -178,6 +178,8 @@ const changeIndex = (index) => {
 
 .queue-list {
   padding: 0 8px 12px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
 }
 
 .queue-row {
@@ -187,12 +189,22 @@ const changeIndex = (index) => {
   gap: 8px;
   min-height: 48px;
   padding: 5px 6px;
-  border-radius: var(--radius-md);
+  border-radius: 0;
   cursor: pointer;
   color: var(--n-text-color-2);
   transition:
     background-color 0.16s ease,
     color 0.16s ease;
+
+  &:first-child {
+    border-top-left-radius: var(--radius-md);
+    border-top-right-radius: var(--radius-md);
+  }
+
+  &:last-child {
+    border-bottom-right-radius: var(--radius-md);
+    border-bottom-left-radius: var(--radius-md);
+  }
 
   &:nth-child(odd) {
     background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
@@ -200,10 +212,6 @@ const changeIndex = (index) => {
 
   &:nth-child(even) {
     background-color: color-mix(in srgb, var(--n-text-color) 5%, transparent);
-  }
-
-  & + .queue-row {
-    margin-top: 2px;
   }
 
   &:hover {

@@ -11,7 +11,7 @@
 </template>
 
 <script setup lang="ts">
-import { getArtistAblums } from "@/api/artist";
+import { getArtistAlbums } from "@/api/album";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";
 import CoverLists from "@/components/DataList/CoverLists.vue";
@@ -29,7 +29,7 @@ const totalCount = ref(0);
 
 // 获取歌手专辑
 const getArtistAblumsData = (id: string | number | string[], limit = 30, offset = 0) => {
-  getArtistAblums(Number(id), limit, offset).then((res) => {
+  getArtistAlbums(Number(id), limit, offset).then((res) => {
     console.log(res);
     // 数据总数
     totalCount.value = res.artist.albumSize;

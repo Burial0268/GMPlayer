@@ -212,7 +212,6 @@ const getPreferredPalette = (palettes: Record<string, MaterialPalette>): Materia
 const tone = (palette: MaterialPalette, value: number, chromaBoost = 0): number =>
   Hct.from(palette.hue, Math.max(palette.chroma + chromaBoost, palette.chroma), value).toInt();
 
-const rgba = (rgb: string, alpha: number): string => `rgba(${rgb}, ${alpha})`;
 const rgbaVar = (rgb: string, varName: string, fallback: number): string =>
   `rgba(${rgb}, var(${varName}, ${fallback}))`;
 
