@@ -194,6 +194,8 @@ struct DecodeWorker<S: PlaybackSink> {
     output_channels: u16,
     output_sample_rate: u32,
     analysis_tx: mpsc::Sender<AnalysisCommand>,
+    analysis_recycle_tx: mpsc::Sender<Vec<f32>>,
+    analysis_recycle_rx: mpsc::Receiver<Vec<f32>>,
     control_rx: mpsc::Receiver<DecoderControl>,
     event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
     playback_id: u64,
@@ -219,6 +221,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
         stop_flag: Arc<AtomicBool>,
         paused: bool,
     ) -> Self {
+        let (analysis_recycle_tx, analysis_recycle_rx) = mpsc::channel();
         Self {
             frames: FrameConverter::new(
                 source,
@@ -231,6 +234,8 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             output_channels,
             output_sample_rate,
             analysis_tx,
+            analysis_recycle_tx,
+            analysis_recycle_rx,
             control_rx,
             event_tx,
             playback_id,
@@ -258,8 +263,10 @@ impl<S: PlaybackSink> DecodeWorker<S> {
 
             let generation = self.output.generation();
             let mut block = Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize);
-            let mut analysis_block =
-                Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize);
+            let mut analysis_block = self.analysis_recycle_rx.try_recv().unwrap_or_else(|_| {
+                Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize)
+            });
+            analysis_block.clear();
             let mut ended = false;
 
             for _ in 0..DECODE_BLOCK_FRAMES {
@@ -294,7 +301,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                     samples: analysis_block,
                     channels: self.output_channels,
                     sample_rate: self.output_sample_rate,
-                    recycle: None,
+                    recycle: Some(self.analysis_recycle_tx.clone()),
                 });
             }
 

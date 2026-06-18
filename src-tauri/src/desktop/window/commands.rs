@@ -154,8 +154,8 @@ pub async fn resize_window(
 }
 
 /// Quit the application after saving window state.
-/// Excludes VISIBLE flag so the main window always starts hidden on next launch
-/// (the frontend controls when to show it, preventing a blank-window flash).
+/// Excludes VISIBLE flag so a previous hide-to-tray state is not restored as a
+/// hidden main window on next launch.
 #[command]
 pub async fn quit_app(app: AppHandle) -> Result<(), String> {
     let flags = StateFlags::SIZE

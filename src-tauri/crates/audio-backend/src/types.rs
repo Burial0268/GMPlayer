@@ -254,10 +254,8 @@ pub enum AudioThreadEvent {
     // the frontend listener.
     #[serde(rename = "fftData", rename_all = "camelCase")]
     FFTData { data: Vec<f32> },
-    /// Smoothed low-frequency volume in `[0.0, ~1.0]`, computed in Rust from
-    /// the actual CPAL output stream using a realtime `70Hz..2kHz` band. This
-    /// keeps background motion tied to playback instead of the FFT analysis
-    /// thread's cadence.
+    /// Smoothed low-frequency volume in `[0.0, ~1.0]`, computed from the same
+    /// raw FFT magnitudes emitted as `fftData`.
     #[serde(rename_all = "camelCase")]
     LowFrequencyVolume { volume: f64 },
     #[serde(rename_all = "camelCase")]

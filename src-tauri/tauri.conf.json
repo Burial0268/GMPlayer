@@ -56,18 +56,7 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [
-      {
-        "fullscreen": false,
-        "height": 653,
-        "decorations": false,
-        "resizable": true,
-        "visible": false,
-        "title": "GMPlayer",
-        "width": 881,
-        "useHttpsScheme": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

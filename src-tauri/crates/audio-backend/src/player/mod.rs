@@ -343,37 +343,6 @@ fn collect_forward_message(
     }
 }
 
-fn spawn_output_low_freq_forwarder(
-    output: &mut LowLatencyOutput,
-    evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
-) {
-    let Some(rx) = output.take_low_freq_rx() else {
-        return;
-    };
-
-    let _ = std::thread::Builder::new()
-        .name("audio-lowfreq".into())
-        .spawn(move || {
-            while let Ok(mut volume) = rx.recv() {
-                while let Ok(next) = rx.try_recv() {
-                    volume = next;
-                }
-
-                if evt_sender
-                    .send(AudioThreadEventMessage::new(
-                        String::new(),
-                        Some(AudioThreadEvent::LowFrequencyVolume {
-                            volume: volume as f64,
-                        }),
-                    ))
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        });
-}
-
 // ── Cloneable handle for sending messages ────────────────────────
 
 #[derive(Clone, Debug)]
@@ -592,9 +561,8 @@ impl AudioPlayer {
         seek_rx: mpsc::UnboundedReceiver<f64>,
         evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
     ) -> AudioResult<Self> {
-        let mut output = output::open_preferred_output(None).map_err(AudioError::Output)?;
+        let output = output::open_preferred_output(None).map_err(AudioError::Output)?;
         output.writer().set_paused(true);
-        spawn_output_low_freq_forwarder(&mut output, evt_sender.clone());
         let deck_mixer = DeckMixer::new(output.writer(), output.config().channels);
         let automix = AutoMixManager::new();
         let clock = Arc::new(parking_lot::Mutex::new(PlayerClock::new()));
@@ -723,12 +691,11 @@ impl AudioPlayer {
             return Ok(false);
         }
 
-        let mut output = output::open_preferred_output(Some(target)).map_err(AudioError::Output)?;
+        let output = output::open_preferred_output(Some(target)).map_err(AudioError::Output)?;
         output.writer().set_volume(self.volume as f32);
         output
             .writer()
             .set_paused(self.playback_intent == PlaybackIntent::Paused);
-        spawn_output_low_freq_forwarder(&mut output, self.evt_sender.clone());
         let changed =
             output.config() != self.output.config() || output.device() != self.output.device();
         self.output = output;
@@ -1523,6 +1490,8 @@ impl AudioPlayer {
             self.secondary_quality = None;
             self.secondary_playback_id = None;
             self.active_deck = DeckId::Primary;
+            self.deck_mixer.set_deck_gain(DeckId::Primary, 1.0);
+            self.deck_mixer.set_deck_gain(DeckId::Secondary, 0.0);
             self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
             self.native_crossfade_active = false;
         }
@@ -1594,7 +1563,10 @@ impl AudioPlayer {
         // starts pushing PCM, avoiding a separate post-load seek round trip.
         let analysis_tx_for_open = self.analysis_tx.clone();
         let path_for_open = local_path.clone();
-        let output_writer = self.deck_mixer.primary_writer();
+        let output_writer = match self.active_deck {
+            DeckId::Primary => self.deck_mixer.primary_writer(),
+            DeckId::Secondary => self.deck_mixer.secondary_writer(),
+        };
         let output_config = self.output.config();
         self.decoder_playback_id = self.decoder_playback_id.wrapping_add(1);
         let playback_id = self.decoder_playback_id;

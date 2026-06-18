@@ -14,11 +14,6 @@ const PREFERRED_FORMATS: [cpal::SampleFormat; 3] = [
     cpal::SampleFormat::U16,
 ];
 const DEFAULT_QUEUE_BLOCKS: usize = 16;
-const LOW_FREQ_MIN_HZ: f32 = 70.0;
-const LOW_FREQ_MAX_HZ: f32 = 2_000.0;
-const LOW_FREQ_GAIN: f32 = 3.2;
-const LOW_FREQ_ATTACK_MS: f32 = 35.0;
-const LOW_FREQ_RELEASE_MS: f32 = 160.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OutputTarget {
@@ -160,7 +155,6 @@ pub struct LowLatencyOutput {
     device: OutputDeviceKey,
     config: OutputConfigKey,
     target: Option<OutputTarget>,
-    low_freq_rx: Option<mpsc::Receiver<f32>>,
 }
 
 impl LowLatencyOutput {
@@ -178,10 +172,6 @@ impl LowLatencyOutput {
 
     pub fn target(&self) -> Option<OutputTarget> {
         self.target
-    }
-
-    pub fn take_low_freq_rx(&mut self) -> Option<mpsc::Receiver<f32>> {
-        self.low_freq_rx.take()
     }
 }
 
@@ -222,7 +212,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
 
     let (data_tx, data_rx) = mpsc::sync_channel::<Vec<f32>>(DEFAULT_QUEUE_BLOCKS);
     let (control_tx, control_rx) = mpsc::channel::<OutputControl>();
-    let (low_freq_tx, low_freq_rx) = mpsc::sync_channel::<f32>(8);
     let paused = Arc::new(AtomicBool::new(true));
     let volume_bits = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let generation = Arc::new(AtomicU64::new(0));
@@ -249,7 +238,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         cpal::SampleFormat::I16 => build_stream::<i16>(
             &device,
@@ -260,7 +248,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         cpal::SampleFormat::I32 => build_stream::<i32>(
             &device,
@@ -271,7 +258,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         cpal::SampleFormat::U8 => build_stream::<u8>(
             &device,
@@ -282,7 +268,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         cpal::SampleFormat::U16 => build_stream::<u16>(
             &device,
@@ -293,7 +278,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         cpal::SampleFormat::U32 => build_stream::<u32>(
             &device,
@@ -304,7 +288,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         cpal::SampleFormat::F32 => build_stream::<f32>(
             &device,
@@ -315,7 +298,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         cpal::SampleFormat::F64 => build_stream::<f64>(
             &device,
@@ -326,7 +308,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
             volume_bits,
             queued_samples,
             rendered_samples,
-            low_freq_tx,
         ),
         other => Err(format!("unsupported output sample format: {other:?}")),
     }?;
@@ -340,7 +321,6 @@ pub fn open_preferred_output(target: Option<OutputTarget>) -> Result<LowLatencyO
         device: device_key,
         config: config_key,
         target,
-        low_freq_rx: Some(low_freq_rx),
     })
 }
 
@@ -353,7 +333,6 @@ fn build_stream<T>(
     volume_bits: Arc<AtomicU32>,
     queued_samples: Arc<AtomicUsize>,
     rendered_samples: Arc<AtomicU64>,
-    low_freq_tx: mpsc::SyncSender<f32>,
 ) -> Result<Stream, String>
 where
     T: SizedSample + Sample + FromSample<f32>,
@@ -363,9 +342,6 @@ where
         control_rx,
         current_block: Vec::new(),
         current_index: 0,
-        output_channels: config.channels.max(1) as usize,
-        low_freq: LowFreqState::new(config.sample_rate.0),
-        low_freq_tx,
     };
     let err_fn = move |err| warn!("音频输出流错误: {err}");
 
@@ -393,87 +369,6 @@ struct CallbackState {
     control_rx: mpsc::Receiver<OutputControl>,
     current_block: Vec<f32>,
     current_index: usize,
-    output_channels: usize,
-    low_freq: LowFreqState,
-    low_freq_tx: mpsc::SyncSender<f32>,
-}
-
-struct LowFreqState {
-    channel_index: usize,
-    frame_sum: f32,
-    prev_input: f32,
-    highpass: f32,
-    band: f32,
-    envelope: f32,
-    highpass_alpha: f32,
-    lowpass_alpha: f32,
-    attack_alpha: f32,
-    release_alpha: f32,
-}
-
-impl LowFreqState {
-    fn new(sample_rate: u32) -> Self {
-        let rate = sample_rate.max(1) as f32;
-        let highpass_alpha = (-2.0 * std::f32::consts::PI * LOW_FREQ_MIN_HZ / rate).exp();
-        let lowpass_alpha = 1.0 - (-2.0 * std::f32::consts::PI * LOW_FREQ_MAX_HZ / rate).exp();
-        let attack_alpha = 1.0 - (-1000.0 / (LOW_FREQ_ATTACK_MS * rate)).exp();
-        let release_alpha = 1.0 - (-1000.0 / (LOW_FREQ_RELEASE_MS * rate)).exp();
-        Self {
-            channel_index: 0,
-            frame_sum: 0.0,
-            prev_input: 0.0,
-            highpass: 0.0,
-            band: 0.0,
-            envelope: 0.0,
-            highpass_alpha,
-            lowpass_alpha,
-            attack_alpha,
-            release_alpha,
-        }
-    }
-
-    fn push_sample(&mut self, sample: f32, channels: usize) {
-        self.frame_sum += sample;
-        self.channel_index += 1;
-        if self.channel_index < channels {
-            return;
-        }
-
-        let mono = self.frame_sum / channels as f32;
-        self.frame_sum = 0.0;
-        self.channel_index = 0;
-
-        self.highpass = self.highpass_alpha * (self.highpass + mono - self.prev_input);
-        self.prev_input = mono;
-        self.band += (self.highpass - self.band) * self.lowpass_alpha;
-
-        let mut target = (self.band.abs() * LOW_FREQ_GAIN).clamp(0.0, 1.0);
-        if target < 0.01 {
-            target = 0.0;
-        }
-        let alpha = if target > self.envelope {
-            self.attack_alpha
-        } else {
-            self.release_alpha
-        };
-        self.envelope += (target - self.envelope) * alpha;
-        self.envelope = self.envelope.clamp(0.0, 1.0);
-    }
-
-    fn push_silence(&mut self, samples: usize, channels: usize) {
-        for _ in 0..samples {
-            self.push_sample(0.0, channels);
-        }
-    }
-
-    fn reset(&mut self) {
-        self.channel_index = 0;
-        self.frame_sum = 0.0;
-        self.prev_input = 0.0;
-        self.highpass = 0.0;
-        self.band = 0.0;
-        self.envelope = 0.0;
-    }
 }
 
 fn fill_output<T>(
@@ -492,17 +387,11 @@ fn fill_output<T>(
                 while state.data_rx.try_recv().is_ok() {}
                 state.current_block.clear();
                 state.current_index = 0;
-                state.low_freq.reset();
-                send_low_freq(&state.low_freq_tx, 0.0);
             }
         }
     }
 
     if paused.load(Ordering::Acquire) {
-        state
-            .low_freq
-            .push_silence(data.len(), state.output_channels);
-        send_low_freq(&state.low_freq_tx, state.low_freq.envelope);
         data.fill(T::from_sample(0.0));
         return;
     }
@@ -518,7 +407,6 @@ fn fill_output<T>(
                     state.current_index = 0;
                 }
                 Err(_) => {
-                    state.low_freq.push_sample(0.0, state.output_channels);
                     *sample = T::from_sample(0.0);
                     continue;
                 }
@@ -529,22 +417,12 @@ fn fill_output<T>(
         let value = raw_value * volume;
         state.current_index += 1;
         written += 1;
-        state.low_freq.push_sample(raw_value, state.output_channels);
         *sample = T::from_sample(value.clamp(-1.0, 1.0));
     }
 
     if written > 0 {
         saturating_sub(queued_samples, written);
         rendered_samples.fetch_add(written as u64, Ordering::AcqRel);
-    }
-    send_low_freq(&state.low_freq_tx, state.low_freq.envelope);
-}
-
-fn send_low_freq(tx: &mpsc::SyncSender<f32>, value: f32) {
-    match tx.try_send(value) {
-        Ok(()) => {}
-        Err(mpsc::TrySendError::Full(_)) => {}
-        Err(mpsc::TrySendError::Disconnected(_)) => {}
     }
 }
 

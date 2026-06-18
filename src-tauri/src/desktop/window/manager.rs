@@ -5,7 +5,10 @@ use tauri::window::EffectsBuilder;
 use tauri::window::{Color, Effect};
 #[cfg(target_os = "macos")]
 use tauri::window::{Effect, EffectState};
-use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
 
 #[cfg(target_os = "macos")]
 use tauri_plugin_decorum::WebviewWindowExt;
@@ -21,6 +24,7 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
     if config.single_instance {
         if let Some(existing) = app.get_webview_window(label) {
             info!("Window '{}' already exists, focusing", label);
+            apply_runtime_size_constraints(&existing, config)?;
             existing.show().map_err(|e| e.to_string())?;
             if existing.is_minimized().unwrap_or(false) {
                 existing.unminimize().map_err(|e| e.to_string())?;
@@ -46,6 +50,14 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
 
     if config.center {
         builder = builder.center();
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(args) = config.additional_args.as_deref() {
+        let args = args.trim();
+        if !args.is_empty() {
+            builder = builder.additional_browser_args(args);
+        }
     }
 
     // Apply min/max size constraints. Each dimension defaults to 0.0 if unset,
@@ -77,6 +89,7 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
     }
 
     let _window = builder.build().map_err(|e| e.to_string())?;
+    apply_runtime_size_constraints(&_window, config)?;
 
     // Apply native window effects (acrylic, mica, etc.) if configured.
     // Uses set_effects() on the built window because WebviewWindowBuilder
@@ -109,6 +122,31 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
     }
 
     info!("Window '{}' created successfully", label);
+    Ok(())
+}
+
+fn apply_runtime_size_constraints(
+    window: &WebviewWindow,
+    config: &WindowConfig,
+) -> Result<(), String> {
+    if config.min_width.is_some() || config.min_height.is_some() {
+        window
+            .set_min_size(Some(LogicalSize::new(
+                config.min_width.unwrap_or(0.0),
+                config.min_height.unwrap_or(0.0),
+            )))
+            .map_err(|e| e.to_string())?;
+    }
+
+    if config.max_width.is_some() || config.max_height.is_some() {
+        window
+            .set_max_size(Some(LogicalSize::new(
+                config.max_width.unwrap_or(f64::MAX),
+                config.max_height.unwrap_or(f64::MAX),
+            )))
+            .map_err(|e| e.to_string())?;
+    }
+
     Ok(())
 }
 

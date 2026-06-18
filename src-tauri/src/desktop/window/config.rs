@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_ADDTIONAL_WINDOW_ARGS: &str = "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle --disable-features=VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,msWebOOUI,msPdfOOUI --enable-threaded-compositing --num-raster-threads=4";
+#[cfg(target_os = "windows")]
+pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle --disable-features=VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,msWebOOUI,msPdfOOUI --enable-threaded-compositing --num-raster-threads=4";
 
 /// Known window labels with preset configurations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -110,6 +111,16 @@ fn default_true() -> bool {
     true
 }
 
+#[cfg(target_os = "windows")]
+fn default_additional_window_args() -> Option<String> {
+    Some(DEFAULT_ADDITIONAL_WINDOW_ARGS.to_owned())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn default_additional_window_args() -> Option<String> {
+    None
+}
+
 impl WindowConfig {
     /// Main window preset — the primary app window.
     pub fn main() -> Self {
@@ -119,8 +130,8 @@ impl WindowConfig {
             url: "/".into(),
             width: 881.0,
             height: 653.0,
-            min_width: Some(680.0),
-            min_height: Some(500.0),
+            min_width: Some(800.0),
+            min_height: Some(600.0),
             max_width: None,
             max_height: None,
             resizable: true,
@@ -136,7 +147,7 @@ impl WindowConfig {
             traffic_lights_inset: Some((12.0, 16.0)),
             window_effect: Some("acrylic".into()),
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: None,
         }
     }
@@ -166,7 +177,7 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: Some("acrylic".into()),
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: None,
         }
     }
@@ -196,7 +207,7 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: None,
             shadow: false,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: None,
         }
     }
@@ -226,7 +237,7 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: None,
             shadow: false,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: Some("desktop-lyrics".into()),
         }
     }
@@ -262,7 +273,7 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: None,
             shadow: false,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: None,
         }
     }
@@ -292,7 +303,7 @@ impl WindowConfig {
             traffic_lights_inset: Some((12.0, 16.0)),
             window_effect: None,
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: None,
         }
     }
@@ -322,7 +333,7 @@ impl WindowConfig {
             traffic_lights_inset: Some((12.0, 16.0)),
             window_effect: None,
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: None,
         }
     }
@@ -353,7 +364,7 @@ impl WindowConfig {
             traffic_lights_inset: None,
             window_effect: Some("acrylic".into()),
             shadow: true,
-            additional_args: Some(DEFAULT_ADDTIONAL_WINDOW_ARGS.to_owned()),
+            additional_args: default_additional_window_args(),
             parent_label: None,
         }
     }

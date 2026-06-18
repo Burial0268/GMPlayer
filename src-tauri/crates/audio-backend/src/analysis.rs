@@ -17,9 +17,9 @@
 //!   - `Clear` / `SetFreqRange` are control commands triggered by the
 //!     player thread on seek / track change / frequency-range updates.
 //!
-//! Realtime `LowFrequencyVolume` is intentionally computed in the CPAL output
-//! callback, not here, so background motion follows the actual output stream
-//! without waiting for this thread's analysis cadence.
+//! `LowFrequencyVolume` is derived from the same FFT frame here, matching
+//! AMLL's frontend low-pass path while keeping extra DSP out of the CPAL
+//! callback.
 //!
 //! Events leave through the same `tokio::sync::mpsc::UnboundedSender` that
 //! every other player event uses, so the WS forwarder picks them up unchanged.
@@ -92,9 +92,9 @@ fn analysis_loop(
         cfg.smoothing_factor,
     );
 
-    // AMLL emits a temporally-smoothed FFT buffer, not one raw FFT frame per
-    // tick. Sending raw magnitudes makes the frontend re-normalize against a
-    // different peak every event, which reads as flashing.
+    // `spectrum` is only a scratch buffer for the processor's normalized WASM
+    // compatibility path. Native IPC emits raw FFT magnitudes from
+    // `proc.fft.raw_spectrum()`, matching AMLL's fftDataAtom data flow.
     let mut spectrum = vec![0.0f32; 2048];
     let mut last_analysis = Instant::now();
     let mut last_fft_emit = Instant::now() - FFT_EMIT_INTERVAL;
@@ -109,17 +109,19 @@ fn analysis_loop(
         let wait = ANALYSIS_INTERVAL.saturating_sub(last_analysis.elapsed());
         match rx.recv_timeout(wait) {
             Ok(cmd) => {
-                apply_cmd_result(
-                    handle_cmd(&mut proc, cmd),
-                    &mut pending_mono_samples,
-                    &mut current_sample_rate,
-                );
+                let result = handle_cmd(&mut proc, cmd);
+                let reset = matches!(result, HandleCmdResult::Reset);
+                apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
+                if reset && emit_low_freq(&evt, 0.0).is_err() {
+                    break;
+                }
                 while let Ok(more) = rx.try_recv() {
-                    apply_cmd_result(
-                        handle_cmd(&mut proc, more),
-                        &mut pending_mono_samples,
-                        &mut current_sample_rate,
-                    );
+                    let result = handle_cmd(&mut proc, more);
+                    let reset = matches!(result, HandleCmdResult::Reset);
+                    apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
+                    if reset && emit_low_freq(&evt, 0.0).is_err() {
+                        return;
+                    }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -129,18 +131,21 @@ fn analysis_loop(
         if last_analysis.elapsed() >= ANALYSIS_INTERVAL && pending_mono_samples >= FFT_SIZE {
             let now = Instant::now();
             let delta_ms = now.duration_since(last_analysis).as_secs_f32() * 1000.0;
-            let _ = proc.process_frame(delta_ms, &mut spectrum);
+            let low_freq = proc.process_frame(delta_ms, &mut spectrum);
 
             let drained = ((delta_ms / 1000.0) * current_sample_rate.max(1) as f32) as usize;
             pending_mono_samples = pending_mono_samples.saturating_sub(drained.max(1));
             last_analysis = now;
 
             if last_fft_emit.elapsed() >= FFT_EMIT_INTERVAL {
+                if emit_low_freq(&evt, low_freq).is_err() {
+                    break;
+                }
                 if evt
                     .send(AudioThreadEventMessage::new(
                         String::new(),
                         Some(AudioThreadEvent::FFTData {
-                            data: spectrum.clone(),
+                            data: proc.fft.raw_spectrum().to_vec(),
                         }),
                     ))
                     .is_err()
@@ -153,6 +158,19 @@ fn analysis_loop(
     }
 }
 
+fn emit_low_freq(
+    evt: &tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
+    value: f32,
+) -> Result<(), tokio_mpsc::error::SendError<AudioThreadEventMessage<AudioThreadEvent>>> {
+    evt.send(AudioThreadEventMessage::new(
+        String::new(),
+        Some(AudioThreadEvent::LowFrequencyVolume {
+            volume: value as f64,
+        }),
+    ))
+}
+
+#[derive(Clone, Copy)]
 enum HandleCmdResult {
     Pushed { samples: usize, sample_rate: u32 },
     Reset,
@@ -187,35 +205,14 @@ fn handle_cmd(proc: &mut AudioProcessor, cmd: AnalysisCommand) -> HandleCmdResul
             sample_rate,
             recycle,
         } => {
-            let ch = (channels as usize).max(1);
-            if ch == 1 {
-                let len = samples.len();
-                proc.push_pcm(&samples, sample_rate);
-                if let Some(tx) = recycle {
-                    samples.clear();
-                    let _ = tx.send(samples);
-                }
-                HandleCmdResult::Pushed {
-                    samples: len,
-                    sample_rate,
-                }
-            } else {
-                let inv = 1.0 / ch as f32;
-                let mut mono = Vec::with_capacity(samples.len() / ch);
-                for chunk in samples.chunks_exact(ch) {
-                    let m: f32 = chunk.iter().sum::<f32>() * inv;
-                    mono.push(m);
-                }
-                let len = mono.len();
-                proc.push_pcm(&mono, sample_rate);
-                if let Some(tx) = recycle {
-                    samples.clear();
-                    let _ = tx.send(samples);
-                }
-                HandleCmdResult::Pushed {
-                    samples: len,
-                    sample_rate,
-                }
+            let len = proc.push_interleaved_pcm(&samples, channels, sample_rate);
+            if let Some(tx) = recycle {
+                samples.clear();
+                let _ = tx.send(samples);
+            }
+            HandleCmdResult::Pushed {
+                samples: len,
+                sample_rate,
             }
         }
         AnalysisCommand::Clear => {

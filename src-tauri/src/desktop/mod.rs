@@ -1,5 +1,7 @@
 //! Desktop (Windows / macOS / Linux) backend: multi-window management, tray, desktop lyrics.
 
+#[cfg(target_os = "linux")]
+mod linux_graphics;
 pub mod window;
 
 use crate::desktop::window::config::WindowConfig;
@@ -11,10 +13,10 @@ use log::warn;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 #[cfg(target_os = "macos")]
 use tauri_plugin_decorum::WebviewWindowExt;
-use tauri_plugin_window_state::{AppHandleExt, StateFlags};
+use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
-/// State flags for window-state plugin — excludes VISIBLE so the main window
-/// always starts hidden and the frontend controls when to show it.
+/// State flags for window-state plugin — excludes VISIBLE so a previous
+/// hide-to-tray state is not restored as a hidden main window on launch.
 const WINDOW_STATE_FLAGS: StateFlags = StateFlags::SIZE
     .union(StateFlags::POSITION)
     .union(StateFlags::MAXIMIZED)
@@ -22,6 +24,9 @@ const WINDOW_STATE_FLAGS: StateFlags = StateFlags::SIZE
     .union(StateFlags::DECORATIONS);
 
 pub fn run() {
+    #[cfg(target_os = "linux")]
+    linux_graphics::configure_webkit_gtk_backend();
+
     let builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -43,7 +48,13 @@ pub fn run() {
         )
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_decorum::init())
-        .plugin(tauri_plugin_window_state::Builder::new().build());
+        .plugin(gmplayer_now_playing_controls::init())
+        .plugin(
+            tauri_plugin_window_state::Builder::new()
+                .with_state_flags(WINDOW_STATE_FLAGS)
+                .skip_initial_state("main")
+                .build(),
+        );
 
     #[cfg(windows)]
     let builder = builder.plugin(gmplayer_taskbar_lyric::init());
@@ -96,10 +107,28 @@ pub fn run() {
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
-            app.manage(commands::PlayerState::new(app_handle));
+            app.manage(commands::PlayerState::new(app_handle.clone()));
+
+            // Create the primary desktop window from the Rust-side preset.
+            // `tauri.conf.json` intentionally has no static windows so desktop
+            // and mobile entry points can own their platform-specific startup.
+            let mut main_config = WindowConfig::main();
+            // Create hidden, restore saved geometry, then show. Otherwise
+            // users see the default window size for one frame before the
+            // window-state plugin applies the saved size/position.
+            main_config.visible = false;
+            if let Err(e) = wm::create_window(&app_handle, &main_config) {
+                warn!("Failed to create main window: {}", e);
+            }
 
             #[allow(unused_variables)]
-            let main_window = app.get_webview_window("main").unwrap();
+            let Some(main_window) = app.get_webview_window("main") else {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "main window was not created",
+                )
+                .into());
+            };
 
             // macOS-specific helpers
             #[cfg(target_os = "macos")]
@@ -115,6 +144,16 @@ pub fn run() {
                 // Set window level
                 // NSWindowLevel: https://developer.apple.com/documentation/appkit/nswindowlevel
                 main_window.set_window_level(25).unwrap();
+            }
+
+            if let Err(e) = main_window.restore_state(WINDOW_STATE_FLAGS) {
+                warn!("Failed to restore main window state before show: {}", e);
+            }
+            if let Err(e) = main_window.show() {
+                warn!("Failed to show main window after state restore: {}", e);
+            } else {
+                let _ = main_window.set_focus();
+                let _ = app_handle.emit("main-window-visibility", true);
             }
 
             // Set up system tray

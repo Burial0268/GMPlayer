@@ -7,8 +7,8 @@ mod wasm;
 /// ## Pipeline (matching AMLL player-core fft_player.rs)
 ///
 /// ```text
-/// PCM → push_pcm() → [ring buffer] → read_spectrum() →
-///   raw/rectangular FFT → frame_buf/result_buf
+/// PCM → push_pcm() → [2048-sample sliding window] → read_spectrum() →
+///   Hamming-windowed FFT → frame_buf/result_buf
 ///   frame_buf → raw_spectrum() / get_raw_bins() / LowFreqAnalyzer
 ///   frame_buf → peak normalization → spectrum (0-255, WASM getSpectrum only)
 /// ```
@@ -18,17 +18,17 @@ mod wasm;
 /// display normalization; this crate's EMA-smoothed `spectrum()` stays internal
 /// to the WASM compatibility path.
 ///
-/// Uses spectrum-analyzer (same crate as AMLL) for FFT scaling and frequency
-/// interpolation.
-use std::collections::VecDeque;
+/// Uses a reusable rustfft plan and buffers so native playback does not allocate
+/// or query a spectrum object on every visual frame.
+use std::sync::Arc;
 
-use spectrum_analyzer::{samples_fft_to_spectrum, scaling, FrequencyLimit};
+use rustfft::{num_complex::Complex, FftPlanner};
 
 // ── Constants ──────────────────────────────────────────────────────
 
 const FFT_SIZE: usize = 2048;
+const FFT_BIN_COUNT: usize = FFT_SIZE / 2 + 1;
 const RESULT_BUF_SIZE: usize = 2048;
-const MAX_QUEUE_LEN: usize = FFT_SIZE * 4; // 8192
 
 // ── FftConfig ──────────────────────────────────────────────────────
 
@@ -59,17 +59,27 @@ impl Default for FftConfig {
 pub struct FftProcessor {
     config: FftConfig,
 
-    /// PCM ring buffer (capped at MAX_QUEUE_LEN)
-    pcm_queue: VecDeque<f32>,
+    /// AMLL-style latest-sample window. Incoming PCM shifts into the tail.
+    sliding_window: [f32; FFT_SIZE],
+    available_samples: usize,
 
     /// Sample rate of incoming PCM (from AudioContext)
     sample_rate: u32,
 
-    /// Unwindowed FFT magnitudes for this tick. Exported via `raw_spectrum()`
-    /// for IPC / native spectrum bars and used by `get_raw_bins` for lowFreq.
+    fft: Arc<dyn rustfft::Fft<f32>>,
+    fft_input: [Complex<f32>; FFT_SIZE],
+    hamming_window: [f32; FFT_SIZE],
+    magnitudes: [f32; FFT_BIN_COUNT],
+    sample_map: Vec<SamplePoint>,
+    sample_map_rate: u32,
+    sample_map_freq_min: f32,
+    sample_map_freq_max: f32,
+
+    /// Hamming-windowed FFT magnitudes for this tick.
     frame_buf: [f32; RESULT_BUF_SIZE],
 
-    /// Legacy public alias — same as `frame_buf`.
+    /// AMLL-style smoothed raw magnitudes. Exported via `raw_spectrum()`
+    /// for IPC / native spectrum bars and used by `get_raw_bins` for lowFreq.
     pub result_buf: [f32; RESULT_BUF_SIZE],
 
     /// Normalized output spectrum (0-255)
@@ -86,13 +96,30 @@ pub struct FftProcessor {
     raw_bins_dirty: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct SamplePoint {
+    index: usize,
+    frac: f32,
+}
+
 impl FftProcessor {
     pub fn new(config: FftConfig) -> Self {
         let out = config.output_size.max(1);
+        let mut planner = FftPlanner::new();
+        let fft = planner.plan_fft_forward(FFT_SIZE);
         Self {
             config,
-            pcm_queue: VecDeque::with_capacity(MAX_QUEUE_LEN),
+            sliding_window: [0.0; FFT_SIZE],
+            available_samples: 0,
             sample_rate: 44100,
+            fft,
+            fft_input: [Complex { re: 0.0, im: 0.0 }; FFT_SIZE],
+            hamming_window: build_hamming_window(),
+            magnitudes: [0.0; FFT_BIN_COUNT],
+            sample_map: vec![SamplePoint::default(); RESULT_BUF_SIZE],
+            sample_map_rate: 0,
+            sample_map_freq_min: f32::NAN,
+            sample_map_freq_max: f32::NAN,
             frame_buf: [0.0; RESULT_BUF_SIZE],
             result_buf: [0.0; RESULT_BUF_SIZE],
             spectrum: vec![0.0; out],
@@ -108,54 +135,96 @@ impl FftProcessor {
         if sample_rate != self.sample_rate {
             self.sample_rate = sample_rate;
         }
-        self.pcm_queue.extend(samples);
-        while self.pcm_queue.len() > MAX_QUEUE_LEN {
-            self.pcm_queue.pop_front();
+        if samples.is_empty() {
+            return;
         }
+
+        let n = samples.len();
+        if n >= FFT_SIZE {
+            self.sliding_window
+                .copy_from_slice(&samples[n - FFT_SIZE..]);
+        } else {
+            self.sliding_window.copy_within(n..FFT_SIZE, 0);
+            self.sliding_window[FFT_SIZE - n..].copy_from_slice(samples);
+        }
+        self.available_samples = self.available_samples.saturating_add(n).min(FFT_SIZE);
+    }
+
+    /// Push interleaved PCM and downmix to mono directly into the sliding window.
+    /// Returns the number of mono frames consumed.
+    pub fn push_interleaved_pcm(
+        &mut self,
+        samples: &[f32],
+        channels: u16,
+        sample_rate: u32,
+    ) -> usize {
+        let ch = (channels as usize).max(1);
+        if ch == 1 {
+            self.push_pcm(samples, sample_rate);
+            return samples.len();
+        }
+
+        if sample_rate != self.sample_rate {
+            self.sample_rate = sample_rate;
+        }
+
+        let frame_count = samples.len() / ch;
+        if frame_count == 0 {
+            return 0;
+        }
+
+        if frame_count >= FFT_SIZE {
+            let start = (frame_count - FFT_SIZE) * ch;
+            for (dst, frame) in self
+                .sliding_window
+                .iter_mut()
+                .zip(samples[start..].chunks_exact(ch))
+            {
+                *dst = frame.iter().copied().sum::<f32>() / ch as f32;
+            }
+        } else {
+            self.sliding_window.copy_within(frame_count..FFT_SIZE, 0);
+            let tail_start = FFT_SIZE - frame_count;
+            for (dst, frame) in self.sliding_window[tail_start..]
+                .iter_mut()
+                .zip(samples.chunks_exact(ch))
+            {
+                *dst = frame.iter().copied().sum::<f32>() / ch as f32;
+            }
+        }
+
+        self.available_samples = self
+            .available_samples
+            .saturating_add(frame_count)
+            .min(FFT_SIZE);
+        frame_count
     }
 
     /// Run FFT (if ≥2048 PCM samples queued), freq-sample, normalize, smooth.
     /// `delta_ms` is wall-clock time since last call (from performance.now()).
     /// Returns reference to the normalized spectrum (0-255).
-    pub fn read_spectrum(&mut self, delta_ms: f32) -> &[f32] {
-        if self.pcm_queue.len() < FFT_SIZE {
+    pub fn read_spectrum(&mut self, _delta_ms: f32) -> &[f32] {
+        if self.available_samples < FFT_SIZE {
             return &self.spectrum;
         }
 
-        let (start_freq, end_freq) = (self.config.freq_min, self.config.freq_max);
+        self.refresh_sample_map();
 
-        // Build input buffer (matching AMLL: take first 2048, don't pop yet)
-        let mut fft_buf = [0.0f32; FFT_SIZE];
         for i in 0..FFT_SIZE {
-            fft_buf[i] = self.pcm_queue[i];
+            self.fft_input[i].re = self.sliding_window[i] * self.hamming_window[i];
+            self.fft_input[i].im = 0.0;
         }
 
-        // Raw/rectangular FFT → IPC display export and lowFreq raw bins.
-        let sample_rate = self.sample_rate.max(1);
-        let freq_limit = FrequencyLimit::Range(start_freq, end_freq);
+        self.fft.process(&mut self.fft_input);
 
-        match samples_fft_to_spectrum(
-            &fft_buf,
-            sample_rate,
-            freq_limit,
-            Some(&scaling::divide_by_N_sqrt),
-        ) {
-            Ok(spec) => {
-                Self::_freq_sample_into(&spec, &mut self.frame_buf);
-                self.result_buf.copy_from_slice(&self.frame_buf);
-            }
-            Err(e) => {
-                eprintln!("FFT error (rectangular): {:?}", e);
-                return &self.spectrum;
-            }
+        let scale = 1.0 / (FFT_SIZE as f32).sqrt();
+        for i in 0..FFT_BIN_COUNT {
+            let c = self.fft_input[i];
+            self.magnitudes[i] = (c.re * c.re + c.im * c.im).sqrt() * scale;
         }
 
-        // Time-based drain (matching AMLL: cut_len = elapsed_sec * 44100)
-        let drain_samples = ((delta_ms / 1000.0) * self.sample_rate as f32) as usize;
-        for _ in 0..drain_samples.min(self.pcm_queue.len()) {
-            self.pcm_queue.pop_front();
-        }
-        self.pcm_queue.truncate(MAX_QUEUE_LEN);
+        self.sample_magnitudes_into_frame();
+        self.smooth_raw_frame();
 
         self._normalize_and_smooth();
         self.raw_bins_dirty = true;
@@ -164,17 +233,64 @@ impl FftProcessor {
     }
 
     /// Uniformly resample `spec` into a 2048-element freq buffer.
-    fn _freq_sample_into(
-        spec: &spectrum_analyzer::FrequencySpectrum,
-        buf: &mut [f32; RESULT_BUF_SIZE],
-    ) {
-        let freq_min = spec.min_fr().val();
-        let freq_max = spec.max_fr().val();
-        let freq_range = freq_max - freq_min;
-        for i in 0..RESULT_BUF_SIZE {
-            let freq = i as f32 / RESULT_BUF_SIZE as f32 * freq_range + freq_min;
-            let freq = freq.clamp(freq_min, freq_max);
-            buf[i] = spec.freq_val_exact(freq).val();
+    fn refresh_sample_map(&mut self) {
+        if self.sample_map_rate == self.sample_rate
+            && self.sample_map_freq_min == self.config.freq_min
+            && self.sample_map_freq_max == self.config.freq_max
+        {
+            return;
+        }
+
+        let sample_rate = self.sample_rate.max(1) as f32;
+        let bin_hz = sample_rate / FFT_SIZE as f32;
+        let max_bin = (FFT_BIN_COUNT - 1) as f32;
+        let requested_start = self.config.freq_min.clamp(0.0, max_bin * bin_hz);
+        let requested_end = self
+            .config
+            .freq_max
+            .clamp(requested_start, max_bin * bin_hz);
+        let first_bin = (requested_start / bin_hz).ceil().clamp(0.0, max_bin) as usize;
+        let last_bin = (requested_end / bin_hz)
+            .floor()
+            .clamp(first_bin as f32, max_bin) as usize;
+        let start_freq = first_bin as f32 * bin_hz;
+        let end_freq = last_bin as f32 * bin_hz;
+        let freq_range = (end_freq - start_freq).max(0.0);
+
+        for (i, point) in self.sample_map.iter_mut().enumerate() {
+            let freq = i as f32 / RESULT_BUF_SIZE as f32 * freq_range + start_freq;
+            let bin_pos = (freq / bin_hz).clamp(first_bin as f32, last_bin as f32);
+            let index = bin_pos.floor() as usize;
+            *point = SamplePoint {
+                index,
+                frac: if index < last_bin {
+                    bin_pos - index as f32
+                } else {
+                    0.0
+                },
+            };
+        }
+
+        self.sample_map_rate = self.sample_rate;
+        self.sample_map_freq_min = self.config.freq_min;
+        self.sample_map_freq_max = self.config.freq_max;
+    }
+
+    fn sample_magnitudes_into_frame(&mut self) {
+        for (dst, point) in self.frame_buf.iter_mut().zip(&self.sample_map) {
+            let current = self.magnitudes[point.index];
+            let next = self
+                .magnitudes
+                .get(point.index + 1)
+                .copied()
+                .unwrap_or(current);
+            *dst = current + (next - current) * point.frac;
+        }
+    }
+
+    fn smooth_raw_frame(&mut self) {
+        for (smoothed, &current) in self.result_buf.iter_mut().zip(&self.frame_buf) {
+            *smoothed = (*smoothed + current) * 0.5;
         }
     }
 
@@ -258,7 +374,7 @@ impl FftProcessor {
         for i in 0..count {
             let start = i * group_size;
             let end = start + group_size;
-            self.raw_bins[i] = self.frame_buf[start..end].iter().sum::<f32>() / group_size as f32;
+            self.raw_bins[i] = self.result_buf[start..end].iter().sum::<f32>() / group_size as f32;
         }
 
         self.raw_bins_dirty = false;
@@ -270,9 +386,9 @@ impl FftProcessor {
         &self.spectrum
     }
 
-    /// Unwindowed FFT magnitudes for this tick (IPC / native display / lowFreq).
+    /// AMLL-style smoothed raw FFT magnitudes (IPC / native display / lowFreq).
     pub fn raw_spectrum(&self) -> &[f32] {
-        &self.frame_buf
+        &self.result_buf
     }
 
     pub fn is_ready(&self) -> bool {
@@ -303,14 +419,13 @@ impl FftProcessor {
 
     /// Drain all queued PCM + zero buffers (e.g. seek).
     pub fn clear_queue(&mut self) {
-        self.pcm_queue.clear();
+        self.sliding_window.fill(0.0);
+        self.available_samples = 0;
         self.reset();
     }
 
     /// Release heap allocations.
     pub fn free(&mut self) {
-        self.pcm_queue.clear();
-        self.pcm_queue.shrink_to_fit();
         self.spectrum.clear();
         self.spectrum.shrink_to_fit();
         self.smoothed.clear();
@@ -318,6 +433,19 @@ impl FftProcessor {
         self.raw_bins.clear();
         self.raw_bins.shrink_to_fit();
     }
+}
+
+fn build_hamming_window() -> [f32; FFT_SIZE] {
+    let mut window = [0.0f32; FFT_SIZE];
+    // Match `spectrum_analyzer::windows::hamming_window`, which AMLL calls in
+    // `FFTPlayer::read`. The crate's formula is not the textbook Hamming
+    // window, but matching it keeps raw FFT/low-pass values identical in shape
+    // and scale to AMLL's player-core.
+    let divisor = ((FFT_SIZE - 1) as f32).cos();
+    for (i, value) in window.iter_mut().enumerate() {
+        *value = 0.54 - 0.46 * (std::f32::consts::TAU * i as f32 / divisor);
+    }
+    window
 }
 
 // ── LowFreqConfig ──────────────────────────────────────────────────
@@ -394,8 +522,9 @@ impl LowFreqAnalyzer {
             return 0.0;
         }
 
-        // Fall-through: window full OR duplicate in partial window
-        if self.gradient.len() >= self.config.window_size {
+        // Fall-through: window full OR duplicate in partial window. Official
+        // AMLL always shifts before pushing in this branch.
+        if !self.gradient.is_empty() {
             self.gradient.remove(0);
         }
         self.gradient.push(volume);
@@ -512,21 +641,33 @@ impl AudioProcessor {
 
     /// Run the full pipeline: FFT → normalize → raw bins → lowFreq analysis.
     pub fn process_frame(&mut self, delta_ms: f32, output_spectrum: &mut [f32]) -> f32 {
-        let spec = self.fft.read_spectrum(delta_ms);
-        let len = output_spectrum.len().min(spec.len());
-        output_spectrum[..len].copy_from_slice(&spec[..len]);
+        {
+            let spec = self.fft.read_spectrum(delta_ms);
+            let len = output_spectrum.len().min(spec.len());
+            output_spectrum[..len].copy_from_slice(&spec[..len]);
+        }
 
-        let bin_count = self.analyzer.config().bin_count;
-        if let Some(raw_bins) = self.fft.get_raw_bins(bin_count) {
-            let bins: Vec<f32> = raw_bins.to_vec();
-            self.analyzer.analyze(&bins, delta_ms)
-        } else {
-            self.analyzer.analyze(&[], delta_ms)
+        let fft = &mut self.fft;
+        let analyzer = &mut self.analyzer;
+        let bin_count = analyzer.config().bin_count;
+        match fft.get_raw_bins(bin_count) {
+            Some(raw_bins) => analyzer.analyze(raw_bins, delta_ms),
+            None => analyzer.analyze(&[], delta_ms),
         }
     }
 
     pub fn push_pcm(&mut self, samples: &[f32], sample_rate: u32) {
         self.fft.push_pcm(samples, sample_rate);
+    }
+
+    pub fn push_interleaved_pcm(
+        &mut self,
+        samples: &[f32],
+        channels: u16,
+        sample_rate: u32,
+    ) -> usize {
+        self.fft
+            .push_interleaved_pcm(samples, channels, sample_rate)
     }
 
     pub fn reset(&mut self) {
@@ -592,7 +733,7 @@ mod tests {
         proc.push_pcm(&samples, 44100);
         let spec = proc.read_spectrum(16.0).to_vec();
         assert!(spec.iter().any(|&v| v > 0.0));
-        assert!(proc.pcm_queue.len() < FFT_SIZE);
+        assert_eq!(proc.available_samples, FFT_SIZE);
     }
 
     #[test]
@@ -668,22 +809,24 @@ mod tests {
         // Call 1: new value → push to window, value=0 → decay from 1.0
         let v1 = analyzer.analyze(&[50000.0, 25000.0], 16.0);
         assert!(v1 < 1.0, "decay from initial 1.0, got {}", v1);
+        assert_eq!(analyzer.gradient.len(), 1);
 
-        // Call 2: duplicate → fall through to gradient → curValue rises
+        // Call 2: duplicate → official branch shifts then pushes, keeping a
+        // partial window at the same length.
         let v2 = analyzer.analyze(&[50000.0, 25000.0], 16.0);
-        assert!(v2 > v1, "duplicate triggers gradient, got {} > {}", v2, v1);
+        assert_eq!(analyzer.gradient.len(), 1);
+        assert!(v2.is_finite());
 
-        // Call 3: new quiet → push+0 → decay
-        let v3 = analyzer.analyze(&[10.0, 5.0], 16.0);
-        assert!(v3 < v2, "quiet value decays, got {} < {}", v3, v2);
+        analyzer.gradient.clear();
+        analyzer.cur_value = 0.0;
 
-        // Call 4: new value → full window → gradient → rises
-        let v4 = analyzer.analyze(&[200.0, 100.0], 16.0);
-        assert!(v4 > v3, "window full, should rise, got {} > {}", v4, v3);
+        analyzer.analyze(&[10.0, 5.0], 16.0);
+        analyzer.analyze(&[20.0, 10.0], 16.0);
+        analyzer.analyze(&[30.0, 15.0], 16.0);
+        assert_eq!(analyzer.gradient.len(), 3);
 
-        // Call 5: loud signal → continues rising
-        let v5 = analyzer.analyze(&[50000.0, 25000.0], 16.0);
-        assert!(v5 > v4, "loud bass keeps rising, got {} > {}", v5, v4);
+        let v = analyzer.analyze(&[50000.0, 25000.0], 16.0);
+        assert!(v > 0.0, "full window with loud bass should rise, got {v}");
     }
 
     #[test]
@@ -718,27 +861,26 @@ mod tests {
             .collect();
         proc.push_pcm(&samples, 44100);
         proc.clear_queue();
-        assert!(proc.pcm_queue.is_empty());
+        assert_eq!(proc.available_samples, 0);
         assert!(proc.spectrum().iter().all(|&v| v == 0.0));
         assert!((proc.peak_value - 0.0001).abs() < 1e-8);
     }
 
     #[test]
-    fn test_time_based_drain() {
+    fn test_sliding_window_keeps_latest_samples() {
         let mut proc = FftProcessor::new(FftConfig::default());
-        let rate = 44100.0;
-        let samples: Vec<f32> = (0..FFT_SIZE * 4)
-            .map(|i| (TAU * 440.0 * i as f32 / rate).sin())
-            .collect();
-        proc.push_pcm(&samples, 44100);
-        proc.read_spectrum(16.0);
-        let remaining = proc.pcm_queue.len();
-        assert!(
-            remaining < 8192,
-            "Queue should be drained, got {}",
-            remaining
-        );
-        assert!(remaining > 7000, "Time-based drain only, got {}", remaining);
+        let first = vec![0.25f32; FFT_SIZE];
+        let second = vec![0.75f32; FFT_SIZE / 2];
+        proc.push_pcm(&first, 44100);
+        proc.push_pcm(&second, 44100);
+
+        assert_eq!(proc.available_samples, FFT_SIZE);
+        assert!(proc.sliding_window[..FFT_SIZE / 2]
+            .iter()
+            .all(|&sample| sample == 0.25));
+        assert!(proc.sliding_window[FFT_SIZE / 2..]
+            .iter()
+            .all(|&sample| sample == 0.75));
     }
 
     #[test]
@@ -795,6 +937,29 @@ mod tests {
             "Bass raw_bins sum={:.6} should be >> treble sum={:.6}",
             sum_bass,
             sum_treble,
+        );
+    }
+
+    #[test]
+    fn test_default_lowfreq_is_visible_for_bass() {
+        let mut proc = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.35, 0.003);
+        proc.clear();
+
+        let rate = 44100.0;
+        let bass: Vec<f32> = (0..FFT_SIZE)
+            .map(|i| (TAU * 80.0 * i as f32 / rate).sin())
+            .collect();
+        let mut spectrum = vec![0.0f32; 2048];
+        let mut low_freq = 0.0;
+
+        for _ in 0..12 {
+            proc.push_pcm(&bass, 44100);
+            low_freq = proc.process_frame(16.0, &mut spectrum);
+        }
+
+        assert!(
+            low_freq > 0.001,
+            "default lowFreq should be visible for bass, got {low_freq}"
         );
     }
 }

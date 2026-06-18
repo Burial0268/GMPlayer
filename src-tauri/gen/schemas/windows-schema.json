@@ -2493,6 +2493,60 @@
           "markdownDescription": "Denies the update_timeline command without any pre-configured scope."
         },
         {
+          "description": "Default permissions for GMPlayer desktop now playing controls\n#### This default permission set includes:\n\n- `allow-clear`\n- `allow-initialize`\n- `allow-set-enabled`\n- `allow-update-play-mode`\n- `allow-update-state`\n- `allow-update-timeline`",
+          "type": "string",
+          "const": "now-playing-controls:default",
+          "markdownDescription": "Default permissions for GMPlayer desktop now playing controls\n#### This default permission set includes:\n\n- `allow-clear`\n- `allow-initialize`\n- `allow-set-enabled`\n- `allow-update-play-mode`\n- `allow-update-state`\n- `allow-update-timeline`"
+        },
+        {
+          "description": "Enables the clear command.",
+          "type": "string",
+          "const": "now-playing-controls:allow-clear",
+          "markdownDescription": "Enables the clear command."
+        },
+        {
+          "description": "Enables the initialize command.",
+          "type": "string",
+          "const": "now-playing-controls:allow-initialize",
+          "markdownDescription": "Enables the initialize command."
+        },
+        {
+          "description": "Enables the permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "now-playing-controls:allow-permissions",
+          "markdownDescription": "Enables the permissions command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_enabled command.",
+          "type": "string",
+          "const": "now-playing-controls:allow-set-enabled",
+          "markdownDescription": "Enables the set_enabled command."
+        },
+        {
+          "description": "Enables the update_play_mode command.",
+          "type": "string",
+          "const": "now-playing-controls:allow-update-play-mode",
+          "markdownDescription": "Enables the update_play_mode command."
+        },
+        {
+          "description": "Enables the update_state command.",
+          "type": "string",
+          "const": "now-playing-controls:allow-update-state",
+          "markdownDescription": "Enables the update_state command."
+        },
+        {
+          "description": "Enables the update_timeline command.",
+          "type": "string",
+          "const": "now-playing-controls:allow-update-timeline",
+          "markdownDescription": "Enables the update_timeline command."
+        },
+        {
+          "description": "Denies the permissions command without any pre-configured scope.",
+          "type": "string",
+          "const": "now-playing-controls:deny-permissions",
+          "markdownDescription": "Denies the permissions command without any pre-configured scope."
+        },
+        {
           "description": "Default permissions for the orientation plugin\n#### This default permission set includes:\n\n- `allow-set-screen-orientation`",
           "type": "string",
           "const": "orientation:default",
