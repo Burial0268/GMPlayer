@@ -1305,6 +1305,7 @@ watch(
 .player {
   --player-data-edge-inset: 14px;
   --player-control-edge-inset: 14px;
+  --player-slider-edge-inset: 0px;
 
   height: 70px;
   position: fixed;
@@ -1338,8 +1339,9 @@ watch(
     pointer-events: var(--mobile-mini-player-pointer-events, auto);
     touch-action: pan-x;
     isolation: isolate;
-    --player-data-edge-inset: 0px;
-    --player-control-edge-inset: 0px;
+    --player-data-edge-inset: 12px;
+    --player-control-edge-inset: 12px;
+    --player-slider-edge-inset: 12px;
     background-color: transparent !important;
     border: none !important;
     outline: none !important;
@@ -1372,8 +1374,8 @@ watch(
   .slider {
     position: absolute;
     top: -12px;
-    left: 0;
-    width: 100%;
+    left: var(--player-slider-edge-inset, 0px);
+    right: var(--player-slider-edge-inset, 0px);
     display: flex;
     align-items: center;
     justify-content: space-between;

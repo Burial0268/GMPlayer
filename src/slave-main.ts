@@ -62,6 +62,11 @@ const router = createRouter({
       component: () => import("@/views/TaskbarLyrics/index.vue"),
     },
     {
+      path: "/tray-popup",
+      name: "tray-popup",
+      component: () => import("@/views/TrayPopup/index.vue"),
+    },
+    {
       path: "/:pathMatch(.*)",
       redirect: "/mini-player",
     },
