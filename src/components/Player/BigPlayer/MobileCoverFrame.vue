@@ -70,17 +70,14 @@ const mergedFrameStyle = computed(() => {
 });
 const frameLayoutEnabled = computed(() => props.layoutEnabled ?? true);
 const frameLayoutId = computed(() =>
-  props.layoutId === null ? undefined : props.layoutId ?? "splayer-mobile-album",
+  props.layoutId === null ? undefined : (props.layoutId ?? "splayer-mobile-album"),
 );
 const loadAnimationEnabled = computed(() => props.loadAnimation ?? false);
 const imgLoaded = ref(!loadAnimationEnabled.value || loadedCoverUrls.has(props.coverUrl));
 
-watch(
-  [() => props.coverUrl, loadAnimationEnabled],
-  ([newUrl]) => {
-    imgLoaded.value = !loadAnimationEnabled.value || loadedCoverUrls.has(newUrl);
-  },
-);
+watch([() => props.coverUrl, loadAnimationEnabled], ([newUrl]) => {
+  imgLoaded.value = !loadAnimationEnabled.value || loadedCoverUrls.has(newUrl);
+});
 
 function onImgLoad(): void {
   loadedCoverUrls.add(props.coverUrl);

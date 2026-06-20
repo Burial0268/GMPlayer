@@ -1,9 +1,5 @@
 <template>
-  <div
-    ref="containerRef"
-    class="control-thumb"
-    :class="{ hovering, pressing }"
-  >
+  <div ref="containerRef" class="control-thumb" :class="{ hovering, pressing }">
     <button
       v-bind="attrs"
       type="button"
@@ -91,7 +87,7 @@ const handlePointerLeave = () => {
   position: relative;
   width: 100%;
   height: 100%;
-  color: rgb(255 255 255 / 0.48);
+  color: var(--main-cover-color, rgb(255 255 255 / 0.72));
   mix-blend-mode: plus-lighter;
 
   button {
@@ -105,14 +101,11 @@ const handlePointerLeave = () => {
     border: none;
     padding: 0;
     border-radius: 4px;
-    background-color: rgb(255 255 255 / 0.12);
+    background-color: color-mix(in srgb, currentColor 16%, transparent);
     color: inherit;
     cursor: none;
-    filter: brightness(0.82);
-    transform: translate(
-        calc(-50% + var(--thumb-x)),
-        calc(-50% + var(--thumb-y))
-      )
+    mix-blend-mode: plus-lighter;
+    transform: translate(calc(-50% + var(--thumb-x)), calc(-50% + var(--thumb-y)))
       scale(var(--thumb-scale, 1));
     transition:
       background-color 0.18s cubic-bezier(0.25, 1, 0.5, 1),
@@ -129,6 +122,7 @@ const handlePointerLeave = () => {
       margin-top: 0;
       background-color: currentColor;
       border-radius: 10px;
+      mix-blend-mode: plus-lighter;
       rotate: 0deg;
       transition:
         width 0.18s cubic-bezier(0.25, 1, 0.5, 1),
@@ -142,7 +136,7 @@ const handlePointerLeave = () => {
   &.hovering button {
     width: 25px;
     height: 25px;
-    background-color: rgb(255 255 255 / 0.14);
+    background-color: color-mix(in srgb, currentColor 22%, transparent);
 
     span {
       left: 5px;

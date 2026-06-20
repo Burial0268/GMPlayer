@@ -7,3 +7,10 @@
     />
   </svg>
 </template>
+
+<style scoped>
+svg,
+path {
+  mix-blend-mode: plus-lighter;
+}
+</style>

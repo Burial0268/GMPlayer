@@ -81,6 +81,7 @@
 import { musicStore, siteStore } from "@/store";
 import { DeleteFour } from "@icon-park/vue-next";
 import { soundStop } from "@/utils/AudioContext";
+import { PLAYLIST_DRAWER_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { useI18n } from "vue-i18n";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 
@@ -170,7 +171,7 @@ watch(
 
 onMounted(() => {
   if (typeof window !== "undefined") {
-    drawerMediaQuery = window.matchMedia("(max-width: 1040px)");
+    drawerMediaQuery = window.matchMedia(PLAYLIST_DRAWER_MEDIA_QUERY);
     syncDrawerLayout();
     drawerMediaQuery.addEventListener("change", syncDrawerLayout);
   } else {

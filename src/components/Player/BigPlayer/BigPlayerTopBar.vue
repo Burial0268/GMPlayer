@@ -91,6 +91,5 @@ defineEmits<{
       margin-left: 8px;
     }
   }
-
 }
 </style>

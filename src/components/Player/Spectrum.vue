@@ -63,7 +63,10 @@ const drawSpectrum = (data) => {
   const canvasWidth = cachedWidth;
   const canvasHeight = cachedHeight;
   const rawBinCount = data.length;
-  const numBars = Math.max(1, Math.min(rawBinCount, Math.floor(canvasWidth / (props.barWidth * 2))));
+  const numBars = Math.max(
+    1,
+    Math.min(rawBinCount, Math.floor(canvasWidth / (props.barWidth * 2))),
+  );
   const barWidth = canvasWidth / numBars / 2;
   const cornerRadius = props.radius;
   let framePeak = 0;

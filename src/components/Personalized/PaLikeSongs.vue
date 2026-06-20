@@ -103,27 +103,25 @@ onMounted(() => {
   }
   .like-song-bg {
     position: absolute;
-    top: -11%;
-    left: -11%;
-    width: 122%;
-    height: 122%;
+    // 放大并超出容器，模糊后的透明边缘被 overflow:hidden 裁掉
+    inset: -48px;
     background-repeat: no-repeat;
     background-size: cover;
     background-position: center;
-    z-index: -2;
+    // 直接模糊背景图本身，避免依赖 backdrop-filter（在 translateZ/perspective 等 3D 上下文中会失效）
+    filter: blur(20px);
+    z-index: 0;
   }
   .gray {
     position: absolute;
-    top: -11%;
-    left: -11%;
-    width: 122%;
-    height: 122%;
+    inset: 0;
     background-color: rgba(0, 0, 0, 0.4);
-    -webkit-backdrop-filter: blur(20px);
-    backdrop-filter: blur(20px);
-    z-index: -1;
+    pointer-events: none;
+    z-index: 1;
   }
   .left {
+    position: relative;
+    z-index: 2;
     height: 100%;
     width: 100%;
     display: flex;
@@ -159,6 +157,8 @@ onMounted(() => {
     }
   }
   .right {
+    position: relative;
+    z-index: 2;
     display: flex;
     .icon {
       opacity: 0;

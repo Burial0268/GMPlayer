@@ -18,6 +18,9 @@
       :style="{
         '--cover-bg': songPicGradient,
         '--main-cover-color': `rgb(${setting.immersivePlayer ? songPicColor : '255,255,255'})`,
+        '--main-cover-mix-color': setting.immersivePlayer
+          ? `color-mix(in srgb, rgb(${songPicColor}) 72%, rgb(239, 239, 239) 28%)`
+          : 'rgb(239, 239, 239)',
       }"
       @mousedown="handleDesktopWindowDrag"
     >

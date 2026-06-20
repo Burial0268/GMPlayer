@@ -421,22 +421,35 @@ const closeBigPlayer = () => {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
+
+    :deep(.n-icon),
+    :deep(svg),
+    :deep(path) {
+      mix-blend-mode: plus-lighter;
+    }
+
+    :deep(.bouncing-slider) {
+      mix-blend-mode: plus-lighter;
+    }
+
     .song-info {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      color: var(--main-cover-color);
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
       .text {
         display: flex;
         flex-direction: column;
         gap: 0.25rem;
+        mix-blend-mode: plus-lighter;
         .name {
           font-size: 1.5rem;
           font-weight: 600;
         }
         .artists {
           font-size: 1rem;
-          opacity: 0.7;
+          opacity: 1;
           .artist-name {
             cursor: pointer;
             &:hover {
@@ -449,16 +462,17 @@ const closeBigPlayer = () => {
         display: flex;
         align-items: center;
         gap: 0.5rem;
+        mix-blend-mode: plus-lighter;
         .like-button {
           font-size: 1.75rem;
           cursor: pointer;
-          opacity: 0.7;
+          opacity: 1;
           transition: opacity 0.2s ease;
         }
         .more-button {
           font-size: 1.75rem;
           cursor: pointer;
-          opacity: 0.7;
+          opacity: 1;
           transition: opacity 0.2s ease;
           &:hover {
             opacity: 1;
@@ -478,11 +492,12 @@ const closeBigPlayer = () => {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        color: var(--main-cover-color);
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
         .time-text {
           font-size: 0.75rem;
-          opacity: 0.7;
+          opacity: 1;
           min-width: 36px;
+          mix-blend-mode: plus-lighter;
           &:last-child {
             text-align: right;
           }
@@ -508,8 +523,9 @@ const closeBigPlayer = () => {
         align-items: center;
         justify-content: center;
         font-size: clamp(1.65rem, calc(var(--cover-size) * 0.072), 1.95rem);
-        color: var(--main-cover-color);
-        opacity: 0.8;
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        mix-blend-mode: plus-lighter;
+        opacity: 1;
         cursor: pointer;
         transition:
           opacity 0.2s ease,
@@ -523,7 +539,7 @@ const closeBigPlayer = () => {
         }
         &.active {
           opacity: 1;
-          color: var(--primary-color);
+          color: var(--main-cover-mix-color, rgb(239, 239, 239));
         }
 
         &.skip-icon {
@@ -535,8 +551,8 @@ const closeBigPlayer = () => {
       display: flex;
       align-items: center;
       :deep(.n-icon) {
-        color: var(--main-cover-color);
-        opacity: 0.7;
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        opacity: 1;
       }
     }
   }

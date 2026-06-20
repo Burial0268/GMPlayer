@@ -5,7 +5,7 @@
     <div class="text">
       <div class="date">
         <n-icon class="calendar" :component="CalendarTodayFilled" size="40" />
-        <n-text class="num" v-html="new Date().getDate()" />
+        <n-text class="num">{{ displayDay }}</n-text>
       </div>
       <div class="desc">
         <n-text class="title">{{ $t("home.modules.dailySongs.title") }}</n-text>
@@ -23,6 +23,7 @@
 import { getDailySongs } from "@/api/home";
 import { useRouter } from "vue-router";
 import { musicStore, userStore } from "@/store";
+import { getDailySongsDate } from "@/utils/timeTools";
 import { PlayCircleFilled, CalendarTodayFilled } from "@vicons/material";
 
 const music = musicStore();
@@ -31,15 +32,21 @@ const router = useRouter();
 
 // 卡片背景
 const cardImage = ref(null);
+const randomIndex = ref(0);
+const displayDay = computed(() => Number(getDailySongsDate().split("-")[2]));
 
-// 随机数
-const randomNumber = Math.floor(Math.random() * music.getDailySongs.length);
+const resetRandomIndex = () => {
+  randomIndex.value = music.getDailySongs.length
+    ? Math.floor(Math.random() * music.getDailySongs.length)
+    : 0;
+};
 
 // 生成卡片背景
 const getCardImage = () => {
   if (user.userLogin && music.getDailySongs[0]) {
+    resetRandomIndex();
     cardImage.value =
-      music.getDailySongs[randomNumber]?.album.picUrl.replace(/^http:/, "https:") +
+      music.getDailySongs[randomIndex.value]?.album.picUrl.replace(/^http:/, "https:") +
       "?param=100y100";
   } else {
     cardImage.value = "/images/pic/pic.jpg";
@@ -49,10 +56,14 @@ const getCardImage = () => {
 // 获取每日推荐数据
 const getDailySongsData = () => {
   getCardImage();
-  if (music.getDailySongs.length === 0 && user.userLogin) {
+  const dailySongsDate = getDailySongsDate();
+  if (
+    user.userLogin &&
+    (music.getDailySongs.length === 0 || music.getDailySongsDate !== dailySongsDate)
+  ) {
     getDailySongs().then((res) => {
       if (res.data.dailySongs) {
-        music.setDailySongs(res.data.dailySongs);
+        music.setDailySongs(res.data.dailySongs, dailySongsDate);
         getCardImage();
       } else {
         $message.error("每日推荐获取失败");
@@ -74,7 +85,7 @@ const playThisSong = () => {
       music.setPlayState(true);
       if (isHas === -1) {
         music.setPlaylists(music.getDailySongs);
-        music.addSongToPlaylists(music.getDailySongs[randomNumber]);
+        music.addSongToPlaylists(music.getDailySongs[randomIndex.value]);
       }
     } else {
       $message.error("每日推荐获取失败，请刷新后重试");
@@ -121,27 +132,25 @@ onMounted(() => {
   }
   .padailysongs-bg {
     position: absolute;
-    top: -11%;
-    left: -11%;
-    width: 122%;
-    height: 122%;
+    // 放大并超出容器，模糊后的透明边缘被 overflow:hidden 裁掉
+    inset: -48px;
     background-repeat: no-repeat;
     background-size: cover;
     background-position: center;
-    z-index: -2;
+    // 直接模糊背景图本身，避免依赖 backdrop-filter（在 translateZ/perspective 等 3D 上下文中会失效）
+    filter: blur(20px);
+    z-index: 0;
   }
   .gray {
     position: absolute;
-    top: -11%;
-    left: -11%;
-    width: 122%;
-    height: 122%;
+    inset: 0;
     background-color: rgba(0, 0, 0, 0.4);
-    -webkit-backdrop-filter: blur(20px);
-    backdrop-filter: blur(20px);
-    z-index: -1;
+    pointer-events: none;
+    z-index: 1;
   }
   .text {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     .date {
@@ -180,6 +189,7 @@ onMounted(() => {
   }
   .control {
     position: relative;
+    z-index: 2;
     height: 100%;
     display: flex;
     align-items: center;

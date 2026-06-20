@@ -146,13 +146,5 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
       pointer-events: none;
     }
   }
-
-}
-
-/* 桌面端左侧控制区 plus-lighter — :global 绕过 scoped 组件边界 */
-:global(.bplayer .left .controls),
-:global(.bplayer .left .controls .bouncing-slider),
-:global(.bplayer .left .controls .n-icon) {
-  mix-blend-mode: plus-lighter;
 }
 </style>

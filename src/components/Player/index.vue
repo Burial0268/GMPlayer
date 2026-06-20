@@ -137,7 +137,7 @@
                   :transition="{ duration: 0.2 }"
                   class="play-state-inner"
                 >
-                  <n-spin :size="28" stroke="var(--main-color)" />
+                  <n-spin :size="28" stroke="var(--player-accent-color, var(--main-color))" />
                 </Motion>
                 <Motion
                   v-else
@@ -303,7 +303,7 @@ import {
 } from "@vicons/material";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { storeToRefs } from "pinia";
-import { musicStore, settingStore, siteStore, listenTogetherStore } from "@/store";
+import { musicStore, settingStore, listenTogetherStore } from "@/store";
 import {
   createSound,
   setVolume,
@@ -314,11 +314,18 @@ import {
 } from "@/utils/AudioContext";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import { useRouter } from "vue-router";
-import { debounce, throttle } from "throttle-debounce";
+import { debounce } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
 import { NativeRustSound, isAudioBackendRuntimeAvailable } from "@/utils/tauri/NativeRustSound";
 import { windowManager } from "@/utils/tauri/windowManager";
+import {
+  broadcastPlayerLyrics,
+  broadcastPlayerSettings,
+  broadcastPlayerState,
+  broadcastPlayerTime,
+  setupMainPlayerCommunication,
+} from "@/utils/tauri/playerCommunication";
 import { useNativeMediaControls } from "@/composables/useNativeMediaControls";
 import VueSlider from "vue-slider-component";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
@@ -329,16 +336,14 @@ import AllArtists from "@/components/DataList/AllArtists.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import BigPlayer from "./BigPlayer/index.vue";
 import "vue-slider-component/theme/default.css";
-import { watch, toRaw } from "vue";
+import { watch } from "vue";
 import { parseLyricData as parseLyric } from "@/utils/LyricsProcessor";
-import { preprocessLyrics, getProcessedLyrics } from "@/utils/LyricsProcessor";
 import { lyricFetcher } from "@/utils/lyricFetcher";
 
 const { t } = useI18n();
 const router = useRouter();
 const setting = settingStore();
 const music = musicStore();
-const site = siteStore();
 const listenTogether = listenTogetherStore();
 const { persistData } = storeToRefs(music);
 useNativeMediaControls();
@@ -352,7 +357,6 @@ let miniTouchState = null;
 let suppressMiniClick = false;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-const PLAYER_BRIDGE_TARGETS = ["mini-player", "desktop-lyrics", "taskbar-lyric"];
 let playlistToggleIntent = null;
 let playlistToggleIntentTimer = null;
 
@@ -375,18 +379,6 @@ const togglePlaylist = () => {
   clearPlaylistToggleIntent();
   music.showPlayList = nextShowState;
 };
-
-function emitPlayerBridgeEvent(eventName, payload, targetLabel) {
-  const tauriEvent = window.__TAURI__?.event;
-  if (!tauriEvent) return;
-
-  tauriEvent.emit(eventName, payload).catch(() => {});
-
-  const targets = targetLabel ? [targetLabel] : PLAYER_BRIDGE_TARGETS;
-  for (const label of targets) {
-    tauriEvent.emitTo(label, eventName, payload).catch(() => {});
-  }
-}
 
 const getMobilePlayerTransitionDistance = () =>
   Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
@@ -706,320 +698,13 @@ const songChange = debounce(500, (val) => {
   getPlaySongData(val);
 });
 
-// Tauri: broadcast player state to other windows (tray popup, mini player, desktop lyrics)
-const broadcastPlayerState = () => {
-  if (!isTauri()) return;
-  const songData = music.getPlaySongData;
-  const playTime = music.getPlaySongTime;
-  const payload = {
-    title: songData?.name || "",
-    artist: songData?.artist?.map((a) => a.name).join(", ") || "",
-    artistList: songData?.artist?.map((a) => ({ id: a.id, name: a.name })) || [],
-    coverUrl: songData?.album?.picUrl
-      ? songData.album.picUrl.replace(/^http:/, "https:") + "?param=128y128"
-      : "",
-    coverUrlLarge: songData?.album?.picUrl
-      ? songData.album.picUrl.replace(/^http:/, "https:") + "?param=512y512"
-      : "",
-    songId: songData?.id || null,
-    isPlaying: music.getPlayState,
-    isLoading: music.isLoadingSong,
-    isLiked: songData ? music.getSongIsLike(songData.id) : false,
-    accentColor: site.songPicColor || "",
-    currentTime: playTime?.currentTime || 0,
-    duration: playTime?.duration || 0,
-    volume: persistData.value.playVolume,
-    playMode: music.persistData.playSongMode || "normal",
-  };
-  emitPlayerBridgeEvent("player-state-update", payload);
-
-  // Update native window effect tint color with accent blend
-  if (site.songPicColor) {
-    const m = site.songPicColor.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-    if (m) {
-      const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-      const base = isDark ? 30 : 240;
-      const r = Math.round(base * 0.85 + parseInt(m[1]) * 0.15);
-      const g = Math.round(base * 0.85 + parseInt(m[2]) * 0.15);
-      const b = Math.round(base * 0.85 + parseInt(m[3]) * 0.15);
-      windowManager.setWindowEffectColor("tray-popup", r, g, b, 200);
-    }
-  }
-};
-
-// Tauri: broadcast time update to slave windows (~20fps, throttled 50ms)
-const broadcastTimeUpdate = throttle(50, () => {
-  if (!isTauri() || !music.getPlayState) return;
-  emitPlayerBridgeEvent("player-time-update", {
-    currentTime: music.getPlaySongTime.currentTime,
-    lyricIndex: music.playSongLyricIndex,
-  });
-});
-
-// Tauri: broadcast lyric data to slave windows
-const broadcastLyricData = () => {
-  if (!isTauri()) return;
-  const songData = music.getPlaySongData;
-  if (!songData) return;
-
-  const rawSongLyric = toRaw(music.songLyric);
-  if (!rawSongLyric || !rawSongLyric.lrc) return;
-
-  // Process lyrics for AMLL
-  let amllLines = [];
-  try {
-    preprocessLyrics(rawSongLyric, {
-      showYrc: setting.showYrc,
-      showRoma: setting.showRoma,
-      showTransl: setting.showTransl,
-    });
-    amllLines = getProcessedLyrics(rawSongLyric, {
-      showYrc: setting.showYrc,
-      showRoma: setting.showRoma,
-      showTransl: setting.showTransl,
-    });
-
-    // Sanitize based on settings
-    if (!setting.showTransl || !setting.showRoma) {
-      for (let i = 0; i < amllLines.length; i++) {
-        const line = amllLines[i];
-        if (!setting.showTransl) line.translatedLyric = "";
-        if (!setting.showRoma) {
-          line.romanLyric = "";
-          const words = line.words;
-          for (let j = 0; j < words.length; j++) {
-            words[j].romanWord = "";
-          }
-        }
-      }
-    }
-  } catch (err) {
-    console.error("[Player] Failed to process lyrics for broadcast:", err);
-  }
-
-  const payload = {
-    songId: songData.id,
-    lrc: rawSongLyric.lrc.map((l) => ({ time: l.time, content: l.content })),
-    amllLines,
-    hasYrc: rawSongLyric.hasYrc || false,
-    hasLrcTran: rawSongLyric.hasLrcTran || false,
-    hasLrcRoma: rawSongLyric.hasLrcRoma || false,
-  };
-  emitPlayerBridgeEvent("player-lyric-update", payload);
-};
-
-// Tauri: broadcast settings to slave windows
-const broadcastSettings = () => {
-  if (!isTauri()) return;
-  const payload = {
-    lyricTimeOffset: setting.lyricTimeOffset,
-    lyricsFontSize: setting.lyricsFontSize,
-    lyricFont: setting.lyricFont,
-    lyricFontWeight: setting.lyricFontWeight,
-    lyricLetterSpacing: setting.lyricLetterSpacing,
-    lyricLineHeight: setting.lyricLineHeight,
-    lyricsBlur: setting.lyricsBlur,
-    lyricsBlock: setting.lyricsBlock,
-    lyricsPosition: setting.lyricsPosition,
-    showYrc: setting.showYrc,
-    showYrcAnimation: setting.showYrcAnimation,
-    showTransl: setting.showTransl,
-    showRoma: setting.showRoma,
-    springParams: setting.springParams,
-  };
-  emitPlayerBridgeEvent("player-settings-update", payload);
-};
-
-// Tauri: push full state snapshot to a newly opened slave window
-const broadcastFullState = (targetLabel) => {
-  if (!isTauri()) return;
-  const statePayload = {
-    title: music.getPlaySongData?.name || "",
-    artist: music.getPlaySongData?.artist?.map((a) => a.name).join(", ") || "",
-    artistList: music.getPlaySongData?.artist?.map((a) => ({ id: a.id, name: a.name })) || [],
-    coverUrl: music.getPlaySongData?.album?.picUrl
-      ? music.getPlaySongData.album.picUrl.replace(/^http:/, "https:") + "?param=128y128"
-      : "",
-    coverUrlLarge: music.getPlaySongData?.album?.picUrl
-      ? music.getPlaySongData.album.picUrl.replace(/^http:/, "https:") + "?param=512y512"
-      : "",
-    songId: music.getPlaySongData?.id || null,
-    isPlaying: music.getPlayState,
-    isLoading: music.isLoadingSong,
-    isLiked: music.getPlaySongData ? music.getSongIsLike(music.getPlaySongData.id) : false,
-    accentColor: siteStore().songPicColor || "",
-    currentTime: music.getPlaySongTime.currentTime,
-    duration: music.getPlaySongTime.duration,
-    volume: persistData.value.playVolume,
-    playMode: music.persistData.playSongMode || "normal",
-  };
-
-  // Build lyric payload
-  let lyricPayload = null;
-  const rawSongLyric = toRaw(music.songLyric);
-  if (rawSongLyric && rawSongLyric.lrc && rawSongLyric.lrc.length > 0 && music.getPlaySongData) {
-    let amllLines = [];
-    try {
-      preprocessLyrics(rawSongLyric, {
-        showYrc: setting.showYrc,
-        showRoma: setting.showRoma,
-        showTransl: setting.showTransl,
-      });
-      amllLines = getProcessedLyrics(rawSongLyric, {
-        showYrc: setting.showYrc,
-        showRoma: setting.showRoma,
-        showTransl: setting.showTransl,
-      });
-      if (!setting.showTransl || !setting.showRoma) {
-        for (let i = 0; i < amllLines.length; i++) {
-          const line = amllLines[i];
-          if (!setting.showTransl) line.translatedLyric = "";
-          if (!setting.showRoma) {
-            line.romanLyric = "";
-            const words = line.words;
-            for (let j = 0; j < words.length; j++) {
-              words[j].romanWord = "";
-            }
-          }
-        }
-      }
-    } catch (err) {
-      console.error("[Player] Failed to process lyrics for full state:", err);
-    }
-    lyricPayload = {
-      songId: music.getPlaySongData.id,
-      lrc: rawSongLyric.lrc.map((l) => ({ time: l.time, content: l.content })),
-      amllLines,
-      hasYrc: rawSongLyric.hasYrc || false,
-      hasLrcTran: rawSongLyric.hasLrcTran || false,
-      hasLrcRoma: rawSongLyric.hasLrcRoma || false,
-    };
-  }
-
-  const settingsPayload = {
-    lyricTimeOffset: setting.lyricTimeOffset,
-    lyricsFontSize: setting.lyricsFontSize,
-    lyricFont: setting.lyricFont,
-    lyricFontWeight: setting.lyricFontWeight,
-    lyricLetterSpacing: setting.lyricLetterSpacing,
-    lyricLineHeight: setting.lyricLineHeight,
-    lyricsBlur: setting.lyricsBlur,
-    lyricsBlock: setting.lyricsBlock,
-    lyricsPosition: setting.lyricsPosition,
-    showYrc: setting.showYrc,
-    showYrcAnimation: setting.showYrcAnimation,
-    showTransl: setting.showTransl,
-    showRoma: setting.showRoma,
-    springParams: setting.springParams,
-  };
-
-  const payload = {
-    state: statePayload,
-    time: {
-      currentTime: music.getPlaySongTime.currentTime,
-      lyricIndex: music.playSongLyricIndex,
+const setupPlayerCommunication = () => {
+  setupMainPlayerCommunication({
+    seek(time) {
+      if (player.value) setSeek(player.value, time);
     },
-    lyric: lyricPayload,
-    settings: settingsPayload,
-  };
-
-  emitPlayerBridgeEvent("player-full-state", payload, targetLabel);
-};
-
-// Tauri: set up tray + slave control event listeners
-const setupTrayListeners = async () => {
-  const tauri = window.__TAURI__;
-  if (!tauri) return;
-
-  // Listen for tray play/pause
-  await tauri.event.listen("tray-play-pause", () => {
-    music.setPlayState(!music.getPlayState);
-  });
-
-  // Listen for tray prev/next track
-  await tauri.event.listen("tray-prev-track", () => {
-    music.setPlaySongIndex("prev");
-  });
-  await tauri.event.listen("tray-next-track", () => {
-    music.setPlaySongIndex("next");
-  });
-
-  // Listen for tray popup opened — push fresh state
-  await tauri.event.listen("tray-popup-opened", () => {
-    broadcastPlayerState();
-  });
-
-  // Listen for tray play mode cycle
-  await tauri.event.listen("tray-cycle-play-mode", () => {
-    music.setPlaySongMode();
-    broadcastPlayerState();
-  });
-
-  // Listen for like song from tray
-  await tauri.event.listen("tray-like-song", async () => {
-    const songData = music.getPlaySongData;
-    if (songData) {
-      await music.changeLikeList(songData.id, !music.getSongIsLike(songData.id));
-      broadcastPlayerState();
-    }
-  });
-
-  // ── Slave window command listeners ──────────────────────────────────
-
-  await tauri.event.listen("slave-play-pause", () => {
-    music.setPlayState(!music.getPlayState);
-  });
-
-  await tauri.event.listen("slave-prev-track", () => {
-    music.setPlaySongIndex("prev");
-  });
-
-  await tauri.event.listen("slave-next-track", () => {
-    music.setPlaySongIndex("next");
-  });
-
-  await tauri.event.listen("slave-seek", (e) => {
-    const { time } = e.payload;
-    if (player.value && typeof time === "number") {
-      setSeek(player.value, time);
-    }
-  });
-
-  await tauri.event.listen("slave-volume", (e) => {
-    const { volume } = e.payload;
-    if (typeof volume === "number") {
-      persistData.value.playVolume = Math.max(0, Math.min(1, volume));
-    }
-  });
-
-  await tauri.event.listen("slave-cycle-play-mode", () => {
-    music.setPlaySongMode();
-    broadcastPlayerState();
-  });
-
-  // Listen for like song from slave windows
-  await tauri.event.listen("slave-like-song", async () => {
-    const songData = music.getPlaySongData;
-    if (songData) {
-      await music.changeLikeList(songData.id, !music.getSongIsLike(songData.id));
-      broadcastPlayerState();
-    }
-  });
-
-  // Listen for lyrics font size changes from desktop lyrics controls
-  await tauri.event.listen("slave-set-lyrics-font-size", (e) => {
-    const { size } = e.payload;
-    if (typeof size === "number") {
-      setting.lyricsFontSize = Math.max(2, Math.min(6, size));
-      // Broadcast settings update to all slave windows
-      broadcastSettings();
-    }
-  });
-
-  // Slave window opened — push full state snapshot
-  await tauri.event.listen("slave-window-opened", (event) => {
-    const payload = event.payload || {};
-    broadcastFullState(payload.label);
+  }).catch((err) => {
+    console.error("[Player] Failed to setup player communication:", err);
   });
 };
 
@@ -1033,7 +718,7 @@ onMounted(() => {
 
   // Tauri: wire up tray control listeners + state broadcasting
   if (isTauri()) {
-    setupTrayListeners();
+    setupPlayerCommunication();
   }
 
   // 一起听歌：从 URL 参数自动加入房间
@@ -1121,12 +806,7 @@ watch(
 
     broadcastPlayerState();
     // Also broadcast time on play state change for slave windows
-    if (isTauri()) {
-      emitPlayerBridgeEvent("player-time-update", {
-        currentTime: music.getPlaySongTime.currentTime,
-        lyricIndex: music.playSongLyricIndex,
-      });
-    }
+    broadcastPlayerTime(true);
     // 一起听歌：发送播放状态同步（房主和房客均可）
     if (listenTogether.isInRoom && !listenTogether.isProcessingRemoteCommand) {
       listenTogether.sendPlayCommand(val ? "PLAY" : "PAUSE");
@@ -1200,7 +880,7 @@ watch(
 watch(
   () => music.getPlaySongTime.currentTime,
   () => {
-    broadcastTimeUpdate();
+    broadcastPlayerTime();
   },
 );
 
@@ -1208,7 +888,7 @@ watch(
 watch(
   () => music.songLyric,
   () => {
-    broadcastLyricData();
+    broadcastPlayerLyrics(true);
   },
   { deep: true },
 );
@@ -1231,9 +911,9 @@ watch(
     setting.showRoma,
   ],
   () => {
-    broadcastSettings();
+    broadcastPlayerSettings();
     // Re-process and re-broadcast lyrics when display settings change
-    broadcastLyricData();
+    broadcastPlayerLyrics(true);
   },
 );
 
@@ -1245,11 +925,13 @@ const fetchAndParseLyric = async (id) => {
       return;
     }
     music.setPlaySongLyric(result);
+    nextTick(() => broadcastPlayerLyrics(true));
   } catch (err) {
     console.error(`[Player] Failed to fetch lyric for ${id}:`, err);
     const defaultResult = parseLyric(null);
     defaultResult.formattedLrc = "";
     music.setPlaySongLyric(defaultResult);
+    nextTick(() => broadcastPlayerLyrics(true));
   }
 };
 
@@ -1303,6 +985,26 @@ watch(
 }
 
 .player {
+  --player-page-accent-rgb: var(--content-panel-accent-rgb, var(--app-shell-rgb, 242, 242, 244));
+  --player-accent-color: color-mix(
+    in srgb,
+    var(--main-color) 72%,
+    rgb(var(--player-page-accent-rgb)) 28%
+  );
+  --player-accent-strong: color-mix(
+    in srgb,
+    var(--main-color) 58%,
+    rgb(var(--player-page-accent-rgb)) 42%
+  );
+  --player-rail-color: color-mix(
+    in srgb,
+    rgb(var(--player-page-accent-rgb)) 22%,
+    var(--n-border-color) 78%
+  );
+  // 外壳底色保持素色，与 sidebar / QueuePanel 完全一致(var(--app-shell-bg))，不再叠加封面取色，
+  // 让 sidebar · 播放栏 · 队列 连成同一块连续的中性外壳。
+  --player-surface-bg: var(--app-shell-bg, var(--layout-bg, #fff));
+  --player-surface-border: var(--acrylic-border, rgba(0, 0, 0, 0.06));
   --player-data-edge-inset: 14px;
   --player-control-edge-inset: 14px;
   --player-slider-edge-inset: 0px;
@@ -1324,8 +1026,7 @@ watch(
     --player-surface-bg,
     var(--app-shell-bg, var(--layout-bg, #fff))
   ) !important;
-  border-top: 1px solid
-    var(--mobile-mini-player-surface-border, var(--acrylic-border, rgba(0, 0, 0, 0.04)));
+  border-top: 1px solid var(--mobile-mini-player-surface-border, var(--player-surface-border));
   box-shadow: var(--mobile-mini-player-surface-shadow, none);
 
   // Mobile: player sits above tab bar, no sidebar
@@ -1341,7 +1042,7 @@ watch(
     isolation: isolate;
     --player-data-edge-inset: 12px;
     --player-control-edge-inset: 12px;
-    --player-slider-edge-inset: 12px;
+    --player-slider-edge-inset: 0px;
     background-color: transparent !important;
     border: none !important;
     outline: none !important;
@@ -1353,9 +1054,10 @@ watch(
       position: absolute;
       inset: 0;
       z-index: -1;
+      // 素色底，与 sidebar / 队列 / 桌面播放栏一致；去掉亚克力与封面取色叠加，求和谐统一
       background-color: var(
         --mobile-mini-player-surface-bg,
-        var(--acrylic-bg, rgba(255, 255, 255, 0.45))
+        var(--app-shell-bg, var(--layout-bg, #fff))
       );
       box-shadow: var(--mobile-mini-player-surface-shadow, 0 -10px 28px rgb(0 0 0 / 10%));
       opacity: var(--mobile-mini-player-surface-opacity, 1);
@@ -1421,11 +1123,15 @@ watch(
       }
 
       :deep(.vue-slider-rail) {
-        background-color: var(--n-border-color);
+        background-color: var(--player-rail-color);
         border-radius: var(--radius-pill);
 
         .vue-slider-process {
-          background-color: var(--main-color);
+          background: linear-gradient(
+            90deg,
+            var(--player-accent-strong),
+            var(--player-accent-color)
+          );
         }
 
         .vue-slider-dot {
@@ -1434,7 +1140,7 @@ watch(
         }
 
         .vue-slider-dot-handle-focus {
-          box-shadow: 0px 0px 1px 2px var(--main-color);
+          box-shadow: 0px 0px 1px 2px var(--player-accent-color);
         }
       }
     }
@@ -1503,7 +1209,7 @@ watch(
           transition: all 0.3s;
 
           &:hover {
-            color: var(--main-color);
+            color: var(--player-accent-color);
           }
         }
 
@@ -1582,7 +1288,7 @@ watch(
       .next,
       .prev,
       .dislike {
-        color: var(--main-color);
+        color: var(--player-accent-color);
         cursor: pointer;
         padding: 4px;
         border-radius: var(--radius-pill);
@@ -1591,7 +1297,7 @@ watch(
 
         &:hover {
           color: var(--n-color-embedded);
-          background-color: var(--main-color);
+          background-color: var(--player-accent-color);
         }
 
         &:active {
@@ -1606,7 +1312,7 @@ watch(
       .play-state {
         width: 46px;
         height: 46px;
-        color: var(--main-color);
+        color: var(--player-accent-color);
         margin: 0 12px;
         cursor: pointer;
         transform: scale(1);
@@ -1640,7 +1346,7 @@ watch(
       flex-direction: row;
       align-items: center;
       justify-content: flex-end;
-      color: var(--main-color);
+      color: var(--player-accent-color);
       z-index: 3;
       box-sizing: border-box;
       padding-right: var(--player-control-edge-inset, 14px);
@@ -1672,7 +1378,7 @@ watch(
 
         @media (min-width: 640px) {
           &:hover {
-            background-color: var(--main-color);
+            background-color: var(--player-accent-color);
             color: var(--n-color-embedded);
           }
         }
@@ -1717,7 +1423,7 @@ watch(
 
         &.open {
           .n-icon {
-            background-color: var(--main-color);
+            background-color: var(--player-accent-color);
             color: var(--n-color-embedded);
           }
         }
@@ -1735,6 +1441,9 @@ watch(
         }
 
         .volmePg {
+          --n-fill-color: var(--player-accent-color);
+          --n-fill-color-hover: var(--player-accent-color);
+          --n-handle-color: var(--player-accent-color);
           --n-handle-size: 12px;
           --n-rail-height: 3px;
         }

@@ -114,32 +114,33 @@ onMounted(() => {
   perspective: 1px;
   .papersonalfm-bg {
     position: absolute;
-    top: -26%;
-    left: -26%;
-    width: 152%;
-    height: 152%;
+    // 放大并超出容器，模糊后的透明边缘被 overflow:hidden 裁掉
+    inset: -96px;
     background-repeat: no-repeat;
     background-size: cover;
-    z-index: -2;
+    background-position: center;
+    // 直接模糊背景图本身，避免依赖 backdrop-filter（在 translateZ/perspective 等 3D 上下文中会失效）
+    filter: blur(40px);
+    z-index: 0;
   }
   .gray {
     position: absolute;
-    top: -26%;
-    left: -26%;
-    width: 152%;
-    height: 152%;
+    inset: 0;
     background-color: rgba(0, 0, 0, 0.4);
-    -webkit-backdrop-filter: blur(40px);
-    backdrop-filter: blur(40px);
-    z-index: -1;
+    pointer-events: none;
+    z-index: 1;
   }
   .pic {
+    position: relative;
+    z-index: 2;
     // width: fit-content;
     height: 100%;
     border-radius: 8px;
     margin-right: 16px;
   }
   .data {
+    position: relative;
+    z-index: 2;
     width: 100%;
     height: 100%;
     display: flex;

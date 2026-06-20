@@ -439,14 +439,27 @@ onMounted(() => {
     display: flex;
     flex-direction: column;
     gap: 1.25rem;
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
+
+    :deep(.n-icon),
+    :deep(svg),
+    :deep(path) {
+      mix-blend-mode: plus-lighter;
+    }
+
+    :deep(.bouncing-slider) {
+      mix-blend-mode: plus-lighter;
+    }
+
     .song-info {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      color: var(--main-cover-color);
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
 
       .text {
         display: flex;
+        mix-blend-mode: plus-lighter;
         flex-direction: column;
         gap: 0.25rem;
         .name {
@@ -455,7 +468,7 @@ onMounted(() => {
         }
         .artists {
           font-size: 1rem;
-          opacity: 0.7;
+          opacity: 1;
           .artist-name {
             cursor: pointer;
             &:hover {
@@ -467,18 +480,19 @@ onMounted(() => {
       .action-row {
         display: flex;
         align-items: center;
+        mix-blend-mode: plus-lighter;
         gap: 0.5rem;
         .like-button {
           font-size: 1.75rem;
           cursor: pointer;
-          opacity: 0.7;
+          opacity: 1;
           transition: opacity 0.2s ease;
         }
 
         .more-button {
           font-size: 1.75rem;
           cursor: pointer;
-          opacity: 0.7;
+          opacity: 1;
           transition: opacity 0.2s ease;
           &:hover {
             opacity: 1;
@@ -499,11 +513,12 @@ onMounted(() => {
         justify-content: space-between;
         align-items: center;
         gap: 8px;
-        color: var(--main-cover-color);
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
         .time-text {
           font-size: 0.75rem;
-          opacity: 0.7;
+          opacity: 1;
           min-width: 36px;
+          mix-blend-mode: plus-lighter;
           &:last-child {
             text-align: right;
           }
@@ -516,8 +531,8 @@ onMounted(() => {
           min-width: 0;
           max-width: calc(100% - 88px);
           background-color: rgba(255, 255, 255, 0.1);
-          color: var(--main-cover-color);
-          opacity: 0.8;
+          color: var(--main-cover-mix-color, rgb(239, 239, 239));
+          opacity: 1;
           font-size: 0.75rem;
           padding: 2px 8px;
           border-radius: 4px;
@@ -540,7 +555,6 @@ onMounted(() => {
       grid-template-columns: repeat(5, minmax(0, 1fr));
       align-items: center;
       justify-items: center;
-      mix-blend-mode: plus-lighter;
       column-gap: clamp(0.25rem, calc(var(--cover-size) * 0.025), 0.75rem);
 
       > * {
@@ -555,8 +569,9 @@ onMounted(() => {
         align-items: center;
         justify-content: center;
         font-size: clamp(1.65rem, calc(var(--cover-size) * 0.072), 1.95rem);
-        color: var(--main-cover-color);
-        opacity: 0.8;
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        mix-blend-mode: plus-lighter;
+        opacity: 1;
         cursor: pointer;
         transition:
           opacity 0.2s ease,
@@ -570,7 +585,7 @@ onMounted(() => {
         }
         &.active {
           opacity: 1;
-          color: var(--primary-color);
+          color: var(--main-cover-mix-color, rgb(239, 239, 239));
         }
 
         &.skip-icon {
@@ -583,8 +598,8 @@ onMounted(() => {
       align-items: center;
 
       :deep(.n-icon) {
-        color: var(--main-cover-color);
-        opacity: 0.7;
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        opacity: 1;
       }
     }
   }

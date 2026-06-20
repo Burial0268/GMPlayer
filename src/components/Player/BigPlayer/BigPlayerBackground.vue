@@ -19,7 +19,7 @@
       <BackgroundRender
         :fps="fps"
         :playing="true"
-        :flowSpeed="actualPlaying ? flowSpeed : 0"
+        :flowSpeed="flowSpeed"
         :album="albumImageUrl === 'none' ? coverImageUrl : albumImageUrl"
         :renderScale="renderScale"
         :lowFreqVolume="lowFreqVolume"
