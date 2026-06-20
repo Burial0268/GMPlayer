@@ -1,15 +1,38 @@
 <template>
   <div class="set-other">
-    <n-card v-if="supported" class="set-item updater-card">
-      <div class="name">
-        {{ $t("setting.appUpdate") }}
-        <span class="tip">{{ updaterTip }}</span>
-      </div>
-      <div class="set updater-actions">
-        <n-space justify="end" align="center" :size="8">
-          <n-tag v-if="hasUpdate && updaterState.update" type="warning" size="small" round>
-            v{{ updaterState.update.version }}
-          </n-tag>
+    <n-card
+      v-if="supported"
+      class="set-item updater-card"
+      :content-style="{
+        flexDirection: 'column',
+        alignItems: 'flex-start',
+      }"
+    >
+      <div class="top">
+        <div class="name">
+          <div class="dev">
+            {{ $t("setting.appUpdate") }}
+            <n-tag
+              v-if="hasUpdate && updaterState.update"
+              type="warning"
+              size="small"
+              round
+              :bordered="false"
+            >
+              v{{ updaterState.update.version }}
+            </n-tag>
+          </div>
+          <span class="tip updater-status">
+            <n-icon
+              class="status-icon"
+              :class="{ spin: statusVisual.spin }"
+              :component="statusVisual.icon"
+              :style="{ color: statusVisual.color }"
+            />
+            {{ updaterTip }}
+          </span>
+        </div>
+        <div class="actions">
           <n-button
             strong
             secondary
@@ -17,14 +40,13 @@
             :disabled="isBusy"
             @click="handleCheckUpdate"
           >
+            <template #icon>
+              <n-icon :component="RefreshRound" />
+            </template>
             {{ $t("setting.checkUpdate") }}
           </n-button>
           <n-button
-            v-if="
-              hasUpdate ||
-              updaterState.status === 'downloading' ||
-              updaterState.status === 'installing'
-            "
+            v-if="showInstallButton"
             strong
             secondary
             type="primary"
@@ -32,38 +54,72 @@
             :disabled="updaterState.status === 'checking'"
             @click="handleInstallUpdate"
           >
+            <template #icon>
+              <n-icon :component="RocketLaunchRound" />
+            </template>
             {{ installButtonText }}
           </n-button>
-        </n-space>
+        </div>
       </div>
-      <div v-if="showUpdaterDetails" class="updater-details">
-        <div v-if="updaterState.update" class="updater-version">
-          <span>{{
-            $t("setting.currentVersion", { version: updaterState.update.currentVersion })
-          }}</span>
-          <span>{{ $t("setting.latestVersion", { version: updaterState.update.version }) }}</span>
+
+      <div v-if="showUpdaterDetails" class="more">
+        <div v-if="updaterState.update" class="version-row">
+          <div class="version-item">
+            <span class="version-label">{{ $t("setting.versionCurrent") }}</span>
+            <span class="version-value">v{{ updaterState.update.currentVersion }}</span>
+          </div>
+          <n-icon class="version-arrow" :component="ArrowForwardRound" />
+          <div class="version-item is-latest">
+            <span class="version-label">{{ $t("setting.versionLatest") }}</span>
+            <span class="version-value" :style="{ color: themeVars.primaryColor }">
+              v{{ updaterState.update.version }}
+            </span>
+          </div>
         </div>
-        <n-progress
-          v-if="updaterState.status === 'downloading' || updaterState.status === 'installing'"
-          type="line"
-          :percentage="progressPercent ?? 0"
-          :show-indicator="progressPercent !== null"
-          processing
-        />
-        <div
-          v-if="updaterState.status === 'downloading' && updaterState.downloadedBytes"
-          class="updater-size"
-        >
-          {{ downloadedSizeText }}
+
+        <div v-if="isDownloading || isInstalling" class="progress-block">
+          <div class="progress-bar-row">
+            <n-progress
+              class="progress-bar"
+              type="line"
+              :percentage="isDownloading ? (progressPercent ?? 0) : 100"
+              :show-indicator="false"
+              :height="8"
+              :border-radius="6"
+              :processing="isInstalling || progressPercent === null"
+            />
+            <span class="progress-pct">{{ progressLabel }}</span>
+          </div>
+          <div class="progress-meta">
+            <span v-if="isDownloading" class="meta-item">
+              <n-icon :component="CloudDownloadRound" />
+              {{ downloadedSizeText }}
+            </span>
+            <span v-if="isDownloading && updaterState.downloadSpeed > 0" class="meta-item">
+              <n-icon :component="SpeedRound" />
+              {{ speedText }}
+            </span>
+            <span v-if="isDownloading && etaText" class="meta-item">
+              <n-icon :component="ScheduleRound" />
+              {{ $t("setting.updateEta", { time: etaText }) }}
+            </span>
+            <span v-if="isInstalling" class="meta-item">{{ $t("setting.installingUpdate") }}…</span>
+          </div>
         </div>
-        <n-alert v-if="updaterState.status === 'installed'" type="success" :show-icon="false">
+
+        <n-alert v-if="updaterState.status === 'installed'" type="success" :bordered="false">
           {{ $t("setting.updateInstalledTip", { version: updaterState.installedVersion }) }}
         </n-alert>
-        <n-alert v-else-if="updaterState.status === 'error'" type="error" :show-icon="false">
+        <n-alert v-else-if="updaterState.status === 'error'" type="error" :bordered="false">
           {{ updaterState.error || $t("setting.updateFailed") }}
         </n-alert>
+
         <div v-if="updaterState.update?.body" class="release-notes">
-          {{ updaterState.update.body }}
+          <div class="release-notes-title">
+            <n-icon :component="DescriptionRound" />
+            {{ $t("setting.releaseNotesTitle") }}
+          </div>
+          <n-scrollbar class="release-notes-body">{{ updaterState.update.body }}</n-scrollbar>
         </div>
       </div>
     </n-card>
@@ -81,18 +137,43 @@
 
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
+import { useThemeVars } from "naive-ui";
+import {
+  ArrowForwardRound,
+  CheckCircleRound,
+  CloudDownloadRound,
+  DescriptionRound,
+  DownloadingRound,
+  ErrorOutlineRound,
+  NewReleasesRound,
+  RefreshRound,
+  RocketLaunchRound,
+  ScheduleRound,
+  SpeedRound,
+  SystemUpdateAltRound,
+  TaskAltRound,
+} from "@vicons/material";
 import { useAppUpdater } from "@/composables/useAppUpdater";
 
 const { t } = useI18n();
+const themeVars = useThemeVars();
 const {
   updaterState,
   supported,
   hasUpdate,
   isBusy,
   progressPercent,
+  etaSeconds,
   checkForUpdate,
   installAvailableUpdate,
 } = useAppUpdater();
+
+const isDownloading = computed(() => updaterState.status === "downloading");
+const isInstalling = computed(() => updaterState.status === "installing");
+
+const showInstallButton = computed(
+  () => hasUpdate.value || isDownloading.value || isInstalling.value,
+);
 
 const updaterTip = computed(() => {
   if (updaterState.status === "checking") return t("setting.checkingUpdate");
@@ -105,6 +186,28 @@ const updaterTip = computed(() => {
   if (updaterState.status === "installed") return t("setting.updateInstalled");
   if (updaterState.status === "error") return t("setting.updateFailed");
   return t("setting.appUpdateTip");
+});
+
+// State-driven icon and color for the compact update status line.
+const statusVisual = computed(() => {
+  switch (updaterState.status) {
+    case "checking":
+      return { icon: RefreshRound, color: themeVars.value.infoColor, spin: true };
+    case "available":
+      return { icon: NewReleasesRound, color: themeVars.value.warningColor, spin: false };
+    case "downloading":
+      return { icon: DownloadingRound, color: themeVars.value.primaryColor, spin: false };
+    case "installing":
+      return { icon: RocketLaunchRound, color: themeVars.value.primaryColor, spin: false };
+    case "installed":
+      return { icon: TaskAltRound, color: themeVars.value.successColor, spin: false };
+    case "not-available":
+      return { icon: CheckCircleRound, color: themeVars.value.successColor, spin: false };
+    case "error":
+      return { icon: ErrorOutlineRound, color: themeVars.value.errorColor, spin: false };
+    default:
+      return { icon: SystemUpdateAltRound, color: themeVars.value.textColor3, spin: false };
+  }
 });
 
 const installButtonText = computed(() => {
@@ -129,6 +232,24 @@ const formatBytes = (bytes: number) => {
 const downloadedSizeText = computed(() => {
   if (!updaterState.contentLength) return formatBytes(updaterState.downloadedBytes);
   return `${formatBytes(updaterState.downloadedBytes)} / ${formatBytes(updaterState.contentLength)}`;
+});
+
+const speedText = computed(() => `${formatBytes(updaterState.downloadSpeed)}/s`);
+
+const progressLabel = computed(() => {
+  if (isInstalling.value) return "";
+  if (progressPercent.value === null) return "";
+  return `${progressPercent.value}%`;
+});
+
+const etaText = computed(() => {
+  if (etaSeconds.value === null) return "";
+  const total = Math.max(0, Math.ceil(etaSeconds.value));
+  if (total >= 3600) {
+    return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`;
+  }
+  if (total >= 60) return `${Math.floor(total / 60)}m ${total % 60}s`;
+  return `${total}s`;
 });
 
 const handleCheckUpdate = async () => {
@@ -191,54 +312,162 @@ const resetApp = () => {
 
 <style lang="scss" scoped>
 .updater-card {
-  :deep(.n-card__content) {
-    flex-wrap: wrap;
-    gap: 12px;
-    align-items: flex-start;
+  .top {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
   }
 
-  .updater-actions {
-    width: auto;
-    min-width: 240px;
+  .actions {
     display: flex;
-    justify-content: flex-end;
+    flex-shrink: 0;
+    align-items: center;
+    gap: 8px;
+  }
 
-    @media (max-width: 768px) {
-      width: 100%;
-      min-width: 0;
-      justify-content: flex-start;
+  .updater-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+
+    .status-icon {
+      flex-shrink: 0;
+      font-size: 15px;
+    }
+
+    .spin {
+      animation: updater-spin 1s linear infinite;
     }
   }
 
-  .updater-details {
-    width: 100%;
-    padding: 12px;
-    border-radius: 8px;
-    background-color: var(--n-border-color);
-    box-sizing: border-box;
+  .more {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
 
-  .updater-version {
+  .version-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  .version-item {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+
+    .version-label {
+      opacity: 0.6;
+    }
+
+    .version-value {
+      font-size: 13px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  .version-arrow {
+    font-size: 18px;
+    opacity: 0.4;
+  }
+
+  .progress-block {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .progress-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .progress-bar {
+    flex: 1 1 auto;
+  }
+
+  .progress-pct {
+    min-width: 42px;
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  .progress-meta {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 16px;
-    margin-bottom: 10px;
+    gap: 6px 16px;
     font-size: 12px;
-    opacity: 0.82;
-  }
+    opacity: 0.75;
 
-  .updater-size {
-    margin-top: 6px;
-    font-size: 12px;
-    opacity: 0.72;
+    .meta-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+
+      .n-icon {
+        font-size: 14px;
+        opacity: 0.8;
+      }
+    }
   }
 
   .release-notes {
-    margin-top: 10px;
-    white-space: pre-wrap;
-    font-size: 12px;
-    line-height: 1.6;
-    opacity: 0.82;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    .release-notes-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      opacity: 0.8;
+
+      .n-icon {
+        font-size: 14px;
+      }
+    }
+
+    .release-notes-body {
+      max-height: 140px;
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      opacity: 0.82;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .top {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 12px;
+    }
+
+    .actions {
+      width: 100%;
+      justify-content: flex-end;
+    }
+  }
+}
+
+@keyframes updater-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
   }
 }
 </style>

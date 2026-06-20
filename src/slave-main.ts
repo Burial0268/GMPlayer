@@ -1,15 +1,19 @@
 /**
  * Slave entry point for Mini Player & Desktop Lyrics windows.
  *
- * This is a completely separate Vue app — NO Pinia, NO persistence,
- * NO store hydration, NO autoplay. Only loads the bridge composable
- * and i18n with language read directly from localStorage.
+ * This is a separate Vue app for auxiliary windows. It avoids the main
+ * playback bootstrap, but mounts Pinia so the settings window can edit
+ * persisted settings without loading the full app shell.
  */
 import { createApp } from "vue";
+import { createPinia } from "pinia";
 import { createRouter, createWebHashHistory } from "vue-router";
 import { createI18n } from "vue-i18n";
+import piniaPluginPersistedstate from "pinia-plugin-persistedstate";
 
 import SlaveApp from "@/SlaveApp.vue";
+import "@/style/global.scss";
+import "@/style/animate.scss";
 
 // i18n messages (same source files as main app)
 import en from "@/locale/lang/en";
@@ -67,6 +71,11 @@ const router = createRouter({
       component: () => import("@/views/TrayPopup/index.vue"),
     },
     {
+      path: "/settings/:section?",
+      name: "slave-settings",
+      component: () => import("@/views/Setting/SlaveSettings.vue"),
+    },
+    {
       path: "/:pathMatch(.*)",
       redirect: "/mini-player",
     },
@@ -75,7 +84,11 @@ const router = createRouter({
 
 // ── Mount ─────────────────────────────────────────────────────────────
 
+const pinia = createPinia();
+pinia.use(piniaPluginPersistedstate);
+
 const app = createApp(SlaveApp);
+app.use(pinia);
 app.use(i18n);
 app.use(router);
 app.mount("#app");

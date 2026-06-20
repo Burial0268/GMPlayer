@@ -26,12 +26,21 @@
           <div class="content-panel-frame" aria-hidden="true" />
           <n-layout-content
             position="absolute"
-            :class="hasPlayBar ? 'show' : ''"
+            :class="[
+              hasPlayBar ? 'show' : '',
+              {
+                'settings-route': route.name === 'setting',
+              },
+            ]"
             :native-scrollbar="false"
             embedded
           >
             <div ref="contentStage" :class="['content-stage', { 'queue-open': showInlineQueue }]">
-              <main ref="mainContent" class="main" id="mainContent">
+              <main
+                ref="mainContent"
+                :class="['main', { 'settings-main': route.name === 'setting' }]"
+                id="mainContent"
+              >
                 <n-back-top
                   :bottom="music.getPlaylists[0] && music.showPlayBar ? 100 : 40"
                   style="transition: all 0.3s; z-index: 999"
@@ -81,6 +90,7 @@ import Sidebar from "@/components/Sidebar/index.vue";
 import MobileTabBar from "@/components/Sidebar/MobileTabBar.vue";
 import QueuePanel from "@/components/QueuePanel/index.vue";
 import packageJson from "@/../package.json";
+import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { ref, watch, computed, h } from "vue";
 
 const { t } = useI18n();
@@ -257,7 +267,7 @@ const handleCloseRequested = () => {
 
 onMounted(() => {
   if (typeof window !== "undefined") {
-    inlineQueueMediaQuery = window.matchMedia("(min-width: 1041px)");
+    inlineQueueMediaQuery = window.matchMedia(INLINE_QUEUE_MEDIA_QUERY);
     syncInlineQueueLayout();
     inlineQueueMediaQuery.addEventListener("change", syncInlineQueueLayout);
   }
@@ -382,6 +392,20 @@ onBeforeUnmount(() => {
     right: var(--content-scrollbar-right) !important;
   }
 
+  &.settings-route {
+    overflow: hidden;
+
+    :deep(.n-layout-scroll-container) {
+      overflow: hidden !important;
+    }
+
+    .content-stage {
+      height: 100%;
+      min-height: 0;
+      overflow: hidden;
+    }
+  }
+
   .main {
     position: relative;
     z-index: 2;
@@ -397,6 +421,13 @@ onBeforeUnmount(() => {
     transition:
       min-height var(--duration-300) var(--ease-in-out),
       background-color var(--duration-200) var(--ease-out);
+
+    &.settings-main {
+      height: var(--content-panel-height);
+      min-height: var(--content-panel-height);
+      max-height: var(--content-panel-height);
+      overflow: hidden;
+    }
   }
 
   .content-stage {
@@ -464,6 +495,12 @@ onBeforeUnmount(() => {
     .main {
       min-height: 100%;
       padding-top: calc(52px + var(--app-safe-area-top, 0px));
+
+      &.settings-main {
+        height: auto;
+        max-height: none;
+        overflow: visible;
+      }
     }
   }
 }

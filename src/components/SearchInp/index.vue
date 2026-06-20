@@ -180,6 +180,7 @@ import { useRouter } from "vue-router";
 import { musicStore, settingStore, siteStore } from "@/store";
 import CollapseTransition from "@ivanv/vue-collapse-transition/src/CollapseTransition.vue";
 import debounce from "@/utils/debounce";
+import { isInlineQueueLayout } from "@/utils/playlistLayout";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -195,7 +196,9 @@ const searchInpRef = ref(null);
 const inputFocus = () => {
   searchInpRef.value?.focus();
   site.searchInputActive = true;
-  music.showPlayList = false;
+  if (!isInlineQueueLayout()) {
+    music.showPlayList = false;
+  }
   getSearchHotData();
 };
 

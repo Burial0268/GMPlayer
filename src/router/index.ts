@@ -8,6 +8,7 @@ declare module "vue-router" {
   interface RouteMeta {
     title?: string;
     needLogin?: boolean;
+    hideLoadingBar?: boolean;
   }
 }
 
@@ -16,16 +17,20 @@ const router = createRouter({
   routes,
 });
 
+let routeLoadingBarActive = false;
+
 // 路由守卫
 router.beforeEach(async (to): Promise<RouteLocationRaw | void> => {
   const user = userStore();
   const music = musicStore();
+  const showLoadingBar = !to.meta.hideLoadingBar;
 
   // 关闭播放器
   music.setBigPlayerState(false);
 
   // 开始进度条
-  if (typeof $loadingBar !== "undefined") $loadingBar.start();
+  routeLoadingBarActive = showLoadingBar;
+  if (showLoadingBar && typeof $loadingBar !== "undefined") $loadingBar.start();
 
   // 判断是否需要登录
   if (to.meta.needLogin) {
@@ -53,7 +58,8 @@ router.beforeEach(async (to): Promise<RouteLocationRaw | void> => {
 });
 
 router.afterEach(() => {
-  if (typeof $loadingBar !== "undefined") $loadingBar.finish();
+  if (routeLoadingBarActive && typeof $loadingBar !== "undefined") $loadingBar.finish();
+  routeLoadingBarActive = false;
 });
 
 export default router;

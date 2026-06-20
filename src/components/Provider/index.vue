@@ -63,7 +63,7 @@ const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 const changeTheme = () => {
   if (setting.getSiteTheme === "light") {
     theme.value = null;
-    themeColorMeta.setAttribute("content", "#f2f2f4");
+    themeColorMeta?.setAttribute("content", "#f2f2f4");
     setCssVariable("--message-bg", "rgba(255, 255, 255, 0.72)");
     setCssVariable("--message-border", "rgba(0, 0, 0, 0.06)");
     setCssVariable("--acrylic-bg", "rgba(255, 255, 255, 0.45)");
@@ -85,7 +85,7 @@ const changeTheme = () => {
     );
   } else if (setting.getSiteTheme === "dark") {
     theme.value = darkTheme;
-    themeColorMeta.setAttribute("content", "#121216");
+    themeColorMeta?.setAttribute("content", "#121216");
     setCssVariable("--message-bg", "rgba(48, 48, 51, 0.72)");
     setCssVariable("--message-border", "rgba(255, 255, 255, 0.08)");
     setCssVariable("--acrylic-bg", "rgba(24, 24, 28, 0.45)");
@@ -97,8 +97,8 @@ const changeTheme = () => {
     setCssVariable("--content-panel-border-base", "rgba(255, 255, 255, 0.14)");
     setCssVariable("--content-panel-edge-shadow", "rgba(0, 0, 0, 0.42)");
     setCssVariable("--content-panel-gradient-overlay", "rgba(24, 24, 28, 0.62)");
-    setCssVariable("--content-panel-hero-wash-opacity", "0.58");
-    setCssVariable("--content-panel-mid-wash-opacity", "0.34");
+    setCssVariable("--content-panel-hero-wash-opacity", "0.42");
+    setCssVariable("--content-panel-mid-wash-opacity", "0.18");
     setCssVariable("--content-panel-side-wash-opacity", "0.22");
     setCssVariable("--content-panel-wash-opacity", "0.24");
     setCssVariable(

@@ -1,7 +1,12 @@
 <template>
   <div
     class="desktop-lyric"
-    :class="{ locked: isLocked, hovering: isHovering && !isLocked }"
+    :class="{
+      locked: isLocked,
+      hovered: isHovering,
+      'temp-unlocked': isTempUnlocked,
+      'no-animation': !animationsEnabled,
+    }"
     :data-tauri-drag-region="!isLocked || undefined"
     @mousemove="onMouseMove"
     @mouseenter="onMouseEnter"
@@ -9,179 +14,154 @@
     @contextmenu.prevent
   >
     <!-- Header bar -->
-    <Transition name="header-fade">
-      <div
-        v-if="showHeader"
-        ref="headerRef"
-        class="header"
-        :data-tauri-drag-region="!isLocked || undefined"
-        @mouseenter="isHeaderHovering = true"
-        @mouseleave="onHeaderLeave"
-      >
-        <template v-if="!isLocked">
-          <div class="header-left">
-            <span
-              class="song-name"
-              :title="state.title"
-              :data-tauri-drag-region="!isLocked || undefined"
-            >
-              {{ state.title || $t("desktopLyrics.noLyrics") }}
-            </span>
-          </div>
-          <div class="header-center">
-            <button
-              class="ctrl-btn"
-              @pointerdown.stop
-              @click="bridge.prevTrack()"
-              :title="$t('desktopLyrics.prev')"
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-              </svg>
-            </button>
-            <button
-              class="ctrl-btn play-btn"
-              @pointerdown.stop
-              @click="bridge.playPause()"
-              :title="$t('desktopLyrics.playPause')"
-            >
-              <svg
-                v-if="state.isPlaying"
-                viewBox="0 0 24 24"
-                width="22"
-                height="22"
-                fill="currentColor"
-              >
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </button>
-            <button
-              class="ctrl-btn"
-              @pointerdown.stop
-              @click="bridge.nextTrack()"
-              :title="$t('desktopLyrics.next')"
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-              </svg>
-            </button>
-          </div>
-          <div class="header-right">
-            <button
-              class="ctrl-btn font-btn"
-              @pointerdown.stop
-              @click="decreaseFontSize"
-              :title="$t('desktopLyrics.smaller')"
-            >
-              A<span class="font-sign">-</span>
-            </button>
-            <button
-              class="ctrl-btn font-btn"
-              @pointerdown.stop
-              @click="increaseFontSize"
-              :title="$t('desktopLyrics.larger')"
-            >
-              A<span class="font-sign">+</span>
-            </button>
-            <button
-              class="ctrl-btn"
-              @pointerdown.stop
-              @click="toggleLock"
-              :title="$t('desktopLyrics.lock')"
-            >
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <path
-                  d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"
-                />
-              </svg>
-            </button>
-            <button
-              class="ctrl-btn"
-              @pointerdown.stop
-              @click="handleClose"
-              :title="$t('desktopLyrics.close')"
-            >
-              <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-                <path
-                  d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
-                />
-              </svg>
-            </button>
-          </div>
-        </template>
-        <template v-else>
-          <!-- Locked mode: show playback controls + unlock button -->
-          <div class="header-left locked-info">
+    <div
+      ref="headerRef"
+      class="header"
+      :data-tauri-drag-region="!isLocked || undefined"
+      @mouseenter="isHeaderHovering = true"
+      @mouseleave="onHeaderLeave"
+    >
+      <template v-if="!isLocked">
+        <div class="header-left">
+          <span
+            class="song-name"
+            :title="state.title"
+            :data-tauri-drag-region="!isLocked || undefined"
+          >
+            {{ state.title || $t("desktopLyrics.noLyrics") }}
+          </span>
+        </div>
+        <div class="header-center">
+          <button
+            class="ctrl-btn"
+            @pointerdown.stop
+            @click="bridge.prevTrack()"
+            :title="$t('desktopLyrics.prev')"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+            </svg>
+          </button>
+          <button
+            class="ctrl-btn play-btn"
+            @pointerdown.stop
+            @click="bridge.playPause()"
+            :title="$t('desktopLyrics.playPause')"
+          >
             <svg
+              v-if="state.isPlaying"
               viewBox="0 0 24 24"
-              width="14"
-              height="14"
+              width="22"
+              height="22"
               fill="currentColor"
-              style="opacity: 0.7"
             >
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </button>
+          <button
+            class="ctrl-btn"
+            @pointerdown.stop
+            @click="bridge.nextTrack()"
+            :title="$t('desktopLyrics.next')"
+          >
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+            </svg>
+          </button>
+        </div>
+        <div class="header-right">
+          <button
+            class="ctrl-btn font-btn"
+            @pointerdown.stop
+            @click="decreaseFontSize"
+            :title="$t('desktopLyrics.smaller')"
+          >
+            A<span class="font-sign">-</span>
+          </button>
+          <button
+            class="ctrl-btn font-btn"
+            @pointerdown.stop
+            @click="increaseFontSize"
+            :title="$t('desktopLyrics.larger')"
+          >
+            A<span class="font-sign">+</span>
+          </button>
+          <button
+            class="ctrl-btn lock-btn"
+            @pointerdown.stop
+            @click="toggleLock"
+            :title="$t('desktopLyrics.lock')"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
               <path
                 d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"
               />
             </svg>
-            <span class="locked-label">{{ $t("desktopLyrics.locked") }}</span>
-          </div>
-          <div class="header-center">
-            <button
-              class="ctrl-btn"
-              @pointerdown.stop
-              @click="bridge.prevTrack()"
-              :title="$t('desktopLyrics.prev')"
+          </button>
+          <button
+            class="ctrl-btn"
+            @pointerdown.stop
+            @click="handleClose"
+            :title="$t('desktopLyrics.close')"
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+              <path
+                d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
+              />
+            </svg>
+          </button>
+        </div>
+      </template>
+      <template v-else>
+        <div class="header-left locked-info">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+            <path
+              d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"
+            />
+          </svg>
+          <span class="locked-label">{{ $t("desktopLyrics.locked") }}</span>
+        </div>
+        <div class="header-center">
+          <button class="ctrl-btn" @pointerdown.stop @click="bridge.prevTrack()">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
+            </svg>
+          </button>
+          <button class="ctrl-btn play-btn" @pointerdown.stop @click="bridge.playPause()">
+            <svg
+              v-if="state.isPlaying"
+              viewBox="0 0 24 24"
+              width="22"
+              height="22"
+              fill="currentColor"
             >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />
-              </svg>
-            </button>
-            <button
-              class="ctrl-btn play-btn"
-              @pointerdown.stop
-              @click="bridge.playPause()"
-              :title="$t('desktopLyrics.playPause')"
-            >
-              <svg
-                v-if="state.isPlaying"
-                viewBox="0 0 24 24"
-                width="22"
-                height="22"
-                fill="currentColor"
-              >
-                <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-              </svg>
-              <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-              </svg>
-            </button>
-            <button
-              class="ctrl-btn"
-              @pointerdown.stop
-              @click="bridge.nextTrack()"
-              :title="$t('desktopLyrics.next')"
-            >
-              <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-                <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
-              </svg>
-            </button>
-          </div>
-          <div class="header-right">
-            <button class="ctrl-btn unlock-btn" @click="handleUnlock">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
-                <path
-                  d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z"
-                />
-              </svg>
-              {{ $t("desktopLyrics.unlock") }}
-            </button>
-          </div>
-        </template>
-      </div>
-    </Transition>
+              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+            </svg>
+            <svg v-else viewBox="0 0 24 24" width="22" height="22" fill="currentColor">
+              <path d="M8 5v14l11-7z" />
+            </svg>
+          </button>
+          <button class="ctrl-btn" @pointerdown.stop @click="bridge.nextTrack()">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+              <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />
+            </svg>
+          </button>
+        </div>
+        <div class="header-right">
+          <button class="ctrl-btn unlock-btn" @pointerdown.stop @click="handleUnlock">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor">
+              <path
+                d="M12 17c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm6-9h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6h1.9c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10z"
+              />
+            </svg>
+            {{ $t("desktopLyrics.unlock") }}
+          </button>
+        </div>
+      </template>
+    </div>
 
     <!-- Lyric content -->
     <div class="lyric-area" :class="{ 'no-animation': !animationsEnabled }">
@@ -193,11 +173,15 @@
         :class="positionClass"
       >
         <div
-          v-for="line in renderLyricLines"
+          v-for="(line, index) in renderLyricLines"
           :key="line.key"
           :ref="(el) => setLyricLineRef(el as HTMLElement, line.key)"
           class="lyric-line"
           :class="{ current: line.isCurrent, title: line.isTitle }"
+          :style="{
+            top: getLineTop(index),
+            fontSize: index > 0 ? '0.8em' : '1em',
+          }"
           @click="seekToLine(line)"
         >
           <div class="lyric-inner" :style="lyricTextStyle">
@@ -208,14 +192,14 @@
               </span>
             </template>
             <template v-else>
-              <span
-                class="scroll-content"
-                :ref="(el) => setScrollContentRef(el as HTMLElement, line.key)"
-                :class="{ scrolling: scrollOverflowMap.get(line.key) && line.isCurrent }"
-                :data-line-key="line.key"
+              <LyricScroll
+                class="lyric-scroll-line"
+                :text="line.text"
+                :progress="line.isCurrent ? lineScrollProgress(line) : 0"
+                :align="scrollAlign"
               >
                 <span class="lyric-text" :class="{ current: line.isCurrent }">{{ line.text }}</span>
-              </span>
+              </LyricScroll>
             </template>
           </div>
           <div
@@ -251,18 +235,10 @@
 </template>
 
 <script setup lang="ts">
-import {
-  ref,
-  computed,
-  watch,
-  shallowRef,
-  onMounted,
-  onUnmounted,
-  nextTick,
-  type ComponentPublicInstance,
-} from "vue";
+import { ref, computed, watch, shallowRef, onMounted, onUnmounted, nextTick } from "vue";
 import { usePlayerBridge } from "@/utils/tauri/playerBridge";
 import { windowManager } from "@/utils/tauri/windowManager";
+import LyricScroll from "@/components/Lyric/LyricScroll.vue";
 import type { AMLLLine, AMLLWord } from "@/utils/LyricsProcessor";
 
 const bridge = usePlayerBridge();
@@ -272,23 +248,47 @@ const { state } = bridge;
 
 /** YRC word animations start this many ms early for perceived responsiveness */
 const LYRIC_LOOKAHEAD = 300;
+/** Line switching needs a smaller lookahead than per-word fill to avoid feeling late. */
+const LINE_SWITCH_LOOKAHEAD = 180;
+const TIME_SYNC_THRESHOLD = 80;
 
 // ── Lyric Data ────────────────────────────────────────────────────────
 
 const amllLines = shallowRef<AMLLLine[]>([]);
 const songGeneration = ref(0);
+let lyricPayloadKey = "";
 
 const hasLyrics = computed(() => amllLines.value && amllLines.value.length > 0);
+
+function getLyricPayloadKey(data: typeof bridge.lyricData.value) {
+  const lines = data?.amllLines ?? [];
+  const first = lines[0];
+  const last = lines[lines.length - 1];
+  return [
+    data?.songId ?? "none",
+    lines.length,
+    first?.startTime ?? 0,
+    last?.startTime ?? 0,
+    last?.endTime ?? 0,
+  ].join(":");
+}
 
 watch(
   () => bridge.lyricData.value,
   (data) => {
+    const nextKey = getLyricPayloadKey(data);
+    const lyricChanged = nextKey !== lyricPayloadKey;
+    lyricPayloadKey = nextKey;
+
     if (data?.amllLines && data.amllLines.length > 0) {
       amllLines.value = data.amllLines;
     } else {
       amllLines.value = [];
     }
-    songGeneration.value++;
+
+    if (lyricChanged) {
+      songGeneration.value++;
+    }
   },
   { immediate: true },
 );
@@ -306,32 +306,32 @@ function getSafeEndTime(lines: AMLLLine[], idx: number): number {
 const interpolatedTimeMs = ref(0);
 let timeAnchorMs = 0;
 let perfAnchor = 0;
+let lastTimePacketAt = 0;
 let rafId = 0;
+
+// Re-anchor the interpolation clock to an authoritative time packet from the master.
+// Snap the displayed time when paused, on the initial sync (forceSnap), or when drift
+// exceeds the threshold; otherwise keep the smoothly-predicted value to avoid jitter.
+function syncBridgeTime(sec: number, forceSnap = false) {
+  const bridgeMs = sec * 1000 + (bridge.settings.lyricTimeOffset ?? 0);
+  const now = performance.now();
+  const predicted = timeAnchorMs + (now - perfAnchor);
+  const shouldSnap =
+    forceSnap || !state.isPlaying || Math.abs(bridgeMs - predicted) > TIME_SYNC_THRESHOLD;
+  timeAnchorMs = bridgeMs;
+  perfAnchor = now;
+  lastTimePacketAt = now;
+  interpolatedTimeMs.value = shouldSnap ? bridgeMs : predicted;
+}
 
 watch(
   () => bridge.currentTime.value,
-  (sec) => {
-    const bridgeMs = sec * 1000 + (bridge.settings.lyricTimeOffset ?? 0);
-    const now = performance.now();
-
-    if (!state.isPlaying) {
-      // When paused, snap directly to bridge time
-      interpolatedTimeMs.value = bridgeMs;
-      timeAnchorMs = bridgeMs;
-      perfAnchor = now;
-      return;
-    }
-
-    const predicted = timeAnchorMs + (now - perfAnchor);
-    if (Math.abs(bridgeMs - predicted) > 300) {
-      timeAnchorMs = bridgeMs;
-      perfAnchor = now;
-    }
-  },
+  (sec) => syncBridgeTime(sec),
 );
 
 function tick() {
-  if (state.isPlaying) {
+  const recentlyReceivedTime = performance.now() - lastTimePacketAt < 300;
+  if (state.isPlaying || recentlyReceivedTime) {
     interpolatedTimeMs.value = timeAnchorMs + (performance.now() - perfAnchor);
   }
   rafId = requestAnimationFrame(tick);
@@ -340,7 +340,7 @@ function tick() {
 // ── Lyric Index (binary search) ───────────────────────────────────────
 
 const currentLineIndex = computed(() => {
-  const timeMs = interpolatedTimeMs.value;
+  const timeMs = interpolatedTimeMs.value + LINE_SWITCH_LOOKAHEAD;
   const lines = amllLines.value;
   if (!lines || lines.length === 0) return -1;
   // Find the last line with startTime <= timeMs
@@ -464,6 +464,11 @@ const localFontSize = computed(() => {
   return clamp(Math.round(base + fontSizeOffset.value), 16, 96);
 });
 
+function getLineTop(index: number) {
+  if (index === 0) return "0px";
+  return `${localFontSize.value * 1.9}px`;
+}
+
 function increaseFontSize() {
   fontSizeOffset.value = Math.min(fontSizeOffset.value + 4, 40);
 }
@@ -517,60 +522,19 @@ const displayState = computed(() => {
 });
 
 // ── Horizontal Scroll for Long Lyrics ─────────────────────────────────
+// Overflow measurement + transform live inside the shared LyricScroll component;
+// here we just feed it the per-line playback progress and the desired alignment.
 
-const scrollContentRefs = new Map<string, HTMLElement>();
-const scrollOverflowMap = shallowRef(new Map<string, boolean>());
-let resizeObserver: ResizeObserver | null = null;
+const scrollAlign = computed<"left" | "center" | "right">(() => {
+  const pos = bridge.settings.lyricsPosition;
+  if (pos === "center") return "center";
+  if (pos === "right") return "right";
+  return "left";
+});
 
-function setScrollContentRef(el: HTMLElement | null, key: string) {
-  if (el) {
-    scrollContentRefs.set(key, el);
-    checkOverflow(el, key);
-    observeScrollContent(el, key);
-  } else {
-    scrollContentRefs.delete(key);
-    const newMap = new Map(scrollOverflowMap.value);
-    newMap.delete(key);
-    scrollOverflowMap.value = newMap;
-  }
-}
-
-function checkOverflow(el: HTMLElement, key: string) {
-  const container = el.closest(".lyric-line") as HTMLElement | null;
-  if (!container) return;
-  const overflowPx = el.scrollWidth - container.clientWidth;
-  const overflow = overflowPx > 0;
-  if (overflow) {
-    el.style.setProperty("--scroll-distance", `-${overflowPx}px`);
-  } else {
-    el.style.removeProperty("--scroll-distance");
-  }
-  const newMap = new Map(scrollOverflowMap.value);
-  newMap.set(key, overflow);
-  scrollOverflowMap.value = newMap;
-}
-
-function observeScrollContent(el: HTMLElement, key: string) {
-  if (!resizeObserver) {
-    resizeObserver = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        const target = entry.target as HTMLElement;
-        const lineKey = target.dataset.lineKey;
-        if (!lineKey) continue;
-        checkOverflow(target, lineKey);
-      }
-    });
-  }
-  resizeObserver.observe(el);
-}
-
-function unobserveAllScrollContents() {
-  if (resizeObserver) {
-    resizeObserver.disconnect();
-    resizeObserver = null;
-  }
-  scrollContentRefs.clear();
-  scrollOverflowMap.value = new Map();
+function lineScrollProgress(line: VisibleLine) {
+  const duration = Math.max(800, line.lineEndTime - line.lineStartTime);
+  return clamp((interpolatedTimeMs.value - line.lineStartTime) / duration, 0, 1);
 }
 
 // ── Drag Attrs (disabled when locked) ─────────────────────────────────
@@ -644,6 +608,7 @@ function scheduleReLock() {
   reLockTimeout = setTimeout(() => {
     if (isLocked.value && isTempUnlocked.value && !isHeaderHovering.value) {
       isTempUnlocked.value = false;
+      isHovering.value = false;
       showHeader.value = false;
       // Re-enable full click-through immediately
       windowManager.setIgnoreCursorEvents("desktop-lyrics", true);
@@ -824,6 +789,7 @@ async function startMouseThrough() {
         // Show the unlock header if not already visible.
         if (!isTempUnlocked.value) {
           isTempUnlocked.value = true;
+          isHovering.value = true;
           showHeader.value = true;
         }
       } else {
@@ -896,11 +862,17 @@ onMounted(async () => {
   // Set initial height from window
   windowHeight.value = window.innerHeight;
 
+  // Anchor the interpolation clock to the current bridge time before the RAF loop
+  // starts, so early frames extrapolate from a real perf origin instead of 0 (which
+  // used to fling the current line on open). tick() then advances whenever playing.
+  syncBridgeTime(bridge.currentTime.value, true);
+
   // Start RAF loop for time interpolation
   rafId = requestAnimationFrame(tick);
 
   const tauri = window.__TAURI__;
   if (!tauri) return;
+  await windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
 
   // Unlock event from main window (tray/BigPlayer button)
   unlistenUnlock = await tauri.event.listen("desktop-lyrics-unlock", () => {
@@ -932,7 +904,6 @@ onUnmounted(() => {
     unlistenMouseThrough = null;
   }
   stopMouseThrough();
-  unobserveAllScrollContents();
 });
 </script>
 
@@ -1194,39 +1165,11 @@ onUnmounted(() => {
 
 .lyric-inner {
   display: inline;
-  // Text stroke (4-dir shadow) + drop shadow for readability
-  text-shadow:
-    -1px -1px 0 rgba(0, 0, 0, 0.8),
-    1px -1px 0 rgba(0, 0, 0, 0.8),
-    -1px 1px 0 rgba(0, 0, 0, 0.8),
-    1px 1px 0 rgba(0, 0, 0, 0.8),
-    0 2px 8px rgba(0, 0, 0, 0.6),
-    0 0 20px rgba(0, 0, 0, 0.4);
-}
-
-// Horizontal scroll wrapper for long lyrics
-.scroll-content {
-  display: inline-block;
-  white-space: nowrap;
-
-  &.scrolling {
-    animation: lyric-scroll 8s linear infinite alternate;
-  }
-}
-
-@keyframes lyric-scroll {
-  0% {
-    transform: translateX(0);
-  }
-  30% {
-    transform: translateX(0);
-  }
-  70% {
-    transform: translateX(var(--scroll-distance, -100%));
-  }
-  100% {
-    transform: translateX(var(--scroll-distance, -100%));
-  }
+  // Keep the main shadow on glyph-bearing spans. When it is inherited from the
+  // full-width line container, clipped scrolling lines can look like a box shadow.
+  --lyric-text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.8), 1px -1px 0 rgba(0, 0, 0, 0.8), -1px 1px 0 rgba(0, 0, 0, 0.8),
+    1px 1px 0 rgba(0, 0, 0, 0.8), 0 2px 8px rgba(0, 0, 0, 0.6), 0 0 20px rgba(0, 0, 0, 0.4);
 }
 
 // ── YRC Word dual-layer ──────────────────────────────────────────────
@@ -1243,6 +1186,7 @@ onUnmounted(() => {
 
 .word-bg {
   color: var(--inactive-color, rgba(255, 255, 255, 0.35));
+  text-shadow: var(--lyric-text-shadow);
 }
 
 .word-fill {
@@ -1258,6 +1202,7 @@ onUnmounted(() => {
 // Plain text (non-YRC or next line)
 .lyric-text {
   color: var(--active-color, rgb(255, 255, 255));
+  text-shadow: var(--lyric-text-shadow);
 
   &:not(.current) {
     color: rgba(255, 255, 255, 0.6);
@@ -1370,5 +1315,245 @@ onUnmounted(() => {
     -1px 1px 0 rgba(0, 0, 0, 0.6),
     1px 1px 0 rgba(0, 0, 0, 0.6),
     0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+// SPlayer-style desktop lyric shell: transparent by default, controls appear on hover.
+.desktop-lyric {
+  display: flex;
+  flex-direction: column;
+  padding: 12px;
+  border-radius: 12px;
+  color: #fff;
+  cursor: default;
+  transition: background-color 0.3s ease;
+
+  &.hovered:not(.locked) {
+    background-color: rgba(0, 0, 0, 0.6);
+  }
+
+  .header {
+    position: relative;
+    inset: auto;
+    z-index: 10;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 12px;
+    min-height: 36px;
+    margin-bottom: 12px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    pointer-events: none;
+
+    > * {
+      min-width: 0;
+    }
+  }
+
+  .header-left,
+  .header-center,
+  .header-right {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    margin: 0;
+    gap: 6px;
+  }
+
+  .header-left {
+    justify-content: flex-start;
+  }
+
+  .header-center {
+    justify-content: center;
+  }
+
+  .header-right {
+    justify-content: flex-end;
+  }
+
+  .song-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 8px;
+    font-size: 13px;
+    line-height: 36px;
+    text-align: left;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .ctrl-btn {
+    flex: 0 0 auto;
+    min-width: 0;
+    padding: 6px;
+    border-radius: 8px;
+    opacity: 0;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.9);
+    pointer-events: auto;
+    transition:
+      opacity 0.3s ease,
+      background-color 0.3s ease,
+      transform 0.3s ease;
+
+    &:hover {
+      background-color: rgba(255, 255, 255, 0.3);
+    }
+
+    &:active {
+      transform: scale(0.96);
+    }
+  }
+
+  &.hovered:not(.locked) {
+    .song-name,
+    .ctrl-btn {
+      opacity: 1;
+    }
+  }
+
+  &.locked {
+    .header {
+      pointer-events: none;
+    }
+
+    .song-name,
+    .ctrl-btn,
+    .lyric-area {
+      pointer-events: none;
+    }
+
+    &.hovered,
+    &.temp-unlocked {
+      .header {
+        pointer-events: auto;
+      }
+
+      .ctrl-btn,
+      .locked-info {
+        opacity: 1;
+      }
+
+      .unlock-btn {
+        pointer-events: auto;
+      }
+    }
+  }
+
+  .locked-info {
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+
+  .unlock-btn {
+    gap: 4px;
+    padding: 6px 10px;
+    border-radius: 12px;
+    background-color: rgba(255, 255, 255, 0.12);
+  }
+
+  .lyric-area {
+    flex: 1 1 auto;
+    display: block;
+    min-height: 0;
+    padding: 0 8px;
+    pointer-events: none;
+  }
+
+  .lyric-container {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    cursor: move;
+  }
+
+  .lyric-line {
+    position: absolute;
+    left: 0;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    padding: 4px max(10px, 0.2em);
+    line-height: normal;
+    white-space: nowrap;
+    pointer-events: auto;
+    transition:
+      top 0.6s cubic-bezier(0.55, 0, 0.1, 1),
+      font-size 0.6s cubic-bezier(0.55, 0, 0.1, 1),
+      color 0.6s cubic-bezier(0.55, 0, 0.1, 1),
+      opacity 0.6s cubic-bezier(0.55, 0, 0.1, 1),
+      transform 0.6s cubic-bezier(0.55, 0, 0.1, 1);
+    will-change: top, font-size, transform;
+    transform-origin: left center;
+
+    &:not(.current) {
+      opacity: 0.72;
+      filter: none;
+    }
+  }
+
+  .lyric-inner {
+    display: block;
+    width: 100%;
+  }
+
+  .lyric-scroll-line {
+    // Short lines (the common case) aren't clipped by LyricScroll, so their soft
+    // drop-shadow renders as a halo hugging the glyphs. Long lines do clip while
+    // scrolling. Give the viewport room for the shadow so edge glyphs are not
+    // cropped into a rectangular shape.
+    &[data-scroll="true"] {
+      box-sizing: border-box;
+      padding: 0.7em max(10px, 0.2em);
+      margin-block: -0.7em;
+    }
+  }
+
+  .pos-center .lyric-line {
+    text-align: center;
+    transform-origin: center center;
+  }
+
+  .pos-right .lyric-line {
+    text-align: right;
+    transform-origin: right center;
+  }
+
+  &.no-animation {
+    .lyric-line,
+    .lyric-slide-move,
+    .lyric-slide-enter-active,
+    .lyric-slide-leave-active {
+      transition: none !important;
+    }
+  }
+}
+
+.lyric-slide-move,
+.lyric-slide-enter-active,
+.lyric-slide-leave-active {
+  transition:
+    transform 0.6s cubic-bezier(0.55, 0, 0.1, 1),
+    opacity 0.6s cubic-bezier(0.55, 0, 0.1, 1);
+  will-change: transform, opacity;
+}
+
+.lyric-slide-enter-from {
+  opacity: 0;
+  transform: translateY(100%);
+}
+
+.lyric-slide-leave-to {
+  opacity: 0;
+  transform: translateY(-100%);
+}
+
+.lyric-slide-leave-active {
+  position: absolute;
 }
 </style>

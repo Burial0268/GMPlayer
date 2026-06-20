@@ -40,7 +40,12 @@
       aria-label="Close window"
       @click="closeWindow"
     >
-      <svg class="titlebar-icon close-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+      <svg
+        class="titlebar-icon close-icon"
+        viewBox="0 0 16 16"
+        aria-hidden="true"
+        focusable="false"
+      >
         <path d="M4.5 4.5l7 7" />
         <path d="M11.5 4.5l-7 7" />
       </svg>

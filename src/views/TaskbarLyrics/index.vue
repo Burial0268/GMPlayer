@@ -61,21 +61,13 @@
             :data-role="item.role"
             :data-active="item.active ? 'true' : 'false'"
           >
-            <div
-              :ref="(el) => setViewportRef(item.key, el)"
-              class="scroll-viewport"
-              :data-align="align"
-              :data-orientation="orientation"
-              :data-scroll="canScroll(item.key) ? 'true' : 'false'"
-            >
-              <span
-                :ref="(el) => setContentRef(item.key, el)"
-                class="scroll-content"
-                :style="scrollContentStyle(item)"
-              >
-                {{ item.text }}
-              </span>
-            </div>
+            <LyricScroll
+              :text="item.text"
+              :progress="lineProgress(item)"
+              :orientation="orientation"
+              :align="align"
+              :end-padding="SCROLL_END_PADDING"
+            />
           </div>
         </TransitionGroup>
       </div>
@@ -84,8 +76,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import type { ComponentPublicInstance, CSSProperties } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import LyricScroll from "@/components/Lyric/LyricScroll.vue";
 import IconForward from "@/components/Player/icons/IconForward.vue";
 import IconPause from "@/components/Player/icons/IconPause.vue";
 import IconPlay from "@/components/Player/icons/IconPlay.vue";
@@ -99,7 +91,6 @@ type Align = "left" | "right";
 type Theme = "light" | "dark";
 type LineRole = "primary" | "secondary";
 type LineMode = "single" | "double";
-type VueRefElement = Element | ComponentPublicInstance | null;
 
 interface DisplayLine {
   key: string;
@@ -123,17 +114,12 @@ const align = ref<Align>("left");
 const theme = ref<Theme>("dark");
 const lineMode = ref<LineMode>("double");
 const displayTimeMs = ref(0);
-const overflowByKey = ref<Record<string, number>>({});
 const rewindIconKey = ref(0);
 const forwardIconKey = ref(0);
 
-const viewportRefs = new Map<string, HTMLElement>();
-const contentRefs = new Map<string, HTMLElement>();
 const unlisteners: (() => void)[] = [];
 
-let resizeObserver: ResizeObserver | null = null;
 let rafId = 0;
-let measureFrame = 0;
 let timeAnchorMs = 0;
 let perfAnchor = 0;
 
@@ -307,96 +293,10 @@ const displayItems = computed(() => {
   return lyricItems.value;
 });
 
-function toHTMLElement(el: VueRefElement): HTMLElement | null {
-  if (el instanceof HTMLElement) return el;
-  const instanceEl = (el as ComponentPublicInstance | null)?.$el;
-  return instanceEl instanceof HTMLElement ? instanceEl : null;
-}
-
-function setViewportRef(key: string, el: VueRefElement) {
-  const element = toHTMLElement(el);
-  if (element) viewportRefs.set(key, element);
-  else viewportRefs.delete(key);
-  scheduleMeasure();
-}
-
-function setContentRef(key: string, el: VueRefElement) {
-  const element = toHTMLElement(el);
-  if (element) contentRefs.set(key, element);
-  else contentRefs.delete(key);
-  scheduleMeasure();
-}
-
-function syncResizeObserver() {
-  resizeObserver?.disconnect();
-  viewportRefs.forEach((element) => resizeObserver?.observe(element));
-  contentRefs.forEach((element) => resizeObserver?.observe(element));
-}
-
-function updateOverflow() {
-  const activeKeys = new Set(displayItems.value.map((item) => item.key));
-  const next: Record<string, number> = {};
-
-  viewportRefs.forEach((_, key) => {
-    if (!activeKeys.has(key)) viewportRefs.delete(key);
-  });
-  contentRefs.forEach((_, key) => {
-    if (!activeKeys.has(key)) contentRefs.delete(key);
-  });
-
-  for (const item of displayItems.value) {
-    const viewport = viewportRefs.get(item.key);
-    const content = contentRefs.get(item.key);
-    if (!viewport || !content) {
-      next[item.key] = 0;
-      continue;
-    }
-
-    const overflow =
-      orientation.value === "vertical"
-        ? content.scrollHeight - viewport.clientHeight
-        : content.scrollWidth - viewport.clientWidth;
-    next[item.key] = Math.max(0, overflow);
-  }
-
-  overflowByKey.value = next;
-}
-
-function scheduleMeasure() {
-  nextTick(() => {
-    if (measureFrame) cancelAnimationFrame(measureFrame);
-    measureFrame = requestAnimationFrame(() => {
-      syncResizeObserver();
-      updateOverflow();
-    });
-  });
-}
-
-function canScroll(key: string) {
-  return (overflowByKey.value[key] ?? 0) > 1;
-}
-
 function lineProgress(item: DisplayLine) {
   if (!item.active || item.startTime === undefined || item.endTime === undefined) return 0;
   const duration = Math.max(MIN_LINE_DURATION_MS, item.endTime - item.startTime);
   return clamp((displayTimeMs.value - item.startTime) / duration, 0, 1);
-}
-
-function scrollContentStyle(item: DisplayLine): CSSProperties {
-  const overflow = overflowByKey.value[item.key] ?? 0;
-  if (overflow <= 1) return {};
-
-  const progress = lineProgress(item);
-  const distance = overflow + SCROLL_END_PADDING;
-  const direction = orientation.value === "horizontal" && align.value === "right" ? 1 : -1;
-  const offset = progress * distance * direction;
-
-  return {
-    transform:
-      orientation.value === "vertical"
-        ? `translateY(${-progress * distance}px)`
-        : `translateX(${offset}px)`,
-  };
 }
 
 function updateTimeAnchor(sec: number) {
@@ -422,7 +322,6 @@ function updateLayoutMode() {
   orientation.value = window.innerHeight > window.innerWidth ? "vertical" : "horizontal";
   const thickness = orientation.value === "vertical" ? window.innerWidth : window.innerHeight;
   lineMode.value = thickness < 45 ? "single" : "double";
-  scheduleMeasure();
 }
 
 function updateTheme() {
@@ -485,8 +384,6 @@ function handleNext() {
   bridge.nextTrack();
 }
 
-watch(displayItems, scheduleMeasure, { immediate: true });
-watch([orientation, singleLineMode], scheduleMeasure);
 watch(
   () => bridge.currentTime.value,
   (sec) => updateTimeAnchor(sec),
@@ -509,7 +406,6 @@ onMounted(async () => {
   updateLayoutMode();
   updateTheme();
 
-  resizeObserver = new ResizeObserver(updateOverflow);
   tickTime();
 
   window.addEventListener("resize", updateLayoutMode);
@@ -535,7 +431,6 @@ onMounted(async () => {
     unlisteners.push(
       await tauri.event.listen("taskbar-lyric:fade-in", () => {
         isVisible.value = true;
-        scheduleMeasure();
       }),
     );
     unlisteners.push(
@@ -546,14 +441,11 @@ onMounted(async () => {
   }
 
   setHoverState(false);
-  scheduleMeasure();
 });
 
 onUnmounted(() => {
   setHoverState(false);
   cancelAnimationFrame(rafId);
-  if (measureFrame) cancelAnimationFrame(measureFrame);
-  resizeObserver?.disconnect();
   unlisteners.splice(0).forEach((unlisten) => unlisten());
 });
 </script>
@@ -846,43 +738,6 @@ onUnmounted(() => {
   height: 100%;
   align-items: flex-start;
   justify-content: center;
-}
-
-.scroll-viewport {
-  width: 100%;
-  min-width: 0;
-  height: 1.2em;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-}
-
-.scroll-viewport[data-align="right"] {
-  justify-content: flex-end;
-}
-
-.scroll-viewport[data-orientation="vertical"] {
-  width: 1.2em;
-  height: 100%;
-  align-items: flex-start;
-}
-
-.scroll-content {
-  flex: 0 0 auto;
-  max-width: none;
-  white-space: nowrap;
-  will-change: transform;
-  transition: transform 0.08s linear;
-}
-
-.scroll-viewport[data-scroll="false"] .scroll-content {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.scroll-viewport[data-orientation="vertical"] .scroll-content {
-  writing-mode: vertical-rl;
 }
 
 .cover-fade-enter-active,

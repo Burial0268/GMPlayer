@@ -19,11 +19,25 @@ const state = reactive({
   error: "",
   downloadedBytes: 0,
   contentLength: 0,
+  downloadSpeed: 0,
   lastCheckedAt: 0,
   installedVersion: "",
 });
 
 let activeCheck: Promise<Update | null> | null = null;
+
+// Download speed tracking (smoothed bytes/sec) — kept outside reactive state
+// so frequent updates during download don't trigger extra reactivity churn.
+let speedAnchorAt = 0;
+let speedAnchorBytes = 0;
+
+const resetDownloadStats = () => {
+  state.downloadedBytes = 0;
+  state.contentLength = 0;
+  state.downloadSpeed = 0;
+  speedAnchorAt = 0;
+  speedAnchorBytes = 0;
+};
 
 const normalizeError = (error: unknown) => {
   if (error instanceof Error) return error.message;
@@ -49,6 +63,12 @@ export function useAppUpdater() {
     if (!state.contentLength) return null;
     return Math.min(100, Math.round((state.downloadedBytes / state.contentLength) * 100));
   });
+  const etaSeconds = computed(() => {
+    if (state.status !== "downloading") return null;
+    if (!state.contentLength || state.downloadSpeed <= 0) return null;
+    const remaining = state.contentLength - state.downloadedBytes;
+    return remaining > 0 ? remaining / state.downloadSpeed : 0;
+  });
 
   const checkForUpdate = async (options: { silent?: boolean } = {}) => {
     if (!supported.value) return null;
@@ -57,8 +77,7 @@ export function useAppUpdater() {
     state.error = "";
     state.installedVersion = "";
     state.status = "checking";
-    state.downloadedBytes = 0;
-    state.contentLength = 0;
+    resetDownloadStats();
 
     activeCheck = check()
       .then(async (update) => {
@@ -92,8 +111,7 @@ export function useAppUpdater() {
 
     state.error = "";
     state.status = "downloading";
-    state.downloadedBytes = 0;
-    state.contentLength = 0;
+    resetDownloadStats();
 
     try {
       await update.downloadAndInstall((event: DownloadEvent) => {
@@ -101,10 +119,25 @@ export function useAppUpdater() {
           state.status = "downloading";
           state.contentLength = event.data.contentLength ?? 0;
           state.downloadedBytes = 0;
+          state.downloadSpeed = 0;
+          speedAnchorAt = Date.now();
+          speedAnchorBytes = 0;
         } else if (event.event === "Progress") {
           state.downloadedBytes += event.data.chunkLength;
+          const now = Date.now();
+          const elapsed = now - speedAnchorAt;
+          // Sample roughly 4×/sec and smooth with an EMA to avoid a jittery readout.
+          if (speedAnchorAt && elapsed >= 250) {
+            const instSpeed = ((state.downloadedBytes - speedAnchorBytes) / elapsed) * 1000;
+            state.downloadSpeed = state.downloadSpeed
+              ? state.downloadSpeed * 0.6 + instSpeed * 0.4
+              : instSpeed;
+            speedAnchorAt = now;
+            speedAnchorBytes = state.downloadedBytes;
+          }
         } else if (event.event === "Finished") {
           state.status = "installing";
+          state.downloadSpeed = 0;
         }
       });
       state.installedVersion = update.version;
@@ -124,6 +157,7 @@ export function useAppUpdater() {
     hasUpdate,
     isBusy,
     progressPercent,
+    etaSeconds,
     checkForUpdate,
     installAvailableUpdate,
   };

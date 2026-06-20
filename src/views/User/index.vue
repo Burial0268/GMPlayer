@@ -15,6 +15,12 @@
         <n-text class="key">{{ user.getUserData.nickname }}</n-text>
         <n-text class="tip" v-html="$t('nav.userChildren.results')" />
       </div>
+      <n-button class="logout-btn" strong secondary round type="error" @click="handleLogout">
+        <template #icon>
+          <n-icon :component="Logout" />
+        </template>
+        {{ $t("nav.avatar.logout") }}
+      </n-button>
     </div>
     <n-tabs class="main-tab" type="line" @update:value="tabChange" v-model:value="tabValue">
       <n-tab name="playlists">{{ $t("nav.userChildren.playlist") }}</n-tab>
@@ -38,10 +44,29 @@
 <script setup lang="ts">
 import { userStore } from "@/store";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
+import { Logout } from "@icon-park/vue-next";
 import { useTabTransition } from "@/composables/useTabTransition";
 
+const { t } = useI18n();
 const router = useRouter();
 const user = userStore();
+
+// 退出登录
+const handleLogout = () => {
+  $dialog.warning({
+    class: "s-dialog",
+    title: t("nav.avatar.logout"),
+    content: t("nav.avatar.tip"),
+    positiveText: t("nav.avatar.logout"),
+    negativeText: t("general.dialog.cancel"),
+    onPositiveClick: () => {
+      user.userLogOut();
+      $message.success(t("nav.avatar.success"));
+      router.push("/");
+    },
+  });
+};
 const { transitionName, updateDirection, syncIndex } = useTabTransition([
   "playlists",
   "like",
@@ -86,6 +111,11 @@ watch(
       min-width: 80px;
       margin-right: 16px;
       box-shadow: 0 6px 8px -2px rgb(0 0 0 / 16%);
+    }
+    .logout-btn {
+      margin-left: auto;
+      flex-shrink: 0;
+      align-self: center;
     }
     .text {
       display: flex;

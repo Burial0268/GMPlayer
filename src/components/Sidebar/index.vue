@@ -196,29 +196,39 @@
         :collapsed="setting.sidebarCollapsed"
         :badge="hasUpdate"
       />
-      <n-tooltip placement="right" :disabled="!setting.sidebarCollapsed" :delay="300">
-        <template #trigger>
-          <div
-            :class="['sidebar-user', { collapsed: setting.sidebarCollapsed }]"
-            @click="user.userLogin ? router.push('/user') : router.push('/login')"
-          >
-            <n-avatar
-              round
-              :size="setting.sidebarCollapsed ? 24 : 22"
-              :src="
-                user.getUserData.avatarUrl
-                  ? user.getUserData.avatarUrl.replace(/^http:/, 'https:') + '?param=60y60'
-                  : '/images/ico/user-filling.svg'
-              "
-              fallback-src="/images/ico/user-filling.svg"
-            />
-            <span :class="['sidebar-user-name text-hidden', { hidden: setting.sidebarCollapsed }]">
-              {{ user.userLogin ? user.getUserData.nickname : $t("nav.avatar.notLogin") }}
-            </span>
-          </div>
-        </template>
-        {{ user.userLogin ? user.getUserData.nickname : $t("nav.avatar.notLogin") }}
-      </n-tooltip>
+      <n-dropdown
+        trigger="click"
+        placement="top-start"
+        :disabled="!user.userLogin"
+        :options="userMenuOptions"
+        @select="handleUserMenuSelect"
+      >
+        <n-tooltip placement="right" :disabled="!setting.sidebarCollapsed" :delay="300">
+          <template #trigger>
+            <div
+              :class="['sidebar-user', { collapsed: setting.sidebarCollapsed }]"
+              @click="!user.userLogin && router.push('/login')"
+            >
+              <n-avatar
+                round
+                :size="setting.sidebarCollapsed ? 24 : 22"
+                :src="
+                  user.getUserData.avatarUrl
+                    ? user.getUserData.avatarUrl.replace(/^http:/, 'https:') + '?param=60y60'
+                    : '/images/ico/user-filling.svg'
+                "
+                fallback-src="/images/ico/user-filling.svg"
+              />
+              <span
+                :class="['sidebar-user-name text-hidden', { hidden: setting.sidebarCollapsed }]"
+              >
+                {{ user.userLogin ? user.getUserData.nickname : $t("nav.avatar.notLogin") }}
+              </span>
+            </div>
+          </template>
+          {{ user.userLogin ? user.getUserData.nickname : $t("nav.avatar.notLogin") }}
+        </n-tooltip>
+      </n-dropdown>
     </div>
   </Motion>
 </template>
@@ -237,11 +247,14 @@ import {
   IndentLeft,
   IndentRight,
   Right,
+  Logout,
+  User,
 } from "@icon-park/vue-next";
-import { NIcon, NAvatar, NSkeleton, NScrollbar, NTooltip } from "naive-ui";
+import { NIcon, NAvatar, NSkeleton, NScrollbar, NTooltip, NDropdown } from "naive-ui";
 import { Motion, AnimatePresence } from "motion-v";
 import { settingStore, siteStore, userStore } from "@/store";
 import { useRouter } from "vue-router";
+import { useI18n } from "vue-i18n";
 import SidebarItem from "./SidebarItem.vue";
 import SidebarPlaylistItem from "./SidebarPlaylistItem.vue";
 import SearchInp from "@/components/SearchInp/index.vue";
@@ -251,7 +264,43 @@ const router = useRouter();
 const setting = settingStore();
 const site = siteStore();
 const user = userStore();
+const { t } = useI18n();
 const { hasUpdate, checkForUpdate } = useAppUpdater();
+
+// 用户条下拉菜单（登录后点击头像弹出）
+const userMenuOptions = computed(() => [
+  {
+    key: "profile",
+    label: t("nav.avatar.profile"),
+    icon: () => h(NIcon, null, { default: () => h(User) }),
+  },
+  {
+    key: "logout",
+    label: t("nav.avatar.logout"),
+    icon: () => h(NIcon, null, { default: () => h(Logout) }),
+  },
+]);
+
+const handleUserMenuSelect = (key: string) => {
+  if (key === "profile") router.push("/user");
+  else if (key === "logout") handleLogout();
+};
+
+// 退出登录
+const handleLogout = () => {
+  $dialog.warning({
+    class: "s-dialog",
+    title: t("nav.avatar.logout"),
+    content: t("nav.avatar.tip"),
+    positiveText: t("nav.avatar.logout"),
+    negativeText: t("general.dialog.cancel"),
+    onPositiveClick: () => {
+      user.userLogOut();
+      $message.success(t("nav.avatar.success"));
+      router.push("/");
+    },
+  });
+};
 
 const sidebarWidth = computed(() => (setting.sidebarCollapsed ? "56px" : "208px"));
 const sectionOpen = reactive({

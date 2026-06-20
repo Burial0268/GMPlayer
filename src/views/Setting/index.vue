@@ -1,139 +1,116 @@
 <template>
   <div class="setting">
-    <div class="title">{{ $t("nav.avatar.setting") }}</div>
-    <n-tabs class="main-tab" type="segment" @update:value="tabChange" v-model:value="tabValue">
-      <n-tab name="main">{{ $t("setting.main") }}</n-tab>
-      <n-tab name="player">{{ $t("setting.player") }}</n-tab>
-      <n-tab name="other">{{ $t("general.type.other") }}</n-tab>
-    </n-tabs>
+    <header class="setting-header">
+      <div>
+        <div class="title">{{ t("nav.avatar.setting") }}</div>
+        <div class="subtitle">{{ t("setting.settingsSubtitle") }}</div>
+      </div>
+    </header>
+
     <main class="content">
-      <router-view v-slot="{ Component }">
-        <Transition :name="transitionName" mode="out-in">
-          <keep-alive>
-            <component :is="Component" />
-          </keep-alive>
-        </Transition>
-      </router-view>
+      <SettingsWorkspace
+        :active="activeSection"
+        variant="page"
+        @update:active="handleActiveUpdate"
+      />
     </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { useTabTransition } from "@/composables/useTabTransition";
+import SettingsWorkspace from "@/components/Settings/SettingsWorkspace.vue";
+import { SETTINGS_SECTION_ALIASES } from "@/components/Settings/useSettingsSections";
+
+declare const $setSiteTitle: (title: string) => void;
+declare const $scrollToTop: () => void;
 
 const { t } = useI18n();
+const route = useRoute();
 const router = useRouter();
-const { transitionName, updateDirection, syncIndex } = useTabTransition([
-  "main",
-  "player",
-  "other",
-]);
 
-// Tab 默认选中
-const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
-syncIndex(tabValue.value);
-
-// Tab 选项卡变化
-const tabChange = (value) => {
-  updateDirection(value);
-  router.push({
-    path: `/setting/${value}`,
-  });
+const resolveSectionKey = (key?: string | string[]) => {
+  const value = Array.isArray(key) ? key[0] : key;
+  if (!value) return "appearance";
+  return SETTINGS_SECTION_ALIASES[value] ?? value;
 };
 
-// 监听路由参数变化
+const activeSection = ref(resolveSectionKey(route.params.section));
+
 watch(
-  () => router.currentRoute.value,
-  (val) => {
-    tabValue.value = val.path.split("/")[2];
-    syncIndex(tabValue.value);
+  () => route.params.section,
+  (section) => {
+    activeSection.value = resolveSectionKey(section);
   },
 );
 
+const handleActiveUpdate = (key: string) => {
+  activeSection.value = key;
+  if (route.params.section === key) return;
+  router.replace({ path: `/setting/${key}` });
+};
+
 onMounted(() => {
   $setSiteTitle(t("nav.avatar.setting"));
-  // 回顶
   if (typeof $scrollToTop !== "undefined") $scrollToTop();
 });
 </script>
 
 <style lang="scss" scoped>
 .setting {
-  .title {
-    margin-top: 30px;
-    margin-bottom: 20px;
-    font-size: 40px;
-    font-weight: bold;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow: hidden;
+
+  .setting-header {
+    flex: 0 0 auto;
     display: flex;
-    align-items: center;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    margin-top: 24px;
+    margin-bottom: 16px;
   }
+
+  .title {
+    font-size: clamp(28px, 4vw, 40px);
+    line-height: 1.1;
+    font-weight: 700;
+  }
+
+  .subtitle {
+    margin-top: 6px;
+    font-size: 13px;
+    opacity: 0.64;
+  }
+
   .content {
-    margin-top: 20px;
-    :deep(.set-item) {
-      width: 100%;
-      border-radius: 8px;
-      margin-bottom: 12px;
-      .n-card__content {
-        display: flex;
-        flex-direction: row;
-        align-items: center;
-        justify-content: space-between;
-        .name {
-          font-size: 16px;
-          display: flex;
-          flex-direction: column;
-          padding-right: 20px;
-          .dev {
-            display: flex;
-            flex-direction: row;
-            align-items: center;
-            .n-tag {
-              margin-left: 6px;
-            }
-          }
-          .tip {
-            font-size: 12px;
-            opacity: 0.8;
-          }
-        }
-        .set {
-          width: 200px;
-          @media (max-width: 768px) {
-            width: 140px;
-            min-width: 140px;
-          }
-        }
-        .more {
-          padding: 12px;
-          border-radius: 8px;
-          background-color: var(--n-border-color);
-          width: 100%;
-          margin-top: 12px;
-          box-sizing: border-box;
-          &.blur {
-            .lrc {
-              filter: blur(2px);
-              &.on {
-                filter: blur(0);
-              }
-            }
-          }
-          .lrc {
-            opacity: 0.6;
-            display: flex;
-            flex-direction: column;
-            transform: scale(0.95);
-            transition: all 0.3s;
-            &.on {
-              font-weight: bold;
-              opacity: 1;
-              transform: scale(1.05);
-            }
-          }
-        }
-      }
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-bottom: 18px;
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 768px) {
+  .setting {
+    height: auto;
+    max-height: none;
+    overflow: visible;
+
+    .setting-header {
+      margin-top: 12px;
+    }
+
+    .content {
+      min-height: 72vh;
+      overflow: visible;
     }
   }
 }

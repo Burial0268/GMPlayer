@@ -122,30 +122,13 @@ const routes: RouteRecordRaw[] = [
   },
   // 设置页
   {
-    path: "/setting",
+    path: "/setting/:section?",
     name: "setting",
     meta: {
       title: "全局设置",
+      hideLoadingBar: true,
     },
     component: () => import("@/views/Setting/index.vue"),
-    redirect: "/setting/main",
-    children: [
-      {
-        path: "main",
-        name: "setting-main",
-        component: () => import("@/views/Setting/main.vue"),
-      },
-      {
-        path: "player",
-        name: "setting-player",
-        component: () => import("@/views/Setting/player.vue"),
-      },
-      {
-        path: "other",
-        name: "setting-other",
-        component: () => import("@/views/Setting/other.vue"),
-      },
-    ],
   },
   // 登录页
   {

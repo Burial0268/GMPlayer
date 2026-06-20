@@ -407,4 +407,3 @@ export function useNativeMediaControls() {
     syncPlayMode,
   };
 }
-

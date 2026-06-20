@@ -47,25 +47,24 @@
               </template>
             </n-input>
           </n-form-item>
-          <n-form-item path="captcha">
-            <n-input-number
-              style="width: 100%"
-              placeholder="请输入短信验证码"
-              v-model:value="phoneFormData.captcha"
-              :show-button="false"
-            >
-              <template #prefix>
-                <n-icon :component="PasswordRound" />
-              </template>
-            </n-input-number>
-            <n-button
-              type="primary"
-              style="margin-left: 12px"
-              :disabled="captchaDisabled"
-              @click="getCaptcha(phoneFormData.phone)"
-            >
-              {{ captchaText }}
-            </n-button>
+          <n-form-item class="captcha-item" path="captcha">
+            <div class="captcha-field">
+              <n-input-otp
+                class="otp-input"
+                v-model:value="phoneFormData.captcha"
+                :length="4"
+                :allow-input="allowCaptchaInput"
+                placeholder=""
+              />
+              <n-button
+                class="send-btn"
+                type="primary"
+                :disabled="captchaDisabled"
+                @click="getCaptcha(phoneFormData.phone)"
+              >
+                {{ captchaText }}
+              </n-button>
+            </div>
           </n-form-item>
           <n-form-item>
             <n-button style="width: 100%" type="primary" @click="phoneLogin">
@@ -87,11 +86,11 @@
 import { userStore, musicStore, settingStore } from "@/store";
 import { getLoginState, getQrKey, checkQr, toLogin, sentCaptcha, verifyCaptcha } from "@/api/login";
 import { useRouter } from "vue-router";
-import { PhoneAndroidRound, PasswordRound } from "@vicons/material";
+import { PhoneAndroidRound } from "@vicons/material";
 import { formRules } from "@/utils/ui/formRules";
 import { useI18n } from "vue-i18n";
 import QrcodeVue from "qrcode.vue";
-import type { FormRules } from "naive-ui";
+import { NInputOtp, type FormRules } from "naive-ui";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -99,25 +98,45 @@ const user = userStore();
 const music = musicStore();
 const setting = settingStore();
 const siteTitle = import.meta.env.VITE_SITE_TITLE;
-const { numberRule, mobileRule } = formRules();
+const { mobileRule } = formRules();
 
 // 二维码数据
 const qrImg = ref(null);
 const loginStatus = ref(t("login.loginStatus1"));
 
+interface PhoneFormData {
+  phone: string | null;
+  captcha: string[];
+}
+
 // 手机号登录数据
 const phoneFormRef = ref(null);
-const phoneFormData = ref({
+const phoneFormData = ref<PhoneFormData>({
   phone: null,
-  captcha: null,
+  captcha: [],
 });
 const phoneFormRules: FormRules = {
   phone: mobileRule,
-  captcha: numberRule,
+  captcha: {
+    required: true,
+    validator(_rule, value) {
+      if (
+        !Array.isArray(value) ||
+        value.join("").length !== 4 ||
+        value.some((v) => !/^\d$/.test(v))
+      ) {
+        return new Error("请输入短信验证码");
+      }
+      return true;
+    },
+    trigger: ["input", "blur"],
+  },
 };
 let captchaTimeOut = null;
 const captchaText = ref(t("login.getCode"));
 const captchaDisabled = ref(false);
+
+const allowCaptchaInput = (char: string) => /^\d$/.test(char);
 
 // 定时器
 let qrCheckInterval = null;
@@ -250,13 +269,11 @@ const phoneLogin = async (e) => {
   phoneFormRef.value?.validate(async (errors) => {
     if (!errors) {
       try {
-        const verifyRes = await verifyCaptcha(
-          phoneFormData.value.phone,
-          phoneFormData.value.captcha,
-        );
+        const captcha = phoneFormData.value.captcha.join("");
+        const verifyRes = await verifyCaptcha(phoneFormData.value.phone, captcha);
         if (isUnmounted) return;
         if (verifyRes.code === 200) {
-          const loginRes = await toLogin(phoneFormData.value.phone, phoneFormData.value.captcha);
+          const loginRes = await toLogin(phoneFormData.value.phone, captcha);
           if (isUnmounted) return;
           if (loginRes.profile) {
             saveLoginData(loginRes);
@@ -269,7 +286,7 @@ const phoneLogin = async (e) => {
           } else {
             user.userLogOut();
             $message.error(t("login.loginStatus5"));
-            phoneFormData.value.captcha = null;
+            phoneFormData.value.captcha = [];
           }
         }
       } catch (err) {
@@ -370,6 +387,20 @@ onBeforeUnmount(() => {
       width: 100%;
       padding: 0 4px;
       box-sizing: border-box;
+      .captcha-field {
+        width: 100%;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: 12px;
+        .otp-input {
+          flex-shrink: 0;
+        }
+        .send-btn {
+          flex: 1;
+          white-space: nowrap;
+        }
+      }
     }
     :deep(.n-input) {
       .n-input__prefix {

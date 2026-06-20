@@ -1,6 +1,6 @@
 import { defineStore, acceptHMRUpdate } from "pinia";
 import { nextTick, h } from "vue";
-import { getSongTime, getSongPlayingTime } from "@/utils/timeTools";
+import { getSongTime, getSongPlayingTime, getDailySongsDate } from "@/utils/timeTools";
 import { getPersonalFm, setFmTrash } from "@/api/home";
 import { getLikelist, setLikeSong } from "@/api/user";
 import { getPlayListCatlist } from "@/api/playlist";
@@ -95,6 +95,7 @@ interface MusicDataState {
   songLyric: SongLyric;
   playSongLyricIndex: number;
   dailySongsData: SongData[];
+  dailySongsDate: string;
   catList: Record<string, any>;
   highqualityCatList: any[];
   spectrumsData: number[];
@@ -132,6 +133,7 @@ const useMusicDataStore = defineStore("musicData", {
       },
       playSongLyricIndex: -1,
       dailySongsData: [],
+      dailySongsDate: "",
       catList: {},
       highqualityCatList: [],
       spectrumsData: [],
@@ -188,6 +190,9 @@ const useMusicDataStore = defineStore("musicData", {
     },
     getDailySongs(state): SongData[] {
       return state.dailySongsData;
+    },
+    getDailySongsDate(state): string {
+      return state.dailySongsDate;
     },
     getPlaylists(state): SongData[] {
       return state.persistData.playlists;
@@ -485,9 +490,10 @@ const useMusicDataStore = defineStore("musicData", {
       this.resetSongLyricState();
     },
 
-    setDailySongs(value: any[]) {
+    setDailySongs(value: any[], date = getDailySongsDate()) {
       if (value) {
         this.dailySongsData = [];
+        this.dailySongsDate = date;
         value.forEach((v) => {
           this.dailySongsData.push({
             id: v.id,

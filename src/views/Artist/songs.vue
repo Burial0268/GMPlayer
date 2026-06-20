@@ -21,7 +21,11 @@
       </div>
 
       <div class="ranking-section">
-        <button class="section-title" type="button" @click="router.push(`/all-songs?id=${artistId}&page=1`)">
+        <button
+          class="section-title"
+          type="button"
+          @click="router.push(`/all-songs?id=${artistId}&page=1`)"
+        >
           <span>{{ $t("general.name.songRanking") }}</span>
           <n-icon :component="ChevronRightRound" />
         </button>
@@ -159,6 +163,8 @@ watch(
 
 <style lang="scss" scoped>
 .artist-overview {
+  container: artist-overview / inline-size;
+
   .section-title {
     appearance: none;
     display: inline-flex;
@@ -190,9 +196,17 @@ watch(
 
   .overview-grid {
     display: grid;
-    grid-template-columns: minmax(230px, 0.48fr) minmax(0, 1fr);
+    grid-template-columns: 1fr;
     gap: clamp(24px, 4vw, 44px);
     align-items: start;
+  }
+
+  .latest-section {
+    container: latest-section / inline-size;
+  }
+
+  .ranking-section {
+    container: ranking-section / inline-size;
   }
 
   .latest-release {
@@ -237,7 +251,7 @@ watch(
 
   .song-rank-grid {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: 1fr;
     column-gap: 22px;
   }
 
@@ -315,26 +329,36 @@ watch(
     margin: 24px 0;
   }
 
-  @media (max-width: 1180px) {
+  /* Side-by-side overview only when the content panel is wide enough */
+  @container artist-overview (min-width: 820px) {
     .overview-grid {
+      grid-template-columns: minmax(230px, 0.48fr) minmax(0, 1fr);
+    }
+  }
+
+  /* Latest release: stack the cover above the album name when its column is cramped */
+  @container latest-section (max-width: 340px) {
+    .latest-release {
       grid-template-columns: 1fr;
+      gap: 12px;
     }
 
+    .latest-cover {
+      max-width: 188px;
+    }
+  }
+
+  /* Song ranking: step the column count down as the section narrows */
+  @container ranking-section (min-width: 460px) {
     .song-rank-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
-
   }
 
-  @media (max-width: 680px) {
-    .latest-release {
-      grid-template-columns: 118px minmax(0, 1fr);
-    }
-
+  @container ranking-section (min-width: 700px) {
     .song-rank-grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
-
   }
 }
 </style>

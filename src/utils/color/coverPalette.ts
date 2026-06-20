@@ -212,6 +212,10 @@ const getPreferredPalette = (palettes: Record<string, MaterialPalette>): Materia
 const tone = (palette: MaterialPalette, value: number, chromaBoost = 0): number =>
   Hct.from(palette.hue, Math.max(palette.chroma + chromaBoost, palette.chroma), value).toInt();
 
+// 在指定 hue/chroma 上取某个明度(tone)的颜色——用于构建「同色相、不同明度」的统一强调色阶梯
+const toneAt = (hue: number, chroma: number, value: number): number =>
+  Hct.from(hue, chroma, value).toInt();
+
 const rgbaVar = (rgb: string, varName: string, fallback: number): string =>
   `rgba(${rgb}, var(${varName}, ${fallback}))`;
 
@@ -223,6 +227,18 @@ const getGradientFromMonetPalette = (
   dark: string,
 ): string =>
   `linear-gradient(-45deg, rgb(${dark}) 0%, rgb(${source}) 28%, rgb(${primary}) 52%, rgb(${secondary}) 74%, rgb(${tertiary}) 100%)`;
+
+// 浅色面板上的「舞台」色洗：单色相、柔和、顶部居中——对桌面(封面在左上)与移动端(封面居中靠上)
+// 都自然对齐；底部回落到面板底色以保证文字可读。摒弃旧的 source/secondary/tertiary 多层叠加(发「脏」)。
+const getPanelStageGradient = (panelAccentColor: string): string =>
+  [
+    `radial-gradient(125% 78% at 50% 0%, ${rgbaVar(
+      panelAccentColor,
+      "--content-panel-hero-wash-opacity",
+      0.16,
+    )} 0%, ${rgbaVar(panelAccentColor, "--content-panel-mid-wash-opacity", 0.06)} 40%, transparent 74%)`,
+    "linear-gradient(180deg, transparent 0%, transparent 62%, var(--content-panel-gradient-overlay, transparent) 100%)",
+  ].join(", ");
 
 export const getGradientFromPalette = (palette: RGB[]): string => {
   const colors = palette
@@ -241,25 +257,35 @@ const createCoverPalette = (sourceArgb: number): CoverPalette => {
   const theme = themeFromSourceColor(sourceArgb);
   const palettes = theme.palettes as unknown as Record<string, MaterialPalette>;
   const selected = getPreferredPalette(palettes);
-  const primary = palettes.primary;
   const secondary = palettes.secondary;
   const tertiary = palettes.tertiary;
   const neutral = palettes.neutral;
 
+  // 统一色相 + 受控色度：所有强调色共享同一 hue/chroma，仅在明度(tone)上分档，
+  // 让深浅版本看起来是「同一种颜色」而非彼此割裂；色度封顶避免低透明度叠加时发灰发「脏」。
+  const hue = Number.isFinite(selected.hue) ? selected.hue : 260;
+  const chroma = clamp(selected.chroma, 30, 56);
+
+  // 亮调：深色/沉浸表面(歌词、迷你播放器、托盘、大播放器取色) | 暗调：浅色面板标题/描边/色洗 | 按钮主色
+  const accentArgb = toneAt(hue, chroma, 72);
+  const panelAccentArgb = toneAt(hue, chroma, 46);
+  const buttonArgb = toneAt(hue, chroma, 50);
+
   const sourceColor = tripletFromArgb(sourceArgb);
-  const accentColor = tripletFromArgb(tone(selected, 88, 8));
-  const panelAccentArgb = tone(selected, 46, 22);
-  const buttonArgb = tone(selected, 84, 10);
+  const accentColor = tripletFromArgb(accentArgb);
   const panelAccentColor = tripletFromArgb(panelAccentArgb);
-  const secondaryColor = tripletFromArgb(tone(secondary, 50, 14));
-  const tertiaryColor = tripletFromArgb(tone(tertiary, 48, 16));
-  const surfaceColor = tripletFromArgb(tone(neutral, 94));
   const buttonColor = tripletFromArgb(buttonArgb);
-  const onButtonColor = calcLuminance(argb2Rgb(buttonArgb)) > 0.48 ? "18, 18, 22" : "255, 255, 255";
+  // 副/三级色仍保留各自色相(用于沉浸渐变)，但同样封顶色度；不再参与浅色面板色洗
+  const secondaryColor = tripletFromArgb(
+    toneAt(secondary.hue, clamp(secondary.chroma, 22, 48), 52),
+  );
+  const tertiaryColor = tripletFromArgb(toneAt(tertiary.hue, clamp(tertiary.chroma, 22, 48), 50));
+  const surfaceColor = tripletFromArgb(tone(neutral, 94));
+  const onButtonColor = calcLuminance(argb2Rgb(buttonArgb)) > 0.55 ? "18, 18, 22" : "255, 255, 255";
   const onAccentColor =
-    calcLuminance(argb2Rgb(panelAccentArgb)) > 0.4 ? "20, 20, 24" : "255, 255, 255";
+    calcLuminance(argb2Rgb(panelAccentArgb)) > 0.45 ? "20, 20, 24" : "255, 255, 255";
   const dark = tripletFromArgb(tone(neutral, 18));
-  const primaryColor = tripletFromArgb(tone(primary, 48, 16));
+  const primaryColor = tripletFromArgb(toneAt(hue, chroma, 48));
 
   return {
     sourceColor,
@@ -278,24 +304,7 @@ const createCoverPalette = (sourceArgb: number): CoverPalette => {
       tertiaryColor,
       dark,
     ),
-    panelGradient: [
-      "linear-gradient(180deg, transparent 0%, transparent 54%, var(--content-panel-gradient-overlay, transparent) 100%)",
-      `radial-gradient(ellipse 82% 58% at 50% 22%, ${rgbaVar(
-        panelAccentColor,
-        "--content-panel-hero-wash-opacity",
-        0.36,
-      )} 0%, ${rgbaVar(panelAccentColor, "--content-panel-mid-wash-opacity", 0.22)} 42%, transparent 78%)`,
-      `radial-gradient(circle at 50% 24%, ${rgbaVar(
-        secondaryColor,
-        "--content-panel-side-wash-opacity",
-        0.15,
-      )} 0%, transparent 46%)`,
-      `radial-gradient(ellipse 118% 76% at 50% 24%, ${rgbaVar(
-        tertiaryColor,
-        "--content-panel-wash-opacity",
-        0.12,
-      )} 0%, transparent 82%)`,
-    ].join(", "),
+    panelGradient: getPanelStageGradient(panelAccentColor),
   };
 };
 
