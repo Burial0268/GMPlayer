@@ -53,7 +53,7 @@ const PREPARE_AHEAD = 13;
 const MIN_CROSSFADE_DURATION = 2;
 
 /** Maximum entries in analysis cache */
-const MAX_CACHE_SIZE = 10;
+const MAX_CACHE_SIZE = 6;
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
@@ -1593,7 +1593,11 @@ export class TransitionStateMachine {
     }
   }
 
-  private _commitWebTransition(transitionId: number, incomingSound: ISound, nextIndex: number): void {
+  private _commitWebTransition(
+    transitionId: number,
+    incomingSound: ISound,
+    nextIndex: number,
+  ): void {
     if (!this._isTransitionActive(transitionId, "web")) return;
     const active = this._activeTransition;
     if (active?.committed) return;
@@ -1910,7 +1914,8 @@ export class TransitionStateMachine {
 
     if (this._softwareFadeRemaining > 0 && !this._crossfadeScheduler.isActive()) {
       this._softwareFadeStartedAt = Date.now();
-      const transitionId = this._activeTransition?.mode === "web" ? this._activeTransition.id : undefined;
+      const transitionId =
+        this._activeTransition?.mode === "web" ? this._activeTransition.id : undefined;
       this._softwareFadeTimerId = setTimeout(() => {
         this._softwareFadeTimerId = null;
         this._onCrossfadeComplete(transitionId);

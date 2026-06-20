@@ -12,6 +12,111 @@ const INTERLUDE_CHARS_REGEX = /[\s♪♩♫♬🎵🎶🎼·…\-_—─●◆�
 // Pre-compiled regex for splitting roma text
 const ROMA_SPLIT_REGEX = /\s+/;
 
+const MIN_LINE_DURATION_MS = 800;
+const FALLBACK_LAST_LINE_DURATION_MS = 5000;
+
+interface TimedSourceLine {
+  words?: readonly {
+    word?: string;
+    startTime?: number;
+    endTime?: number;
+    romanWord?: string;
+  }[];
+  startTime?: number;
+  endTime?: number;
+}
+
+type TimedSourceWord = NonNullable<TimedSourceLine["words"]>[number];
+
+function finiteTime(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function sourceLineStart(line: TimedSourceLine | undefined): number | undefined {
+  if (!line) return undefined;
+  return finiteTime(line.startTime) ?? finiteTime(line.words?.[0]?.startTime);
+}
+
+function sourceLineWordEnd(line: TimedSourceLine | undefined): number | undefined {
+  const words = line?.words;
+  if (!words?.length) return undefined;
+
+  let endTime: number | undefined;
+  for (let i = 0; i < words.length; i++) {
+    const wordEnd = finiteTime(words[i].endTime);
+    if (wordEnd !== undefined && (endTime === undefined || wordEnd > endTime)) {
+      endTime = wordEnd;
+    }
+  }
+  return endTime;
+}
+
+function nextLineStart(
+  lines: readonly TimedSourceLine[],
+  index: number,
+  startTime: number,
+): number | undefined {
+  for (let i = index + 1; i < lines.length; i++) {
+    const nextStart = sourceLineStart(lines[i]);
+    if (nextStart !== undefined && nextStart > startTime) return nextStart;
+  }
+  return undefined;
+}
+
+function resolveLineStart(line: TimedSourceLine): number {
+  return sourceLineStart(line) ?? 0;
+}
+
+function resolveLineEnd(
+  lines: readonly TimedSourceLine[],
+  index: number,
+  startTime: number,
+  preferNextStart: boolean,
+): number {
+  const line = lines[index];
+  const explicitEnd = finiteTime(line?.endTime);
+  const wordEnd = sourceLineWordEnd(line);
+  const nextStart = nextLineStart(lines, index, startTime);
+
+  let endTime =
+    preferNextStart && nextStart !== undefined
+      ? nextStart
+      : explicitEnd !== undefined && explicitEnd > startTime
+        ? explicitEnd
+        : wordEnd !== undefined && wordEnd > startTime
+          ? wordEnd
+          : nextStart !== undefined
+            ? nextStart
+            : startTime + FALLBACK_LAST_LINE_DURATION_MS;
+
+  if (endTime <= startTime) {
+    endTime = startTime + MIN_LINE_DURATION_MS;
+  }
+
+  return endTime;
+}
+
+function resolveWordTime(
+  words: readonly TimedSourceWord[],
+  index: number,
+  lineStartTime: number,
+  lineEndTime: number,
+) {
+  const word = words[index];
+  const startTime = finiteTime(word.startTime) ?? lineStartTime;
+  let endTime = finiteTime(word.endTime);
+
+  if (endTime === undefined || endTime <= startTime) {
+    const nextStart = finiteTime(words[index + 1]?.startTime);
+    endTime = nextStart !== undefined && nextStart > startTime ? nextStart : lineEndTime;
+  }
+
+  if (endTime <= startTime) {
+    endTime = startTime + MIN_LINE_DURATION_MS;
+  }
+
+  return { startTime, endTime };
+}
 
 /**
  * 判断是否为间奏行
@@ -119,11 +224,10 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
     if (!words || words.length === 0) continue;
 
     const wordsLen = words.length;
-    const firstWord = words[0];
-    const lastWord = words[wordsLen - 1];
-
-    const time = msToS(firstWord.startTime);
-    const endTime = msToS(lastWord.endTime);
+    const lineStartTime = resolveLineStart(line);
+    const lineEndTime = resolveLineEnd(yrcData, i, lineStartTime, false);
+    const time = msToS(lineStartTime);
+    const endTime = msToS(lineEndTime);
 
     // Build content array and string in one pass
     const content: ParsedYrcLine["content"] = [];
@@ -132,6 +236,7 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
 
     for (let j = 0; j < wordsLen; j++) {
       const word = words[j];
+      const wordTime = resolveWordTime(words, j, lineStartTime, lineEndTime);
       const wordText = word.word;
       // Preserve original word text including trailing spaces.
       // TTML lyrics rely on trailing spaces to separate words;
@@ -140,9 +245,9 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
       const processedWord = wordText;
 
       content[j] = {
-        time: msToS(word.startTime),
-        endTime: msToS(word.endTime),
-        duration: msToS(word.endTime - word.startTime),
+        time: msToS(wordTime.startTime),
+        endTime: msToS(wordTime.endTime),
+        duration: msToS(wordTime.endTime - wordTime.startTime),
         content: processedWord,
         endsWithSpace,
       };
@@ -353,25 +458,8 @@ export const buildAMLLData = (
     const wordsLen = words.length;
 
     const firstWord = wordsLen > 0 ? words[0] : null;
-    const lastWord = wordsLen > 0 ? words[wordsLen - 1] : null;
-    const startTime = firstWord ? firstWord.startTime : 0;
-
-    // Calculate endTime
-    let endTime: number;
-    const nextLine = lrcData[i + 1];
-    const nextFirstWord = nextLine?.words?.[0];
-
-    if (nextFirstWord) {
-      endTime = nextFirstWord.startTime;
-    } else if (lastWord) {
-      endTime = lastWord.endTime;
-    } else {
-      endTime = startTime + 5000;
-    }
-
-    if (endTime <= startTime) {
-      endTime = startTime + 100;
-    }
+    const startTime = firstWord ? firstWord.startTime : resolveLineStart(line);
+    const endTime = resolveLineEnd(lrcData, i, startTime, true);
 
     // Build words array efficiently
     const resultWords: AMLLLine["words"] = [];
@@ -379,10 +467,11 @@ export const buildAMLLData = (
 
     for (let j = 0; j < wordsLen; j++) {
       const w = words[j];
+      const wordTime = resolveWordTime(words, j, startTime, endTime);
       resultWords[j] = {
         word: w.word,
-        startTime: w.startTime,
-        endTime: w.endTime,
+        startTime: wordTime.startTime,
+        endTime: wordTime.endTime,
         romanWord: w.romanWord || "",
       };
     }
@@ -441,6 +530,8 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
     const l = lines[i];
     const sourceWords = l.words || [];
     const wordsLen = sourceWords.length;
+    const startTime = resolveLineStart(l);
+    const endTime = resolveLineEnd(lines, i, startTime, false);
 
     // Build words array
     const words: AMLLLine["words"] = [];
@@ -448,18 +539,14 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
 
     for (let j = 0; j < wordsLen; j++) {
       const w = sourceWords[j];
+      const wordTime = resolveWordTime(sourceWords, j, startTime, endTime);
       words[j] = {
-        startTime: w.startTime,
-        endTime: w.endTime,
+        startTime: wordTime.startTime,
+        endTime: wordTime.endTime,
         word: w.word,
         romanWord: w.romanWord || "",
       };
     }
-
-    const firstWord = words[0];
-    const lastWord = words[wordsLen - 1];
-    const startTime = l.startTime ?? firstWord?.startTime ?? 0;
-    const endTime = l.endTime ?? lastWord?.endTime ?? startTime;
 
     // 有逐字音译时清除行级音译，避免重复显示
     let hasPerWordRoma = false;

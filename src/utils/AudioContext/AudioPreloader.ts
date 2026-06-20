@@ -25,6 +25,7 @@ interface PreloadedEntry {
   songIndex: number;
   sound: BufferedSound;
   ready: boolean;
+  timeoutId: ReturnType<typeof setTimeout> | null;
 }
 
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -121,11 +122,12 @@ export class AudioPreloader {
         songIndex: nextIndex,
         sound,
         ready: false,
+        timeoutId: null,
       };
       this._entry = entry;
 
       // Wait for load with timeout
-      const timeoutId = setTimeout(() => {
+      entry.timeoutId = setTimeout(() => {
         if (!entry.ready && this._entry === entry) {
           if (IS_DEV) {
             console.warn(`[AudioPreloader] Timeout for: ${nextSong.name}`);
@@ -135,7 +137,10 @@ export class AudioPreloader {
       }, 30000);
 
       sound.once("load", () => {
-        clearTimeout(timeoutId);
+        if (entry.timeoutId !== null) {
+          clearTimeout(entry.timeoutId);
+          entry.timeoutId = null;
+        }
         if (abortSignal.aborted || this._entry !== entry) return;
         entry.ready = true;
         this._isPreloading = false;
@@ -145,7 +150,10 @@ export class AudioPreloader {
       });
 
       sound.once("loaderror", () => {
-        clearTimeout(timeoutId);
+        if (entry.timeoutId !== null) {
+          clearTimeout(entry.timeoutId);
+          entry.timeoutId = null;
+        }
         if (this._entry === entry) {
           if (IS_DEV) {
             console.warn(`[AudioPreloader] Load error for: ${nextSong.name}`);
@@ -193,6 +201,10 @@ export class AudioPreloader {
       this._abortController = null;
     }
     if (this._entry) {
+      if (this._entry.timeoutId !== null) {
+        clearTimeout(this._entry.timeoutId);
+        this._entry.timeoutId = null;
+      }
       // Unload the preloaded sound to free memory
       try {
         this._entry.sound.unload();

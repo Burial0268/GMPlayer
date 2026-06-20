@@ -89,7 +89,7 @@ export class AudioEffectManager {
   private _lastAverage: number = 0;
 
   // AnalyserNode fallback for mobile lowFreqVolume (avoids WASM overhead)
-  private _analyserLowFreqBins: number[] = [0, 0, 0, 0];
+  private _analyserLowFreqBins = new Float32Array(4);
   private _fallbackAnalyzer: LowFreqVolumeAnalyzer;
 
   // Throttling for AnalyserNode
@@ -237,7 +237,7 @@ export class AudioEffectManager {
   /**
    * Get FFT data from WASM audio analysis (Hamming window, normalized 0-255).
    */
-  getFFTData(): number[] {
+  getFFTData(): ArrayLike<number> {
     this._ensureFresh(true);
     return this._analysisProc?.getSpectrum() ?? [];
   }
@@ -269,7 +269,7 @@ export class AudioEffectManager {
 
     const binCount = Math.min(this.options.lowFreqBinCount, this._frequencyBuffer.length);
     if (this._analyserLowFreqBins.length !== binCount) {
-      this._analyserLowFreqBins = Array.from({ length: binCount }, () => 0);
+      this._analyserLowFreqBins = new Float32Array(binCount);
     }
     for (let i = 0; i < binCount; i++) {
       this._analyserLowFreqBins[i] = this._frequencyBuffer[i] * 50;

@@ -7,12 +7,13 @@
  *  - BPM detection (time-domain onset envelope + autocorrelation — O(N), NOT spectral DFT)
  *  - Spectral fingerprint (bark-band energy from a few windows)
  *
- * All computation is self-contained — no external imports.
+ * In Web/WASM backend mode, the worker can also decode audio bytes through
+ * the Rust/Symphonia WASM backend before running the same analysis pipeline.
  */
 
 // ─── Protocol types ────────────────────────────────────────────────
 
-interface AnalysisRequest {
+interface PcmAnalysisRequest {
   type: "analyze";
   id: number;
   /** Mono PCM samples (Transferable) */
@@ -20,6 +21,35 @@ interface AnalysisRequest {
   sampleRate: number;
   duration: number;
   analyzeBPM: boolean;
+}
+
+interface DecodeAndAnalyzeRequest {
+  type: "decodeAndAnalyze";
+  id: number;
+  bytes: Uint8Array;
+  extension: string;
+  analyzeBPM: boolean;
+}
+
+type AnalysisRequest = PcmAnalysisRequest | DecodeAndAnalyzeRequest;
+
+interface WasmDecodedAudio {
+  samples(): Float32Array;
+  sampleRate(): number;
+  duration(): number;
+  free?: () => void;
+}
+
+interface WasmAudioBackendBinding {
+  decodeAudioBytes(bytes: Uint8Array, extension: string): WasmDecodedAudio;
+}
+
+interface WasmAudioBackendCtor {
+  new (): WasmAudioBackendBinding;
+}
+
+interface WasmAudioBackendModule {
+  WasmAudioBackend: WasmAudioBackendCtor;
 }
 
 interface VolumeAnalysis {
@@ -125,6 +155,18 @@ const BPM_ANALYSIS_DURATION = 30; // seconds
 const BPM_ANALYSIS_RATE = 11025; // downsample target
 const MIN_BPM = 60;
 const MAX_BPM = 200;
+
+let wasmBackendPromise: Promise<WasmAudioBackendBinding> | null = null;
+
+async function getWasmBackend(): Promise<WasmAudioBackendBinding> {
+  if (!wasmBackendPromise) {
+    wasmBackendPromise = import("@player-helper/gmplayer-audio-backend").then((mod) => {
+      const wasmMod = mod as unknown as WasmAudioBackendModule;
+      return new wasmMod.WasmAudioBackend();
+    });
+  }
+  return wasmBackendPromise;
+}
 
 // ─── Volume Analysis ───────────────────────────────────────────────
 
@@ -1986,49 +2028,83 @@ function analyzeIntro(
 
 // ─── Message Handler ───────────────────────────────────────────────
 
-self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
-  const { type, id, monoData, sampleRate, duration, analyzeBPM } = e.data;
+function runAnalysis(
+  id: number,
+  monoData: Float32Array,
+  sampleRate: number,
+  duration: number,
+  analyzeBPM: boolean,
+): AnalysisResponse {
+  const volume = analyzeVolume(monoData);
+  const energy = analyzeEnergy(monoData, sampleRate, duration);
+  const bpm = analyzeBPM ? runBPMDetection(monoData, sampleRate, duration) : null;
+  const fingerprint = computeFingerprint(monoData, sampleRate);
+  const outro = analyzeOutroMultiband(monoData, sampleRate, duration, energy.trailingSilence);
+  const intro = analyzeIntro(
+    energy.energyPerSecond,
+    energy.averageEnergy,
+    monoData,
+    sampleRate,
+    duration,
+  );
 
-  if (type !== "analyze") return;
+  // Phrase analysis for beat-aligned DJ-style transitions
+  const energyCurve = getEnergyCurve(monoData, sampleRate);
+  const phrases = analyzePhrases(bpm, energyCurve, energy.introEndOffset);
 
-  try {
-    const volume = analyzeVolume(monoData);
-    const energy = analyzeEnergy(monoData, sampleRate, duration);
-    const bpm = analyzeBPM ? runBPMDetection(monoData, sampleRate, duration) : null;
-    const fingerprint = computeFingerprint(monoData, sampleRate);
-    const outro = analyzeOutroMultiband(monoData, sampleRate, duration, energy.trailingSilence);
-    const intro = analyzeIntro(
-      energy.energyPerSecond,
-      energy.averageEnergy,
-      monoData,
-      sampleRate,
-      duration,
+  return {
+    type: "result",
+    id,
+    volume,
+    energy,
+    bpm,
+    fingerprint,
+    outro,
+    intro,
+    phrases,
+    duration,
+  };
+}
+
+async function handleAnalysisRequest(request: AnalysisRequest): Promise<AnalysisResponse> {
+  if (request.type === "analyze") {
+    return runAnalysis(
+      request.id,
+      request.monoData,
+      request.sampleRate,
+      request.duration,
+      request.analyzeBPM,
     );
-
-    // Phrase analysis for beat-aligned DJ-style transitions
-    const energyCurve = getEnergyCurve(monoData, sampleRate);
-    const phrases = analyzePhrases(bpm, energyCurve, energy.introEndOffset);
-
-    const response: AnalysisResponse = {
-      type: "result",
-      id,
-      volume,
-      energy,
-      bpm,
-      fingerprint,
-      outro,
-      intro,
-      phrases,
-      duration,
-    };
-
-    (self as unknown as Worker).postMessage(response);
-  } catch (err) {
-    const response: ErrorResponse = {
-      type: "error",
-      id,
-      error: err instanceof Error ? err.message : String(err),
-    };
-    (self as unknown as Worker).postMessage(response);
   }
+
+  const backend = await getWasmBackend();
+  const decoded = backend.decodeAudioBytes(request.bytes, request.extension);
+  try {
+    return runAnalysis(
+      request.id,
+      decoded.samples(),
+      decoded.sampleRate(),
+      decoded.duration(),
+      request.analyzeBPM,
+    );
+  } finally {
+    decoded.free?.();
+  }
+}
+
+self.onmessage = (e: MessageEvent<AnalysisRequest>) => {
+  const { id } = e.data;
+
+  void handleAnalysisRequest(e.data)
+    .then((response) => {
+      (self as unknown as Worker).postMessage(response);
+    })
+    .catch((err) => {
+      const response: ErrorResponse = {
+        type: "error",
+        id,
+        error: err instanceof Error ? err.message : String(err),
+      };
+      (self as unknown as Worker).postMessage(response);
+    });
 };

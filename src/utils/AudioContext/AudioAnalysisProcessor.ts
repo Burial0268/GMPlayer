@@ -73,9 +73,9 @@ export class AudioAnalysisProcessor {
   private _rawBinCount: number;
 
   // Cached results from last processFrame
-  private _cachedSpectrum: number[] = [];
+  private _cachedSpectrum: Float32Array<ArrayBuffer>;
   private _cachedLowFreq: number = 1;
-  private _rawBinsCache: number[] = [];
+  private _rawBinsCache: Float32Array<ArrayBuffer>;
 
   // Delta tracking
   private _lastTime: number = 0;
@@ -98,8 +98,8 @@ export class AudioAnalysisProcessor {
     this._outputBuf = new Float32Array(outputSize);
     this._rawBinCount = binCount;
     this._lfOptions = { binCount, windowSize, gradientThreshold, smoothingFactor };
-    this._cachedSpectrum = Array.from({ length: outputSize }, () => 0);
-    this._rawBinsCache = Array.from({ length: binCount }, () => 0);
+    this._cachedSpectrum = new Float32Array(outputSize);
+    this._rawBinsCache = new Float32Array(binCount);
 
     this._tryCreateProc(
       outputSize,
@@ -174,7 +174,7 @@ export class AudioAnalysisProcessor {
     }
   }
 
-  getSpectrum(): number[] {
+  getSpectrum(): Float32Array<ArrayBuffer> {
     return this._cachedSpectrum;
   }
 
@@ -182,9 +182,9 @@ export class AudioAnalysisProcessor {
     return this._cachedLowFreq;
   }
 
-  getRawBins(count: number): number[] {
+  getRawBins(count: number): Float32Array<ArrayBuffer> {
     if (this._rawBinsCache.length !== count) {
-      this._rawBinsCache = Array.from({ length: count }, () => 0);
+      this._rawBinsCache = new Float32Array(count);
     }
     if (!this._proc) {
       this._rawBinsCache.fill(0);

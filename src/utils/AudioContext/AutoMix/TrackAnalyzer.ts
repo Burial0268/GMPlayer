@@ -123,6 +123,11 @@ interface PendingRequest {
 }
 const pendingRequests = new Map<number, PendingRequest>();
 
+interface AnalysisFetchResult {
+  bytes: Uint8Array;
+  responseUrl: string;
+}
+
 function getWorker(): Worker | null {
   if (workerFailed) return null;
   if (worker) return worker;
@@ -166,14 +171,9 @@ function getWorker(): Worker | null {
 
 // ─── Audio decoding (main thread, using global AudioContext) ───────
 
-async function decodeBlob(blobUrl: string): Promise<AudioBuffer> {
-  const response = await fetch(blobUrl);
+async function decodeBlob(blobUrl: string, ctx: AudioContext): Promise<AudioBuffer> {
+  const response = await fetch(blobUrl, { credentials: "omit" });
   const arrayBuffer = await response.arrayBuffer();
-
-  const ctx = AudioContextManager.getContext();
-  if (!ctx) {
-    throw new Error("No AudioContext available for decoding");
-  }
 
   // Use callback form for maximum browser compatibility
   return new Promise<AudioBuffer>((resolve, reject) => {
@@ -436,8 +436,20 @@ export async function analyzeTrack(
     console.log("TrackAnalyzer: Starting analysis for", sourceUrl.substring(0, 50));
   }
 
-  // Step 1: decode on main thread using global AudioContext
-  const buffer = await decodeBlob(sourceUrl);
+  const w = getWorker();
+  const ctx = AudioContextManager.getContext();
+
+  if (!ctx) {
+    if (!w) {
+      throw new Error("No AudioContext or analysis Worker available for decoding");
+    }
+    const fetchResult = await fetchAnalysisBytes(sourceUrl);
+    const extension = extensionFromSrc(fetchResult.responseUrl) || extensionFromSrc(sourceUrl);
+    return analyzeViaWorkerDecode(w, fetchResult.bytes, extension, analyzeBPM);
+  }
+
+  // Step 1: decode on main thread using global AudioContext when available.
+  const buffer = await decodeBlob(sourceUrl, ctx);
 
   // Step 2: mix to mono
   const monoData = mixToMono(buffer);
@@ -445,8 +457,6 @@ export async function analyzeTrack(
   const duration = buffer.duration;
 
   // Step 3: dispatch to Worker or fall back
-  const w = getWorker();
-
   if (w) {
     return analyzeViaWorker(w, monoData, sampleRate, duration, analyzeBPM);
   } else {
@@ -503,6 +513,132 @@ function analyzeViaWorker(
       monoData.buffer,
     ]);
   });
+}
+
+function analyzeViaWorkerDecode(
+  w: Worker,
+  bytes: Uint8Array,
+  extension: string,
+  analyzeBPM: boolean,
+): Promise<TrackAnalysis> {
+  const id = ++requestId;
+
+  return new Promise<TrackAnalysis>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pendingRequests.delete(id);
+      reject(new Error("WASM decode+analysis timed out"));
+    }, 60000);
+
+    pendingRequests.set(id, {
+      resolve: (result) => {
+        clearTimeout(timeout);
+        resolve(result);
+      },
+      reject: (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      },
+    });
+
+    const transferable =
+      bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+        ? bytes.buffer
+        : bytes.slice().buffer;
+    const transferBytes = new Uint8Array(transferable);
+    w.postMessage({ type: "decodeAndAnalyze", id, bytes: transferBytes, extension, analyzeBPM }, [
+      transferable,
+    ]);
+  });
+}
+
+async function fetchAnalysisBytes(sourceUrl: string): Promise<AnalysisFetchResult> {
+  let lastError: unknown = null;
+  for (const url of [sourceUrl, analysisProxyUrl(sourceUrl)]) {
+    if (!url) continue;
+    const attempts = buildAnalysisFetchAttempts(url);
+    for (const attempt of attempts) {
+      try {
+        const response = await fetch(url, attempt.init);
+        if (!response.ok) {
+          lastError = new Error(
+            `HTTP ${response.status} ${response.statusText || ""}`.trim() +
+              ` (${attempt.label}, ${url === sourceUrl ? "direct" : "proxy"})`,
+          );
+          continue;
+        }
+
+        const buffer = await response.arrayBuffer();
+        if (buffer.byteLength === 0) {
+          lastError = new Error(
+            `empty response (${attempt.label}, ${url === sourceUrl ? "direct" : "proxy"})`,
+          );
+          continue;
+        }
+
+        return {
+          bytes: new Uint8Array(buffer),
+          responseUrl: response.headers.get("x-audio-source-url") || response.url || sourceUrl,
+        };
+      } catch (err) {
+        lastError = err;
+      }
+    }
+  }
+
+  const detail = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`unable to fetch audio for WASM analysis: ${detail}; url=${sourceUrl}`);
+}
+
+function buildAnalysisFetchAttempts(url: string): Array<{ label: string; init: RequestInit }> {
+  if (isSameOriginUrl(url)) {
+    return [
+      {
+        label: "range+credentials",
+        init: { credentials: "include", headers: { Range: "bytes=0-" } },
+      },
+      {
+        label: "range",
+        init: { credentials: "same-origin", headers: { Range: "bytes=0-" } },
+      },
+      { label: "credentials", init: { credentials: "include" } },
+      { label: "default", init: { credentials: "same-origin" } },
+    ];
+  }
+
+  return [
+    {
+      label: "range",
+      init: { credentials: "omit", headers: { Range: "bytes=0-" } },
+    },
+    { label: "default", init: { credentials: "omit" } },
+  ];
+}
+
+function isSameOriginUrl(src: string): boolean {
+  try {
+    return new URL(src, self.location.href).origin === self.location.origin;
+  } catch {
+    return false;
+  }
+}
+
+function analysisProxyUrl(src: string): string | null {
+  try {
+    const url = new URL(src, self.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (url.origin === self.location.origin) return null;
+    return `/api/audio-proxy?url=${encodeURIComponent(url.href)}`;
+  } catch {
+    return null;
+  }
+}
+
+function extensionFromSrc(src: string): string {
+  const withoutHash = src.split("#", 1)[0] ?? src;
+  const withoutQuery = withoutHash.split("?", 1)[0] ?? withoutHash;
+  const name = withoutQuery.split(/[\\/]/).pop() ?? "";
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
 /**

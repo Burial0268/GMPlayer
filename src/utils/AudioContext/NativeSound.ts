@@ -44,6 +44,7 @@ export class NativeSound implements ISound {
 
   // Fade animation
   private _fadeAnimationId: number | null = null;
+  private _fadeTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
   // Native event handler references (for cleanup)
   private _boundHandlers: {
@@ -455,6 +456,11 @@ export class NativeSound implements ISound {
   fade(from: number, to: number, duration: number): this {
     if (this._fadeAnimationId) {
       cancelAnimationFrame(this._fadeAnimationId);
+      this._fadeAnimationId = null;
+    }
+    if (this._fadeTimeoutId) {
+      clearTimeout(this._fadeTimeoutId);
+      this._fadeTimeoutId = null;
     }
 
     // Initialize audio graph if needed for GainNode access
@@ -472,7 +478,8 @@ export class NativeSound implements ISound {
       this._gainNode.gain.linearRampToValueAtTime(to, currentTime + duration / 1000);
 
       // Emit fade event after duration
-      setTimeout(() => {
+      this._fadeTimeoutId = setTimeout(() => {
+        this._fadeTimeoutId = null;
         this._volume = to;
         this._emit("fade");
       }, duration);
@@ -541,10 +548,10 @@ export class NativeSound implements ISound {
   }
 
   /**
-   * Get FFT data as number[] from WASM FFTPlayer
-   * @returns number[] of spectrum values (0-255 range)
+   * Get FFT data from WASM FFTPlayer.
+   * @returns spectrum values (0-255 range)
    */
-  getFFTData(): number[] {
+  getFFTData(): ArrayLike<number> {
     return this._effectManager ? this._effectManager.getFFTData() : [];
   }
 
@@ -606,6 +613,10 @@ export class NativeSound implements ISound {
     if (this._fadeAnimationId) {
       cancelAnimationFrame(this._fadeAnimationId);
       this._fadeAnimationId = null;
+    }
+    if (this._fadeTimeoutId) {
+      clearTimeout(this._fadeTimeoutId);
+      this._fadeTimeoutId = null;
     }
 
     // Remove AudioContext event listener

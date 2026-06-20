@@ -56,7 +56,7 @@ export class BufferedSound implements ISound {
     this._src = Array.isArray(src) ? src[0] : src;
     this._volume = volume;
     this._preload = preload;
-    this._sounds = [{ _node: new Audio() }];
+    this._sounds = [];
 
     if (IS_DEV) {
       console.log("BufferedSound created:", this._src);
@@ -154,6 +154,7 @@ export class BufferedSound implements ISound {
 
       // Create Blob URL
       const blob = new Blob([arrayBuffer], { type: contentType });
+      arrayBuffer = new ArrayBuffer(0);
       this._blobUrl = URL.createObjectURL(blob);
 
       if (IS_DEV) {
@@ -369,7 +370,7 @@ export class BufferedSound implements ISound {
     return this._inner?.getFrequencyData() ?? (EMPTY_U8 as Uint8Array<ArrayBuffer>);
   }
 
-  getFFTData(): number[] {
+  getFFTData(): ArrayLike<number> {
     return this._inner?.getFFTData() ?? [];
   }
 

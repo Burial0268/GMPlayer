@@ -8,7 +8,7 @@
  */
 
 import { h } from "vue";
-import { songScrobble } from "@/api/song";
+import { songScrobbleV2, submitSongPlayState } from "@/api/song";
 // Import stores directly to avoid circular dependency through barrel exports
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
 import useMusicDataStore from "@/store/musicData";
@@ -35,6 +35,11 @@ import {
   isNativeAudioBackendAvailable,
 } from "../tauri/NativeRustSound";
 import { getAudioBackendTransport } from "../tauri/audioIpc";
+import {
+  buildNeteaseDesktopCookie,
+  buildNeteaseDesktopUserAgent,
+  createNeteasePlaybackSessionId,
+} from "../neteaseClient";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
@@ -45,6 +50,11 @@ let timeupdateInterval: number | null = null;
 let timeupdateGeneration = 0;
 // 听歌打卡延时器
 let scrobbleTimeout: ReturnType<typeof setTimeout> | null = null;
+let pendingScrobbleKey: string | null = null;
+let lastScrobbleKey: string | null = null;
+let lastScrobbleAt = 0;
+let playStateSessionKey: string | null = null;
+let playStateSessionId: string | null = null;
 // 重试次数
 let testNumber = 0;
 // 频谱更新动画帧 ID
@@ -61,6 +71,22 @@ let lastBackendStateAuditAt = 0;
 
 const LOW_FREQ_STORE_INTERVAL_MS = 33;
 const LOW_FREQ_STORE_EPSILON = 0.005;
+const SCROBBLE_DELAY_MS = 3000;
+const SCROBBLE_DUPLICATE_GUARD_MS = 10000;
+
+const getPlayStateSessionId = (key: string): string => {
+  if (playStateSessionKey !== key || !playStateSessionId) {
+    playStateSessionKey = key;
+    playStateSessionId = createNeteasePlaybackSessionId();
+  }
+  return playStateSessionId;
+};
+
+const getRelayPlayMode = (mode: ReturnType<typeof musicStore>["persistData"]["playSongMode"]) => {
+  if (mode === "random") return "shuffle";
+  if (mode === "single") return "single_loop";
+  return "list_loop";
+};
 
 const updateLowFreqStore = (music: ReturnType<typeof musicStore>, value: number): void => {
   const nextValue = Number.isFinite(value) ? value : 0;
@@ -98,6 +124,86 @@ const getActiveNativeSound = (): NativeRustSound | null => {
   return null;
 };
 
+const syncNativeAnalysisState = (
+  sound: ISound | undefined | null,
+  settings = settingStore(),
+): void => {
+  if (!(sound instanceof NativeRustSound)) return;
+  const analysisEnabled = isPageVisible && (settings.musicFrequency || settings.dynamicFlowSpeed);
+  sound.setAnalysisEnabled(analysisEnabled);
+  sound.setFFTEnabled(analysisEnabled && settings.musicFrequency);
+};
+
+const disableActiveNativeAnalysis = (): void => {
+  const sound = getActiveNativeSound();
+  if (!sound) return;
+  sound.setFFTEnabled(false);
+  sound.setAnalysisEnabled(false);
+};
+
+const scheduleScrobble = (reason: string): void => {
+  const music = musicStore();
+  const user = userStore();
+  const songId = Number(music.getPlaySongData?.id);
+  const sourceId = Number(music.getPlaySongData?.sourceId || 0);
+
+  if (!user.userLogin || !Number.isFinite(songId) || songId <= 0) return;
+
+  const scrobbleKey = `${music.persistData.playSongIndex}:${songId}:${sourceId}`;
+  const now = Date.now();
+  if (pendingScrobbleKey === scrobbleKey) return;
+  if (lastScrobbleKey === scrobbleKey && now - lastScrobbleAt < SCROBBLE_DUPLICATE_GUARD_MS) {
+    return;
+  }
+
+  if (scrobbleTimeout) clearTimeout(scrobbleTimeout);
+  pendingScrobbleKey = scrobbleKey;
+  scrobbleTimeout = setTimeout(() => {
+    pendingScrobbleKey = null;
+    // 仅当当前曲目仍是计划打卡的曲目时才上报
+    const liveData = music.getPlaySongData;
+    if (Number(liveData?.id) !== songId) return;
+    // 歌曲(总)时长由后端歌曲数据提供，作为播放时长 time 与总时长 total 上报
+    const totalSec = Math.round(Number(music.getPlaySongTime?.duration) || 0);
+    const progressSec = Math.max(0, Math.round(Number(music.getPlaySongTime?.currentTime) || 0));
+    const artist = Array.isArray(liveData?.artist)
+      ? liveData.artist
+          .map((a: { name?: string }) => a?.name)
+          .filter(Boolean)
+          .join("/")
+      : undefined;
+    const sessionId = getPlayStateSessionId(scrobbleKey);
+    const desktopCookie = buildNeteaseDesktopCookie(user.cookie);
+
+    submitSongPlayState(songId, {
+      sessionId,
+      progress: progressSec,
+      playMode: getRelayPlayMode(music.persistData.playSongMode),
+      type: "song",
+      cookie: desktopCookie,
+      ua: buildNeteaseDesktopUserAgent(),
+    }).catch((err) => {
+      console.error("播放状态提交失败：" + err);
+    });
+
+    songScrobbleV2(songId, totalSec, {
+      sourceid: sourceId || undefined,
+      source: "list",
+      name: liveData?.name,
+      artist,
+      total: totalSec || undefined,
+    })
+      .then((res) => {
+        lastScrobbleKey = scrobbleKey;
+        lastScrobbleAt = Date.now();
+        if (IS_DEV) console.log(`歌曲打卡完成 (${reason})`, res);
+      })
+      .catch((err) => {
+        console.error("歌曲打卡失败：" + err);
+      });
+  }, SCROBBLE_DELAY_MS);
+};
+
 const applyNativeAutoMixCompletion = (
   currentIndex: number,
   playback?: { position?: number; duration?: number },
@@ -131,6 +237,7 @@ const applyNativeAutoMixCompletion = (
   }
 
   void syncNativeAutoMixCurrentSound(sound);
+  scheduleScrobble("native-automix");
 };
 
 /**
@@ -198,12 +305,14 @@ if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
     isPageVisible = document.visibilityState === "visible";
     if (!isPageVisible) {
+      disableActiveNativeAnalysis();
       // RAF is paused while hidden; keep playback time and AutoMix monitoring
       // on a low-rate timer independent of visual spectrum settings.
       startBackgroundMonitor();
     } else {
       requestNativeBackendSync();
       const sound = SoundManager.getCurrentSound();
+      syncNativeAnalysisState(sound, settingStore());
       if (sound) {
         checkAudioTime(sound, musicStore());
       }
@@ -232,7 +341,7 @@ if (typeof window !== "undefined") {
 /**
  * 停止频谱更新
  */
-const stopSpectrumUpdate = (): void => {
+const stopSpectrumUpdate = (disableNativeAnalysis = true): void => {
   spectrumUpdateGeneration++;
   if (spectrumAnimationId !== null) {
     cancelAnimationFrame(spectrumAnimationId);
@@ -240,6 +349,9 @@ const stopSpectrumUpdate = (): void => {
   }
   clearSpectrumFrame();
   stopBackgroundMonitor();
+  if (disableNativeAnalysis) {
+    disableActiveNativeAnalysis();
+  }
 };
 
 /**
@@ -250,7 +362,7 @@ const stopSpectrumUpdate = (): void => {
  * @param music - pinia store
  */
 const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
-  stopSpectrumUpdate();
+  stopSpectrumUpdate(false);
   const generation = spectrumUpdateGeneration;
 
   // If page is already hidden, start background monitor immediately
@@ -276,6 +388,7 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
     const needsSpectrum = settings.musicFrequency;
     const needsLowFreq = settings.dynamicFlowSpeed;
     const needsAutoMix = settings.autoMixEnabled;
+    syncNativeAnalysisState(sound, settings);
     if (!needsSpectrum && !needsLowFreq && !needsAutoMix) {
       stopSpectrumUpdate();
       return;
@@ -465,19 +578,7 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     // call). No extra `sound.seek()` here — that used to race with the
     // first `SyncStatus` and overwrite the optimistic local position.
     music.isLoadingSong = false;
-
-    if (isLogin) {
-      if (scrobbleTimeout) clearTimeout(scrobbleTimeout);
-      scrobbleTimeout = setTimeout(() => {
-        songScrobble(songId, sourceId)
-          .then((res) => {
-            if (IS_DEV) console.log("歌曲打卡完成", res);
-          })
-          .catch((err) => {
-            console.error("歌曲打卡失败：" + err);
-          });
-      }, 3000);
-    }
+    if (isLogin) scheduleScrobble("native-load");
 
     // Sync volume from the store. The Rust backend creates a fresh
     // player with volume=1.0; we restore the user's setting.
@@ -537,6 +638,7 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     }
 
     startTimeUpdate(sound, music);
+    syncNativeAnalysisState(sound, settings);
 
     music.setPlayHistory(playSongData);
     window.document.title = `${songName} - ${songArtist} - ${import.meta.env.VITE_SITE_TITLE}`;
@@ -730,20 +832,7 @@ export const createSound = (
       // 取消加载状态
       music.isLoadingSong = false;
       // 听歌打卡
-      if (isLogin) {
-        if (scrobbleTimeout) clearTimeout(scrobbleTimeout);
-        scrobbleTimeout = setTimeout(() => {
-          songScrobble(songId, sourceId)
-            .then((res) => {
-              if (IS_DEV) {
-                console.log("歌曲打卡完成", res);
-              }
-            })
-            .catch((err) => {
-              console.error("歌曲打卡失败：" + err);
-            });
-        }, 3000);
-      }
+      if (isLogin) scheduleScrobble("load");
     });
 
     // 播放事件
@@ -1019,6 +1108,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   // Ensure play state is true (incoming is already playing)
   music.setPlayState(true);
   music.isLoadingSong = false;
+  scheduleScrobble("automix-adopt");
 
   // Initialize time from the incoming sound immediately.
   // The song data watcher no longer resets time during crossfade (to prevent duration=0),
@@ -1040,6 +1130,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
 
   // Start time tracking immediately
   startTimeUpdate(incomingSound, music);
+  syncNativeAnalysisState(incomingSound, settings);
 
   // Start spectrum update (also handles AutoMix monitorPlayback per frame)
   if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
@@ -1092,6 +1183,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
 
     // Restart time tracking
     startTimeUpdate(incomingSound, music);
+    syncNativeAnalysisState(incomingSound, settings);
 
     // Restart spectrum + AutoMix monitoring
     if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
@@ -1161,6 +1253,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   }
 
   startTimeUpdate(sound, music);
+  syncNativeAnalysisState(sound, settings);
   if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
     startSpectrumUpdate(sound, music);
   }
@@ -1258,10 +1351,12 @@ export const processSpectrum = (_sound: ISound | undefined): void => {
 export const setPageVisible = (visible: boolean): void => {
   isPageVisible = visible;
   if (!visible) {
+    disableActiveNativeAnalysis();
     startBackgroundMonitor();
   } else if (visible) {
     requestNativeBackendSync();
     const sound = SoundManager.getCurrentSound();
+    syncNativeAnalysisState(sound, settingStore());
     if (sound) {
       checkAudioTime(sound, musicStore());
     }

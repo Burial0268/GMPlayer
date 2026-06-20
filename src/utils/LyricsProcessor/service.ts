@@ -6,7 +6,6 @@
 import request from "@/utils/request";
 import { parseQrc, parseTTML, parseYrc } from "@applemusic-like-lyrics/lyric";
 import type { TTMLLyric } from "@applemusic-like-lyrics/lyric";
-import { preprocessLyrics } from "./processor";
 import { detectYrcType } from "./timeUtils";
 
 // Re-define LyricData interface based on parseLyric.ts
@@ -241,6 +240,7 @@ export class LyricService {
    */
   async fetchLyric(id: number, processOptions?: LyricProcessOptions): Promise<LyricData | null> {
     try {
+      void processOptions;
       const startTime = performance.now();
       console.time(`[LyricService] 获取并处理歌词 ${id}`);
 
@@ -394,22 +394,8 @@ export class LyricService {
           }
         }
 
-        // 设置歌词处理选项，优先使用传入的选项，否则使用默认选项
-        const options = processOptions || this.defaultProcessOptions;
-
-        // 预处理歌词数据，提前生成缓存以提高性能
-        console.time("[LyricService] 预处理歌词");
-        try {
-          // 初始化AMLL数据字段
-          result.lrcAMData = result.lrcAMData || [];
-          result.yrcAMData = result.yrcAMData || [];
-          // 这里我们调用改进后的预处理函数，将处理结果缓存到歌词对象中
-          preprocessLyrics(result as any, options);
-          console.log(`[LyricService] 歌曲ID ${id} 歌词预处理成功`);
-        } catch (err) {
-          console.warn(`[LyricService] 歌曲ID ${id} 歌词预处理失败:`, err);
-        }
-        console.timeEnd("[LyricService] 预处理歌词");
+        // Parsed lyric caching happens after parseLyricData() normalizes all formats.
+        // Preprocessing the raw API response can cache unnormalized TTML/YRC timelines.
       }
 
       const endTime = performance.now();

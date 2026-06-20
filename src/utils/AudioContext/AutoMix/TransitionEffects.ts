@@ -368,10 +368,7 @@ export class TransitionEffects {
     this._reverseGain = ctx.createGain();
     const peakGain = Math.pow(10, (-20 + intensity * 8) / 20);
     this._reverseGain.gain.setValueAtTime(0.0001, startTime);
-    this._reverseGain.gain.exponentialRampToValueAtTime(
-      peakGain,
-      startTime + duration * 0.92,
-    );
+    this._reverseGain.gain.exponentialRampToValueAtTime(peakGain, startTime + duration * 0.92);
     this._reverseGain.gain.linearRampToValueAtTime(0, startTime + duration);
 
     this._reverseSource.connect(this._reverseFilter);

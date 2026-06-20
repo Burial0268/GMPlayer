@@ -9,12 +9,7 @@
 
 import { toRaw } from "vue";
 import type { LyricLine as AMLLLine } from "@applemusic-like-lyrics/core";
-import type {
-  SongLyric,
-  ProcessingSettings,
-  InputLyricLine,
-  StoredLyricLine,
-} from "./types";
+import type { SongLyric, ProcessingSettings, InputLyricLine, StoredLyricLine } from "./types";
 import { parseLrcToEntries } from "./parser/entryParser";
 import { buildIndexMatching } from "./alignment";
 import { convertToAMLL, splitRomaToWords } from "./parser/formatParser";
@@ -59,6 +54,65 @@ function extractRomajiText(songLyric: SongLyric): string | undefined {
   return undefined;
 }
 
+function hasRenderableWords(line: AMLLLine): boolean {
+  const words = line.words;
+  if (!words || words.length === 0) return false;
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i].word;
+    if (word && word.trim().length > 0) return true;
+  }
+
+  return false;
+}
+
+function hasWordRomanization(line: AMLLLine): boolean {
+  const words = line.words;
+  for (let i = 0; i < words.length; i++) {
+    if (words[i].romanWord) return true;
+  }
+  return false;
+}
+
+function getCanonicalTTMLLines(songLyric: SongLyric, settings: ProcessingSettings): AMLLLine[] {
+  const source = toRaw(songLyric.ttml) as unknown as AMLLLine[];
+  const result: AMLLLine[] = [];
+  result.length = source.length;
+
+  let count = 0;
+  const keepTransl = settings.showTransl;
+  const keepRoma = settings.showRoma;
+
+  for (let i = 0; i < source.length; i++) {
+    const line = source[i];
+    if (!hasRenderableWords(line)) continue;
+
+    const shouldHideTransl = !keepTransl && Boolean(line.translatedLyric);
+    const shouldHideLineRoma = !keepRoma && Boolean(line.romanLyric);
+    const shouldHideWordRoma = !keepRoma && hasWordRomanization(line);
+
+    if (!shouldHideTransl && !shouldHideLineRoma && !shouldHideWordRoma) {
+      result[count++] = line;
+      continue;
+    }
+
+    result[count++] = {
+      ...line,
+      translatedLyric: keepTransl ? (line.translatedLyric ?? "") : "",
+      romanLyric: keepRoma ? (line.romanLyric ?? "") : "",
+      words: shouldHideWordRoma
+        ? line.words.map((word) => ({
+            ...word,
+            romanWord: "",
+          }))
+        : line.words,
+    };
+  }
+
+  result.length = count;
+  return result;
+}
+
 /**
  * 处理歌词数据 - 使用行索引匹配 (优化版)
  *
@@ -67,16 +121,19 @@ function extractRomajiText(songLyric: SongLyric): string | undefined {
  * @returns 处理后的歌词行数组
  */
 export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings): AMLLLine[] {
-  // 选择歌词源：TTML > YRC > LRC
+  // TTML parser already returns canonical AMLL lines with millisecond timings.
+  // Do not rebuild, realign, or infer timeline/content here.
+  if (songLyric.hasTTML && songLyric.ttml && songLyric.ttml.length > 0) {
+    return getCanonicalTTMLLines(songLyric, settings);
+  }
+
+  // 选择歌词源：YRC > LRC
   let rawLyricsSource: InputLyricLine[];
 
-  const hasTTML = songLyric.hasTTML && songLyric.ttml && songLyric.ttml.length > 0;
   const hasYrc = settings.showYrc && songLyric.yrcAMData && songLyric.yrcAMData.length > 0;
   const hasLrc = songLyric.lrcAMData && songLyric.lrcAMData.length > 0;
 
-  if (hasTTML) {
-    rawLyricsSource = toRaw(songLyric.ttml) as InputLyricLine[];
-  } else if (hasYrc) {
+  if (hasYrc) {
     rawLyricsSource = toRaw(songLyric.yrcAMData) as InputLyricLine[];
   } else if (hasLrc) {
     rawLyricsSource = toRaw(songLyric.lrcAMData) as InputLyricLine[];
@@ -97,17 +154,7 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
     const words = line.words;
     if (!words || words.length === 0) continue;
 
-    // Check if any word has content
-    let hasContent = false;
-    for (let j = 0; j < words.length; j++) {
-      const word = words[j].word;
-      if (word && word.trim().length > 0) {
-        hasContent = true;
-        break;
-      }
-    }
-
-    if (hasContent) {
+    if (hasRenderableWords(line)) {
       validLines[validCount++] = line;
     }
   }

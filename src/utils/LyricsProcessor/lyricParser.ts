@@ -22,6 +22,65 @@ type ParsedSourceLine = AMLLParsedLyricLine;
 const parseLrcText = (lyricText: string): ParsedSourceLine[] => parseAMLLLrc(lyricText);
 const parseYrcText = (lyricText: string): ParsedSourceLine[] => parseAMLLYrc(lyricText);
 
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function lineStartTime(line: ParsedSourceLine): number | undefined {
+  return finiteNumber(line.startTime) ?? finiteNumber(line.words?.[0]?.startTime);
+}
+
+function detectTTMLTimeScale(lines: ParsedSourceLine[]): 1 | 1000 {
+  if (lines.length < 2) return 1;
+
+  const starts: number[] = [];
+  let maxTime = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const start = lineStartTime(line);
+    if (start !== undefined) starts.push(start);
+    maxTime = Math.max(maxTime, start ?? 0, line.endTime ?? 0);
+
+    const words = line.words;
+    for (let j = 0; j < words.length; j++) {
+      maxTime = Math.max(maxTime, words[j].startTime, words[j].endTime);
+    }
+  }
+
+  // AMLL lyric parsers use milliseconds. Only scale when the whole timeline
+  // looks like seconds; this avoids multiplying valid short millisecond clips.
+  if (maxTime <= 0 || maxTime > 3600 || starts.length < 2) return 1;
+
+  starts.sort((a, b) => a - b);
+  const gaps: number[] = [];
+  for (let i = 1; i < starts.length; i++) {
+    const gap = starts[i] - starts[i - 1];
+    if (gap > 0) gaps.push(gap);
+  }
+  if (!gaps.length) return 1;
+
+  gaps.sort((a, b) => a - b);
+  const medianGap = gaps[gaps.length >> 1];
+  return medianGap > 0 && medianGap < 30 ? 1000 : 1;
+}
+
+function normalizeTTMLLines(lines: ParsedSourceLine[]): ParsedSourceLine[] {
+  const scale = detectTTMLTimeScale(lines);
+  if (scale === 1) return lines;
+
+  return lines.map((line) => ({
+    ...line,
+    startTime: line.startTime * scale,
+    endTime: line.endTime * scale,
+    words: line.words.map((word) => ({
+      ...word,
+      startTime: word.startTime * scale,
+      endTime: word.endTime * scale,
+    })),
+  }));
+}
+
 // Backward compat alias
 export type LyricData = RawLyricData;
 
@@ -73,7 +132,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
     };
     const directTTMLLines =
       data.hasTTML && Array.isArray(data.ttml) && data.ttml.length > 0
-        ? (data.ttml as ParsedSourceLine[])
+        ? normalizeTTMLLines(data.ttml as ParsedSourceLine[])
         : [];
 
     // --- LAAPI data parsing ---
@@ -185,7 +244,7 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
           // New TTML data should arrive through data.ttml directly.
           try {
             const jsonPart = lrcData.yrc.substring(TTML_PREFIX.length);
-            yrcParsedRawLines = JSON.parse(jsonPart) as ParsedSourceLine[];
+            yrcParsedRawLines = normalizeTTMLLines(JSON.parse(jsonPart) as ParsedSourceLine[]);
             result.hasTTML = true;
             result.ttml = yrcParsedRawLines;
           } catch {
@@ -228,11 +287,9 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
         }
       }
 
-      result.yrcAMData = buildAMLLData(
-        yrcParsedRawLines,
-        effectiveYrcTranSource,
-        effectiveYrcRomaSource,
-      );
+      result.yrcAMData = result.hasTTML
+        ? yrcParsedRawLines
+        : buildAMLLData(yrcParsedRawLines, effectiveYrcTranSource, effectiveYrcRomaSource);
     }
   } catch {
     return createEmptyLyricResult();
