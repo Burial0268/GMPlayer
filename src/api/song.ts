@@ -125,6 +125,56 @@ export const song = {
     }),
 
   /**
+   * 听歌打卡 V2 (NCBL 加密版)
+   * 使用桌面客户端 NCBL 加密日志格式上报听歌记录
+   * @param id 歌曲 id
+   * @param time 播放时长(秒)
+   * @param options sourceid 来源列表 id / source 来源名称(默认 list) / name 歌曲名 /
+   *   artist 艺术家 / bitrate 码率(默认 320) / level 音质等级(默认 exhigh) / total 歌曲总时长(秒)
+   */
+  scrobbleV2: (
+    id: number,
+    time: number,
+    options: {
+      sourceid?: number;
+      source?: string;
+      name?: string;
+      artist?: string;
+      bitrate?: number;
+      level?: string;
+      total?: number;
+    } = {},
+  ) =>
+    request<any>({
+      method: "GET",
+      url: "/scrobble/v1",
+      hiddenBar: true,
+      params: { id, time, timestamp: Date.now(), ...options },
+    }),
+
+  /**
+   * 提交歌曲播放状态
+   * 使用桌面客户端 Cookie/UA 形态提交当前播放进度
+   */
+  submitPlayState: (
+    id: number,
+    options: {
+      sessionId?: string;
+      progress?: number;
+      playMode?: string;
+      type?: string;
+      cookie?: string;
+      ua?: string;
+    } = {},
+  ) =>
+    request<any>({
+      method: "GET",
+      url: "/relay/play/state/submit",
+      hiddenBar: true,
+      params: { id, timestamp: Date.now(), ...options },
+    }),
+
+  /**
    * 喜欢/取消喜欢歌曲
    */
   like: (id: number, like = true) =>
@@ -149,4 +199,6 @@ export const getSimiPlayList = song.getSimiPlaylist;
 export const getSimiSong = song.getSimiSong;
 export const getSongDownload = song.getDownloadUrl;
 export const songScrobble = song.scrobble;
+export const songScrobbleV2 = song.scrobbleV2;
+export const submitSongPlayState = song.submitPlayState;
 export const setLikeSong = song.like;
