@@ -55,6 +55,12 @@ pub enum AnalysisCommand {
         recycle: Option<mpsc::Sender<Vec<f32>>>,
     },
     Clear,
+    SetEnabled {
+        enabled: bool,
+    },
+    SetFftEnabled {
+        enabled: bool,
+    },
     SetFreqRange {
         from: f32,
         to: f32,
@@ -100,23 +106,30 @@ fn analysis_loop(
     let mut last_fft_emit = Instant::now() - FFT_EMIT_INTERVAL;
     let mut pending_mono_samples = 0usize;
     let mut current_sample_rate = 44_100u32;
+    let mut analysis_enabled = true;
+    let mut fft_enabled = true;
 
     // LowFreqAnalyzer::new starts at 1.0 for WASM compatibility. Native IPC
     // should start from silence so the first lowFreq event does not jump.
     proc.clear();
 
     loop {
-        let wait = ANALYSIS_INTERVAL.saturating_sub(last_analysis.elapsed());
+        let wait = if analysis_enabled {
+            ANALYSIS_INTERVAL.saturating_sub(last_analysis.elapsed())
+        } else {
+            ANALYSIS_INTERVAL
+        };
         match rx.recv_timeout(wait) {
             Ok(cmd) => {
-                let result = handle_cmd(&mut proc, cmd);
+                let result = handle_cmd(&mut proc, cmd, &mut analysis_enabled, &mut fft_enabled);
                 let reset = matches!(result, HandleCmdResult::Reset);
                 apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
                 if reset && emit_low_freq(&evt, 0.0).is_err() {
                     break;
                 }
                 while let Ok(more) = rx.try_recv() {
-                    let result = handle_cmd(&mut proc, more);
+                    let result =
+                        handle_cmd(&mut proc, more, &mut analysis_enabled, &mut fft_enabled);
                     let reset = matches!(result, HandleCmdResult::Reset);
                     apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
                     if reset && emit_low_freq(&evt, 0.0).is_err() {
@@ -128,7 +141,10 @@ fn analysis_loop(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
 
-        if last_analysis.elapsed() >= ANALYSIS_INTERVAL && pending_mono_samples >= FFT_SIZE {
+        if analysis_enabled
+            && last_analysis.elapsed() >= ANALYSIS_INTERVAL
+            && pending_mono_samples >= FFT_SIZE
+        {
             let now = Instant::now();
             let delta_ms = now.duration_since(last_analysis).as_secs_f32() * 1000.0;
             let low_freq = proc.process_frame(delta_ms, &mut spectrum);
@@ -141,16 +157,18 @@ fn analysis_loop(
                 if emit_low_freq(&evt, low_freq).is_err() {
                     break;
                 }
-                if evt
-                    .send(AudioThreadEventMessage::new(
-                        String::new(),
-                        Some(AudioThreadEvent::FFTData {
-                            data: proc.fft.raw_spectrum().to_vec(),
-                        }),
-                    ))
-                    .is_err()
-                {
-                    break;
+                if fft_enabled {
+                    if evt
+                        .send(AudioThreadEventMessage::new(
+                            String::new(),
+                            Some(AudioThreadEvent::FFTData {
+                                data: proc.fft.raw_spectrum().to_vec(),
+                            }),
+                        ))
+                        .is_err()
+                    {
+                        break;
+                    }
                 }
                 last_fft_emit = now;
             }
@@ -197,7 +215,12 @@ fn apply_cmd_result(
     }
 }
 
-fn handle_cmd(proc: &mut AudioProcessor, cmd: AnalysisCommand) -> HandleCmdResult {
+fn handle_cmd(
+    proc: &mut AudioProcessor,
+    cmd: AnalysisCommand,
+    analysis_enabled: &mut bool,
+    fft_enabled: &mut bool,
+) -> HandleCmdResult {
     match cmd {
         AnalysisCommand::Pcm {
             mut samples,
@@ -205,19 +228,39 @@ fn handle_cmd(proc: &mut AudioProcessor, cmd: AnalysisCommand) -> HandleCmdResul
             sample_rate,
             recycle,
         } => {
-            let len = proc.push_interleaved_pcm(&samples, channels, sample_rate);
+            let len = if *analysis_enabled {
+                proc.push_interleaved_pcm(&samples, channels, sample_rate)
+            } else {
+                0
+            };
             if let Some(tx) = recycle {
                 samples.clear();
                 let _ = tx.send(samples);
             }
-            HandleCmdResult::Pushed {
-                samples: len,
-                sample_rate,
+            if *analysis_enabled {
+                HandleCmdResult::Pushed {
+                    samples: len,
+                    sample_rate,
+                }
+            } else {
+                HandleCmdResult::None
             }
         }
         AnalysisCommand::Clear => {
             proc.clear();
             HandleCmdResult::Reset
+        }
+        AnalysisCommand::SetEnabled { enabled } => {
+            if *analysis_enabled == enabled {
+                return HandleCmdResult::None;
+            }
+            *analysis_enabled = enabled;
+            proc.clear();
+            HandleCmdResult::Reset
+        }
+        AnalysisCommand::SetFftEnabled { enabled } => {
+            *fft_enabled = enabled;
+            HandleCmdResult::None
         }
         AnalysisCommand::SetFreqRange { from, to } => {
             proc.fft.set_freq_range(from, to);

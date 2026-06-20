@@ -309,11 +309,7 @@ impl DeckRuntime {
         self.queued_samples.store(0, Ordering::Release);
     }
 
-    fn next_sample(&mut self) -> Option<f32> {
-        if self.paused.load(Ordering::Acquire) {
-            return None;
-        }
-
+    fn next_sample(&mut self, consumed: &mut usize) -> Option<f32> {
         if self.current_index >= self.current_block.len() {
             match self.rx.try_recv() {
                 Ok(block) => {
@@ -322,12 +318,24 @@ impl DeckRuntime {
                 }
                 Err(_) => return None,
             }
+            if self.current_block.is_empty() {
+                return None;
+            }
         }
 
         let sample = self.current_block[self.current_index];
         self.current_index += 1;
-        saturating_sub(&self.queued_samples, 1);
+        *consumed += 1;
         Some(sample)
+    }
+
+    /// Decrement the shared queued-sample counter once per mix block instead of
+    /// once per sample, turning ~one CAS-loop-per-sample into one per block.
+    #[inline]
+    fn commit_consumed(&self, consumed: usize) {
+        if consumed > 0 {
+            saturating_sub(&self.queued_samples, consumed);
+        }
     }
 }
 
@@ -351,24 +359,57 @@ struct MixerWorker {
 
 impl MixerWorker {
     fn run(&mut self) {
+        let channels = self.output_channels.max(1);
+        let frame_capacity = MIX_BLOCK_FRAMES * channels;
+
         while !self.stop_flag.load(Ordering::Acquire) {
             if !self.drain_controls() {
                 break;
             }
 
-            let mut block = vec![0.0; MIX_BLOCK_FRAMES * self.output_channels];
+            // Paused state changes far slower than the sample rate — sample it
+            // once per block instead of doing an atomic load per sample.
+            let primary_paused = self.primary.paused.load(Ordering::Acquire);
+            let secondary_paused = self.secondary.paused.load(Ordering::Acquire);
+
+            // Reserve exact capacity and fill by pushing — no zero-fill pass,
+            // since every slot is written below.
+            let mut block = Vec::with_capacity(frame_capacity);
             let mut has_audio = false;
-            for sample in &mut block {
-                let primary = self.primary.next_sample();
-                let secondary = self.secondary.next_sample();
+            let mut consumed_primary = 0usize;
+            let mut consumed_secondary = 0usize;
+
+            for _ in 0..MIX_BLOCK_FRAMES {
+                // Crossfade gains move over seconds, so advance them once per
+                // frame (all channels in a frame share one gain) rather than
+                // once per sample. This keeps the sin/sqrt/pow curve math at
+                // frame rate during a fade.
                 self.advance_crossfade();
-                let mixed = primary.unwrap_or(0.0) * self.primary.gain
-                    + secondary.unwrap_or(0.0) * self.secondary.gain;
-                if primary.is_some() || secondary.is_some() {
-                    has_audio = true;
+                let primary_gain = self.primary.gain;
+                let secondary_gain = self.secondary.gain;
+
+                for _ in 0..channels {
+                    let primary = if primary_paused {
+                        None
+                    } else {
+                        self.primary.next_sample(&mut consumed_primary)
+                    };
+                    let secondary = if secondary_paused {
+                        None
+                    } else {
+                        self.secondary.next_sample(&mut consumed_secondary)
+                    };
+                    if primary.is_some() || secondary.is_some() {
+                        has_audio = true;
+                    }
+                    let mixed =
+                        primary.unwrap_or(0.0) * primary_gain + secondary.unwrap_or(0.0) * secondary_gain;
+                    block.push(mixed.clamp(-1.0, 1.0));
                 }
-                *sample = mixed.clamp(-1.0, 1.0);
             }
+
+            self.primary.commit_consumed(consumed_primary);
+            self.secondary.commit_consumed(consumed_secondary);
 
             if has_audio {
                 if !self.output.push_block(block, self.stop_flag.as_ref()) {
@@ -432,11 +473,14 @@ impl MixerWorker {
         let Some(fade) = self.crossfade.as_ref() else {
             return;
         };
+        // `advance_crossfade` is called once per frame, while the fade duration
+        // is tracked in samples — step by one frame (= `output_channels`).
+        let step = self.output_channels.max(1);
         let progress = (fade.elapsed_samples as f32 / fade.duration_samples as f32).clamp(0.0, 1.0);
         let (out_gain, in_gain) = balanced_crossfade_gains(progress, fade.params);
         let outgoing = fade.outgoing;
         let incoming = fade.incoming;
-        let elapsed_samples = fade.elapsed_samples.saturating_add(1);
+        let elapsed_samples = fade.elapsed_samples.saturating_add(step);
         let duration_samples = fade.duration_samples;
         let final_in_gain = fade.params.incoming_gain;
 

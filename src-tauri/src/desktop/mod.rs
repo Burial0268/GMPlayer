@@ -33,19 +33,11 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Info)
-                // Silence symphonia's MP3 bit-reservoir underflow WARN
-                // spam. These warnings fire on every track open and after
-                // every seek (the decoder's frame buffer needs a few
-                // frames to fill up) but are masked entirely by our
-                // pre-roll silence in `FFTFeedSource` — they never reach
-                // the speakers. The log lines were being mistaken for
-                // real glitches; silencing them at Error keeps real
-                // decode errors visible while dropping the noise.
                 .level_for(
                     "symphonia_bundle_mp3",
-                    tauri_plugin_log::log::LevelFilter::Error,
+                    tauri_plugin_log::log::LevelFilter::Info,
                 )
-                .level_for("symphonia_core", tauri_plugin_log::log::LevelFilter::Error)
+                .level_for("symphonia_core", tauri_plugin_log::log::LevelFilter::Info)
                 .build(),
         )
         .plugin(tauri_plugin_http::init())

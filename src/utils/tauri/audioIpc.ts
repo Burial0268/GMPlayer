@@ -485,6 +485,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _positionTimer: ReturnType<typeof setInterval> | null = null;
   private _analysisTimer: ReturnType<typeof setInterval> | null = null;
   private _analysisFrameInFlight = false;
+  private _analysisEnabled = true;
   private _analysisFftEnabled = true;
   private _analysisFreqRange: { fromFreq: number; toFreq: number } | null = null;
   private _analysisGeneration = 0;
@@ -492,6 +493,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _lastAnalysisAt = 0;
   private _currentVolume = 1;
   private _isClosing = false;
+  private _playPromise: Promise<void> | null = null;
 
   connect(): Promise<void> {
     if (this._backend) return Promise.resolve();
@@ -557,6 +559,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     this._cancelAnalysis();
     this._stopPositionTimer();
     this._releaseAudio();
+    this._playPromise = null;
     this._backend?.shutdown();
     this._backend = null;
     this._listeners.clear();
@@ -578,6 +581,19 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
 
   private _mirrorAnalysisControl(msg: AudioThreadMessage): void {
     switch (msg.type) {
+      case "setAnalysis":
+        this._analysisEnabled = msg.enabled;
+        if (!msg.enabled) {
+          this._stopAnalysisTimer();
+        } else if (
+          this._analysisReady &&
+          this._audio &&
+          !this._audio.paused &&
+          !this._audio.ended
+        ) {
+          this._startAnalysisTimer();
+        }
+        break;
       case "setFFT":
         this._analysisFftEnabled = msg.enabled;
         this._handleAnalysisReplyPromise(this._analysisWorker?.setFFT(msg.enabled));
@@ -603,6 +619,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
         this._play();
         break;
       case "pause":
+        this._playPromise = null;
         this._audio?.pause();
         this._stopAnalysisTimer();
         break;
@@ -625,9 +642,12 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     const generation = this._resetAnalysis();
     this._stopPositionTimer();
     this._releaseAudio();
+    this._playPromise = null;
 
     const audio = new Audio();
-    audio.crossOrigin = "anonymous";
+    // Playback does not read PCM from this element. Setting crossOrigin here
+    // forces CORS validation and breaks otherwise playable remote media URLs.
+    // WASM analysis fetches bytes separately and can use the proxy fallback.
     audio.preload = "auto";
     audio.src = effect.src;
     this._setElementVolumeForCurrentGraph(audio);
@@ -658,6 +678,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
 
     audio.addEventListener("play", () => {
       if (this._audio !== audio) return;
+      this._playPromise = null;
       this._handleReplyPromise(this._backend?.applyPlaybackState(true));
       this._startPositionTimer();
       this._startAnalysisTimer();
@@ -665,6 +686,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
 
     audio.addEventListener("pause", () => {
       if (this._audio !== audio || this._isClosing || audio.ended) return;
+      this._playPromise = null;
       this._stopAnalysisTimer();
       this._handleReplyPromise(this._backend?.applyPlaybackState(false));
     });
@@ -694,10 +716,23 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _play(): void {
     const audio = this._audio;
     if (!audio) return;
-    void audio.play().catch((err) => {
-      const message = err instanceof Error ? err.message : String(err);
-      this._handleReplyPromise(this._backend?.applyPlayError(message));
-    });
+    if (!audio.paused && !audio.ended) return;
+    if (this._playPromise) return;
+
+    const playPromise = audio.play();
+    this._playPromise = playPromise;
+    void playPromise
+      .catch((err) => {
+        if (this._playPromise !== playPromise) return;
+        this._playPromise = null;
+        const message = err instanceof Error ? err.message : String(err);
+        this._handleReplyPromise(this._backend?.applyPlayError(message));
+      })
+      .finally(() => {
+        if (this._playPromise === playPromise) {
+          this._playPromise = null;
+        }
+      });
   }
 
   private _seek(position: number): void {
@@ -757,6 +792,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   }
 
   private _startAnalysisTimer(): void {
+    if (!this._analysisEnabled) return;
     if (!this._analysisReady) return;
     if (this._analysisTimer !== null) return;
     this._lastAnalysisAt = this._nowMs();
@@ -777,6 +813,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _tickAnalysis(): void {
     const audio = this._audio;
     const analysisWorker = this._analysisWorker;
+    if (!this._analysisEnabled) return;
     if (!audio || !analysisWorker || !this._analysisReady || audio.paused || audio.ended) return;
     if (this._analysisFrameInFlight) return;
 
@@ -793,6 +830,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
           this._analysisWorker === analysisWorker &&
           this._audio === audio &&
           this._analysisGeneration === generation &&
+          this._analysisEnabled &&
           this._analysisReady
         ) {
           this._handleReply(reply, false);
@@ -871,6 +909,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _releaseAudio(): void {
     if (!this._audio) return;
     this._stopAnalysisTimer();
+    this._playPromise = null;
     const audio = this._audio;
     this._isClosing = true;
     try {

@@ -8,7 +8,7 @@
 /// Message flow:  frontend → WebSocket → Player::send_msg() → AudioPlayer → decoder/output
 /// Event flow:   AudioPlayer → callback → WebSocket broadcast → frontend
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -155,7 +155,9 @@ impl Player {
                 evt_msg.seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 if let Some(event) = &evt_msg.data {
                     update_shared_from_event(&shared_clone, event);
-                    shared_clone.event_buf.lock().push(event.clone());
+                    if should_buffer_poll_event(event) {
+                        shared_clone.event_buf.lock().push(event.clone());
+                    }
                 }
                 if let Some(ws) = ws_for_forwarder.as_ref() {
                     ws.broadcast_event(&evt_msg);
@@ -325,6 +327,13 @@ fn update_shared_from_event(shared: &Arc<PlayerShared>, event: &AudioThreadEvent
     }
 }
 
+fn should_buffer_poll_event(event: &AudioThreadEvent) -> bool {
+    !matches!(
+        event,
+        AudioThreadEvent::FFTData { .. } | AudioThreadEvent::LowFrequencyVolume { .. }
+    )
+}
+
 fn collect_forward_message(
     msg: AudioThreadEventMessage<AudioThreadEvent>,
     realtime: &mut Vec<AudioThreadEventMessage<AudioThreadEvent>>,
@@ -454,6 +463,7 @@ struct AudioPlayer {
     /// signals the thread to exit). Wrapped in `Option` so `take()` works
     /// in `Drop`.
     analysis_thread: Option<std::thread::JoinHandle<()>>,
+    analysis_enabled: Arc<AtomicBool>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -589,6 +599,7 @@ impl AudioPlayer {
         let (analysis_tx, analysis_thread) = analysis::spawn_analysis_thread(evt_sender.clone())
             .map_err(|e| AudioError::ThreadError(format!("spawn audio-analysis thread: {e}")))?;
         let analysis_thread = Some(analysis_thread);
+        let analysis_enabled = Arc::new(AtomicBool::new(true));
 
         let mut tasks = Vec::new();
 
@@ -678,6 +689,7 @@ impl AudioPlayer {
             tasks,
             analysis_tx,
             analysis_thread,
+            analysis_enabled,
         })
     }
 
@@ -1014,10 +1026,16 @@ impl AudioPlayer {
                         })
                         .await;
                 }
+                AudioThreadMessage::SetAnalysis { enabled } => {
+                    self.analysis_enabled.store(*enabled, Ordering::Release);
+                    let _ = self
+                        .analysis_tx
+                        .send(AnalysisCommand::SetEnabled { enabled: *enabled });
+                }
                 AudioThreadMessage::SetFFT { enabled } => {
-                    if !enabled {
-                        let _ = self.analysis_tx.send(AnalysisCommand::Clear);
-                    }
+                    let _ = self
+                        .analysis_tx
+                        .send(AnalysisCommand::SetFftEnabled { enabled: *enabled });
                 }
                 AudioThreadMessage::SetFFTRange { from_freq, to_freq } => {
                     let _ = self.analysis_tx.send(AnalysisCommand::SetFreqRange {
@@ -1281,6 +1299,7 @@ impl AudioPlayer {
         let playback_id = self.decoder_playback_id.wrapping_add(1);
         let decoder_event_tx = self.decoder_event_tx.clone();
         let start_paused = self.playback_intent == PlaybackIntent::Paused;
+        let analysis_enabled_for_open = Arc::clone(&self.analysis_enabled);
 
         let open_result = tokio::task::spawn_blocking(move || {
             decoder::spawn_playback_decoder(
@@ -1290,6 +1309,7 @@ impl AudioPlayer {
                 output_config.channels,
                 output_config.sample_rate,
                 analysis_tx_for_open,
+                analysis_enabled_for_open,
                 decoder_event_tx,
                 playback_id,
                 start_paused,
@@ -1573,6 +1593,7 @@ impl AudioPlayer {
         let decoder_event_tx = self.decoder_event_tx.clone();
         let start_paused = self.playback_intent == PlaybackIntent::Paused;
         let seek_into_open = initial_position.filter(|p| *p > 0.0);
+        let analysis_enabled_for_open = Arc::clone(&self.analysis_enabled);
 
         let open_result = tokio::task::spawn_blocking(move || {
             decoder::spawn_playback_decoder(
@@ -1582,6 +1603,7 @@ impl AudioPlayer {
                 output_config.channels,
                 output_config.sample_rate,
                 analysis_tx_for_open,
+                analysis_enabled_for_open,
                 decoder_event_tx,
                 playback_id,
                 start_paused,

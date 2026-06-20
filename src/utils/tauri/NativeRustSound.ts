@@ -112,10 +112,13 @@ export class NativeRustSound implements ISound {
   /** Rust-computed low-frequency volume from the `lowFrequencyVolume`
    * event, derived from the same raw FFT frame as `fftData`. */
   private _lowFreqVolume: number = 0;
+  private _analysisEnabled: boolean | null = null;
+  private _fftEventsEnabled: boolean | null = null;
 
   private _loaded: boolean = false;
   private _destroyed: boolean = false;
   private _playbackState: "stopped" | "playing" | "paused" | "ended" = "stopped";
+  private _pendingPlayCommand: boolean = false;
   private _optimisticPlayback: boolean = isTauri();
   private _adoptNextBackendMusicId: boolean = false;
   private _nativeAutoMixSyncPending: boolean = false;
@@ -163,7 +166,11 @@ export class NativeRustSound implements ISound {
       return;
     }
 
-    const canAttachExistingBackend = !window.$player;
+    // Only the native/Tauri runtime can have a real backend that outlives the
+    // current frontend controller. The Web/WASM runtime is page-local and uses a
+    // singleton JS transport, so adopting its previous state after SoundManager
+    // clears window.$player can bind a new NativeRustSound to a stale <audio>.
+    const canAttachExistingBackend = isTauri() && !window.$player;
     if (canAttachExistingBackend) {
       this._allowInitialBackendAttach = true;
       await this.requestStatusSync(400);
@@ -257,6 +264,43 @@ export class NativeRustSound implements ISound {
     return sentNow;
   }
 
+  setAnalysisEnabled(enabled: boolean): void {
+    if (this._destroyed || this._analysisEnabled === enabled) return;
+    this._analysisEnabled = enabled;
+    if (!enabled) {
+      this._clearFFTState();
+      this._lowFreqVolume = 0;
+    }
+    this._sendCommand({ type: "setAnalysis", enabled });
+  }
+
+  setFFTEnabled(enabled: boolean): void {
+    if (this._destroyed || this._fftEventsEnabled === enabled) return;
+    this._fftEventsEnabled = enabled;
+    if (!enabled) {
+      this._clearFFTState();
+    } else if (this._loaded && this._playbackState === "playing") {
+      this._armNoFFTWarning();
+    }
+    this._sendCommand({ type: "setFFT", enabled });
+  }
+
+  private _clearFFTState(): void {
+    this._fftData = [];
+    if (this._frequencyData.length !== 0) {
+      this._frequencyData = new Uint8Array(0);
+    }
+    this._averageAmplitude = 0;
+    this._clearNoFFTWarning();
+  }
+
+  private _clearNoFFTWarning(): void {
+    if (this._noFFTWarnTimer !== null) {
+      clearTimeout(this._noFFTWarnTimer);
+      this._noFFTWarnTimer = null;
+    }
+  }
+
   // ═════════════════════════════════════════════════════════════╗
   //  Event routing                                              ║
   // ═════════════════════════════════════════════════════════════╝
@@ -345,6 +389,7 @@ export class NativeRustSound implements ISound {
 
       case "playStatus": {
         const wantPlaying = evt.data.isPlaying;
+        this._pendingPlayCommand = false;
         this._state.isPlaying = wantPlaying;
         const isCurrentlyPlaying = this._playbackState === "playing";
         if (wantPlaying === isCurrentlyPlaying) {
@@ -363,6 +408,7 @@ export class NativeRustSound implements ISound {
       }
 
       case "audioPlayFinished": {
+        this._pendingPlayCommand = false;
         if (evt.data.musicId === this._expectedMusicId) {
           this._playbackState = "ended";
           this._state.position = this._state.duration;
@@ -440,10 +486,7 @@ export class NativeRustSound implements ISound {
         }
         this._averageAmplitude = this._fftData.length > 0 ? sum / this._fftData.length : 0;
         this._fftReceived = true;
-        if (this._noFFTWarnTimer !== null) {
-          clearTimeout(this._noFFTWarnTimer);
-          this._noFFTWarnTimer = null;
-        }
+        this._clearNoFFTWarning();
         if (IS_DEV) {
           const now = Date.now();
           if (now - this._lastFFTLogAt > FFT_LOG_INTERVAL_MS) {
@@ -465,6 +508,7 @@ export class NativeRustSound implements ISound {
       case "playError":
       case "loadError": {
         const err = new Error(evt.data.error);
+        this._pendingPlayCommand = false;
         if (evt.type === "loadError") {
           if (this._pendingLoad) {
             this._rejectPendingLoad(err);
@@ -555,11 +599,12 @@ export class NativeRustSound implements ISound {
 
   private _armNoFFTWarning(): void {
     if (!IS_DEV) return;
+    if (this._analysisEnabled === false || this._fftEventsEnabled === false) return;
     // Web/WASM does not use the native WS/CPAL FFT event stream. It may add
     // analysis later through a WASM decoder/PCM path, but absence of `fftData`
     // there is not a WebSocket/backend failure.
     if (!isTauri()) return;
-    if (this._noFFTWarnTimer !== null) clearTimeout(this._noFFTWarnTimer);
+    this._clearNoFFTWarning();
     this._noFFTWarnTimer = setTimeout(() => {
       this._noFFTWarnTimer = null;
       if (!this._fftReceived && this._playbackState === "playing") {
@@ -576,11 +621,13 @@ export class NativeRustSound implements ISound {
   // ═════════════════════════════════════════════════════════════╝
 
   playing(): boolean {
-    return this._playbackState === "playing";
+    return this._playbackState === "playing" || this._pendingPlayCommand;
   }
 
   play(): this {
     if (this._destroyed) return this;
+    if (this._playbackState === "playing" || this._pendingPlayCommand) return this;
+    this._pendingPlayCommand = true;
     this._sendCommand({ type: "resumeAudio" });
     if (this._optimisticPlayback && this._playbackState !== "playing") {
       this._playbackState = "playing";
@@ -597,6 +644,7 @@ export class NativeRustSound implements ISound {
 
   pause(): this {
     if (this._destroyed) return this;
+    this._pendingPlayCommand = false;
     this._sendCommand({ type: "pauseAudio" });
     if (this._optimisticPlayback && this._playbackState !== "paused") {
       this._playbackState = "paused";
@@ -609,6 +657,7 @@ export class NativeRustSound implements ISound {
 
   stop(): this {
     if (this._destroyed) return this;
+    this._pendingPlayCommand = false;
     this._sendCommand({ type: "pauseAudio" });
     this._sendCommand({ type: "seekAudio", position: 0 });
     this._state.position = 0;
@@ -809,10 +858,7 @@ export class NativeRustSound implements ISound {
       clearTimeout(sync.timeout);
       sync.resolve();
     }
-    if (this._noFFTWarnTimer !== null) {
-      clearTimeout(this._noFFTWarnTimer);
-      this._noFFTWarnTimer = null;
-    }
+    this._clearNoFFTWarning();
     if (this._unlistenTransport) {
       try {
         this._unlistenTransport();
@@ -821,10 +867,13 @@ export class NativeRustSound implements ISound {
       }
       this._unlistenTransport = null;
     }
-    this._fftData = [];
-    this._frequencyData = new Uint8Array(0);
-    this._averageAmplitude = 0;
+    this._clearFFTState();
     this._lowFreqVolume = 0;
-    this._sendCommand({ type: "pauseAudio" });
+    this._analysisEnabled = false;
+    this._fftEventsEnabled = false;
+    this._pendingPlayCommand = false;
+    this._sendCommand({ type: "setFFT", enabled: false });
+    this._sendCommand({ type: "setAnalysis", enabled: false });
+    this._sendCommand(isTauri() ? { type: "pauseAudio" } : { type: "close" });
   }
 }

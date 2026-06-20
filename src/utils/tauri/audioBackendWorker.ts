@@ -1,8 +1,4 @@
-import type {
-  AudioThreadEvent,
-  AudioThreadEventMessage,
-  AudioThreadMessage,
-} from "./audioBridge";
+import type { AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage } from "./audioBridge";
 
 interface WasmAudioBackendBinding {
   sendMessageJson(envelopeJson: string): string;

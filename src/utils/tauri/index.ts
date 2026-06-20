@@ -4,12 +4,18 @@ import { isTauri } from "./windowManager";
 export { windowManager, isTauri, isWindowsTauri } from "./windowManager";
 export type { WindowConfig, WindowLabel, WindowState } from "./types";
 export { usePlayerBridge } from "./playerBridge";
+export {
+  PLAYER_COMMUNICATION_EVENTS,
+  PLAYER_CONTENT_WINDOW_LABELS,
+  PLAYER_STATE_WINDOW_LABELS,
+} from "./playerCommunicationTypes";
 export type {
+  PlayerFullStatePayload,
   PlayerStatePayload,
   PlayerTimePayload,
   PlayerLyricPayload,
   PlayerSettingsPayload,
-} from "./playerBridge";
+} from "./playerCommunicationTypes";
 
 // Android media notification plugin bridge
 export {

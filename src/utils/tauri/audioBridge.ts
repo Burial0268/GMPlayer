@@ -48,6 +48,7 @@ export type AudioThreadMessage =
   | { type: "setVolume"; volume: number }
   | { type: "setVolumeRelative"; volume: number }
   | { type: "setAudioOutput"; name: string }
+  | { type: "setAnalysis"; enabled: boolean }
   | { type: "setFFT"; enabled: boolean }
   | { type: "setFFTRange"; fromFreq: number; toFreq: number }
   | { type: "syncStatus" }

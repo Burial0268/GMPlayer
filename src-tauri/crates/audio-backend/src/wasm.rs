@@ -59,6 +59,37 @@ struct DecodedAudio {
     duration: f64,
 }
 
+#[wasm_bindgen]
+pub struct DecodedAudioJs {
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+    duration: f64,
+}
+
+#[wasm_bindgen]
+impl DecodedAudioJs {
+    #[wasm_bindgen(js_name = "samples")]
+    pub fn samples(&self) -> Vec<f32> {
+        self.samples.clone()
+    }
+
+    #[wasm_bindgen(js_name = "sampleRate")]
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    #[wasm_bindgen(js_name = "channels")]
+    pub fn channels(&self) -> u16 {
+        self.channels
+    }
+
+    #[wasm_bindgen(js_name = "duration")]
+    pub fn duration(&self) -> f64 {
+        self.duration
+    }
+}
+
 struct AnalysisState {
     samples: Vec<f32>,
     sample_rate: u32,
@@ -314,6 +345,26 @@ impl WasmAudioBackend {
         )
     }
 
+    /// Decode browser-fetched audio bytes into mono PCM for offline AutoMix analysis.
+    ///
+    /// This is intentionally state-independent: AutoMix analysis must not mutate
+    /// the playback backend's playlist/current-track state.
+    #[wasm_bindgen(js_name = "decodeAudioBytes")]
+    pub fn decode_audio_bytes(
+        &self,
+        bytes: &[u8],
+        extension: String,
+    ) -> Result<DecodedAudioJs, JsValue> {
+        decode_audio_bytes(bytes, &extension)
+            .map(|decoded| DecodedAudioJs {
+                samples: decoded.samples,
+                sample_rate: decoded.sample_rate,
+                channels: decoded.channels,
+                duration: decoded.duration,
+            })
+            .map_err(|err| JsValue::from_str(&err))
+    }
+
     #[wasm_bindgen(js_name = "processAnalysisFrame")]
     pub fn process_analysis_frame(&mut self, position: f64, delta_ms: f64) -> String {
         self.position = finite_nonnegative(position);
@@ -521,6 +572,7 @@ impl WasmAudioBackend {
                 self.reply(Vec::new(), Vec::new())
             }
             AudioThreadMessage::SetAudioOutput { .. }
+            | AudioThreadMessage::SetAnalysis { .. }
             | AudioThreadMessage::SetMediaControlsEnabled { .. }
             | AudioThreadMessage::AutomixSetEnabled { .. }
             | AudioThreadMessage::AutomixConfigure { .. }
@@ -536,6 +588,13 @@ impl WasmAudioBackend {
             AudioThreadMessage::Close => {
                 self.state = PlaybackState::Stopped;
                 self.position = 0.0;
+                self.duration = 0.0;
+                self.load_position = 0.0;
+                self.playlist.clear();
+                self.playlist_inited = false;
+                self.current_play_index = 0;
+                self.music_info = DisplayAudioInfo::default();
+                self.quality = AudioQuality::default();
                 self.analysis = None;
                 self.reply(
                     vec![AudioThreadEvent::PlayStatus { is_playing: false }],

@@ -1,59 +1,22 @@
 import { reactive, ref, shallowRef, onMounted, onUnmounted } from "vue";
-import type { AMLLLine } from "@/utils/LyricsProcessor";
+import {
+  PLAYER_COMMUNICATION_EVENTS,
+  type PlayerFullStatePayload,
+  type PlayerLyricPayload,
+  type PlayerSettingsPayload,
+  type PlayerStatePayload,
+  type PlayerTimePayload,
+} from "./playerCommunicationTypes";
 
 // ── Payload Types ──────────────────────────────────────────────────────────
 
-export interface PlayerStatePayload {
-  title: string;
-  artist: string;
-  artistList: { id: number; name: string }[];
-  coverUrl: string;
-  coverUrlLarge: string;
-  songId: number | null;
-  isPlaying: boolean;
-  isLoading: boolean;
-  isLiked: boolean;
-  accentColor: string;
-  currentTime: number;
-  duration: number;
-  volume: number;
-  playMode: "normal" | "random" | "single";
-}
-
-export interface PlayerTimePayload {
-  currentTime: number;
-  lyricIndex: number;
-}
-
-export interface PlayerLyricPayload {
-  songId: number;
-  lrc: { time: number; content: string }[];
-  amllLines: AMLLLine[];
-  hasYrc: boolean;
-  hasLrcTran: boolean;
-  hasLrcRoma: boolean;
-}
-
-export interface PlayerSettingsPayload {
-  lyricTimeOffset: number;
-  lyricsFontSize: number;
-  lyricFont: string;
-  lyricFontWeight: string;
-  lyricLetterSpacing: string;
-  lyricLineHeight: number;
-  lyricsBlur: boolean;
-  lyricsBlock: string;
-  lyricsPosition: string;
-  showYrc: boolean;
-  showYrcAnimation: boolean;
-  showTransl: boolean;
-  showRoma: boolean;
-  springParams: {
-    posX: { mass: number; damping: number; stiffness: number };
-    posY: { mass: number; damping: number; stiffness: number };
-    scale: { mass: number; damping: number; stiffness: number };
-  };
-}
+export type {
+  PlayerFullStatePayload,
+  PlayerLyricPayload,
+  PlayerSettingsPayload,
+  PlayerStatePayload,
+  PlayerTimePayload,
+} from "./playerCommunicationTypes";
 
 // ── Default Values ─────────────────────────────────────────────────────────
 
@@ -95,10 +58,17 @@ const defaultSettings: PlayerSettingsPayload = {
   },
 };
 
+const READY_RETRY_DELAYS = [150, 600, 1200] as const;
+const noop = () => {};
+
 // ── Helper ─────────────────────────────────────────────────────────────────
 
 function getTauri() {
   return window.__TAURI__;
+}
+
+function emitToMain(eventName: string, payload?: unknown) {
+  getTauri()?.event.emitTo("main", eventName, payload).catch(noop);
 }
 
 // ── Composable ─────────────────────────────────────────────────────────────
@@ -121,48 +91,58 @@ export function usePlayerBridge() {
 
   async function connect(): Promise<void> {
     const tauri = getTauri();
-    if (!tauri) return;
+    if (!tauri || unlisteners.length > 0) return;
 
     // Player state (song metadata, playback state, etc.)
-    const u1 = await tauri.event.listen<PlayerStatePayload>("player-state-update", (e) => {
-      Object.assign(state, e.payload);
-    });
+    const u1 = await tauri.event.listen<PlayerStatePayload>(
+      PLAYER_COMMUNICATION_EVENTS.state,
+      (e) => {
+        Object.assign(state, e.payload);
+      },
+    );
     unlisteners.push(u1);
 
     // Time updates (~20fps)
-    const u2 = await tauri.event.listen<PlayerTimePayload>("player-time-update", (e) => {
-      currentTime.value = e.payload.currentTime;
-      lyricIndex.value = e.payload.lyricIndex;
-    });
+    const u2 = await tauri.event.listen<PlayerTimePayload>(
+      PLAYER_COMMUNICATION_EVENTS.time,
+      (e) => {
+        currentTime.value = e.payload.currentTime;
+        lyricIndex.value = e.payload.lyricIndex;
+      },
+    );
     unlisteners.push(u2);
 
     // Lyric data (once per song)
-    const u3 = await tauri.event.listen<PlayerLyricPayload>("player-lyric-update", (e) => {
-      lyricData.value = e.payload;
-    });
+    const u3 = await tauri.event.listen<PlayerLyricPayload>(
+      PLAYER_COMMUNICATION_EVENTS.lyric,
+      (e) => {
+        lyricData.value = e.payload;
+      },
+    );
     unlisteners.push(u3);
 
     // Settings changes
-    const u4 = await tauri.event.listen<PlayerSettingsPayload>("player-settings-update", (e) => {
-      Object.assign(settings, e.payload);
-    });
+    const u4 = await tauri.event.listen<PlayerSettingsPayload>(
+      PLAYER_COMMUNICATION_EVENTS.settings,
+      (e) => {
+        Object.assign(settings, e.payload);
+      },
+    );
     unlisteners.push(u4);
 
     // Full state snapshot (response to slave-window-opened)
-    const u5 = await tauri.event.listen<{
-      state: PlayerStatePayload;
-      time: PlayerTimePayload;
-      lyric: PlayerLyricPayload | null;
-      settings: PlayerSettingsPayload;
-    }>("player-full-state", (e) => {
-      Object.assign(state, e.payload.state);
-      currentTime.value = e.payload.time.currentTime;
-      lyricIndex.value = e.payload.time.lyricIndex;
-      if (e.payload.lyric) {
-        lyricData.value = e.payload.lyric;
-      }
-      Object.assign(settings, e.payload.settings);
-    });
+    const u5 = await tauri.event.listen<PlayerFullStatePayload>(
+      PLAYER_COMMUNICATION_EVENTS.fullState,
+      (e) => {
+        Object.assign(state, e.payload.state);
+        currentTime.value = e.payload.time.currentTime;
+        lyricIndex.value = e.payload.time.lyricIndex;
+        if (e.payload.lyric) {
+          lyricData.value = e.payload.lyric;
+        }
+        Object.assign(settings, e.payload.settings);
+      },
+    );
     unlisteners.push(u5);
 
     // Notify master that we're ready
@@ -176,11 +156,14 @@ export function usePlayerBridge() {
           : "unknown";
 
     const notifyMaster = () => {
-      tauri.event.emitTo("main", "slave-window-opened", { label: windowLabel }).catch(() => {});
+      emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveReady, { label: windowLabel });
     };
 
     notifyMaster();
-    const retryTimers = [150, 600, 1200].map((delay) => window.setTimeout(notifyMaster, delay));
+    const retryTimers: number[] = [];
+    for (const delay of READY_RETRY_DELAYS) {
+      retryTimers.push(window.setTimeout(notifyMaster, delay));
+    }
     unlisteners.push(() => retryTimers.forEach((timer) => window.clearTimeout(timer)));
   }
 
@@ -194,41 +177,41 @@ export function usePlayerBridge() {
   // in Tauri v2 only broadcasts to the current window by default.
 
   function playPause(): void {
-    getTauri()?.event.emitTo("main", "slave-play-pause", null);
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slavePlayPause, null);
   }
 
   function prevTrack(): void {
-    getTauri()?.event.emitTo("main", "slave-prev-track", null);
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slavePrevTrack, null);
   }
 
   function nextTrack(): void {
-    getTauri()?.event.emitTo("main", "slave-next-track", null);
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveNextTrack, null);
   }
 
   function seek(time: number): void {
-    getTauri()?.event.emitTo("main", "slave-seek", { time });
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveSeek, { time });
   }
 
   function setVolume(volume: number): void {
-    getTauri()?.event.emitTo("main", "slave-volume", { volume });
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveVolume, { volume });
   }
 
   function cyclePlayMode(): void {
-    getTauri()?.event.emitTo("main", "slave-cycle-play-mode", null);
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveCyclePlayMode, null);
   }
 
   function toggleLike(): void {
-    getTauri()?.event.emitTo("main", "slave-like-song", null);
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveLikeSong, null);
   }
 
   function setLyricsFontSize(size: number): void {
-    getTauri()?.event.emitTo("main", "slave-set-lyrics-font-size", { size });
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveSetLyricsFontSize, { size });
   }
 
   // ── Auto-connect lifecycle ──────────────────────────────────────────
 
   onMounted(() => {
-    connect();
+    connect().catch(noop);
   });
 
   onUnmounted(() => {

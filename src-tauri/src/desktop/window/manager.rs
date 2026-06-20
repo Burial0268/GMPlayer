@@ -53,7 +53,7 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
     }
 
     #[cfg(target_os = "windows")]
-    if let Some(args) = config.additional_args.as_deref() {
+    if let Some(args) = config.effective_additional_args() {
         let args = args.trim();
         if !args.is_empty() {
             builder = builder.additional_browser_args(args);

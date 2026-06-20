@@ -42,6 +42,18 @@ export const getLongTime = (mss: number | string): string => {
 };
 
 /**
+ * 网易云日推每天 6:00 更新，6:00 前仍对应前一天的推荐日期。
+ */
+export const getDailySongsDate = (date = new Date()): string => {
+  const dailyDate = new Date(date);
+  if (dailyDate.getHours() < 6) dailyDate.setDate(dailyDate.getDate() - 1);
+  const y = dailyDate.getFullYear();
+  const m = `0${dailyDate.getMonth() + 1}`.slice(-2);
+  const d = `0${dailyDate.getDate()}`.slice(-2);
+  return `${y}-${m}-${d}`;
+};
+
+/**
  * 将时间戳转化为对应的时间格式
  * @param t - 时间戳，单位为毫秒
  * @returns 转换后的时间字符串

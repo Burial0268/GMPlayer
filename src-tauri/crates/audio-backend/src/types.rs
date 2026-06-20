@@ -163,6 +163,8 @@ pub enum AudioThreadMessage {
     #[serde(rename_all = "camelCase")]
     SetAudioOutput { name: String },
     #[serde(rename_all = "camelCase")]
+    SetAnalysis { enabled: bool },
+    #[serde(rename_all = "camelCase")]
     SetFFT { enabled: bool },
     #[serde(rename_all = "camelCase")]
     SetFFTRange { from_freq: f32, to_freq: f32 },

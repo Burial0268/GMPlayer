@@ -283,11 +283,11 @@ impl WindowConfig {
         Self {
             label: "settings".into(),
             title: "Settings".into(),
-            url: "/setting".into(),
-            width: 700.0,
-            height: 500.0,
-            min_width: Some(500.0),
-            min_height: Some(400.0),
+            url: "/slave.html#/settings".into(),
+            width: 860.0,
+            height: 620.0,
+            min_width: Some(680.0),
+            min_height: Some(520.0),
             max_width: None,
             max_height: None,
             resizable: true,
@@ -383,5 +383,21 @@ impl WindowConfig {
             "tray-popup" => Some(Self::tray_popup()),
             _ => None,
         }
+    }
+
+    /// Effective browser args for WebView2-backed windows.
+    ///
+    /// WebView2 requires every webview that shares the same user data folder
+    /// to be created with the same additional browser arguments. A custom or
+    /// incomplete window config with `additional_args = None` can otherwise
+    /// fail to open after the main profile has already been initialized.
+    #[cfg(target_os = "windows")]
+    pub fn effective_additional_args(&self) -> Option<&str> {
+        Some(DEFAULT_ADDITIONAL_WINDOW_ARGS)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn effective_additional_args(&self) -> Option<&str> {
+        self.additional_args.as_deref()
     }
 }

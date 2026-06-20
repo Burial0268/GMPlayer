@@ -1,6 +1,16 @@
 /* tslint:disable */
 /* eslint-disable */
 
+export class DecodedAudioJs {
+    private constructor();
+    free(): void;
+    [Symbol.dispose](): void;
+    channels(): number;
+    duration(): number;
+    sampleRate(): number;
+    samples(): Float32Array;
+}
+
 /**
  * Return type for `getLFOptions` (plain data object visible in JS).
  */
@@ -35,6 +45,13 @@ export class WasmAudioBackend {
     applyPlaybackFinished(): string;
     applyPlaybackState(is_playing: boolean): string;
     applyVolume(volume: number): string;
+    /**
+     * Decode browser-fetched audio bytes into mono PCM for offline AutoMix analysis.
+     *
+     * This is intentionally state-independent: AutoMix analysis must not mutate
+     * the playback backend's playlist/current-track state.
+     */
+    decodeAudioBytes(bytes: Uint8Array, extension: string): DecodedAudioJs;
     /**
      * Decode browser-fetched audio bytes for the WASM analysis path.
      *

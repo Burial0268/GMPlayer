@@ -71,10 +71,7 @@ function parseReply(replyJson: string): WasmReply {
   }
 }
 
-function sendMessage(
-  wasmBackend: WasmAudioBackendBinding,
-  data: AudioThreadMessage,
-): WasmReply {
+function sendMessage(wasmBackend: WasmAudioBackendBinding, data: AudioThreadMessage): WasmReply {
   return parseReply(
     wasmBackend.sendMessageJson(
       JSON.stringify({
@@ -149,26 +146,11 @@ async function handleRequest(request: AnalysisWorkerRequest): Promise<AnalysisWo
   }
 }
 
-async function fetchAnalysisBytes(
-  src: string,
-  signal?: AbortSignal,
-): Promise<AnalysisFetchResult> {
-  const attempts: Array<{ label: string; init: RequestInit }> = [
-    {
-      label: "range+credentials",
-      init: { credentials: "include", headers: { Range: "bytes=0-" } },
-    },
-    {
-      label: "range",
-      init: { credentials: "same-origin", headers: { Range: "bytes=0-" } },
-    },
-    { label: "credentials", init: { credentials: "include" } },
-    { label: "default", init: { credentials: "same-origin" } },
-  ];
-
+async function fetchAnalysisBytes(src: string, signal?: AbortSignal): Promise<AnalysisFetchResult> {
   let lastError: unknown = null;
   for (const url of [src, analysisProxyUrl(src)]) {
     if (!url) continue;
+    const attempts = buildAnalysisFetchAttempts(url);
     for (const attempt of attempts) {
       try {
         const response = await fetch(url, { ...attempt.init, signal });
@@ -201,6 +183,42 @@ async function fetchAnalysisBytes(
 
   const detail = lastError instanceof Error ? lastError.message : String(lastError);
   throw new Error(`unable to fetch analysis audio bytes: ${detail}; url=${src}`);
+}
+
+function buildAnalysisFetchAttempts(url: string): Array<{ label: string; init: RequestInit }> {
+  if (isSameOriginUrl(url)) {
+    return [
+      {
+        label: "range+credentials",
+        init: { credentials: "include", headers: { Range: "bytes=0-" } },
+      },
+      {
+        label: "range",
+        init: { credentials: "same-origin", headers: { Range: "bytes=0-" } },
+      },
+      { label: "credentials", init: { credentials: "include" } },
+      { label: "default", init: { credentials: "same-origin" } },
+    ];
+  }
+
+  // Netease media URLs commonly return `Access-Control-Allow-Origin: *`.
+  // Cross-origin credentialed fetches are rejected for wildcard ACAO, and the
+  // playback element does not need cookies, so never include credentials here.
+  return [
+    {
+      label: "range",
+      init: { credentials: "omit", headers: { Range: "bytes=0-" } },
+    },
+    { label: "default", init: { credentials: "omit" } },
+  ];
+}
+
+function isSameOriginUrl(src: string): boolean {
+  try {
+    return new URL(src, self.location.href).origin === self.location.origin;
+  } catch {
+    return false;
+  }
 }
 
 function analysisProxyUrl(src: string): string | null {

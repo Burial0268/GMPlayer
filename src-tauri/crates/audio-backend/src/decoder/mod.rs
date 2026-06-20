@@ -136,6 +136,7 @@ pub fn spawn_playback_decoder<S>(
     output_channels: u16,
     output_sample_rate: u32,
     analysis_tx: mpsc::Sender<AnalysisCommand>,
+    analysis_enabled: Arc<AtomicBool>,
     event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
     playback_id: u64,
     start_paused: bool,
@@ -172,6 +173,7 @@ where
                 output_channels,
                 output_sample_rate,
                 analysis_tx,
+                analysis_enabled,
                 control_rx,
                 event_tx,
                 playback_id,
@@ -194,6 +196,7 @@ struct DecodeWorker<S: PlaybackSink> {
     output_channels: u16,
     output_sample_rate: u32,
     analysis_tx: mpsc::Sender<AnalysisCommand>,
+    analysis_enabled: Arc<AtomicBool>,
     analysis_recycle_tx: mpsc::Sender<Vec<f32>>,
     analysis_recycle_rx: mpsc::Receiver<Vec<f32>>,
     control_rx: mpsc::Receiver<DecoderControl>,
@@ -215,6 +218,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
         output_channels: u16,
         output_sample_rate: u32,
         analysis_tx: mpsc::Sender<AnalysisCommand>,
+        analysis_enabled: Arc<AtomicBool>,
         control_rx: mpsc::Receiver<DecoderControl>,
         event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
         playback_id: u64,
@@ -234,6 +238,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             output_channels,
             output_sample_rate,
             analysis_tx,
+            analysis_enabled,
             analysis_recycle_tx,
             analysis_recycle_rx,
             control_rx,
@@ -263,10 +268,17 @@ impl<S: PlaybackSink> DecodeWorker<S> {
 
             let generation = self.output.generation();
             let mut block = Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize);
-            let mut analysis_block = self.analysis_recycle_rx.try_recv().unwrap_or_else(|_| {
-                Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize)
-            });
-            analysis_block.clear();
+            let mut analysis_block =
+                if self.analysis_enabled.load(Ordering::Acquire) {
+                    Some(self.analysis_recycle_rx.try_recv().unwrap_or_else(|_| {
+                        Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize)
+                    }))
+                } else {
+                    None
+                };
+            if let Some(block) = analysis_block.as_mut() {
+                block.clear();
+            }
             let mut ended = false;
 
             for _ in 0..DECODE_BLOCK_FRAMES {
@@ -289,20 +301,26 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                         self.start_ramp_frames_remaining -= 1;
                     }
                     block.extend_from_slice(&frame);
-                    analysis_block.extend_from_slice(&frame);
+                    if let Some(block) = analysis_block.as_mut() {
+                        block.extend_from_slice(&frame);
+                    }
                 }
             }
 
             let pushed = block.is_empty() || self.output.push_block(block, self.stop_flag.as_ref());
             let generation_current = self.output.generation() == generation;
 
-            if pushed && generation_current && !analysis_block.is_empty() {
-                let _ = self.analysis_tx.send(AnalysisCommand::Pcm {
-                    samples: analysis_block,
-                    channels: self.output_channels,
-                    sample_rate: self.output_sample_rate,
-                    recycle: Some(self.analysis_recycle_tx.clone()),
-                });
+            if pushed && generation_current && self.analysis_enabled.load(Ordering::Acquire) {
+                if let Some(analysis_block) = analysis_block.take() {
+                    if !analysis_block.is_empty() {
+                        let _ = self.analysis_tx.send(AnalysisCommand::Pcm {
+                            samples: analysis_block,
+                            channels: self.output_channels,
+                            sample_rate: self.output_sample_rate,
+                            recycle: Some(self.analysis_recycle_tx.clone()),
+                        });
+                    }
+                }
             }
 
             if ended {
@@ -401,11 +419,22 @@ struct FrameConverter {
     input_channels: usize,
     output_channels: usize,
     matrix: Vec<Vec<(usize, f32)>>,
-    current_frame: Option<Vec<f32>>,
-    next_frame: Option<Vec<f32>>,
+    /// Reused scratch buffers (capacity == input_channels). They are swapped,
+    /// never reallocated, so the per-frame hot path performs zero heap
+    /// allocations regardless of how long playback runs.
+    current_frame: Vec<f32>,
+    next_frame: Vec<f32>,
+    has_current: bool,
+    has_next: bool,
     reached_end: bool,
     frac: f64,
     step: f64,
+    /// `true` when input and output sample rates match, letting us skip the
+    /// linear-interpolation resampler (and its lookahead frame) entirely.
+    resample: bool,
+    /// `true` when channels map 1:1 (identity matrix), letting the no-resample
+    /// path read straight into the output frame with no matrix mixing.
+    passthrough: bool,
 }
 
 impl FrameConverter {
@@ -418,17 +447,29 @@ impl FrameConverter {
     ) -> Self {
         let input_channels = input_channels.max(1) as usize;
         let output_channels = output_channels.max(1) as usize;
-        let step = input_sample_rate.max(1) as f64 / output_sample_rate.max(1) as f64;
+        let input_sample_rate = input_sample_rate.max(1);
+        let output_sample_rate = output_sample_rate.max(1);
+        let step = input_sample_rate as f64 / output_sample_rate as f64;
+        let matrix = build_mix_matrix(input_channels, output_channels);
+        let passthrough = input_channels == output_channels
+            && matrix
+                .iter()
+                .enumerate()
+                .all(|(out, row)| row.len() == 1 && row[0].0 == out && row[0].1 == 1.0);
         Self {
             source,
             input_channels,
             output_channels,
-            matrix: build_mix_matrix(input_channels, output_channels),
-            current_frame: None,
-            next_frame: None,
+            matrix,
+            current_frame: Vec::with_capacity(input_channels),
+            next_frame: Vec::with_capacity(input_channels),
+            has_current: false,
+            has_next: false,
             reached_end: false,
             frac: 0.0,
             step,
+            resample: input_sample_rate != output_sample_rate,
+            passthrough,
         }
     }
 
@@ -439,77 +480,127 @@ impl FrameConverter {
     }
 
     fn reset(&mut self) {
-        self.current_frame = None;
-        self.next_frame = None;
+        self.has_current = false;
+        self.has_next = false;
         self.reached_end = false;
         self.frac = 0.0;
+        self.current_frame.clear();
+        self.next_frame.clear();
     }
 
     fn next_frame(&mut self, output: &mut [f32]) -> Option<()> {
         debug_assert_eq!(output.len(), self.output_channels);
-        if self.current_frame.is_none() {
-            self.current_frame = Some(self.read_input_frame()?);
+
+        if !self.resample {
+            // No sample-rate conversion: one input frame maps to one output frame.
+            if self.passthrough {
+                // Hottest path (e.g. stereo file → stereo device): pull straight
+                // into the output frame — no buffering, no matrix, no alloc.
+                for slot in output.iter_mut() {
+                    *slot = self.source.next()?;
+                }
+                return Some(());
+            }
+            if !read_input_frame(self.source.as_mut(), self.input_channels, &mut self.current_frame)
+            {
+                return None;
+            }
+            apply_mix_matrix(&self.matrix, &self.current_frame, output);
+            return Some(());
         }
-        if self.next_frame.is_none() && !self.reached_end {
-            match self.read_input_frame() {
-                Some(frame) => self.next_frame = Some(frame),
-                None => self.reached_end = true,
+
+        // Linear-interpolation resampling path.
+        if !self.has_current {
+            if !read_input_frame(self.source.as_mut(), self.input_channels, &mut self.current_frame)
+            {
+                return None;
+            }
+            self.has_current = true;
+        }
+        if !self.has_next && !self.reached_end {
+            if read_input_frame(self.source.as_mut(), self.input_channels, &mut self.next_frame) {
+                self.has_next = true;
+            } else {
+                self.reached_end = true;
             }
         }
 
         self.mix_current(output);
 
-        if self.reached_end && self.next_frame.is_none() {
-            self.current_frame = None;
+        if self.reached_end && !self.has_next {
+            self.has_current = false;
             return Some(());
         }
 
         self.frac += self.step;
         while self.frac >= 1.0 {
             self.frac -= 1.0;
-            if let Some(next) = self.next_frame.take() {
-                self.current_frame = Some(next);
-            } else {
-                self.current_frame = None;
-                break;
-            }
-
-            match self.read_input_frame() {
-                Some(frame) => self.next_frame = Some(frame),
-                None => {
+            if self.has_next {
+                std::mem::swap(&mut self.current_frame, &mut self.next_frame);
+                self.has_next = false;
+                if read_input_frame(self.source.as_mut(), self.input_channels, &mut self.next_frame)
+                {
+                    self.has_next = true;
+                } else {
                     self.reached_end = true;
-                    break;
                 }
+            } else {
+                self.has_current = false;
+                break;
             }
         }
 
         Some(())
     }
 
-    fn read_input_frame(&mut self) -> Option<Vec<f32>> {
-        let mut frame = Vec::with_capacity(self.input_channels);
-        for _ in 0..self.input_channels {
-            frame.push(self.source.next()?);
-        }
-        Some(frame)
-    }
-
     fn mix_current(&self, output: &mut [f32]) {
-        let current = self.current_frame.as_ref().expect("current frame exists");
-        let next = self.next_frame.as_ref();
+        let current = &self.current_frame;
         let frac = self.frac as f32;
 
-        for (out, row) in output.iter_mut().zip(&self.matrix) {
-            let mut mixed = 0.0;
-            for &(input, gain) in row {
-                let sample = match next {
-                    Some(next) => current[input] + (next[input] - current[input]) * frac,
-                    None => current[input],
-                };
-                mixed += sample * gain;
+        if self.has_next {
+            let next = &self.next_frame;
+            for (out, row) in output.iter_mut().zip(&self.matrix) {
+                let mut mixed = 0.0;
+                for &(input, gain) in row {
+                    let sample = current[input] + (next[input] - current[input]) * frac;
+                    mixed += sample * gain;
+                }
+                *out = mixed;
             }
-            *out = mixed;
+        } else {
+            apply_mix_matrix(&self.matrix, current, output);
         }
+    }
+}
+
+/// Pull one interleaved input frame from `source` into `buf` (reusing its
+/// capacity). Returns `false` if the source ends, leaving any partial frame to
+/// be discarded by the caller — matching rodio's frame-aligned EOF behaviour.
+#[inline]
+fn read_input_frame(
+    source: &mut (dyn Source<Item = f32> + Send),
+    channels: usize,
+    buf: &mut Vec<f32>,
+) -> bool {
+    buf.clear();
+    for _ in 0..channels {
+        match source.next() {
+            Some(sample) => buf.push(sample),
+            None => return false,
+        }
+    }
+    true
+}
+
+/// Apply the channel mix matrix for a single frame (no interpolation).
+#[inline]
+fn apply_mix_matrix(matrix: &[Vec<(usize, f32)>], frame: &[f32], output: &mut [f32]) {
+    for (out, row) in output.iter_mut().zip(matrix) {
+        let mut mixed = 0.0;
+        for &(input, gain) in row {
+            mixed += frame[input] * gain;
+        }
+        *out = mixed;
     }
 }
 

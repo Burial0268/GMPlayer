@@ -5,5 +5,5 @@ import { __wbg_set_wasm } from "./gmplayer_audio_backend_bg.js";
 __wbg_set_wasm(wasm);
 
 export {
-    LFOptionsJs, WasmAudioBackend, WasmAudioProcessor
+    DecodedAudioJs, LFOptionsJs, WasmAudioBackend, WasmAudioProcessor
 } from "./gmplayer_audio_backend_bg.js";

@@ -67,9 +67,7 @@ export function initializeNowPlayingControls(): Promise<void | undefined> {
   return call("initialize");
 }
 
-export function updateNowPlayingState(
-  req: NowPlayingStateRequest,
-): Promise<void | undefined> {
+export function updateNowPlayingState(req: NowPlayingStateRequest): Promise<void | undefined> {
   return call("update_state", {
     payload: {
       title: req.title,
@@ -133,4 +131,3 @@ export async function listenNowPlayingAction(
     return () => {};
   }
 }
-
