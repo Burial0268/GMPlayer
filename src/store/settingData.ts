@@ -14,6 +14,7 @@ interface SpringParams {
 
 interface SettingDataState {
   theme: "light" | "dark";
+  themeMode: "light" | "dark" | "system";
   themeAuto: boolean;
   themeType: string;
   themeData: Record<string, any>;
@@ -87,6 +88,7 @@ const useSettingDataStore = defineStore("settingData", {
   state: (): SettingDataState => {
     return {
       theme: "light",
+      themeMode: "system",
       themeAuto: true,
       themeType: "red",
       themeData: {},
@@ -167,6 +169,8 @@ const useSettingDataStore = defineStore("settingData", {
       const message = isLightMode ? getLanguageData("lightMode") : getLanguageData("darkMode");
       const icon = isLightMode ? WbSunnyFilled : DarkModeFilled;
       this.theme = value;
+      this.themeMode = value;
+      this.themeAuto = false;
       $message.info(message, {
         icon: () => h(NIcon, null, { default: () => h(icon) }),
       });
@@ -187,6 +191,9 @@ const useSettingDataStore = defineStore("settingData", {
             const parsed = JSON.parse(raw);
             if ("useLyricAtlasAPI" in parsed && !("useTTMLRepo" in parsed)) {
               store.useTTMLRepo = parsed.useLyricAtlasAPI;
+            }
+            if (!("themeMode" in parsed)) {
+              store.themeMode = parsed.themeAuto ? "system" : parsed.theme;
             }
           } catch {
             /* ignore */
