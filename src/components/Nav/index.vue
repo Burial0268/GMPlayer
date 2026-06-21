@@ -58,7 +58,6 @@ const toggleTheme = () => {
   } else {
     setting.setSiteTheme("light");
   }
-  setting.themeAuto = false;
 };
 </script>
 

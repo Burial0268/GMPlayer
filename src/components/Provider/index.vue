@@ -60,7 +60,41 @@ const themeOverrides = ref(null);
 // 明暗切换
 const theme = ref(null);
 const themeColorMeta = document.querySelector('meta[name="theme-color"]');
-const changeTheme = () => {
+let themeReady = false;
+
+const prefersReducedMotion = () =>
+  window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
+
+const runThemeTransition = (apply) => {
+  if (!themeReady || prefersReducedMotion()) {
+    apply();
+    themeReady = true;
+    return;
+  }
+
+  const root = document.documentElement;
+  root.classList.add("theme-transitioning");
+
+  if (document.startViewTransition) {
+    const transition = document.startViewTransition(apply);
+    transition.finished.finally(() => {
+      root.classList.remove("theme-transitioning");
+    });
+    return;
+  }
+
+  requestAnimationFrame(() => {
+    apply();
+    window.setTimeout(() => {
+      root.classList.remove("theme-transitioning");
+    }, 260);
+  });
+};
+
+const applyTheme = () => {
+  document.documentElement.dataset.theme = setting.getSiteTheme;
+  document.documentElement.style.colorScheme = setting.getSiteTheme;
+
   if (setting.getSiteTheme === "light") {
     theme.value = null;
     themeColorMeta?.setAttribute("content", "#f2f2f4");
@@ -108,10 +142,26 @@ const changeTheme = () => {
   }
 };
 
+const changeTheme = () => {
+  runThemeTransition(applyTheme);
+};
+
 // 根据系统决定明暗切换
 const osThemeChange = (val) => {
-  if (setting.themeAuto) {
+  if (setting.themeMode === "system" || setting.themeAuto) {
+    setting.themeMode = "system";
+    setting.themeAuto = true;
     setting.theme = val === "dark" ? "dark" : "light";
+  }
+};
+
+const applyThemeMode = (mode) => {
+  if (mode === "system") {
+    setting.themeAuto = true;
+    setting.theme = osThemeRef.value === "dark" ? "dark" : "light";
+  } else {
+    setting.themeAuto = false;
+    setting.theme = mode === "dark" ? "dark" : "light";
   }
 };
 
@@ -175,6 +225,25 @@ watch(
   },
 );
 
+watch(
+  () => setting.themeMode,
+  (val) => {
+    applyThemeMode(val);
+  },
+);
+
+watch(
+  () => setting.themeAuto,
+  (val) => {
+    if (val) {
+      setting.themeMode = "system";
+      osThemeChange(osThemeRef.value);
+    } else if (setting.themeMode === "system") {
+      setting.themeMode = setting.theme;
+    }
+  },
+);
+
 // 监听主题色变化
 watch(
   () => setting.themeType,
@@ -186,8 +255,38 @@ watch(
 );
 
 onMounted(() => {
+  applyThemeMode(setting.themeMode ?? (setting.themeAuto ? "system" : setting.theme));
   changeTheme();
   changeThemeColor(setting.themeType);
-  osThemeChange(osThemeRef.value);
 });
 </script>
+
+<style lang="scss">
+@media (prefers-reduced-motion: no-preference) {
+  html.theme-transitioning,
+  html.theme-transitioning body,
+  html.theme-transitioning #app,
+  html.theme-transitioning .n-card,
+  html.theme-transitioning .n-layout,
+  html.theme-transitioning .n-layout-sider,
+  html.theme-transitioning .n-layout-header,
+  html.theme-transitioning .n-button,
+  html.theme-transitioning .n-input,
+  html.theme-transitioning .n-select,
+  html.theme-transitioning .n-modal,
+  html.theme-transitioning .n-drawer,
+  html.theme-transitioning .n-popover {
+    transition:
+      background-color 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      border-color 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      box-shadow 240ms cubic-bezier(0.22, 1, 0.36, 1),
+      color 180ms cubic-bezier(0.22, 1, 0.36, 1) !important;
+  }
+
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: 260ms;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+</style>

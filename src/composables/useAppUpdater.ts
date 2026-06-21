@@ -1,4 +1,4 @@
-import { computed, reactive } from "vue";
+import { computed, markRaw, reactive } from "vue";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { isTauri } from "@/utils/tauri";
 
@@ -25,6 +25,7 @@ const state = reactive({
 });
 
 let activeCheck: Promise<Update | null> | null = null;
+let activeInstall: Promise<boolean> | null = null;
 
 // Download speed tracking (smoothed bytes/sec) — kept outside reactive state
 // so frequent updates during download don't trigger extra reactivity churn.
@@ -42,7 +43,16 @@ const resetDownloadStats = () => {
 const normalizeError = (error: unknown) => {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
+  if (typeof error === "object" && error && "message" in error) {
+    return String((error as { message?: unknown }).message ?? error);
+  }
   return String(error ?? "");
+};
+
+const reportUpdaterError = (phase: string, error: unknown) => {
+  const message = normalizeError(error);
+  console.error(`[app-updater] ${phase} failed:`, error);
+  return message;
 };
 
 const releaseUpdate = async () => {
@@ -85,7 +95,7 @@ export function useAppUpdater() {
         state.lastCheckedAt = Date.now();
         if (update) {
           await releaseUpdate();
-          state.update = update;
+          state.update = markRaw(update);
           state.status = "available";
         } else {
           await releaseUpdate();
@@ -94,7 +104,7 @@ export function useAppUpdater() {
         return update;
       })
       .catch((error) => {
-        state.error = normalizeError(error);
+        state.error = reportUpdaterError("check", error);
         state.status = options.silent ? "idle" : "error";
         return null;
       })
@@ -106,49 +116,57 @@ export function useAppUpdater() {
   };
 
   const installAvailableUpdate = async () => {
-    const update = state.update ?? (await checkForUpdate());
-    if (!update) return false;
+    if (activeInstall) return activeInstall;
 
-    state.error = "";
-    state.status = "downloading";
-    resetDownloadStats();
+    activeInstall = (async () => {
+      const update = state.update ?? (await checkForUpdate());
+      if (!update) return false;
 
-    try {
-      await update.downloadAndInstall((event: DownloadEvent) => {
-        if (event.event === "Started") {
-          state.status = "downloading";
-          state.contentLength = event.data.contentLength ?? 0;
-          state.downloadedBytes = 0;
-          state.downloadSpeed = 0;
-          speedAnchorAt = Date.now();
-          speedAnchorBytes = 0;
-        } else if (event.event === "Progress") {
-          state.downloadedBytes += event.data.chunkLength;
-          const now = Date.now();
-          const elapsed = now - speedAnchorAt;
-          // Sample roughly 4×/sec and smooth with an EMA to avoid a jittery readout.
-          if (speedAnchorAt && elapsed >= 250) {
-            const instSpeed = ((state.downloadedBytes - speedAnchorBytes) / elapsed) * 1000;
-            state.downloadSpeed = state.downloadSpeed
-              ? state.downloadSpeed * 0.6 + instSpeed * 0.4
-              : instSpeed;
-            speedAnchorAt = now;
-            speedAnchorBytes = state.downloadedBytes;
+      state.error = "";
+      state.status = "downloading";
+      resetDownloadStats();
+
+      try {
+        await update.downloadAndInstall((event: DownloadEvent) => {
+          if (event.event === "Started") {
+            state.status = "downloading";
+            state.contentLength = event.data.contentLength ?? 0;
+            state.downloadedBytes = 0;
+            state.downloadSpeed = 0;
+            speedAnchorAt = Date.now();
+            speedAnchorBytes = 0;
+          } else if (event.event === "Progress") {
+            state.downloadedBytes += event.data.chunkLength;
+            const now = Date.now();
+            const elapsed = now - speedAnchorAt;
+            // Sample roughly 4x/sec and smooth with an EMA to avoid a jittery readout.
+            if (speedAnchorAt && elapsed >= 250) {
+              const instSpeed = ((state.downloadedBytes - speedAnchorBytes) / elapsed) * 1000;
+              state.downloadSpeed = state.downloadSpeed
+                ? state.downloadSpeed * 0.6 + instSpeed * 0.4
+                : instSpeed;
+              speedAnchorAt = now;
+              speedAnchorBytes = state.downloadedBytes;
+            }
+          } else if (event.event === "Finished") {
+            state.status = "installing";
+            state.downloadSpeed = 0;
           }
-        } else if (event.event === "Finished") {
-          state.status = "installing";
-          state.downloadSpeed = 0;
-        }
-      });
-      state.installedVersion = update.version;
-      state.status = "installed";
-      await releaseUpdate();
-      return true;
-    } catch (error) {
-      state.error = normalizeError(error);
-      state.status = "error";
-      return false;
-    }
+        });
+        state.installedVersion = update.version;
+        state.status = "installed";
+        await releaseUpdate();
+        return true;
+      } catch (error) {
+        state.error = reportUpdaterError("install", error);
+        state.status = "error";
+        return false;
+      }
+    })().finally(() => {
+      activeInstall = null;
+    });
+
+    return activeInstall;
   };
 
   return {

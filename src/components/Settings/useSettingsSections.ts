@@ -1,6 +1,5 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { useOsTheme } from "naive-ui";
 import { settingStore, userStore } from "@/store";
 import { isTauri } from "@/utils/tauri";
 import { isWindowsTauri, windowManager } from "@/utils/tauri/windowManager";
@@ -17,7 +16,6 @@ export const SETTINGS_SECTION_ALIASES: Record<string, string> = {
 export function useSettingsSections() {
   const setting = settingStore();
   const user = userStore();
-  const osThemeRef = useOsTheme();
   const { locale, t } = useI18n();
   const hasUnmServer = !!import.meta.env.VITE_UNM_API;
 
@@ -26,11 +24,6 @@ export function useSettingsSections() {
     locale.value = value;
     document.documentElement.setAttribute("lang", value);
     $message?.success(t("setting.changeLanguage", { name: value }));
-  };
-
-  const followSystemTheme = (value: unknown) => {
-    if (!value) return;
-    setting.theme = osThemeRef.value === "dark" ? "dark" : "light";
   };
 
   const closeTaskbarLyricsWhenDisabled = (enabled: unknown) => {
@@ -62,22 +55,14 @@ export function useSettingsSections() {
           onUpdate: changeLanguage,
         },
         {
-          key: "theme",
+          key: "themeMode",
           label: "setting.theme",
           control: "select",
           options: [
             { label: "nav.avatar.light", value: "light" },
             { label: "nav.avatar.dark", value: "dark" },
+            { label: "setting.themeModeSystem", value: "system" },
           ],
-          onUpdate: () => {
-            setting.themeAuto = false;
-          },
-        },
-        {
-          key: "themeAuto",
-          label: "setting.themeAuto",
-          control: "switch",
-          onUpdate: followSystemTheme,
         },
       ],
     },

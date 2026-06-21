@@ -367,6 +367,7 @@ const messages: Record<string, unknown> = {
     language: "Language",
     changeLanguage: "Language has been switched to {name}",
     theme: "Light/Dark Mode",
+    themeModeSystem: "Follow System",
     themeAuto: "Follow System Light/Dark Mode",
     autoSignIn: "Daily Check-in",
     autoSignInTip: "Automatically perform daily check-in",

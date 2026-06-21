@@ -237,7 +237,7 @@ const handleCheckUpdate = async () => {
   if (update) {
     $message?.success(t("setting.updateAvailableTip", { version: update.version }));
   } else if (updaterState.status === "error") {
-    $message?.error(t("setting.updateFailed"));
+    $message?.error(updaterState.error || t("setting.updateFailed"));
   } else {
     $message?.success(t("setting.noUpdate"));
   }
@@ -256,7 +256,7 @@ const handleInstallUpdate = () => {
       if (installed) {
         $message?.success(t("setting.updateInstalled"));
       } else {
-        $message?.error(t("setting.updateFailed"));
+        $message?.error(updaterState.error || t("setting.updateFailed"));
       }
     },
   });

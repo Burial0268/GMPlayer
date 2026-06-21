@@ -366,6 +366,7 @@ const messages: Record<string, unknown> = {
     language: "语言",
     changeLanguage: "语言已切换为 {name}",
     theme: "明暗模式",
+    themeModeSystem: "遵循系统",
     themeAuto: "明暗模式跟随系统",
     autoSignIn: "每日签到",
     autoSignInTip: "是否自动进行每日签到",
