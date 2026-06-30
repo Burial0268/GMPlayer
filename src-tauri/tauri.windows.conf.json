@@ -1,0 +1,17 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "bundle": {
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "nsis": {
+        "displayLanguageSelector": true
+      },
+      "wix": {
+        "language": ["zh-CN", "en-US"]
+      }
+    }
+  }
+}
