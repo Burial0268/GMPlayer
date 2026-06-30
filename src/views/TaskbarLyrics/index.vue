@@ -16,7 +16,17 @@
       @mousemove="handleMouseMove"
       @mouseleave="handleMouseLeave"
     >
-      <div class="cover-wrapper">
+      <div
+        class="cover-wrapper"
+        role="button"
+        tabindex="0"
+        :title="$t('nav.backToMain')"
+        :aria-label="$t('nav.backToMain')"
+        @click.stop.prevent="openMain"
+        @mouseup.left.stop.prevent="openMain"
+        @keydown.enter.stop.prevent="openMain"
+        @keydown.space.stop.prevent="openMain"
+      >
         <Transition name="cover-fade" mode="out-in">
           <img
             v-if="bridge.state.coverUrl"
@@ -84,6 +94,7 @@ import IconPlay from "@/components/Player/icons/IconPlay.vue";
 import IconRewind from "@/components/Player/icons/IconRewind.vue";
 import "@/components/Player/icons/icon-animations.css";
 import { usePlayerBridge } from "@/utils/tauri/playerBridge";
+import { windowManager } from "@/utils/tauri/windowManager";
 import type { AMLLLine } from "@/utils/LyricsProcessor";
 
 type Orientation = "horizontal" | "vertical";
@@ -122,6 +133,7 @@ const unlisteners: (() => void)[] = [];
 let rafId = 0;
 let timeAnchorMs = 0;
 let perfAnchor = 0;
+let lastOpenMainAt = 0;
 
 const singleLineMode = computed(() => lineMode.value === "single");
 const lyricLines = computed<AMLLLine[]>(() => bridge.lyricData.value?.amllLines ?? []);
@@ -384,6 +396,19 @@ function handleNext() {
   bridge.nextTrack();
 }
 
+/** Clicking the album cover brings the main window to the foreground. */
+async function openMain() {
+  const now = performance.now();
+  if (now - lastOpenMainAt < 300) return;
+  lastOpenMainAt = now;
+
+  try {
+    await windowManager.focusWindow("main");
+  } catch (error) {
+    console.warn("[TaskbarLyrics] Could not focus main window:", error);
+  }
+}
+
 watch(
   () => bridge.currentTime.value,
   (sec) => updateTimeAnchor(sec),
@@ -565,6 +590,24 @@ onUnmounted(() => {
   border-radius: 6px;
   overflow: hidden;
   background: var(--cover-bg);
+  cursor: pointer;
+  outline: none;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
+}
+
+.cover-wrapper:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--text-primary) 55%, transparent);
+}
+
+.cover-wrapper:active {
+  transform: scale(0.97);
+}
+
+.cover-wrapper:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--text-primary) 70%, transparent);
 }
 
 .taskbar-lyric__container[data-orientation="vertical"] .cover-wrapper {

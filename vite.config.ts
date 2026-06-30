@@ -206,6 +206,9 @@ export default defineConfig(({ mode }) => {
       open: true,
       http: true,
       ssr: true,
+      watch: {
+        ignored: ['**/src-tauri/**'],
+      },
       headers: {
         "Cross-Origin-Opener-Policy": "same-origin",
         "Cross-Origin-Embedder-Policy": "credentialless",

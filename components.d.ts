@@ -131,6 +131,7 @@ declare module 'vue' {
     RouterView: typeof import('vue-router')['RouterView']
     SearchInp: typeof import('./src/components/SearchInp/index.vue')['default']
     SettingsAppUpdate: typeof import('./src/components/Settings/SettingsAppUpdate.vue')['default']
+    SettingsDsp: typeof import('./src/components/Settings/SettingsDsp.vue')['default']
     SettingsItem: typeof import('./src/components/Settings/SettingsItem.vue')['default']
     SettingsPanel: typeof import('./src/components/Settings/SettingsPanel.vue')['default']
     SettingsWorkspace: typeof import('./src/components/Settings/SettingsWorkspace.vue')['default']
@@ -141,5 +142,6 @@ declare module 'vue' {
     Spectrum: typeof import('./src/components/Player/Spectrum.vue')['default']
     TitleBar: typeof import('./src/components/TitleBar/index.vue')['default']
     VideoLists: typeof import('./src/components/DataList/VideoLists.vue')['default']
+    WindowControls: typeof import('./src/components/TitleBar/WindowControls.vue')['default']
   }
 }

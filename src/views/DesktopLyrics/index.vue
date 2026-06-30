@@ -177,56 +177,65 @@
           :key="line.key"
           :ref="(el) => setLyricLineRef(el as HTMLElement, line.key)"
           class="lyric-line"
-          :class="{ current: line.isCurrent, title: line.isTitle }"
-          :style="{
-            top: getLineTop(index),
-            fontSize: index > 0 ? '0.8em' : '1em',
-          }"
+          :class="{ current: line.isTimelineActive, primary: line.isCurrent, title: line.isTitle }"
+          :style="getLineStyle(line, index)"
           @click="seekToLine(line)"
         >
-          <div class="lyric-inner" :style="lyricTextStyle">
-            <template v-if="line.isCurrent && line.words.length > 1 && bridge.settings.showYrc">
-              <span v-for="(word, wi) in line.words" :key="wi" class="lyric-word">
-                <span class="word-bg">{{ word.word }}</span>
-                <span class="word-fill" :style="getWordStyle(word)">{{ word.word }}</span>
-              </span>
-            </template>
-            <template v-else>
-              <LyricScroll
-                class="lyric-scroll-line"
-                :text="line.text"
-                :progress="line.isCurrent ? lineScrollProgress(line) : 0"
-                :align="scrollAlign"
-              >
-                <span class="lyric-text" :class="{ current: line.isCurrent }">{{ line.text }}</span>
-              </LyricScroll>
-            </template>
+          <div class="lyric-inner" :style="getLyricTextStyle(line)">
+            <LyricScroll
+              class="lyric-scroll-line"
+              :text="line.text"
+              :progress="lineScrollProgress(line)"
+              :align="scrollAlign"
+              :end-padding="DESKTOP_SCROLL_END_PADDING"
+            >
+              <template v-if="shouldRenderWordProgress(line)">
+                <span
+                  v-for="(word, wi) in line.words"
+                  :key="wi"
+                  class="lyric-word"
+                  :data-word="word.word"
+                >
+                  <span class="word-bg">{{ word.word }}</span>
+                  <span class="word-fill" :style="getWordStyle(word)">{{ word.word }}</span>
+                </span>
+              </template>
+              <template v-else>
+                <span class="lyric-text" :class="{ current: line.isTimelineActive }">
+                  {{ line.text }}
+                </span>
+              </template>
+            </LyricScroll>
           </div>
-          <div
-            v-if="line.translatedLyric && bridge.settings.showTransl"
+          <LyricScroll
+            v-if="line.isCurrent && line.translatedLyric && bridge.settings.showTransl"
             class="lyric-tran"
-            :style="tranStyle"
-          >
-            {{ line.translatedLyric }}
-          </div>
-          <div
-            v-if="line.romanLyric && bridge.settings.showRoma"
+            :style="getTranStyle(line)"
+            :text="line.translatedLyric"
+            :progress="lineScrollProgress(line)"
+            :align="scrollAlign"
+            :end-padding="DESKTOP_SCROLL_END_PADDING"
+          />
+          <LyricScroll
+            v-if="line.isCurrent && line.romanLyric && bridge.settings.showRoma"
             class="lyric-tran lyric-roma"
-            :style="tranStyle"
-          >
-            {{ line.romanLyric }}
-          </div>
+            :style="getTranStyle(line)"
+            :text="line.romanLyric"
+            :progress="lineScrollProgress(line)"
+            :align="scrollAlign"
+            :end-padding="DESKTOP_SCROLL_END_PADDING"
+          />
         </div>
       </TransitionGroup>
       <div
         v-else-if="displayState === 'noLyrics'"
         ref="noLyricsRef"
         class="no-lyrics"
-        :style="lyricTextStyle"
+        :style="noLyricsTextStyle"
       >
         <span class="song-title">{{ $t("desktopLyrics.pureMusic") }}</span>
       </div>
-      <div v-else ref="noLyricsRef" class="no-lyrics" :style="lyricTextStyle">
+      <div v-else ref="noLyricsRef" class="no-lyrics" :style="noLyricsTextStyle">
         <span class="song-title">{{ state.title || $t("desktopLyrics.noLyrics") }}</span>
         <span v-if="state.artist" class="artist-name">{{ state.artist }}</span>
       </div>
@@ -251,6 +260,7 @@ const LYRIC_LOOKAHEAD = 300;
 /** Line switching needs a smaller lookahead than per-word fill to avoid feeling late. */
 const LINE_SWITCH_LOOKAHEAD = 180;
 const TIME_SYNC_THRESHOLD = 80;
+const DESKTOP_SCROLL_END_PADDING = 14;
 
 // ── Lyric Data ────────────────────────────────────────────────────────
 
@@ -272,26 +282,6 @@ function getLyricPayloadKey(data: typeof bridge.lyricData.value) {
     last?.endTime ?? 0,
   ].join(":");
 }
-
-watch(
-  () => bridge.lyricData.value,
-  (data) => {
-    const nextKey = getLyricPayloadKey(data);
-    const lyricChanged = nextKey !== lyricPayloadKey;
-    lyricPayloadKey = nextKey;
-
-    if (data?.amllLines && data.amllLines.length > 0) {
-      amllLines.value = data.amllLines;
-    } else {
-      amllLines.value = [];
-    }
-
-    if (lyricChanged) {
-      songGeneration.value++;
-    }
-  },
-  { immediate: true },
-);
 
 /** Falls back to next line's startTime when endTime is invalid */
 function getSafeEndTime(lines: AMLLLine[], idx: number): number {
@@ -323,6 +313,27 @@ function syncBridgeTime(sec: number, forceSnap = false) {
   lastTimePacketAt = now;
   interpolatedTimeMs.value = shouldSnap ? bridgeMs : predicted;
 }
+
+watch(
+  () => bridge.lyricData.value,
+  (data) => {
+    const nextKey = getLyricPayloadKey(data);
+    const lyricChanged = nextKey !== lyricPayloadKey;
+    lyricPayloadKey = nextKey;
+
+    if (data?.amllLines && data.amllLines.length > 0) {
+      amllLines.value = data.amllLines;
+    } else {
+      amllLines.value = [];
+    }
+
+    if (lyricChanged) {
+      songGeneration.value++;
+      syncBridgeTime(bridge.currentTime.value, true);
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   () => bridge.currentTime.value,
@@ -359,6 +370,7 @@ const currentLineIndex = computed(() => {
 interface VisibleLine {
   key: string;
   isCurrent: boolean;
+  isTimelineActive: boolean;
   words: AMLLWord[];
   text: string;
   translatedLyric: string;
@@ -373,6 +385,37 @@ function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
 }
 
+function buildVisibleLine(
+  lines: AMLLLine[],
+  index: number,
+  gen: number,
+  isCurrent: boolean,
+  isTimelineActive: boolean,
+): VisibleLine {
+  const line = lines[index];
+  return {
+    key: `${gen}-${index}`,
+    isCurrent,
+    isTimelineActive,
+    words: line.words,
+    text: line.words.map((w) => w.word).join(""),
+    translatedLyric: line.translatedLyric || "",
+    romanLyric: line.romanLyric || "",
+    lineStartTime: line.startTime,
+    lineEndTime: getSafeEndTime(lines, index),
+    lineIndex: index,
+    isTitle: false,
+  };
+}
+
+function hasVisibleSubLines(line: VisibleLine | undefined) {
+  return Boolean(
+    line &&
+    ((bridge.settings.showTransl && line.translatedLyric) ||
+      (bridge.settings.showRoma && line.romanLyric)),
+  );
+}
+
 const renderLyricLines = computed<VisibleLine[]>(() => {
   const lines = amllLines.value;
   if (!lines || lines.length === 0) return [];
@@ -385,6 +428,7 @@ const renderLyricLines = computed<VisibleLine[]>(() => {
     result.push({
       key: `${gen}-title`,
       isCurrent: true,
+      isTimelineActive: true,
       words: [],
       text: state.title || "",
       translatedLyric: state.artist || "",
@@ -397,42 +441,29 @@ const renderLyricLines = computed<VisibleLine[]>(() => {
     return result;
   }
 
-  // Current line
-  if (idx < lines.length) {
-    const line = lines[idx];
-    const endTime = getSafeEndTime(lines, idx);
-    result.push({
-      key: `${gen}-${idx}`,
-      isCurrent: true,
-      words: line.words,
-      text: line.words.map((w) => w.word).join(""),
-      translatedLyric: line.translatedLyric || "",
-      romanLyric: line.romanLyric || "",
-      lineStartTime: line.startTime,
-      lineEndTime: endTime,
-      lineIndex: idx,
-      isTitle: false,
-    });
+  if (idx >= lines.length) return result;
+
+  const currentLine = buildVisibleLine(lines, idx, gen, true, true);
+  const prevIdx = idx - 1;
+  const timelineMs = interpolatedTimeMs.value + LYRIC_LOOKAHEAD;
+  if (prevIdx >= 0) {
+    const prevEndTime = getSafeEndTime(lines, prevIdx);
+    const prevOverlapsCurrent = prevEndTime > currentLine.lineStartTime;
+    const prevStillRendering = timelineMs < prevEndTime;
+    const prevSettling = timelineMs < prevEndTime + PREVIOUS_LINE_SETTLE_MS;
+    if (prevOverlapsCurrent && prevSettling) {
+      result.push(buildVisibleLine(lines, prevIdx, gen, false, prevStillRendering));
+    }
   }
 
-  // Next line (double-line mode: only when translation is off)
-  if (!bridge.settings.showTransl) {
+  result.push(currentLine);
+
+  // Next line preview stays disabled when the primary line already needs room for
+  // translation or romanization; otherwise the bottom auxiliary line can overflow.
+  if (!hasVisibleSubLines(currentLine) && result.length < 2) {
     const nextIdx = idx + 1;
-    if (nextIdx < lines.length && result.length < 2) {
-      const line = lines[nextIdx];
-      const endTime = getSafeEndTime(lines, nextIdx);
-      result.push({
-        key: `${gen}-${nextIdx}`,
-        isCurrent: false,
-        words: line.words,
-        text: line.words.map((w) => w.word).join(""),
-        translatedLyric: line.translatedLyric || "",
-        romanLyric: line.romanLyric || "",
-        lineStartTime: line.startTime,
-        lineEndTime: endTime,
-        lineIndex: nextIdx,
-        isTitle: false,
-      });
+    if (nextIdx < lines.length) {
+      result.push(buildVisibleLine(lines, nextIdx, gen, false, false));
     }
   }
 
@@ -454,27 +485,146 @@ function getWordStyle(word: AMLLWord) {
   };
 }
 
+function shouldRenderWordProgress(line: VisibleLine) {
+  return (
+    !line.isTitle &&
+    bridge.settings.showYrc &&
+    line.words.length > 1 &&
+    (line.isTimelineActive || line.lineIndex < currentLineIndex.value)
+  );
+}
+
 // ── Font Size ─────────────────────────────────────────────────────────
 
-const fontSizeOffset = ref(0);
+const MIN_DESKTOP_FONT_SIZE = 16;
+const MAX_DESKTOP_FONT_SIZE = 96;
+const SECONDARY_LINE_SCALE = 0.8;
+const TRANSLATION_FONT_SCALE = 0.45;
+const MIN_TRANSLATION_FONT_SIZE = 9;
+const MAIN_LINE_HEIGHT = 1.18;
+const SUB_LINE_HEIGHT = 1.15;
+const PARALLEL_LINE_TOP_SCALE = 1.9;
+const PREVIOUS_LINE_SETTLE_MS = 620;
+const LINE_VERTICAL_PADDING = 8;
+const SUB_LINE_MARGIN_TOP = 2;
+const DESKTOP_SHELL_VERTICAL_PADDING = 24;
+const DESKTOP_HEADER_RESERVED_HEIGHT = 48;
+
 const windowHeight = ref(120);
+const fontSizeOffset = computed(() => bridge.settings.desktopLyricsFontSizeOffset ?? 0);
+
+function getSubLineCount(line: VisibleLine | undefined) {
+  if (!line || !line.isCurrent) return 0;
+  let count = 0;
+  if (bridge.settings.showTransl && line.translatedLyric) count++;
+  if (bridge.settings.showRoma && line.romanLyric) count++;
+  return count;
+}
+
+function getAvailableLyricHeight() {
+  return Math.max(
+    44,
+    windowHeight.value - DESKTOP_SHELL_VERTICAL_PADDING - DESKTOP_HEADER_RESERVED_HEIGHT,
+  );
+}
+
+function getDesiredTranslationFontSizeFor(baseFontSize: number) {
+  return Math.max(MIN_TRANSLATION_FONT_SIZE, Math.round(baseFontSize * TRANSLATION_FONT_SCALE));
+}
+
+function estimateLineHeight(baseFontSize: number, line: VisibleLine, subLineFontSize?: number) {
+  const mainFontSize = baseFontSize * getLineScale(line);
+  const subLineCount = getSubLineCount(line);
+  const resolvedSubLineFontSize = subLineFontSize ?? getDesiredTranslationFontSizeFor(baseFontSize);
+  return (
+    mainFontSize * MAIN_LINE_HEIGHT +
+    subLineCount * (resolvedSubLineFontSize * SUB_LINE_HEIGHT + SUB_LINE_MARGIN_TOP) +
+    LINE_VERTICAL_PADDING
+  );
+}
+
+function estimateLyricGroupHeight(baseFontSize: number, currentSubLineFontSize?: number) {
+  const visibleLines = renderLyricLines.value;
+  if (visibleLines.length === 0) return baseFontSize * MAIN_LINE_HEIGHT + LINE_VERTICAL_PADDING;
+
+  const currentIndex = Math.max(
+    0,
+    visibleLines.findIndex((line) => line.isCurrent),
+  );
+  const currentLine = visibleLines[currentIndex] ?? visibleLines[0];
+  const currentHeight = estimateLineHeight(baseFontSize, currentLine, currentSubLineFontSize);
+  if (visibleLines.length === 1) return currentHeight;
+
+  const secondaryLine = visibleLines[currentIndex === 0 ? 1 : 0] ?? currentLine;
+  const secondaryHeight = estimateLineHeight(
+    baseFontSize,
+    secondaryLine,
+    secondaryLine.isCurrent ? currentSubLineFontSize : undefined,
+  );
+  if (currentIndex === 0) {
+    return Math.max(currentHeight, baseFontSize * PARALLEL_LINE_TOP_SCALE + secondaryHeight);
+  }
+  return baseFontSize * PARALLEL_LINE_TOP_SCALE + currentHeight;
+}
 
 const localFontSize = computed(() => {
   const base = clamp(20 + (windowHeight.value - 100) * 0.3, 20, 80);
-  return clamp(Math.round(base + fontSizeOffset.value), 16, 96);
+  return clamp(
+    Math.round(base + fontSizeOffset.value),
+    MIN_DESKTOP_FONT_SIZE,
+    MAX_DESKTOP_FONT_SIZE,
+  );
+});
+
+const currentSubLineFontSize = computed(() => {
+  const visibleLines = renderLyricLines.value;
+  const currentIndex = visibleLines.findIndex((line) => line.isCurrent);
+  const currentLine = visibleLines[currentIndex];
+  const subLineCount = getSubLineCount(currentLine);
+  const desiredSize = getDesiredTranslationFontSizeFor(localFontSize.value);
+  if (!currentLine || subLineCount === 0) return desiredSize;
+
+  const availableHeight = getAvailableLyricHeight();
+  const currentTop = Math.max(0, currentIndex) * localFontSize.value * PARALLEL_LINE_TOP_SCALE;
+  const remainingForCurrent = Math.max(0, availableHeight - currentTop - LINE_VERTICAL_PADDING);
+  const mainHeight = localFontSize.value * MAIN_LINE_HEIGHT;
+  const remainingForSubLines =
+    remainingForCurrent - mainHeight - subLineCount * SUB_LINE_MARGIN_TOP;
+  const maxSubLineSize = Math.floor(remainingForSubLines / (subLineCount * SUB_LINE_HEIGHT));
+  return clamp(maxSubLineSize, MIN_TRANSLATION_FONT_SIZE, desiredSize);
+});
+
+const lyricGroupTopOffset = computed(() => {
+  const overflow =
+    estimateLyricGroupHeight(localFontSize.value, currentSubLineFontSize.value) -
+    getAvailableLyricHeight();
+  return overflow > 0 ? -Math.ceil(overflow) : 0;
 });
 
 function getLineTop(index: number) {
-  if (index === 0) return "0px";
-  return `${localFontSize.value * 1.9}px`;
+  return `${lyricGroupTopOffset.value + index * localFontSize.value * PARALLEL_LINE_TOP_SCALE}px`;
+}
+
+function getLineFontSize(line: VisibleLine) {
+  return Math.round(localFontSize.value);
+}
+
+function getLineScale(line: VisibleLine) {
+  return line.isCurrent || line.isTimelineActive ? 1 : SECONDARY_LINE_SCALE;
+}
+
+function getLineStyle(line: VisibleLine, index: number) {
+  return {
+    top: getLineTop(index),
+  };
 }
 
 function increaseFontSize() {
-  fontSizeOffset.value = Math.min(fontSizeOffset.value + 4, 40);
+  bridge.setDesktopLyricsFontSizeOffset(fontSizeOffset.value + 4);
 }
 
 function decreaseFontSize() {
-  fontSizeOffset.value = Math.max(fontSizeOffset.value - 4, -20);
+  bridge.setDesktopLyricsFontSizeOffset(fontSizeOffset.value - 4);
 }
 
 // ── Computed Styles ───────────────────────────────────────────────────
@@ -487,18 +637,37 @@ const inactiveColor = computed(() =>
   state.accentColor ? `rgba(${state.accentColor}, 0.35)` : "rgba(255, 255, 255, 0.35)",
 );
 
+const secondaryColor = computed(() =>
+  state.accentColor ? `rgba(${state.accentColor}, 0.55)` : "rgba(255, 255, 255, 0.55)",
+);
+
 const lyricTextStyle = computed(() => ({
-  fontSize: `${localFontSize.value}px`,
   fontWeight: bridge.settings.lyricFontWeight || "bold",
   fontFamily: bridge.settings.lyricFont || "HarmonyOS Sans SC",
   letterSpacing: bridge.settings.lyricLetterSpacing || "normal",
   "--active-color": accentColor.value,
   "--inactive-color": inactiveColor.value,
+  "--secondary-color": secondaryColor.value,
 }));
 
-const tranStyle = computed(() => ({
-  fontSize: `${Math.max(14, Math.round(localFontSize.value * 0.45))}px`,
+const noLyricsTextStyle = computed(() => ({
+  ...lyricTextStyle.value,
+  fontSize: `${localFontSize.value}px`,
 }));
+
+function getLyricTextStyle(line: VisibleLine) {
+  return {
+    ...lyricTextStyle.value,
+    fontSize: `${getLineFontSize(line)}px`,
+    transform: `scale(${getLineScale(line)})`,
+  };
+}
+
+function getTranStyle(line: VisibleLine) {
+  return {
+    fontSize: `${line.isCurrent ? currentSubLineFontSize.value : getDesiredTranslationFontSizeFor(getLineFontSize(line))}px`,
+  };
+}
 
 // ── Lyric Position / Alignment ────────────────────────────────────────
 
@@ -516,8 +685,8 @@ const animationsEnabled = computed(() => bridge.settings.showYrcAnimation !== fa
 // ── Display State ─────────────────────────────────────────────────────
 
 const displayState = computed(() => {
-  if (state.isLoading) return "loading";
   if (hasLyrics.value) return "hasLyrics";
+  if (state.isLoading) return "loading";
   return "noLyrics";
 });
 
@@ -1147,6 +1316,10 @@ onUnmounted(() => {
     opacity: 1;
   }
 
+  &.current:not(.primary) {
+    opacity: 0.78;
+  }
+
   &.title {
     cursor: default;
     pointer-events: none;
@@ -1165,6 +1338,9 @@ onUnmounted(() => {
 
 .lyric-inner {
   display: inline;
+  transform-origin: inherit;
+  transition: transform 0.6s cubic-bezier(0.55, 0, 0.1, 1);
+  will-change: transform;
   // Keep the main shadow on glyph-bearing spans. When it is inherited from the
   // full-width line container, clipped scrolling lines can look like a box shadow.
   --lyric-text-shadow:
@@ -1178,21 +1354,37 @@ onUnmounted(() => {
 .lyric-word {
   position: relative;
   display: inline-block;
+  isolation: isolate;
   vertical-align: baseline;
   // Prevent HTML from collapsing trailing spaces inside each word.
   // TTML lyrics rely on trailing spaces to separate words.
   white-space: pre;
+
+  &::before {
+    content: attr(data-word);
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 0;
+    color: transparent;
+    white-space: inherit;
+    text-shadow: var(--lyric-text-shadow);
+    pointer-events: none;
+  }
 }
 
 .word-bg {
+  position: relative;
+  z-index: 1;
   color: var(--inactive-color, rgba(255, 255, 255, 0.35));
-  text-shadow: var(--lyric-text-shadow);
+  text-shadow: none;
 }
 
 .word-fill {
   position: absolute;
   left: 0;
   top: 0;
+  z-index: 2;
   color: var(--active-color, rgb(255, 255, 255));
   text-shadow: none;
   will-change: clip-path;
@@ -1205,12 +1397,15 @@ onUnmounted(() => {
   text-shadow: var(--lyric-text-shadow);
 
   &:not(.current) {
-    color: rgba(255, 255, 255, 0.6);
+    color: var(--secondary-color, rgba(255, 255, 255, 0.55));
   }
 }
 
 // Translation line
 .lyric-tran {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   text-align: center;
   color: rgba(255, 255, 255, 0.7);
   margin-top: 2px;
@@ -1226,37 +1421,18 @@ onUnmounted(() => {
     system-ui,
     -apple-system,
     sans-serif;
+
+  &[data-scroll="true"] {
+    box-sizing: border-box;
+    padding-block: 0.5em;
+    padding-inline: 0;
+    margin-block: -0.5em 0;
+  }
 }
 
 // Romanization line
 .lyric-roma {
   font-style: italic;
-}
-
-// ── Lyric line transitions ────────────────────────────────────────────
-.lyric-slide-enter-active,
-.lyric-slide-leave-active {
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.lyric-slide-enter-from {
-  opacity: 0;
-  transform: translateY(100%);
-}
-
-.lyric-slide-leave-to {
-  opacity: 0;
-  transform: translateY(-100%);
-}
-
-.lyric-slide-move {
-  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-// Leaving elements need absolute positioning for FLIP animation
-.lyric-slide-leave-active {
-  position: absolute;
-  width: 100%;
 }
 
 // ── No animation mode ────────────────────────────────────────────────
@@ -1437,6 +1613,10 @@ onUnmounted(() => {
         opacity: 1;
       }
 
+      .ctrl-btn {
+        pointer-events: auto;
+      }
+
       .unlock-btn {
         pointer-events: auto;
       }
@@ -1484,32 +1664,36 @@ onUnmounted(() => {
     pointer-events: auto;
     transition:
       top 0.6s cubic-bezier(0.55, 0, 0.1, 1),
-      font-size 0.6s cubic-bezier(0.55, 0, 0.1, 1),
       color 0.6s cubic-bezier(0.55, 0, 0.1, 1),
-      opacity 0.6s cubic-bezier(0.55, 0, 0.1, 1),
-      transform 0.6s cubic-bezier(0.55, 0, 0.1, 1);
-    will-change: top, font-size, transform;
+      opacity 0.6s cubic-bezier(0.55, 0, 0.1, 1);
+    will-change: top;
     transform-origin: left center;
 
     &:not(.current) {
       opacity: 0.72;
       filter: none;
     }
+
+    &.current:not(.primary) {
+      opacity: 0.78;
+    }
   }
 
   .lyric-inner {
     display: block;
     width: 100%;
+    transform-origin: inherit;
   }
 
   .lyric-scroll-line {
     // Short lines (the common case) aren't clipped by LyricScroll, so their soft
     // drop-shadow renders as a halo hugging the glyphs. Long lines do clip while
-    // scrolling. Give the viewport room for the shadow so edge glyphs are not
-    // cropped into a rectangular shape.
+    // scrolling. Keep only vertical breathing room here; horizontal padding shifts
+    // the measured start edge and makes scrolling lines misalign with normal lines.
     &[data-scroll="true"] {
       box-sizing: border-box;
-      padding: 0.7em max(10px, 0.2em);
+      padding-block: 0.7em;
+      padding-inline: 0;
       margin-block: -0.7em;
     }
   }
@@ -1526,7 +1710,6 @@ onUnmounted(() => {
 
   &.no-animation {
     .lyric-line,
-    .lyric-slide-move,
     .lyric-slide-enter-active,
     .lyric-slide-leave-active {
       transition: none !important;
@@ -1534,26 +1717,26 @@ onUnmounted(() => {
   }
 }
 
-.lyric-slide-move,
-.lyric-slide-enter-active,
-.lyric-slide-leave-active {
+.desktop-lyric .lyric-container .lyric-line.lyric-slide-enter-active,
+.desktop-lyric .lyric-container .lyric-line.lyric-slide-leave-active {
   transition:
     transform 0.6s cubic-bezier(0.55, 0, 0.1, 1),
     opacity 0.6s cubic-bezier(0.55, 0, 0.1, 1);
   will-change: transform, opacity;
 }
 
-.lyric-slide-enter-from {
+.desktop-lyric .lyric-container .lyric-line.lyric-slide-enter-from {
   opacity: 0;
   transform: translateY(100%);
 }
 
-.lyric-slide-leave-to {
+.desktop-lyric .lyric-container .lyric-line.lyric-slide-leave-to {
   opacity: 0;
   transform: translateY(-100%);
 }
 
-.lyric-slide-leave-active {
+.desktop-lyric .lyric-container .lyric-line.lyric-slide-leave-active {
   position: absolute;
+  width: 100%;
 }
 </style>

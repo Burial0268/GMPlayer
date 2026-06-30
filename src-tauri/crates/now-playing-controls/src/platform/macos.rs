@@ -5,7 +5,7 @@ use block2::RcBlock;
 use objc2::{
     rc::Retained,
     runtime::{AnyObject, ProtocolObject},
-    AnyThread as _, Message as _,
+    AnyThread as _, ClassType as _, Message as _,
 };
 use objc2_app_kit::NSImage;
 use objc2_foundation::{NSArray, NSData, NSMutableDictionary, NSNumber, NSSize, NSString};
@@ -57,6 +57,17 @@ impl MacosImpl {
 
     fn store_token(&mut self, command: &MPRemoteCommand, token: Retained<AnyObject>) {
         self.target_tokens.push((command.retain(), token));
+    }
+
+    fn set_info_object<T>(&self, key: &'static NSString, object: Retained<T>)
+    where
+        T: objc2::ClassType + 'static,
+    {
+        let object: Retained<AnyObject> = object.into();
+        unsafe {
+            self.info
+                .setObject_forKey(&object, ProtocolObject::from_ref(key));
+        }
     }
 
     fn setup_event_listeners(&mut self, callback: &EventCallback) {
@@ -128,19 +139,21 @@ impl MacosImpl {
 
         let info_ctr = self.np_info_ctr.clone();
 
-        let block = RcBlock::new(move |_| -> MPRemoteCommandHandlerStatus {
-            let current_state = unsafe { info_ctr.playbackState() };
+        let block = RcBlock::new(
+            move |_: NonNull<MPRemoteCommandEvent>| -> MPRemoteCommandHandlerStatus {
+                let current_state = unsafe { info_ctr.playbackState() };
 
-            let event_type = if current_state == MPNowPlayingPlaybackState::Playing {
-                SystemMediaEventType::Pause
-            } else {
-                SystemMediaEventType::Play
-            };
+                let event_type = if current_state == MPNowPlayingPlaybackState::Playing {
+                    SystemMediaEventType::Pause
+                } else {
+                    SystemMediaEventType::Play
+                };
 
-            debug!(?event_type, "MPRemoteCommand Toggle 触发");
-            cb(SystemMediaEvent::new(event_type));
-            MPRemoteCommandHandlerStatus::Success
-        });
+                debug!(?event_type, "MPRemoteCommand Toggle 触发");
+                cb(SystemMediaEvent::new(event_type));
+                MPRemoteCommandHandlerStatus::Success
+            },
+        );
 
         unsafe {
             command.setEnabled(true);
@@ -171,7 +184,7 @@ impl MacosImpl {
         unsafe {
             command.setEnabled(true);
             let token = command.addTargetWithHandler(&block);
-            self.store_token(&command, token);
+            self.store_token(command.as_super(), token);
         }
     }
 
@@ -208,7 +221,7 @@ impl MacosImpl {
             command.setSupportedPlaybackRates(&rates);
 
             let token = command.addTargetWithHandler(&block);
-            self.store_token(&command, token);
+            self.store_token(command.as_super(), token);
         }
     }
 
@@ -232,7 +245,7 @@ impl MacosImpl {
         unsafe {
             command.setEnabled(true);
             let token = command.addTargetWithHandler(&block);
-            self.store_token(&command, token);
+            self.store_token(command.as_super(), token);
         }
     }
 
@@ -256,7 +269,7 @@ impl MacosImpl {
         unsafe {
             command.setEnabled(true);
             let token = command.addTargetWithHandler(&block);
-            self.store_token(&command, token);
+            self.store_token(command.as_super(), token);
         }
     }
 
@@ -297,37 +310,31 @@ impl MacosImpl {
         );
 
         unsafe {
-            // 基础文本信息
-            let info = &self.info;
-
-            info.setObject_forKey(
-                &NSString::from_str(&payload.song_name),
-                ProtocolObject::from_ref(MPMediaItemPropertyTitle),
+            self.set_info_object(
+                MPMediaItemPropertyTitle,
+                NSString::from_str(&payload.song_name),
             );
-            info.setObject_forKey(
-                &NSString::from_str(&payload.author_name),
-                ProtocolObject::from_ref(MPMediaItemPropertyArtist),
+            self.set_info_object(
+                MPMediaItemPropertyArtist,
+                NSString::from_str(&payload.author_name),
             );
-            info.setObject_forKey(
-                &NSString::from_str(&payload.album_name),
-                ProtocolObject::from_ref(MPMediaItemPropertyAlbumTitle),
+            self.set_info_object(
+                MPMediaItemPropertyAlbumTitle,
+                NSString::from_str(&payload.album_name),
             );
 
             // 流派
             if payload.genre.is_empty() {
-                info.removeObjectForKey(MPMediaItemPropertyGenre);
+                self.info.removeObjectForKey(MPMediaItemPropertyGenre);
             } else {
                 let genre_str = payload.genre.join(", ");
-                info.setObject_forKey(
-                    &NSString::from_str(&genre_str),
-                    ProtocolObject::from_ref(MPMediaItemPropertyGenre),
-                );
+                self.set_info_object(MPMediaItemPropertyGenre, NSString::from_str(&genre_str));
             }
 
             // 重置已播放时间
-            info.setObject_forKey(
-                &NSNumber::new_f64(0.0),
-                ProtocolObject::from_ref(MPNowPlayingInfoPropertyElapsedPlaybackTime),
+            self.set_info_object(
+                MPNowPlayingInfoPropertyElapsedPlaybackTime,
+                NSNumber::new_f64(0.0),
             );
 
             // 设置唯一 PersistentID
@@ -338,20 +345,21 @@ impl MacosImpl {
                     .as_millis() as i64
             });
 
-            info.setObject_forKey(
-                &NSNumber::new_i64(persistent_id),
-                ProtocolObject::from_ref(MPMediaItemPropertyPersistentID),
+            self.set_info_object(
+                MPMediaItemPropertyPersistentID,
+                NSNumber::new_i64(persistent_id),
             );
 
             // 时长
             if let Some(dur) = payload.duration {
                 let duration_secs = dur.as_secs_f64();
-                info.setObject_forKey(
-                    &NSNumber::new_f64(duration_secs),
-                    ProtocolObject::from_ref(MPMediaItemPropertyPlaybackDuration),
+                self.set_info_object(
+                    MPMediaItemPropertyPlaybackDuration,
+                    NSNumber::new_f64(duration_secs),
                 );
             } else {
-                info.removeObjectForKey(MPMediaItemPropertyPlaybackDuration);
+                self.info
+                    .removeObjectForKey(MPMediaItemPropertyPlaybackDuration);
             }
 
             // 封面
@@ -372,16 +380,13 @@ impl MacosImpl {
                         artwork, img_size, &handler,
                     );
 
-                    info.setObject_forKey(
-                        &artwork,
-                        ProtocolObject::from_ref(MPMediaItemPropertyArtwork),
-                    );
+                    self.set_info_object(MPMediaItemPropertyArtwork, artwork);
                 }
             } else {
-                info.removeObjectForKey(MPMediaItemPropertyArtwork);
+                self.info.removeObjectForKey(MPMediaItemPropertyArtwork);
             }
 
-            self.np_info_ctr.setNowPlayingInfo(Some(info));
+            self.np_info_ctr.setNowPlayingInfo(Some(&self.info));
         }
         Ok(())
     }
@@ -402,9 +407,9 @@ impl MacosImpl {
     pub async fn update_playback_rate(&mut self, rate: f64) -> Result<()> {
         trace!(new_rate = rate, "正在更新 MPNowPlayingInfoCenter 播放速率");
         unsafe {
-            self.info.setObject_forKey(
-                &NSNumber::new_f64(rate),
-                ProtocolObject::from_ref(MPNowPlayingInfoPropertyPlaybackRate),
+            self.set_info_object(
+                MPNowPlayingInfoPropertyPlaybackRate,
+                NSNumber::new_f64(rate),
             );
             self.np_info_ctr.setNowPlayingInfo(Some(&self.info));
         }
@@ -424,15 +429,15 @@ impl MacosImpl {
 
         unsafe {
             // 播放进度
-            self.info.setObject_forKey(
-                &NSNumber::new_f64(payload.current_time.as_secs_f64()),
-                ProtocolObject::from_ref(MPNowPlayingInfoPropertyElapsedPlaybackTime),
+            self.set_info_object(
+                MPNowPlayingInfoPropertyElapsedPlaybackTime,
+                NSNumber::new_f64(payload.current_time.as_secs_f64()),
             );
 
             // 总时长
-            self.info.setObject_forKey(
-                &NSNumber::new_f64(payload.total_time.as_secs_f64()),
-                ProtocolObject::from_ref(MPMediaItemPropertyPlaybackDuration),
+            self.set_info_object(
+                MPMediaItemPropertyPlaybackDuration,
+                NSNumber::new_f64(payload.total_time.as_secs_f64()),
             );
 
             self.np_info_ctr.setNowPlayingInfo(Some(&self.info));

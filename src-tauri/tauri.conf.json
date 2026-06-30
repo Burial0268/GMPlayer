@@ -17,39 +17,9 @@
       "../public/images/logo/favicon.png",
       "../public/favicon.ico"
     ],
-    "android": {
-			"minSdkVersion": 26
-		},
-    "windows": {
-      "certificateThumbprint": null,
-      "digestAlgorithm": "sha256",
-      "timestampUrl": "",
-      "webviewInstallMode": {
-        "type": "embedBootstrapper"
-      },
-      "nsis": {
-        "displayLanguageSelector": true
-      },
-      "wix": {
-        "language": ["zh-CN", "en-US"]
-      }
-
-    },
     "longDescription": "",
-    "macOS": {
-      "entitlements": null,
-      "exceptionDomain": "",
-      "frameworks": [],
-      "providerShortName": null,
-      "signingIdentity": null
-    },
     "resources": [],
-    "shortDescription": "",
-    "linux": {
-      "deb": {
-        "depends": []
-      }
-    }
+    "shortDescription": ""
   },
   "productName": "GMPlayer",
   "mainBinaryName": "GMPlayer",
@@ -58,11 +28,11 @@
   "plugins": {
     "audio-backend": {},
     "updater": {
-			"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0ODJDNzZGMTI4NjYxQjUKUldTMVlZWVNiOGVDcERETzFZc1U2ME13dTQvRGhwZGJLbWlkc1ZTeDJ6L0M3ckwwdHpLNkUxUXIK",
-			"endpoints": [
-				"https://github.com/Burial0268/GMPlayer/releases/download/master-player-dev/latest.json"
-			]
-		}
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE0ODJDNzZGMTI4NjYxQjUKUldTMVlZWVNiOGVDcERETzFZc1U2ME13dTQvRGhwZGJLbWlkc1ZTeDJ6L0M3ckwwdHpLNkUxUXIK",
+      "endpoints": [
+        "https://github.com/Burial0268/GMPlayer/releases/download/master-player-dev/latest.json"
+      ]
+    }
   },
   "app": {
     "withGlobalTauri": true,

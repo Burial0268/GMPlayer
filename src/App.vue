@@ -537,6 +537,7 @@ onBeforeUnmount(() => {
   display: flex;
   height: 100vh;
   background-color: var(--app-shell-bg, var(--layout-bg, #fff));
+  overflow: hidden;
 
   .bigplayer-open & {
     overflow: hidden;

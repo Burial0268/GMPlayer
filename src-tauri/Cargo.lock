@@ -1963,6 +1963,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "audio-analysis",
+ "coreaudio-rs",
  "cpal",
  "futures-util",
  "log",
@@ -1980,6 +1981,7 @@ dependencies = [
  "tracing",
  "ureq",
  "wasm-bindgen",
+ "windows 0.54.0",
 ]
 
 [[package]]

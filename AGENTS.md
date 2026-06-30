@@ -51,6 +51,12 @@ There is no dedicated frontend test script. For frontend changes, run focused `o
 
 The audio system centers on `src/utils/AudioContext/PlayerFunctions.ts`, `SoundManager`, `BufferedSound`, `NativeRustSound`, spectrum helpers, and the `AutoMix/` state machine. `window.$player` holds the active `ISound`. Playback state is coordinated through `src/store/musicData.ts`, then broadcast to slave windows through `src/utils/tauri/playerBridge.ts`.
 
+For `src-tauri/crates/audio-backend`, zero abstraction overhead, low latency, and minimal resource use are hard requirements. Keep blocking work, allocation, device enumeration, and heavyweight setup out of audio callbacks and hot playback loops; prefer concrete types, preallocation, block-level processing, and explicit bypass paths over dynamic dispatch or per-sample control checks. Any DSP/EQ work must preserve this constraint.
+
+Native seek must not invalidate the active decoder generation. A seek should flush queued PCM from the active deck/output, update the decoder source position, reset analysis, and republish the position anchor; it must not call `DeckMixer::clear_all`, `DeckMixer::clear_deck`, or any path that bumps the active `DeckWriter`/`OutputWriter` generation. Generation bumps are reserved for replacing, cancelling, or retiring playback chains.
+
+Frontend seek/autoresume must preserve the optimistic position anchor. After a seek, delayed native `syncStatus`/`playPosition` events from before the seek should not overwrite the new local position. Startup autoresume should snapshot the persisted position before loading and apply it before autoplay starts, especially for web `BufferedSound` where pending seek is consumed before pending play.
+
 Lyrics support LRC, YRC, and TTML. Fetching and normalization live under `src/utils/LyricsProcessor/`, while AMLL rendering powers rich lyric views.
 
 Tauri windows are created through Rust-side presets in `src-tauri/src/desktop/window/config.rs` and `manager.rs`. On Windows, WebView2 windows that share a profile must use consistent additional browser args.
