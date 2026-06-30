@@ -14,14 +14,69 @@ import { parseLrcToEntries } from "./parser/entryParser";
 import { buildIndexMatching } from "./alignment";
 import { convertToAMLL, splitRomaToWords } from "./parser/formatParser";
 
+const PROCESSING_CACHE_VERSION = "lyrics-processor-v2";
+
 /**
  * 生成设置状态的哈希值
  */
-function generateSettingsHash(settings: ProcessingSettings): string {
+function generateSettingsFlags(settings: ProcessingSettings): number {
   // Use bit flags for faster comparison (3 booleans = 3 bits)
-  const flags =
-    (settings.showYrc ? 4 : 0) | (settings.showRoma ? 2 : 0) | (settings.showTransl ? 1 : 0);
-  return String(flags);
+  return (settings.showYrc ? 4 : 0) | (settings.showRoma ? 2 : 0) | (settings.showTransl ? 1 : 0);
+}
+
+function finiteTime(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function sourceLineStart(line: InputLyricLine | StoredLyricLine | undefined): number {
+  if (!line) return 0;
+  return finiteTime(line.startTime) || finiteTime(line.words?.[0]?.startTime);
+}
+
+function sourceLineEnd(line: InputLyricLine | StoredLyricLine | undefined): number {
+  if (!line) return 0;
+  const explicitEnd = finiteTime(line.endTime);
+  if (explicitEnd) return explicitEnd;
+
+  const words = line.words;
+  if (!words?.length) return 0;
+
+  let endTime = 0;
+  for (let i = 0; i < words.length; i++) {
+    const wordEnd = finiteTime(words[i].endTime);
+    if (wordEnd > endTime) endTime = wordEnd;
+  }
+  return endTime;
+}
+
+function buildSourceFingerprint(source: readonly (InputLyricLine | StoredLyricLine)[]): string {
+  const len = source.length;
+  if (len === 0) return "0";
+
+  const first = source[0];
+  const last = source[len - 1];
+  return `${len}:${Math.round(sourceLineStart(first))}:${Math.round(sourceLineEnd(last))}`;
+}
+
+function selectSourceForHash(
+  songLyric: SongLyric,
+  settings: ProcessingSettings,
+): { kind: string; source: readonly (InputLyricLine | StoredLyricLine)[] } {
+  if (songLyric.hasTTML && songLyric.ttml?.length) {
+    return { kind: "ttml", source: songLyric.ttml };
+  }
+  if (settings.showYrc && songLyric.yrcAMData?.length) {
+    return { kind: "yrc", source: songLyric.yrcAMData };
+  }
+  if (songLyric.lrcAMData?.length) {
+    return { kind: "lrc", source: songLyric.lrcAMData };
+  }
+  return { kind: "empty", source: [] };
+}
+
+function generateProcessingHash(songLyric: SongLyric, settings: ProcessingSettings): string {
+  const selected = selectSourceForHash(songLyric, settings);
+  return `${PROCESSING_CACHE_VERSION}:${generateSettingsFlags(settings)}:${selected.kind}:${buildSourceFingerprint(selected.source)}`;
 }
 
 /**
@@ -113,6 +168,78 @@ function getCanonicalTTMLLines(songLyric: SongLyric, settings: ProcessingSetting
   return result;
 }
 
+function getMedianPositiveGap(lines: readonly AMLLLine[]): number {
+  const starts: number[] = [];
+  starts.length = lines.length;
+
+  let count = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const start = finiteTime(lines[i].startTime) || finiteTime(lines[i].words?.[0]?.startTime);
+    if (start > 0) starts[count++] = start;
+  }
+  starts.length = count;
+
+  if (count < 4) return 0;
+
+  starts.sort((a, b) => a - b);
+  const gaps: number[] = [];
+  gaps.length = count - 1;
+
+  let gapCount = 0;
+  for (let i = 1; i < count; i++) {
+    const gap = starts[i] - starts[i - 1];
+    if (gap > 0) gaps[gapCount++] = gap;
+  }
+  gaps.length = gapCount;
+
+  if (gapCount < 3) return 0;
+
+  gaps.sort((a, b) => a - b);
+  return gaps[gapCount >> 1];
+}
+
+function shouldRescaleInflatedLrcTimeline(lines: readonly AMLLLine[]): boolean {
+  const medianGap = getMedianPositiveGap(lines);
+  if (medianGap <= 0) return false;
+
+  // Some LRC sources encode [ss:cc.xx], but AMLL parses it as [mm:ss.xx].
+  // That inflates adjacent line gaps by roughly 60x, e.g. 11.003s -> 663000ms.
+  const scaledMedianGap = medianGap / 100;
+  return medianGap >= 30000 && scaledMedianGap >= 300 && scaledMedianGap <= 15000;
+}
+
+function recoverInflatedLrcTime(timeMs: number): number {
+  const normalized = Math.max(0, Math.round(timeMs));
+  const secondsPart = Math.floor(normalized / 60000);
+  const fractionPart = Math.round((normalized % 60000) / 1000);
+  const fractionMs = fractionPart < 10 ? fractionPart : fractionPart * 10;
+  return secondsPart * 1000 + fractionMs;
+}
+
+function recoverInflatedLrcLine(line: AMLLLine): AMLLLine {
+  return {
+    ...line,
+    startTime: recoverInflatedLrcTime(line.startTime),
+    endTime: recoverInflatedLrcTime(line.endTime),
+    words: line.words.map((word) => ({
+      ...word,
+      startTime: recoverInflatedLrcTime(word.startTime),
+      endTime: recoverInflatedLrcTime(word.endTime),
+    })),
+  };
+}
+
+function normalizeLrcTimeline(lines: AMLLLine[]): AMLLLine[] {
+  if (!shouldRescaleInflatedLrcTimeline(lines)) return lines;
+
+  const result: AMLLLine[] = [];
+  result.length = lines.length;
+  for (let i = 0; i < lines.length; i++) {
+    result[i] = recoverInflatedLrcLine(lines[i]);
+  }
+  return result;
+}
+
 /**
  * 处理歌词数据 - 使用行索引匹配 (优化版)
  *
@@ -132,17 +259,23 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
 
   const hasYrc = settings.showYrc && songLyric.yrcAMData && songLyric.yrcAMData.length > 0;
   const hasLrc = songLyric.lrcAMData && songLyric.lrcAMData.length > 0;
+  let sourceKind: "yrc" | "lrc";
 
   if (hasYrc) {
     rawLyricsSource = toRaw(songLyric.yrcAMData) as InputLyricLine[];
+    sourceKind = "yrc";
   } else if (hasLrc) {
     rawLyricsSource = toRaw(songLyric.lrcAMData) as InputLyricLine[];
+    sourceKind = "lrc";
   } else {
     return [];
   }
 
   // 转换为 AMLL 格式
-  const amllLines = convertToAMLL(rawLyricsSource);
+  const amllLines =
+    sourceKind === "lrc"
+      ? normalizeLrcTimeline(convertToAMLL(rawLyricsSource))
+      : convertToAMLL(rawLyricsSource);
 
   // 过滤完全空白的行 - 使用更高效的过滤
   const validLines: AMLLLine[] = [];
@@ -286,7 +419,7 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
  * @param settings 设置状态
  */
 export function preprocessLyrics(songLyric: SongLyric, settings: ProcessingSettings): void {
-  const currentHash = generateSettingsHash(settings);
+  const currentHash = generateProcessingHash(songLyric, settings);
 
   // 检查缓存
   if (
@@ -309,7 +442,7 @@ export function preprocessLyrics(songLyric: SongLyric, settings: ProcessingSetti
  * @returns 处理后的歌词行数组
  */
 export function getProcessedLyrics(songLyric: SongLyric, settings: ProcessingSettings): AMLLLine[] {
-  const currentHash = generateSettingsHash(settings);
+  const currentHash = generateProcessingHash(songLyric, settings);
 
   // 检查缓存 - StoredLyricLine 与 AMLLLine 结构兼容
   const cached = songLyric.processedLyrics;

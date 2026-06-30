@@ -6,7 +6,13 @@
 import request from "@/utils/request";
 import { parseQrc, parseTTML, parseYrc } from "@applemusic-like-lyrics/lyric";
 import type { TTMLLyric } from "@applemusic-like-lyrics/lyric";
-import { detectYrcType } from "./timeUtils";
+import {
+  detectYrcType,
+  detectLrcTimestampMode,
+  formatLrcTime,
+  parseFirstLrcTimestamp,
+  stripLrcTimestampTags,
+} from "./timeUtils";
 
 // Re-define LyricData interface based on parseLyric.ts
 interface LyricData {
@@ -267,17 +273,14 @@ export class LyricService {
           console.log(`[LyricService] 处理歌词同步，id: ${id}`);
           const mainTimeMap = new Map<number, { time: string; content: string; rawLine: string }>();
           const mainLrcLines = result.lrc.lyric.split("\n").filter((line) => line.trim());
-          const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2})\]/;
+          const mainTimestampMode = detectLrcTimestampMode(result.lrc.lyric);
 
           for (const line of mainLrcLines) {
-            const match = line.match(timeRegex);
-            if (match) {
-              const min = parseInt(match[1]);
-              const sec = parseInt(match[2]);
-              const ms = parseInt(match[3]);
-              const timeMs = min * 60000 + sec * 1000 + ms * 10;
-              const timeStr = `${match[1]}:${match[2]}.${match[3]}`;
-              const content = line.replace(timeRegex, "").trim();
+            const timestamp = parseFirstLrcTimestamp(line, mainTimestampMode);
+            if (timestamp && line.slice(0, timestamp.index).trim().length === 0) {
+              const timeMs = timestamp.timeMs;
+              const timeStr = formatLrcTime(timeMs);
+              const content = stripLrcTimestampTags(line).trim();
               if (content) {
                 mainTimeMap.set(timeMs, { time: timeStr, content, rawLine: line });
               }
@@ -427,27 +430,28 @@ export class LyricService {
 
     console.log(`[LyricService] 开始同步${lyricType}，歌曲ID: ${songId}`);
 
-    const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2})\]/;
     const lines = lyricText.split("\n").filter((line) => line.trim());
+    const timestampMode = detectLrcTimestampMode(lyricText);
     const mainTimestamps = Array.from(mainTimeMap.keys()).sort((a, b) => a - b);
 
     // 构建辅助歌词的时间和内容数组
     const auxLyrics: { timeMs: number; timeStr: string; content: string }[] = [];
 
     for (const line of lines) {
-      const match = line.match(timeRegex);
-      if (match) {
-        const min = parseInt(match[1]);
-        const sec = parseInt(match[2]);
-        const ms = parseInt(match[3]);
-        const timeMs = min * 60000 + sec * 1000 + ms * 10;
-        const timeStr = `${match[1]}:${match[2]}.${match[3]}`;
-
-        const content = line.replace(timeRegex, "").trim();
+      const timestamp = parseFirstLrcTimestamp(line, timestampMode);
+      if (timestamp && line.slice(0, timestamp.index).trim().length === 0) {
+        const timeMs = timestamp.timeMs;
+        const timeStr = formatLrcTime(timeMs);
+        const content = stripLrcTimestampTags(line).trim();
         if (content) {
           auxLyrics.push({ timeMs, timeStr, content });
         }
       }
+    }
+
+    if (auxLyrics.length === 0) {
+      console.log(`[LyricService] ${lyricType}没有可解析时间戳，保持原始内容`);
+      return lyricText;
     }
 
     // 按时间排序

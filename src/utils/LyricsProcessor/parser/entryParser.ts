@@ -4,10 +4,11 @@
  */
 
 import type { TimeTextEntry } from "../types";
-import { parseLrcTime } from "../timeUtils";
-
-// Pre-compiled regex (avoid recompilation on each call)
-const LRC_LINE_REGEX = /^\[(\d+:\d+(?:\.\d+)?)\](.*)/;
+import {
+  detectLrcTimestampMode,
+  parseFirstLrcTimestamp,
+  stripLrcTimestampTags,
+} from "../timeUtils";
 
 /**
  * 解析 LRC 文本为时间-文本条目数组
@@ -18,19 +19,17 @@ export function parseLrcToEntries(lrcText: string): TimeTextEntry[] {
   if (!lrcText) return [];
 
   const lines = lrcText.split("\n");
+  const timestampMode = detectLrcTimestampMode(lrcText);
   const entries: TimeTextEntry[] = [];
   entries.length = lines.length; // Pre-allocate approximate size
 
   let count = 0;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const match = LRC_LINE_REGEX.exec(line);
-    if (match) {
-      const timeMs = parseLrcTime(match[1]);
-      const text = match[2].trim();
-      if (timeMs >= 0 && text) {
-        entries[count++] = { timeMs, text };
-      }
+    const timestamp = parseFirstLrcTimestamp(line, timestampMode);
+    if (timestamp && line.slice(0, timestamp.index).trim().length === 0) {
+      const text = stripLrcTimestampTags(line).trim();
+      if (text) entries[count++] = { timeMs: timestamp.timeMs, text };
     }
   }
 

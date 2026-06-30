@@ -15,11 +15,13 @@ import {
   buildAMLLData,
 } from "./parser/formatParser";
 import { alignByIndex } from "./alignment";
+import { normalizeLrcTimestampText } from "./timeUtils";
 import type { RawLyricData, ParsedLyricResult } from "./types";
 
 type ParsedSourceLine = AMLLParsedLyricLine;
 
-const parseLrcText = (lyricText: string): ParsedSourceLine[] => parseAMLLLrc(lyricText);
+const parseLrcText = (lyricText: string): ParsedSourceLine[] =>
+  parseAMLLLrc(normalizeLrcTimestampText(lyricText));
 const parseYrcText = (lyricText: string): ParsedSourceLine[] => parseAMLLYrc(lyricText);
 
 function finiteNumber(value: unknown): number | undefined {
