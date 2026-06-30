@@ -74,6 +74,26 @@ const LOW_FREQ_STORE_EPSILON = 0.005;
 const SCROBBLE_DELAY_MS = 3000;
 const SCROBBLE_DUPLICATE_GUARD_MS = 10000;
 
+const getUsableDuration = (duration: number, fallback = 0): number => {
+  if (Number.isFinite(duration) && duration > 0) return duration;
+  return Number.isFinite(fallback) && fallback > 0 ? fallback : 0;
+};
+
+const normalizePlaybackPosition = (position: number, duration = 0, fallback = 0): number => {
+  const nextPosition = Number.isFinite(position) ? Math.max(0, position) : Math.max(0, fallback);
+  return duration > 0 ? Math.min(nextPosition, duration) : nextPosition;
+};
+
+const resetPlaySongTime = (music: ReturnType<typeof musicStore>): void => {
+  music.persistData.playSongTime = {
+    currentTime: 0,
+    duration: 0,
+    barMoveDistance: 0,
+    songTimePlayed: "00:00",
+    songTimeDuration: "00:00",
+  };
+};
+
 const getPlayStateSessionId = (key: string): string => {
   if (playStateSessionKey !== key || !playStateSessionId) {
     playStateSessionKey = key;
@@ -122,6 +142,21 @@ const getActiveNativeSound = (): NativeRustSound | null => {
   const windowPlayer = window.$player as ISound | undefined;
   if (isNativeRustSoundLike(windowPlayer)) return windowPlayer;
   return null;
+};
+
+const isDestroyedNativeSound = (sound: ISound | undefined | null): boolean => {
+  return sound instanceof NativeRustSound && sound.isDestroyed();
+};
+
+const resolveSeekTarget = (sound: ISound | undefined): ISound | undefined => {
+  const currentSound = SoundManager.getCurrentSound() ?? undefined;
+  if (currentSound && !isDestroyedNativeSound(currentSound)) return currentSound;
+
+  const windowPlayer = window.$player as ISound | undefined;
+  if (windowPlayer && !isDestroyedNativeSound(windowPlayer)) return windowPlayer;
+
+  if (sound && !isDestroyedNativeSound(sound)) return sound;
+  return undefined;
 };
 
 const syncNativeAnalysisState = (
@@ -213,13 +248,19 @@ const applyNativeAutoMixCompletion = (
   if (!sound) return;
 
   const playlists = music.persistData.playlists;
-  if (!Number.isInteger(currentIndex) || currentIndex < 0 || currentIndex >= playlists.length) {
+  if (!Number.isInteger(currentIndex) || currentIndex < 0) {
     return;
   }
 
-  const changed = music.persistData.playSongIndex !== currentIndex;
+  const autoMixIndex = getAutoMixEngine().resolveActiveTransitionTargetIndex(currentIndex);
+  const resolvedIndex = autoMixIndex >= 0 ? autoMixIndex : currentIndex;
+  if (resolvedIndex < 0 || resolvedIndex >= playlists.length) {
+    return;
+  }
+
+  const changed = music.persistData.playSongIndex !== resolvedIndex;
   if (changed) {
-    music.persistData.playSongIndex = currentIndex;
+    music.persistData.playSongIndex = resolvedIndex;
     if (typeof music.resetSongLyricState === "function") {
       music.resetSongLyricState();
     }
@@ -324,15 +365,27 @@ if (typeof document !== "undefined") {
 if (typeof window !== "undefined") {
   window.addEventListener(NATIVE_AUTOMIX_COMPLETE_EVENT, (event) => {
     const detail =
-      (event as CustomEvent<{ currentIndex?: number; position?: number; duration?: number }>)
-        .detail ?? {};
+      (
+        event as CustomEvent<{
+          currentIndex?: number;
+          musicId?: string;
+          position?: number;
+          duration?: number;
+        }>
+      ).detail ?? {};
     const currentIndex = Number(detail.currentIndex);
     applyNativeAutoMixCompletion(currentIndex, detail);
   });
   window.addEventListener(NATIVE_AUTOMIX_SYNC_EVENT, (event) => {
     const detail =
-      (event as CustomEvent<{ currentIndex?: number; position?: number; duration?: number }>)
-        .detail ?? {};
+      (
+        event as CustomEvent<{
+          currentIndex?: number;
+          musicId?: string;
+          position?: number;
+          duration?: number;
+        }>
+      ).detail ?? {};
     const currentIndex = Number(detail.currentIndex);
     applyNativeAutoMixCompletion(currentIndex, detail);
   });
@@ -507,7 +560,11 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
 /**
  * Set up a NativeRustSound with all the standard event handlers and return it.
  */
-const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => {
+const setupNativeSound = (
+  sound: NativeRustSound,
+  autoPlay: boolean,
+  options: { allowInitialBackendAttach?: boolean } = {},
+): ISound => {
   const music = musicStore();
   const settings = settingStore();
   const user = userStore();
@@ -527,10 +584,16 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
   // with stale 0, so the progress bar would jump from 0 up to the resumed
   // position instead of starting at it.
   const isMemoryAtLoad = settings.memoryLastPlaybackPosition;
+  const savedDurationAtLoad = getUsableDuration(music.persistData.playSongTime.duration);
   const savedPosAtLoad = isMemoryAtLoad
-    ? Number(music.persistData.playSongTime.currentTime) || 0
+    ? normalizePlaybackPosition(
+        Number(music.persistData.playSongTime.currentTime),
+        savedDurationAtLoad,
+      )
     : 0;
-  sound.load(savedPosAtLoad);
+  if (savedPosAtLoad > 0) {
+    music.setPlaySongTime({ currentTime: savedPosAtLoad, duration: savedDurationAtLoad });
+  }
 
   // ── Load timeout guard ────────────────────────────────────────
   let _loadClearTimeout: ReturnType<typeof setTimeout> | null = setTimeout(() => {
@@ -556,24 +619,25 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     const songId = music.getPlaySongData?.id;
     const sourceId = music.getPlaySongData?.sourceId ? music.getPlaySongData.sourceId : 0;
     const isLogin = user.userLogin;
-    const isMemory = settings.memoryLastPlaybackPosition;
 
     if (IS_DEV) {
       console.log("[Native] 首次缓冲完成：" + songId + " / 来源：" + sourceId);
     }
 
-    if (!isMemory) {
+    if (!isMemoryAtLoad) {
       // Saved position is disabled — wipe persisted time so subsequent
       // sessions start fresh.
-      music.persistData.playSongTime = {
-        currentTime: 0,
-        duration: 0,
-        barMoveDistance: 0,
-        songTimePlayed: "00:00",
-        songTimeDuration: "00:00",
-      };
+      resetPlaySongTime(music);
+    } else if (savedPosAtLoad > 0) {
+      const duration = getUsableDuration(sound.duration(), savedDurationAtLoad);
+      const currentTime = normalizePlaybackPosition(
+        (sound.seek() as number) || savedPosAtLoad,
+        duration,
+        savedPosAtLoad,
+      );
+      music.setPlaySongTime({ currentTime, duration });
     }
-    // When `isMemory` is true, the resumed position was already baked into
+    // When `isMemoryAtLoad` is true, the resumed position was already baked into
     // the load via `jumpToSongAt` (see setupNativeSound's `sound.load(savedPos)`
     // call). No extra `sound.seek()` here — that used to race with the
     // first `SyncStatus` and overwrite the optimistic local position.
@@ -592,14 +656,18 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     sound.volume(vol);
 
     if (autoPlay) {
+      const alreadyPlaying = sound.playing();
       sound.play();
+      if (alreadyPlaying) {
+        handleNativePlay();
+      }
     } else {
       sound.pause();
     }
   });
 
   // ── Play ──────────────────────────────────────────────────────
-  sound.on("play", () => {
+  function handleNativePlay(): void {
     if (window.$player && window.$player !== sound) return;
     const autoMixCheck = getAutoMixEngine();
     if (autoMixCheck.isCrossfading()) return;
@@ -646,7 +714,9 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     if (settings.musicFrequency || settings.dynamicFlowSpeed || settings.autoMixEnabled) {
       startSpectrumUpdate(sound, music);
     }
-  });
+  }
+
+  sound.on("play", handleNativePlay);
 
   // ── Pause ─────────────────────────────────────────────────────
   sound.on("pause", () => {
@@ -693,6 +763,9 @@ const setupNativeSound = (sound: NativeRustSound, autoPlay: boolean): ISound => 
     console.error(getLanguageData("songPlayError"));
   });
 
+  void sound.load(savedPosAtLoad, {
+    allowInitialBackendAttach: options.allowInitialBackendAttach === true,
+  });
   return (window.$player = sound);
 };
 
@@ -716,6 +789,9 @@ export const createSound = (
       }
       return window.$player;
     }
+
+    const allowInitialBackendAttach =
+      isNativeAudioBackendAvailable() && !SoundManager.hasSound() && !window.$player;
 
     SoundManager.unload();
     stopSpectrumUpdate();
@@ -747,7 +823,7 @@ export const createSound = (
           : "[createSound] Using WASM audio backend",
       );
       const sound = new NativeRustSound(src);
-      return setupNativeSound(sound, autoPlay);
+      return setupNativeSound(sound, autoPlay, { allowInitialBackendAttach });
     }
     console.log("[createSound] Using WEB audio backend");
 
@@ -782,6 +858,22 @@ export const createSound = (
       console.log("[createSound] autoPlay:", autoPlay, "getPlayState:", music.getPlayState);
     }
 
+    const isMemoryAtLoad = settings.memoryLastPlaybackPosition;
+    const savedDurationAtLoad = getUsableDuration(music.persistData.playSongTime.duration);
+    const savedPosAtLoad = isMemoryAtLoad
+      ? normalizePlaybackPosition(
+          Number(music.persistData.playSongTime.currentTime),
+          savedDurationAtLoad,
+        )
+      : 0;
+
+    if (savedPosAtLoad > 0) {
+      sound.seek(savedPosAtLoad);
+      music.setPlaySongTime({ currentTime: savedPosAtLoad, duration: savedDurationAtLoad });
+    } else if (!isMemoryAtLoad) {
+      resetPlaySongTime(music);
+    }
+
     if (autoPlay) {
       fadePlayOrPause(sound, "play", music.persistData.playVolume);
     }
@@ -812,22 +904,24 @@ export const createSound = (
       const songId = music.getPlaySongData?.id;
       const sourceId = music.getPlaySongData?.sourceId ? music.getPlaySongData.sourceId : 0;
       const isLogin = user.userLogin;
-      const isMemory = settings.memoryLastPlaybackPosition;
 
       if (IS_DEV) {
         console.log("首次缓冲完成：" + songId + " / 来源：" + sourceId);
       }
 
-      if (isMemory) {
-        sound?.seek(music.persistData.playSongTime.currentTime);
+      if (isMemoryAtLoad) {
+        const duration = getUsableDuration(sound.duration(), savedDurationAtLoad);
+        const currentTime = normalizePlaybackPosition(
+          (sound.seek() as number) || savedPosAtLoad,
+          duration,
+          savedPosAtLoad,
+        );
+        if (currentTime > 0) {
+          sound.seek(currentTime);
+          music.setPlaySongTime({ currentTime, duration });
+        }
       } else {
-        music.persistData.playSongTime = {
-          currentTime: 0,
-          duration: 0,
-          barMoveDistance: 0,
-          songTimePlayed: "00:00",
-          songTimeDuration: "00:00",
-        };
+        resetPlaySongTime(music);
       }
       // 取消加载状态
       music.isLoadingSong = false;
@@ -1016,19 +1110,31 @@ export const setVolume = (sound: ISound | undefined, volume: number): void => {
  */
 export const setSeek = (sound: ISound | undefined, seek: number): void => {
   const music = musicStore();
+  const target = resolveSeekTarget(sound);
+  if (!target) {
+    if (IS_DEV) {
+      console.warn("[setSeek] ignored seek because no active sound is available", { seek });
+    }
+    return;
+  }
+  const storedDuration = getUsableDuration(music.persistData.playSongTime.duration);
+  const soundDuration = getUsableDuration(target.duration(), storedDuration);
+  const currentTime = normalizePlaybackPosition(
+    seek,
+    soundDuration,
+    music.persistData.playSongTime.currentTime,
+  );
   // Cancel AutoMix crossfade on seek
   const autoMix = getAutoMixEngine();
   if (autoMix.isCrossfading()) {
     autoMix.cancelCrossfade();
   }
-  sound?.seek(seek);
+  target.seek(currentTime);
   // 直接调用 setPlaySongTime 确保 UI 状态立即更新
-  if (sound) {
-    music.setPlaySongTime({
-      currentTime: seek,
-      duration: sound.duration(),
-    });
-  }
+  music.setPlaySongTime({
+    currentTime,
+    duration: soundDuration,
+  });
 };
 
 /**

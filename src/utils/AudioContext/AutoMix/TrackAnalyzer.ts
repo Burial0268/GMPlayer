@@ -96,6 +96,31 @@ export interface PhraseAnalysis {
   mixInPhrase: Phrase | null;
 }
 
+export type SongSectionKind =
+  | "start"
+  | "verse"
+  | "chorus"
+  | "bridge"
+  | "breakdown"
+  | "outro"
+  | "silence";
+
+export interface SongSection {
+  sectionType: SongSectionKind;
+  start: number;
+  end: number;
+  index: number;
+  confidence: number;
+  energy: number;
+}
+
+export interface SectionAnalysis {
+  sections: SongSection[];
+  confidence: number;
+  /** Native Rust currently emits this; Web worker analysis may omit sections. */
+  method: string;
+}
+
 export interface TrackAnalysis {
   volume: VolumeAnalysis;
   energy: EnergyAnalysis;
@@ -104,6 +129,7 @@ export interface TrackAnalysis {
   outro: OutroAnalysis | null;
   intro: IntroAnalysis | null;
   phrases: PhraseAnalysis | null;
+  sections?: SectionAnalysis | null;
   duration: number;
 }
 

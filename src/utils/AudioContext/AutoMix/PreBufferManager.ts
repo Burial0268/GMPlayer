@@ -16,6 +16,7 @@ const IS_DEV = import.meta.env?.DEV ?? false;
 interface PreBufferState {
   sound: BufferedSound;
   songIndex: number;
+  songId: number | string | null;
   sourceUrl: string;
   analysis: CachedAnalysis | null;
 }
@@ -134,6 +135,7 @@ export class PreBufferManager {
       this._preBuffered = {
         sound,
         songIndex: nextIndex,
+        songId: nextSong.id ?? null,
         sourceUrl: url,
         analysis: preBufferedAnalysis,
       };
@@ -160,9 +162,15 @@ export class PreBufferManager {
    * Consume the pre-buffered sound (transfers ownership to caller).
    * Returns null if no pre-buffered sound available or index doesn't match.
    */
-  consume(expectedIndex: number): PreBufferState | null {
+  consume(expectedIndex: number, expectedSongId?: number | string | null): PreBufferState | null {
     if (!this._preBuffered) return null;
-    if (this._preBuffered.songIndex !== expectedIndex) {
+    const expectedId = expectedSongId ?? null;
+    const sameSong =
+      expectedId === null ||
+      this._preBuffered.songId === null ||
+      String(this._preBuffered.songId) === String(expectedId);
+
+    if (this._preBuffered.songIndex !== expectedIndex || !sameSong) {
       // Wrong track — clean up and return null
       this.cleanup();
       return null;

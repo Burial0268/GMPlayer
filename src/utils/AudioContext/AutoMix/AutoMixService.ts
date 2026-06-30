@@ -57,6 +57,10 @@ export class AutoMixService {
     return this._stateMachine.getActiveGainAdjustment();
   }
 
+  resolveActiveTransitionTargetIndex(fallbackIndex: number): number {
+    return this._stateMachine.resolveActiveTransitionTargetIndex(fallbackIndex);
+  }
+
   monitorPlayback(currentSound: ISound): void {
     this._stateMachine.monitorPlayback(currentSound);
   }

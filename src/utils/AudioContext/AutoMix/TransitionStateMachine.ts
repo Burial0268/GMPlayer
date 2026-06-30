@@ -66,6 +66,10 @@ interface ActiveAutoMixTransition {
   mode: AutoMixTransitionMode;
   fromIndex: number;
   toIndex: number;
+  fromSongId: number | null;
+  fromSongName: string | null;
+  toSongId: number | null;
+  toSongName: string | null;
   phase: AutoMixTransitionPhase;
   committed: boolean;
   holdUntil: number;
@@ -206,6 +210,8 @@ export class TransitionStateMachine {
     fromIndex: number,
     toIndex: number,
     phase: AutoMixTransitionPhase,
+    fromSong?: any,
+    toSong?: any,
   ): number {
     const id = ++this._transitionSeq;
     this._activeTransition = {
@@ -213,11 +219,61 @@ export class TransitionStateMachine {
       mode,
       fromIndex,
       toIndex,
+      fromSongId: this._getSongId(fromSong),
+      fromSongName: this._getSongName(fromSong),
+      toSongId: this._getSongId(toSong),
+      toSongName: this._getSongName(toSong),
       phase,
       committed: false,
       holdUntil: 0,
     };
     return id;
+  }
+
+  private _getSongId(song: any): number | null {
+    const value = song?.id;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim() !== "") {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) return numeric;
+    }
+    return null;
+  }
+
+  private _getSongName(song: any): string | null {
+    return typeof song?.name === "string" && song.name.trim() !== "" ? song.name : null;
+  }
+
+  private _findPlaylistIndexBySongId(songId: number | null): number {
+    if (songId === null || !this._musicStoreRef) return -1;
+    const playlist = this._musicStoreRef.persistData?.playlists;
+    if (!Array.isArray(playlist)) return -1;
+    return playlist.findIndex((song: any) => String(song?.id) === String(songId));
+  }
+
+  private _resolvePlaylistIndexForSong(songId: number | null, fallbackIndex: number): number {
+    const byId = this._findPlaylistIndexBySongId(songId);
+    if (byId >= 0) return byId;
+
+    const playlist = this._musicStoreRef?.persistData?.playlists;
+    if (!Array.isArray(playlist) || fallbackIndex < 0 || fallbackIndex >= playlist.length) {
+      return -1;
+    }
+
+    if (songId !== null) {
+      return String(playlist[fallbackIndex]?.id) === String(songId) ? fallbackIndex : -1;
+    }
+
+    return fallbackIndex;
+  }
+
+  resolveActiveTransitionTargetIndex(fallbackIndex: number): number {
+    if (!this._storesReady) {
+      this._loadStores();
+    }
+    const active = this._activeTransition;
+    if (!active) return this._resolvePlaylistIndexForSong(null, fallbackIndex);
+    return this._resolvePlaylistIndexForSong(active.toSongId, fallbackIndex);
   }
 
   private _isTransitionActive(id: number, mode?: AutoMixTransitionMode): boolean {
@@ -389,7 +445,14 @@ export class TransitionStateMachine {
     if (!nextSong) return;
 
     const effectiveDuration = this._getEffectiveCrossfadeDuration(duration);
-    const transitionId = this._beginTransition("native", currentIndex, nextIndex, "preparing");
+    const transitionId = this._beginTransition(
+      "native",
+      currentIndex,
+      nextIndex,
+      "preparing",
+      playlist[currentIndex],
+      nextSong,
+    );
     this._crossfadeDuration = effectiveDuration;
     this._effectiveEnd = duration;
     this._crossfadeStartTime = Math.max(0, duration - effectiveDuration);
@@ -491,6 +554,10 @@ export class TransitionStateMachine {
   private _acceptNativeTransitionEvent(transitionId?: number | null): boolean {
     if (transitionId === undefined || transitionId === null) return true;
     return this._isTransitionActive(transitionId, "native");
+  }
+
+  private _isNativeTransitionActive(): boolean {
+    return this._activeTransition?.mode === "native";
   }
 
   private _handleNativeAutoMixEvent(event: AudioThreadEvent): void {
@@ -605,19 +672,22 @@ export class TransitionStateMachine {
       this._nativeFinishTimerId = null;
     }
 
-    if (transitionId > 0) {
-      this._setTransitionPhase(transitionId, "finishing");
-    }
-    this._state = "finishing";
-    this._updateStoreState();
-
-    const nextIndex = currentIndex >= 0 ? currentIndex : this._nativeNextIndex;
+    const nextIndex = this.resolveActiveTransitionTargetIndex(
+      currentIndex >= 0 ? currentIndex : this._nativeNextIndex,
+    );
     if (nextIndex >= 0 && this._musicStoreRef) {
       this._musicStoreRef.persistData.playSongIndex = nextIndex;
       if (typeof this._musicStoreRef.resetSongLyricState === "function") {
         this._musicStoreRef.resetSongLyricState();
       }
     }
+
+    this._isPaused = false;
+    if (transitionId > 0) {
+      this._setTransitionPhase(transitionId, "finishing");
+    }
+    this._state = "finishing";
+    this._updateStoreState();
 
     const currentSound = SoundManager.getCurrentSound();
     if (currentSound) {
@@ -1351,13 +1421,23 @@ export class TransitionStateMachine {
 
     const nextSong = playlist[nextIndex];
     if (!nextSong) throw new Error("No next song");
-    const transitionId = this._beginTransition("web", currentIndex, nextIndex, "crossfading");
+    if (this._nextAnalysis && String(this._nextAnalysis.songId) !== String(nextSong.id)) {
+      this._nextAnalysis = null;
+    }
+    const transitionId = this._beginTransition(
+      "web",
+      currentIndex,
+      nextIndex,
+      "crossfading",
+      playlist[currentIndex],
+      nextSong,
+    );
 
     let incomingSound: BufferedSound;
     let incomingSourceUrl: string | null = null;
 
     // ★ Fast path: use pre-buffered sound
-    const preBuffered = this._preBufferManager.consume(nextIndex);
+    const preBuffered = this._preBufferManager.consume(nextIndex, nextSong.id);
     if (preBuffered) {
       incomingSound = preBuffered.sound;
       incomingSourceUrl = preBuffered.sourceUrl;
@@ -1605,8 +1685,9 @@ export class TransitionStateMachine {
 
     const music = this._musicStoreRef;
     if (music) {
-      if (music.persistData.playSongIndex !== nextIndex) {
-        music.persistData.playSongIndex = nextIndex;
+      const resolvedNextIndex = this.resolveActiveTransitionTargetIndex(nextIndex);
+      if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
+        music.persistData.playSongIndex = resolvedNextIndex;
       }
       if (typeof music.resetSongLyricState === "function") {
         music.resetSongLyricState();
@@ -1729,8 +1810,9 @@ export class TransitionStateMachine {
     // so the debounced watcher in Player/index.vue sees isCrossfading()=true.
     if (this._pendingNextIndex >= 0 && this._musicStoreRef) {
       const music = this._musicStoreRef;
-      if (music.persistData.playSongIndex !== this._pendingNextIndex) {
-        music.persistData.playSongIndex = this._pendingNextIndex;
+      const resolvedNextIndex = this.resolveActiveTransitionTargetIndex(this._pendingNextIndex);
+      if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
+        music.persistData.playSongIndex = resolvedNextIndex;
         if (typeof music.resetSongLyricState === "function") {
           music.resetSongLyricState();
         }
@@ -1864,6 +1946,16 @@ export class TransitionStateMachine {
   pauseCrossfade(): boolean {
     if (this._state !== "crossfading" || this._isPaused) return false;
 
+    if (this._isNativeTransitionActive()) {
+      this._isPaused = true;
+      SoundManager.getCurrentSound()?.pause();
+
+      if (IS_DEV) {
+        console.log("TransitionStateMachine: Native crossfade paused");
+      }
+      return true;
+    }
+
     if (this._crossfadeScheduler.isActive()) {
       this._isPaused = true;
       this._crossfadeScheduler.pauseCrossfade();
@@ -1900,6 +1992,20 @@ export class TransitionStateMachine {
   resumeCrossfade(): void {
     if (this._state !== "crossfading" || !this._isPaused) return;
     this._isPaused = false;
+
+    if (this._isNativeTransitionActive()) {
+      SoundManager.getCurrentSound()?.play();
+
+      if (this._unpauseResolve) {
+        this._unpauseResolve();
+        this._unpauseResolve = null;
+      }
+
+      if (IS_DEV) {
+        console.log("TransitionStateMachine: Native crossfade resumed");
+      }
+      return;
+    }
 
     SoundManager.getOutgoingSound()?.play();
     SoundManager.getCurrentSound()?.play();
@@ -2017,7 +2123,15 @@ export class TransitionStateMachine {
 
     let incomingSongName: string | null = null;
     let incomingSongId: number | null = null;
-    if (this._state === "crossfading" || this._state === "waiting") {
+    const activeTransition = this._activeTransition;
+    if (
+      (this._state === "crossfading" || this._state === "waiting" || this._state === "finishing") &&
+      activeTransition &&
+      activeTransition.toSongId !== null
+    ) {
+      incomingSongName = activeTransition.toSongName;
+      incomingSongId = activeTransition.toSongId;
+    } else if (this._state === "crossfading" || this._state === "waiting") {
       const playlist = this._musicStoreRef.persistData?.playlists;
       const currentIndex = this._musicStoreRef.persistData?.playSongIndex;
       if (playlist && currentIndex !== null && currentIndex !== undefined) {
