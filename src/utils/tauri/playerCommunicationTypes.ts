@@ -23,6 +23,7 @@ export const PLAYER_COMMUNICATION_EVENTS = {
   slaveCyclePlayMode: "slave-cycle-play-mode",
   slaveLikeSong: "slave-like-song",
   slaveSetLyricsFontSize: "slave-set-lyrics-font-size",
+  slaveSetDesktopLyricsFontSizeOffset: "slave-set-desktop-lyrics-font-size-offset",
 } as const;
 
 export type PlayerContentWindowLabel = (typeof PLAYER_CONTENT_WINDOW_LABELS)[number];
@@ -48,6 +49,11 @@ export interface PlayerStatePayload {
 export interface PlayerTimePayload {
   currentTime: number;
   lyricIndex: number;
+  duration?: number;
+  songId?: number | null;
+  isPlaying?: boolean;
+  seq?: number;
+  sentAt?: number;
 }
 
 export interface PlayerLyricPayload {
@@ -62,6 +68,7 @@ export interface PlayerLyricPayload {
 export interface PlayerSettingsPayload {
   lyricTimeOffset: number;
   lyricsFontSize: number;
+  desktopLyricsFontSizeOffset: number;
   lyricFont: string;
   lyricFontWeight: string;
   lyricLetterSpacing: string;

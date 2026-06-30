@@ -16,7 +16,7 @@
  */
 
 import type { ISound, SoundEventCallback, SoundEventType } from "../AudioContext/types";
-import { isTauri } from "./audioBridge";
+import { AudioTimelineSync, isTauri } from "./audioBridge";
 import type { AudioQuality, AudioThreadEvent, DisplayAudioInfo, SongData } from "./audioBridge";
 import {
   getAudioBackendTransport,
@@ -31,6 +31,7 @@ const NO_FFT_WARN_MS = 5000;
 const SEEN_EVENT_SEQ_LIMIT = 512;
 const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
 const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
+const SEEK_REQUEST_ID_MODULO = 1000;
 
 interface LocalState {
   musicId: string;
@@ -64,6 +65,10 @@ type SyncPromise = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+type NativeLoadOptions = {
+  allowInitialBackendAttach?: boolean;
+};
+
 export class NativeRustSound implements ISound {
   private _events: EventMap = {};
   private _onceEvents: EventMap = {};
@@ -88,8 +93,8 @@ export class NativeRustSound implements ISound {
     currentPlayIndex: 0,
   };
 
-  /** Anchor for client-side position extrapolation between 1 Hz heartbeats. */
-  private _lastPositionEvent: { position: number; receivedAt: number } | null = null;
+  /** Shared optimistic seek guard + extrapolated playback clock. */
+  private _timeline: AudioTimelineSync = new AudioTimelineSync();
 
   /**
    * Recently processed event sequence ids. Priority status events are sent on
@@ -123,6 +128,8 @@ export class NativeRustSound implements ISound {
   private _adoptNextBackendMusicId: boolean = false;
   private _nativeAutoMixSyncPending: boolean = false;
   private _allowInitialBackendAttach: boolean = false;
+  private _backendTrackReady: boolean = false;
+  private _nextSeekRequestId: number = 0;
 
   /** Pending load() promise so we can resolve from event handlers. */
   private _pendingLoad: LoadPromise | null = null;
@@ -145,7 +152,7 @@ export class NativeRustSound implements ISound {
   //  load() — register listeners, open track, await load event  ║
   // ═════════════════════════════════════════════════════════════╝
 
-  async load(initialPosition?: number): Promise<void> {
+  async load(initialPosition?: number, options?: NativeLoadOptions): Promise<void> {
     if (this._loaded || this._destroyed) return;
 
     if (!isAudioBackendRuntimeAvailable()) {
@@ -166,16 +173,23 @@ export class NativeRustSound implements ISound {
       return;
     }
 
+    const initPos = this._normalizeSeekPosition(initialPosition ?? 0);
+    this._backendTrackReady = false;
+    this._timeline.reset(initPos);
+
     // Only the native/Tauri runtime can have a real backend that outlives the
     // current frontend controller. The Web/WASM runtime is page-local and uses a
     // singleton JS transport, so adopting its previous state after SoundManager
     // clears window.$player can bind a new NativeRustSound to a stale <audio>.
-    const canAttachExistingBackend = isTauri() && !window.$player;
+    const canAttachExistingBackend = isTauri() && options?.allowInitialBackendAttach === true;
     if (canAttachExistingBackend) {
       this._allowInitialBackendAttach = true;
       await this.requestStatusSync(400);
       this._allowInitialBackendAttach = false;
       if (this._state.musicId && this._state.duration > 0) {
+        if (initPos > 0 && Math.abs(this._state.position - initPos) > 1) {
+          this.seek(initPos);
+        }
         this._loaded = true;
         this._armNoFFTWarning();
         this._emit("load");
@@ -188,10 +202,8 @@ export class NativeRustSound implements ISound {
     // even before the first event arrives from Rust. This is what makes
     // the progress bar display the resumed position immediately on
     // startup, not jump from 0 once events catch up.
-    const initPos = initialPosition !== undefined && initialPosition > 0 ? initialPosition : 0;
     if (initPos > 0) {
-      this._state.position = initPos;
-      this._lastPositionEvent = { position: initPos, receivedAt: Date.now() };
+      this._setLocalPosition(initPos, true);
     }
 
     // 2. Set up the load-completion promise BEFORE dispatching messages
@@ -244,6 +256,10 @@ export class NativeRustSound implements ISound {
     }
 
     if (this._destroyed) return;
+
+    if (isTauri()) {
+      await this.requestStatusSync(500);
+    }
 
     this._loaded = true;
     this._armNoFFTWarning();
@@ -316,34 +332,43 @@ export class NativeRustSound implements ISound {
         const expectedBefore = this._expectedMusicId;
         const expectingNativeAutoMixAdoption =
           this._adoptNextBackendMusicId || this._nativeAutoMixSyncPending;
+        const allowInitialTauriAttach = isTauri() && this._allowInitialBackendAttach;
         if (
-          !this._acceptMusicId(
-            d.musicId,
-            this._isActiveController() || this._allowInitialBackendAttach,
-          )
-        )
+          !this._acceptMusicId(d.musicId, expectingNativeAutoMixAdoption || allowInitialTauriAttach)
+        ) {
+          if (this._allowInitialBackendAttach) {
+            this._resolvePendingSyncs();
+          }
           return;
+        }
         const adoptedBackendTrack = !!d.musicId && d.musicId !== expectedBefore;
         const pendingNativeAutoMixIndex = this._state.currentPlayIndex;
+        const acceptedPosition = this._acceptIncomingPosition(
+          this._coerceIncomingPosition(d.position),
+        );
         this._state = {
           musicId: d.musicId,
-          position: d.position,
+          position: acceptedPosition,
           duration: d.duration,
           isPlaying: d.isPlaying,
           volume: d.volume,
           playlist: d.playlist,
           currentPlayIndex: d.currentPlayIndex,
         };
-        this._musicInfo = d.musicInfo;
+        this._musicInfo = d.musicInfo
+          ? { ...d.musicInfo, position: acceptedPosition }
+          : d.musicInfo;
         this._quality = d.quality;
-        this._lastPositionEvent = { position: d.position, receivedAt: Date.now() };
+        this._timeline.setDuration(d.duration);
+        this._backendTrackReady = true;
+        if (isTauri() && this._allowInitialBackendAttach && this._playbackState === "stopped") {
+          this._playbackState = d.isPlaying ? "playing" : "paused";
+          this._syncTimelineClock();
+        }
         this._resolvePendingSyncs();
         const shouldNotifyNativeAutoMixSync = this._nativeAutoMixSyncPending
           ? adoptedBackendTrack || d.currentPlayIndex === pendingNativeAutoMixIndex
-          : (expectingNativeAutoMixAdoption ||
-              this._isActiveController() ||
-              this._allowInitialBackendAttach) &&
-            adoptedBackendTrack;
+          : (expectingNativeAutoMixAdoption || this._isActiveController()) && adoptedBackendTrack;
         if (shouldNotifyNativeAutoMixSync) {
           this._nativeAutoMixSyncPending = false;
           window.dispatchEvent(
@@ -351,20 +376,17 @@ export class NativeRustSound implements ISound {
               detail: {
                 currentIndex: d.currentPlayIndex,
                 musicId: d.musicId,
-                position: d.position,
+                position: acceptedPosition,
                 duration: d.duration,
               },
             }),
           );
         }
-        // NOTE: do NOT update `_playbackState` from syncStatus. State
-        // transitions belong to `PlayStatus` events only. SyncStatus is
-        // emitted by Rust at points like `start_playing_song` end —
-        // where `sink.is_paused()` may still report `true` for a tick
-        // even though a follow-on `ResumeAudio` is already queued.
-        // Updating state here would revert an optimistic `"playing"`
-        // back to `"paused"`, and the eventual `PlayStatus(true)` would
-        // then re-emit `"play"`, causing a duplicate toast.
+        // Outside the Tauri initial re-attach path above, do not update
+        // `_playbackState` from syncStatus. State transitions belong to
+        // `PlayStatus` events only. SyncStatus can be emitted while a follow-on
+        // ResumeAudio is queued; applying it generally would revert optimistic
+        // playback and cause duplicate play notifications.
         break;
       }
 
@@ -373,6 +395,8 @@ export class NativeRustSound implements ISound {
           this._musicInfo = evt.data.musicInfo;
           this._quality = evt.data.quality;
           this._state.duration = evt.data.musicInfo.duration;
+          this._timeline.setDuration(evt.data.musicInfo.duration);
+          this._backendTrackReady = true;
           this._resolvePendingLoad();
         }
         break;
@@ -382,8 +406,8 @@ export class NativeRustSound implements ISound {
         break;
 
       case "playPosition": {
-        this._state.position = evt.data.position;
-        this._lastPositionEvent = { position: evt.data.position, receivedAt: Date.now() };
+        if (!this._backendTrackReady) break;
+        this._acceptIncomingPosition(this._coerceIncomingPosition(evt.data.position));
         break;
       }
 
@@ -393,15 +417,18 @@ export class NativeRustSound implements ISound {
         this._state.isPlaying = wantPlaying;
         const isCurrentlyPlaying = this._playbackState === "playing";
         if (wantPlaying === isCurrentlyPlaying) {
+          this._syncTimelineClock();
           // Already in this state (likely from an optimistic flip) —
           // don't re-emit; consumers would see duplicate play/pause.
           break;
         }
         if (wantPlaying) {
           this._playbackState = "playing";
+          this._syncTimelineClock();
           this._emit("play");
         } else {
           this._playbackState = "paused";
+          this._syncTimelineClock();
           this._emit("pause");
         }
         break;
@@ -411,7 +438,7 @@ export class NativeRustSound implements ISound {
         this._pendingPlayCommand = false;
         if (evt.data.musicId === this._expectedMusicId) {
           this._playbackState = "ended";
-          this._state.position = this._state.duration;
+          this._setLocalPosition(this._state.duration);
           this._emit("end");
         } else if (this._isActiveController()) {
           this._adoptNextBackendMusicId = true;
@@ -419,7 +446,7 @@ export class NativeRustSound implements ISound {
           void this.requestStatusSync().then(() => {
             if (this._destroyed) return;
             this._playbackState = "ended";
-            this._state.position = this._state.duration;
+            this._setLocalPosition(this._state.duration);
             this._emit("end");
           });
         }
@@ -443,16 +470,13 @@ export class NativeRustSound implements ISound {
         }
         if (typeof evt.data.duration === "number" && evt.data.duration > 0) {
           this._state.duration = evt.data.duration;
+          this._timeline.setDuration(evt.data.duration);
           if (this._musicInfo) {
             this._musicInfo = { ...this._musicInfo, duration: evt.data.duration };
           }
         }
         if (typeof evt.data.position === "number" && evt.data.position >= 0) {
-          this._state.position = evt.data.position;
-          this._lastPositionEvent = { position: evt.data.position, receivedAt: Date.now() };
-          if (this._musicInfo) {
-            this._musicInfo = { ...this._musicInfo, position: evt.data.position };
-          }
+          this._setLocalPosition(evt.data.position);
         }
         this._sendCommand({ type: "syncStatus" });
         window.dispatchEvent(
@@ -505,6 +529,21 @@ export class NativeRustSound implements ISound {
         break;
       }
 
+      case "audioOutputChanged":
+        break;
+
+      case "audioOutputError":
+        console.warn("[NativeRustSound] audio output error:", evt.data.error);
+        break;
+
+      case "seekCommitted":
+        this._handleSeekCommitted(evt.data.requestId, evt.data.position);
+        break;
+
+      case "seekFailed":
+        this._handleSeekFailed(evt.data.requestId, evt.data.position, evt.data.error);
+        break;
+
       case "playError":
       case "loadError": {
         const err = new Error(evt.data.error);
@@ -547,8 +586,89 @@ export class NativeRustSound implements ISound {
     return false;
   }
 
+  private _coerceIncomingPosition(position: number): number {
+    if (!Number.isFinite(position) || position <= 0) return 0;
+    const duration = this.duration();
+    return duration > 0 ? Math.min(position, duration) : position;
+  }
+
+  private _normalizeSeekPosition(position: number): number {
+    if (!Number.isFinite(position) || position <= 0) return 0;
+    const duration = this.duration();
+    return duration > 0 ? Math.min(position, duration) : position;
+  }
+
+  private _newSeekRequestId(): number {
+    this._nextSeekRequestId = (this._nextSeekRequestId + 1) % SEEK_REQUEST_ID_MODULO;
+    return Date.now() * SEEK_REQUEST_ID_MODULO + this._nextSeekRequestId;
+  }
+
+  private _syncTimelineClock(): void {
+    this._timeline.setDuration(this.duration());
+    this._timeline.setPlaybackState(this._playbackState === "playing", this._pendingPlayCommand);
+  }
+
+  private _applyTimelinePosition(position: number): number {
+    const nextPosition = this._normalizeSeekPosition(position);
+    this._state.position = nextPosition;
+    if (this._musicInfo) {
+      this._musicInfo = { ...this._musicInfo, position: nextPosition };
+    }
+    return nextPosition;
+  }
+
+  private _setLocalPosition(position: number, guardSeek = false, requestId?: number): number {
+    this._syncTimelineClock();
+    const nextPosition = this._timeline.setLocalPosition(position, {
+      guardSeek,
+      requestId,
+      atomicSeek: requestId !== undefined && isTauri(),
+    });
+    return this._applyTimelinePosition(nextPosition);
+  }
+
+  private _acceptIncomingPosition(position: number): number {
+    this._syncTimelineClock();
+    return this._applyTimelinePosition(this._timeline.acceptIncomingPosition(position));
+  }
+
+  private _handleSeekCommitted(requestId: number | null | undefined, position: number): void {
+    this._syncTimelineClock();
+    const nextPosition = this._timeline.commitSeek(requestId, position);
+    if (nextPosition === null) return;
+    this._applyTimelinePosition(nextPosition);
+  }
+
+  private _handleSeekFailed(
+    requestId: number | null | undefined,
+    position: number,
+    error: string,
+  ): void {
+    this._syncTimelineClock();
+    if (!this._timeline.rejectSeek(requestId)) return;
+    if (IS_DEV) {
+      console.warn("[NativeRustSound] native seek failed", { requestId, position, error });
+    }
+    void this.requestStatusSync(500);
+  }
+
+  private _issueSeek(position: number): boolean {
+    const requestId = isTauri() ? this._newSeekRequestId() : undefined;
+    const msg: import("./audioBridge").AudioThreadMessage =
+      requestId !== undefined
+        ? { type: "seekAudio", position, requestId, expectedMusicId: this._expectedMusicId }
+        : { type: "seekAudio", position, expectedMusicId: this._expectedMusicId };
+    const sentNow = this._sendCommand(msg);
+    this._setLocalPosition(position, true, requestId);
+    return sentNow;
+  }
+
   private _isActiveController(): boolean {
     return window.$player === this;
+  }
+
+  isDestroyed(): boolean {
+    return this._destroyed;
   }
 
   private _acceptMusicId(musicId: string, allowBackendAdoption = false): boolean {
@@ -632,7 +752,7 @@ export class NativeRustSound implements ISound {
     if (this._optimisticPlayback && this._playbackState !== "playing") {
       this._playbackState = "playing";
       this._state.isPlaying = true;
-      this._lastPositionEvent = { position: this._state.position, receivedAt: Date.now() };
+      this._syncTimelineClock();
       // Defer via microtask so `sound.play(); sound.once("play", ...)` —
       // the pattern PlayerFunctions.fadePlayOrPause uses — has time to
       // register the listener before the event fires. Without this the
@@ -649,7 +769,7 @@ export class NativeRustSound implements ISound {
     if (this._optimisticPlayback && this._playbackState !== "paused") {
       this._playbackState = "paused";
       this._state.isPlaying = false;
-      this._lastPositionEvent = { position: this._state.position, receivedAt: Date.now() };
+      this._syncTimelineClock();
       this._emitDeferred("pause");
     }
     return this;
@@ -659,12 +779,11 @@ export class NativeRustSound implements ISound {
     if (this._destroyed) return this;
     this._pendingPlayCommand = false;
     this._sendCommand({ type: "pauseAudio" });
-    this._sendCommand({ type: "seekAudio", position: 0 });
-    this._state.position = 0;
+    this._issueSeek(0);
     this._state.isPlaying = false;
-    this._lastPositionEvent = { position: 0, receivedAt: Date.now() };
     if (this._optimisticPlayback && this._playbackState !== "stopped") {
       this._playbackState = "stopped";
+      this._syncTimelineClock();
       this._emitDeferred("pause");
     }
     return this;
@@ -673,22 +792,20 @@ export class NativeRustSound implements ISound {
   seek(pos?: number): number | this {
     if (pos !== undefined) {
       if (!this._destroyed) {
-        this._sendCommand({ type: "seekAudio", position: pos });
-        this._state.position = pos;
-        this._lastPositionEvent = { position: pos, receivedAt: Date.now() };
+        const position = this._normalizeSeekPosition(pos);
+        const sentNow = this._issueSeek(position);
+        if (isTauri() && sentNow) {
+          window.setTimeout(() => {
+            void this.requestStatusSync(300);
+          }, 0);
+        }
       }
       return this;
     }
-    // Getter: extrapolate position client-side. Rust emits PlayPosition
-    // once on state changes / seeks and again every 1 s — between those,
-    // we add elapsed wall time so the seek-bar / time display stay smooth.
-    if (this._playbackState === "playing" && this._lastPositionEvent) {
-      const elapsed = (Date.now() - this._lastPositionEvent.receivedAt) / 1000;
-      const duration = this._musicInfo?.duration ?? this._state.duration;
-      const extrapolated = this._lastPositionEvent.position + elapsed;
-      return duration > 0 ? Math.min(extrapolated, duration) : extrapolated;
-    }
-    return this._state.position;
+    this._syncTimelineClock();
+    const position = this._timeline.readPosition();
+    this._state.position = position;
+    return position;
   }
 
   duration(): number {
@@ -852,6 +969,7 @@ export class NativeRustSound implements ISound {
 
   unload(): void {
     if (this._destroyed) return;
+    const wasActiveController = this._isActiveController();
     this._destroyed = true;
     this._clearPendingLoad();
     for (const sync of this._pendingSyncs.splice(0)) {
@@ -872,8 +990,10 @@ export class NativeRustSound implements ISound {
     this._analysisEnabled = false;
     this._fftEventsEnabled = false;
     this._pendingPlayCommand = false;
-    this._sendCommand({ type: "setFFT", enabled: false });
-    this._sendCommand({ type: "setAnalysis", enabled: false });
-    this._sendCommand(isTauri() ? { type: "pauseAudio" } : { type: "close" });
+    if (wasActiveController) {
+      this._sendCommand({ type: "setFFT", enabled: false });
+      this._sendCommand({ type: "setAnalysis", enabled: false });
+      this._sendCommand(isTauri() ? { type: "pauseAudio" } : { type: "close" });
+    }
   }
 }

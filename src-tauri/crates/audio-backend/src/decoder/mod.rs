@@ -1,34 +1,44 @@
 pub mod symphonia;
 
+use std::fs::File;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rodio::{Decoder, Source};
+use ::symphonia::core::audio::{SampleBuffer, SignalSpec};
+use ::symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
+use ::symphonia::core::errors::Error as SymphoniaError;
+use ::symphonia::core::formats::{FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo};
+use ::symphonia::core::io::MediaSourceStream;
+use ::symphonia::core::meta::MetadataOptions;
+use ::symphonia::core::probe::Hint;
+use ::symphonia::core::units::Time;
+use rodio::source::SeekError;
+use rodio::Source;
 use tokio::sync::mpsc as tokio_mpsc;
 use tracing::warn;
 
 use crate::analysis::AnalysisCommand;
 use crate::error::{AudioError, AudioResult};
-use crate::output::OutputWriter;
+use crate::output::{OutputWriter, PushCancel};
 
-pub trait PlaybackSink: Clone + Send + 'static {
-    fn push_block(&self, block: Vec<f32>, cancel: &AtomicBool) -> bool;
-    fn clear(&self);
+pub(crate) trait PlaybackSink: Clone + Send + 'static {
+    fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool;
+    fn flush_for_seek(&self);
     fn set_paused(&self, paused: bool);
     fn queued_samples(&self) -> usize;
     fn generation(&self) -> u64;
 }
 
 impl PlaybackSink for OutputWriter {
-    fn push_block(&self, block: Vec<f32>, cancel: &AtomicBool) -> bool {
+    fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool {
         OutputWriter::push_block(self, block, cancel)
     }
 
-    fn clear(&self) {
-        OutputWriter::clear(self);
+    fn flush_for_seek(&self) {
+        OutputWriter::flush(self);
     }
 
     fn set_paused(&self, paused: bool) {
@@ -80,7 +90,11 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<tempfile::TempPath> {
 // ── DecoderHandle ────────────────────────────────────────────────
 
 enum DecoderControl {
-    Seek(Duration),
+    Seek {
+        pos: Duration,
+        epoch: u64,
+        ack: mpsc::Sender<Result<(), String>>,
+    },
     SetPaused(bool),
     Stop,
 }
@@ -92,13 +106,34 @@ enum DecoderControl {
 pub struct DecoderHandle {
     control_tx: mpsc::Sender<DecoderControl>,
     stop_flag: Arc<AtomicBool>,
+    seek_epoch: Arc<AtomicU64>,
 }
 
 impl DecoderHandle {
     pub fn seek(&self, pos: Duration) -> AudioResult<()> {
+        let (ack_tx, ack_rx) = mpsc::channel();
+        let epoch = self
+            .seek_epoch
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1);
         self.control_tx
-            .send(DecoderControl::Seek(pos))
-            .map_err(|_| AudioError::ThreadError("decoder control channel closed".into()))
+            .send(DecoderControl::Seek {
+                pos,
+                epoch,
+                ack: ack_tx,
+            })
+            .map_err(|_| AudioError::ThreadError("decoder control channel closed".into()))?;
+
+        match ack_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(AudioError::Decode(err)),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                Err(AudioError::ThreadError("decoder seek timed out".into()))
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(AudioError::ThreadError(
+                "decoder seek acknowledgement channel closed".into(),
+            )),
+        }
     }
 
     pub fn set_paused(&self, paused: bool) -> AudioResult<()> {
@@ -109,6 +144,7 @@ impl DecoderHandle {
 
     pub fn stop(&self) {
         self.stop_flag.store(true, Ordering::Release);
+        self.seek_epoch.fetch_add(1, Ordering::AcqRel);
         let _ = self.control_tx.send(DecoderControl::Stop);
     }
 }
@@ -127,6 +163,245 @@ pub enum DecoderEvent {
 const DECODE_BLOCK_FRAMES: usize = 512;
 const PRE_ROLL_SILENCE_FRAMES: usize = 1024;
 const START_RAMP_FRAMES: usize = 2048;
+const SEEK_RAMP_FRAMES: usize = 512;
+const SEEK_CONTROL_CHECK_FRAMES: usize = 64;
+const MAX_DECODE_RETRIES: usize = 3;
+
+struct SeekableSymphoniaSource {
+    format: Box<dyn FormatReader>,
+    decoder: Box<dyn ::symphonia::core::codecs::Decoder>,
+    track_id: u32,
+    spec: SignalSpec,
+    total_duration: Option<Time>,
+    buffer: Vec<f32>,
+    buffer_offset: usize,
+}
+
+impl SeekableSymphoniaSource {
+    fn open(path: &Path) -> AudioResult<Self> {
+        let file = File::open(path)?;
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+            hint.with_extension(ext);
+        }
+
+        let format_opts = FormatOptions {
+            enable_gapless: true,
+            ..Default::default()
+        };
+        let probed = ::symphonia::default::get_probe()
+            .format(&hint, mss, &format_opts, &MetadataOptions::default())
+            .map_err(|e| AudioError::Decode(e.to_string()))?;
+        let mut format = probed.format;
+
+        let track = format
+            .default_track()
+            .or_else(|| {
+                format
+                    .tracks()
+                    .iter()
+                    .find(|track| track.codec_params.codec != CODEC_TYPE_NULL)
+            })
+            .ok_or_else(|| AudioError::Decode("no supported audio track".into()))?
+            .clone();
+        let track_id = track.id;
+        let total_duration = track
+            .codec_params
+            .time_base
+            .zip(track.codec_params.n_frames)
+            .map(|(base, frames)| base.calc_time(frames));
+        let mut decoder = ::symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .map_err(|e| AudioError::Decode(e.to_string()))?;
+
+        let (spec, buffer) = decode_next_audio_buffer(format.as_mut(), decoder.as_mut(), track_id)
+            .map_err(|e| AudioError::Decode(e.to_string()))?
+            .ok_or_else(|| AudioError::Decode("no decodable audio samples".into()))?;
+
+        Ok(Self {
+            format,
+            decoder,
+            track_id,
+            spec,
+            total_duration,
+            buffer,
+            buffer_offset: 0,
+        })
+    }
+
+    fn refill(&mut self) -> Option<()> {
+        let (spec, buffer) = match decode_next_audio_buffer(
+            self.format.as_mut(),
+            self.decoder.as_mut(),
+            self.track_id,
+        ) {
+            Ok(Some(decoded)) => decoded,
+            Ok(None) => return None,
+            Err(err) => {
+                warn!("decode failed while refilling playback buffer: {err}");
+                return None;
+            }
+        };
+        self.spec = spec;
+        self.buffer = buffer;
+        self.buffer_offset = 0;
+        Some(())
+    }
+
+    fn refine_position(&mut self, seeked: SeekedTo) -> Result<(), SymphoniaError> {
+        let mut frames_to_skip = seeked.required_ts.saturating_sub(seeked.actual_ts);
+        loop {
+            let packet = self.next_track_packet()?;
+            if packet.dur() <= frames_to_skip {
+                frames_to_skip -= packet.dur();
+                continue;
+            }
+
+            let (spec, buffer) = decode_packet_to_buffer(self.decoder.as_mut(), &packet)?;
+            self.spec = spec;
+            self.buffer = buffer;
+            self.buffer_offset = (frames_to_skip as usize)
+                .saturating_mul(self.channels() as usize)
+                .min(self.buffer.len());
+            return Ok(());
+        }
+    }
+
+    fn next_track_packet(&mut self) -> Result<Packet, SymphoniaError> {
+        loop {
+            let packet = self.format.next_packet()?;
+            if packet.track_id() == self.track_id {
+                return Ok(packet);
+            }
+        }
+    }
+}
+
+impl Iterator for SeekableSymphoniaSource {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.buffer_offset >= self.buffer.len() {
+            self.refill()?;
+        }
+        let sample = *self.buffer.get(self.buffer_offset)?;
+        self.buffer_offset += 1;
+        Some(sample)
+    }
+}
+
+impl Source for SeekableSymphoniaSource {
+    fn current_frame_len(&self) -> Option<usize> {
+        Some(self.buffer.len().saturating_sub(self.buffer_offset))
+    }
+
+    fn channels(&self) -> u16 {
+        self.spec.channels.count().max(1) as u16
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.spec.rate.max(1)
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        self.total_duration.map(|Time { seconds, frac }| {
+            Duration::new(
+                seconds,
+                (frac.clamp(0.0, 0.999_999_999) * 1_000_000_000.0) as u32,
+            )
+        })
+    }
+
+    fn try_seek(&mut self, pos: Duration) -> Result<(), SeekError> {
+        let target = if self
+            .total_duration()
+            .is_some_and(|duration| duration.saturating_sub(pos).as_millis() < 1)
+        {
+            self.total_duration
+                .map(skip_back_a_tiny_bit)
+                .unwrap_or_else(|| pos.as_secs_f64().into())
+        } else {
+            pos.as_secs_f64().into()
+        };
+
+        let seeked = self
+            .format
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time: target,
+                    track_id: Some(self.track_id),
+                },
+            )
+            .map_err(to_seek_error)?;
+
+        self.decoder.reset();
+        self.refine_position(seeked).map_err(to_seek_error)?;
+        Ok(())
+    }
+}
+
+fn decode_next_audio_buffer(
+    format: &mut dyn FormatReader,
+    decoder: &mut dyn ::symphonia::core::codecs::Decoder,
+    track_id: u32,
+) -> Result<Option<(SignalSpec, Vec<f32>)>, SymphoniaError> {
+    let mut decode_errors = 0;
+    loop {
+        let packet = match format.next_packet() {
+            Ok(packet) => packet,
+            Err(SymphoniaError::IoError(_)) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        if packet.track_id() != track_id {
+            continue;
+        }
+
+        match decode_packet_to_buffer(decoder, &packet) {
+            Ok(decoded) => return Ok(Some(decoded)),
+            Err(SymphoniaError::DecodeError(_)) => {
+                decode_errors += 1;
+                if decode_errors > MAX_DECODE_RETRIES {
+                    return Err(SymphoniaError::DecodeError("too many decode errors"));
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+fn decode_packet_to_buffer(
+    decoder: &mut dyn ::symphonia::core::codecs::Decoder,
+    packet: &Packet,
+) -> Result<(SignalSpec, Vec<f32>), SymphoniaError> {
+    let decoded = decoder.decode(packet)?;
+    let spec = *decoded.spec();
+    let mut sample_buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
+    sample_buffer.copy_interleaved_ref(decoded);
+    Ok((spec, sample_buffer.samples().to_vec()))
+}
+
+fn to_seek_error(err: SymphoniaError) -> SeekError {
+    SeekError::Other(Box::new(std::io::Error::new(
+        std::io::ErrorKind::Other,
+        err.to_string(),
+    )))
+}
+
+fn skip_back_a_tiny_bit(
+    Time {
+        mut seconds,
+        mut frac,
+    }: Time,
+) -> Time {
+    frac -= 0.0001;
+    if frac < 0.0 {
+        seconds = seconds.saturating_sub(1);
+        frac = 1.0 + frac;
+    }
+    Time { seconds, frac }
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_playback_decoder<S>(
@@ -144,9 +419,7 @@ pub fn spawn_playback_decoder<S>(
 where
     S: PlaybackSink,
 {
-    let file = std::io::BufReader::new(std::fs::File::open(path)?);
-    let decoder = Decoder::new(file).map_err(|e| AudioError::Decode(e.to_string()))?;
-    let mut source = decoder.convert_samples::<f32>();
+    let mut source = SeekableSymphoniaSource::open(path)?;
     let input_channels = source.channels().max(1);
     let input_sample_rate = source.sample_rate().max(1);
 
@@ -158,7 +431,9 @@ where
 
     let (control_tx, control_rx) = mpsc::channel();
     let stop_flag = Arc::new(AtomicBool::new(false));
+    let seek_epoch = Arc::new(AtomicU64::new(0));
     let worker_stop = Arc::clone(&stop_flag);
+    let worker_seek_epoch = Arc::clone(&seek_epoch);
     let output_channels = output_channels.max(1);
     let output_sample_rate = output_sample_rate.max(1);
 
@@ -178,6 +453,7 @@ where
                 event_tx,
                 playback_id,
                 worker_stop,
+                worker_seek_epoch,
                 start_paused,
             );
             worker.run();
@@ -187,6 +463,7 @@ where
     Ok(DecoderHandle {
         control_tx,
         stop_flag,
+        seek_epoch,
     })
 }
 
@@ -203,9 +480,13 @@ struct DecodeWorker<S: PlaybackSink> {
     event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
     playback_id: u64,
     stop_flag: Arc<AtomicBool>,
+    seek_epoch: Arc<AtomicU64>,
     paused: bool,
     pre_roll_frames_remaining: usize,
+    start_ramp_total_frames: usize,
     start_ramp_frames_remaining: usize,
+    applied_seek_epoch: u64,
+    pending_seek_flush_epoch: Option<u64>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -223,6 +504,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
         event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
         playback_id: u64,
         stop_flag: Arc<AtomicBool>,
+        seek_epoch: Arc<AtomicU64>,
         paused: bool,
     ) -> Self {
         let (analysis_recycle_tx, analysis_recycle_rx) = mpsc::channel();
@@ -245,9 +527,13 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             event_tx,
             playback_id,
             stop_flag,
+            seek_epoch,
             paused,
             pre_roll_frames_remaining: PRE_ROLL_SILENCE_FRAMES,
+            start_ramp_total_frames: START_RAMP_FRAMES,
             start_ramp_frames_remaining: START_RAMP_FRAMES,
+            applied_seek_epoch: 0,
+            pending_seek_flush_epoch: None,
         }
     }
 
@@ -266,22 +552,35 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                 continue;
             }
 
+            if self.seek_epoch.load(Ordering::Acquire) != self.applied_seek_epoch {
+                std::thread::yield_now();
+                continue;
+            }
+
+            let block_seek_epoch = self.applied_seek_epoch;
             let generation = self.output.generation();
             let mut block = Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize);
-            let mut analysis_block =
-                if self.analysis_enabled.load(Ordering::Acquire) {
-                    Some(self.analysis_recycle_rx.try_recv().unwrap_or_else(|_| {
-                        Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize)
-                    }))
-                } else {
-                    None
-                };
+            let mut analysis_block = if self.analysis_enabled.load(Ordering::Acquire) {
+                Some(self.analysis_recycle_rx.try_recv().unwrap_or_else(|_| {
+                    Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize)
+                }))
+            } else {
+                None
+            };
             if let Some(block) = analysis_block.as_mut() {
                 block.clear();
             }
             let mut ended = false;
+            let mut superseded = false;
 
-            for _ in 0..DECODE_BLOCK_FRAMES {
+            for frame_index in 0..DECODE_BLOCK_FRAMES {
+                if frame_index % SEEK_CONTROL_CHECK_FRAMES == 0
+                    && self.seek_epoch.load(Ordering::Acquire) != block_seek_epoch
+                {
+                    superseded = true;
+                    break;
+                }
+
                 if self.frames.next_frame(&mut frame).is_none() {
                     ended = true;
                     break;
@@ -292,8 +591,9 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                     block.extend(std::iter::repeat(0.0).take(self.output_channels as usize));
                 } else {
                     if self.start_ramp_frames_remaining > 0 {
-                        let elapsed = START_RAMP_FRAMES - self.start_ramp_frames_remaining;
-                        let t = (elapsed as f32 / START_RAMP_FRAMES as f32).clamp(0.0, 1.0);
+                        let ramp_total = self.start_ramp_total_frames.max(1);
+                        let elapsed = ramp_total.saturating_sub(self.start_ramp_frames_remaining);
+                        let t = (elapsed as f32 / ramp_total as f32).clamp(0.0, 1.0);
                         let gain = t * t * (3.0 - 2.0 * t);
                         for sample in &mut frame {
                             *sample *= gain;
@@ -307,7 +607,26 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                 }
             }
 
-            let pushed = block.is_empty() || self.output.push_block(block, self.stop_flag.as_ref());
+            if superseded || self.seek_epoch.load(Ordering::Acquire) != block_seek_epoch {
+                continue;
+            }
+
+            if self.pending_seek_flush_epoch == Some(block_seek_epoch)
+                && (!block.is_empty() || ended)
+            {
+                self.output.flush_for_seek();
+                self.pending_seek_flush_epoch = None;
+            }
+
+            let pushed = block.is_empty()
+                || self.output.push_block(
+                    block,
+                    PushCancel::with_interrupt_epoch(
+                        self.stop_flag.as_ref(),
+                        self.seek_epoch.as_ref(),
+                        block_seek_epoch,
+                    ),
+                );
             let generation_current = self.output.generation() == generation;
 
             if pushed && generation_current && self.analysis_enabled.load(Ordering::Acquire) {
@@ -392,16 +711,26 @@ impl<S: PlaybackSink> DecodeWorker<S> {
 
     fn apply_control(&mut self, control: DecoderControl) -> bool {
         match control {
-            DecoderControl::Seek(pos) => {
-                self.output.clear();
-                match self.frames.seek(pos) {
+            DecoderControl::Seek { pos, epoch, ack } => {
+                let result = match self.frames.seek(pos) {
                     Ok(()) => {
-                        self.pre_roll_frames_remaining = PRE_ROLL_SILENCE_FRAMES;
-                        self.start_ramp_frames_remaining = START_RAMP_FRAMES;
+                        self.applied_seek_epoch = epoch;
+                        self.pending_seek_flush_epoch = Some(epoch);
+                        self.pre_roll_frames_remaining = 0;
+                        self.start_ramp_total_frames = SEEK_RAMP_FRAMES;
+                        self.start_ramp_frames_remaining = SEEK_RAMP_FRAMES;
                         let _ = self.analysis_tx.send(AnalysisCommand::Clear);
+                        Ok(())
                     }
-                    Err(e) => warn!("decoder seek failed: {e}"),
-                }
+                    Err(e) => {
+                        self.applied_seek_epoch = epoch;
+                        self.pending_seek_flush_epoch = None;
+                        let err = format!("decoder seek failed: {e}");
+                        warn!("{err}");
+                        Err(err)
+                    }
+                };
+                let _ = ack.send(result);
                 true
             }
             DecoderControl::SetPaused(paused) => {
@@ -501,8 +830,11 @@ impl FrameConverter {
                 }
                 return Some(());
             }
-            if !read_input_frame(self.source.as_mut(), self.input_channels, &mut self.current_frame)
-            {
+            if !read_input_frame(
+                self.source.as_mut(),
+                self.input_channels,
+                &mut self.current_frame,
+            ) {
                 return None;
             }
             apply_mix_matrix(&self.matrix, &self.current_frame, output);
@@ -511,14 +843,21 @@ impl FrameConverter {
 
         // Linear-interpolation resampling path.
         if !self.has_current {
-            if !read_input_frame(self.source.as_mut(), self.input_channels, &mut self.current_frame)
-            {
+            if !read_input_frame(
+                self.source.as_mut(),
+                self.input_channels,
+                &mut self.current_frame,
+            ) {
                 return None;
             }
             self.has_current = true;
         }
         if !self.has_next && !self.reached_end {
-            if read_input_frame(self.source.as_mut(), self.input_channels, &mut self.next_frame) {
+            if read_input_frame(
+                self.source.as_mut(),
+                self.input_channels,
+                &mut self.next_frame,
+            ) {
                 self.has_next = true;
             } else {
                 self.reached_end = true;
@@ -538,8 +877,11 @@ impl FrameConverter {
             if self.has_next {
                 std::mem::swap(&mut self.current_frame, &mut self.next_frame);
                 self.has_next = false;
-                if read_input_frame(self.source.as_mut(), self.input_channels, &mut self.next_frame)
-                {
+                if read_input_frame(
+                    self.source.as_mut(),
+                    self.input_channels,
+                    &mut self.next_frame,
+                ) {
                     self.has_next = true;
                 } else {
                     self.reached_end = true;

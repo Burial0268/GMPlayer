@@ -50,6 +50,19 @@ tempfile = "3"
 tokio-tungstenite = "0.21"
 futures-util = "0.3"
 
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "windows"))'.dependencies.windows]
+version = "0.54"
+features = [
+  "Win32_Foundation",
+  "Win32_Media_Audio",
+  "Win32_System_Com",
+]
+
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
+coreaudio-rs = { version = "0.11", default-features = false, features = [
+  "core_audio",
+] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 symphonia = { version = "0.5", default-features = false, features = [

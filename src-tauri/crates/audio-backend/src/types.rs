@@ -52,6 +52,110 @@ impl Default for AutoMixConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DspConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub input_gain_db: f32,
+    #[serde(default)]
+    pub equalizer: EqualizerConfig,
+    #[serde(default)]
+    pub output_gain_db: f32,
+    #[serde(default)]
+    pub limiter: LimiterConfig,
+}
+
+impl Default for DspConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            input_gain_db: 0.0,
+            equalizer: EqualizerConfig::default(),
+            output_gain_db: 0.0,
+            limiter: LimiterConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EqualizerConfig {
+    pub enabled: bool,
+    #[serde(default)]
+    pub preamp_db: f32,
+    #[serde(default)]
+    pub bands: Vec<EqualizerBand>,
+}
+
+impl Default for EqualizerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            preamp_db: 0.0,
+            bands: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LimiterConfig {
+    pub enabled: bool,
+    #[serde(default = "default_limiter_threshold_db")]
+    pub threshold_db: f32,
+    #[serde(default = "default_limiter_ceiling_db")]
+    pub ceiling_db: f32,
+    #[serde(default = "default_limiter_release_ms")]
+    pub release_ms: f32,
+}
+
+impl Default for LimiterConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold_db: -1.0,
+            ceiling_db: -1.0,
+            release_ms: 80.0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EqualizerBand {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    pub filter_type: EqualizerFilterType,
+    pub frequency: f32,
+    pub gain_db: f32,
+    pub q: f32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EqualizerFilterType {
+    Peaking,
+    LowShelf,
+    HighShelf,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_limiter_threshold_db() -> f32 {
+    -1.0
+}
+
+fn default_limiter_ceiling_db() -> f32 {
+    -1.0
+}
+
+fn default_limiter_release_ms() -> f32 {
+    80.0
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AutoMixNativeState {
@@ -136,7 +240,13 @@ pub enum AudioThreadMessage {
     #[serde(rename_all = "camelCase")]
     ResumeOrPauseAudio,
     #[serde(rename_all = "camelCase")]
-    SeekAudio { position: f64 },
+    SeekAudio {
+        position: f64,
+        #[serde(default)]
+        request_id: Option<u64>,
+        #[serde(default)]
+        expected_music_id: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
     JumpToSong { song_index: usize },
     /// Same as `JumpToSong` but pre-seeks to `position` seconds before the
@@ -168,6 +278,10 @@ pub enum AudioThreadMessage {
     SetFFT { enabled: bool },
     #[serde(rename_all = "camelCase")]
     SetFFTRange { from_freq: f32, to_freq: f32 },
+    #[serde(rename_all = "camelCase")]
+    SetEqualizer { config: EqualizerConfig },
+    #[serde(rename_all = "camelCase")]
+    SetDsp { config: DspConfig },
     #[serde(rename_all = "camelCase")]
     SyncStatus,
     #[serde(rename_all = "camelCase")]
@@ -246,11 +360,32 @@ pub enum AudioThreadEvent {
     #[serde(rename_all = "camelCase")]
     PlayStatus { is_playing: bool },
     #[serde(rename_all = "camelCase")]
+    SeekCommitted {
+        request_id: Option<u64>,
+        position: f64,
+    },
+    #[serde(rename_all = "camelCase")]
+    SeekFailed {
+        request_id: Option<u64>,
+        position: f64,
+        error: String,
+    },
+    #[serde(rename_all = "camelCase")]
     LoadError { error: String },
     #[serde(rename_all = "camelCase")]
     PlayError { error: String },
     #[serde(rename_all = "camelCase")]
     VolumeChanged { volume: f64 },
+    #[serde(rename_all = "camelCase")]
+    AudioOutputChanged {
+        device_name: String,
+        is_default: bool,
+        channels: u16,
+        sample_rate: u32,
+        sample_format: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    AudioOutputError { error: String, recoverable: bool },
     // FFTData → "fftData" needs explicit rename: serde's `rename_all = "camelCase"`
     // only lowercases the first character, which would produce "fFTData" and miss
     // the frontend listener.

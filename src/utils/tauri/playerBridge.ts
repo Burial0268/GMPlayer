@@ -40,6 +40,7 @@ const defaultState: PlayerStatePayload = {
 const defaultSettings: PlayerSettingsPayload = {
   lyricTimeOffset: 0,
   lyricsFontSize: 3.6,
+  desktopLyricsFontSizeOffset: 0,
   lyricFont: "HarmonyOS Sans SC",
   lyricFontWeight: "normal",
   lyricLetterSpacing: "normal",
@@ -86,6 +87,46 @@ export function usePlayerBridge() {
   const lyricIndex = ref(-1);
 
   const unlisteners: (() => void)[] = [];
+  let lastAcceptedTimeSeq = 0;
+  let lastAcceptedTimeSongId: number | null = null;
+
+  function isStaleTimePayload(payload: PlayerTimePayload): boolean {
+    const seq = payload.seq ?? 0;
+    return seq > 0 && lastAcceptedTimeSeq > 0 && seq <= lastAcceptedTimeSeq;
+  }
+
+  function applyStatePayload(payload: PlayerStatePayload): void {
+    const acceptedTime = currentTime.value;
+    Object.assign(state, payload);
+    if (
+      lastAcceptedTimeSeq > 0 &&
+      (payload.songId === null ||
+        lastAcceptedTimeSongId === null ||
+        payload.songId === lastAcceptedTimeSongId)
+    ) {
+      state.currentTime = acceptedTime;
+    }
+  }
+
+  function applyTimePayload(payload: PlayerTimePayload): void {
+    if (isStaleTimePayload(payload)) return;
+
+    const time = Number.isFinite(payload.currentTime) ? Math.max(0, payload.currentTime) : 0;
+    currentTime.value = time;
+    lyricIndex.value = payload.lyricIndex;
+    state.currentTime = time;
+
+    if (typeof payload.duration === "number" && Number.isFinite(payload.duration)) {
+      state.duration = Math.max(0, payload.duration);
+    }
+    if (typeof payload.isPlaying === "boolean") {
+      state.isPlaying = payload.isPlaying;
+    }
+
+    const seq = payload.seq ?? 0;
+    if (seq > 0) lastAcceptedTimeSeq = seq;
+    lastAcceptedTimeSongId = payload.songId ?? state.songId ?? lastAcceptedTimeSongId;
+  }
 
   // ── Receive events from master ──────────────────────────────────────
 
@@ -97,7 +138,7 @@ export function usePlayerBridge() {
     const u1 = await tauri.event.listen<PlayerStatePayload>(
       PLAYER_COMMUNICATION_EVENTS.state,
       (e) => {
-        Object.assign(state, e.payload);
+        applyStatePayload(e.payload);
       },
     );
     unlisteners.push(u1);
@@ -106,8 +147,7 @@ export function usePlayerBridge() {
     const u2 = await tauri.event.listen<PlayerTimePayload>(
       PLAYER_COMMUNICATION_EVENTS.time,
       (e) => {
-        currentTime.value = e.payload.currentTime;
-        lyricIndex.value = e.payload.lyricIndex;
+        applyTimePayload(e.payload);
       },
     );
     unlisteners.push(u2);
@@ -134,9 +174,9 @@ export function usePlayerBridge() {
     const u5 = await tauri.event.listen<PlayerFullStatePayload>(
       PLAYER_COMMUNICATION_EVENTS.fullState,
       (e) => {
-        Object.assign(state, e.payload.state);
-        currentTime.value = e.payload.time.currentTime;
-        lyricIndex.value = e.payload.time.lyricIndex;
+        if (isStaleTimePayload(e.payload.time)) return;
+        applyStatePayload(e.payload.state);
+        applyTimePayload(e.payload.time);
         if (e.payload.lyric) {
           lyricData.value = e.payload.lyric;
         }
@@ -208,6 +248,14 @@ export function usePlayerBridge() {
     emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveSetLyricsFontSize, { size });
   }
 
+  function setDesktopLyricsFontSizeOffset(offset: number): void {
+    const nextOffset = Math.max(-20, Math.min(40, offset));
+    settings.desktopLyricsFontSizeOffset = nextOffset;
+    emitToMain(PLAYER_COMMUNICATION_EVENTS.slaveSetDesktopLyricsFontSizeOffset, {
+      offset: nextOffset,
+    });
+  }
+
   // ── Auto-connect lifecycle ──────────────────────────────────────────
 
   onMounted(() => {
@@ -235,6 +283,7 @@ export function usePlayerBridge() {
     cyclePlayMode,
     toggleLike,
     setLyricsFontSize,
+    setDesktopLyricsFontSizeOffset,
 
     // Lifecycle
     connect,

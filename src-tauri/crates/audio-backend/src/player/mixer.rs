@@ -3,9 +3,12 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
+use parking_lot::RwLock;
+
 use crate::decoder::PlaybackSink;
-use crate::output::OutputWriter;
-use crate::types::CrossfadeCurve;
+use crate::effects::DspChain;
+use crate::output::{OutputWriter, PushCancel};
+use crate::types::{CrossfadeCurve, DspConfig};
 
 const DECK_QUEUE_BLOCKS: usize = 16;
 const MIX_BLOCK_FRAMES: usize = 1024;
@@ -17,11 +20,25 @@ pub enum DeckId {
 }
 
 enum MixerControl {
+    FlushDeck {
+        deck: DeckId,
+        generation: u64,
+        flush_epoch: u64,
+        clear_output: bool,
+        ack: mpsc::Sender<()>,
+    },
     ClearDeck {
         deck: DeckId,
+        generation: u64,
+        flush_epoch: u64,
+        clear_output: bool,
         ack: mpsc::Sender<()>,
     },
     ClearAll {
+        primary_generation: u64,
+        primary_flush_epoch: u64,
+        secondary_generation: u64,
+        secondary_flush_epoch: u64,
         ack: mpsc::Sender<()>,
     },
     #[allow(dead_code)]
@@ -35,19 +52,31 @@ enum MixerControl {
         duration_samples: usize,
         params: CrossfadeParams,
     },
+    ReplaceOutput {
+        output: OutputWriter,
+        ack: mpsc::Sender<()>,
+    },
+    SetDsp(DspConfig),
     Stop,
 }
 
 #[derive(Clone)]
 pub struct DeckWriter {
     deck: DeckId,
-    data_tx: mpsc::SyncSender<Vec<f32>>,
+    data_tx: mpsc::SyncSender<DeckBlock>,
     control_tx: mpsc::Sender<MixerControl>,
-    output: OutputWriter,
+    control_epoch: Arc<AtomicU64>,
+    output: Arc<RwLock<OutputWriter>>,
     paused: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
+    flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
-    clear_output_on_clear: bool,
+}
+
+struct DeckBlock {
+    samples: Vec<f32>,
+    generation: u64,
+    flush_epoch: u64,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -70,15 +99,17 @@ impl Default for CrossfadeParams {
 }
 
 impl PlaybackSink for DeckWriter {
-    fn push_block(&self, mut block: Vec<f32>, cancel: &AtomicBool) -> bool {
+    fn push_block(&self, mut block: Vec<f32>, cancel: PushCancel<'_>) -> bool {
         if block.is_empty() {
             return true;
         }
 
         let generation = self.generation.load(Ordering::Acquire);
+        let flush_epoch = self.flush_epoch.load(Ordering::Acquire);
         loop {
-            if cancel.load(Ordering::Acquire)
+            if cancel.is_cancelled()
                 || self.generation.load(Ordering::Acquire) != generation
+                || self.flush_epoch.load(Ordering::Acquire) != flush_epoch
             {
                 return false;
             }
@@ -89,12 +120,26 @@ impl PlaybackSink for DeckWriter {
             }
 
             let block_len = block.len();
+            let deck_block = DeckBlock {
+                samples: block,
+                generation,
+                flush_epoch,
+            };
             self.queued_samples.fetch_add(block_len, Ordering::Release);
-            match self.data_tx.try_send(block) {
-                Ok(()) => return true,
+            match self.data_tx.try_send(deck_block) {
+                Ok(()) => {
+                    if cancel.is_cancelled()
+                        || self.generation.load(Ordering::Acquire) != generation
+                        || self.flush_epoch.load(Ordering::Acquire) != flush_epoch
+                    {
+                        saturating_sub(&self.queued_samples, block_len);
+                        return false;
+                    }
+                    return true;
+                }
                 Err(mpsc::TrySendError::Full(returned)) => {
                     saturating_sub(&self.queued_samples, block_len);
-                    block = returned;
+                    block = returned.samples;
                     thread::sleep(Duration::from_millis(2));
                 }
                 Err(mpsc::TrySendError::Disconnected(_)) => {
@@ -105,18 +150,8 @@ impl PlaybackSink for DeckWriter {
         }
     }
 
-    fn clear(&self) {
-        self.generation.fetch_add(1, Ordering::AcqRel);
-        self.queued_samples.store(0, Ordering::Release);
-        let (ack_tx, ack_rx) = mpsc::channel();
-        let _ = self.control_tx.send(MixerControl::ClearDeck {
-            deck: self.deck,
-            ack: ack_tx,
-        });
-        let _ = ack_rx.recv_timeout(Duration::from_millis(200));
-        if self.clear_output_on_clear {
-            self.output.clear();
-        }
+    fn flush_for_seek(&self) {
+        self.flush_deck_for_seek();
     }
 
     fn set_paused(&self, paused: bool) {
@@ -124,7 +159,7 @@ impl PlaybackSink for DeckWriter {
     }
 
     fn queued_samples(&self) -> usize {
-        self.queued_samples.load(Ordering::Acquire) + self.output.queued_samples()
+        self.queued_samples.load(Ordering::Acquire) + self.output.read().queued_samples()
     }
 
     fn generation(&self) -> u64 {
@@ -132,18 +167,42 @@ impl PlaybackSink for DeckWriter {
     }
 }
 
+impl DeckWriter {
+    fn flush_deck_for_seek(&self) {
+        let generation = self.generation.load(Ordering::Acquire);
+        let flush_epoch = self.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        self.queued_samples.store(0, Ordering::Release);
+        let (ack_tx, ack_rx) = mpsc::channel();
+        self.control_epoch.fetch_add(1, Ordering::AcqRel);
+        let _ = self.control_tx.send(MixerControl::FlushDeck {
+            deck: self.deck,
+            generation,
+            flush_epoch,
+            clear_output: true,
+            ack: ack_tx,
+        });
+        let _ = ack_rx.recv_timeout(Duration::from_millis(200));
+    }
+}
+
 pub struct DeckMixer {
     primary: DeckWriter,
     secondary: DeckWriter,
     control_tx: mpsc::Sender<MixerControl>,
+    output: Arc<RwLock<OutputWriter>>,
     stop_flag: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
 
 impl DeckMixer {
-    pub fn new(output: OutputWriter, output_channels: u16) -> Self {
-        let (primary_tx, primary_rx) = mpsc::sync_channel::<Vec<f32>>(DECK_QUEUE_BLOCKS);
-        let (secondary_tx, secondary_rx) = mpsc::sync_channel::<Vec<f32>>(DECK_QUEUE_BLOCKS);
+    pub fn new(
+        output: OutputWriter,
+        output_channels: u16,
+        output_sample_rate: u32,
+        dsp_config: &DspConfig,
+    ) -> Self {
+        let (primary_tx, primary_rx) = mpsc::sync_channel::<DeckBlock>(DECK_QUEUE_BLOCKS);
+        let (secondary_tx, secondary_rx) = mpsc::sync_channel::<DeckBlock>(DECK_QUEUE_BLOCKS);
         let (control_tx, control_rx) = mpsc::channel::<MixerControl>();
 
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -151,34 +210,43 @@ impl DeckMixer {
         let secondary_paused = Arc::new(AtomicBool::new(true));
         let primary_generation = Arc::new(AtomicU64::new(0));
         let secondary_generation = Arc::new(AtomicU64::new(0));
+        let primary_flush_epoch = Arc::new(AtomicU64::new(0));
+        let secondary_flush_epoch = Arc::new(AtomicU64::new(0));
         let primary_queued = Arc::new(AtomicUsize::new(0));
         let secondary_queued = Arc::new(AtomicUsize::new(0));
+        let control_epoch = Arc::new(AtomicU64::new(0));
+        let output_state = Arc::new(RwLock::new(output.clone()));
         let primary = DeckWriter {
             deck: DeckId::Primary,
             data_tx: primary_tx,
             control_tx: control_tx.clone(),
-            output: output.clone(),
+            control_epoch: Arc::clone(&control_epoch),
+            output: Arc::clone(&output_state),
             paused: Arc::clone(&primary_paused),
             generation: Arc::clone(&primary_generation),
+            flush_epoch: Arc::clone(&primary_flush_epoch),
             queued_samples: Arc::clone(&primary_queued),
-            clear_output_on_clear: true,
         };
 
         let secondary = DeckWriter {
             deck: DeckId::Secondary,
             data_tx: secondary_tx,
             control_tx: control_tx.clone(),
-            output: output.clone(),
+            control_epoch: Arc::clone(&control_epoch),
+            output: Arc::clone(&output_state),
             paused: Arc::clone(&secondary_paused),
             generation: Arc::clone(&secondary_generation),
+            flush_epoch: Arc::clone(&secondary_flush_epoch),
             queued_samples: Arc::clone(&secondary_queued),
-            clear_output_on_clear: false,
         };
 
         let mixer_stop = Arc::clone(&stop_flag);
+        let dsp_config = dsp_config.clone();
         let thread = thread::Builder::new()
             .name("audio-deck-mixer".into())
             .spawn(move || {
+                let mut dsp = DspChain::new(output_sample_rate, output_channels);
+                dsp.set_dsp(&dsp_config);
                 let mut worker = MixerWorker {
                     output,
                     output_channels: output_channels.max(1) as usize,
@@ -190,7 +258,9 @@ impl DeckMixer {
                         0.0,
                     ),
                     crossfade: None,
+                    dsp,
                     control_rx,
+                    control_epoch,
                     stop_flag: mixer_stop,
                 };
                 worker.run();
@@ -201,6 +271,7 @@ impl DeckMixer {
             primary,
             secondary,
             control_tx,
+            output: output_state,
             stop_flag,
             thread,
         }
@@ -226,12 +297,18 @@ impl DeckMixer {
             DeckId::Primary => &self.primary,
             DeckId::Secondary => &self.secondary,
         };
-        writer.generation.fetch_add(1, Ordering::AcqRel);
+        let generation = writer.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let flush_epoch = writer.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         writer.queued_samples.store(0, Ordering::Release);
         let (ack_tx, ack_rx) = mpsc::channel();
-        let _ = self
-            .control_tx
-            .send(MixerControl::ClearDeck { deck, ack: ack_tx });
+        self.primary.control_epoch.fetch_add(1, Ordering::AcqRel);
+        let _ = self.control_tx.send(MixerControl::ClearDeck {
+            deck,
+            generation,
+            flush_epoch,
+            clear_output: false,
+            ack: ack_tx,
+        });
         let _ = ack_rx.recv_timeout(Duration::from_millis(200));
     }
 
@@ -255,14 +332,54 @@ impl DeckMixer {
     }
 
     pub fn clear_all(&self) {
-        self.primary.generation.fetch_add(1, Ordering::AcqRel);
-        self.secondary.generation.fetch_add(1, Ordering::AcqRel);
+        let primary_generation = self.primary.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let primary_flush_epoch = self.primary.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        let secondary_generation = self.secondary.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        let secondary_flush_epoch = self.secondary.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
         self.primary.queued_samples.store(0, Ordering::Release);
         self.secondary.queued_samples.store(0, Ordering::Release);
         let (ack_tx, ack_rx) = mpsc::channel();
-        let _ = self.control_tx.send(MixerControl::ClearAll { ack: ack_tx });
+        self.primary.control_epoch.fetch_add(1, Ordering::AcqRel);
+        let _ = self.control_tx.send(MixerControl::ClearAll {
+            primary_generation,
+            primary_flush_epoch,
+            secondary_generation,
+            secondary_flush_epoch,
+            ack: ack_tx,
+        });
         let _ = ack_rx.recv_timeout(Duration::from_millis(200));
-        self.primary.output.clear();
+    }
+
+    pub fn replace_output(&self, output: OutputWriter) -> bool {
+        let (ack_tx, ack_rx) = mpsc::channel();
+        self.primary.control_epoch.fetch_add(1, Ordering::AcqRel);
+        if self
+            .control_tx
+            .send(MixerControl::ReplaceOutput {
+                output: output.clone(),
+                ack: ack_tx,
+            })
+            .is_err()
+        {
+            return false;
+        }
+
+        if ack_rx.recv_timeout(Duration::from_millis(200)).is_err() {
+            return false;
+        }
+
+        *self.output.write() = output;
+        true
+    }
+
+    pub fn set_dsp(&self, config: DspConfig) {
+        let _ = self.control_tx.send(MixerControl::SetDsp(config));
+    }
+
+    pub fn queued_samples(&self) -> usize {
+        self.primary.queued_samples.load(Ordering::Acquire)
+            + self.secondary.queued_samples.load(Ordering::Acquire)
+            + self.output.read().queued_samples()
     }
 }
 
@@ -271,15 +388,25 @@ impl Drop for DeckMixer {
         self.stop_flag.store(true, Ordering::Release);
         let _ = self.control_tx.send(MixerControl::Stop);
         if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+            join_mixer_thread_async(thread);
         }
     }
 }
 
+fn join_mixer_thread_async(handle: thread::JoinHandle<()>) {
+    let _ = thread::Builder::new()
+        .name("audio-deck-mixer-join".into())
+        .spawn(move || {
+            let _ = handle.join();
+        });
+}
+
 struct DeckRuntime {
-    rx: mpsc::Receiver<Vec<f32>>,
+    rx: mpsc::Receiver<DeckBlock>,
     current_block: Vec<f32>,
     current_index: usize,
+    accepted_generation: u64,
+    accepted_flush_epoch: u64,
     queued_samples: Arc<AtomicUsize>,
     paused: Arc<AtomicBool>,
     gain: f32,
@@ -287,7 +414,7 @@ struct DeckRuntime {
 
 impl DeckRuntime {
     fn new(
-        rx: mpsc::Receiver<Vec<f32>>,
+        rx: mpsc::Receiver<DeckBlock>,
         queued_samples: Arc<AtomicUsize>,
         paused: Arc<AtomicBool>,
         gain: f32,
@@ -296,30 +423,41 @@ impl DeckRuntime {
             rx,
             current_block: Vec::new(),
             current_index: 0,
+            accepted_generation: 0,
+            accepted_flush_epoch: 0,
             queued_samples,
             paused,
             gain,
         }
     }
 
-    fn clear(&mut self) {
-        while self.rx.try_recv().is_ok() {}
+    fn clear(&mut self, generation: u64, flush_epoch: u64) {
         self.current_block.clear();
         self.current_index = 0;
+        self.accepted_generation = generation;
+        self.accepted_flush_epoch = flush_epoch;
         self.queued_samples.store(0, Ordering::Release);
     }
 
     fn next_sample(&mut self, consumed: &mut usize) -> Option<f32> {
         if self.current_index >= self.current_block.len() {
-            match self.rx.try_recv() {
-                Ok(block) => {
-                    self.current_block = block;
-                    self.current_index = 0;
+            loop {
+                match self.rx.try_recv() {
+                    Ok(block) => {
+                        if block.generation != self.accepted_generation
+                            || block.flush_epoch != self.accepted_flush_epoch
+                        {
+                            continue;
+                        }
+                        self.current_block = block.samples;
+                        self.current_index = 0;
+                        if self.current_block.is_empty() {
+                            continue;
+                        }
+                        break;
+                    }
+                    Err(_) => return None,
                 }
-                Err(_) => return None,
-            }
-            if self.current_block.is_empty() {
-                return None;
             }
         }
 
@@ -353,7 +491,9 @@ struct MixerWorker {
     primary: DeckRuntime,
     secondary: DeckRuntime,
     crossfade: Option<CrossfadeRuntime>,
+    dsp: DspChain,
     control_rx: mpsc::Receiver<MixerControl>,
+    control_epoch: Arc<AtomicU64>,
     stop_flag: Arc<AtomicBool>,
 }
 
@@ -365,6 +505,11 @@ impl MixerWorker {
         while !self.stop_flag.load(Ordering::Acquire) {
             if !self.drain_controls() {
                 break;
+            }
+
+            if self.output.has_failed() {
+                thread::sleep(Duration::from_millis(2));
+                continue;
             }
 
             // Paused state changes far slower than the sample rate — sample it
@@ -402,8 +547,8 @@ impl MixerWorker {
                     if primary.is_some() || secondary.is_some() {
                         has_audio = true;
                     }
-                    let mixed =
-                        primary.unwrap_or(0.0) * primary_gain + secondary.unwrap_or(0.0) * secondary_gain;
+                    let mixed = primary.unwrap_or(0.0) * primary_gain
+                        + secondary.unwrap_or(0.0) * secondary_gain;
                     block.push(mixed.clamp(-1.0, 1.0));
                 }
             }
@@ -412,7 +557,18 @@ impl MixerWorker {
             self.secondary.commit_consumed(consumed_secondary);
 
             if has_audio {
-                if !self.output.push_block(block, self.stop_flag.as_ref()) {
+                let control_epoch = self.control_epoch.load(Ordering::Acquire);
+                if !self.dsp.is_bypassed() {
+                    self.dsp.process_interleaved(&mut block);
+                }
+                if !self.output.push_block(
+                    block,
+                    PushCancel::with_interrupt_epoch(
+                        self.stop_flag.as_ref(),
+                        self.control_epoch.as_ref(),
+                        control_epoch,
+                    ),
+                ) {
                     if self.stop_flag.load(Ordering::Acquire) {
                         break;
                     }
@@ -427,8 +583,14 @@ impl MixerWorker {
     fn drain_controls(&mut self) -> bool {
         while let Ok(control) = self.control_rx.try_recv() {
             match control {
-                MixerControl::ClearDeck { deck, ack } => {
-                    self.deck_mut(deck).clear();
+                MixerControl::FlushDeck {
+                    deck,
+                    generation,
+                    flush_epoch,
+                    clear_output,
+                    ack,
+                } => {
+                    self.deck_mut(deck).clear(generation, flush_epoch);
                     if self
                         .crossfade
                         .as_ref()
@@ -436,12 +598,43 @@ impl MixerWorker {
                     {
                         self.crossfade = None;
                     }
+                    if clear_output {
+                        self.output.flush();
+                    }
                     let _ = ack.send(());
                 }
-                MixerControl::ClearAll { ack } => {
-                    self.primary.clear();
-                    self.secondary.clear();
+                MixerControl::ClearDeck {
+                    deck,
+                    generation,
+                    flush_epoch,
+                    clear_output,
+                    ack,
+                } => {
+                    self.deck_mut(deck).clear(generation, flush_epoch);
+                    if self
+                        .crossfade
+                        .as_ref()
+                        .is_some_and(|fade| fade.outgoing == deck || fade.incoming == deck)
+                    {
+                        self.crossfade = None;
+                    }
+                    if clear_output {
+                        self.output.clear();
+                    }
+                    let _ = ack.send(());
+                }
+                MixerControl::ClearAll {
+                    primary_generation,
+                    primary_flush_epoch,
+                    secondary_generation,
+                    secondary_flush_epoch,
+                    ack,
+                } => {
+                    self.primary.clear(primary_generation, primary_flush_epoch);
+                    self.secondary
+                        .clear(secondary_generation, secondary_flush_epoch);
                     self.crossfade = None;
+                    self.output.clear();
                     let _ = ack.send(());
                 }
                 MixerControl::SetDeckGain { deck, gain } => {
@@ -462,6 +655,14 @@ impl MixerWorker {
                         elapsed_samples: 0,
                         params,
                     });
+                }
+                MixerControl::ReplaceOutput { output, ack } => {
+                    self.output.retire();
+                    self.output = output;
+                    let _ = ack.send(());
+                }
+                MixerControl::SetDsp(config) => {
+                    self.dsp.set_dsp(&config);
                 }
                 MixerControl::Stop => return false,
             }

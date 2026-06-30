@@ -14,6 +14,7 @@ import type { AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage } fr
 
 type EventListener = (evt: AudioThreadEvent, seq?: number) => void;
 type AudioWsUrls = { events: string; control: string };
+type SeekAudioMessage = Extract<AudioThreadMessage, { type: "seekAudio" }>;
 
 const CTRL_RESUME = 1;
 const CTRL_PAUSE = 2;
@@ -38,7 +39,7 @@ export class AudioWsClient {
 
   private _pendingOrderedCommands: AudioThreadMessage[] = [];
   private _pendingPlaybackState: boolean | null = null;
-  private _pendingSeekPosition: number | null = null;
+  private _pendingSeekCommand: SeekAudioMessage | null = null;
   private _pendingVolume: number | null = null;
   private _flushingPending = false;
 
@@ -238,6 +239,7 @@ export class AudioWsClient {
       case "resumeOrPauseAudio":
         return this._opcodeFrame(CTRL_TOGGLE);
       case "seekAudio":
+        if (msg.requestId !== undefined || msg.expectedMusicId !== undefined) return null;
         return this._f64Frame(CTRL_SEEK, msg.position);
       case "setVolume":
         return this._f64Frame(CTRL_SET_VOLUME, msg.volume);
@@ -271,7 +273,7 @@ export class AudioWsClient {
         this._pendingPlaybackState = false;
         break;
       case "seekAudio":
-        this._pendingSeekPosition = msg.position;
+        this._pendingSeekCommand = msg;
         break;
       case "setVolume":
         this._pendingVolume = msg.volume;
@@ -311,18 +313,18 @@ export class AudioWsClient {
   private _drainPendingControls(): AudioThreadMessage[] {
     const messages = this._pendingOrderedCommands.splice(0);
     const playbackState = this._pendingPlaybackState;
-    const seekPosition = this._pendingSeekPosition;
+    const seekCommand = this._pendingSeekCommand;
     const volume = this._pendingVolume;
 
     this._pendingPlaybackState = null;
-    this._pendingSeekPosition = null;
+    this._pendingSeekCommand = null;
     this._pendingVolume = null;
 
     if (playbackState === false) {
       messages.push({ type: "pauseAudio" });
     }
-    if (seekPosition !== null) {
-      messages.push({ type: "seekAudio", position: seekPosition });
+    if (seekCommand !== null) {
+      messages.push(seekCommand);
     }
     if (playbackState === true) {
       messages.push({ type: "resumeAudio" });

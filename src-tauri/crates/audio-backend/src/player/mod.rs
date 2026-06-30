@@ -77,7 +77,7 @@ impl EventBuffer {
 
 pub struct Player {
     msg_tx: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadMessage>>,
-    seek_tx: mpsc::UnboundedSender<f64>,
+    seek_tx: mpsc::UnboundedSender<SeekRequest>,
     shared: Arc<PlayerShared>,
 }
 
@@ -357,14 +357,44 @@ fn collect_forward_message(
 #[derive(Clone, Debug)]
 pub struct PlayerHandle {
     msg_tx: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadMessage>>,
-    seek_tx: mpsc::UnboundedSender<f64>,
+    seek_tx: mpsc::UnboundedSender<SeekRequest>,
+}
+
+#[derive(Clone, Debug)]
+struct SeekRequest {
+    position: f64,
+    request_id: Option<u64>,
+    expected_music_id: Option<String>,
+}
+
+impl SeekRequest {
+    fn new(position: f64, request_id: Option<u64>, expected_music_id: Option<String>) -> Self {
+        Self {
+            position,
+            request_id,
+            expected_music_id,
+        }
+    }
+
+    fn normalized(self) -> Self {
+        Self {
+            position: normalize_seek_position(self.position),
+            request_id: self.request_id,
+            expected_music_id: self.expected_music_id,
+        }
+    }
 }
 
 impl PlayerHandle {
     pub fn send(&self, msg: AudioThreadEventMessage<AudioThreadMessage>) -> AudioResult<()> {
         if msg.callback_id.is_empty() {
-            if let Some(AudioThreadMessage::SeekAudio { position }) = msg.data.as_ref() {
-                return self.send_seek(*position);
+            if let Some(AudioThreadMessage::SeekAudio {
+                position,
+                request_id,
+                expected_music_id,
+            }) = msg.data.as_ref()
+            {
+                return self.send_seek(*position, *request_id, expected_music_id.clone());
             }
         }
 
@@ -377,9 +407,14 @@ impl PlayerHandle {
         self.send(AudioThreadEventMessage::new("".into(), Some(msg)))
     }
 
-    pub fn send_seek(&self, position: f64) -> AudioResult<()> {
+    pub fn send_seek(
+        &self,
+        position: f64,
+        request_id: Option<u64>,
+        expected_music_id: Option<String>,
+    ) -> AudioResult<()> {
         self.seek_tx
-            .send(position)
+            .send(SeekRequest::new(position, request_id, expected_music_id))
             .map_err(|_| AudioError::ThreadError("player seek channel closed".into()))
     }
 }
@@ -391,7 +426,7 @@ impl PlayerHandle {
 struct AudioPlayer {
     // Channels
     msg_receiver: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
-    seek_rx: mpsc::UnboundedReceiver<f64>,
+    seek_rx: mpsc::UnboundedReceiver<SeekRequest>,
     evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
     // Self-message channel: lets `run()` re-enter `process_message` for
     // auto-advance, matching the AMLL reference's NextSongGapless pattern.
@@ -401,8 +436,10 @@ struct AudioPlayer {
     // CPAL playback. Decoding runs on a worker thread and pushes PCM blocks
     // into the deck mixer; the mixer pushes mixed PCM blocks to this output queue.
     output: LowLatencyOutput,
+    output_selector: output::OutputDeviceSelector,
     deck_mixer: DeckMixer,
     active_deck: DeckId,
+    dsp_config: DspConfig,
     automix: AutoMixManager,
     volume: f64,
     /// What the user wants the sink to be doing. Used so auto-advance and
@@ -420,6 +457,7 @@ struct AudioPlayer {
     /// loads, which deletes the temp file from disk.
     current_temp_file: Option<tempfile::TempPath>,
     current_decoder_handle: Option<decoder::DecoderHandle>,
+    pending_seek: Option<SeekRequest>,
     secondary_decoder_handle: Option<decoder::DecoderHandle>,
     secondary_temp_file: Option<tempfile::TempPath>,
     secondary_local_path: Option<PathBuf>,
@@ -432,6 +470,18 @@ struct AudioPlayer {
     decoder_event_rx: mpsc::UnboundedReceiver<decoder::DecoderEvent>,
     automix_prepare_tx: mpsc::UnboundedSender<automix::AutoMixPrepareResult>,
     automix_prepare_rx: mpsc::UnboundedReceiver<automix::AutoMixPrepareResult>,
+    output_refresh_tx: mpsc::UnboundedSender<OutputRefreshEvent>,
+    output_refresh_rx: mpsc::UnboundedReceiver<OutputRefreshEvent>,
+    output_refresh_pending: bool,
+    output_refresh_generation: u64,
+    output_epoch: u64,
+    output_refresh_dirty: bool,
+    output_refresh_dirty_force: bool,
+    output_refresh_failures: u8,
+    output_refresh_backoff_until: Option<std::time::Instant>,
+    output_health_last_samples: u64,
+    output_health_stalled_ticks: u8,
+    last_output_error: Option<String>,
     decoder_playback_id: u64,
     native_crossfade_generation: u64,
     native_crossfade_active: bool,
@@ -470,6 +520,59 @@ struct AudioPlayer {
 enum PlaybackIntent {
     Playing,
     Paused,
+}
+
+enum OutputRefreshEvent {
+    Unchanged {
+        generation: u64,
+        output_epoch: u64,
+    },
+    Stale {
+        generation: u64,
+        output_epoch: u64,
+    },
+    Opened {
+        generation: u64,
+        output_epoch: u64,
+        output: LowLatencyOutput,
+        force_replace: bool,
+    },
+    DecoderReady {
+        generation: u64,
+        output_epoch: u64,
+        playback_id: u64,
+        position: f64,
+        output: LowLatencyOutput,
+        deck_mixer: DeckMixer,
+        result: AudioResult<decoder::DecoderHandle>,
+    },
+    Failed {
+        generation: u64,
+        output_epoch: u64,
+        error: String,
+    },
+}
+
+impl OutputRefreshEvent {
+    fn generation(&self) -> u64 {
+        match self {
+            Self::Unchanged { generation, .. }
+            | Self::Stale { generation, .. }
+            | Self::Opened { generation, .. }
+            | Self::DecoderReady { generation, .. }
+            | Self::Failed { generation, .. } => *generation,
+        }
+    }
+
+    fn output_epoch(&self) -> u64 {
+        match self {
+            Self::Unchanged { output_epoch, .. }
+            | Self::Stale { output_epoch, .. }
+            | Self::Opened { output_epoch, .. }
+            | Self::DecoderReady { output_epoch, .. }
+            | Self::Failed { output_epoch, .. } => *output_epoch,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -568,12 +671,20 @@ fn normalize_seek_position(position: f64) -> f64 {
 impl AudioPlayer {
     async fn new(
         msg_receiver: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
-        seek_rx: mpsc::UnboundedReceiver<f64>,
+        seek_rx: mpsc::UnboundedReceiver<SeekRequest>,
         evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
     ) -> AudioResult<Self> {
-        let output = output::open_preferred_output(None).map_err(AudioError::Output)?;
+        let output_selector = output::OutputDeviceSelector::Default;
+        let output =
+            output::open_output(output_selector.clone(), None).map_err(AudioError::Output)?;
         output.writer().set_paused(true);
-        let deck_mixer = DeckMixer::new(output.writer(), output.config().channels);
+        let dsp_config = DspConfig::default();
+        let deck_mixer = DeckMixer::new(
+            output.writer(),
+            output.config().channels,
+            output.config().sample_rate,
+            &dsp_config,
+        );
         let automix = AutoMixManager::new();
         let clock = Arc::new(parking_lot::Mutex::new(PlayerClock::new()));
         {
@@ -643,6 +754,7 @@ impl AudioPlayer {
         let (self_msg_tx, self_msg_rx) = mpsc::unbounded_channel();
         let (decoder_event_tx, decoder_event_rx) = mpsc::unbounded_channel();
         let (automix_prepare_tx, automix_prepare_rx) = mpsc::unbounded_channel();
+        let (output_refresh_tx, output_refresh_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             msg_receiver,
@@ -651,8 +763,10 @@ impl AudioPlayer {
             self_msg_tx,
             self_msg_rx,
             output,
+            output_selector,
             deck_mixer,
             active_deck: DeckId::Primary,
+            dsp_config,
             automix,
             volume: 1.0,
             playback_intent: PlaybackIntent::Paused,
@@ -661,6 +775,7 @@ impl AudioPlayer {
             current_local_path: None,
             current_temp_file: None,
             current_decoder_handle: None,
+            pending_seek: None,
             secondary_decoder_handle: None,
             secondary_temp_file: None,
             secondary_local_path: None,
@@ -673,6 +788,18 @@ impl AudioPlayer {
             decoder_event_rx,
             automix_prepare_tx,
             automix_prepare_rx,
+            output_refresh_tx,
+            output_refresh_rx,
+            output_refresh_pending: false,
+            output_refresh_generation: 0,
+            output_epoch: 0,
+            output_refresh_dirty: false,
+            output_refresh_dirty_force: false,
+            output_refresh_failures: 0,
+            output_refresh_backoff_until: None,
+            output_health_last_samples: 0,
+            output_health_stalled_ticks: 0,
+            last_output_error: None,
             decoder_playback_id: 0,
             native_crossfade_generation: 0,
             native_crossfade_active: false,
@@ -699,18 +826,44 @@ impl AudioPlayer {
 
     fn ensure_output_for_source(&mut self, audio_info: &AudioInfo) -> anyhow::Result<bool> {
         let target = output::OutputTarget::for_source(audio_info.channels, audio_info.sample_rate);
-        if self.output.target() == Some(target) {
+        if self.output.selector() == &self.output_selector
+            && self
+                .output
+                .target()
+                .is_some_and(|current| output_target_layout_matches(current, target))
+            && !self.output.has_failed()
+        {
             return Ok(false);
         }
 
-        let output = output::open_preferred_output(Some(target)).map_err(AudioError::Output)?;
+        self.cancel_pending_output_refresh();
+        let output = output::open_output(self.output_selector.clone(), Some(target))
+            .map_err(AudioError::Output)?;
+        let changed =
+            output.config() != self.output.config() || output.device() != self.output.device();
+        self.install_output(output);
+        Ok(changed)
+    }
+
+    fn cancel_pending_output_refresh(&mut self) {
+        self.output_refresh_generation = self.output_refresh_generation.wrapping_add(1);
+        self.output_refresh_pending = false;
+        self.output_refresh_dirty = false;
+        self.output_refresh_dirty_force = false;
+    }
+
+    fn mark_output_chain_committed(&mut self) {
+        self.output_epoch = self.output_epoch.wrapping_add(1);
+        self.reset_output_refresh_backoff();
+    }
+
+    fn install_output(&mut self, output: LowLatencyOutput) {
         output.writer().set_volume(self.volume as f32);
         output
             .writer()
             .set_paused(self.playback_intent == PlaybackIntent::Paused);
-        let changed =
-            output.config() != self.output.config() || output.device() != self.output.device();
         self.output = output;
+        self.mark_output_chain_committed();
         {
             let writer = self.output.writer();
             let config = self.output.config();
@@ -720,17 +873,515 @@ impl AudioPlayer {
                 config.channels,
             );
         }
-        self.deck_mixer = DeckMixer::new(self.output.writer(), self.output.config().channels);
+        self.deck_mixer = DeckMixer::new(
+            self.output.writer(),
+            self.output.config().channels,
+            self.output.config().sample_rate,
+            &self.dsp_config,
+        );
         self.active_deck = DeckId::Primary;
         self.secondary_playback_id = None;
         self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
         self.native_crossfade_active = false;
         self.native_crossfade_transition_id = None;
-        Ok(changed)
+        self.reset_output_health();
+    }
+
+    fn replace_output_stream(&mut self, output: LowLatencyOutput) -> Result<(), LowLatencyOutput> {
+        output.writer().set_volume(0.0);
+        output.writer().set_paused(true);
+        let writer = output.writer();
+        let config = output.config();
+        if !self.deck_mixer.replace_output(writer.clone()) {
+            return Err(output);
+        }
+        self.output = output;
+        self.mark_output_chain_committed();
+        self.clock.lock().set_render_clock(
+            writer.render_clock(),
+            config.sample_rate,
+            config.channels,
+        );
+        self.output.writer().set_volume(self.volume as f32);
+        self.output
+            .writer()
+            .set_paused(self.playback_intent == PlaybackIntent::Paused);
+        self.reset_output_health();
+        Ok(())
+    }
+
+    async fn abandon_current_mixer_for_output_rebuild(&mut self) {
+        self.cancel_native_automix_runtime().await;
+        self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
+        let events = self.automix.cancel(self.current_play_index);
+        self.emit_many(events).await;
+
+        if let Some(handle) = self.current_decoder_handle.take() {
+            handle.stop();
+        }
+        if let Some(handle) = self.secondary_decoder_handle.take() {
+            handle.stop();
+        }
+        self.secondary_local_path = None;
+        self.secondary_temp_file = None;
+        self.secondary_song = None;
+        self.secondary_duration = 0.0;
+        self.secondary_display_info = None;
+        self.secondary_quality = None;
+        self.secondary_playback_id = None;
+
+        self.deck_mixer = DeckMixer::new(
+            self.output.writer(),
+            self.output.config().channels,
+            self.output.config().sample_rate,
+            &self.dsp_config,
+        );
+        self.active_deck = DeckId::Primary;
+        self.deck_mixer.set_deck_gain(DeckId::Primary, 1.0);
+        self.deck_mixer.set_deck_gain(DeckId::Secondary, 0.0);
+        self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
+        self.native_crossfade_active = false;
+        self.native_crossfade_transition_id = None;
+        self.output_epoch = self.output_epoch.wrapping_add(1);
+        self.reset_output_health();
+    }
+
+    fn reset_output_health(&mut self) {
+        self.output_health_last_samples = self.output.writer().render_clock().rendered_samples();
+        self.output_health_stalled_ticks = 0;
+    }
+
+    fn reset_output_refresh_backoff(&mut self) {
+        self.output_refresh_failures = 0;
+        self.output_refresh_backoff_until = None;
+    }
+
+    fn record_output_refresh_failure(&mut self) {
+        self.output_refresh_failures = self.output_refresh_failures.saturating_add(1).min(6);
+        let exponent = self.output_refresh_failures.saturating_sub(1) as u32;
+        let delay_ms = 250u64.saturating_mul(1u64 << exponent).min(4_000);
+        self.output_refresh_backoff_until =
+            Some(std::time::Instant::now() + Duration::from_millis(delay_ms));
+    }
+
+    fn output_render_stalled(&mut self) -> bool {
+        let writer = self.output.writer();
+        let rendered_samples = writer.render_clock().rendered_samples();
+        let queued_samples = self.deck_mixer.queued_samples();
+        if self.playback_intent != PlaybackIntent::Playing
+            || self.current_song.is_none()
+            || self.current_decoder_handle.is_none()
+            || queued_samples == 0
+        {
+            self.output_health_last_samples = rendered_samples;
+            self.output_health_stalled_ticks = 0;
+            return false;
+        }
+
+        if rendered_samples != self.output_health_last_samples {
+            self.output_health_last_samples = rendered_samples;
+            self.output_health_stalled_ticks = 0;
+            return false;
+        }
+
+        self.output_health_stalled_ticks = self.output_health_stalled_ticks.saturating_add(1);
+        self.output_health_stalled_ticks >= 15
+    }
+
+    fn request_output_refresh(&mut self, force_replace: bool) {
+        if self.output_refresh_pending {
+            self.output_refresh_dirty = true;
+            self.output_refresh_dirty_force |= force_replace;
+            return;
+        }
+        if let Some(backoff_until) = self.output_refresh_backoff_until {
+            if std::time::Instant::now() < backoff_until {
+                return;
+            }
+            self.output_refresh_backoff_until = None;
+        }
+        self.output_refresh_pending = true;
+        self.output_refresh_generation = self.output_refresh_generation.wrapping_add(1);
+
+        let generation = self.output_refresh_generation;
+        let output_epoch = self.output_epoch;
+        let selector = self.output_selector.clone();
+        let current_device = self.output.device().clone();
+        let force_replace = force_replace || self.output.has_failed();
+        let output_config = self.output.config();
+        let target = Some(output::OutputTarget {
+            channels: output_config.channels,
+            sample_rate: output_config.sample_rate,
+        });
+        let tx = self.output_refresh_tx.clone();
+        tokio::task::spawn_blocking(move || {
+            let opened_event =
+                |output: LowLatencyOutput| match output::selected_output_device_key(&selector) {
+                    Ok(selected_device) if selected_device == output.device().clone() => {
+                        OutputRefreshEvent::Opened {
+                            generation,
+                            output_epoch,
+                            output,
+                            force_replace,
+                        }
+                    }
+                    Ok(_) => OutputRefreshEvent::Stale {
+                        generation,
+                        output_epoch,
+                    },
+                    Err(error) => OutputRefreshEvent::Failed {
+                        generation,
+                        output_epoch,
+                        error,
+                    },
+                };
+
+            let event = if force_replace {
+                match output::open_output(selector.clone(), target) {
+                    Ok(output) => opened_event(output),
+                    Err(error) => OutputRefreshEvent::Failed {
+                        generation,
+                        output_epoch,
+                        error,
+                    },
+                }
+            } else {
+                match output::selected_output_device_key(&selector) {
+                    Ok(selected_device) if selected_device == current_device => {
+                        OutputRefreshEvent::Unchanged {
+                            generation,
+                            output_epoch,
+                        }
+                    }
+                    Ok(_) => match output::open_output(selector.clone(), target) {
+                        Ok(output) => opened_event(output),
+                        Err(error) => OutputRefreshEvent::Failed {
+                            generation,
+                            output_epoch,
+                            error,
+                        },
+                    },
+                    Err(error) => OutputRefreshEvent::Failed {
+                        generation,
+                        output_epoch,
+                        error,
+                    },
+                }
+            };
+            let _ = tx.send(event);
+        });
+    }
+
+    fn complete_output_refresh(&mut self) {
+        self.output_refresh_pending = false;
+        if self.output_refresh_dirty {
+            let force_replace = self.output_refresh_dirty_force;
+            self.output_refresh_dirty = false;
+            self.output_refresh_dirty_force = false;
+            self.request_output_refresh(force_replace);
+        }
+    }
+
+    async fn emit_output_changed(&self, output: &LowLatencyOutput) {
+        let config = output.config();
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::AudioOutputChanged {
+                device_name: output.device().name().to_string(),
+                is_default: output.selector().is_default(),
+                channels: config.channels,
+                sample_rate: config.sample_rate,
+                sample_format: format!("{:?}", config.sample_format),
+            })
+            .await;
+    }
+
+    async fn emit_output_error_once(&mut self, error: String) {
+        if self.last_output_error.as_deref() == Some(error.as_str()) {
+            return;
+        }
+        self.last_output_error = Some(error.clone());
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::AudioOutputError {
+                error,
+                recoverable: true,
+            })
+            .await;
+    }
+
+    fn clear_output_error(&mut self) {
+        self.last_output_error = None;
+    }
+
+    async fn handle_output_refresh_event(&mut self, event: OutputRefreshEvent) {
+        if event.generation() != self.output_refresh_generation
+            || event.output_epoch() != self.output_epoch
+        {
+            return;
+        }
+
+        match event {
+            OutputRefreshEvent::Unchanged { .. } => {
+                self.clear_output_error();
+                self.reset_output_refresh_backoff();
+                self.reset_output_health();
+                self.complete_output_refresh();
+            }
+            OutputRefreshEvent::Stale { .. } => {
+                warn!("刷新音频输出设备结果已过期，将重试");
+                self.output_refresh_dirty = true;
+                self.complete_output_refresh();
+            }
+            OutputRefreshEvent::Failed { error, .. } => {
+                warn!("刷新音频输出设备失败：{error}");
+                self.record_output_refresh_failure();
+                self.complete_output_refresh();
+                self.emit_output_error_once(error).await;
+            }
+            OutputRefreshEvent::Opened {
+                generation,
+                output_epoch,
+                output,
+                force_replace,
+            } => {
+                if output.device() == self.output.device()
+                    && output.config() == self.output.config()
+                    && !force_replace
+                {
+                    self.complete_output_refresh();
+                    return;
+                }
+
+                let old_device = self.output.device().name().to_string();
+                let new_device = output.device().name().to_string();
+                let position = self.output_rebuild_position().await;
+                let is_playing = self.playback_intent == PlaybackIntent::Playing;
+                let position = self.clock.lock().set_anchor(is_playing, position);
+                self.clear_output_error();
+                info!("音频输出设备变化：{old_device} -> {new_device}");
+                if output_audio_layout_matches(self.output.config(), output.config()) {
+                    match self.replace_output_stream(output) {
+                        Ok(()) => {
+                            self.complete_output_refresh();
+                            self.emit_output_changed(&self.output).await;
+                            self.publish_position_anchor(is_playing, position).await;
+                            if is_playing {
+                                let _ = self
+                                    .emitter()
+                                    .emit(AudioThreadEvent::PlayStatus { is_playing: true })
+                                    .await;
+                            }
+                            self.sync_ui().await;
+                        }
+                        Err(output) => {
+                            warn!("替换音频输出 writer 超时，将丢弃当前 mixer 并重建播放链路");
+                            self.abandon_current_mixer_for_output_rebuild().await;
+                            if self.current_song.is_some() {
+                                self.spawn_reconfigured_decoder(
+                                    generation,
+                                    self.output_epoch,
+                                    output,
+                                    position,
+                                );
+                            } else {
+                                self.install_output(output);
+                                self.complete_output_refresh();
+                                self.emit_output_changed(&self.output).await;
+                                self.sync_ui().await;
+                            }
+                        }
+                    }
+                    return;
+                }
+
+                let old_config = self.output.config();
+                let new_config = output.config();
+                warn!(
+                    "音频输出 layout 变化，必须重建解码器：old={:?} new={:?}",
+                    old_config, new_config
+                );
+
+                if self.current_song.is_some() {
+                    self.cancel_native_automix_runtime().await;
+                    self.automix_prepare_generation =
+                        self.automix_prepare_generation.wrapping_add(1);
+                    let events = self.automix.cancel(self.current_play_index);
+                    self.emit_many(events).await;
+                    self.secondary_local_path = None;
+                    self.secondary_temp_file = None;
+                    self.secondary_song = None;
+                    self.secondary_duration = 0.0;
+                    self.secondary_display_info = None;
+                    self.secondary_quality = None;
+                    self.secondary_playback_id = None;
+                    self.spawn_reconfigured_decoder(generation, output_epoch, output, position);
+                } else {
+                    self.install_output(output);
+                    self.complete_output_refresh();
+                    self.emit_output_changed(&self.output).await;
+                    self.sync_ui().await;
+                }
+            }
+            OutputRefreshEvent::DecoderReady {
+                playback_id,
+                position,
+                output,
+                deck_mixer,
+                result,
+                ..
+            } => match result {
+                Ok(handle) => {
+                    if playback_id != self.decoder_playback_id.wrapping_add(1) {
+                        self.complete_output_refresh();
+                        return;
+                    }
+                    let is_playing = self.playback_intent == PlaybackIntent::Playing;
+                    let pending_seek = self.pending_seek.take();
+                    let commit_position = if let Some(seek) = pending_seek.as_ref() {
+                        seek.position
+                    } else {
+                        self.output_rebuild_position().await
+                    };
+                    let commit_position = self.clock.lock().set_anchor(is_playing, commit_position);
+                    if (commit_position - position).abs() > 0.025 {
+                        if let Err(err) = handle.seek(Duration::from_secs_f64(commit_position)) {
+                            warn!(
+                                "热重建提交前同步 seek 失败，将按最新位置重新准备解码器: {err:?}"
+                            );
+                            handle.stop();
+                            self.pending_seek = pending_seek;
+                            self.spawn_reconfigured_decoder(
+                                self.output_refresh_generation,
+                                self.output_epoch,
+                                output,
+                                commit_position,
+                            );
+                            return;
+                        }
+                    }
+                    if let Some(handle) = self.current_decoder_handle.take() {
+                        handle.stop();
+                    }
+                    if let Some(handle) = self.secondary_decoder_handle.take() {
+                        handle.stop();
+                    }
+                    self.decoder_playback_id = playback_id;
+                    let writer = output.writer();
+                    let config = output.config();
+                    self.output = output;
+                    self.mark_output_chain_committed();
+                    self.deck_mixer = deck_mixer;
+                    self.deck_mixer.set_dsp(self.dsp_config.clone());
+                    self.active_deck = DeckId::Primary;
+                    self.secondary_playback_id = None;
+                    self.native_crossfade_generation =
+                        self.native_crossfade_generation.wrapping_add(1);
+                    self.native_crossfade_active = false;
+                    self.native_crossfade_transition_id = None;
+                    self.clock.lock().set_render_clock(
+                        writer.render_clock(),
+                        config.sample_rate,
+                        config.channels,
+                    );
+                    self.output.writer().set_volume(self.volume as f32);
+                    self.output.writer().set_paused(!is_playing);
+                    let _ = handle.set_paused(!is_playing);
+                    self.current_decoder_handle = Some(handle);
+                    let _ = self.analysis_tx.send(AnalysisCommand::Clear);
+                    self.reset_output_health();
+                    self.complete_output_refresh();
+                    self.clear_output_error();
+                    self.emit_output_changed(&self.output).await;
+                    self.publish_position_anchor(is_playing, commit_position)
+                        .await;
+                    if let Some(seek) = pending_seek {
+                        self.emit_seek_committed(seek).await;
+                    }
+                    if is_playing {
+                        let _ = self
+                            .emitter()
+                            .emit(AudioThreadEvent::PlayStatus { is_playing: true })
+                            .await;
+                    }
+                    self.sync_ui().await;
+                }
+                Err(err) => {
+                    self.complete_output_refresh();
+                    warn!("切换音频输出后准备新解码器失败，将保留当前播放链路并重试: {err:?}");
+                    let is_playing = self.playback_intent == PlaybackIntent::Playing;
+                    let position = self.output_rebuild_position().await;
+                    self.publish_position_anchor(is_playing, position).await;
+                    self.sync_ui().await;
+                }
+            },
+        }
+    }
+
+    fn spawn_reconfigured_decoder(
+        &mut self,
+        generation: u64,
+        output_epoch: u64,
+        output: LowLatencyOutput,
+        position: f64,
+    ) {
+        let Some(path) = self.current_local_path.clone() else {
+            self.complete_output_refresh();
+            return;
+        };
+
+        let playback_id = self.decoder_playback_id.wrapping_add(1);
+        output.writer().set_volume(0.0);
+        output.writer().set_paused(true);
+        let output_config = output.config();
+        let deck_mixer = DeckMixer::new(
+            output.writer(),
+            output_config.channels,
+            output_config.sample_rate,
+            &self.dsp_config,
+        );
+        let output_writer = deck_mixer.primary_writer();
+        let analysis_tx = self.analysis_tx.clone();
+        let analysis_enabled = Arc::clone(&self.analysis_enabled);
+        let decoder_event_tx = self.decoder_event_tx.clone();
+        let start_paused = true;
+        let seek_position = position.max(0.0);
+        let tx = self.output_refresh_tx.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let result = decoder::spawn_playback_decoder(
+                &path,
+                (seek_position > 0.0).then_some(seek_position),
+                output_writer,
+                output_config.channels,
+                output_config.sample_rate,
+                analysis_tx,
+                analysis_enabled,
+                decoder_event_tx,
+                playback_id,
+                start_paused,
+            );
+            let _ = tx.send(OutputRefreshEvent::DecoderReady {
+                generation,
+                output_epoch,
+                playback_id,
+                position: seek_position,
+                output,
+                deck_mixer,
+                result,
+            });
+        });
     }
 
     fn clock_position(&self) -> f64 {
         self.clock.lock().position()
+    }
+
+    async fn output_rebuild_position(&self) -> f64 {
+        if let Some(seek) = self.pending_seek.as_ref() {
+            return seek.position;
+        }
+        self.clock_position()
     }
 
     async fn publish_position_anchor(&self, is_playing: bool, position: f64) {
@@ -742,6 +1393,27 @@ impl AudioPlayer {
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::PlayPosition { position })
+            .await;
+    }
+
+    async fn emit_seek_committed(&self, seek: SeekRequest) {
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::SeekCommitted {
+                request_id: seek.request_id,
+                position: seek.position,
+            })
+            .await;
+    }
+
+    async fn emit_seek_failed(&self, seek: SeekRequest, error: impl Into<String>) {
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::SeekFailed {
+                request_id: seek.request_id,
+                position: seek.position,
+                error: error.into(),
+            })
             .await;
     }
 
@@ -776,14 +1448,19 @@ impl AudioPlayer {
     }
 
     async fn run(mut self) {
+        let mut output_device_check = tokio::time::interval(Duration::from_secs(1));
+        output_device_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut output_health_check = tokio::time::interval(Duration::from_millis(100));
+        output_health_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
             tokio::select! {
               biased;
 
               seek = self.seek_rx.recv() => {
                 if let Some(first_seek) = seek {
-                  let seek_pos = self.drain_latest_seek(first_seek);
-                  if let Err(err) = self.process_seek_position(seek_pos).await {
+                  let seek = self.drain_latest_seek(first_seek);
+                  if let Err(err) = self.process_seek_request(seek).await {
                     warn!("处理 seek 消息时出错：{err:?}");
                   }
                 } else {
@@ -819,6 +1496,22 @@ impl AudioPlayer {
                   self.handle_automix_prepare_result(result).await;
                 }
               }
+
+              _ = output_device_check.tick() => {
+                self.request_output_refresh(false);
+              }
+
+              _ = output_health_check.tick() => {
+                if self.output.has_failed() || self.output_render_stalled() {
+                  self.request_output_refresh(true);
+                }
+              }
+
+              event = self.output_refresh_rx.recv() => {
+                if let Some(event) = event {
+                  self.handle_output_refresh_event(event).await;
+                }
+              }
             }
         }
 
@@ -831,12 +1524,12 @@ impl AudioPlayer {
         // The `Drop for AudioPlayer` impl joins the thread.
     }
 
-    fn drain_latest_seek(&mut self, first_seek: f64) -> f64 {
-        let mut seek_pos = first_seek;
+    fn drain_latest_seek(&mut self, first_seek: SeekRequest) -> SeekRequest {
+        let mut seek = first_seek;
         while let Ok(next_seek) = self.seek_rx.try_recv() {
-            seek_pos = next_seek;
+            seek = next_seek;
         }
-        seek_pos
+        seek
     }
 
     async fn handle_decoder_finished(&mut self, playback_id: u64) {
@@ -874,20 +1567,97 @@ impl AudioPlayer {
         }
     }
 
-    async fn process_seek_position(&mut self, position: f64) -> anyhow::Result<()> {
-        let seek_pos = normalize_seek_position(position);
+    fn seek_matches_current_song(&self, seek: &SeekRequest) -> bool {
+        let Some(expected) = seek.expected_music_id.as_deref() else {
+            return true;
+        };
+        self.current_song
+            .as_ref()
+            .is_some_and(|song| song.get_id() == expected)
+    }
+
+    async fn apply_pending_seek_if_ready(&mut self) -> anyhow::Result<bool> {
+        let Some(seek) = self.pending_seek.clone() else {
+            return Ok(false);
+        };
+        if !self.seek_matches_current_song(&seek) {
+            self.pending_seek = None;
+            warn!(
+                "忽略已过期 seek 请求: {:.3}s, expected={:?}",
+                seek.position, seek.expected_music_id
+            );
+            self.emit_seek_failed(seek, "seek 请求所属歌曲已不是当前歌曲")
+                .await;
+            self.sync_ui().await;
+            return Ok(true);
+        }
+        let Some(handle) = self.current_decoder_handle.as_ref() else {
+            return Ok(false);
+        };
+
+        if let Err(err) = handle.seek(Duration::from_secs_f64(seek.position)) {
+            self.pending_seek = None;
+            let error = err.to_string();
+            warn!("decoder 原地 seek 失败: {:.3}s, {error}", seek.position);
+            self.emit_seek_failed(seek, error).await;
+            self.sync_ui().await;
+            return Ok(true);
+        }
+        self.pending_seek = None;
+        let _ = self.analysis_tx.send(AnalysisCommand::Clear);
+        let is_playing = self.playback_intent == PlaybackIntent::Playing;
+        self.publish_position_anchor(is_playing, seek.position)
+            .await;
+        self.reset_output_health();
+        self.emit_seek_committed(seek).await;
+        self.sync_ui().await;
+        Ok(true)
+    }
+
+    async fn process_seek_request(&mut self, request: SeekRequest) -> anyhow::Result<()> {
+        let seek = request.normalized();
+        if self.current_song.is_none() {
+            self.pending_seek = None;
+            warn!("没有当前歌曲, 忽略 seek 请求: {:.3}s", seek.position);
+            self.emit_seek_failed(seek, "没有当前歌曲可 seek").await;
+            return Ok(());
+        }
+
+        if !self.seek_matches_current_song(&seek) {
+            warn!(
+                "忽略非当前歌曲 seek 请求: {:.3}s, expected={:?}, current={:?}",
+                seek.position,
+                seek.expected_music_id,
+                self.current_song.as_ref().map(SongData::get_id)
+            );
+            self.emit_seek_failed(seek, "seek 请求所属歌曲已不是当前歌曲")
+                .await;
+            self.sync_ui().await;
+            return Ok(());
+        }
+
         self.cancel_native_automix_runtime().await;
         self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
         let events = self.automix.cancel(self.current_play_index);
         self.emit_many(events).await;
-        if let Some(handle) = &self.current_decoder_handle {
-            self.deck_mixer.clear_all();
-            handle.seek(Duration::from_secs_f64(seek_pos))?;
-            let _ = self.analysis_tx.send(AnalysisCommand::Clear);
-            let is_playing = self.playback_intent == PlaybackIntent::Playing;
-            self.publish_position_anchor(is_playing, seek_pos).await;
-        } else {
-            warn!("找不到解码器句柄, 无法执行跳转");
+
+        self.pending_seek = Some(seek.clone());
+        match self.apply_pending_seek_if_ready().await {
+            Ok(true) => {}
+            Ok(false) => {
+                let is_playing = self.playback_intent == PlaybackIntent::Playing;
+                self.publish_position_anchor(is_playing, seek.position)
+                    .await;
+                self.sync_ui().await;
+                warn!("解码器暂不可用, 已延后 seek 到 {:.3}s", seek.position);
+            }
+            Err(err) => {
+                self.pending_seek = None;
+                let error = err.to_string();
+                warn!("执行 seek 失败: {error}");
+                self.emit_seek_failed(seek, error).await;
+                self.sync_ui().await;
+            }
         }
         Ok(())
     }
@@ -958,8 +1728,17 @@ impl AudioPlayer {
                         })
                         .await;
                 }
-                AudioThreadMessage::SeekAudio { position } => {
-                    self.process_seek_position(*position).await?;
+                AudioThreadMessage::SeekAudio {
+                    position,
+                    request_id,
+                    expected_music_id,
+                } => {
+                    self.process_seek_request(SeekRequest::new(
+                        *position,
+                        *request_id,
+                        expected_music_id.clone(),
+                    ))
+                    .await?;
                 }
                 AudioThreadMessage::SetVolume { volume } => {
                     self.volume = volume.clamp(0.0, 1.0);
@@ -1043,8 +1822,24 @@ impl AudioPlayer {
                         to: *to_freq,
                     });
                 }
-                AudioThreadMessage::SetAudioOutput { .. } => {
-                    warn!("SetAudioOutput 尚未实现");
+                AudioThreadMessage::SetEqualizer { config } => {
+                    self.dsp_config.equalizer = config.clone();
+                    self.dsp_config.enabled = dsp_config_is_active(&self.dsp_config);
+                    self.deck_mixer.set_dsp(self.dsp_config.clone());
+                }
+                AudioThreadMessage::SetDsp { config } => {
+                    self.dsp_config = config.clone();
+                    self.deck_mixer.set_dsp(self.dsp_config.clone());
+                }
+                AudioThreadMessage::SetAudioOutput { name } => {
+                    let selector = output::OutputDeviceSelector::from_name(name);
+                    if selector != self.output_selector {
+                        self.cancel_pending_output_refresh();
+                        self.output_selector = selector;
+                    }
+                    self.reset_output_refresh_backoff();
+                    self.clear_output_error();
+                    self.request_output_refresh(true);
                 }
                 AudioThreadMessage::SyncStatus => {
                     // Explicit snapshot request from the frontend — emit it here.
@@ -1466,6 +2261,7 @@ impl AudioPlayer {
         clear_sink: bool,
         initial_position: Option<f64>,
     ) -> anyhow::Result<()> {
+        self.pending_seek = None;
         let song_data = self
             .current_song
             .clone()
@@ -1486,6 +2282,7 @@ impl AudioPlayer {
             .await;
 
         if clear_sink {
+            self.cancel_pending_output_refresh();
             self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
             if let Some(handle) = self.current_decoder_handle.take() {
                 handle.stop();
@@ -1695,6 +2492,30 @@ impl Drop for AudioPlayer {
         // next `recv_timeout` interval (50 ms).
         let _ = self.analysis_thread.take();
     }
+}
+
+fn dsp_config_is_active(config: &DspConfig) -> bool {
+    if config.input_gain_db.abs() >= 0.001 || config.output_gain_db.abs() >= 0.001 {
+        return true;
+    }
+    if config.limiter.enabled {
+        return true;
+    }
+    config.equalizer.enabled
+        && (config.equalizer.preamp_db.abs() >= 0.001
+            || config
+                .equalizer
+                .bands
+                .iter()
+                .any(|band| band.enabled && band.gain_db.abs() >= 0.001))
+}
+
+fn output_audio_layout_matches(a: output::OutputConfigKey, b: output::OutputConfigKey) -> bool {
+    a.channels == b.channels && a.sample_rate == b.sample_rate
+}
+
+fn output_target_layout_matches(a: output::OutputTarget, b: output::OutputTarget) -> bool {
+    a.channels == b.channels
 }
 
 // ── Metadata helpers ─────────────────────────────────────────────

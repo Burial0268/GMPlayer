@@ -79,6 +79,37 @@ pub struct PhraseAnalysis {
     pub mix_in_phrase: Option<Phrase>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SongSectionKind {
+    Start,
+    Verse,
+    Chorus,
+    Bridge,
+    Breakdown,
+    Outro,
+    Silence,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongSection {
+    pub section_type: SongSectionKind,
+    pub start: f32,
+    pub end: f32,
+    pub index: u32,
+    pub confidence: f32,
+    pub energy: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SectionAnalysis {
+    pub sections: Vec<SongSection>,
+    pub confidence: f32,
+    pub method: String,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SpectralFingerprint {
@@ -132,6 +163,8 @@ pub struct TrackAnalysis {
     pub outro: Option<OutroAnalysis>,
     pub intro: Option<IntroAnalysis>,
     pub phrases: Option<PhraseAnalysis>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sections: Option<SectionAnalysis>,
     pub duration: f32,
 }
 
@@ -147,6 +180,11 @@ const MAX_BPM: f32 = 200.0;
 const OUTRO_WINDOW_MS: f32 = 250.0;
 const OUTRO_ANALYSIS_SECONDS: f32 = 60.0;
 const INTRO_SCAN_SECONDS: usize = 20;
+const SECTION_PHRASE_BEATS: f32 = 16.0;
+const SECTION_FALLBACK_SECONDS: f32 = 8.0;
+const SECTION_MIN_SECONDS: f32 = 4.0;
+const SECTION_MAX_SECONDS: f32 = 24.0;
+const MAX_SONG_SECTIONS: usize = 48;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -668,6 +706,469 @@ fn analyze_intro(
     })
 }
 
+// ─── Song Section Analysis ────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct SectionCandidate {
+    start: f32,
+    end: f32,
+    avg_energy: f32,
+    peak_energy: f32,
+    flux: f32,
+    index: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SectionEnergyProfile {
+    median: f32,
+    low_threshold: f32,
+    high_threshold: f32,
+    spread: f32,
+    content_count: usize,
+}
+
+#[derive(Debug, Clone)]
+struct LabeledSectionCandidate {
+    candidate: SectionCandidate,
+    section_type: SongSectionKind,
+    confidence: f32,
+}
+
+fn analyze_song_sections(
+    energy: &EnergyAnalysis,
+    bpm: Option<&BPMResult>,
+    intro: Option<&IntroAnalysis>,
+    outro: Option<&OutroAnalysis>,
+    duration: f32,
+) -> Option<SectionAnalysis> {
+    if duration < SECTION_MIN_SECONDS * 2.0 || energy.energy_per_second.len() < 4 {
+        return None;
+    }
+
+    let content_end = (duration - energy.trailing_silence).max(0.0).min(duration);
+    if content_end < SECTION_MIN_SECONDS {
+        return None;
+    }
+
+    let intro_boundary = section_intro_boundary(energy, intro, content_end);
+    let outro_boundary = section_outro_boundary(energy, outro, duration, content_end);
+    let (step_seconds, method, bpm_confidence) = section_grid_step(bpm, content_end);
+    let candidates = build_section_candidates(
+        &energy.energy_per_second,
+        duration,
+        content_end,
+        intro_boundary,
+        outro_boundary,
+        step_seconds,
+    );
+    if candidates.len() < 2 {
+        return None;
+    }
+
+    let profile = build_section_energy_profile(&candidates, intro_boundary, outro_boundary)
+        .unwrap_or(SectionEnergyProfile {
+            median: energy.average_energy,
+            low_threshold: energy.average_energy * 0.65,
+            high_threshold: (energy.average_energy + 0.15).min(0.85),
+            spread: 0.0,
+            content_count: candidates.len(),
+        });
+
+    let mut labeled = candidates
+        .into_iter()
+        .map(|candidate| {
+            let (section_type, confidence) = classify_section_candidate(
+                &candidate,
+                profile,
+                intro_boundary,
+                outro_boundary,
+                content_end,
+                duration,
+                bpm_confidence,
+            );
+            LabeledSectionCandidate {
+                candidate,
+                section_type,
+                confidence,
+            }
+        })
+        .collect::<Vec<_>>();
+
+    promote_best_chorus_if_needed(&mut labeled, profile);
+
+    let mut sections = merge_labeled_sections(labeled);
+    if sections.is_empty() {
+        return None;
+    }
+
+    for (index, section) in sections.iter_mut().enumerate() {
+        section.index = index as u32;
+    }
+
+    let avg_confidence = sections
+        .iter()
+        .map(|section| section.confidence)
+        .sum::<f32>()
+        / sections.len() as f32;
+    let confidence = (avg_confidence * 0.7
+        + bpm_confidence * 0.15
+        + (profile.spread / 0.35).clamp(0.0, 1.0) * 0.15)
+        .clamp(0.0, 1.0);
+
+    Some(SectionAnalysis {
+        sections,
+        confidence,
+        method,
+    })
+}
+
+fn section_intro_boundary(
+    energy: &EnergyAnalysis,
+    intro: Option<&IntroAnalysis>,
+    content_end: f32,
+) -> f32 {
+    let intro_energy = intro
+        .map(|intro| intro.energy_build_duration.max(intro.quiet_intro_duration))
+        .unwrap_or(energy.intro_end_offset);
+    intro_energy
+        .max(energy.intro_end_offset)
+        .clamp(0.0, content_end.min(SECTION_MAX_SECONDS))
+}
+
+fn section_outro_boundary(
+    energy: &EnergyAnalysis,
+    outro: Option<&OutroAnalysis>,
+    duration: f32,
+    content_end: f32,
+) -> f32 {
+    let outro_from_energy = duration - energy.outro_start_offset;
+    let outro_from_classifier = outro
+        .and_then(|outro| outro.outro_section_start)
+        .unwrap_or(outro_from_energy);
+    outro_from_classifier
+        .min(outro_from_energy.max(content_end - SECTION_FALLBACK_SECONDS))
+        .clamp(0.0, content_end)
+}
+
+fn section_grid_step(bpm: Option<&BPMResult>, content_end: f32) -> (f32, String, f32) {
+    let max_sections = (MAX_SONG_SECTIONS.saturating_sub(2)).max(1) as f32;
+    let min_step_for_limit = (content_end / max_sections).max(SECTION_MIN_SECONDS);
+
+    if let Some(bpm) = bpm {
+        if bpm.confidence >= 0.3 && bpm.bpm.is_finite() && bpm.bpm > 0.0 {
+            let phrase_seconds = (60.0 / bpm.bpm) * SECTION_PHRASE_BEATS;
+            if (SECTION_MIN_SECONDS..=SECTION_MAX_SECONDS).contains(&phrase_seconds) {
+                let step = phrase_seconds.max(min_step_for_limit);
+                return (
+                    step,
+                    "bpmPhraseEnergy".to_string(),
+                    bpm.confidence.clamp(0.0, 1.0),
+                );
+            }
+        }
+    }
+
+    (
+        SECTION_FALLBACK_SECONDS.max(min_step_for_limit),
+        "energyWindow".to_string(),
+        0.0,
+    )
+}
+
+fn build_section_candidates(
+    energy_per_second: &[f32],
+    duration: f32,
+    content_end: f32,
+    intro_boundary: f32,
+    outro_boundary: f32,
+    step_seconds: f32,
+) -> Vec<SectionCandidate> {
+    let mut boundaries = Vec::new();
+    push_section_boundary(&mut boundaries, 0.0, duration);
+
+    if intro_boundary >= SECTION_MIN_SECONDS && intro_boundary < content_end - SECTION_MIN_SECONDS {
+        push_section_boundary(&mut boundaries, intro_boundary, duration);
+    }
+
+    let mut cursor = boundaries.last().copied().unwrap_or(0.0);
+    let body_end = if outro_boundary >= cursor + SECTION_MIN_SECONDS {
+        outro_boundary
+    } else {
+        content_end
+    };
+
+    while cursor + step_seconds < body_end - SECTION_MIN_SECONDS {
+        cursor += step_seconds;
+        push_section_boundary(&mut boundaries, cursor, duration);
+    }
+
+    if outro_boundary >= SECTION_MIN_SECONDS && outro_boundary < content_end - 1.0 {
+        push_section_boundary(&mut boundaries, outro_boundary, duration);
+    }
+
+    push_section_boundary(&mut boundaries, content_end, duration);
+
+    if duration - content_end >= 1.0 {
+        push_section_boundary(&mut boundaries, duration, duration);
+    }
+
+    boundaries.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    boundaries.dedup_by(|a, b| (*a - *b).abs() < 0.25);
+
+    let mut candidates = Vec::new();
+    for pair in boundaries.windows(2) {
+        let start = pair[0];
+        let end = pair[1];
+        if end - start < 1.0 {
+            continue;
+        }
+        let (avg_energy, peak_energy, flux) = section_energy_stats(energy_per_second, start, end);
+        candidates.push(SectionCandidate {
+            start,
+            end,
+            avg_energy,
+            peak_energy,
+            flux,
+            index: candidates.len() as u32,
+        });
+    }
+
+    candidates
+}
+
+fn push_section_boundary(boundaries: &mut Vec<f32>, value: f32, duration: f32) {
+    let value = value.clamp(0.0, duration);
+    if boundaries
+        .last()
+        .is_none_or(|last| (value - *last).abs() >= 0.25)
+    {
+        boundaries.push(value);
+    }
+}
+
+fn section_energy_stats(energy_per_second: &[f32], start: f32, end: f32) -> (f32, f32, f32) {
+    if energy_per_second.is_empty() {
+        return (0.0, 0.0, 0.0);
+    }
+
+    let start_idx = start.floor().max(0.0) as usize;
+    let end_idx = end.ceil().max(start + 1.0) as usize;
+    let start_idx = start_idx.min(energy_per_second.len() - 1);
+    let end_idx = end_idx.clamp(start_idx + 1, energy_per_second.len());
+    let slice = &energy_per_second[start_idx..end_idx];
+
+    let mut sum = 0.0;
+    let mut peak = 0.0;
+    let mut flux_sum = 0.0;
+    let mut prev = slice[0];
+
+    for (i, &value) in slice.iter().enumerate() {
+        sum += value;
+        if value > peak {
+            peak = value;
+        }
+        if i > 0 {
+            flux_sum += (value - prev).abs();
+            prev = value;
+        }
+    }
+
+    let avg = sum / slice.len() as f32;
+    let flux = if slice.len() > 1 {
+        flux_sum / (slice.len() - 1) as f32
+    } else {
+        0.0
+    };
+
+    (avg, peak, flux)
+}
+
+fn build_section_energy_profile(
+    candidates: &[SectionCandidate],
+    intro_boundary: f32,
+    outro_boundary: f32,
+) -> Option<SectionEnergyProfile> {
+    let mut values = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.end > intro_boundary + 0.5 && candidate.start < outro_boundary - 0.5
+        })
+        .map(|candidate| candidate.avg_energy)
+        .filter(|value| value.is_finite())
+        .collect::<Vec<_>>();
+
+    if values.is_empty() {
+        return None;
+    }
+
+    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p25 = percentile_sorted(&values, 0.25);
+    let median = percentile_sorted(&values, 0.5);
+    let p75 = percentile_sorted(&values, 0.75);
+    let mean = values.iter().sum::<f32>() / values.len() as f32;
+    let spread = (p75 - p25).max(0.0);
+    let high_threshold = if spread < 0.08 {
+        (mean + 0.08).max(p75)
+    } else {
+        (p75 * 0.7 + mean * 0.3).max(mean + spread * 0.25)
+    }
+    .clamp(0.35, 0.9);
+    let low_threshold = (p25 * 0.85).min(mean * 0.8).clamp(0.05, 0.7);
+
+    Some(SectionEnergyProfile {
+        median,
+        low_threshold,
+        high_threshold,
+        spread,
+        content_count: values.len(),
+    })
+}
+
+fn percentile_sorted(values: &[f32], percentile: f32) -> f32 {
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    let index = ((values.len() - 1) as f32 * percentile.clamp(0.0, 1.0)).round() as usize;
+    values[index.min(values.len() - 1)]
+}
+
+fn classify_section_candidate(
+    candidate: &SectionCandidate,
+    profile: SectionEnergyProfile,
+    intro_boundary: f32,
+    outro_boundary: f32,
+    content_end: f32,
+    duration: f32,
+    bpm_confidence: f32,
+) -> (SongSectionKind, f32) {
+    let bpm_bonus = bpm_confidence * 0.12;
+
+    if candidate.start >= content_end - 0.25 && duration - content_end >= 1.0 {
+        return (SongSectionKind::Silence, (0.85 + bpm_bonus).min(1.0));
+    }
+
+    if candidate.end <= intro_boundary + 0.5 || (candidate.index == 0 && candidate.start < 0.5) {
+        let cue_confidence = if intro_boundary >= SECTION_MIN_SECONDS {
+            0.72
+        } else {
+            0.5
+        };
+        return (
+            SongSectionKind::Start,
+            (cue_confidence + bpm_bonus).min(1.0),
+        );
+    }
+
+    if candidate.start >= outro_boundary - 0.25 || candidate.end > content_end - 0.5 {
+        return (SongSectionKind::Outro, (0.68 + bpm_bonus).min(1.0));
+    }
+
+    if candidate.avg_energy <= profile.low_threshold
+        && candidate.peak_energy < profile.median.max(profile.low_threshold) * 1.05
+    {
+        return (SongSectionKind::Breakdown, (0.48 + bpm_bonus).min(1.0));
+    }
+
+    if profile.content_count >= 2 && candidate.avg_energy >= profile.high_threshold {
+        let energy_margin = candidate.avg_energy - profile.high_threshold;
+        return (
+            SongSectionKind::Chorus,
+            (0.58 + energy_margin * 0.8 + bpm_bonus).clamp(0.0, 1.0),
+        );
+    }
+
+    if profile.spread >= 0.1
+        && candidate.flux >= 0.12
+        && candidate.avg_energy < profile.median * 0.95
+    {
+        return (SongSectionKind::Bridge, (0.45 + bpm_bonus).min(1.0));
+    }
+
+    let verse_confidence = if candidate.avg_energy >= profile.low_threshold {
+        0.55
+    } else {
+        0.42
+    };
+    (
+        SongSectionKind::Verse,
+        (verse_confidence + bpm_bonus).min(1.0),
+    )
+}
+
+fn promote_best_chorus_if_needed(
+    labeled: &mut [LabeledSectionCandidate],
+    profile: SectionEnergyProfile,
+) {
+    if labeled
+        .iter()
+        .any(|section| section.section_type == SongSectionKind::Chorus)
+    {
+        return;
+    }
+
+    let Some((index, best)) = labeled
+        .iter()
+        .enumerate()
+        .filter(|(_, section)| {
+            matches!(
+                section.section_type,
+                SongSectionKind::Verse | SongSectionKind::Bridge
+            )
+        })
+        .max_by(|(_, a), (_, b)| {
+            a.candidate
+                .avg_energy
+                .partial_cmp(&b.candidate.avg_energy)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    else {
+        return;
+    };
+
+    if best.candidate.avg_energy >= (profile.median + 0.04).max(0.45) || profile.spread >= 0.08 {
+        labeled[index].section_type = SongSectionKind::Chorus;
+        labeled[index].confidence = labeled[index].confidence.max(0.44);
+    }
+}
+
+fn merge_labeled_sections(labeled: Vec<LabeledSectionCandidate>) -> Vec<SongSection> {
+    let mut sections: Vec<SongSection> = Vec::new();
+
+    for item in labeled {
+        let duration = (item.candidate.end - item.candidate.start).max(0.001);
+        if let Some(last) = sections.last_mut() {
+            if last.section_type == item.section_type
+                && (item.candidate.start - last.end).abs() <= 0.25
+            {
+                let last_duration = (last.end - last.start).max(0.001);
+                let total_duration = last_duration + duration;
+                last.confidence =
+                    (last.confidence * last_duration + item.confidence * duration) / total_duration;
+                last.energy = (last.energy * last_duration + item.candidate.avg_energy * duration)
+                    / total_duration;
+                last.end = item.candidate.end;
+                continue;
+            }
+        }
+
+        if sections.len() >= MAX_SONG_SECTIONS {
+            break;
+        }
+
+        sections.push(SongSection {
+            section_type: item.section_type,
+            start: item.candidate.start,
+            end: item.candidate.end,
+            index: 0,
+            confidence: item.confidence,
+            energy: item.candidate.avg_energy,
+        });
+    }
+
+    sections
+}
+
 // ─── Outro Classification (Simplified) ─────────────────────────────
 
 struct ClassificationResult {
@@ -1126,6 +1627,13 @@ pub fn analyze_mono_samples(
             mix_in_phrase: Some(mix_in_phrase),
         })
     });
+    let sections = analyze_song_sections(
+        &energy,
+        bpm.as_ref(),
+        intro.as_ref(),
+        outro.as_ref(),
+        duration,
+    );
 
     TrackAnalysis {
         volume,
@@ -1135,6 +1643,7 @@ pub fn analyze_mono_samples(
         outro,
         intro,
         phrases,
+        sections,
         duration,
     }
 }
@@ -1166,4 +1675,70 @@ pub fn analyze_audio_file(
 
 pub fn analyze_audio_source(req: AutomixAnalyzeSourceRequest) -> Result<TrackAnalysis, String> {
     analyze_audio_file(req.source, req.analyze_bpm.unwrap_or(true))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn song_sections_detect_basic_pop_structure() {
+        let mut energy_per_second = Vec::new();
+        energy_per_second.extend(std::iter::repeat(0.20).take(8));
+        energy_per_second.extend(std::iter::repeat(0.45).take(16));
+        energy_per_second.extend(std::iter::repeat(0.88).take(16));
+        energy_per_second.extend(std::iter::repeat(0.48).take(16));
+        energy_per_second.extend(std::iter::repeat(0.90).take(16));
+        energy_per_second.extend(std::iter::repeat(0.25).take(8));
+
+        let average_energy = energy_per_second.iter().sum::<f32>() / energy_per_second.len() as f32;
+        let energy = EnergyAnalysis {
+            energy_per_second,
+            outro_start_offset: 8.0,
+            intro_end_offset: 8.0,
+            average_energy,
+            trailing_silence: 0.0,
+            is_fade_out: false,
+        };
+        let bpm = BPMResult {
+            bpm: 120.0,
+            confidence: 0.9,
+            beat_grid: Vec::new(),
+            analysis_offset: 0.0,
+        };
+        let intro = IntroAnalysis {
+            quiet_intro_duration: 4.0,
+            energy_build_duration: 8.0,
+            intro_energy_ratio: 0.6,
+            multiband_energy: None,
+        };
+
+        let analysis = analyze_song_sections(&energy, Some(&bpm), Some(&intro), None, 80.0)
+            .expect("expected section analysis");
+        let section_types = analysis
+            .sections
+            .iter()
+            .map(|section| section.section_type)
+            .collect::<Vec<_>>();
+
+        assert_eq!(section_types.first(), Some(&SongSectionKind::Start));
+        assert!(section_types.contains(&SongSectionKind::Verse));
+        assert!(section_types.contains(&SongSectionKind::Chorus));
+        assert_eq!(section_types.last(), Some(&SongSectionKind::Outro));
+        assert_eq!(analysis.method, "bpmPhraseEnergy");
+    }
+
+    #[test]
+    fn song_sections_skip_too_short_tracks() {
+        let energy = EnergyAnalysis {
+            energy_per_second: vec![0.4, 0.5, 0.4],
+            outro_start_offset: 3.0,
+            intro_end_offset: 0.0,
+            average_energy: 0.43,
+            trailing_silence: 0.0,
+            is_fade_out: false,
+        };
+
+        assert!(analyze_song_sections(&energy, None, None, None, 3.0).is_none());
+    }
 }

@@ -8,6 +8,15 @@ import { audioSendMsg, isTauri, listenPlayerEvents } from "./audioBridge";
 import { getAudioWs } from "./audioWs";
 
 const WASM_ANALYSIS_INTERVAL_MS = 66;
+// Drive the UI position from the real <audio> clock at a few Hz. The element
+// clock is the ground truth and lives on this thread, so we dispatch locally
+// instead of round-tripping every heartbeat through the worker. A fast cadence
+// keeps NativeRustSound's wall-clock extrapolation from outrunning real
+// playback (which is what made the timeline rewind at the start of a track).
+const WASM_POSITION_DISPATCH_INTERVAL_MS = 200;
+// The worker only needs its internal position for occasional syncStatus/state
+// reads, so refresh it lazily rather than on every dispatch tick.
+const WASM_WORKER_POSITION_SYNC_INTERVAL_MS = 1000;
 
 export interface AudioBackendTransport {
   connect(): Promise<void>;
@@ -138,6 +147,7 @@ type WasmEffect =
   | { type: "pause" }
   | { type: "seek"; position: number }
   | { type: "setVolume"; volume: number }
+  | { type: "setOutputDevice"; name: string }
   | { type: "close" };
 
 interface WasmReply {
@@ -483,6 +493,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _boundAudio: HTMLAudioElement | null = null;
   private _syncingElementVolume = false;
   private _positionTimer: ReturnType<typeof setInterval> | null = null;
+  private _lastWorkerPositionSyncAt = 0;
   private _analysisTimer: ReturnType<typeof setInterval> | null = null;
   private _analysisFrameInFlight = false;
   private _analysisEnabled = true;
@@ -492,6 +503,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _analysisReady = false;
   private _lastAnalysisAt = 0;
   private _currentVolume = 1;
+  private _outputDeviceName = "";
   private _isClosing = false;
   private _playPromise: Promise<void> | null = null;
 
@@ -630,6 +642,9 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
         this._currentVolume = Math.max(0, Math.min(1, effect.volume));
         this._applyOutputVolume();
         break;
+      case "setOutputDevice":
+        this._setOutputDevice(effect.name);
+        break;
       case "close":
         this._cancelAnalysis();
         this._stopPositionTimer();
@@ -652,6 +667,9 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     audio.src = effect.src;
     this._setElementVolumeForCurrentGraph(audio);
     this._audio = audio;
+    if (this._outputDeviceName) {
+      this._setOutputDevice(this._outputDeviceName);
+    }
     this._bindAudio(audio, effect.initialPosition);
     audio.load();
 
@@ -769,6 +787,62 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     }
   }
 
+  private _setOutputDevice(name: string): void {
+    const audio = this._audio;
+    const outputName = name.trim();
+    this._outputDeviceName = outputName;
+    const isDefault =
+      outputName === "" ||
+      outputName.toLowerCase() === "default" ||
+      outputName.toLowerCase() === "system";
+    const sinkId = isDefault ? "" : outputName;
+    const dispatchChanged = () => {
+      this._dispatch({
+        type: "audioOutputChanged",
+        data: {
+          deviceName: isDefault ? "browser default" : outputName,
+          isDefault,
+          channels: 2,
+          sampleRate: 44100,
+          sampleFormat: "browser",
+        },
+      });
+    };
+    const dispatchError = (error: string) => {
+      this._dispatch({
+        type: "audioOutputError",
+        data: { error, recoverable: true },
+      });
+    };
+
+    if (!audio) {
+      if (isDefault) dispatchChanged();
+      return;
+    }
+
+    const setSinkId = (
+      audio as HTMLAudioElement & {
+        setSinkId?: (sinkId: string) => Promise<void>;
+      }
+    ).setSinkId;
+    if (typeof setSinkId !== "function") {
+      if (isDefault) {
+        dispatchChanged();
+      } else {
+        dispatchError("browser does not support selecting an audio output device");
+      }
+      return;
+    }
+
+    void setSinkId
+      .call(audio, sinkId)
+      .then(dispatchChanged)
+      .catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        dispatchError(message);
+      });
+  }
+
   private _resetLowFreq(): void {
     this._dispatch({
       type: "lowFrequencyVolume",
@@ -778,10 +852,35 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
 
   private _startPositionTimer(): void {
     if (this._positionTimer !== null) return;
+    this._lastWorkerPositionSyncAt = 0;
     this._positionTimer = setInterval(() => {
-      if (!this._audio || this._audio.paused || this._audio.ended) return;
-      this._handleReplyPromise(this._backend?.applyPlayPosition(this._audio.currentTime));
-    }, 1000);
+      this._tickPosition();
+    }, WASM_POSITION_DISPATCH_INTERVAL_MS);
+    // Dispatch immediately so the position anchor is re-stamped to the real
+    // element clock the instant playback starts. Otherwise the first
+    // extrapolated reads inherit the stale load-time anchor, run ahead of real
+    // playback, and snap backward when the first heartbeat lands.
+    this._tickPosition();
+  }
+
+  private _tickPosition(): void {
+    const audio = this._audio;
+    if (!audio || audio.paused || audio.ended) return;
+    const position = audio.currentTime;
+    // Emit the position event locally from the real element clock. Routing each
+    // heartbeat through the worker only to echo it back costs a postMessage
+    // round-trip per tick and arrives too coarse (1 Hz) to keep client-side
+    // extrapolation aligned with real playback.
+    this._dispatch({ type: "playPosition", data: { position } });
+    // Keep the worker's internal position roughly current for any later
+    // syncStatus/state read, but at a low rate and without re-dispatching its
+    // (older) echo on top of the fresh local value above.
+    const now = this._nowMs();
+    if (now - this._lastWorkerPositionSyncAt >= WASM_WORKER_POSITION_SYNC_INTERVAL_MS) {
+      this._lastWorkerPositionSyncAt = now;
+      const pending = this._backend?.applyPlayPosition(position);
+      if (pending) void pending.catch(() => {});
+    }
   }
 
   private _stopPositionTimer(): void {
@@ -789,6 +888,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
       clearInterval(this._positionTimer);
       this._positionTimer = null;
     }
+    this._lastWorkerPositionSyncAt = 0;
   }
 
   private _startAnalysisTimer(): void {

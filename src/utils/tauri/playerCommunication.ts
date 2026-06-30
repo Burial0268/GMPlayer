@@ -45,6 +45,7 @@ let cachedSetting: SettingStore | null = null;
 let cachedSite: SiteStore | null = null;
 let mainListenersStarted = false;
 let lastTimeBroadcastAt = 0;
+let timeBroadcastSeq = 0;
 let cachedLyricSource: SongLyric | null = null;
 let cachedLyricSongId: number | null = null;
 let cachedLyricSettingsKey = "";
@@ -112,9 +113,16 @@ function buildPlayerStatePayload(): PlayerStatePayload {
 
 function buildPlayerTimePayload(): PlayerTimePayload {
   const music = getMusic();
+  const playTime = music.getPlaySongTime;
+  timeBroadcastSeq = (timeBroadcastSeq + 1) >>> 0 || 1;
   return {
-    currentTime: music.getPlaySongTime.currentTime,
+    currentTime: playTime.currentTime,
     lyricIndex: music.playSongLyricIndex,
+    duration: playTime.duration,
+    songId: music.getPlaySongData?.id ?? null,
+    isPlaying: music.getPlayState,
+    seq: timeBroadcastSeq,
+    sentAt: Date.now(),
   };
 }
 
@@ -187,6 +195,7 @@ function buildPlayerSettingsPayload(): PlayerSettingsPayload {
   return {
     lyricTimeOffset: setting.lyricTimeOffset,
     lyricsFontSize: setting.lyricsFontSize,
+    desktopLyricsFontSizeOffset: setting.desktopLyricsFontSizeOffset,
     lyricFont: setting.lyricFont,
     lyricFontWeight: setting.lyricFontWeight,
     lyricLetterSpacing: setting.lyricLetterSpacing,
@@ -354,6 +363,15 @@ export async function setupMainPlayerCommunication(options: MainPlayerCommunicat
       if (typeof size !== "number") return;
       setting.lyricsFontSize = Math.max(2, Math.min(6, size));
       broadcastPlayerSettings();
+    },
+  );
+
+  await tauri.event.listen<{ offset?: unknown }>(
+    PLAYER_COMMUNICATION_EVENTS.slaveSetDesktopLyricsFontSizeOffset,
+    (event) => {
+      const offset = event.payload?.offset;
+      if (typeof offset !== "number" || !Number.isFinite(offset)) return;
+      setting.desktopLyricsFontSizeOffset = Math.max(-20, Math.min(40, offset));
     },
   );
 

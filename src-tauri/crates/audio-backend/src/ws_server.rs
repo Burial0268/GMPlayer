@@ -349,6 +349,8 @@ fn dispatch_binary(bytes: &[u8], player: &PlayerHandle) -> anyhow::Result<()> {
         CTRL_TOGGLE => AudioThreadMessage::ResumeOrPauseAudio,
         CTRL_SEEK => AudioThreadMessage::SeekAudio {
             position: read_f64_payload(payload)?,
+            request_id: None,
+            expected_music_id: None,
         },
         CTRL_SET_VOLUME => AudioThreadMessage::SetVolume {
             volume: read_f64_payload(payload)?,

@@ -49,6 +49,10 @@ enum WebBackendEffect {
     SetVolume {
         volume: f64,
     },
+    #[serde(rename_all = "camelCase")]
+    SetOutputDevice {
+        name: String,
+    },
     Close,
 }
 
@@ -484,7 +488,7 @@ impl WasmAudioBackend {
                     self.handle_message(AudioThreadMessage::ResumeAudio)
                 }
             }
-            AudioThreadMessage::SeekAudio { position } => {
+            AudioThreadMessage::SeekAudio { position, .. } => {
                 self.position = finite_nonnegative(position);
                 self.music_info.position = self.position;
                 self.reply(
@@ -571,8 +575,12 @@ impl WasmAudioBackend {
                 }
                 self.reply(Vec::new(), Vec::new())
             }
-            AudioThreadMessage::SetAudioOutput { .. }
-            | AudioThreadMessage::SetAnalysis { .. }
+            AudioThreadMessage::SetAudioOutput { name } => {
+                self.reply(Vec::new(), vec![WebBackendEffect::SetOutputDevice { name }])
+            }
+            AudioThreadMessage::SetAnalysis { .. }
+            | AudioThreadMessage::SetEqualizer { .. }
+            | AudioThreadMessage::SetDsp { .. }
             | AudioThreadMessage::SetMediaControlsEnabled { .. }
             | AudioThreadMessage::AutomixSetEnabled { .. }
             | AudioThreadMessage::AutomixConfigure { .. }
