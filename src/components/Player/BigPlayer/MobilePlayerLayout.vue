@@ -209,38 +209,57 @@
             </div>
           </div>
 
-          <div ref="queueListRef" class="mobile-queue-list">
-            <div
-              v-for="(item, index) in music.getPlaylists"
-              :id="`mobile-queue-${index}`"
-              :key="`${item.id}-${index}`"
-              :class="['queue-song', { 'is-current': index === music.persistData.playSongIndex }]"
-              role="button"
-              tabindex="0"
-              @click="changeQueueIndex(index)"
-              @keydown.enter.prevent="changeQueueIndex(index)"
-            >
-              <div class="queue-index">
-                <span v-if="index !== music.persistData.playSongIndex">{{ index + 1 }}</span>
-                <div v-else class="playing-bars">
-                  <span class="line"></span>
-                  <span class="line"></span>
-                  <span class="line"></span>
+          <n-virtual-list
+            v-if="music.getPlaylists.length"
+            ref="queueListRef"
+            class="mobile-queue-list"
+            :items="queueRows"
+            :item-size="73"
+            :item-resizable="true"
+            key-field="key"
+            :show-scrollbar="false"
+            @scroll="handleQueueScroll"
+          >
+            <template #default="{ item: row }">
+              <div
+                :id="`mobile-queue-${row.index}`"
+                :class="[
+                  'queue-song',
+                  { 'is-current': row.index === music.persistData.playSongIndex },
+                ]"
+                role="button"
+                tabindex="0"
+                @click="changeQueueIndex(row.index)"
+                @keydown.enter.prevent="changeQueueIndex(row.index)"
+              >
+                <div class="queue-index">
+                  <span v-if="row.index !== music.persistData.playSongIndex">
+                    {{ row.index + 1 }}
+                  </span>
+                  <div v-else class="playing-bars">
+                    <span class="line"></span>
+                    <span class="line"></span>
+                    <span class="line"></span>
+                  </div>
                 </div>
+                <img class="queue-cover" :src="getQueueCover(row.item)" alt="cover" />
+                <div class="queue-info">
+                  <div class="queue-name text-hidden">{{ row.item.name }}</div>
+                  <div class="queue-artists text-hidden">{{ formatArtists(row.item.artist) }}</div>
+                </div>
+                <div class="queue-duration" v-if="row.item.time">{{ row.item.time }}</div>
+                <button
+                  class="queue-remove"
+                  type="button"
+                  @click.stop="music.removeSong(row.index)"
+                >
+                  <n-icon size="20" :component="DeleteRound" />
+                </button>
               </div>
-              <img class="queue-cover" :src="getQueueCover(item)" alt="cover" />
-              <div class="queue-info">
-                <div class="queue-name text-hidden">{{ item.name }}</div>
-                <div class="queue-artists text-hidden">{{ formatArtists(item.artist) }}</div>
-              </div>
-              <div class="queue-duration" v-if="item.time">{{ item.time }}</div>
-              <button class="queue-remove" type="button" @click.stop="music.removeSong(index)">
-                <n-icon size="20" :component="DeleteRound" />
-              </button>
-            </div>
-            <div class="queue-empty" v-if="!music.getPlaylists.length">
-              {{ $t("other.playlistEmpty") }}
-            </div>
+            </template>
+          </n-virtual-list>
+          <div class="queue-empty" v-else>
+            {{ $t("other.playlistEmpty") }}
           </div>
         </div>
       </Motion>
@@ -256,6 +275,7 @@ import {
   StarBorderRound,
   StarRound,
 } from "@vicons/material";
+import { NVirtualList } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
 import { Motion, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
@@ -319,7 +339,10 @@ const phonyBigCoverRef = ref<HTMLElement | null>(null);
 const phonySmallCoverRef = ref<HTMLElement | null>(null);
 const nameWrapperRef = ref<HTMLElement | null>(null);
 const nameTextRef = ref<HTMLElement | null>(null);
-const queueListRef = ref<HTMLElement | null>(null);
+const queueListRef = ref<{
+  scrollTo: (options: { index: number; behavior?: ScrollBehavior }) => void;
+} | null>(null);
+const queueScrollTop = ref(0);
 const suppressCoverClick = ref(false);
 const playerTouch = ref<{
   x: number;
@@ -339,6 +362,13 @@ const playerContentAnimate = computed(() =>
 );
 const queueContentAnimate = computed(() =>
   props.queueOpen ? { y: 0, opacity: 1 } : { y: "18%", opacity: 0 },
+);
+const queueRows = computed(() =>
+  music.getPlaylists.map((item: QueueSong, index: number) => ({
+    item,
+    index,
+    key: `${item.id}-${index}`,
+  })),
 );
 
 const shouldIgnorePlayerSwipe = (target: EventTarget | null) => {
@@ -434,8 +464,14 @@ const handleQueueTouchStart = (event: TouchEvent) => {
     x: touch.clientX,
     y: touch.clientY,
     dragging: false,
-    scrollTop: queueListRef.value?.scrollTop ?? 0,
+    scrollTop: queueScrollTop.value,
   };
+};
+
+const handleQueueScroll = (event: Event) => {
+  if (event.target instanceof HTMLElement) {
+    queueScrollTop.value = event.target.scrollTop;
+  }
 };
 
 const handleQueueTouchMove = (event: TouchEvent) => {
@@ -477,12 +513,10 @@ const getQueueCover = (item: QueueSong) => {
 };
 
 const scrollCurrentQueueSong = () => {
-  const list = queueListRef.value;
-  if (!list) return;
-  const current = list.querySelector<HTMLElement>(
-    `#mobile-queue-${music.persistData.playSongIndex}`,
-  );
-  current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  queueListRef.value?.scrollTo({
+    index: music.persistData.playSongIndex,
+    behavior: "smooth",
+  });
 };
 
 const changeQueueIndex = (index: number) => {
@@ -1009,13 +1043,19 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 
 .mobile-queue-list {
   min-height: 0;
-  overflow-y: auto;
+  overflow-x: clip;
   overscroll-behavior: contain;
   padding: 4px 0 12px;
-  scrollbar-width: none;
+  contain: layout paint style;
 
-  &::-webkit-scrollbar {
-    display: none;
+  :deep(.v-vl) {
+    overflow-x: hidden !important;
+    scrollbar-width: none;
+  }
+
+  :deep(.v-vl::-webkit-scrollbar) {
+    width: 0;
+    height: 0;
   }
 }
 

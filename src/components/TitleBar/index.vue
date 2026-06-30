@@ -2,136 +2,103 @@
   <div
     v-if="showTitleBar"
     class="titlebar"
-    :class="{ 'bigplayer-mode': music.showBigPlayer, 'dark-mode': isDark }"
+    :class="titlebarClasses"
+    :data-tauri-drag-region="draggable ? '' : undefined"
   >
-    <button
-      class="decorum-tb-btn"
-      type="button"
-      aria-label="Minimize window"
-      @click="minimizeWindow"
-    >
-      <svg class="titlebar-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-        <path d="M3.5 8h9" />
-      </svg>
-    </button>
-    <button
-      class="decorum-tb-btn"
-      type="button"
-      :aria-label="isMaximized ? 'Restore window size' : 'Maximize window size'"
-      @click="toggleMaximize"
-    >
-      <svg
-        v-if="isMaximized"
-        class="titlebar-icon restore-icon"
-        viewBox="0 0 16 16"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path d="M5.5 4.5h6v6h-6z" />
-        <path d="M4.5 6.5h-1v6h6v-1" />
-      </svg>
-      <svg v-else class="titlebar-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
-        <path d="M4.5 4.5h7v7h-7z" />
-      </svg>
-    </button>
-    <button
-      class="decorum-tb-btn close"
-      type="button"
-      aria-label="Close window"
-      @click="closeWindow"
-    >
-      <svg
-        class="titlebar-icon close-icon"
-        viewBox="0 0 16 16"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <path d="M4.5 4.5l7 7" />
-        <path d="M11.5 4.5l-7 7" />
-      </svg>
-    </button>
+    <div v-if="title" class="titlebar-title" data-tauri-drag-region>
+      <n-icon v-if="icon" class="titlebar-icon" :component="icon" />
+      <span class="titlebar-text" data-tauri-drag-region>{{ title }}</span>
+    </div>
+    <WindowControls :label="label" :minimizable="minimizable" :maximizable="maximizable" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from "vue";
+import { ref, computed, onMounted, type Component } from "vue";
 import { musicStore, settingStore } from "@/store";
 import { isTauri } from "@/utils/tauri/windowManager";
 import { isMobile } from "@/utils/tauri";
+import type { WindowLabel } from "@/utils/tauri/types";
 import { useOsTheme } from "naive-ui";
+import WindowControls from "./WindowControls.vue";
+
+const props = withDefaults(
+  defineProps<{
+    label?: WindowLabel;
+    title?: string;
+    icon?: Component;
+    variant?: "floating" | "window";
+    draggable?: boolean;
+    minimizable?: boolean;
+    maximizable?: boolean;
+    showOnMac?: boolean;
+  }>(),
+  {
+    label: "main",
+    variant: "floating",
+    draggable: false,
+    minimizable: true,
+    maximizable: true,
+    showOnMac: false,
+  },
+);
 
 const music = musicStore();
 const setting = settingStore();
 const osThemeRef = useOsTheme();
+const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
 
 const isDark = computed(() => {
   return setting.themeAuto ? osThemeRef.value === "dark" : setting.theme === "dark";
 });
+const titlebarClasses = computed(() => [
+  `titlebar--${props.variant}`,
+  {
+    "bigplayer-mode": props.variant === "floating" && music.showBigPlayer,
+    "dark-mode": isDark.value,
+    "has-title": Boolean(props.title),
+    "is-mac": isMac,
+  },
+]);
 const showTitleBar = ref(false);
-const isMaximized = ref(false);
-
-let unlistenResize: (() => void) | null = null;
-
-async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> {
-  if (!isTauri()) return null;
-  return window.__TAURI__!.core.invoke<T>(cmd, args);
-}
-
-async function listen(event: string, handler: (payload: unknown) => void): Promise<() => void> {
-  if (!isTauri()) return () => {};
-  return window.__TAURI__!.event.listen(event, (e) => handler(e.payload));
-}
-
-async function minimizeWindow() {
-  await invoke("plugin:window|minimize", { label: "main" });
-}
-
-async function toggleMaximize() {
-  await invoke("plugin:window|toggle_maximize", { label: "main" });
-}
-
-async function closeWindow() {
-  await invoke("plugin:window|close", { label: "main" });
-}
-
-async function checkMaximized() {
-  const result = await invoke<boolean>("plugin:window|is_maximized", { label: "main" });
-  if (result !== null) {
-    isMaximized.value = result;
-  }
-}
 
 onMounted(async () => {
   if (!isTauri()) return;
   if (await isMobile()) return;
 
   // Don't show custom titlebar on macOS (traffic lights handle it)
-  const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
-  if (isMac) return;
+  if (isMac && !props.showOnMac) return;
 
   showTitleBar.value = true;
-  await checkMaximized();
-
-  unlistenResize = await listen("tauri://resize", () => {
-    checkMaximized();
-  });
-});
-
-onBeforeUnmount(() => {
-  unlistenResize?.();
 });
 </script>
 
 <style lang="scss" scoped>
 .titlebar {
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  color: var(--n-text-color, #333);
+  user-select: none;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+  transition:
+    opacity 0.25s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease;
+
+  &.dark-mode {
+    --titlebar-bg: rgba(24, 24, 24, 0.56);
+    color: rgba(255, 255, 255, 0.85);
+  }
+}
+
+.titlebar--floating {
   position: fixed;
   top: var(--app-floating-control-top);
   right: var(--app-floating-control-inset, 14px);
   z-index: 9999;
-  display: flex;
   height: 30px;
-  align-items: center;
-  overflow: hidden;
   border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.06));
   border-radius: var(--radius-lg);
   background-color: var(--titlebar-bg, rgba(255, 255, 255, 0.52));
@@ -140,20 +107,11 @@ onBeforeUnmount(() => {
     inset 0 1px 0 rgb(255 255 255 / 26%);
   -webkit-backdrop-filter: blur(18px) saturate(160%);
   backdrop-filter: blur(18px) saturate(160%);
-  user-select: none;
-  -webkit-app-region: no-drag;
-  transition:
-    opacity 0.25s ease,
-    background-color 0.2s ease,
-    border-color 0.2s ease;
 
-  &.dark-mode {
-    --titlebar-bg: rgba(24, 24, 24, 0.56);
-  }
-
-  // When BigPlayer is open: hidden by default, visible on hover
+  // BigPlayer mode: white controls on dark cover, hidden until hover
   &.bigplayer-mode {
     opacity: 0;
+    color: rgba(255, 255, 255, 0.85);
 
     &:hover {
       opacity: 1;
@@ -161,83 +119,47 @@ onBeforeUnmount(() => {
   }
 }
 
-// Match decorum's button styling exactly
-.decorum-tb-btn {
-  width: 38px;
-  height: 100%;
-  border: none;
-  padding: 0;
-  outline: none;
-  display: flex;
-  font-size: 10px;
-  font-weight: 300;
-  cursor: default;
-  box-shadow: none;
-  border-radius: 0;
-  align-items: center;
-  justify-content: center;
-  transition:
-    background-color 0.12s ease,
-    color 0.12s ease;
-  background-color: transparent;
-  color: var(--n-text-color, #333);
+.titlebar--window {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  justify-content: space-between;
+  width: 100%;
+  height: 44px;
+  padding: 0 6px 0 16px;
+  box-sizing: border-box;
+  border-bottom: 1px solid color-mix(in srgb, var(--n-border-color) 50%, transparent);
+  background-color: color-mix(in srgb, var(--n-text-color) 2.5%, transparent);
+  -webkit-app-region: drag;
+  app-region: drag;
 
-  &:hover {
-    background-color: rgba(0, 0, 0, 0.08);
-  }
-
-  &.close:hover {
-    background-color: rgba(255, 0, 0, 0.7);
-    color: #fff;
-  }
-
-  // Dark mode: light overlays on dark background
-  .dark-mode & {
-    color: rgba(255, 255, 255, 0.85);
-
-    &:hover {
-      background-color: rgba(255, 255, 255, 0.12);
-    }
-
-    &.close:hover {
-      background-color: rgba(255, 0, 0, 0.7);
-      color: #fff;
-    }
-  }
-
-  // BigPlayer mode: white text on dark background
-  .bigplayer-mode & {
-    color: rgba(255, 255, 255, 0.85);
-
-    &:hover {
-      background-color: rgba(255, 255, 255, 0.1);
-    }
-
-    &.close:hover {
-      background-color: rgba(255, 0, 0, 0.7);
-      color: #fff;
-    }
+  &.is-mac {
+    padding-left: 78px;
   }
 }
 
-.titlebar-icon {
-  width: 20px;
-  height: 20px;
-  display: block;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.55;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.titlebar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   pointer-events: none;
 }
 
-.restore-icon {
-  width: 20px;
-  height: 20px;
+.titlebar-icon {
+  flex: 0 0 auto;
+  font-size: 18px;
+  color: var(--main-color);
 }
 
-.close-icon {
-  stroke-width: 1.65;
+.titlebar-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  opacity: 0.92;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>

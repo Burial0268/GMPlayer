@@ -122,7 +122,11 @@ const routes: RouteRecordRaw[] = [
   },
   // 设置页
   {
-    path: "/setting/:section?",
+    path: "/setting",
+    redirect: "/setting/appearance",
+  },
+  {
+    path: "/setting/:section",
     name: "setting",
     meta: {
       title: "全局设置",

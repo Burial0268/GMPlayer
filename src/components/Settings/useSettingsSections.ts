@@ -1,5 +1,15 @@
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import {
+  ColorLensRound,
+  TuneRound,
+  MusicNoteRound,
+  GraphicEqRound,
+  SlideshowRound,
+  SubtitlesRound,
+  AutoAwesomeRound,
+  BuildRound,
+} from "@vicons/material";
 import { settingStore, userStore } from "@/store";
 import { isTauri } from "@/utils/tauri";
 import { isWindowsTauri, windowManager } from "@/utils/tauri/windowManager";
@@ -35,6 +45,7 @@ export function useSettingsSections() {
     {
       key: "appearance",
       label: "setting.sectionAppearance",
+      icon: ColorLensRound,
       searchText: "setting.themeType setting.language setting.theme",
       items: [
         {
@@ -69,6 +80,7 @@ export function useSettingsSections() {
     {
       key: "general",
       label: "setting.sectionGeneral",
+      icon: TuneRound,
       searchText: "setting.bannerShow setting.searchHistory setting.bottomLyricShow",
       items: [
         {
@@ -118,6 +130,7 @@ export function useSettingsSections() {
     {
       key: "playback",
       label: "setting.sectionPlayback",
+      icon: MusicNoteRound,
       searchText: "setting.songLevel AutoMix UNM",
       items: [
         {
@@ -157,8 +170,24 @@ export function useSettingsSections() {
       ],
     },
     {
+      key: "dsp",
+      label: "setting.sectionDsp",
+      icon: GraphicEqRound,
+      searchText: "DSP EQ Equalizer limiter",
+      items: [
+        {
+          key: "dspSettings",
+          label: "setting.dspTitle",
+          tip: "setting.dspTip",
+          control: "custom",
+          slot: "dspSettings",
+        },
+      ],
+    },
+    {
       key: "player",
       label: "setting.sectionPlayerVisual",
+      icon: SlideshowRound,
       searchText: "setting.playerStyle setting.backgroundImageShow setting.musicFrequency",
       items: [
         {
@@ -239,6 +268,7 @@ export function useSettingsSections() {
     {
       key: "lyrics",
       label: "setting.sectionLyrics",
+      icon: SubtitlesRound,
       searchText: "YRC TTML AMLL lyric",
       items: [
         {
@@ -386,6 +416,7 @@ export function useSettingsSections() {
     {
       key: "automix",
       label: "setting.sectionAutoMix",
+      icon: AutoAwesomeRound,
       searchText: "AutoMix crossfade bpm",
       items: [
         {
@@ -465,6 +496,7 @@ export function useSettingsSections() {
     {
       key: "system",
       label: "setting.sectionSystem",
+      icon: BuildRound,
       searchText: "setting.appUpdate setting.resetApp",
       items: [
         {

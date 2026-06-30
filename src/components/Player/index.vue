@@ -303,7 +303,7 @@ import {
 } from "@vicons/material";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { storeToRefs } from "pinia";
-import { musicStore, settingStore, listenTogetherStore } from "@/store";
+import { musicStore, settingStore, siteStore, listenTogetherStore } from "@/store";
 import {
   createSound,
   setVolume,
@@ -344,6 +344,7 @@ const { t } = useI18n();
 const router = useRouter();
 const setting = settingStore();
 const music = musicStore();
+const site = siteStore();
 const listenTogether = listenTogetherStore();
 const { persistData } = storeToRefs(music);
 useNativeMediaControls();
@@ -769,6 +770,16 @@ watch(
   { deep: true },
 );
 
+// Tauri: cover palette extraction completes asynchronously after song metadata changes.
+// Broadcast the refreshed accent color instead of waiting for a later play/pause/time event.
+watch(
+  () => site.songPicColor,
+  (val, oldVal) => {
+    if (val === oldVal) return;
+    broadcastPlayerState();
+  },
+);
+
 // 监听当前音量数据变化
 watch(
   () => persistData.value.playVolume,
@@ -884,11 +895,21 @@ watch(
   },
 );
 
+// Tauri: keep slave windows from holding stale loading state while lyrics arrive later.
+watch(
+  () => music.isLoadingSong,
+  () => {
+    broadcastPlayerState();
+    broadcastPlayerTime(true);
+  },
+);
+
 // Tauri: broadcast lyric data when songLyric changes
 watch(
   () => music.songLyric,
   () => {
     broadcastPlayerLyrics(true);
+    broadcastPlayerTime(true);
   },
   { deep: true },
 );
@@ -914,6 +935,14 @@ watch(
     broadcastPlayerSettings();
     // Re-process and re-broadcast lyrics when display settings change
     broadcastPlayerLyrics(true);
+  },
+);
+
+// Tauri: desktop lyric font size is render-only; don't re-process lyrics for it.
+watch(
+  () => setting.desktopLyricsFontSizeOffset,
+  () => {
+    broadcastPlayerSettings();
   },
 );
 

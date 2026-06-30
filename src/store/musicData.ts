@@ -633,19 +633,37 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     setPlaySongTime(value: { currentTime: number; duration: number }) {
-      this.persistData.playSongTime.currentTime = value.currentTime;
-      this.persistData.playSongTime.duration = value.duration;
-      if (value.duration === 0) {
+      const previousTime = this.persistData.playSongTime;
+      const fallbackCurrentTime = Number.isFinite(previousTime.currentTime)
+        ? previousTime.currentTime
+        : 0;
+      const previousDuration = Number.isFinite(previousTime.duration) && previousTime.duration > 0
+        ? previousTime.duration
+        : 0;
+      const incomingDuration = Number.isFinite(value.duration) && value.duration > 0
+        ? value.duration
+        : 0;
+      const duration = incomingDuration > 0 ? incomingDuration : previousDuration;
+      const incomingCurrentTime = Number.isFinite(value.currentTime)
+        ? Math.max(0, value.currentTime)
+        : fallbackCurrentTime;
+      const currentTime = duration > 0
+        ? Math.min(incomingCurrentTime, duration)
+        : incomingCurrentTime;
+
+      this.persistData.playSongTime.currentTime = currentTime;
+      this.persistData.playSongTime.duration = duration;
+      if (duration === 0) {
         this.persistData.playSongTime.barMoveDistance = 0;
       } else {
-        this.persistData.playSongTime.barMoveDistance = (value.currentTime / value.duration) * 100;
+        this.persistData.playSongTime.barMoveDistance = (currentTime / duration) * 100;
       }
 
       if (!Number.isNaN(this.persistData.playSongTime.barMoveDistance)) {
         this.persistData.playSongTime.songTimePlayed = getSongPlayingTime(
-          (value.duration / 100) * this.persistData.playSongTime.barMoveDistance,
+          (duration / 100) * this.persistData.playSongTime.barMoveDistance,
         );
-        this.persistData.playSongTime.songTimeDuration = getSongPlayingTime(value.duration);
+        this.persistData.playSongTime.songTimeDuration = getSongPlayingTime(duration);
       }
 
       const setting = settingStore();
@@ -778,15 +796,29 @@ const useMusicDataStore = defineStore("musicData", {
 
     addSongToNext(value: SongData) {
       this.persistData.playSongMode = "normal";
+      const autoMix = getAutoMixEngine();
+      let insertAfterIndex = this.persistData.playSongIndex;
+      if (autoMix.isHandoffActive()) {
+        const autoMixTargetIndex = autoMix.resolveActiveTransitionTargetIndex(insertAfterIndex);
+        if (autoMixTargetIndex >= 0) {
+          insertAfterIndex = autoMixTargetIndex;
+        }
+      }
+
       const index = this.persistData.playlists.findIndex((o) => o.id === value.id);
       if (index !== -1) {
         console.log(index);
-        if (index === this.persistData.playSongIndex) return true;
+        if (index === this.persistData.playSongIndex || index === insertAfterIndex) return true;
         if (index < this.persistData.playSongIndex) this.persistData.playSongIndex--;
         const arr = this.persistData.playlists.splice(index, 1)[0];
-        this.persistData.playlists.splice(this.persistData.playSongIndex + 1, 0, arr);
+        if (index < insertAfterIndex) insertAfterIndex--;
+        const insertIndex = insertAfterIndex + 1;
+        this.persistData.playlists.splice(insertIndex, 0, arr);
+        if (insertIndex <= this.persistData.playSongIndex) this.persistData.playSongIndex++;
       } else {
-        this.persistData.playlists.splice(this.persistData.playSongIndex + 1, 0, value);
+        const insertIndex = insertAfterIndex + 1;
+        this.persistData.playlists.splice(insertIndex, 0, value);
+        if (insertIndex <= this.persistData.playSongIndex) this.persistData.playSongIndex++;
       }
       $message.success(value.name + " " + getLanguageData("addSongToNext"));
     },

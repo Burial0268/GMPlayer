@@ -28,7 +28,14 @@
         @update:value="handleDateChange"
       />
     </div>
-    <DataLists :listData="displaySongs" :loading="songsLoading" />
+    <DataLists
+      :listData="displaySongs"
+      :loading="songsLoading"
+      virtual
+      virtual-height="min(68vh, 760px)"
+      :virtual-item-size="82"
+      :virtual-threshold="40"
+    />
   </div>
 </template>
 

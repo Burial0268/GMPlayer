@@ -713,7 +713,10 @@ const applyMiniUiVars = (progress: number) => {
   const miniSurfaceOpacity = miniTransitioning ? 1 - easeOutCubic(miniSurfaceExit) : 1;
   const miniMaskY = miniTransitioning ? getMiniBarY(progress) : 0;
   setMiniUiVar("--mobile-mini-player-root-y", `${getMiniBarY(progress)}px`);
-  setMiniUiVar("--mobile-mini-player-z-index", progress < MOBILE_MINI_UI_FADE_END ? "2102" : "2");
+  setMiniUiVar(
+    "--mobile-mini-player-z-index",
+    miniTransitioning && progress < MOBILE_MINI_UI_FADE_END ? "2102" : "2",
+  );
   setMiniUiVar("--mobile-mini-player-pointer-events", miniTransitioning ? "none" : "auto");
   if (miniTransitioning) {
     setMiniUiVar("--mobile-mini-player-surface-border", "transparent");
@@ -737,7 +740,7 @@ const applyMiniUiVars = (progress: number) => {
   setMiniUiVar("--mobile-mini-player-bottom-y", `${mix(0, 110, bottomExit)}%`);
   setMiniUiVar(
     "--mobile-mini-player-bottom-z-index",
-    progress < MOBILE_MINI_BAR_HANDOFF_END ? "2101" : "1000",
+    miniTransitioning && progress < MOBILE_MINI_BAR_HANDOFF_END ? "2101" : "1000",
   );
   setMiniUiVar("--mobile-mini-player-bottom-pointer-events", miniTransitioning ? "none" : "auto");
 };

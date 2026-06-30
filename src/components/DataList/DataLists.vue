@@ -1,100 +1,208 @@
 <template>
   <Transition mode="out-in">
     <div class="datalists" id="datalists" v-if="listData[0]">
-      <n-card
-        v-for="(item, index) in listData"
-        :key="item"
-        :id="'song' + index"
-        :class="[
-          'songs',
-          {
-            play: music.getPlaySongData && music.getPlaySongData?.id == item?.id,
-            'song-row-first': index === 0,
-            'song-row-last': index === listData.length - 1,
-            'song-row-single': listData.length === 1,
-          },
-        ]"
-        :content-style="{
-          padding: '16px',
-          display: 'flex',
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }"
-        hoverable
-        @dblclick="setting.listClickMode === 'dblclick' ? playSong(listData, item) : null"
-        @click="checkCanClick(listData, item)"
-        @contextmenu="openRightMenu($event, item)"
+      <n-virtual-list
+        v-if="useVirtualList"
+        class="song-virtual-list"
+        :items="virtualListItems"
+        :item-size="virtualItemSize"
+        :item-resizable="true"
+        :style="virtualListStyle"
+        key-field="key"
+        :show-scrollbar="false"
       >
-        <n-avatar
-          v-if="item.album?.picUrl"
-          lazy
-          class="pic"
-          :src="item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'"
-          fallback-src="/images/pic/default.png"
-        />
-        <div class="num" v-else-if="item?.num">
-          <n-text :depth="2" v-html="item?.num" />
-        </div>
-        <div class="name">
-          <div class="title">
-            <n-text
-              class="text-hidden"
-              depth="2"
-              v-html="item?.name"
-              @click.stop="jumpLink(item?.id, 1)"
-            />
-            <n-tag
-              v-if="item?.fee == 1 || item?.fee == 4"
-              class="vip"
-              round
-              :bordered="false"
-              size="small"
-            >
-              {{ item?.fee == 1 ? "VIP" : "EP" }}
-            </n-tag>
-            <n-tag v-if="item?.pc" class="cloud" round type="info" size="small" :bordered="false">
-              {{ $t("general.name.cloud") }}
-            </n-tag>
-            <n-tag
-              v-if="item?.mv"
-              class="mv"
-              round
-              type="warning"
-              size="small"
-              :bordered="false"
-              @click.stop="router.push(`/video?id=${item.mv}`)"
-            >
-              MV
-            </n-tag>
-          </div>
-          <div class="meta">
-            <AllArtists v-if="item?.artist" class="text-hidden" :artistsData="item?.artist" />
-            <n-text class="alia text-hidden" depth="3" v-if="item?.alia[0]" v-html="item.alia[0]" />
-          </div>
-        </div>
-        <div class="album" v-if="!hideAlbum && item?.album">
-          <n-text v-html="item.album.name" @click.stop="jumpLink(item.album.id, 10)" />
-        </div>
-        <div class="action">
-          <n-icon
-            class="like"
-            size="20"
-            @click.stop="
-              music.getSongIsLike(item?.id)
-                ? music.changeLikeList(item?.id, false)
-                : music.changeLikeList(item?.id, true)
-            "
+        <template #default="{ item: row }">
+          <n-card
+            :id="'song' + row.index"
+            :class="getSongClass(row.item, row.index)"
+            :content-style="songCardContentStyle"
+            hoverable
+            @dblclick="setting.listClickMode === 'dblclick' ? playSong(listData, row.item) : null"
+            @click="checkCanClick(listData, row.item)"
+            @contextmenu="openRightMenu($event, row.item)"
           >
-            <Like :theme="music.getSongIsLike(item?.id) ? 'filled' : 'outline'" />
-          </n-icon>
-          <n-icon class="download" size="20" @click.stop="downloadSongRef.openDownloadModal(item)">
-            <DownloadFour theme="filled" />
-          </n-icon>
-          <n-icon class="more" size="20" :component="More" @click.stop="openDrawer(item)" />
-        </div>
-        <n-text class="time" v-html="item.time" />
-      </n-card>
+            <n-avatar
+              v-if="row.item.album?.picUrl"
+              lazy
+              class="pic"
+              :src="row.item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'"
+              fallback-src="/images/pic/default.png"
+            />
+            <div class="num" v-else-if="row.item?.num">
+              <n-text :depth="2" v-html="row.item?.num" />
+            </div>
+            <div class="name">
+              <div class="title">
+                <n-text
+                  class="text-hidden"
+                  depth="2"
+                  v-html="row.item?.name"
+                  @click.stop="jumpLink(row.item?.id, 1)"
+                />
+                <n-tag
+                  v-if="row.item?.fee == 1 || row.item?.fee == 4"
+                  class="vip"
+                  round
+                  :bordered="false"
+                  size="small"
+                >
+                  {{ row.item?.fee == 1 ? "VIP" : "EP" }}
+                </n-tag>
+                <n-tag
+                  v-if="row.item?.pc"
+                  class="cloud"
+                  round
+                  type="info"
+                  size="small"
+                  :bordered="false"
+                >
+                  {{ $t("general.name.cloud") }}
+                </n-tag>
+                <n-tag
+                  v-if="row.item?.mv"
+                  class="mv"
+                  round
+                  type="warning"
+                  size="small"
+                  :bordered="false"
+                  @click.stop="router.push(`/video?id=${row.item.mv}`)"
+                >
+                  MV
+                </n-tag>
+              </div>
+              <div class="meta">
+                <AllArtists
+                  v-if="row.item?.artist"
+                  class="text-hidden"
+                  :artistsData="row.item?.artist"
+                />
+                <n-text
+                  class="alia text-hidden"
+                  depth="3"
+                  v-if="row.item?.alia[0]"
+                  v-html="row.item.alia[0]"
+                />
+              </div>
+            </div>
+            <div class="album" v-if="!hideAlbum && row.item?.album">
+              <n-text v-html="row.item.album.name" @click.stop="jumpLink(row.item.album.id, 10)" />
+            </div>
+            <div class="action">
+              <n-icon
+                class="like"
+                size="20"
+                @click.stop="
+                  music.getSongIsLike(row.item?.id)
+                    ? music.changeLikeList(row.item?.id, false)
+                    : music.changeLikeList(row.item?.id, true)
+                "
+              >
+                <Like :theme="music.getSongIsLike(row.item?.id) ? 'filled' : 'outline'" />
+              </n-icon>
+              <n-icon
+                class="download"
+                size="20"
+                @click.stop="downloadSongRef.openDownloadModal(row.item)"
+              >
+                <DownloadFour theme="filled" />
+              </n-icon>
+              <n-icon class="more" size="20" :component="More" @click.stop="openDrawer(row.item)" />
+            </div>
+            <n-text class="time" v-html="row.item.time" />
+          </n-card>
+        </template>
+      </n-virtual-list>
+      <template v-else>
+        <n-card
+          v-for="(item, index) in listData"
+          :key="item"
+          :id="'song' + index"
+          :class="getSongClass(item, index)"
+          :content-style="songCardContentStyle"
+          hoverable
+          @dblclick="setting.listClickMode === 'dblclick' ? playSong(listData, item) : null"
+          @click="checkCanClick(listData, item)"
+          @contextmenu="openRightMenu($event, item)"
+        >
+          <n-avatar
+            v-if="item.album?.picUrl"
+            lazy
+            class="pic"
+            :src="item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'"
+            fallback-src="/images/pic/default.png"
+          />
+          <div class="num" v-else-if="item?.num">
+            <n-text :depth="2" v-html="item?.num" />
+          </div>
+          <div class="name">
+            <div class="title">
+              <n-text
+                class="text-hidden"
+                depth="2"
+                v-html="item?.name"
+                @click.stop="jumpLink(item?.id, 1)"
+              />
+              <n-tag
+                v-if="item?.fee == 1 || item?.fee == 4"
+                class="vip"
+                round
+                :bordered="false"
+                size="small"
+              >
+                {{ item?.fee == 1 ? "VIP" : "EP" }}
+              </n-tag>
+              <n-tag v-if="item?.pc" class="cloud" round type="info" size="small" :bordered="false">
+                {{ $t("general.name.cloud") }}
+              </n-tag>
+              <n-tag
+                v-if="item?.mv"
+                class="mv"
+                round
+                type="warning"
+                size="small"
+                :bordered="false"
+                @click.stop="router.push(`/video?id=${item.mv}`)"
+              >
+                MV
+              </n-tag>
+            </div>
+            <div class="meta">
+              <AllArtists v-if="item?.artist" class="text-hidden" :artistsData="item?.artist" />
+              <n-text
+                class="alia text-hidden"
+                depth="3"
+                v-if="item?.alia[0]"
+                v-html="item.alia[0]"
+              />
+            </div>
+          </div>
+          <div class="album" v-if="!hideAlbum && item?.album">
+            <n-text v-html="item.album.name" @click.stop="jumpLink(item.album.id, 10)" />
+          </div>
+          <div class="action">
+            <n-icon
+              class="like"
+              size="20"
+              @click.stop="
+                music.getSongIsLike(item?.id)
+                  ? music.changeLikeList(item?.id, false)
+                  : music.changeLikeList(item?.id, true)
+              "
+            >
+              <Like :theme="music.getSongIsLike(item?.id) ? 'filled' : 'outline'" />
+            </n-icon>
+            <n-icon
+              class="download"
+              size="20"
+              @click.stop="downloadSongRef.openDownloadModal(item)"
+            >
+              <DownloadFour theme="filled" />
+            </n-icon>
+            <n-icon class="more" size="20" :component="More" @click.stop="openDrawer(item)" />
+          </div>
+          <n-text class="time" v-html="item.time" />
+        </n-card>
+      </template>
       <!-- 右键菜单 -->
       <n-dropdown
         style="--n-font-size: 14px; --n-border-radius: 6px"
@@ -114,6 +222,7 @@
         v-model:show="drawerShow"
         placement="bottom"
         height="70vh"
+        :z-index="2200"
         style="border-radius: 8px 8px 0 0"
       >
         <n-drawer-content
@@ -314,7 +423,7 @@ import {
 import { musicStore, settingStore, userStore } from "@/store";
 import { useRouter } from "vue-router";
 import { setCloudDel } from "@/api/user";
-import { NIcon } from "naive-ui";
+import { NIcon, NVirtualList } from "naive-ui";
 import { soundStop } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
@@ -348,7 +457,75 @@ const props = defineProps({
     type: Boolean,
     default: null,
   },
+  // 大列表虚拟滚动
+  virtual: {
+    type: Boolean,
+    default: false,
+  },
+  virtualThreshold: {
+    type: Number,
+    default: 60,
+  },
+  virtualItemSize: {
+    type: Number,
+    default: 94,
+  },
+  virtualHeight: {
+    type: [String, Number],
+    default: "min(70vh, 760px)",
+  },
+  virtualAutoHeight: {
+    type: Boolean,
+    default: true,
+  },
 });
+
+const songCardContentStyle = {
+  padding: "16px",
+  display: "flex",
+  flexDirection: "row",
+  alignItems: "center",
+  justifyContent: "space-between",
+};
+
+const normalizeCssSize = (size) => (typeof size === "number" ? `${size}px` : size);
+
+const useVirtualList = computed(
+  () => props.virtual && props.listData.length > props.virtualThreshold,
+);
+
+const virtualListItems = computed(() =>
+  props.listData.map((item, index) => ({
+    item,
+    index,
+    key: `${item?.id ?? "song"}-${index}`,
+  })),
+);
+
+const virtualListStyle = computed(() => {
+  const maxHeight = normalizeCssSize(props.virtualHeight);
+  if (!props.virtualAutoHeight) return { height: maxHeight };
+  return {
+    height: `min(${maxHeight}, ${props.listData.length * props.virtualItemSize}px)`,
+  };
+});
+
+const hasSongId = (id) => id !== null && id !== undefined;
+
+const getSongClass = (item, index) => [
+  "songs",
+  {
+    play:
+      hasSongId(music.getPlaySongData?.id) && hasSongId(item?.id)
+        ? String(music.getPlaySongData.id) === String(item.id)
+        : false,
+    "song-row-odd": index % 2 === 0,
+    "song-row-even": index % 2 === 1,
+    "song-row-first": index === 0,
+    "song-row-last": index === props.listData.length - 1,
+    "song-row-single": props.listData.length === 1,
+  },
+];
 
 // 右键菜单数据
 const rightMenuX = ref(0);
@@ -626,6 +803,27 @@ const jumpLink = (id, type) => {
   opacity: 0;
 }
 .datalists {
+  .song-virtual-list {
+    width: 100%;
+    overflow-x: clip;
+    overscroll-behavior: contain;
+    contain: layout paint style;
+
+    :deep(.v-vl) {
+      overflow-x: hidden !important;
+      scrollbar-width: none;
+    }
+
+    :deep(.v-vl::-webkit-scrollbar) {
+      width: 0;
+      height: 0;
+    }
+
+    :deep(.v-vl-items) {
+      min-width: 0;
+    }
+  }
+
   .songs {
     border-radius: 8px;
     margin-bottom: 12px;

@@ -54,7 +54,7 @@
   --app-drag-region-height: 42px;
   --app-titlebar-width: 114px;
   --app-titlebar-gap: 10px;
-  --z-search-overlay: 1900;
+  --z-search-overlay: 2200;
 
   /* Precomposed shortcuts */
   --transition-fast: 150ms var(--ease-out);
@@ -73,8 +73,9 @@
 html,
 body,
 #app {
-  font-smooth: subpixel-antialiased;
   font-family: "HarmonyOS_Regular", sans-serif !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 // Dialog

@@ -112,15 +112,18 @@ const resolvedMarks = computed(() => {
 <style lang="scss" scoped>
 .set-item {
   width: 100%;
-  border-radius: 8px;
-  margin-bottom: 10px;
-  border-color: color-mix(in srgb, var(--n-border-color) 72%, transparent);
+  border-radius: var(--radius-md);
+  border-color: color-mix(in srgb, var(--n-border-color) 60%, transparent);
+  background-color: color-mix(in srgb, var(--n-card-color, var(--n-color)) 92%, transparent);
   transition:
-    border-color var(--duration-150) var(--ease-out),
-    background-color var(--duration-150) var(--ease-out);
+    border-color var(--duration-200) var(--ease-out),
+    background-color var(--duration-200) var(--ease-out),
+    box-shadow var(--duration-200) var(--ease-out);
 
   &:hover {
-    border-color: color-mix(in srgb, var(--main-color) 30%, var(--n-border-color));
+    border-color: color-mix(in srgb, var(--main-color) 34%, var(--n-border-color));
+    background-color: color-mix(in srgb, var(--n-card-color, var(--n-color)) 100%, transparent);
+    box-shadow: var(--shadow-1);
   }
 
   :deep(.n-card__content) {
@@ -128,9 +131,9 @@ const resolvedMarks = computed(() => {
     flex-direction: row;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    min-height: 42px;
-    padding: 14px 16px;
+    gap: 12px;
+    min-height: 40px;
+    padding: 12px 14px;
     box-sizing: border-box;
   }
 
@@ -141,7 +144,7 @@ const resolvedMarks = computed(() => {
     flex-direction: column;
     gap: 3px;
     padding-right: 8px;
-    font-size: 15px;
+    font-size: 13.5px;
     line-height: 1.35;
 
     .dev {
@@ -161,7 +164,7 @@ const resolvedMarks = computed(() => {
 
   .set {
     flex: 0 0 auto;
-    width: min(220px, 38vw);
+    width: min(226px, 38vw);
   }
 
   :deep(.n-slider) {
@@ -170,7 +173,7 @@ const resolvedMarks = computed(() => {
   }
 
   :deep(.n-input-number) {
-    width: min(220px, 38vw);
+    width: min(226px, 38vw);
   }
 }
 

@@ -7,6 +7,8 @@
         dark: setting.getSiteTheme === 'dark',
         collapsed: setting.sidebarCollapsed,
         'search-active': site.searchInputActive,
+        'scroll-top-shadow': sidebarShowTopShadow,
+        'scroll-bottom-shadow': sidebarShowBottomShadow,
       },
     ]"
     :animate="{ width: sidebarWidth, minWidth: sidebarWidth }"
@@ -32,7 +34,11 @@
     </div>
 
     <!-- Scrollable nav area -->
-    <n-scrollbar :class="['sidebar-scroll', { collapsed: setting.sidebarCollapsed }]">
+    <n-scrollbar
+      v-if="!setting.sidebarCollapsed"
+      class="sidebar-scroll"
+      @scroll="handleSidebarScroll"
+    >
       <!-- Menu section -->
       <div :class="['sidebar-section sidebar-primary', { collapsed: setting.sidebarCollapsed }]">
         <SidebarItem
@@ -181,6 +187,39 @@
       </div>
     </n-scrollbar>
 
+    <n-virtual-list
+      v-else
+      class="sidebar-scroll sidebar-virtual collapsed"
+      :items="collapsedNavItems"
+      :item-size="38"
+      key-field="key"
+      :show-scrollbar="false"
+      @scroll="handleSidebarScroll"
+    >
+      <template #default="{ item }">
+        <div class="sidebar-virtual-row">
+          <SidebarItem
+            v-if="item.type === 'route'"
+            :to="item.to"
+            :icon="item.icon"
+            :label="item.label"
+            :collapsed="true"
+            :badge="item.badge"
+          />
+          <SidebarPlaylistItem
+            v-else-if="item.type === 'playlist'"
+            :id="item.id"
+            :cover="item.cover"
+            :name="item.name"
+            :collapsed="true"
+            @navigate="goToPlaylist"
+          />
+          <n-skeleton v-else-if="item.type === 'skeleton'" :height="32" :width="32" :round="true" />
+          <div v-else class="sidebar-virtual-divider" />
+        </div>
+      </template>
+    </n-virtual-list>
+
     <!-- Footer: history, settings, avatar -->
     <div :class="['sidebar-footer', { collapsed: setting.sidebarCollapsed }]">
       <SidebarItem
@@ -190,7 +229,7 @@
         :collapsed="setting.sidebarCollapsed"
       />
       <SidebarItem
-        :to="'/setting'"
+        :to="'/setting/appearance'"
         :icon="SettingTwo"
         :label="$t('sidebar.settings')"
         :collapsed="setting.sidebarCollapsed"
@@ -250,11 +289,12 @@ import {
   Logout,
   User,
 } from "@icon-park/vue-next";
-import { NIcon, NAvatar, NSkeleton, NScrollbar, NTooltip, NDropdown } from "naive-ui";
+import { NIcon, NAvatar, NSkeleton, NScrollbar, NTooltip, NDropdown, NVirtualList } from "naive-ui";
 import { Motion, AnimatePresence } from "motion-v";
 import { settingStore, siteStore, userStore } from "@/store";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
+import type { Component } from "vue";
 import SidebarItem from "./SidebarItem.vue";
 import SidebarPlaylistItem from "./SidebarPlaylistItem.vue";
 import SearchInp from "@/components/SearchInp/index.vue";
@@ -266,6 +306,27 @@ const site = siteStore();
 const user = userStore();
 const { t } = useI18n();
 const { hasUpdate, checkForUpdate } = useAppUpdater();
+
+type CollapsedNavItem =
+  | {
+      type: "route";
+      key: string;
+      to: string | { path: string; query?: Record<string, string | number> };
+      icon: Component;
+      label: string;
+      badge?: boolean;
+    }
+  | {
+      type: "playlist";
+      key: string;
+      id: number;
+      cover: string;
+      name: string;
+    }
+  | {
+      type: "divider" | "skeleton";
+      key: string;
+    };
 
 // 用户条下拉菜单（登录后点击头像弹出）
 const userMenuOptions = computed(() => [
@@ -303,14 +364,123 @@ const handleLogout = () => {
 };
 
 const sidebarWidth = computed(() => (setting.sidebarCollapsed ? "56px" : "208px"));
+const sidebarShowTopShadow = ref(false);
+const sidebarShowBottomShadow = ref(false);
 const sectionOpen = reactive({
   library: true,
   own: true,
   liked: true,
 });
 
+const collapsedNavItems = computed<CollapsedNavItem[]>(() => {
+  const items: CollapsedNavItem[] = [
+    { type: "route", key: "home", to: "/", icon: HomeTwo, label: t("nav.home") },
+    { type: "route", key: "discover", to: "/discover", icon: FindOne, label: t("nav.discover") },
+  ];
+
+  if (user.userLogin) {
+    items.push({
+      type: "route",
+      key: "dailySongs",
+      to: "/dailySongs",
+      icon: CalendarThirty,
+      label: t("sidebar.dailySongs"),
+    });
+    items.push({ type: "divider", key: "divider-library" });
+
+    if (sectionOpen.library) {
+      items.push(
+        {
+          type: "route",
+          key: "library-playlists",
+          to: "/user/playlists",
+          icon: MusicList,
+          label: t("sidebar.playlists"),
+        },
+        {
+          type: "route",
+          key: "library-album",
+          to: "/user/album",
+          icon: RecordDisc,
+          label: t("sidebar.albums"),
+        },
+        {
+          type: "route",
+          key: "library-artists",
+          to: "/user/artists",
+          icon: Voice,
+          label: t("sidebar.artists"),
+        },
+        {
+          type: "route",
+          key: "library-cloud",
+          to: "/user/cloud",
+          icon: CloudStorage,
+          label: t("sidebar.cloud"),
+        },
+      );
+    }
+
+    items.push({ type: "divider", key: "divider-own" });
+    if (sectionOpen.own) {
+      if (user.getUserPlayLists.isLoading) {
+        items.push(
+          { type: "skeleton", key: "own-skeleton-1" },
+          { type: "skeleton", key: "own-skeleton-2" },
+          { type: "skeleton", key: "own-skeleton-3" },
+        );
+      } else {
+        for (const playlist of user.getUserPlayLists.own) {
+          items.push({
+            type: "playlist",
+            key: `own-${playlist.id}`,
+            id: playlist.id,
+            cover: playlist.cover,
+            name: playlist.name,
+          });
+        }
+      }
+    }
+
+    if (user.getUserPlayLists.like.length) {
+      items.push({ type: "divider", key: "divider-liked" });
+      if (sectionOpen.liked) {
+        for (const playlist of user.getUserPlayLists.like) {
+          items.push({
+            type: "playlist",
+            key: `liked-${playlist.id}`,
+            id: playlist.id,
+            cover: playlist.cover,
+            name: playlist.name,
+          });
+        }
+      }
+    }
+  }
+
+  return items;
+});
+
 const toggleSection = (key: "library" | "own" | "liked") => {
   sectionOpen[key] = !sectionOpen[key];
+  resetSidebarScrollShadow();
+};
+
+const resetSidebarScrollShadow = () => {
+  sidebarShowTopShadow.value = false;
+  sidebarShowBottomShadow.value = false;
+};
+
+const handleSidebarScroll = (event: Event) => {
+  if (!(event.target instanceof HTMLElement)) {
+    resetSidebarScrollShadow();
+    return;
+  }
+
+  const { scrollTop, clientHeight, scrollHeight } = event.target;
+  const awayFromTop = scrollTop > 2;
+  sidebarShowTopShadow.value = awayFromTop;
+  sidebarShowBottomShadow.value = awayFromTop && scrollTop + clientHeight < scrollHeight - 2;
 };
 
 // Tauri detection
@@ -324,7 +494,19 @@ onMounted(() => {
   }
 });
 
-const goToPlaylist = (id) => {
+watch(
+  () => [
+    setting.sidebarCollapsed,
+    collapsedNavItems.value.length,
+    user.getUserPlayLists.own.length,
+    user.getUserPlayLists.like.length,
+  ],
+  () => {
+    resetSidebarScrollShadow();
+  },
+);
+
+const goToPlaylist = (id: number) => {
   router.push({ path: "/playlist", query: { id, page: 1 } });
 };
 </script>
@@ -333,12 +515,18 @@ const goToPlaylist = (id) => {
 .sidebar {
   position: relative;
   z-index: 0;
+  flex: 0 0 auto;
   height: 100vh;
+  max-height: 100vh;
+  min-height: 0;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   background-color: var(--app-shell-bg, var(--layout-bg, #fff));
   transition: background-color 0.3s;
-  overflow: visible;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  contain: layout paint;
 
   --sidebar-text: #333;
   --sidebar-text-secondary: #999;
@@ -351,6 +539,28 @@ const goToPlaylist = (id) => {
 
   &.search-active {
     z-index: var(--z-search-overlay, 1900);
+    overflow: visible;
+    contain: none;
+  }
+
+  &.collapsed {
+    width: 56px;
+    min-width: 56px;
+    max-width: 56px;
+    overflow: clip;
+    contain: size layout paint;
+  }
+
+  &.scroll-top-shadow {
+    .sidebar-header::after {
+      opacity: 1;
+    }
+  }
+
+  &.scroll-bottom-shadow {
+    .sidebar-footer::before {
+      opacity: 1;
+    }
   }
 
   &.dark {
@@ -378,6 +588,23 @@ const goToPlaylist = (id) => {
   transition:
     grid-template-columns 0.22s ease,
     padding 0.22s ease;
+
+  &::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -18px;
+    height: 18px;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(
+      to bottom,
+      rgba(var(--app-shell-rgb, 242, 242, 244), 0.72),
+      rgba(var(--app-shell-rgb, 242, 242, 244), 0)
+    );
+    transition: opacity 0.18s ease;
+  }
 
   &.collapsed {
     grid-template-columns: var(--sidebar-item-slot);
@@ -449,8 +676,21 @@ const goToPlaylist = (id) => {
 }
 
 .sidebar-scroll {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: 100%;
+  min-width: 0;
+  width: 100%;
   overflow: hidden;
+  overscroll-behavior: contain;
+
+  :deep(.n-scrollbar-container),
+  :deep(.n-scrollbar-content) {
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    overflow-x: hidden !important;
+  }
 
   :deep(.n-scrollbar-rail) {
     opacity: 0;
@@ -464,14 +704,84 @@ const goToPlaylist = (id) => {
   }
 
   &.collapsed {
+    width: 56px;
+    min-width: 56px;
+    max-width: 56px;
+    scrollbar-width: none;
+
+    :deep(.n-scrollbar-container) {
+      width: 56px;
+      max-width: 56px;
+      overflow-x: hidden !important;
+      overscroll-behavior: contain;
+    }
+
+    :deep(.n-scrollbar-content) {
+      width: 56px;
+      min-width: 56px;
+      max-width: 56px;
+      overflow-x: hidden;
+    }
+
     :deep(.n-scrollbar-rail) {
       display: none;
     }
   }
 }
 
+.sidebar-virtual {
+  flex: 1 1 auto;
+  width: 56px;
+  min-width: 56px;
+  max-width: 56px;
+  min-height: 0;
+  overflow: hidden;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  touch-action: pan-y;
+
+  :deep(.v-vl),
+  :deep(.v-vl-items),
+  :deep(.n-virtual-list) {
+    width: 56px !important;
+    min-width: 56px !important;
+    max-width: 56px !important;
+    overflow-x: hidden !important;
+    overscroll-behavior: contain;
+  }
+
+  :deep(.v-vl) {
+    scrollbar-width: none;
+  }
+
+  :deep(.v-vl::-webkit-scrollbar) {
+    display: none;
+  }
+}
+
+.sidebar-virtual-row {
+  width: 56px;
+  height: 38px;
+  min-width: 56px;
+  max-width: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.sidebar-virtual-divider {
+  width: 14px;
+  height: 1px;
+  border-radius: var(--radius-pill);
+  background-color: var(--sidebar-divider);
+}
+
 .sidebar-section {
   padding: 1px 8px;
+  max-width: 100%;
+  box-sizing: border-box;
   transition: padding 0.3s ease;
 
   &.collapsed {
@@ -574,9 +884,31 @@ const goToPlaylist = (id) => {
 }
 
 .sidebar-footer {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  min-width: 0;
   padding: 7px 8px;
   border-top: 1px solid var(--sidebar-divider);
+  background-color: var(--app-shell-bg, var(--layout-bg, #fff));
   transition: padding 0.3s ease;
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -18px;
+    height: 18px;
+    pointer-events: none;
+    opacity: 0;
+    background: linear-gradient(
+      to top,
+      rgba(var(--app-shell-rgb, 242, 242, 244), 0.78),
+      rgba(var(--app-shell-rgb, 242, 242, 244), 0)
+    );
+    transition: opacity 0.18s ease;
+  }
 
   &.collapsed {
     padding: 8px;

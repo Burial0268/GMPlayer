@@ -12,44 +12,54 @@
       </div>
     </div>
 
-    <div ref="queueListRef" class="queue-list">
-      <div
-        v-for="(item, index) in music.getPlaylists"
-        :id="`desktop-queue-${index}`"
-        :key="`${item.id}-${index}`"
-        :class="['queue-song', { 'is-current': index === music.persistData.playSongIndex }]"
-        role="button"
-        tabindex="0"
-        @click="changeQueueIndex(index)"
-        @keydown.enter.prevent="changeQueueIndex(index)"
-      >
-        <div class="queue-index">
-          <span v-if="index !== music.persistData.playSongIndex">{{ index + 1 }}</span>
-          <div v-else class="playing-bars">
-            <span class="line"></span>
-            <span class="line"></span>
-            <span class="line"></span>
+    <n-virtual-list
+      v-if="music.getPlaylists.length"
+      ref="queueListRef"
+      class="queue-list"
+      :items="queueRows"
+      :item-size="73"
+      :item-resizable="true"
+      key-field="key"
+      :show-scrollbar="false"
+    >
+      <template #default="{ item: row }">
+        <div
+          :id="`desktop-queue-${row.index}`"
+          :class="['queue-song', { 'is-current': row.index === music.persistData.playSongIndex }]"
+          role="button"
+          tabindex="0"
+          @click="changeQueueIndex(row.index)"
+          @keydown.enter.prevent="changeQueueIndex(row.index)"
+        >
+          <div class="queue-index">
+            <span v-if="row.index !== music.persistData.playSongIndex">{{ row.index + 1 }}</span>
+            <div v-else class="playing-bars">
+              <span class="line"></span>
+              <span class="line"></span>
+              <span class="line"></span>
+            </div>
           </div>
+          <img class="queue-cover" :src="getQueueCover(row.item)" alt="cover" />
+          <div class="queue-info">
+            <div class="queue-name text-hidden">{{ row.item.name }}</div>
+            <div class="queue-artists text-hidden">{{ formatArtists(row.item.artist) }}</div>
+          </div>
+          <div class="queue-duration" v-if="row.item.time">{{ row.item.time }}</div>
+          <button class="queue-remove" type="button" @click.stop="music.removeSong(row.index)">
+            <n-icon size="20" :component="DeleteRound" />
+          </button>
         </div>
-        <img class="queue-cover" :src="getQueueCover(item)" alt="cover" />
-        <div class="queue-info">
-          <div class="queue-name text-hidden">{{ item.name }}</div>
-          <div class="queue-artists text-hidden">{{ formatArtists(item.artist) }}</div>
-        </div>
-        <div class="queue-duration" v-if="item.time">{{ item.time }}</div>
-        <button class="queue-remove" type="button" @click.stop="music.removeSong(index)">
-          <n-icon size="20" :component="DeleteRound" />
-        </button>
-      </div>
-      <div class="queue-empty" v-if="!music.getPlaylists.length">
-        {{ $t("other.playlistEmpty") }}
-      </div>
+      </template>
+    </n-virtual-list>
+    <div class="queue-empty" v-else>
+      {{ $t("other.playlistEmpty") }}
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { NVirtualList } from "naive-ui";
 import { DeleteRound, QueueMusicRound } from "@vicons/material";
 import { musicStore } from "@/store";
 import { soundStop } from "@/utils/AudioContext";
@@ -70,8 +80,17 @@ const props = defineProps<{
 }>();
 
 const music = musicStore();
-const queueListRef = ref<HTMLElement | null>(null);
+const queueListRef = ref<{
+  scrollTo: (options: { index: number; behavior?: ScrollBehavior }) => void;
+} | null>(null);
 const scrollTimer = ref<number | null>(null);
+const queueRows = computed(() =>
+  music.getPlaylists.map((item: QueueSong, index: number) => ({
+    item,
+    index,
+    key: `${item.id}-${index}`,
+  })),
+);
 
 const formatArtists = (artists: Artist[] = []) =>
   artists
@@ -85,12 +104,10 @@ const getQueueCover = (item: QueueSong) => {
 };
 
 const scrollCurrentQueueSong = () => {
-  const list = queueListRef.value;
-  if (!list) return;
-  const current = list.querySelector<HTMLElement>(
-    `#desktop-queue-${music.persistData.playSongIndex}`,
-  );
-  current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  queueListRef.value?.scrollTo({
+    index: music.persistData.playSongIndex,
+    behavior: "smooth",
+  });
 };
 
 const changeQueueIndex = (index: number) => {
@@ -192,13 +209,19 @@ onBeforeUnmount(() => {
 
 .queue-list {
   min-height: 0;
-  overflow-y: auto;
+  overflow-x: clip;
   overscroll-behavior: contain;
   padding: 2px 2px 8px;
-  scrollbar-width: none;
+  contain: layout paint style;
 
-  &::-webkit-scrollbar {
-    display: none;
+  :deep(.v-vl) {
+    overflow-x: hidden !important;
+    scrollbar-width: none;
+  }
+
+  :deep(.v-vl::-webkit-scrollbar) {
+    width: 0;
+    height: 0;
   }
 }
 

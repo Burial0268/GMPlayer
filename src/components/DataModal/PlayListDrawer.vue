@@ -3,7 +3,7 @@
     v-if="useDrawerLayout"
     class="playlist-drawer"
     :show="playListShow"
-    :z-index="1"
+    :z-index="2200"
     :width="400"
     :show-mask="false"
     :trap-focus="false"
@@ -13,7 +13,7 @@
       '--cover-second-color': `rgba(${site.songPicColor}, 0.14)` || '#efefef14',
     }"
     placement="right"
-    to="#mainContent"
+    to="body"
     @update:show="handleDrawerShowUpdate"
     @after-leave="handleDrawerAfterLeave"
   >

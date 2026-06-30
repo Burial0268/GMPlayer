@@ -119,7 +119,13 @@
           </div>
         </n-space>
       </div>
-      <DataLists :listData="playListData" />
+      <DataLists
+        :listData="playListData"
+        virtual
+        virtual-height="min(68vh, 760px)"
+        :virtual-item-size="54"
+        :virtual-threshold="40"
+      />
       <Pagination
         :totalCount="totalCount"
         :pageNumber="pageNumber"
@@ -714,11 +720,13 @@ watch(
       box-shadow: none;
     }
 
-    :deep(.datalists .songs:nth-child(odd)) {
+    :deep(.datalists .songs:nth-child(odd)),
+    :deep(.datalists .songs.song-row-odd) {
       background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
     }
 
-    :deep(.datalists .songs:nth-child(even)) {
+    :deep(.datalists .songs:nth-child(even)),
+    :deep(.datalists .songs.song-row-even) {
       background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
     }
 

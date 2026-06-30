@@ -28,7 +28,12 @@ const tabs = computed(() => [
   { key: "home", to: "/", icon: HomeTwo, label: t("sidebar.tab.home") },
   { key: "discover", to: "/discover", icon: FindOne, label: t("sidebar.tab.discover") },
   { key: "library", to: "/user", icon: Me, label: t("sidebar.tab.library") },
-  { key: "settings", to: "/setting", icon: SettingTwo, label: t("sidebar.tab.settings") },
+  {
+    key: "settings",
+    to: "/setting/appearance",
+    icon: SettingTwo,
+    label: t("sidebar.tab.settings"),
+  },
 ]);
 
 const isActive = (tab) => {

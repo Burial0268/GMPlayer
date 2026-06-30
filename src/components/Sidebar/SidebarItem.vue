@@ -48,8 +48,11 @@ defineEmits(["navigate"]);
 
   &.collapsed {
     width: var(--sidebar-item-slot, 40px);
+    min-width: var(--sidebar-item-slot, 40px);
+    max-width: var(--sidebar-item-slot, 40px);
     min-height: 34px;
     margin-inline: auto;
+    grid-template-columns: var(--sidebar-item-slot, 40px) 0;
   }
 
   &:hover {

@@ -102,6 +102,10 @@
       <template #appUpdate>
         <SettingsAppUpdate />
       </template>
+
+      <template #dspSettings>
+        <SettingsDsp />
+      </template>
     </SettingsPanel>
 
     <n-modal
@@ -211,6 +215,7 @@ import { settingStore } from "@/store";
 import themeColorData from "@/components/Provider/themeColor.json";
 import SettingsPanel from "./SettingsPanel.vue";
 import SettingsAppUpdate from "./SettingsAppUpdate.vue";
+import SettingsDsp from "./SettingsDsp.vue";
 import { SETTINGS_SECTION_ALIASES, useSettingsSections } from "./useSettingsSections";
 
 declare const $cleanAll: any;

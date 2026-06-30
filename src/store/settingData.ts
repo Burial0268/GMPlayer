@@ -12,6 +12,14 @@ interface SpringParams {
   stiffness: number;
 }
 
+interface DspEqBandSetting {
+  enabled: boolean;
+  filterType: "peaking" | "lowShelf" | "highShelf";
+  frequency: number;
+  gainDb: number;
+  q: number;
+}
+
 interface SettingDataState {
   theme: "light" | "dark";
   themeMode: "light" | "dark" | "system";
@@ -35,6 +43,7 @@ interface SettingDataState {
   lyricsPosition: string;
   lyricsBlock: string;
   lyricsFontSize: number;
+  desktopLyricsFontSizeOffset: number;
   lyricFont: string;
   lyricFontWeight: string;
   lyricLetterSpacing: string;
@@ -76,6 +85,17 @@ interface SettingDataState {
   autoMixSmartCurve: boolean;
   autoMixTransitionEffects: boolean;
   autoMixVocalGuard: boolean;
+  // DSP settings. Defaults must resolve to a native bypass path.
+  dspEnabled: boolean;
+  dspEqEnabled: boolean;
+  dspEqPreampDb: number;
+  dspEqPreset: string;
+  dspEqBandCount: number;
+  dspEqBands: DspEqBandSetting[];
+  dspLimiterEnabled: boolean;
+  dspLimiterThresholdDb: number;
+  dspLimiterCeilingDb: number;
+  dspLimiterReleaseMs: number;
   // Lyric time offset (ms). Positive = lyrics advance, Negative = lyrics delay
   lyricTimeOffset: number;
   // Close behavior for Tauri desktop app
@@ -83,6 +103,27 @@ interface SettingDataState {
   // Sidebar collapsed state
   sidebarCollapsed: boolean;
 }
+
+const DSP_EQ_FREQUENCY_SETS: Record<number, number[]> = {
+  10: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000],
+  15: [25, 40, 63, 100, 160, 250, 400, 630, 1000, 1600, 2500, 4000, 6300, 10000, 16000],
+  31: [
+    20, 25, 31.5, 40, 50, 63, 80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250,
+    1600, 2000, 2500, 3150, 4000, 5000, 6300, 8000, 10000, 12500, 16000, 20000,
+  ],
+};
+
+const defaultDspEqBands = (count = 10): DspEqBandSetting[] => {
+  const frequencies = DSP_EQ_FREQUENCY_SETS[count] ?? DSP_EQ_FREQUENCY_SETS[10];
+  return frequencies.map((frequency, index) => ({
+    enabled: true,
+    filterType:
+      index === 0 ? "lowShelf" : index === frequencies.length - 1 ? "highShelf" : "peaking",
+    frequency,
+    gainDb: 0,
+    q: frequencies.length >= 31 ? 4.318 : 1.414,
+  }));
+};
 
 const useSettingDataStore = defineStore("settingData", {
   state: (): SettingDataState => {
@@ -109,6 +150,7 @@ const useSettingDataStore = defineStore("settingData", {
       lyricsPosition: "left",
       lyricsBlock: "top",
       lyricsFontSize: 3.6,
+      desktopLyricsFontSizeOffset: 0,
       lyricFont: "HarmonyOS Sans SC",
       lyricFontWeight: "normal",
       lyricLetterSpacing: "normal",
@@ -150,6 +192,17 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixSmartCurve: true,
       autoMixTransitionEffects: true,
       autoMixVocalGuard: true,
+      // DSP defaults: native mixer stays bypassed until explicitly enabled.
+      dspEnabled: false,
+      dspEqEnabled: true,
+      dspEqPreampDb: 0,
+      dspEqPreset: "flat",
+      dspEqBandCount: 10,
+      dspEqBands: defaultDspEqBands(),
+      dspLimiterEnabled: false,
+      dspLimiterThresholdDb: -1,
+      dspLimiterCeilingDb: -1,
+      dspLimiterReleaseMs: 80,
       // Lyric time offset (ms)
       lyricTimeOffset: 0,
       // Close behavior (Tauri): 'ask' | 'tray' | 'exit'
@@ -195,6 +248,44 @@ const useSettingDataStore = defineStore("settingData", {
             if (!("themeMode" in parsed)) {
               store.themeMode = parsed.themeAuto ? "system" : parsed.theme;
             }
+            if (
+              typeof store.desktopLyricsFontSizeOffset !== "number" ||
+              !Number.isFinite(store.desktopLyricsFontSizeOffset)
+            ) {
+              store.desktopLyricsFontSizeOffset = 0;
+            } else {
+              store.desktopLyricsFontSizeOffset = Math.max(
+                -20,
+                Math.min(40, store.desktopLyricsFontSizeOffset),
+              );
+            }
+            if (![10, 15, 31].includes(store.dspEqBandCount)) {
+              store.dspEqBandCount = Array.isArray(store.dspEqBands)
+                ? ([10, 15, 31].find((count) => count === store.dspEqBands.length) ?? 10)
+                : 10;
+            }
+            if (
+              !Array.isArray(store.dspEqBands) ||
+              store.dspEqBands.length !== store.dspEqBandCount
+            ) {
+              store.dspEqBands = defaultDspEqBands(store.dspEqBandCount);
+            } else {
+              const defaults = defaultDspEqBands(store.dspEqBandCount);
+              store.dspEqBands = store.dspEqBands.map(
+                (band: Partial<DspEqBandSetting>, index: number) => ({
+                  enabled: typeof band.enabled === "boolean" ? band.enabled : true,
+                  filterType: band.filterType ?? defaults[index]?.filterType ?? "peaking",
+                  frequency: Number.isFinite(band.frequency)
+                    ? band.frequency!
+                    : (defaults[index]?.frequency ?? 1000),
+                  gainDb: Number.isFinite(band.gainDb) ? band.gainDb : 0,
+                  q: Number.isFinite(band.q) ? band.q! : (defaults[index]?.q ?? 1.414),
+                }),
+              );
+            }
+            if (typeof store.dspEnabled !== "boolean") store.dspEnabled = false;
+            if (typeof store.dspEqEnabled !== "boolean") store.dspEqEnabled = true;
+            if (typeof store.dspLimiterEnabled !== "boolean") store.dspLimiterEnabled = false;
           } catch {
             /* ignore */
           }

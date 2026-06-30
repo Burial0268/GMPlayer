@@ -1,6 +1,8 @@
 /**
  * 统一设置面板的声明式 schema 类型
  */
+import type { Component } from "vue";
+
 export type SettingsControl = "switch" | "select" | "slider" | "number" | "button" | "custom";
 
 export interface SettingsOption {
@@ -43,6 +45,8 @@ export interface SettingsSection {
   key: string;
   /** i18n key 或原始文本 */
   label: string;
+  /** 分区图标（@vicons 组件），用于侧栏导航 */
+  icon?: Component;
   /** 用于搜索的补充关键字（i18n key 或原始文本） */
   searchText?: string;
   items: SettingsItem[];

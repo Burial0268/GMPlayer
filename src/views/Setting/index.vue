@@ -47,8 +47,8 @@ watch(
 
 const handleActiveUpdate = (key: string) => {
   activeSection.value = key;
-  if (route.params.section === key) return;
-  router.replace({ path: `/setting/${key}` });
+  if (resolveSectionKey(route.params.section) === key) return;
+  router.replace({ name: "setting", params: { section: key } });
 };
 
 onMounted(() => {
@@ -73,12 +73,12 @@ onMounted(() => {
     align-items: flex-end;
     justify-content: space-between;
     gap: 16px;
-    margin-top: 24px;
-    margin-bottom: 16px;
+    margin-top: 8px;
+    margin-bottom: 8px;
   }
 
   .title {
-    font-size: clamp(28px, 4vw, 40px);
+    font-size: clamp(24px, 3vw, 32px);
     line-height: 1.1;
     font-weight: 700;
   }
@@ -92,7 +92,7 @@ onMounted(() => {
   .content {
     flex: 1 1 auto;
     min-height: 0;
-    padding-bottom: 18px;
+    padding-bottom: 4px;
     box-sizing: border-box;
     overflow: hidden;
   }

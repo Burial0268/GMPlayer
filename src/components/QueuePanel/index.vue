@@ -27,16 +27,33 @@
           {{ $t("general.name.songSize", { size: music.getPlaylists.length }) }}
         </span>
       </div>
-      <n-scrollbar class="queue-scroll">
-        <div v-if="music.getPlaylists.length" class="queue-list">
+      <n-virtual-list
+        v-if="music.getPlaylists.length"
+        class="queue-scroll"
+        :items="queueRows"
+        :item-size="49"
+        :item-resizable="true"
+        key-field="key"
+        :show-scrollbar="false"
+      >
+        <template #default="{ item: row }">
           <div
-            v-for="(item, index) in music.getPlaylists"
-            :key="`${item.id}-${index}`"
-            :class="['queue-row', { active: index === music.persistData.playSongIndex }]"
-            @click="changeIndex(index)"
+            :class="[
+              'queue-row',
+              {
+                active: row.index === music.persistData.playSongIndex,
+                'queue-row-odd': row.index % 2 === 0,
+                'queue-row-even': row.index % 2 === 1,
+                'queue-row-first': row.index === 0,
+                'queue-row-last': row.index === music.getPlaylists.length - 1,
+              },
+            ]"
+            @click="changeIndex(row.index)"
           >
             <div class="queue-index">
-              <span v-if="index !== music.persistData.playSongIndex">{{ index + 1 }}</span>
+              <span v-if="row.index !== music.persistData.playSongIndex">
+                {{ row.index + 1 }}
+              </span>
               <div v-else class="queue-bars">
                 <span v-for="bar in 3" :key="bar" :style="{ animationDelay: `${bar * 0.12}s` }" />
               </div>
@@ -44,33 +61,33 @@
             <img
               class="queue-cover"
               :src="
-                item.album?.picUrl
-                  ? item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'
+                row.item.album?.picUrl
+                  ? row.item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'
                   : '/images/pic/default.png'
               "
               alt="cover"
               loading="lazy"
             />
             <div class="queue-meta">
-              <div class="queue-name text-hidden">{{ item.name }}</div>
-              <AllArtists class="queue-artists text-hidden" :artistsData="item.artist" />
+              <div class="queue-name text-hidden">{{ row.item.name }}</div>
+              <AllArtists class="queue-artists text-hidden" :artistsData="row.item.artist" />
             </div>
             <n-icon
               class="queue-remove"
               :size="17"
               :component="DeleteFour"
-              @click.stop="music.removeSong(index)"
+              @click.stop="music.removeSong(row.index)"
             />
           </div>
-        </div>
-        <div v-else class="queue-empty">{{ $t("other.playlistEmpty") }}</div>
-      </n-scrollbar>
+        </template>
+      </n-virtual-list>
+      <div v-else class="queue-empty">{{ $t("other.playlistEmpty") }}</div>
     </section>
   </aside>
 </template>
 
 <script setup>
-import { NIcon, NScrollbar } from "naive-ui";
+import { NIcon, NVirtualList } from "naive-ui";
 import { DeleteFour } from "@icon-park/vue-next";
 import { musicStore } from "@/store";
 import { soundStop } from "@/utils/AudioContext";
@@ -79,6 +96,13 @@ import AllArtists from "@/components/DataList/AllArtists.vue";
 const music = musicStore();
 
 const currentSong = computed(() => music.getPlaySongData);
+const queueRows = computed(() =>
+  music.getPlaylists.map((item, index) => ({
+    item,
+    index,
+    key: `${item.id}-${index}`,
+  })),
+);
 
 const changeIndex = (index) => {
   if (index === music.persistData.playSongIndex) return;
@@ -174,6 +198,20 @@ const changeIndex = (index) => {
 .queue-scroll {
   min-height: 0;
   flex: 1;
+  padding: 0 8px 12px;
+  overflow-x: clip;
+  overscroll-behavior: contain;
+  contain: layout paint style;
+
+  :deep(.v-vl) {
+    overflow-x: hidden !important;
+    scrollbar-width: none;
+  }
+
+  :deep(.v-vl::-webkit-scrollbar) {
+    width: 0;
+    height: 0;
+  }
 }
 
 .queue-list {
@@ -196,21 +234,25 @@ const changeIndex = (index) => {
     background-color 0.16s ease,
     color 0.16s ease;
 
-  &:first-child {
+  &:first-child,
+  &.queue-row-first {
     border-top-left-radius: var(--radius-md);
     border-top-right-radius: var(--radius-md);
   }
 
-  &:last-child {
+  &:last-child,
+  &.queue-row-last {
     border-bottom-right-radius: var(--radius-md);
     border-bottom-left-radius: var(--radius-md);
   }
 
-  &:nth-child(odd) {
+  &:nth-child(odd),
+  &.queue-row-odd {
     background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
   }
 
-  &:nth-child(even) {
+  &:nth-child(even),
+  &.queue-row-even {
     background-color: color-mix(in srgb, var(--n-text-color) 5%, transparent);
   }
 

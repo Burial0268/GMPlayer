@@ -1,5 +1,5 @@
 <template>
-  <div :class="['searchInp', { active: site.searchInputActive }]">
+  <div ref="searchRootRef" :class="['searchInp', { active: site.searchInputActive }]">
     <n-input
       :class="site.searchInputActive ? 'input focus' : 'input'"
       :input-props="{ autoComplete: false }"
@@ -8,23 +8,37 @@
       round
       clearable
       v-model:value="inputValue"
-      @focus="inputFocus"
+      @focus="openSearchPanel"
       @keydown="inputkeydown($event)"
-      @click.stop
+      @pointerdown.stop="openSearchPanel"
+      @touchstart.stop="openSearchPanel"
+      @click.stop="openSearchPanel"
     >
       <template #prefix>
-        <n-icon size="16" :class="site.searchInputActive ? 'active' : ''" :component="Search" />
+        <n-icon
+          size="16"
+          :class="site.searchInputActive ? 'active' : ''"
+          :component="Search"
+          @pointerdown.stop
+          @touchstart.stop
+          @click.stop="toggleSearchPanel"
+        />
       </template>
     </n-input>
     <CollapseTransition easing="ease-in-out">
       <n-card
         class="list"
-        v-show="
-          site.searchInputActive && !inputValue && (music.getSearchHistory[0] || searchData.hot[0])
-        "
+        v-show="site.searchInputActive && !inputValue"
         content-style="padding: 0"
+        @pointerdown.stop
+        @touchstart.stop
+        @click.stop
       >
         <n-scrollbar>
+          <div class="suggest-tip" v-if="!music.getSearchHistory[0] && !searchData.hot[0]">
+            <n-icon size="16" :component="Find" />
+            <span>{{ $t("nav.search.searchTip") }}</span>
+          </div>
           <div class="history-list" v-if="music.getSearchHistory[0] && setting.searchHistory">
             <div class="list-title">
               <n-icon size="16" :component="History" />
@@ -81,6 +95,9 @@
         class="list"
         v-show="site.searchInputActive && inputValue && searchData.suggest"
         content-style="padding: 0"
+        @pointerdown.stop
+        @touchstart.stop
+        @click.stop
       >
         <n-scrollbar>
           <div class="suggest-tip" v-if="Object.keys(searchData.suggest).length === 0">
@@ -191,15 +208,32 @@ const site = siteStore();
 // 输入框内容
 const inputValue = ref(null);
 const searchInpRef = ref(null);
+const searchRootRef = ref(null);
+const searchHotLoading = ref(false);
+
+const closeSearchPanelState = () => {
+  searchInpRef.value?.blur();
+  site.searchInputActive = false;
+};
 
 // 输入框激活事件
-const inputFocus = () => {
-  searchInpRef.value?.focus();
+const openSearchPanel = () => {
   site.searchInputActive = true;
   if (!isInlineQueueLayout()) {
     music.showPlayList = false;
   }
   getSearchHotData();
+  nextTick(() => {
+    searchInpRef.value?.focus();
+  });
+};
+
+const toggleSearchPanel = () => {
+  if (site.searchInputActive) {
+    closeSearchPanelState();
+    return;
+  }
+  openSearchPanel();
 };
 
 // 搜索相关数据
@@ -210,9 +244,15 @@ const searchData = reactive({
 
 // 获取搜索相关数据
 const getSearchHotData = () => {
-  getSearchHot().then((res) => {
-    searchData.hot = res.data;
-  });
+  if (searchHotLoading.value || searchData.hot[0]) return;
+  searchHotLoading.value = true;
+  getSearchHot()
+    .then((res) => {
+      searchData.hot = res.data;
+    })
+    .finally(() => {
+      searchHotLoading.value = false;
+    });
 };
 const getSearchSuggestData = (keywords) => {
   searchData.suggest = [];
@@ -224,10 +264,6 @@ const getSearchSuggestData = (keywords) => {
 
 // 点击搜索结果
 const toSearch = (val, type) => {
-  // 非直接搜索时关闭搜索面板
-  if (type !== 0) {
-    site.searchInputActive = false;
-  }
   switch (type) {
     case 0:
       // 直接搜索
@@ -241,18 +277,22 @@ const toSearch = (val, type) => {
           page: 1,
         },
       });
+      closeSearchPanelState();
       break;
     case 1:
       // 歌曲页
       router.push(`/song?id=${val}`);
+      closeSearchPanelState();
       break;
     case 10:
       // 专辑页
       router.push(`/album?id=${val}`);
+      closeSearchPanelState();
       break;
     case 100:
       // 歌手页
       router.push(`/artist?id=${val}`);
+      closeSearchPanelState();
       break;
     case 1000:
       // 歌单页
@@ -260,6 +300,7 @@ const toSearch = (val, type) => {
         path: "/playlist",
         query: { id: val, page: 1 },
       });
+      closeSearchPanelState();
       break;
     default:
       break;
@@ -270,8 +311,7 @@ const toSearch = (val, type) => {
 const inputkeydown = (e) => {
   if (e.key === "Enter" && inputValue.value !== null) {
     console.log("执行搜索" + inputValue.value.trim());
-    searchInpRef.value?.blur();
-    site.searchInputActive = false;
+    closeSearchPanelState();
     // 写入搜索历史
     music.setSearchHistory(inputValue.value.trim());
     router.push({
@@ -283,9 +323,21 @@ const inputkeydown = (e) => {
   }
 };
 
-const closeSearchPanel = () => {
-  searchInpRef.value?.blur();
-  site.searchInputActive = false;
+const eventComposedPathContainsSearch = (event) => {
+  const path = typeof event?.composedPath === "function" ? event.composedPath() : [];
+  if (path.includes(searchRootRef.value)) return true;
+  return path.some((node) => node instanceof Element && node.classList.contains("searchInp"));
+};
+
+const closeSearchPanel = (event) => {
+  if (!site.searchInputActive) return;
+  if (eventComposedPathContainsSearch(event)) return;
+
+  const target = event?.target;
+  if (target instanceof Node && searchRootRef.value?.contains(target)) return;
+  if (target instanceof Element && target.closest(".searchInp")) return;
+
+  closeSearchPanelState();
 };
 
 // 删除搜索历史
@@ -307,18 +359,24 @@ onMounted(() => {
   // 获取热搜
   getSearchHotData();
   // 搜索框失焦
-  document.addEventListener("click", closeSearchPanel);
+  document.addEventListener("pointerdown", closeSearchPanel, true);
+  document.addEventListener("mousedown", closeSearchPanel, true);
+  document.addEventListener("touchstart", closeSearchPanel, true);
+  document.addEventListener("click", closeSearchPanel, true);
 });
 
 onUnmounted(() => {
-  document.removeEventListener("click", closeSearchPanel);
+  document.removeEventListener("pointerdown", closeSearchPanel, true);
+  document.removeEventListener("mousedown", closeSearchPanel, true);
+  document.removeEventListener("touchstart", closeSearchPanel, true);
+  document.removeEventListener("click", closeSearchPanel, true);
 });
 
 // 监听输入框内容
 watch(
   () => inputValue.value,
   (value) => {
-    if (value.trim()) {
+    if (typeof value === "string" && value.trim()) {
       debounce(() => {
         console.log(value.trim());
         getSearchSuggestData(value.trim());
@@ -332,8 +390,7 @@ watch(
   () => music.showPlayList,
   (val) => {
     if (val) {
-      searchInpRef.value?.blur();
-      site.searchInputActive = false;
+      closeSearchPanelState();
     }
   },
 );

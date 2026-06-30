@@ -43,9 +43,11 @@ import {
   useNotification,
 } from "naive-ui";
 import { settingStore } from "@/store";
+import { useDspSettings } from "@/composables/useDspSettings";
 import themeColorData from "./themeColor.json";
 
 const setting = settingStore();
+useDspSettings();
 
 // 检测是否为移动端（宽度小于768px或存在触摸设备特征）
 const isMobile = ref(false);
