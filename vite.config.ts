@@ -1,6 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 import { Readable } from "node:stream";
-import { defineConfig, loadEnv } from "vite";
+import { defineConfig, loadEnv, ViteDevServer } from "vite";
 import { NaiveUiResolver } from "unplugin-vue-components/resolvers";
 import { VitePWA } from "vite-plugin-pwa";
 import vue from "@vitejs/plugin-vue";
@@ -49,7 +49,7 @@ function isBlockedAudioProxyHost(hostname: string): boolean {
 function audioProxyPlugin() {
   return {
     name: "gmplayer-audio-proxy",
-    configureServer(server) {
+    configureServer(server: ViteDevServer) {
       server.middlewares.use(AUDIO_PROXY_PATH, async (req, res) => {
         const requestUrl = new URL(req.url || "", "http://localhost");
         const rawTarget = requestUrl.searchParams.get("url");
