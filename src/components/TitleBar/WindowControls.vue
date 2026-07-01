@@ -49,7 +49,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from "vue";
 import { isTauri } from "@/utils/tauri/windowManager";
-import { isMobile } from "@/utils/tauri";
+import { getDesktopEnvironment, isMobile } from "@/utils/tauri";
 
 /**
  * Reusable native window control cluster (minimize / maximize / close).
@@ -113,9 +113,8 @@ onMounted(async () => {
   if (!isTauri()) return;
   if (await isMobile()) return;
 
-  // macOS uses the native traffic lights overlay instead of DOM controls.
-  const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
-  if (isMac) return;
+  const desktopEnvironment = await getDesktopEnvironment();
+  if (desktopEnvironment.usesNativeTrafficLights) return;
 
   showControls.value = true;
   await checkMaximized();

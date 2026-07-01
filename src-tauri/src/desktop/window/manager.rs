@@ -41,8 +41,14 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
         .title(&config.title)
         .inner_size(config.width, config.height)
         .resizable(config.resizable)
-        .decorations(config.decorations)
-        .transparent(config.transparent)
+        .decorations(config.decorations);
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        builder = builder.transparent(config.transparent);
+    }
+
+    let mut builder = builder
         .always_on_top(config.always_on_top)
         .skip_taskbar(config.skip_taskbar)
         .visible(config.visible)

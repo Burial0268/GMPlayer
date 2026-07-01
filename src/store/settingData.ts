@@ -47,6 +47,7 @@ interface SettingDataState {
   lyricFont: string;
   lyricFontWeight: string;
   lyricLetterSpacing: string;
+  hidePassedLines: boolean;
   lyricLineHeight: number;
   lyricsBlur: boolean;
   musicFrequency: boolean;
@@ -154,6 +155,7 @@ const useSettingDataStore = defineStore("settingData", {
       lyricFont: "HarmonyOS Sans SC",
       lyricFontWeight: "normal",
       lyricLetterSpacing: "normal",
+      hidePassedLines: false,
       lyricLineHeight: 1.8,
       lyricsBlur: true,
       musicFrequency: false,

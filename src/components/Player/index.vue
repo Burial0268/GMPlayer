@@ -938,9 +938,9 @@ watch(
   },
 );
 
-// Tauri: desktop lyric font size is render-only; don't re-process lyrics for it.
+// Tauri: render-only lyric settings; don't re-process lyrics for them.
 watch(
-  () => setting.desktopLyricsFontSizeOffset,
+  () => [setting.desktopLyricsFontSizeOffset, setting.hidePassedLines],
   () => {
     broadcastPlayerSettings();
   },

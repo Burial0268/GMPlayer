@@ -266,6 +266,7 @@ function buildPlayerSettingsPayload(): PlayerSettingsPayload {
     lyricLetterSpacing: setting.lyricLetterSpacing,
     lyricLineHeight: setting.lyricLineHeight,
     lyricsBlur: setting.lyricsBlur,
+    hidePassedLines: setting.hidePassedLines,
     lyricsBlock: setting.lyricsBlock,
     lyricsPosition: setting.lyricsPosition,
     showYrc: setting.showYrc,

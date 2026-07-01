@@ -1,5 +1,8 @@
 <template>
-  <div :class="['tray-popup', { 'native-effect': hasNativeEffect, 'is-playing': isPlaying }]">
+  <div
+    ref="popupRef"
+    :class="['tray-popup', { 'native-effect': hasNativeEffect, 'is-playing': isPlaying }]"
+  >
     <button class="song-section" type="button" :title="title || 'GMPlayer'" @click="showMainWindow">
       <img class="cover" :src="coverUrl || '/images/pic/default.png'" alt="" />
       <span class="song-text">
@@ -135,7 +138,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import BouncingSlider from "@/components/Player/BouncingSlider.vue";
 
 type PlayMode = "normal" | "random" | "single";
@@ -159,8 +162,10 @@ const volume = ref(0.7);
 const previousVolume = ref(0.7);
 const playMode = ref<PlayMode>("normal");
 const showTaskbarLyricsEntry = ref(false);
+const popupRef = ref<HTMLElement | null>(null);
 
 const unlisteners: Array<() => void> = [];
+let layoutFrame = 0;
 
 const lang = (navigator.language || "").startsWith("zh") ? "zh" : "en";
 const t = {
@@ -258,6 +263,27 @@ function refreshTaskbarLyricsEntry() {
   showTaskbarLyricsEntry.value = isWindowsTauri() && getTaskbarLyricsEnabled();
 }
 
+function scheduleTrayPopupLayoutUpdate() {
+  if (layoutFrame) cancelAnimationFrame(layoutFrame);
+  layoutFrame = requestAnimationFrame(async () => {
+    layoutFrame = 0;
+    await nextTick();
+    updateTrayPopupLayout();
+  });
+}
+
+function updateTrayPopupLayout() {
+  const el = popupRef.value;
+  const tauri = getTauri();
+  if (!el || !tauri) return;
+
+  const width = Math.ceil(el.offsetWidth || 260);
+  const height = Math.ceil(Math.max(el.offsetHeight, el.scrollHeight));
+  tauri.core
+    .invoke("update_tray_popup_layout", { width, height })
+    .catch((error) => console.warn("[TrayPopup] Failed to update layout:", error));
+}
+
 function updateState(state: PlayerStatePayload) {
   title.value = state.title || "";
   artist.value = state.artist || "";
@@ -331,10 +357,22 @@ function quitApp() {
   getTauri()?.core.invoke("quit_app");
 }
 
+function handleStorage(event: StorageEvent) {
+  if (event.key && event.key !== "settingData") return;
+  refreshTaskbarLyricsEntry();
+  scheduleTrayPopupLayoutUpdate();
+}
+
+watch(showTaskbarLyricsEntry, () => {
+  scheduleTrayPopupLayoutUpdate();
+});
+
 onMounted(async () => {
   document.addEventListener("contextmenu", preventDefault);
   document.addEventListener("keydown", preventRefresh);
+  window.addEventListener("storage", handleStorage);
   refreshTaskbarLyricsEntry();
+  scheduleTrayPopupLayoutUpdate();
 
   const tauri = getTauri();
   if (!tauri) return;
@@ -347,13 +385,16 @@ onMounted(async () => {
   unlisteners.push(
     await tauri.event.listen("tray-popup-opened", () => {
       refreshTaskbarLyricsEntry();
+      scheduleTrayPopupLayoutUpdate();
     }),
   );
 });
 
 onBeforeUnmount(() => {
+  if (layoutFrame) cancelAnimationFrame(layoutFrame);
   document.removeEventListener("contextmenu", preventDefault);
   document.removeEventListener("keydown", preventRefresh);
+  window.removeEventListener("storage", handleStorage);
   unlisteners.forEach((unlisten) => unlisten());
 });
 
@@ -369,7 +410,7 @@ function preventRefresh(event: KeyboardEvent) {
 <style lang="scss" scoped>
 .tray-popup {
   width: 260px;
-  height: 370px;
+  height: auto;
   background: var(--popup-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);

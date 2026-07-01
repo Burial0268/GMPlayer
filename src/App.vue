@@ -5,7 +5,7 @@
   </template>
   <!-- Normal app layout -->
   <Provider v-else>
-    <div :class="['app-body', music.showBigPlayer ? 'bigplayer-open' : '']">
+    <div :class="appBodyClasses">
       <div
         class="app-layout-wrapper"
         :style="{ '--sidebar-width': setting.sidebarCollapsed ? '56px' : '208px' }"
@@ -79,7 +79,12 @@ import { useRouter, useRoute } from "vue-router";
 import { getLoginState, refreshLogin } from "@/api/login";
 import { userDailySignin, userYunbeiSign } from "@/api/user";
 import { useI18n } from "vue-i18n";
-import { isTauri, windowManager } from "@/utils/tauri";
+import {
+  getDesktopEnvironment,
+  isTauri,
+  windowManager,
+  type DesktopEnvironment,
+} from "@/utils/tauri";
 
 import { setPageVisible } from "@/utils/AudioContext";
 import Provider from "@/components/Provider/index.vue";
@@ -103,10 +108,20 @@ const route = useRoute();
 const contentStage = ref<HTMLElement | null>(null);
 const mainContent = ref<HTMLElement | null>(null);
 const isInlineQueueLayout = ref(false);
+const desktopEnvironment = ref<DesktopEnvironment | null>(null);
 let inlineQueueMediaQuery: MediaQueryList | null = null;
 
 const showInlineQueue = computed(() => isInlineQueueLayout.value && music.showPlayList);
 const hasPlayBar = computed(() => Boolean(music.getPlaylists[0] && music.showPlayBar));
+const appBodyClasses = computed(() => [
+  "app-body",
+  {
+    "bigplayer-open": music.showBigPlayer,
+    "native-traffic-lights": desktopEnvironment.value?.usesNativeTrafficLights ?? false,
+    "hyprland-shell": desktopEnvironment.value?.isHyprland ?? false,
+    "linux-shell": desktopEnvironment.value?.isLinux ?? false,
+  },
+]);
 
 const syncInlineQueueLayout = (event?: MediaQueryListEvent) => {
   if (event) {
@@ -285,6 +300,11 @@ onMounted(() => {
   // Tauri 环境标识
   if (typeof window !== "undefined" && "__TAURI__" in window) {
     document.documentElement.classList.add("tauri-app");
+    getDesktopEnvironment()
+      .then((environment) => {
+        desktopEnvironment.value = environment;
+      })
+      .catch(() => {});
   }
 
   // 公告
@@ -530,6 +550,17 @@ onBeforeUnmount(() => {
 
   &.bigplayer-open::after {
     opacity: 0.75;
+  }
+
+  &.native-traffic-lights {
+    --app-titlebar-width: 0px;
+    --app-titlebar-gap: 0px;
+    --app-native-traffic-light-reserve-y: 42px;
+
+    :deep(.sidebar .sidebar-header) {
+      min-height: calc(var(--app-native-traffic-light-reserve-y) + 46px);
+      padding-top: var(--app-native-traffic-light-reserve-y);
+    }
   }
 }
 

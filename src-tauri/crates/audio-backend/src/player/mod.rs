@@ -272,10 +272,7 @@ impl Player {
     /// Register the frontend event `Channel`. The event forwarder streams all
     /// `AudioThreadEventMessage`s here until it is replaced or the webview
     /// reloads (a failed send clears the slot and falls back to global emit).
-    pub fn set_event_channel(
-        &self,
-        channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>,
-    ) {
+    pub fn set_event_channel(&self, channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>) {
         *self.shared.event_channel.lock() = Some(channel);
     }
 }

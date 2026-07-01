@@ -61,6 +61,7 @@ pub fn run() {
         .manage(HitRegionRegistry::default())
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
+            shared::desktop_environment,
             // Window management commands
             window::commands::create_window,
             window::commands::create_custom_window,
@@ -89,6 +90,7 @@ pub fn run() {
             window::desktop_lyrics::commands::update_mouse_through_regions,
             // Tray commands
             window::tray::set_tray_tooltip,
+            window::tray::update_tray_popup_layout,
             // AutoMix analysis (native Rust, shared by desktop/mobile)
             commands::audio_analyze_automix,
             commands::audio_analyze_automix_source,
@@ -127,20 +129,13 @@ pub fn run() {
                 .into());
             };
 
-            // macOS-specific helpers
+            // macOS-specific helpers that are not part of the generic window preset.
             #[cfg(target_os = "macos")]
             {
-                main_window.create_overlay_titlebar().unwrap();
-
-                // Set a custom inset to the traffic lights
-                main_window.set_traffic_lights_inset(12.0, 16.0).unwrap();
-
-                // Make window transparent without privateApi
-                main_window.make_transparent().unwrap();
-
-                // Set window level
                 // NSWindowLevel: https://developer.apple.com/documentation/appkit/nswindowlevel
-                main_window.set_window_level(25).unwrap();
+                if let Err(e) = main_window.set_window_level(25) {
+                    warn!("Failed to set main window level: {}", e);
+                }
             }
 
             if let Err(e) = main_window.restore_state(WINDOW_STATE_FLAGS) {

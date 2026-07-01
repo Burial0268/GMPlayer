@@ -486,6 +486,8 @@ const messages: Record<string, unknown> = {
     positionCenter: "Centered",
     lyricsBlur: "Lyric Blur",
     lyricsBlurTip: "Blur lyrics other than the currently playing ones, experimental feature",
+    hidePassedLines: "Hide Played Lyrics",
+    hidePassedLinesTip: "Hide lyric lines before the current line during playback",
     lyricOffset: "Lyric Offset",
     lyricOffsetAdvance: "Advance lyrics",
     lyricOffsetDelay: "Delay lyrics",

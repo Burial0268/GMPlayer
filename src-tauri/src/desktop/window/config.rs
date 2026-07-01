@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
 pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle --disable-features=VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,msWebOOUI,msPdfOOUI --enable-threaded-compositing --num-raster-threads=4";
 
+pub const TRAY_POPUP_WIDTH: f64 = 260.0;
+pub const TRAY_POPUP_BASE_HEIGHT: f64 = 334.0;
+
 /// Known window labels with preset configurations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WindowLabel {
@@ -136,7 +139,7 @@ impl WindowConfig {
             max_height: None,
             resizable: true,
             decorations: false,
-            transparent: false,
+            transparent: cfg!(target_os = "macos"),
             always_on_top: false,
             skip_taskbar: false,
             center: false,
@@ -345,8 +348,8 @@ impl WindowConfig {
             label: "tray-popup".into(),
             title: "Tray Popup".into(),
             url: "/slave.html#/tray-popup".into(),
-            width: 260.0,
-            height: 370.0,
+            width: TRAY_POPUP_WIDTH,
+            height: TRAY_POPUP_BASE_HEIGHT,
             min_width: None,
             min_height: None,
             max_width: None,

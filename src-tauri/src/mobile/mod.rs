@@ -19,6 +19,7 @@ pub fn run() {
         .plugin(gmplayer_orientation::init())
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
+            shared::desktop_environment,
             // AMLL-style native playback backend. Android uses cpal/rodio's
             // native AAudio path plus Symphonia decoding, matching desktop's
             // message/Channel transport surface.

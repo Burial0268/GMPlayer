@@ -293,6 +293,7 @@
               :current-time="adjustedTime"
               :playing="state.isPlaying"
               :enable-blur="bridge.settings.lyricsBlur"
+              :hide-passed-lines="bridge.settings.hidePassedLines"
               :enable-spring="bridge.settings.showYrcAnimation"
               :enable-scale="bridge.settings.showYrcAnimation"
               :word-fade-width="0.5"

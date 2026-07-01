@@ -328,7 +328,11 @@ fn detect_bpm_from_envelope(envelope: &[f32], hops_per_second: f32) -> (f32, f32
     (bpm, confidence)
 }
 
-pub(super) fn run_bpm_detection(data: &[f32], sample_rate: u32, duration: f32) -> Option<BPMResult> {
+pub(super) fn run_bpm_detection(
+    data: &[f32],
+    sample_rate: u32,
+    duration: f32,
+) -> Option<BPMResult> {
     if duration < 5.0 {
         return None;
     }

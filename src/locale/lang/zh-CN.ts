@@ -480,6 +480,8 @@ const messages: Record<string, unknown> = {
     positionCenter: "居中",
     lyricsBlur: "歌词模糊",
     lyricsBlurTip: "除当前播放歌词外模糊显示，实验性功能",
+    hidePassedLines: "隐藏已播放歌词",
+    hidePassedLinesTip: "播放时隐藏当前行之前的歌词行",
     lyricOffset: "歌词偏移",
     lyricOffsetAdvance: "歌词提前",
     lyricOffsetDelay: "歌词延后",

@@ -1,9 +1,42 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "app": {
+    "enableGTKAppId": true
+  },
   "bundle": {
+    "targets": ["deb", "rpm", "appimage"],
+    "shortDescription": "支持网易云音乐与本地播放的桌面音乐播放器。",
+    "longDescription": "GMPlayer 是一款基于 Vue 3 与 Tauri 的音乐播放器，支持网易云音乐、本地播放、富歌词、桌面歌词、媒体控制、频谱分析与 AutoMix。",
     "linux": {
+      "appimage": {
+        "bundleMediaFramework": true
+      },
       "deb": {
-        "depends": []
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0",
+          "libayatana-appindicator3-1",
+          "librsvg2-2",
+          "libasound2",
+          "gstreamer1.0-plugins-base",
+          "gstreamer1.0-plugins-good"
+        ],
+        "section": "sound",
+        "priority": "optional"
+      },
+      "rpm": {
+        "depends": [
+          "webkit2gtk4.1",
+          "gtk3",
+          "libayatana-appindicator-gtk3",
+          "librsvg2",
+          "alsa-lib",
+          "gstreamer1",
+          "gstreamer1-plugins-base",
+          "gstreamer1-plugins-good"
+        ],
+        "release": "1",
+        "epoch": 0
       }
     }
   }

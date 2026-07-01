@@ -1,6 +1,30 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "app": {
-    "macOSPrivateApi": true
+    "macOSPrivateApi": false
+  },
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "shortDescription": "支持网易云音乐与本地播放的桌面音乐播放器。",
+    "longDescription": "GMPlayer 是一款基于 Vue 3 与 Tauri 的音乐播放器，支持网易云音乐、本地播放、富歌词、桌面歌词、媒体控制、频谱分析与 AutoMix。",
+    "macOS": {
+      "bundleName": "GMPlayer",
+      "minimumSystemVersion": "10.15",
+      "hardenedRuntime": true,
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        },
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        }
+      }
+    }
   }
 }

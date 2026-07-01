@@ -403,6 +403,12 @@ export function useSettingsSections() {
           control: "switch",
         },
         {
+          key: "hidePassedLines",
+          label: "setting.hidePassedLines",
+          tip: "setting.hidePassedLinesTip",
+          control: "switch",
+        },
+        {
           key: "lyricTimeOffset",
           label: "setting.lyricOffset",
           tip: "setting.lyricOffsetTip",

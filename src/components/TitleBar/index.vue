@@ -17,7 +17,7 @@
 import { ref, computed, onMounted, type Component } from "vue";
 import { musicStore, settingStore } from "@/store";
 import { isTauri } from "@/utils/tauri/windowManager";
-import { isMobile } from "@/utils/tauri";
+import { getDesktopEnvironment, isMobile, type DesktopEnvironment } from "@/utils/tauri";
 import type { WindowLabel } from "@/utils/tauri/types";
 import { useOsTheme } from "naive-ui";
 import WindowControls from "./WindowControls.vue";
@@ -46,18 +46,23 @@ const props = withDefaults(
 const music = musicStore();
 const setting = settingStore();
 const osThemeRef = useOsTheme();
-const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+const desktopEnvironment = ref<DesktopEnvironment | null>(null);
 
 const isDark = computed(() => {
   return setting.themeAuto ? osThemeRef.value === "dark" : setting.theme === "dark";
 });
+const usesNativeTrafficLights = computed(
+  () => desktopEnvironment.value?.usesNativeTrafficLights ?? false,
+);
 const titlebarClasses = computed(() => [
   `titlebar--${props.variant}`,
   {
     "bigplayer-mode": props.variant === "floating" && music.showBigPlayer,
     "dark-mode": isDark.value,
     "has-title": Boolean(props.title),
-    "is-mac": isMac,
+    "is-mac": usesNativeTrafficLights.value,
+    "is-linux": desktopEnvironment.value?.isLinux ?? false,
+    "is-hyprland": desktopEnvironment.value?.isHyprland ?? false,
   },
 ]);
 const showTitleBar = ref(false);
@@ -66,8 +71,10 @@ onMounted(async () => {
   if (!isTauri()) return;
   if (await isMobile()) return;
 
-  // Don't show custom titlebar on macOS (traffic lights handle it)
-  if (isMac && !props.showOnMac) return;
+  desktopEnvironment.value = await getDesktopEnvironment();
+
+  // Don't show the floating DOM titlebar on macOS; native traffic lights handle it.
+  if (usesNativeTrafficLights.value && !props.showOnMac) return;
 
   showTitleBar.value = true;
 });

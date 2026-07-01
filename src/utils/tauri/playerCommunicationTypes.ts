@@ -74,6 +74,7 @@ export interface PlayerSettingsPayload {
   lyricLetterSpacing: string;
   lyricLineHeight: number;
   lyricsBlur: boolean;
+  hidePassedLines: boolean;
   lyricsBlock: string;
   lyricsPosition: string;
   showYrc: boolean;

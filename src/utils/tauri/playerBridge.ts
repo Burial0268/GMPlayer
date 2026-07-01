@@ -46,6 +46,7 @@ const defaultSettings: PlayerSettingsPayload = {
   lyricLetterSpacing: "normal",
   lyricLineHeight: 1.8,
   lyricsBlur: true,
+  hidePassedLines: false,
   lyricsBlock: "top",
   lyricsPosition: "left",
   showYrc: true,

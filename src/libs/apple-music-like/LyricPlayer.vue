@@ -12,6 +12,7 @@
       :current-time="currentTime"
       :playing="playState"
       :enable-blur="setting.lyricsBlur"
+      :hide-passed-lines="setting.hidePassedLines"
       :enable-spring="setting.showYrcAnimation"
       :enable-scale="setting.showYrcAnimation"
       :word-fade-width="0.5"
