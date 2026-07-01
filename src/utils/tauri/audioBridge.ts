@@ -122,11 +122,12 @@ export interface AudioThreadEventMessage<T> {
   callbackId: string;
   data: T | null;
   /**
-   * Monotonic sequence number stamped by the Rust event forwarder. Both
-   * the WebSocket transport and the Tauri event channel deliver the same
+   * Monotonic sequence number stamped by the Rust event forwarder. The
+   * primary Tauri `Channel` and the global-emit fallback deliver the same
    * event with the same `seq`; subscribers use it to drop duplicates that
-   * arrive via the secondary transport (otherwise state-flip dedup breaks
-   * on Pause → Seek → Resume bursts and similar patterns).
+   * arrive via the secondary transport during a fallback transition
+   * (otherwise state-flip dedup breaks on Pause → Seek → Resume bursts and
+   * similar patterns).
    *
    * `0` (or missing) means the event was not stamped — fall back to the
    * legacy "no dedup" behavior in that case.
@@ -586,15 +587,18 @@ const EVENT_CHANNEL = "audio-player://event";
 export type AudioThreadEventCallback = (event: AudioThreadEvent, seq?: number) => void;
 
 /**
- * Listen for push events from the Rust backend.
+ * Listen for push events from the Rust backend over the global
+ * `audio-player://event` emit stream. This is the fallback path used when the
+ * primary `Channel` transport (see `audioIpc.ts`) is unavailable; the Rust
+ * forwarder emits here whenever no channel is registered.
  * Returns an unlisten function.
  *
  * The Rust side wraps each event in an `AudioThreadEventMessage<AudioThreadEvent>`
  * envelope (with `callbackId` + `data` + `seq`). Some envelopes carry only an
  * ack (data is null) — we filter those out here so consumers see only real
  * events. The envelope's `seq` is forwarded as the second handler argument
- * so consumers can dedup against duplicate deliveries from the WebSocket
- * transport.
+ * so consumers can dedup against duplicate deliveries from the primary
+ * Channel transport during a fallback transition.
  */
 export async function listenPlayerEvents(handler: AudioThreadEventCallback): Promise<() => void> {
   if (!isTauri()) {

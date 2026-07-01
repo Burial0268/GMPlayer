@@ -13,6 +13,7 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tauri::ipc::Channel;
 use tauri::{Emitter, Runtime};
 use tokio::sync::mpsc;
 use tokio::sync::RwLock as TokioRwLock;
@@ -23,7 +24,6 @@ use crate::decoder::{self, PlaybackSink};
 use crate::error::{AudioError, AudioResult};
 use crate::output::{self, LowLatencyOutput, OutputRenderClock};
 use crate::types::*;
-use crate::ws_server::WsServer;
 
 mod automix;
 mod mixer;
@@ -86,10 +86,12 @@ pub struct PlayerShared {
     pub position_ms: AtomicU64,
     pub duration_ms: AtomicU64,
     pub event_buf: parking_lot::Mutex<EventBuffer>,
-    /// Local-loopback WebSocket bridge for low-latency event delivery. Normal
-    /// native playback uses this as the single event transport; Tauri emit is
-    /// only used if the WS server failed to start.
-    pub ws_server: parking_lot::Mutex<Option<Arc<WsServer>>>,
+    /// Event sink registered by the frontend via `audio_subscribe_events`.
+    /// The forwarder streams every `AudioThreadEventMessage` here; when no
+    /// channel is registered yet (startup / secondary windows) or a send
+    /// fails (webview reload), it falls back to a Tauri global `emit`.
+    pub event_channel:
+        parking_lot::Mutex<Option<Channel<AudioThreadEventMessage<AudioThreadEvent>>>>,
 }
 
 impl Player {
@@ -104,51 +106,23 @@ impl Player {
             position_ms: AtomicU64::new(0),
             duration_ms: AtomicU64::new(0),
             event_buf: parking_lot::Mutex::new(EventBuffer::new(0)),
-            ws_server: parking_lot::Mutex::new(None),
+            event_channel: parking_lot::Mutex::new(None),
         });
 
-        // Start the WS server on Tauri's async runtime so its accept loop
-        // outlives this function. (An earlier version built a throwaway
-        // `current_thread` runtime and used `rt.block_on(...)` — when `rt`
-        // dropped, the spawned listener task was aborted with it and no WS
-        // connections ever succeeded.) Tauri's `async_runtime` is a long-
-        // lived multi-thread tokio runtime; `block_on` enters it just long
-        // enough to bind the listener, then `WsServer::start` spawns the
-        // accept task on the same runtime via `tokio::spawn`.
-        let player_handle_for_ws = PlayerHandle {
-            msg_tx: msg_tx.clone(),
-            seek_tx: seek_tx.clone(),
-        };
-        let ws_server = match tauri::async_runtime::block_on(WsServer::start(player_handle_for_ws))
-        {
-            Ok(server) => {
-                let arc = Arc::new(server);
-                info!(
-                    "音频 WebSocket 服务器就绪: events={} control={}",
-                    arc.event_ws_url(),
-                    arc.control_ws_url()
-                );
-                Some(arc)
-            }
-            Err(e) => {
-                warn!("音频 WebSocket 服务器启动失败 (将仅使用 Tauri 事件): {e:?}");
-                None
-            }
-        };
-        *shared.ws_server.lock() = ws_server.clone();
-
-        // Forward events from the internal evt channel → WS broadcast (or
-        // Tauri emit only when WS failed to start) + EventBuffer. We peek at
-        // certain events to update `shared` atomics so `audio_get_state` can
-        // return up-to-date values without going through the message loop.
+        // Forward events from the internal evt channel → the frontend's
+        // `Channel` (registered via `audio_subscribe_events`), falling back to
+        // a Tauri global `emit` when no channel is registered yet or a send
+        // fails. We peek at certain events to update `shared` atomics so
+        // `audio_get_state` can return up-to-date values without going through
+        // the message loop.
         //
         // High-rate analysis events are coalesced before forwarding. Playback
         // controls/status events must not sit behind stale 2048-bin FFT JSON
-        // frames in the WS queue; keeping only the latest FFT/lowFreq sample
-        // preserves visual freshness while state/control events stay realtime.
+        // frames in the channel queue; keeping only the latest FFT/lowFreq
+        // sample preserves visual freshness while state/control events stay
+        // realtime.
         let shared_clone = Arc::clone(&shared);
         let app = app_handle.clone();
-        let ws_for_forwarder = ws_server;
         let seq_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
         tauri::async_runtime::spawn(async move {
             let forward_msg = |mut evt_msg: AudioThreadEventMessage<AudioThreadEvent>| {
@@ -159,8 +133,15 @@ impl Player {
                         shared_clone.event_buf.lock().push(event.clone());
                     }
                 }
-                if let Some(ws) = ws_for_forwarder.as_ref() {
-                    ws.broadcast_event(&evt_msg);
+                let channel = shared_clone.event_channel.lock().clone();
+                if let Some(channel) = channel {
+                    if channel.send(evt_msg.clone()).is_err() {
+                        // The webview/channel went away (e.g. reload). Drop the
+                        // stale sink so it self-heals on the next subscribe, and
+                        // fall back to a global emit for this event.
+                        *shared_clone.event_channel.lock() = None;
+                        let _ = app.emit("audio-player://event", &evt_msg);
+                    }
                 } else {
                     let _ = app.emit("audio-player://event", &evt_msg);
                 }
@@ -237,6 +218,26 @@ impl Player {
     }
 
     pub fn send_msg(&self, msg: AudioThreadEventMessage<AudioThreadMessage>) -> AudioResult<()> {
+        // Route seeks to the dedicated priority channel (coalesced via
+        // `drain_latest_seek`) instead of the generic message queue, matching
+        // the retired WebSocket control path. The invoke `callback_id` is not
+        // used for seek correlation — the frontend correlates on `request_id`
+        // via SeekCommitted/SeekFailed — so bypassing the queue is safe.
+        if let Some(AudioThreadMessage::SeekAudio {
+            position,
+            request_id,
+            expected_music_id,
+        }) = msg.data.as_ref()
+        {
+            return self
+                .seek_tx
+                .send(SeekRequest::new(
+                    *position,
+                    *request_id,
+                    expected_music_id.clone(),
+                ))
+                .map_err(|_| AudioError::ThreadError("player seek channel closed".into()));
+        }
         self.msg_tx
             .send(msg)
             .map_err(|_| AudioError::ThreadError("player channel closed".into()))
@@ -268,18 +269,14 @@ impl Player {
         self.shared.event_buf.lock().reset(session_id);
     }
 
-    /// `ws://127.0.0.1:PORT` if the WebSocket bridge bound successfully,
-    /// `None` if the bind failed (native playback cannot use WS controls).
-    pub fn ws_url(&self) -> Option<String> {
-        self.shared.ws_server.lock().as_ref().map(|s| s.ws_url())
-    }
-
-    pub fn ws_urls(&self) -> Option<(String, String)> {
-        self.shared
-            .ws_server
-            .lock()
-            .as_ref()
-            .map(|s| (s.event_ws_url(), s.control_ws_url()))
+    /// Register the frontend event `Channel`. The event forwarder streams all
+    /// `AudioThreadEventMessage`s here until it is replaced or the webview
+    /// reloads (a failed send clears the slot and falls back to global emit).
+    pub fn set_event_channel(
+        &self,
+        channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>,
+    ) {
+        *self.shared.event_channel.lock() = Some(channel);
     }
 }
 

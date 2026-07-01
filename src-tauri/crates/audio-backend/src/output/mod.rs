@@ -10,6 +10,7 @@ use cpal::{
     BufferSize, FromSample, Sample, SampleRate, SizedSample, Stream, StreamConfig,
     SupportedBufferSize,
 };
+use parking_lot::Mutex;
 use tracing::{info, warn};
 
 const PREFERRED_RATES: [u32; 2] = [48_000, 44_100];
@@ -19,6 +20,11 @@ const PREFERRED_FORMATS: [cpal::SampleFormat; 3] = [
     cpal::SampleFormat::U16,
 ];
 const DEFAULT_QUEUE_BLOCKS: usize = 16;
+// Depth of the buffer-recycling channel that returns spent mix blocks from the
+// CPAL callback back to the mixer for reuse. Sized a little above the data
+// queue so every in-flight buffer has a slot; overflow simply drops the buffer
+// (a plain free on the producer side), so the callback never blocks.
+const RECYCLE_QUEUE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS + 4;
 const OUTPUT_INIT_TIMEOUT: Duration = Duration::from_secs(4);
 const STABLE_OUTPUT_BUFFER_MS: u32 = 20;
 const MIN_STABLE_OUTPUT_BUFFER_FRAMES: u32 = 512;
@@ -151,6 +157,11 @@ pub struct OutputWriter {
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
     rendered_samples: Arc<AtomicU64>,
+    /// Spent mix blocks returned by the CPAL callback for reuse. Single
+    /// consumer (the mixer) behind a `Mutex` so `OutputWriter` stays `Sync`
+    /// while remaining cloneable; the lock is only ever taken off the audio
+    /// callback (on the mixer thread), so it never blocks real-time work.
+    recycle_rx: Arc<Mutex<mpsc::Receiver<Vec<f32>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -259,6 +270,24 @@ impl OutputWriter {
         self.queued_samples.load(Ordering::Acquire)
     }
 
+    /// Reuse a spent mix block returned by the CPAL callback, or allocate a
+    /// fresh one when the pool is empty. Called only from the mixer thread, so
+    /// the `try_lock` is effectively uncontended and never touches the audio
+    /// callback. The returned buffer is empty (`len == 0`) with at least
+    /// `capacity` capacity, ready to be filled by pushing.
+    pub fn take_recycled_buffer(&self, capacity: usize) -> Vec<f32> {
+        if let Some(rx) = self.recycle_rx.try_lock() {
+            if let Ok(mut buf) = rx.try_recv() {
+                buf.clear();
+                if buf.capacity() < capacity {
+                    buf.reserve(capacity - buf.capacity());
+                }
+                return buf;
+            }
+        }
+        Vec::with_capacity(capacity)
+    }
+
     pub fn render_clock(&self) -> OutputRenderClock {
         OutputRenderClock {
             rendered_samples: Arc::clone(&self.rendered_samples),
@@ -316,6 +345,7 @@ pub fn open_output(
 ) -> Result<LowLatencyOutput, String> {
     let (data_tx, data_rx) = mpsc::sync_channel::<OutputBlock>(DEFAULT_QUEUE_BLOCKS);
     let (control_tx, control_rx) = mpsc::channel::<OutputControl>();
+    let (recycle_tx, recycle_rx) = mpsc::sync_channel::<Vec<f32>>(RECYCLE_QUEUE_BLOCKS);
     let (stream_stop_tx, stream_stop_rx) = mpsc::channel::<()>();
     let (init_tx, init_rx) = mpsc::channel::<Result<(OutputDeviceKey, OutputConfigKey), String>>();
     let paused = Arc::new(AtomicBool::new(true));
@@ -337,6 +367,7 @@ pub fn open_output(
         flush_epoch: Arc::clone(&flush_epoch),
         queued_samples: Arc::clone(&queued_samples),
         rendered_samples: Arc::clone(&rendered_samples),
+        recycle_rx: Arc::new(Mutex::new(recycle_rx)),
     };
 
     let stream_thread = thread::Builder::new()
@@ -347,6 +378,7 @@ pub fn open_output(
                 target,
                 data_rx,
                 control_rx,
+                recycle_tx,
                 paused,
                 stream_failed,
                 volume_bits,
@@ -592,6 +624,7 @@ fn open_output_stream(
     target: Option<OutputTarget>,
     data_rx: mpsc::Receiver<OutputBlock>,
     control_rx: mpsc::Receiver<OutputControl>,
+    recycle_tx: mpsc::SyncSender<Vec<f32>>,
     paused: Arc<AtomicBool>,
     stream_failed: Arc<AtomicBool>,
     volume_bits: Arc<AtomicU32>,
@@ -630,6 +663,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -643,6 +677,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -656,6 +691,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -669,6 +705,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -682,6 +719,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -695,6 +733,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -708,6 +747,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -721,6 +761,7 @@ fn open_output_stream(
             &stream_config,
             data_rx,
             control_rx,
+            recycle_tx,
             paused,
             stream_failed,
             volume_bits,
@@ -743,6 +784,7 @@ fn build_stream<T>(
     config: &StreamConfig,
     data_rx: mpsc::Receiver<OutputBlock>,
     control_rx: mpsc::Receiver<OutputControl>,
+    recycle_tx: mpsc::SyncSender<Vec<f32>>,
     paused: Arc<AtomicBool>,
     stream_failed: Arc<AtomicBool>,
     volume_bits: Arc<AtomicU32>,
@@ -757,6 +799,7 @@ where
     let mut state = CallbackState {
         data_rx,
         control_rx,
+        recycle_tx,
         current_block: Vec::new(),
         current_index: 0,
         accepted_generation: generation.load(Ordering::Acquire),
@@ -796,6 +839,10 @@ where
 struct CallbackState {
     data_rx: mpsc::Receiver<OutputBlock>,
     control_rx: mpsc::Receiver<OutputControl>,
+    /// Returns spent mix blocks to the mixer for reuse instead of freeing them
+    /// inside the real-time callback. Best-effort: a full channel just drops
+    /// the buffer, so this never blocks.
+    recycle_tx: mpsc::SyncSender<Vec<f32>>,
     current_block: Vec<f32>,
     current_index: usize,
     accepted_generation: u64,
@@ -860,7 +907,10 @@ fn fill_output<T>(
         if state.current_index >= state.current_block.len() {
             match next_current_block(state, generation, flush_epoch) {
                 Some(block) => {
-                    state.current_block = block;
+                    // Return the spent block to the mixer's pool instead of
+                    // dropping (freeing) it inside the real-time callback.
+                    let spent = std::mem::replace(&mut state.current_block, block);
+                    recycle_buffer(&state.recycle_tx, spent);
                     state.current_index = 0;
                 }
                 None => break,
@@ -930,9 +980,13 @@ fn next_current_block(
                 if block.generation != current_generation
                     || block.flush_epoch != current_flush_epoch
                 {
+                    // Stale block from a superseded generation — recycle its
+                    // buffer instead of freeing it in the callback.
+                    recycle_buffer(&state.recycle_tx, block.samples);
                     continue;
                 }
                 if block.samples.is_empty() {
+                    recycle_buffer(&state.recycle_tx, block.samples);
                     continue;
                 }
                 state.accepted_generation = block.generation;
@@ -1014,6 +1068,13 @@ fn underrun_fade_sample(state: &mut CallbackState, channel: usize) -> f32 {
         state.last_values[channel] = 0.0;
     }
     value
+}
+
+#[inline]
+fn recycle_buffer(recycle_tx: &mpsc::SyncSender<Vec<f32>>, buf: Vec<f32>) {
+    // Best-effort hand-back to the mixer's pool; a full channel just drops the
+    // buffer (a normal free), so the real-time callback never blocks.
+    let _ = recycle_tx.try_send(buf);
 }
 
 fn saturating_sub(counter: &AtomicUsize, amount: usize) {
@@ -1196,6 +1257,7 @@ mod tests {
     fn flush_does_not_invalidate_output_generation() {
         let (data_tx, _data_rx) = mpsc::sync_channel(1);
         let (control_tx, control_rx) = mpsc::channel();
+        let (_recycle_tx, recycle_rx) = mpsc::sync_channel::<Vec<f32>>(4);
         let generation = Arc::new(AtomicU64::new(7));
         let queued_samples = Arc::new(AtomicUsize::new(42));
         let writer = OutputWriter {
@@ -1208,6 +1270,7 @@ mod tests {
             flush_epoch: Arc::new(AtomicU64::new(0)),
             queued_samples: Arc::clone(&queued_samples),
             rendered_samples: Arc::new(AtomicU64::new(0)),
+            recycle_rx: Arc::new(Mutex::new(recycle_rx)),
         };
 
         writer.flush();
@@ -1246,9 +1309,11 @@ mod tests {
         let flush_epoch = AtomicU64::new(1);
         let queued_samples = AtomicUsize::new(0);
         let rendered_samples = AtomicU64::new(0);
+        let (recycle_tx, _recycle_rx) = mpsc::sync_channel::<Vec<f32>>(4);
         let mut state = CallbackState {
             data_rx,
             control_rx,
+            recycle_tx,
             current_block: Vec::new(),
             current_index: 0,
             accepted_generation: 0,
@@ -1295,9 +1360,11 @@ mod tests {
         let flush_epoch = AtomicU64::new(1);
         let queued_samples = AtomicUsize::new(4);
         let rendered_samples = AtomicU64::new(0);
+        let (recycle_tx, _recycle_rx) = mpsc::sync_channel::<Vec<f32>>(4);
         let mut state = CallbackState {
             data_rx,
             control_rx,
+            recycle_tx,
             current_block: Vec::new(),
             current_index: 0,
             accepted_generation: 0,

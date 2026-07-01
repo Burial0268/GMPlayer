@@ -450,8 +450,8 @@ const startSpectrumUpdate = (sound: ISound, music: ReturnType<typeof musicStore>
     // Skip spectrum computation when page is not visible
     if (isPageVisible) {
       if (needsSpectrum) {
-        // Native Rust backend: use the 2048-bin raw FFT frame delivered by
-        // the WebSocket IPC service. Do not call getFrequencyData() here:
+        // Native Rust backend: use the 2048-bin raw FFT frame delivered over
+        // the native event Channel. Do not call getFrequencyData() here:
         // the web backend's AnalyserNode path is windowed/smoothed and only
         // 1024 bins by default.
         const spectrumData =

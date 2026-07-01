@@ -1,3 +1,5 @@
+import { Channel, invoke } from "@tauri-apps/api/core";
+
 import type {
   AudioThreadEvent,
   AudioThreadEventCallback,
@@ -5,7 +7,6 @@ import type {
   AudioThreadMessage,
 } from "./audioBridge";
 import { audioSendMsg, isTauri, listenPlayerEvents } from "./audioBridge";
-import { getAudioWs } from "./audioWs";
 
 const WASM_ANALYSIS_INTERVAL_MS = 66;
 // Drive the UI position from the real <audio> clock at a few Hz. The element
@@ -86,6 +87,73 @@ class TauriInvokeAudioIpc implements AudioBackendTransport {
   }
 }
 
+/**
+ * Primary Tauri transport: a `Channel` carries the Rust → frontend event
+ * stream (FFT / status / position); control commands go out over the existing
+ * `audio_send_msg` invoke. The Channel rides the webview's native IPC, so it
+ * behaves identically on WebView2 / WebKitGTK / WKWebView / Android WebView —
+ * unlike the retired local WebSocket, which WebKitGTK could not consume on
+ * Linux (playback never started while the UI showed an optimistic "playing").
+ *
+ * `connect()` rejects if `audio_subscribe_events` fails so the hybrid can fall
+ * back to `TauriInvokeAudioIpc` (global `audio-player://event` emit), which the
+ * Rust forwarder targets whenever no channel is registered.
+ */
+class TauriChannelAudioIpc implements AudioBackendTransport {
+  private _listeners: Set<AudioThreadEventCallback> = new Set();
+  private _channel: Channel<AudioThreadEventMessage<AudioThreadEvent>> | null = null;
+  private _connectPromise: Promise<void> | null = null;
+
+  connect(): Promise<void> {
+    if (this._channel) return Promise.resolve();
+    if (this._connectPromise) return this._connectPromise;
+
+    const channel = new Channel<AudioThreadEventMessage<AudioThreadEvent>>();
+    channel.onmessage = (envelope) => {
+      if (envelope && envelope.data) {
+        this._dispatch(envelope.data, envelope.seq);
+      }
+    };
+
+    this._connectPromise = invoke<void>("audio_subscribe_events", { channel })
+      .then(() => {
+        this._channel = channel;
+      })
+      .finally(() => {
+        this._connectPromise = null;
+      });
+
+    return this._connectPromise;
+  }
+
+  subscribe(listener: AudioThreadEventCallback): () => void {
+    this._listeners.add(listener);
+    return () => {
+      this._listeners.delete(listener);
+    };
+  }
+
+  sendOrQueue(msg: AudioThreadMessage): boolean {
+    void audioSendMsg(msg);
+    return true;
+  }
+
+  shutdown(): void {
+    this._channel = null;
+    this._listeners.clear();
+  }
+
+  private _dispatch(event: AudioThreadEvent, seq?: number): void {
+    for (const listener of this._listeners) {
+      try {
+        listener(event, seq);
+      } catch {
+        /* listener errors should not break dispatch */
+      }
+    }
+  }
+}
+
 class TauriHybridAudioIpc implements AudioBackendTransport {
   private _active: AudioBackendTransport | null = null;
   private _fallback: TauriInvokeAudioIpc | null = null;
@@ -96,14 +164,14 @@ class TauriHybridAudioIpc implements AudioBackendTransport {
       return;
     }
 
-    const ws = getAudioWs();
+    const channel = new TauriChannelAudioIpc();
     try {
-      await ws.connect();
-      this._active = ws;
+      await channel.connect();
+      this._active = channel;
       return;
     } catch (err) {
       console.warn(
-        "[audioIpc] WebSocket audio transport unavailable, falling back to Tauri IPC",
+        "[audioIpc] Tauri Channel transport unavailable, falling back to global events",
         err,
       );
     }

@@ -475,6 +475,57 @@ impl DeckRuntime {
             saturating_sub(&self.queued_samples, consumed);
         }
     }
+
+    /// Bulk-fill up to `samples` samples from this deck into `dst`, applying
+    /// `gain` and clamping over contiguous runs (which autovectorizes). Pulls
+    /// fresh blocks from the queue as needed and stops early on underrun.
+    /// Returns the number of samples written and adds it to `consumed`; the
+    /// queued-sample counter is committed once per block by the caller.
+    fn fill_scaled(
+        &mut self,
+        dst: &mut Vec<f32>,
+        samples: usize,
+        gain: f32,
+        consumed: &mut usize,
+    ) -> usize {
+        let mut written = 0;
+        while written < samples {
+            if self.current_index >= self.current_block.len() {
+                match self.rx.try_recv() {
+                    Ok(block) => {
+                        if block.generation != self.accepted_generation
+                            || block.flush_epoch != self.accepted_flush_epoch
+                        {
+                            continue;
+                        }
+                        self.current_block = block.samples;
+                        self.current_index = 0;
+                        if self.current_block.is_empty() {
+                            continue;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            let avail = self.current_block.len() - self.current_index;
+            let run = (samples - written).min(avail);
+            let src = &self.current_block[self.current_index..self.current_index + run];
+            if gain == 1.0 {
+                for &s in src {
+                    dst.push(s.clamp(-1.0, 1.0));
+                }
+            } else {
+                for &s in src {
+                    dst.push((s * gain).clamp(-1.0, 1.0));
+                }
+            }
+            self.current_index += run;
+            written += run;
+            *consumed += run;
+        }
+        written
+    }
 }
 
 struct CrossfadeRuntime {
@@ -518,43 +569,11 @@ impl MixerWorker {
             let secondary_paused = self.secondary.paused.load(Ordering::Acquire);
 
             // Reserve exact capacity and fill by pushing — no zero-fill pass,
-            // since every slot is written below.
-            let mut block = Vec::with_capacity(frame_capacity);
-            let mut has_audio = false;
-            let mut consumed_primary = 0usize;
-            let mut consumed_secondary = 0usize;
-
-            for _ in 0..MIX_BLOCK_FRAMES {
-                // Crossfade gains move over seconds, so advance them once per
-                // frame (all channels in a frame share one gain) rather than
-                // once per sample. This keeps the sin/sqrt/pow curve math at
-                // frame rate during a fade.
-                self.advance_crossfade();
-                let primary_gain = self.primary.gain;
-                let secondary_gain = self.secondary.gain;
-
-                for _ in 0..channels {
-                    let primary = if primary_paused {
-                        None
-                    } else {
-                        self.primary.next_sample(&mut consumed_primary)
-                    };
-                    let secondary = if secondary_paused {
-                        None
-                    } else {
-                        self.secondary.next_sample(&mut consumed_secondary)
-                    };
-                    if primary.is_some() || secondary.is_some() {
-                        has_audio = true;
-                    }
-                    let mixed = primary.unwrap_or(0.0) * primary_gain
-                        + secondary.unwrap_or(0.0) * secondary_gain;
-                    block.push(mixed.clamp(-1.0, 1.0));
-                }
-            }
-
-            self.primary.commit_consumed(consumed_primary);
-            self.secondary.commit_consumed(consumed_secondary);
+            // since every slot is written below. The buffer is recycled from
+            // the output callback when available, so steady playback does not
+            // allocate here (and the callback does not free).
+            let mut block = self.output.take_recycled_buffer(frame_capacity);
+            let has_audio = self.mix_block(&mut block, channels, primary_paused, secondary_paused);
 
             if has_audio {
                 let control_epoch = self.control_epoch.load(Ordering::Acquire);
@@ -578,6 +597,91 @@ impl MixerWorker {
                 thread::sleep(Duration::from_millis(2));
             }
         }
+    }
+
+    /// Mix one output block worth of samples into `block`, returning whether
+    /// any audio was written.
+    ///
+    /// Fast path: with no crossfade in progress the deck gains are constant for
+    /// the whole block, so when exactly one deck is contributing we bulk-copy
+    /// it (gain + clamp over contiguous runs, which autovectorizes) instead of
+    /// running the per-sample two-deck mixer. The per-sample path still runs
+    /// during crossfades (gains move per frame) and in the rare case where both
+    /// decks are simultaneously active without a crossfade.
+    fn mix_block(
+        &mut self,
+        block: &mut Vec<f32>,
+        channels: usize,
+        primary_paused: bool,
+        secondary_paused: bool,
+    ) -> bool {
+        let want = MIX_BLOCK_FRAMES * channels;
+
+        if self.crossfade.is_none() {
+            let primary_active = !primary_paused && self.primary.gain != 0.0;
+            let secondary_active = !secondary_paused && self.secondary.gain != 0.0;
+
+            if primary_active != secondary_active {
+                let written = if primary_active {
+                    let gain = self.primary.gain;
+                    let mut consumed = 0;
+                    let written = self.primary.fill_scaled(block, want, gain, &mut consumed);
+                    self.primary.commit_consumed(consumed);
+                    written
+                } else {
+                    let gain = self.secondary.gain;
+                    let mut consumed = 0;
+                    let written = self.secondary.fill_scaled(block, want, gain, &mut consumed);
+                    self.secondary.commit_consumed(consumed);
+                    written
+                };
+                // Pad the tail with silence on underrun so the block is a whole
+                // number of frames.
+                block.resize(block.len() + (want - written), 0.0);
+                return written > 0;
+            }
+
+            if !primary_active && !secondary_active {
+                // Nothing to render — leave `block` empty; the caller sleeps.
+                return false;
+            }
+            // Both active without a crossfade — fall through to the mixer.
+        }
+
+        // General path: advance crossfade gains once per frame and mix both
+        // decks sample by sample.
+        let mut has_audio = false;
+        let mut consumed_primary = 0usize;
+        let mut consumed_secondary = 0usize;
+
+        for _ in 0..MIX_BLOCK_FRAMES {
+            self.advance_crossfade();
+            let primary_gain = self.primary.gain;
+            let secondary_gain = self.secondary.gain;
+
+            for _ in 0..channels {
+                let primary = if primary_paused {
+                    None
+                } else {
+                    self.primary.next_sample(&mut consumed_primary)
+                };
+                let secondary = if secondary_paused {
+                    None
+                } else {
+                    self.secondary.next_sample(&mut consumed_secondary)
+                };
+                if primary.is_some() || secondary.is_some() {
+                    has_audio = true;
+                }
+                let mixed = primary.unwrap_or(0.0) * primary_gain
+                    + secondary.unwrap_or(0.0) * secondary_gain;
+                block.push(mixed.clamp(-1.0, 1.0));
+            }
+        }
+
+        self.primary.commit_consumed(consumed_primary);
+        self.secondary.commit_consumed(consumed_secondary);
+        has_audio
     }
 
     fn drain_controls(&mut self) -> bool {
@@ -756,5 +860,83 @@ fn crossfade_values(progress: f32, curve: CrossfadeCurve) -> (f32, f32) {
             let angle = s * std::f32::consts::FRAC_PI_2;
             (angle.cos(), angle.sin())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn deck_from_blocks(blocks: Vec<Vec<f32>>) -> (DeckRuntime, mpsc::SyncSender<DeckBlock>) {
+        let (tx, rx) = mpsc::sync_channel(16);
+        for samples in blocks {
+            tx.send(DeckBlock {
+                samples,
+                generation: 0,
+                flush_epoch: 0,
+            })
+            .unwrap();
+        }
+        let deck = DeckRuntime::new(
+            rx,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+            1.0,
+        );
+        (deck, tx)
+    }
+
+    #[test]
+    fn fill_scaled_bulk_copies_with_gain_and_clamp() {
+        let (mut deck, _tx) = deck_from_blocks(vec![vec![0.5, -0.5, 2.0, -2.0]]);
+        let mut dst = Vec::new();
+        let mut consumed = 0;
+        let written = deck.fill_scaled(&mut dst, 4, 0.5, &mut consumed);
+        assert_eq!(written, 4);
+        assert_eq!(consumed, 4);
+        // 2.0 * 0.5 = 1.0 and -2.0 * 0.5 = -1.0 stay inside the clamp range.
+        assert_eq!(dst, vec![0.25, -0.25, 1.0, -1.0]);
+    }
+
+    #[test]
+    fn fill_scaled_stops_on_underrun() {
+        let (mut deck, tx) = deck_from_blocks(vec![vec![0.1, 0.2]]);
+        drop(tx); // no further blocks will arrive
+        let mut dst = Vec::new();
+        let mut consumed = 0;
+        let written = deck.fill_scaled(&mut dst, 8, 1.0, &mut consumed);
+        assert_eq!(written, 2);
+        assert_eq!(consumed, 2);
+        assert_eq!(dst, vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn fill_scaled_skips_stale_generation_blocks() {
+        let (tx, rx) = mpsc::sync_channel(16);
+        tx.send(DeckBlock {
+            samples: vec![9.0, 9.0],
+            generation: 0,
+            flush_epoch: 0,
+        })
+        .unwrap();
+        tx.send(DeckBlock {
+            samples: vec![0.3, 0.4],
+            generation: 1,
+            flush_epoch: 0,
+        })
+        .unwrap();
+        let mut deck = DeckRuntime::new(
+            rx,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+            1.0,
+        );
+        deck.accepted_generation = 1; // only accept generation 1
+
+        let mut dst = Vec::new();
+        let mut consumed = 0;
+        let written = deck.fill_scaled(&mut dst, 2, 1.0, &mut consumed);
+        assert_eq!(written, 2);
+        assert_eq!(dst, vec![0.3, 0.4]); // the stale generation-0 block is dropped
     }
 }

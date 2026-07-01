@@ -29,8 +29,6 @@ mod spectrum;
 mod types;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
-#[cfg(not(target_arch = "wasm32"))]
-mod ws_server;
 
 pub use error::{AudioError, AudioResult};
 #[cfg(not(target_arch = "wasm32"))]

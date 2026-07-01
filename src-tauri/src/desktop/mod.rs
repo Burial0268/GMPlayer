@@ -94,10 +94,10 @@ pub fn run() {
             commands::audio_analyze_automix_source,
             // AMLL-style: single message command for all playback control
             commands::audio_send_msg,
+            // Event stream subscription (Rust → frontend Tauri Channel)
+            commands::audio_subscribe_events,
             // Sync query commands
             commands::audio_get_state,
-            commands::audio_get_ws_url,
-            commands::audio_get_ws_urls,
             // Session-based event polling (backward compat)
             commands::audio_set_session,
             commands::audio_poll_events,

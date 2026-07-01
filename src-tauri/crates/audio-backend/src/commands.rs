@@ -1,4 +1,5 @@
 use serde::Serialize;
+use tauri::ipc::Channel;
 use tauri::{Runtime, State};
 
 use crate::automix::{self, AutomixAnalyzeRequest, AutomixAnalyzeSourceRequest, TrackAnalysis};
@@ -38,12 +39,6 @@ pub struct AudioStateResponse {
     pub duration: f64,
 }
 
-#[derive(Serialize, Clone, Debug)]
-pub struct AudioWsUrlsResponse {
-    pub events: String,
-    pub control: String,
-}
-
 fn state_name(s: PlaybackState) -> &'static str {
     match s {
         PlaybackState::Stopped => "stopped",
@@ -58,8 +53,8 @@ fn state_name(s: PlaybackState) -> &'static str {
 // ═══════════════════════════════════════════════════════════════════
 
 /// Send an AudioThreadMessage to the player via Tauri invoke.
-/// Native playback controls use the local WebSocket; this remains for
-/// compatibility and diagnostics.
+/// This is the native playback control path (frontend → Rust); events flow
+/// back over the `Channel` registered by `audio_subscribe_events`.
 #[tauri::command]
 pub fn audio_send_msg(
     state: State<PlayerState>,
@@ -83,23 +78,17 @@ pub fn audio_get_state(state: State<PlayerState>) -> Result<AudioStateResponse, 
     })
 }
 
-/// Return `ws://127.0.0.1:PORT` for the local WebSocket bridge, or `null`
-/// if the bridge failed to bind (e.g. all ports busy). Kept for older
-/// frontend code; returns the event socket.
+/// Register the frontend event `Channel` (Rust → frontend event stream:
+/// FFT / status / position). The frontend creates a `Channel`, wires its
+/// `onmessage`, and passes it here; the player forwards every
+/// `AudioThreadEventMessage` to it. Replaces the old local WebSocket bridge.
 #[tauri::command]
-pub fn audio_get_ws_url(state: State<PlayerState>) -> Result<Option<String>, String> {
-    Ok(state.player.ws_url())
-}
-
-/// Return split WebSocket URLs:
-/// - `events`: Rust → frontend event stream (FFT/status/position)
-/// - `control`: frontend → Rust command stream (play/pause/seek/volume)
-#[tauri::command]
-pub fn audio_get_ws_urls(state: State<PlayerState>) -> Result<Option<AudioWsUrlsResponse>, String> {
-    Ok(state
-        .player
-        .ws_urls()
-        .map(|(events, control)| AudioWsUrlsResponse { events, control }))
+pub fn audio_subscribe_events(
+    state: State<PlayerState>,
+    channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>,
+) -> Result<(), String> {
+    state.player.set_event_channel(channel);
+    Ok(())
 }
 
 // ═══════════════════════════════════════════════════════════════════

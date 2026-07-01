@@ -61,6 +61,9 @@ gmplayer-now-playing-controls = { package = "tauri-plugin-now-playing-controls",
 [target.'cfg(windows)'.dependencies]
 gmplayer-taskbar-lyric = { package = "tauri-plugin-taskbar-lyric", path = "crates/taskbar-lyric" }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.25.0"
+
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
 ndk-context = "0.1"

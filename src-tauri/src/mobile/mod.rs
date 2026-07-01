@@ -21,11 +21,10 @@ pub fn run() {
             shared::detect_desktop,
             // AMLL-style native playback backend. Android uses cpal/rodio's
             // native AAudio path plus Symphonia decoding, matching desktop's
-            // message/WebSocket transport surface.
+            // message/Channel transport surface.
             commands::audio_send_msg,
+            commands::audio_subscribe_events,
             commands::audio_get_state,
-            commands::audio_get_ws_url,
-            commands::audio_get_ws_urls,
             commands::audio_analyze_automix,
             commands::audio_analyze_automix_source,
             commands::audio_set_session,

@@ -1,15 +1,18 @@
 /**
  * NativeRustSound — an ISound implementation backed by the Tauri audio-backend.
  *
- * v5: Local WebSocket primary transport.
- *   - Playback commands go via a dedicated control WebSocket. Falling back
- *     to Tauri invoke breaks realtime controls because it can queue behind
- *     unrelated IPC work.
- *   - Events flow over a separate event WebSocket. FFT/event backpressure
- *     must never share transport state with play/pause/seek commands.
+ * v6: Tauri Channel transport.
+ *   - Events (Rust → frontend: FFT/status/position) flow over a
+ *     `tauri::ipc::Channel` registered via `audio_subscribe_events`. It rides
+ *     the webview's native IPC, so it works on WebView2 / WebKitGTK /
+ *     WKWebView / Android WebView alike (the previous local WebSocket could
+ *     not be consumed by WebKitGTK on Linux).
+ *   - Playback commands go out over the `audio_send_msg` invoke — a separate
+ *     IPC path from the event Channel, so play/pause/seek never queue behind
+ *     FFT frames.
  *   - Play/pause/stop/seek are *optimistic*: the local `_playbackState`
  *     flips and the `play`/`pause` event fires synchronously, then the
- *     server confirmation arrives and is de-duped.
+ *     backend confirmation arrives and is de-duped.
  *   - Position is extrapolated client-side (last `playPosition` + elapsed
  *     wall time) so the seek-bar updates smoothly even though the Rust
  *     side only emits 1 Hz heartbeats.
@@ -97,11 +100,10 @@ export class NativeRustSound implements ISound {
   private _timeline: AudioTimelineSync = new AudioTimelineSync();
 
   /**
-   * Recently processed event sequence ids. Priority status events are sent on
-   * the control socket while FFT/visual events are sent on the event socket, so
-   * cross-socket delivery can be out of order after background throttling. We
-   * only drop the exact same seq twice; lower seq is still valid if it was not
-   * seen yet.
+   * Recently processed event sequence ids. A single Channel delivers events
+   * in order, but during a Channel → global-emit fallback transition the same
+   * event can briefly arrive over both paths; the `seq` stamp lets us drop the
+   * exact duplicate. Lower seq is still valid if it was not seen yet.
    */
   private _seenEventSeq: Set<number> = new Set();
   private _seenEventSeqOrder: number[] = [];
@@ -160,7 +162,7 @@ export class NativeRustSound implements ISound {
       return;
     }
 
-    // 1. Open the WebSocket (best-effort) and register listeners BEFORE
+    // 1. Connect the transport (best-effort) and register listeners BEFORE
     //    sending any messages so we can't miss the LoadAudio event.
     const transport = getAudioBackendTransport();
     try {
@@ -218,9 +220,9 @@ export class NativeRustSound implements ISound {
       this._pendingLoad = { resolve, reject, timeout };
     });
 
-    // 3. Dispatch setPlaylist + jumpToSong / jumpToSongAt over WebSocket.
-    //    Load completion is driven by LoadAudio / LoadError events, not by
-    //    invoke acks, so this stays on the realtime IPC path.
+    // 3. Dispatch setPlaylist + jumpToSong / jumpToSongAt over the invoke
+    //    control path. Load completion is driven by LoadAudio / LoadError
+    //    events, not by invoke acks.
     //
     //    `jumpToSongAt` bundles the initial-position seek into the load,
     //    avoiding a separate `seekAudio` round-trip. The Rust side opens
@@ -267,7 +269,7 @@ export class NativeRustSound implements ISound {
   }
 
   // ═════════════════════════════════════════════════════════════╗
-  //  Transport: WebSocket-only control path                     ║
+  //  Transport: invoke control path                             ║
   // ═════════════════════════════════════════════════════════════╝
 
   private _sendCommand(msg: import("./audioBridge").AudioThreadMessage): boolean {
@@ -720,9 +722,9 @@ export class NativeRustSound implements ISound {
   private _armNoFFTWarning(): void {
     if (!IS_DEV) return;
     if (this._analysisEnabled === false || this._fftEventsEnabled === false) return;
-    // Web/WASM does not use the native WS/CPAL FFT event stream. It may add
-    // analysis later through a WASM decoder/PCM path, but absence of `fftData`
-    // there is not a WebSocket/backend failure.
+    // Web/WASM does not use the native Channel/CPAL FFT event stream. It may
+    // add analysis later through a WASM decoder/PCM path, but absence of
+    // `fftData` there is not a transport/backend failure.
     if (!isTauri()) return;
     this._clearNoFFTWarning();
     this._noFFTWarnTimer = setTimeout(() => {
@@ -730,7 +732,7 @@ export class NativeRustSound implements ISound {
       if (!this._fftReceived && this._playbackState === "playing") {
         console.warn(
           `[NativeRustSound] No fftData event received within ${NO_FFT_WARN_MS}ms of load. ` +
-            `Check Rust logs for "FFT broadcast: ... empty ticks" or WS connection state.`,
+            `Check Rust logs for "FFT broadcast: ... empty ticks" or the event Channel state.`,
         );
       }
     }, NO_FFT_WARN_MS);

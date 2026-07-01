@@ -38,6 +38,10 @@ type SettingStore = ReturnType<typeof settingStore>;
 type SiteStore = ReturnType<typeof siteStore>;
 
 const TIME_BROADCAST_INTERVAL_MS = 50;
+// How often to reconcile the open-content-window set against the real window
+// list (to detect closes). Only runs while at least one content window is
+// believed open; opens are tracked immediately via the `slaveReady` handshake.
+const CONTENT_WINDOW_RECONCILE_MS = 2000;
 const noop = () => {};
 
 let cachedMusic: MusicStore | null = null;
@@ -50,6 +54,14 @@ let cachedLyricSource: SongLyric | null = null;
 let cachedLyricSongId: number | null = null;
 let cachedLyricSettingsKey = "";
 let cachedLyricPayload: PlayerLyricPayload | null = null;
+
+// Which content windows (mini-player / desktop-lyrics / taskbar-lyric) are
+// currently open. The 20fps time broadcast is skipped entirely when this is
+// empty, and only fans out to the labels that are actually open — so the
+// common case (no lyric/mini windows) costs nothing, and one open window costs
+// one `emitTo` instead of three.
+const openContentWindows = new Set<string>();
+let contentWindowReconcileTimer: ReturnType<typeof setInterval> | null = null;
 
 function getMusic() {
   cachedMusic ??= musicStore();
@@ -80,6 +92,59 @@ function emitToLabels(eventName: string, payload: unknown, labels: readonly stri
 
 export function emitToMain(eventName: string, payload?: unknown) {
   getTauriEvent()?.emitTo("main", eventName, payload).catch(noop);
+}
+
+// ── Open content-window tracking (gates the 20fps time broadcast) ────────────
+
+function isContentWindowLabel(label: string): boolean {
+  return (PLAYER_CONTENT_WINDOW_LABELS as readonly string[]).includes(label);
+}
+
+/** Labels of content windows believed open, in canonical order. */
+function openContentBroadcastLabels(): string[] {
+  return PLAYER_CONTENT_WINDOW_LABELS.filter((label) => openContentWindows.has(label));
+}
+
+/**
+ * Mark a content window open. Called from the `slaveReady` handshake, which the
+ * slave re-sends with retries — so opens are never missed. Closes are handled
+ * by the reconcile loop, so this only ever *adds*.
+ */
+function markContentWindowOpen(label: string): void {
+  if (!isContentWindowLabel(label)) return;
+  openContentWindows.add(label);
+  ensureContentWindowReconcile();
+}
+
+function ensureContentWindowReconcile(): void {
+  if (contentWindowReconcileTimer !== null) return;
+  contentWindowReconcileTimer = setInterval(() => {
+    void reconcileContentWindows();
+  }, CONTENT_WINDOW_RECONCILE_MS);
+}
+
+/**
+ * Prune content windows that have closed. Never *under-reports* open windows:
+ * on a failed/empty window query we keep the current belief so a live slave is
+ * never starved of updates. When nothing is open, the reconcile loop stops
+ * (opens restart it via `markContentWindowOpen`).
+ */
+async function reconcileContentWindows(): Promise<void> {
+  const open = await windowManager.listWindows().catch(() => null);
+  if (open) {
+    const openSet = new Set(open);
+    for (const label of openContentWindows) {
+      if (!openSet.has(label)) openContentWindows.delete(label);
+    }
+    // Pick up any content window that opened without a handshake (safety net).
+    for (const label of PLAYER_CONTENT_WINDOW_LABELS) {
+      if (openSet.has(label)) openContentWindows.add(label);
+    }
+  }
+  if (openContentWindows.size === 0 && contentWindowReconcileTimer !== null) {
+    clearInterval(contentWindowReconcileTimer);
+    contentWindowReconcileTimer = null;
+  }
 }
 
 function coverUrl(picUrl: string | undefined, size: number) {
@@ -241,15 +306,16 @@ export function broadcastPlayerTime(force = false) {
   const music = getMusic();
   if (!force && !music.getPlayState) return;
 
+  // Nothing to update when no content window is open — skip the payload build
+  // and the per-window emit entirely (the common case).
+  const labels = openContentBroadcastLabels();
+  if (labels.length === 0) return;
+
   const now = performance.now();
   if (!force && now - lastTimeBroadcastAt < TIME_BROADCAST_INTERVAL_MS) return;
   lastTimeBroadcastAt = now;
 
-  emitToLabels(
-    PLAYER_COMMUNICATION_EVENTS.time,
-    buildPlayerTimePayload(),
-    PLAYER_CONTENT_WINDOW_LABELS,
-  );
+  emitToLabels(PLAYER_COMMUNICATION_EVENTS.time, buildPlayerTimePayload(), labels);
 }
 
 export function broadcastPlayerLyrics(force = false) {
@@ -377,6 +443,9 @@ export async function setupMainPlayerCommunication(options: MainPlayerCommunicat
 
   await tauri.event.listen<{ label?: unknown }>(PLAYER_COMMUNICATION_EVENTS.slaveReady, (event) => {
     const label = event.payload?.label;
-    if (typeof label === "string") broadcastPlayerFullState(label);
+    if (typeof label === "string") {
+      markContentWindowOpen(label);
+      broadcastPlayerFullState(label);
+    }
   });
 }

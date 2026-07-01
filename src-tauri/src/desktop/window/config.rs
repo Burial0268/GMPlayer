@@ -92,7 +92,7 @@ pub struct WindowConfig {
     pub use_overlay_titlebar: bool,
     /// macOS traffic lights inset (x, y). Only used on macOS.
     #[serde(default)]
-    pub traffic_lights_inset: Option<(f64, f64)>,
+    pub traffic_lights_inset: Option<(f32, f32)>,
     /// Native window effect to apply (e.g. "acrylic"). Platform-specific.
     #[serde(default)]
     pub window_effect: Option<String>,
