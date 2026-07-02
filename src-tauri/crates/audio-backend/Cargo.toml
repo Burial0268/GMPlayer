@@ -37,7 +37,7 @@ rodio = { version = "0.20", features = ["symphonia-all"] }
 # the audio callback — that work gets deprioritised by EcoQoS when the app
 # is backgrounded and shows up as stutter). Version pinned to whatever
 # rodio 0.20 already brings in transitively.
-cpal = "0.15"
+cpal = { version = "0.15", features = ["oboe-shared-stdcxx"] }
 rustfft = "6"
 parking_lot = "0.12"
 log = "0.4"
