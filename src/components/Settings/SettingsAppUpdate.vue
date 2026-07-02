@@ -111,7 +111,12 @@
           <n-icon :component="DescriptionRound" />
           {{ t("setting.releaseNotesTitle") }}
         </div>
-        <n-scrollbar class="release-notes-body">{{ updaterState.update.body }}</n-scrollbar>
+        <n-scrollbar class="release-notes-body">
+            <div
+              class="markdown-body"
+              v-html="releaseNotesHtml"
+            />
+        </n-scrollbar>
       </div>
     </div>
   </div>
@@ -136,9 +141,16 @@ import {
   TaskAltRound,
 } from "@vicons/material";
 import { useAppUpdater } from "@/composables/useAppUpdater";
+import MarkdownIt from "markdown-it";
 
 declare const $dialog: any;
 declare const $message: any;
+
+const md = new MarkdownIt({
+  html: false,
+  breaks: true,
+  linkify: true,
+});
 
 const { t } = useI18n();
 const themeVars = useThemeVars();
@@ -156,6 +168,10 @@ const isDownloading = computed(() => updaterState.status === "downloading");
 const isInstalling = computed(() => updaterState.status === "installing");
 const showInstallButton = computed(
   () => hasUpdate.value || isDownloading.value || isInstalling.value,
+);
+
+const releaseNotesHtml = computed(() =>
+  md.render(updaterState.update?.body ?? "")
 );
 
 const updaterTip = computed(() => {
