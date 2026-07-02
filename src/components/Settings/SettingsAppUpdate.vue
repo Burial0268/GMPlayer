@@ -142,6 +142,7 @@ import {
 } from "@vicons/material";
 import { useAppUpdater } from "@/composables/useAppUpdater";
 import MarkdownIt from "markdown-it";
+import "github-markdown-css/github-markdown.css";
 
 declare const $dialog: any;
 declare const $message: any;
