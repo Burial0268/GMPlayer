@@ -21,8 +21,8 @@
           ]"
           style="height: 100vh"
         >
-          <div v-if="isTauri()" class="nav-drag-layer" data-tauri-drag-region />
-          <Nav :class="['app-nav-overlay', { 'tauri-nav': isTauri() }]" />
+          <div v-if="usesDesktopTauriChrome" class="nav-drag-layer" data-tauri-drag-region />
+          <Nav :class="['app-nav-overlay', { 'tauri-nav': usesDesktopTauriChrome }]" />
           <div class="content-panel-frame" aria-hidden="true" />
           <n-layout-content
             position="absolute"
@@ -69,7 +69,7 @@
       </div>
       <MobileTabBar />
     </div>
-    <TitleBar />
+    <TitleBar v-if="usesDesktopTauriChrome" />
   </Provider>
 </template>
 
@@ -81,6 +81,7 @@ import { userDailySignin, userYunbeiSign } from "@/api/user";
 import { useI18n } from "vue-i18n";
 import {
   getDesktopEnvironment,
+  isMobile,
   isTauri,
   windowManager,
   type DesktopEnvironment,
@@ -109,6 +110,7 @@ const contentStage = ref<HTMLElement | null>(null);
 const mainContent = ref<HTMLElement | null>(null);
 const isInlineQueueLayout = ref(false);
 const desktopEnvironment = ref<DesktopEnvironment | null>(null);
+const usesDesktopTauriChrome = ref(false);
 let inlineQueueMediaQuery: MediaQueryList | null = null;
 
 const showInlineQueue = computed(() => isInlineQueueLayout.value && music.showPlayList);
@@ -300,9 +302,14 @@ onMounted(() => {
   // Tauri 环境标识
   if (typeof window !== "undefined" && "__TAURI__" in window) {
     document.documentElement.classList.add("tauri-app");
-    getDesktopEnvironment()
+    isMobile()
+      .then((mobile) => {
+        usesDesktopTauriChrome.value = !mobile;
+        if (mobile) return null;
+        return getDesktopEnvironment();
+      })
       .then((environment) => {
-        desktopEnvironment.value = environment;
+        if (environment) desktopEnvironment.value = environment;
       })
       .catch(() => {});
   }

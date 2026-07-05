@@ -1,7 +1,6 @@
 <template>
   <Teleport to="body">
     <div
-      v-if="!isMobile || mobileOverlayVisible"
       ref="bigPlayerRef"
       :class="[
         'bplayer',
@@ -54,7 +53,7 @@
                 :albumImageUrl="setting.albumImageUrl"
                 :flowSpeed="setting.flowSpeed"
                 :lowFreqVolume="computedLowFreqVolume"
-                :staticMode="false"
+                :staticMode="mobileBackgroundStatic"
               />
             </Motion>
 
@@ -232,6 +231,9 @@ const mobileOverlayVisible = computed(() =>
 );
 const mobilePlayerOpened = computed(() =>
   isMobile.value ? music.showBigPlayer || mobileExiting.value : music.showBigPlayer,
+);
+const mobileBackgroundStatic = computed(
+  () => !music.showBigPlayer && !mobileTransitionActive.value && !mobileExiting.value,
 );
 const sharedLayoutTransition = {
   type: "spring",
@@ -813,6 +815,33 @@ const animateProgressTo = (target: number, onComplete?: () => void) => {
   });
 };
 
+const resetClosedMobileState = () => {
+  stopArtworkFrameAnimations();
+  mobileLayer.value = 1;
+  mobileInteractive.value = false;
+  mobileTransitionActive.value = false;
+  mobileTransitionDirection.value = null;
+  mobileExiting.value = false;
+  mobileContentReady.value = false;
+  mobileContentVisible.value = false;
+  mobileTransitionPhase.value = "mini";
+  mobileAlbumLayerReady.value = false;
+  pendingInteractiveProgress = 0;
+  interactiveFrames = null;
+  playerProgress.set(0);
+  fullUiOpacity.set(0);
+  fullUiY.set(14);
+  controlsOpacity.set(0);
+  controlsY.set(14);
+  backgroundVisualOpacity.set(0);
+  backgroundGrayOpacity.set(0);
+  backgroundTop.set(0);
+  backgroundRadius.set(0);
+  artworkOpacity.set(0);
+  resetMobileQueueState();
+  clearMiniUiVars();
+};
+
 const switchMobileLayer = (targetLayer: number) => {
   if (targetLayer !== 1 && targetLayer !== 2) return;
   if (targetLayer === mobileLayer.value) return;
@@ -864,16 +893,7 @@ const handleDesktopWindowDrag = (event: MouseEvent) => {
 };
 
 const cleanupClosedMobileTransition = () => {
-  stopArtworkFrameAnimations();
-  mobileInteractive.value = false;
-  mobileTransitionActive.value = false;
-  mobileTransitionDirection.value = null;
-  mobileExiting.value = false;
-  resetMobileQueueState();
-  interactiveFrames = null;
-  mobileAlbumLayerReady.value = false;
-  applyProgressState(0);
-  clearMiniUiVars();
+  resetClosedMobileState();
 };
 
 const completeClosedMobileTransition = (updateStore: boolean) => {
@@ -958,6 +978,13 @@ const beginMobileInteractive = async (
   stopArtworkFrameAnimations();
   pendingInteractiveProgress = clamp(initialProgress);
   mobileTransitionDirection.value = pendingInteractiveProgress >= 0.999 ? "closing" : "opening";
+  if (pendingInteractiveProgress <= 0.001) {
+    mobileLayer.value = 1;
+    mobileContentReady.value = false;
+    mobileContentVisible.value = false;
+    mobileTransitionPhase.value = "mini";
+    mobileAlbumLayerReady.value = false;
+  }
   mobileInteractive.value = true;
   mobileTransitionActive.value = true;
   mobileExiting.value = false;
@@ -1338,7 +1365,7 @@ defineExpose({
     }
 
     &.opened {
-      pointer-events: auto;
+      pointer-events: none;
     }
 
     &.mobile-transitioning {
@@ -1362,6 +1389,7 @@ defineExpose({
       background-color: transparent;
       transform-origin: bottom center;
       will-change: transform, opacity;
+      isolation: isolate;
 
       .mobile-background-visual {
         position: absolute;
@@ -1390,10 +1418,22 @@ defineExpose({
           will-change: opacity;
         }
       }
+
+      :deep(.mobile-full-ui) {
+        mix-blend-mode: plus-lighter;
+      }
+
+      :deep(.mobile-thumb) {
+        pointer-events: none;
+      }
     }
 
     :deep(.mobile-pages) {
       z-index: 2;
+    }
+
+    :deep(.mobile-cover-frame) {
+      pointer-events: none;
     }
 
     // ═══ 状态切换 (AMLL .hideLyric 模式反转) ═══
@@ -1405,7 +1445,7 @@ defineExpose({
     }
 
     :deep(.mobile-cover-layout) {
-      pointer-events: auto;
+      pointer-events: none;
     }
 
     :deep(.mobile-lyric),
@@ -1419,12 +1459,19 @@ defineExpose({
       opacity: 1;
     }
 
+    &.mobile-visible {
+      :deep(.mobile-thumb),
+      :deep(.mobile-cover-frame),
+      :deep(.mobile-cover-layout) {
+        pointer-events: auto;
+      }
+    }
+
     // Layer 2 激活 (= AMLL default)
     &.layer2-active {
       :deep(.mobile-small-controls) {
         opacity: 1;
         transition: opacity 0.25s 0.25s;
-        pointer-events: auto;
       }
 
       :deep(.mobile-cover-layout) {
@@ -1435,12 +1482,19 @@ defineExpose({
       :deep(.no-lyrics) {
         opacity: 1;
         transition: opacity 0.5s 0.5s;
-        pointer-events: auto;
       }
 
       :deep(.mobile-big-controls) {
         opacity: 0;
         pointer-events: none;
+      }
+    }
+
+    &.mobile-visible.layer2-active {
+      :deep(.mobile-small-controls),
+      :deep(.mobile-lyric),
+      :deep(.no-lyrics) {
+        pointer-events: auto;
       }
     }
 

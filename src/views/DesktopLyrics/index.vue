@@ -7,27 +7,22 @@
       'temp-unlocked': isTempUnlocked,
       'no-animation': !animationsEnabled,
     }"
-    :data-tauri-drag-region="!isLocked || undefined"
     @mousemove="onMouseMove"
     @mouseenter="onMouseEnter"
     @mouseleave="onMouseLeave"
+    @pointerdown="handleWindowDrag"
     @contextmenu.prevent
   >
     <!-- Header bar -->
     <div
       ref="headerRef"
       class="header"
-      :data-tauri-drag-region="!isLocked || undefined"
       @mouseenter="isHeaderHovering = true"
       @mouseleave="onHeaderLeave"
     >
       <template v-if="!isLocked">
         <div class="header-left">
-          <span
-            class="song-name"
-            :title="state.title"
-            :data-tauri-drag-region="!isLocked || undefined"
-          >
+          <span class="song-name" :title="state.title">
             {{ state.title || $t("desktopLyrics.noLyrics") }}
           </span>
         </div>
@@ -175,11 +170,16 @@
         <div
           v-for="(line, index) in renderLyricLines"
           :key="line.key"
-          :ref="(el) => setLyricLineRef(el as HTMLElement, line.key)"
           class="lyric-line"
-          :class="{ current: line.isTimelineActive, primary: line.isCurrent, title: line.isTitle }"
-          :style="getLineStyle(line, index)"
-          @click="seekToLine(line)"
+          :class="{
+            current: line.isTimelineActive,
+            primary: line.isCurrent,
+            parallel: line.isParallel,
+            interlude: line.isInterlude,
+            retiring: line.slotIndex < 0,
+            title: line.isTitle,
+          }"
+          :style="getLineStyle(line)"
         >
           <div class="lyric-inner" :style="getLyricTextStyle(line)">
             <LyricScroll
@@ -194,10 +194,11 @@
                   v-for="(word, wi) in line.words"
                   :key="wi"
                   class="lyric-word"
+                  :class="{ 'interlude-word': line.isInterlude }"
                   :data-word="word.word"
                 >
                   <span class="word-bg">{{ word.word }}</span>
-                  <span class="word-fill" :style="getWordStyle(word)">{{ word.word }}</span>
+                  <span class="word-fill" :style="getWordStyle(word, line)">{{ word.word }}</span>
                 </span>
               </template>
               <template v-else>
@@ -215,7 +216,9 @@
             :progress="lineScrollProgress(line)"
             :align="scrollAlign"
             :end-padding="DESKTOP_SCROLL_END_PADDING"
-          />
+          >
+            <span class="lyric-sub-text">{{ line.translatedLyric }}</span>
+          </LyricScroll>
           <LyricScroll
             v-if="line.isCurrent && line.romanLyric && bridge.settings.showRoma"
             class="lyric-tran lyric-roma"
@@ -224,18 +227,15 @@
             :progress="lineScrollProgress(line)"
             :align="scrollAlign"
             :end-padding="DESKTOP_SCROLL_END_PADDING"
-          />
+          >
+            <span class="lyric-sub-text">{{ line.romanLyric }}</span>
+          </LyricScroll>
         </div>
       </TransitionGroup>
-      <div
-        v-else-if="displayState === 'noLyrics'"
-        ref="noLyricsRef"
-        class="no-lyrics"
-        :style="noLyricsTextStyle"
-      >
+      <div v-else-if="displayState === 'noLyrics'" class="no-lyrics" :style="noLyricsTextStyle">
         <span class="song-title">{{ $t("desktopLyrics.pureMusic") }}</span>
       </div>
-      <div v-else ref="noLyricsRef" class="no-lyrics" :style="noLyricsTextStyle">
+      <div v-else class="no-lyrics" :style="noLyricsTextStyle">
         <span class="song-title">{{ state.title || $t("desktopLyrics.noLyrics") }}</span>
         <span v-if="state.artist" class="artist-name">{{ state.artist }}</span>
       </div>
@@ -245,6 +245,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, shallowRef, onMounted, onUnmounted, nextTick } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { usePlayerBridge } from "@/utils/tauri/playerBridge";
 import { windowManager } from "@/utils/tauri/windowManager";
 import LyricScroll from "@/components/Lyric/LyricScroll.vue";
@@ -296,7 +297,6 @@ function getSafeEndTime(lines: AMLLLine[], idx: number): number {
 const interpolatedTimeMs = ref(0);
 let timeAnchorMs = 0;
 let perfAnchor = 0;
-let lastTimePacketAt = 0;
 let rafId = 0;
 
 // Re-anchor the interpolation clock to an authoritative time packet from the master.
@@ -310,7 +310,6 @@ function syncBridgeTime(sec: number, forceSnap = false) {
     forceSnap || !state.isPlaying || Math.abs(bridgeMs - predicted) > TIME_SYNC_THRESHOLD;
   timeAnchorMs = bridgeMs;
   perfAnchor = now;
-  lastTimePacketAt = now;
   interpolatedTimeMs.value = shouldSnap ? bridgeMs : predicted;
 }
 
@@ -340,9 +339,13 @@ watch(
   (sec) => syncBridgeTime(sec),
 );
 
+watch(
+  () => state.isPlaying,
+  () => syncBridgeTime(bridge.currentTime.value, true),
+);
+
 function tick() {
-  const recentlyReceivedTime = performance.now() - lastTimePacketAt < 300;
-  if (state.isPlaying || recentlyReceivedTime) {
+  if (state.isPlaying) {
     interpolatedTimeMs.value = timeAnchorMs + (performance.now() - perfAnchor);
   }
   rafId = requestAnimationFrame(tick);
@@ -371,6 +374,9 @@ interface VisibleLine {
   key: string;
   isCurrent: boolean;
   isTimelineActive: boolean;
+  isParallel: boolean;
+  isInterlude: boolean;
+  slotIndex: number;
   words: AMLLWord[];
   text: string;
   translatedLyric: string;
@@ -379,6 +385,17 @@ interface VisibleLine {
   lineEndTime: number;
   lineIndex: number;
   isTitle: boolean;
+}
+
+interface InterludeLineEnd {
+  time: number;
+}
+
+interface InterludeWindow {
+  anchorLineIndex: number;
+  nextIndex: number;
+  startTime: number;
+  endTime: number;
 }
 
 function clamp(v: number, min: number, max: number) {
@@ -391,12 +408,17 @@ function buildVisibleLine(
   gen: number,
   isCurrent: boolean,
   isTimelineActive: boolean,
+  isParallel = false,
+  slotIndex = 0,
 ): VisibleLine {
   const line = lines[index];
   return {
     key: `${gen}-${index}`,
     isCurrent,
     isTimelineActive,
+    isParallel,
+    isInterlude: false,
+    slotIndex,
     words: line.words,
     text: line.words.map((w) => w.word).join(""),
     translatedLyric: line.translatedLyric || "",
@@ -408,6 +430,53 @@ function buildVisibleLine(
   };
 }
 
+function buildInterludeLine(
+  gen: number,
+  prevIndex: number,
+  nextIndex: number,
+  lineStartTime: number,
+  lineEndTime: number,
+  slotIndex: number,
+): VisibleLine {
+  return {
+    key: `${gen}-interlude-${prevIndex}-${nextIndex}`,
+    isCurrent: false,
+    isTimelineActive: true,
+    isParallel: false,
+    isInterlude: true,
+    slotIndex,
+    words: buildInterludeWords(lineStartTime, lineEndTime),
+    text: "...",
+    translatedLyric: "",
+    romanLyric: "",
+    lineStartTime,
+    lineEndTime,
+    lineIndex: prevIndex,
+    isTitle: false,
+  };
+}
+
+function buildInterludeWords(lineStartTime: number, lineEndTime: number): AMLLWord[] {
+  const availableDuration = Math.max(INTERLUDE_DOT_COUNT, lineEndTime - lineStartTime);
+  const fillDuration = Math.max(
+    INTERLUDE_DOT_COUNT,
+    availableDuration - INTERLUDE_DOT_FILL_IDLE_MS,
+  );
+  const segmentDuration = fillDuration / INTERLUDE_DOT_COUNT;
+
+  return Array.from({ length: INTERLUDE_DOT_COUNT }, (_, dotIndex) => {
+    const startTime = lineStartTime + dotIndex * segmentDuration;
+    return {
+      word: ".",
+      startTime,
+      endTime:
+        dotIndex === INTERLUDE_DOT_COUNT - 1
+          ? lineStartTime + fillDuration
+          : startTime + segmentDuration,
+    };
+  });
+}
+
 function hasVisibleSubLines(line: VisibleLine | undefined) {
   return Boolean(
     line &&
@@ -416,19 +485,164 @@ function hasVisibleSubLines(line: VisibleLine | undefined) {
   );
 }
 
+function getLineText(line: AMLLLine) {
+  return line.words.map((word) => word.word).join("");
+}
+
+function getLastWordEndTime(line: AMLLLine) {
+  let endTime = 0;
+  for (const word of line.words) {
+    if (word.endTime > endTime) endTime = word.endTime;
+  }
+  return endTime;
+}
+
+function getEstimatedLineSingEndTime(line: AMLLLine, nextStartTime: number) {
+  const textLength = Array.from(getLineText(line).trim()).length;
+  const estimatedDuration = clamp(
+    INTERLUDE_ESTIMATED_BASE_DURATION_MS + textLength * INTERLUDE_ESTIMATED_CHAR_DURATION_MS,
+    INTERLUDE_ESTIMATED_MIN_DURATION_MS,
+    INTERLUDE_ESTIMATED_MAX_DURATION_MS,
+  );
+  return Math.min(line.startTime + estimatedDuration, nextStartTime - INTERLUDE_LINE_END_GUARD_MS);
+}
+
+function hasLineStarted(line: AMLLLine, timelineMs: number) {
+  return timelineMs >= line.startTime;
+}
+
+function isLineActive(lines: AMLLLine[], index: number, timelineMs: number) {
+  const line = lines[index];
+  return hasLineStarted(line, timelineMs) && timelineMs < getSafeEndTime(lines, index);
+}
+
+function collectActiveLineIndices(
+  lines: AMLLLine[],
+  latestStartedIndex: number,
+  timelineMs: number,
+) {
+  const activeIndices: number[] = [];
+  for (let index = latestStartedIndex; index >= 0; index--) {
+    if (isLineActive(lines, index, timelineMs)) {
+      activeIndices.push(index);
+      if (activeIndices.length >= MAX_DESKTOP_RENDER_LINES) break;
+    }
+  }
+  return activeIndices.reverse();
+}
+
+function isLineTimelineActive(
+  lines: AMLLLine[],
+  index: number,
+  timelineMs: number,
+  isCurrent = false,
+) {
+  if (isCurrent) return true;
+  const line = lines[index];
+  return timelineMs >= line.startTime && timelineMs < getSafeEndTime(lines, index);
+}
+
+function getInterludeLineEnd(lines: AMLLLine[], index: number, nextStartTime: number) {
+  if (index < 0) {
+    return {
+      time: 0,
+    } satisfies InterludeLineEnd;
+  }
+
+  const line = lines[index];
+
+  if (line.endTime > line.startTime && line.endTime < nextStartTime - INTERLUDE_LINE_END_GUARD_MS) {
+    return {
+      time: line.endTime,
+    } satisfies InterludeLineEnd;
+  }
+
+  const wordEndTime = getLastWordEndTime(line);
+  if (wordEndTime > nextStartTime + INTERLUDE_LINE_END_GUARD_MS) {
+    return null;
+  }
+  if (
+    line.words.length > 1 &&
+    wordEndTime > line.startTime &&
+    wordEndTime < nextStartTime - INTERLUDE_LINE_END_GUARD_MS
+  ) {
+    return {
+      time: wordEndTime,
+    } satisfies InterludeLineEnd;
+  }
+
+  const estimatedEndTime = getEstimatedLineSingEndTime(line, nextStartTime);
+  return {
+    time: estimatedEndTime,
+  } satisfies InterludeLineEnd;
+}
+
+function checkInterludeGap(lines: AMLLLine[], anchorLineIndex: number, currentTime: number) {
+  const nextIndex = anchorLineIndex + 1;
+  if (nextIndex < 0 || nextIndex >= lines.length) return null;
+
+  const nextStartTime = lines[nextIndex].startTime;
+  const lineEnd = getInterludeLineEnd(lines, anchorLineIndex, nextStartTime);
+  if (lineEnd === null) return null;
+
+  const startTime = Math.max(0, lineEnd.time);
+  const endTime = Math.max(startTime, nextStartTime - INTERLUDE_END_LOOKAHEAD_MS);
+  if (endTime - startTime < INTERLUDE_MIN_GAP_MS) return null;
+  if (currentTime <= startTime || currentTime >= endTime) return null;
+
+  return {
+    anchorLineIndex,
+    nextIndex,
+    startTime,
+    endTime,
+  } satisfies InterludeWindow;
+}
+
+function getInterludeWindow(lines: AMLLLine[], index: number, currentTime: number) {
+  const adjustedTime = currentTime + INTERLUDE_TIME_LOOKAHEAD_MS;
+  return (
+    checkInterludeGap(lines, index - 1, adjustedTime) ||
+    checkInterludeGap(lines, index, adjustedTime) ||
+    checkInterludeGap(lines, index + 1, adjustedTime)
+  );
+}
+
+function getParallelLineSlot(renderIndex: number) {
+  return renderIndex;
+}
+
 const renderLyricLines = computed<VisibleLine[]>(() => {
   const lines = amllLines.value;
   if (!lines || lines.length === 0) return [];
   const idx = currentLineIndex.value;
   const gen = songGeneration.value;
   const result: VisibleLine[] = [];
+  const displayMs = interpolatedTimeMs.value;
 
   // Before first lyric line: show song title + artist as placeholder
   if (idx < 0) {
+    const interlude = getInterludeWindow(lines, idx, displayMs);
+    if (interlude) {
+      result.push(
+        buildInterludeLine(
+          gen,
+          interlude.anchorLineIndex,
+          interlude.nextIndex,
+          interlude.startTime,
+          interlude.endTime,
+          0,
+        ),
+      );
+      return result;
+    }
+
     result.push({
       key: `${gen}-title`,
       isCurrent: true,
       isTimelineActive: true,
+      isParallel: false,
+      isInterlude: false,
+      slotIndex: 0,
       words: [],
       text: state.title || "",
       translatedLyric: state.artist || "",
@@ -443,27 +657,63 @@ const renderLyricLines = computed<VisibleLine[]>(() => {
 
   if (idx >= lines.length) return result;
 
-  const currentLine = buildVisibleLine(lines, idx, gen, true, true);
-  const prevIdx = idx - 1;
-  const timelineMs = interpolatedTimeMs.value + LYRIC_LOOKAHEAD;
-  if (prevIdx >= 0) {
-    const prevEndTime = getSafeEndTime(lines, prevIdx);
-    const prevOverlapsCurrent = prevEndTime > currentLine.lineStartTime;
-    const prevStillRendering = timelineMs < prevEndTime;
-    const prevSettling = timelineMs < prevEndTime + PREVIOUS_LINE_SETTLE_MS;
-    if (prevOverlapsCurrent && prevSettling) {
-      result.push(buildVisibleLine(lines, prevIdx, gen, false, prevStillRendering));
-    }
+  const timelineMs = interpolatedTimeMs.value + LINE_SWITCH_LOOKAHEAD;
+  const interlude = getInterludeWindow(lines, idx, displayMs);
+  if (interlude) {
+    result.push(
+      buildInterludeLine(
+        gen,
+        interlude.anchorLineIndex,
+        interlude.nextIndex,
+        interlude.startTime,
+        interlude.endTime,
+        0,
+      ),
+    );
+    return result;
   }
 
-  result.push(currentLine);
+  const activeLineIndices = collectActiveLineIndices(lines, idx, timelineMs);
+  const visibleLineIndices = activeLineIndices.length > 0 ? activeLineIndices : [idx];
+  const primaryIdx = visibleLineIndices[visibleLineIndices.length - 1];
+  const hasParallelRows = visibleLineIndices.length > 1;
+
+  for (let renderIndex = 0; renderIndex < visibleLineIndices.length; renderIndex++) {
+    const lineIdx = visibleLineIndices[renderIndex];
+    const lineIsPrimary = lineIdx === primaryIdx;
+    result.push(
+      buildVisibleLine(
+        lines,
+        lineIdx,
+        gen,
+        lineIsPrimary,
+        isLineTimelineActive(lines, lineIdx, timelineMs, lineIsPrimary),
+        hasParallelRows,
+        getParallelLineSlot(renderIndex),
+      ),
+    );
+  }
+
+  const primaryLine = result.find((line) => line.lineIndex === primaryIdx);
 
   // Next line preview stays disabled when the primary line already needs room for
   // translation or romanization; otherwise the bottom auxiliary line can overflow.
-  if (!hasVisibleSubLines(currentLine) && result.length < 2) {
+  // Parallel lyrics reserve all rows for real active timelines, so a finished middle
+  // row can leave while a new active row takes its slot without pushing older lines.
+  if (!hasParallelRows && primaryLine && !hasVisibleSubLines(primaryLine)) {
     const nextIdx = idx + 1;
     if (nextIdx < lines.length) {
-      result.push(buildVisibleLine(lines, nextIdx, gen, false, false));
+      result.push(
+        buildVisibleLine(
+          lines,
+          nextIdx,
+          gen,
+          false,
+          isLineTimelineActive(lines, nextIdx, timelineMs),
+          false,
+          1,
+        ),
+      );
     }
   }
 
@@ -472,20 +722,18 @@ const renderLyricLines = computed<VisibleLine[]>(() => {
 
 // ── YRC Word Gradient Style ───────────────────────────────────────────
 
-function getWordStyle(word: AMLLWord) {
+function getWordStyle(word: AMLLWord, line: VisibleLine) {
   const duration = word.endTime - word.startTime;
   if (duration <= 0) return { clipPath: "inset(0 0% 0 0)" };
-  const progress = clamp(
-    (interpolatedTimeMs.value - word.startTime + LYRIC_LOOKAHEAD) / duration,
-    0,
-    1,
-  );
+  const lookahead = line.isInterlude ? 0 : LYRIC_LOOKAHEAD;
+  const progress = clamp((interpolatedTimeMs.value - word.startTime + lookahead) / duration, 0, 1);
   return {
     clipPath: `inset(0 ${(1 - progress) * 100}% 0 0)`,
   };
 }
 
 function shouldRenderWordProgress(line: VisibleLine) {
+  if (line.isInterlude) return animationsEnabled.value && line.words.length > 1;
   return (
     !line.isTitle &&
     bridge.settings.showYrc &&
@@ -504,7 +752,17 @@ const MIN_TRANSLATION_FONT_SIZE = 9;
 const MAIN_LINE_HEIGHT = 1.18;
 const SUB_LINE_HEIGHT = 1.15;
 const PARALLEL_LINE_TOP_SCALE = 1.9;
-const PREVIOUS_LINE_SETTLE_MS = 620;
+const MAX_DESKTOP_RENDER_LINES = 3;
+const INTERLUDE_DOT_COUNT = 3;
+const INTERLUDE_TIME_LOOKAHEAD_MS = 20;
+const INTERLUDE_END_LOOKAHEAD_MS = 250;
+const INTERLUDE_MIN_GAP_MS = 4000;
+const INTERLUDE_LINE_END_GUARD_MS = INTERLUDE_END_LOOKAHEAD_MS;
+const INTERLUDE_ESTIMATED_BASE_DURATION_MS = 1100;
+const INTERLUDE_ESTIMATED_CHAR_DURATION_MS = 140;
+const INTERLUDE_ESTIMATED_MIN_DURATION_MS = 2200;
+const INTERLUDE_ESTIMATED_MAX_DURATION_MS = 5200;
+const INTERLUDE_DOT_FILL_IDLE_MS = 420;
 const LINE_VERTICAL_PADDING = 8;
 const SUB_LINE_MARGIN_TOP = 2;
 const DESKTOP_SHELL_VERTICAL_PADDING = 24;
@@ -547,24 +805,28 @@ function estimateLyricGroupHeight(baseFontSize: number, currentSubLineFontSize?:
   const visibleLines = renderLyricLines.value;
   if (visibleLines.length === 0) return baseFontSize * MAIN_LINE_HEIGHT + LINE_VERTICAL_PADDING;
 
-  const currentIndex = Math.max(
-    0,
-    visibleLines.findIndex((line) => line.isCurrent),
-  );
-  const currentLine = visibleLines[currentIndex] ?? visibleLines[0];
-  const currentHeight = estimateLineHeight(baseFontSize, currentLine, currentSubLineFontSize);
-  if (visibleLines.length === 1) return currentHeight;
+  const lineGap = baseFontSize * PARALLEL_LINE_TOP_SCALE;
+  let hasMeasuredLine = false;
+  let minTop = 0;
+  let maxBottom = 0;
 
-  const secondaryLine = visibleLines[currentIndex === 0 ? 1 : 0] ?? currentLine;
-  const secondaryHeight = estimateLineHeight(
-    baseFontSize,
-    secondaryLine,
-    secondaryLine.isCurrent ? currentSubLineFontSize : undefined,
-  );
-  if (currentIndex === 0) {
-    return Math.max(currentHeight, baseFontSize * PARALLEL_LINE_TOP_SCALE + secondaryHeight);
+  for (const line of visibleLines) {
+    if (line.slotIndex < 0) continue;
+
+    const lineTop = line.slotIndex * lineGap;
+    const lineHeight = estimateLineHeight(
+      baseFontSize,
+      line,
+      line.isCurrent ? currentSubLineFontSize : undefined,
+    );
+    minTop = hasMeasuredLine ? Math.min(minTop, lineTop) : lineTop;
+    maxBottom = hasMeasuredLine ? Math.max(maxBottom, lineTop + lineHeight) : lineTop + lineHeight;
+    hasMeasuredLine = true;
   }
-  return baseFontSize * PARALLEL_LINE_TOP_SCALE + currentHeight;
+
+  return hasMeasuredLine
+    ? maxBottom - minTop
+    : baseFontSize * MAIN_LINE_HEIGHT + LINE_VERTICAL_PADDING;
 }
 
 const localFontSize = computed(() => {
@@ -578,14 +840,14 @@ const localFontSize = computed(() => {
 
 const currentSubLineFontSize = computed(() => {
   const visibleLines = renderLyricLines.value;
-  const currentIndex = visibleLines.findIndex((line) => line.isCurrent);
-  const currentLine = visibleLines[currentIndex];
+  const currentLine = visibleLines.find((line) => line.isCurrent);
   const subLineCount = getSubLineCount(currentLine);
   const desiredSize = getDesiredTranslationFontSizeFor(localFontSize.value);
   if (!currentLine || subLineCount === 0) return desiredSize;
 
   const availableHeight = getAvailableLyricHeight();
-  const currentTop = Math.max(0, currentIndex) * localFontSize.value * PARALLEL_LINE_TOP_SCALE;
+  const currentTop =
+    Math.max(0, currentLine.slotIndex) * localFontSize.value * PARALLEL_LINE_TOP_SCALE;
   const remainingForCurrent = Math.max(0, availableHeight - currentTop - LINE_VERTICAL_PADDING);
   const mainHeight = localFontSize.value * MAIN_LINE_HEIGHT;
   const remainingForSubLines =
@@ -601,8 +863,8 @@ const lyricGroupTopOffset = computed(() => {
   return overflow > 0 ? -Math.ceil(overflow) : 0;
 });
 
-function getLineTop(index: number) {
-  return `${lyricGroupTopOffset.value + index * localFontSize.value * PARALLEL_LINE_TOP_SCALE}px`;
+function getLineTop(slotIndex: number) {
+  return `${lyricGroupTopOffset.value + slotIndex * localFontSize.value * PARALLEL_LINE_TOP_SCALE}px`;
 }
 
 function getLineFontSize(line: VisibleLine) {
@@ -610,12 +872,12 @@ function getLineFontSize(line: VisibleLine) {
 }
 
 function getLineScale(line: VisibleLine) {
-  return line.isCurrent || line.isTimelineActive ? 1 : SECONDARY_LINE_SCALE;
+  return line.isCurrent || line.isTimelineActive || line.isParallel ? 1 : SECONDARY_LINE_SCALE;
 }
 
-function getLineStyle(line: VisibleLine, index: number) {
+function getLineStyle(line: VisibleLine) {
   return {
-    top: getLineTop(index),
+    top: getLineTop(line.slotIndex),
   };
 }
 
@@ -638,7 +900,7 @@ const inactiveColor = computed(() =>
 );
 
 const secondaryColor = computed(() =>
-  state.accentColor ? `rgba(${state.accentColor}, 0.55)` : "rgba(255, 255, 255, 0.55)",
+  state.accentColor ? `rgba(${state.accentColor}, 0.42)` : "rgba(255, 255, 255, 0.42)",
 );
 
 const lyricTextStyle = computed(() => ({
@@ -706,9 +968,29 @@ function lineScrollProgress(line: VisibleLine) {
   return clamp((interpolatedTimeMs.value - line.lineStartTime) / duration, 0, 1);
 }
 
-// ── Drag Attrs (disabled when locked) ─────────────────────────────────
+// ── Window Drag ───────────────────────────────────────────────────────
 
-const dragAttrs = computed(() => (!isLocked.value ? { "data-tauri-drag-region": "" } : {}));
+const dragBlockSelector = [
+  "button",
+  "a",
+  "input",
+  "textarea",
+  "select",
+  "[role='button']",
+  "[role='slider']",
+].join(",");
+
+function handleWindowDrag(event: PointerEvent) {
+  if (isLocked.value || event.button !== 0 || event.detail > 1) return;
+  if (typeof window === "undefined" || !("__TAURI__" in window)) return;
+  const target = event.target;
+  if (target instanceof Element && target.closest(dragBlockSelector)) return;
+
+  event.preventDefault();
+  void getCurrentWindow()
+    .startDragging()
+    .catch(() => {});
+}
 
 // ── Header Visibility ─────────────────────────────────────────────────
 
@@ -825,13 +1107,6 @@ function stopCursorPolling() {
   // Replaced by stopMouseThrough.
 }
 
-// ── Seek on Line Click ────────────────────────────────────────────────
-
-function seekToLine(line: VisibleLine) {
-  if (isLocked.value || line.isTitle) return;
-  bridge.seek(line.lineStartTime / 1000);
-}
-
 // ── Close ─────────────────────────────────────────────────────────────
 
 async function handleClose() {
@@ -846,16 +1121,6 @@ let unlistenMouseThrough: (() => void) | null = null;
 
 /** DOM refs for hit regions that should capture mouse when locked */
 const headerRef = ref<HTMLElement | null>(null);
-const lyricLineMap = new Map<string, HTMLElement>();
-const noLyricsRef = ref<HTMLElement | null>(null);
-
-function setLyricLineRef(el: HTMLElement | null, key: string) {
-  if (el) {
-    lyricLineMap.set(key, el);
-  } else {
-    lyricLineMap.delete(key);
-  }
-}
 
 interface HitRegion {
   id: string;
@@ -890,32 +1155,6 @@ function collectHitRegions(): HitRegion[] {
       const rect = headerRef.value.getBoundingClientRect();
       regions.push({
         id: "header",
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-      });
-    }
-  }
-
-  // Lyric lines (clickable for seek) — only when NOT locked
-  if (!isLocked.value) {
-    for (const [key, el] of lyricLineMap) {
-      const rect = el.getBoundingClientRect();
-      regions.push({
-        id: `lyric-${key}`,
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-      });
-    }
-
-    // No-lyrics placeholder (also clickable)
-    if (noLyricsRef.value) {
-      const rect = noLyricsRef.value.getBoundingClientRect();
-      regions.push({
-        id: "no-lyrics",
         x: rect.left,
         y: rect.top,
         width: rect.width,
@@ -971,9 +1210,7 @@ async function startMouseThrough() {
       return;
     }
 
-    // ── Unlocked mode logic ────────────────────────────────────────
-    // Only lyric lines / no-lyrics placeholder are interactive.
-    windowManager.setIgnoreCursorEvents("desktop-lyrics", !inside);
+    windowManager.setIgnoreCursorEvents("desktop-lyrics", false);
   });
 }
 
@@ -1012,13 +1249,6 @@ async function updateMouseThroughRegions() {
 watch(showHeader, () => {
   if (isLocked.value && mouseThroughActive.value) {
     updateMouseThroughRegions();
-  }
-});
-
-// Watch for lyric content changes to update hit regions
-watch(renderLyricLines, () => {
-  if (isLocked.value && mouseThroughActive.value) {
-    nextTick(() => updateMouseThroughRegions());
   }
 });
 
@@ -1303,7 +1533,7 @@ onUnmounted(() => {
 
 // ── Lyric line ────────────────────────────────────────────────────────
 .lyric-line {
-  pointer-events: auto;
+  pointer-events: none;
   white-space: nowrap;
   overflow: hidden;
   width: 100%;
@@ -1320,13 +1550,27 @@ onUnmounted(() => {
     opacity: 0.78;
   }
 
+  &.current.parallel {
+    opacity: 1;
+  }
+
+  &.interlude {
+    opacity: 1;
+    filter: none;
+  }
+
+  &.retiring {
+    opacity: 0;
+    visibility: hidden;
+  }
+
   &.title {
     cursor: default;
     pointer-events: none;
   }
 
   &:not(.current) {
-    opacity: 0.45;
+    opacity: 0.38;
     filter: blur(0.5px);
 
     &:hover {
@@ -1401,6 +1645,19 @@ onUnmounted(() => {
   }
 }
 
+.lyric-word.interlude-word {
+  font-size: 1.16em;
+  letter-spacing: 0.16em;
+
+  .word-bg {
+    color: var(--inactive-color, rgba(255, 255, 255, 0.3));
+  }
+
+  .word-fill {
+    text-shadow: 0 0 0.38em var(--active-color, rgb(255, 255, 255));
+  }
+}
+
 // Translation line
 .lyric-tran {
   width: 100%;
@@ -1409,12 +1666,7 @@ onUnmounted(() => {
   text-align: center;
   color: rgba(255, 255, 255, 0.7);
   margin-top: 2px;
-  text-shadow:
-    -1px -1px 0 rgba(0, 0, 0, 0.6),
-    1px -1px 0 rgba(0, 0, 0, 0.6),
-    -1px 1px 0 rgba(0, 0, 0, 0.6),
-    1px 1px 0 rgba(0, 0, 0, 0.6),
-    0 1px 4px rgba(0, 0, 0, 0.4);
+  text-shadow: none;
   font-family:
     "HarmonyOS Sans SC",
     "Segoe UI",
@@ -1424,10 +1676,21 @@ onUnmounted(() => {
 
   &[data-scroll="true"] {
     box-sizing: border-box;
+    overflow: clip;
+    overflow-clip-margin: var(--lyric-scroll-shadow-bleed);
     padding-block: 0.5em;
     padding-inline: 0;
     margin-block: -0.5em 0;
   }
+}
+
+.lyric-sub-text {
+  text-shadow:
+    -1px -1px 0 rgba(0, 0, 0, 0.6),
+    1px -1px 0 rgba(0, 0, 0, 0.6),
+    -1px 1px 0 rgba(0, 0, 0, 0.6),
+    1px 1px 0 rgba(0, 0, 0, 0.6),
+    0 1px 4px rgba(0, 0, 0, 0.4);
 }
 
 // Romanization line
@@ -1449,7 +1712,7 @@ onUnmounted(() => {
 
 // ── No lyrics state ───────────────────────────────────────────────────
 .no-lyrics {
-  pointer-events: auto;
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1661,21 +1924,35 @@ onUnmounted(() => {
     padding: 4px max(10px, 0.2em);
     line-height: normal;
     white-space: nowrap;
-    pointer-events: auto;
+    pointer-events: none;
     transition:
       top 0.6s cubic-bezier(0.55, 0, 0.1, 1),
       color 0.6s cubic-bezier(0.55, 0, 0.1, 1),
       opacity 0.6s cubic-bezier(0.55, 0, 0.1, 1);
     will-change: top;
     transform-origin: left center;
+    --lyric-scroll-shadow-bleed: max(10px, 0.22em);
 
     &:not(.current) {
-      opacity: 0.72;
+      opacity: 0.58;
       filter: none;
     }
 
     &.current:not(.primary) {
       opacity: 0.78;
+    }
+
+    &.current.parallel {
+      opacity: 1;
+    }
+
+    &.interlude {
+      opacity: 1;
+      filter: none;
+    }
+
+    &.retiring {
+      opacity: 0;
     }
   }
 
@@ -1692,6 +1969,8 @@ onUnmounted(() => {
     // the measured start edge and makes scrolling lines misalign with normal lines.
     &[data-scroll="true"] {
       box-sizing: border-box;
+      overflow: clip;
+      overflow-clip-margin: var(--lyric-scroll-shadow-bleed);
       padding-block: 0.7em;
       padding-inline: 0;
       margin-block: -0.7em;

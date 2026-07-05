@@ -5,7 +5,7 @@
         <BlurBackgroundRender
           v-if="hasPlayData"
           :fps="fps || 30"
-          :playing="true"
+          :playing="backgroundPlaying"
           :album="coverImageUrl"
           :blurLevel="blurAmount || 30"
           :saturation="contrastAmount || 1.2"
@@ -18,7 +18,7 @@
     <template v-if="backgroundImageShow === 'eplor'">
       <BackgroundRender
         :fps="fps"
-        :playing="true"
+        :playing="backgroundPlaying"
         :flowSpeed="flowSpeed"
         :album="albumImageUrl === 'none' ? coverImageUrl : albumImageUrl"
         :renderScale="renderScale"
@@ -57,10 +57,11 @@ const props = defineProps<{
 const isEplorOrBlurMode = computed(
   () => props.backgroundImageShow === "eplor" || props.backgroundImageShow === "blur",
 );
+const backgroundPlaying = computed(() => !props.staticMode);
 
 const grayClasses = computed(() => {
   const classes: string[] = ["gray"];
-  if (props.backgroundImageShow === "blur") classes.push("blur");
+  if (props.backgroundImageShow) classes.push(props.backgroundImageShow);
   return classes;
 });
 

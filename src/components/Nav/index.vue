@@ -25,12 +25,12 @@ import { Left, Right, Moon, SunOne } from "@icon-park/vue-next";
 import { settingStore } from "@/store";
 import { useRouter } from "vue-router";
 import SearchInp from "@/components/SearchInp/index.vue";
-import { isTauri, isMobile } from "@/utils/tauri";
+import { isTauri, isMobile, isMobileDevice } from "@/utils/tauri";
 import { ref, onMounted, onUnmounted, computed } from "vue";
 
 const router = useRouter();
 const setting = settingStore();
-const isMobileState = ref(false);
+const isMobileState = ref(isMobileDevice());
 const isCompactViewport = ref(false);
 let compactViewportQuery = null;
 

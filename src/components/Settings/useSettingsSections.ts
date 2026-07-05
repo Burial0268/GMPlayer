@@ -430,7 +430,6 @@ export function useSettingsSections() {
           label: "setting.autoMixEnabled",
           tip: "setting.autoMixEnabledTip",
           control: "switch",
-          dev: true,
         },
         {
           key: "autoMixCrossfadeDuration",
@@ -482,13 +481,6 @@ export function useSettingsSections() {
           control: "switch",
           show: () => setting.autoMixEnabled,
           disabled: () => !setting.autoMixBpmMatch,
-        },
-        {
-          key: "autoMixTransitionEffects",
-          label: "setting.autoMixTransitionEffects",
-          tip: "setting.autoMixTransitionEffectsTip",
-          control: "switch",
-          show: () => setting.autoMixEnabled,
         },
         {
           key: "autoMixVocalGuard",

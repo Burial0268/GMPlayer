@@ -6,6 +6,7 @@ import piniaPluginPersistedstate from "pinia-plugin-persistedstate";
 
 import App from "@/App.vue";
 import router from "@/router/index";
+import { audioPreheat, isTauri } from "@/utils/tauri/audioBridge";
 
 // 全局样式
 import "@/style/global.scss";
@@ -22,6 +23,12 @@ useI18n(app);
 await useMobileSafeAreaVars();
 
 app.mount("#app");
+
+if (isTauri()) {
+  void audioPreheat().catch((err) => {
+    console.warn("[main] native audio preheat failed", err);
+  });
+}
 
 if ("serviceWorker" in navigator) {
   let pwaMessage: { destroy: () => void } | null = null;

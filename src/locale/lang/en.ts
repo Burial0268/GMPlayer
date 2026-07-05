@@ -580,8 +580,8 @@ const messages: Record<string, unknown> = {
     autoMixEnabledTip: "Automatically crossfade between songs for seamless transitions",
     autoMixCrossfadeDuration: "Crossfade Duration",
     autoMixCrossfadeDurationTip: "Duration of the crossfade between songs (seconds)",
-    autoMixBpmMatch: "BPM Matching",
-    autoMixBpmMatchTip: "Analyze song tempo for optimized transitions (desktop only)",
+    autoMixBpmMatch: "BPM Analysis",
+    autoMixBpmMatchTip: "Analyze song tempo for beat-aware transition planning",
     autoMixBeatAlign: "Beat Alignment",
     autoMixBeatAlignTip: "Align transition point to the beat of the song",
     autoMixVolumeNorm: "Volume Normalization",
@@ -594,9 +594,6 @@ const messages: Record<string, unknown> = {
     autoMixSmartCurve: "Smart Curve Override",
     autoMixSmartCurveTip:
       "Automatically select the best crossfade curve based on detected song ending type",
-    autoMixTransitionEffects: "Transition Effects",
-    autoMixTransitionEffectsTip:
-      "Add reverb tail and noise riser effects during transitions for smoother crossfades",
     autoMixVocalGuard: "Vocal Guard",
     autoMixVocalGuardTip:
       "Delay transition when vocal activity is detected to avoid cutting into singing",
