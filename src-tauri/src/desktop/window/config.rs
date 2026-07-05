@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", debug_assertions))]
+pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle --disable-features=VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,msWebOOUI,msPdfOOUI --enable-threaded-compositing --num-raster-threads=4 --remote-debugging-port=9222";
+
+#[cfg(all(target_os = "windows", not(debug_assertions)))]
 pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle --disable-features=VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,msWebOOUI,msPdfOOUI --enable-threaded-compositing --num-raster-threads=4";
 
 pub const TRAY_POPUP_WIDTH: f64 = 260.0;

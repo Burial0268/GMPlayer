@@ -260,6 +260,25 @@ pub fn list_windows(app: &AppHandle) -> Vec<String> {
     app.webview_windows().keys().cloned().collect()
 }
 
+/// Open DevTools for a managed window in development builds.
+pub fn open_window_devtools(app: &AppHandle, label: &str) -> Result<(), String> {
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = app;
+        let _ = label;
+        Err("window devtools are only available in dev builds".into())
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        let window = app
+            .get_webview_window(label)
+            .ok_or_else(|| format!("Window '{}' not found", label))?;
+        window.open_devtools();
+        Ok(())
+    }
+}
+
 /// Show a window at a specific position (physical pixels).
 pub fn show_window_at_position(app: &AppHandle, label: &str, x: f64, y: f64) -> Result<(), String> {
     let window = app

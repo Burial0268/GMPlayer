@@ -3,15 +3,22 @@ use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use crate::decoder::PlaybackSink;
 use crate::effects::DspChain;
 use crate::output::{OutputWriter, PushCancel};
 use crate::types::{CrossfadeCurve, DspConfig};
 
+#[cfg(target_os = "android")]
 const DECK_QUEUE_BLOCKS: usize = 16;
-const MIX_BLOCK_FRAMES: usize = 1024;
+#[cfg(not(target_os = "android"))]
+const DECK_QUEUE_BLOCKS: usize = 8;
+const DECK_RECYCLE_QUEUE_BLOCKS: usize = DECK_QUEUE_BLOCKS + 4;
+const MIX_BLOCK_FRAMES: usize = 512;
+const PRODUCER_YIELD_RETRIES: u32 = 8;
+const PRODUCER_MIN_PARK_US: u64 = 100;
+const PRODUCER_MAX_PARK_US: u64 = 1_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeckId {
@@ -71,6 +78,7 @@ pub struct DeckWriter {
     generation: Arc<AtomicU64>,
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
+    recycle_rx: Arc<Mutex<mpsc::Receiver<Vec<f32>>>>,
 }
 
 struct DeckBlock {
@@ -106,17 +114,13 @@ impl PlaybackSink for DeckWriter {
 
         let generation = self.generation.load(Ordering::Acquire);
         let flush_epoch = self.flush_epoch.load(Ordering::Acquire);
+        let mut retry_count = 0;
         loop {
             if cancel.is_cancelled()
                 || self.generation.load(Ordering::Acquire) != generation
                 || self.flush_epoch.load(Ordering::Acquire) != flush_epoch
             {
                 return false;
-            }
-
-            if self.paused.load(Ordering::Acquire) {
-                thread::sleep(Duration::from_millis(2));
-                continue;
             }
 
             let block_len = block.len();
@@ -140,7 +144,7 @@ impl PlaybackSink for DeckWriter {
                 Err(mpsc::TrySendError::Full(returned)) => {
                     saturating_sub(&self.queued_samples, block_len);
                     block = returned.samples;
-                    thread::sleep(Duration::from_millis(2));
+                    producer_retry_backoff(&mut retry_count);
                 }
                 Err(mpsc::TrySendError::Disconnected(_)) => {
                     saturating_sub(&self.queued_samples, block_len);
@@ -164,6 +168,19 @@ impl PlaybackSink for DeckWriter {
 
     fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    fn take_recycled_buffer(&self, capacity: usize) -> Vec<f32> {
+        if let Some(rx) = self.recycle_rx.try_lock() {
+            if let Ok(mut buf) = rx.try_recv() {
+                buf.clear();
+                if buf.capacity() < capacity {
+                    buf.reserve(capacity - buf.capacity());
+                }
+                return buf;
+            }
+        }
+        Vec::with_capacity(capacity)
     }
 }
 
@@ -203,6 +220,10 @@ impl DeckMixer {
     ) -> Self {
         let (primary_tx, primary_rx) = mpsc::sync_channel::<DeckBlock>(DECK_QUEUE_BLOCKS);
         let (secondary_tx, secondary_rx) = mpsc::sync_channel::<DeckBlock>(DECK_QUEUE_BLOCKS);
+        let (primary_recycle_tx, primary_recycle_rx) =
+            mpsc::sync_channel::<Vec<f32>>(DECK_RECYCLE_QUEUE_BLOCKS);
+        let (secondary_recycle_tx, secondary_recycle_rx) =
+            mpsc::sync_channel::<Vec<f32>>(DECK_RECYCLE_QUEUE_BLOCKS);
         let (control_tx, control_rx) = mpsc::channel::<MixerControl>();
 
         let stop_flag = Arc::new(AtomicBool::new(false));
@@ -226,6 +247,7 @@ impl DeckMixer {
             generation: Arc::clone(&primary_generation),
             flush_epoch: Arc::clone(&primary_flush_epoch),
             queued_samples: Arc::clone(&primary_queued),
+            recycle_rx: Arc::new(Mutex::new(primary_recycle_rx)),
         };
 
         let secondary = DeckWriter {
@@ -238,6 +260,7 @@ impl DeckMixer {
             generation: Arc::clone(&secondary_generation),
             flush_epoch: Arc::clone(&secondary_flush_epoch),
             queued_samples: Arc::clone(&secondary_queued),
+            recycle_rx: Arc::new(Mutex::new(secondary_recycle_rx)),
         };
 
         let mixer_stop = Arc::clone(&stop_flag);
@@ -250,11 +273,18 @@ impl DeckMixer {
                 let mut worker = MixerWorker {
                     output,
                     output_channels: output_channels.max(1) as usize,
-                    primary: DeckRuntime::new(primary_rx, primary_queued, primary_paused, 1.0),
+                    primary: DeckRuntime::new(
+                        primary_rx,
+                        primary_queued,
+                        primary_paused,
+                        primary_recycle_tx,
+                        1.0,
+                    ),
                     secondary: DeckRuntime::new(
                         secondary_rx,
                         secondary_queued,
                         secondary_paused,
+                        secondary_recycle_tx,
                         0.0,
                     ),
                     crossfade: None,
@@ -409,6 +439,7 @@ struct DeckRuntime {
     accepted_flush_epoch: u64,
     queued_samples: Arc<AtomicUsize>,
     paused: Arc<AtomicBool>,
+    recycle_tx: mpsc::SyncSender<Vec<f32>>,
     gain: f32,
 }
 
@@ -417,6 +448,7 @@ impl DeckRuntime {
         rx: mpsc::Receiver<DeckBlock>,
         queued_samples: Arc<AtomicUsize>,
         paused: Arc<AtomicBool>,
+        recycle_tx: mpsc::SyncSender<Vec<f32>>,
         gain: f32,
     ) -> Self {
         Self {
@@ -427,12 +459,14 @@ impl DeckRuntime {
             accepted_flush_epoch: 0,
             queued_samples,
             paused,
+            recycle_tx,
             gain,
         }
     }
 
     fn clear(&mut self, generation: u64, flush_epoch: u64) {
-        self.current_block.clear();
+        let spent = std::mem::take(&mut self.current_block);
+        recycle_deck_buffer(&self.recycle_tx, spent);
         self.current_index = 0;
         self.accepted_generation = generation;
         self.accepted_flush_epoch = flush_epoch;
@@ -447,9 +481,11 @@ impl DeckRuntime {
                         if block.generation != self.accepted_generation
                             || block.flush_epoch != self.accepted_flush_epoch
                         {
+                            recycle_deck_buffer(&self.recycle_tx, block.samples);
                             continue;
                         }
-                        self.current_block = block.samples;
+                        let spent = std::mem::replace(&mut self.current_block, block.samples);
+                        recycle_deck_buffer(&self.recycle_tx, spent);
                         self.current_index = 0;
                         if self.current_block.is_empty() {
                             continue;
@@ -496,9 +532,11 @@ impl DeckRuntime {
                         if block.generation != self.accepted_generation
                             || block.flush_epoch != self.accepted_flush_epoch
                         {
+                            recycle_deck_buffer(&self.recycle_tx, block.samples);
                             continue;
                         }
-                        self.current_block = block.samples;
+                        let spent = std::mem::replace(&mut self.current_block, block.samples);
+                        recycle_deck_buffer(&self.recycle_tx, spent);
                         self.current_index = 0;
                         if self.current_block.is_empty() {
                             continue;
@@ -552,6 +590,7 @@ impl MixerWorker {
     fn run(&mut self) {
         let channels = self.output_channels.max(1);
         let frame_capacity = MIX_BLOCK_FRAMES * channels;
+        let mut idle_retry_count = 0;
 
         while !self.stop_flag.load(Ordering::Acquire) {
             if !self.drain_controls() {
@@ -559,7 +598,7 @@ impl MixerWorker {
             }
 
             if self.output.has_failed() {
-                thread::sleep(Duration::from_millis(2));
+                producer_retry_backoff(&mut idle_retry_count);
                 continue;
             }
 
@@ -576,6 +615,7 @@ impl MixerWorker {
             let has_audio = self.mix_block(&mut block, channels, primary_paused, secondary_paused);
 
             if has_audio {
+                idle_retry_count = 0;
                 let control_epoch = self.control_epoch.load(Ordering::Acquire);
                 if !self.dsp.is_bypassed() {
                     self.dsp.process_interleaved(&mut block);
@@ -594,7 +634,7 @@ impl MixerWorker {
                     continue;
                 }
             } else {
-                thread::sleep(Duration::from_millis(2));
+                producer_retry_backoff(&mut idle_retry_count);
             }
         }
     }
@@ -823,6 +863,27 @@ fn saturating_sub(counter: &AtomicUsize, amount: usize) {
     }
 }
 
+fn recycle_deck_buffer(recycle_tx: &mpsc::SyncSender<Vec<f32>>, mut block: Vec<f32>) {
+    if block.capacity() == 0 {
+        return;
+    }
+    block.clear();
+    let _ = recycle_tx.try_send(block);
+}
+
+fn producer_retry_backoff(retry_count: &mut u32) {
+    if *retry_count < PRODUCER_YIELD_RETRIES {
+        *retry_count += 1;
+        thread::yield_now();
+        return;
+    }
+
+    let shift = (*retry_count - PRODUCER_YIELD_RETRIES).min(4);
+    let park_us = (PRODUCER_MIN_PARK_US << shift).min(PRODUCER_MAX_PARK_US);
+    *retry_count = (*retry_count).saturating_add(1);
+    thread::park_timeout(Duration::from_micros(park_us));
+}
+
 fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
     let t = progress.clamp(0.0, 1.0);
     let (out_vol, in_vol) = crossfade_values(t, params.curve);
@@ -869,6 +930,7 @@ mod tests {
 
     fn deck_from_blocks(blocks: Vec<Vec<f32>>) -> (DeckRuntime, mpsc::SyncSender<DeckBlock>) {
         let (tx, rx) = mpsc::sync_channel(16);
+        let (recycle_tx, _recycle_rx) = mpsc::sync_channel(16);
         for samples in blocks {
             tx.send(DeckBlock {
                 samples,
@@ -881,6 +943,7 @@ mod tests {
             rx,
             Arc::new(AtomicUsize::new(0)),
             Arc::new(AtomicBool::new(false)),
+            recycle_tx,
             1.0,
         );
         (deck, tx)
@@ -913,6 +976,7 @@ mod tests {
     #[test]
     fn fill_scaled_skips_stale_generation_blocks() {
         let (tx, rx) = mpsc::sync_channel(16);
+        let (recycle_tx, _recycle_rx) = mpsc::sync_channel(16);
         tx.send(DeckBlock {
             samples: vec![9.0, 9.0],
             generation: 0,
@@ -929,6 +993,7 @@ mod tests {
             rx,
             Arc::new(AtomicUsize::new(0)),
             Arc::new(AtomicBool::new(false)),
+            recycle_tx,
             1.0,
         );
         deck.accepted_generation = 1; // only accept generation 1

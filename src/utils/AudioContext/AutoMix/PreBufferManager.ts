@@ -55,6 +55,14 @@ export class PreBufferManager {
     const nextSong = playlist[nextIndex];
     if (!nextSong) return;
 
+    const canContinue = (): boolean => {
+      const state = stateGetter();
+      return (
+        (state === "idle" || state === "analyzing" || state === "waiting") &&
+        musicStore.persistData.playSongIndex === currentIndex
+      );
+    };
+
     this._isBuffering = true;
 
     const doPreBuffer = async () => {
@@ -66,7 +74,7 @@ export class PreBufferManager {
       const url = result.url;
 
       // Bail if state changed
-      if (stateGetter() !== "waiting") return;
+      if (!canContinue()) return;
 
       // Step 2: Create BufferedSound (starts silent, begins download)
       const sound = new BufferedSound({
@@ -89,7 +97,7 @@ export class PreBufferManager {
       });
 
       // Bail if state changed during load
-      if (stateGetter() !== "waiting") {
+      if (!canContinue()) {
         sound.stop();
         sound.unload();
         return;
@@ -115,7 +123,7 @@ export class PreBufferManager {
       }
 
       // Bail if state changed during analysis
-      if (stateGetter() !== "waiting") {
+      if (!canContinue()) {
         sound.stop();
         sound.unload();
         return;
@@ -125,7 +133,7 @@ export class PreBufferManager {
       await sound.ensureAudioGraph();
 
       // Final bail check
-      if (stateGetter() !== "waiting") {
+      if (!canContinue()) {
         sound.stop();
         sound.unload();
         return;

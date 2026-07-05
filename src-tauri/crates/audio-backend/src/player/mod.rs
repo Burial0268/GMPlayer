@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use tauri::ipc::Channel;
@@ -79,6 +80,7 @@ pub struct Player {
     msg_tx: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadMessage>>,
     seek_tx: mpsc::UnboundedSender<SeekRequest>,
     shared: Arc<PlayerShared>,
+    thread: Option<thread::JoinHandle<()>>,
 }
 
 pub struct PlayerShared {
@@ -183,7 +185,7 @@ impl Player {
         // Spawn the audio player on a dedicated thread with its own tokio runtime.
         // `AudioPlayer` owns the live `OutputStream` so it can reopen the stream
         // with a source-aware channel count when tracks change.
-        std::thread::Builder::new()
+        let thread = thread::Builder::new()
             .name("audio-player".into())
             .spawn(move || {
                 let rt = tokio::runtime::Builder::new_current_thread()
@@ -207,6 +209,7 @@ impl Player {
             msg_tx,
             seek_tx,
             shared,
+            thread: Some(thread),
         })
     }
 
@@ -275,6 +278,24 @@ impl Player {
     pub fn set_event_channel(&self, channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>) {
         *self.shared.event_channel.lock() = Some(channel);
     }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        let _ = self.msg_tx.send(AudioThreadEventMessage::new(
+            String::new(),
+            Some(AudioThreadMessage::Close),
+        ));
+        if let Some(thread) = self.thread.take() {
+            join_thread_async("audio-player-join", thread);
+        }
+    }
+}
+
+fn join_thread_async(name: &'static str, handle: thread::JoinHandle<()>) {
+    let _ = thread::Builder::new().name(name.into()).spawn(move || {
+        let _ = handle.join();
+    });
 }
 
 /// Update `PlayerShared` atomics from events we'd otherwise miss because
@@ -433,6 +454,13 @@ struct AudioPlayer {
     output_selector: output::OutputDeviceSelector,
     deck_mixer: DeckMixer,
     active_deck: DeckId,
+    /// Persistent per-track loudness-normalization gain currently applied to the
+    /// active deck (the AutoMix `volume_norm` adjustment, range ~[0.1, 2.0]).
+    /// Master volume rides separately on the output writer (`set_volume`), so
+    /// this must survive crossfades, cancels and output rebuilds unchanged —
+    /// otherwise the deck gain snaps back to 1.0 and the track jumps in level.
+    /// Mirrors the mixer's active-deck gain during steady-state playback.
+    active_norm_gain: f32,
     dsp_config: DspConfig,
     automix: AutoMixManager,
     volume: f64,
@@ -457,6 +485,11 @@ struct AudioPlayer {
     secondary_local_path: Option<PathBuf>,
     secondary_song: Option<SongData>,
     secondary_duration: f64,
+    /// Normalization gain of the preloaded/incoming (secondary) deck's track.
+    /// Captured at crossfade start and promoted to `active_norm_gain` when the
+    /// crossfade completes, so the incoming level is continuous into steady
+    /// state and into the next crossfade's outgoing side.
+    secondary_norm_gain: f32,
     secondary_display_info: Option<DisplayAudioInfo>,
     secondary_quality: Option<AudioQuality>,
     secondary_playback_id: Option<u64>,
@@ -471,6 +504,7 @@ struct AudioPlayer {
     output_epoch: u64,
     output_refresh_dirty: bool,
     output_refresh_dirty_force: bool,
+    output_refresh_dirty_rebuild_chain: bool,
     output_refresh_failures: u8,
     output_refresh_backoff_until: Option<std::time::Instant>,
     output_health_last_samples: u64,
@@ -516,6 +550,8 @@ enum PlaybackIntent {
     Paused,
 }
 
+const START_PREBUFFER_FRAMES: usize = 512;
+
 enum OutputRefreshEvent {
     Unchanged {
         generation: u64,
@@ -530,6 +566,7 @@ enum OutputRefreshEvent {
         output_epoch: u64,
         output: LowLatencyOutput,
         force_replace: bool,
+        rebuild_chain: bool,
     },
     DecoderReady {
         generation: u64,
@@ -662,6 +699,11 @@ fn normalize_seek_position(position: f64) -> f64 {
     }
 }
 
+fn start_prebuffer_samples(channels: usize) -> usize {
+    let channels = channels.max(1);
+    channels * START_PREBUFFER_FRAMES
+}
+
 impl AudioPlayer {
     async fn new(
         msg_receiver: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
@@ -760,6 +802,7 @@ impl AudioPlayer {
             output_selector,
             deck_mixer,
             active_deck: DeckId::Primary,
+            active_norm_gain: 1.0,
             dsp_config,
             automix,
             volume: 1.0,
@@ -775,6 +818,7 @@ impl AudioPlayer {
             secondary_local_path: None,
             secondary_song: None,
             secondary_duration: 0.0,
+            secondary_norm_gain: 1.0,
             secondary_display_info: None,
             secondary_quality: None,
             secondary_playback_id: None,
@@ -789,6 +833,7 @@ impl AudioPlayer {
             output_epoch: 0,
             output_refresh_dirty: false,
             output_refresh_dirty_force: false,
+            output_refresh_dirty_rebuild_chain: false,
             output_refresh_failures: 0,
             output_refresh_backoff_until: None,
             output_health_last_samples: 0,
@@ -819,24 +864,44 @@ impl AudioPlayer {
     }
 
     fn ensure_output_for_source(&mut self, audio_info: &AudioInfo) -> anyhow::Result<bool> {
-        let target = output::OutputTarget::for_source(audio_info.channels, audio_info.sample_rate);
-        if self.output.selector() == &self.output_selector
-            && self
-                .output
-                .target()
-                .is_some_and(|current| output_target_layout_matches(current, target))
-            && !self.output.has_failed()
+        #[cfg(target_os = "android")]
         {
-            return Ok(false);
+            let _ = audio_info;
+            if self.output.selector() == &self.output_selector && !self.output.has_failed() {
+                return Ok(false);
+            }
+
+            self.cancel_pending_output_refresh();
+            let output = output::open_output(self.output_selector.clone(), None)
+                .map_err(AudioError::Output)?;
+            let changed =
+                output.config() != self.output.config() || output.device() != self.output.device();
+            self.install_output(output);
+            return Ok(changed);
         }
 
-        self.cancel_pending_output_refresh();
-        let output = output::open_output(self.output_selector.clone(), Some(target))
-            .map_err(AudioError::Output)?;
-        let changed =
-            output.config() != self.output.config() || output.device() != self.output.device();
-        self.install_output(output);
-        Ok(changed)
+        #[cfg(not(target_os = "android"))]
+        {
+            let target =
+                output::OutputTarget::for_source(audio_info.channels, audio_info.sample_rate);
+            if self.output.selector() == &self.output_selector
+                && self
+                    .output
+                    .target()
+                    .is_some_and(|current| output_target_layout_matches(current, target))
+                && !self.output.has_failed()
+            {
+                return Ok(false);
+            }
+
+            self.cancel_pending_output_refresh();
+            let output = output::open_output(self.output_selector.clone(), Some(target))
+                .map_err(AudioError::Output)?;
+            let changed =
+                output.config() != self.output.config() || output.device() != self.output.device();
+            self.install_output(output);
+            Ok(changed)
+        }
     }
 
     fn cancel_pending_output_refresh(&mut self) {
@@ -844,6 +909,7 @@ impl AudioPlayer {
         self.output_refresh_pending = false;
         self.output_refresh_dirty = false;
         self.output_refresh_dirty_force = false;
+        self.output_refresh_dirty_rebuild_chain = false;
     }
 
     fn mark_output_chain_committed(&mut self) {
@@ -931,8 +997,13 @@ impl AudioPlayer {
             &self.dsp_config,
         );
         self.active_deck = DeckId::Primary;
-        self.deck_mixer.set_deck_gain(DeckId::Primary, 1.0);
+        // The current track survives the output rebuild (it is re-decoded into the
+        // fresh Primary deck), so carry its normalization gain across instead of
+        // resetting to 1.0.
+        self.deck_mixer
+            .set_deck_gain(DeckId::Primary, self.active_norm_gain);
         self.deck_mixer.set_deck_gain(DeckId::Secondary, 0.0);
+        self.secondary_norm_gain = 1.0;
         self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
         self.native_crossfade_active = false;
         self.native_crossfade_transition_id = None;
@@ -965,7 +1036,6 @@ impl AudioPlayer {
         if self.playback_intent != PlaybackIntent::Playing
             || self.current_song.is_none()
             || self.current_decoder_handle.is_none()
-            || queued_samples == 0
         {
             self.output_health_last_samples = rendered_samples;
             self.output_health_stalled_ticks = 0;
@@ -979,13 +1049,15 @@ impl AudioPlayer {
         }
 
         self.output_health_stalled_ticks = self.output_health_stalled_ticks.saturating_add(1);
-        self.output_health_stalled_ticks >= 15
+        let stalled_tick_limit = if queued_samples == 0 { 30 } else { 15 };
+        self.output_health_stalled_ticks >= stalled_tick_limit
     }
 
-    fn request_output_refresh(&mut self, force_replace: bool) {
+    fn request_output_refresh(&mut self, force_replace: bool, rebuild_chain: bool) {
         if self.output_refresh_pending {
             self.output_refresh_dirty = true;
             self.output_refresh_dirty_force |= force_replace;
+            self.output_refresh_dirty_rebuild_chain |= rebuild_chain;
             return;
         }
         if let Some(backoff_until) = self.output_refresh_backoff_until {
@@ -1002,11 +1074,17 @@ impl AudioPlayer {
         let selector = self.output_selector.clone();
         let current_device = self.output.device().clone();
         let force_replace = force_replace || self.output.has_failed();
-        let output_config = self.output.config();
-        let target = Some(output::OutputTarget {
-            channels: output_config.channels,
-            sample_rate: output_config.sample_rate,
-        });
+        let rebuild_chain = rebuild_chain && self.current_song.is_some();
+        #[cfg(target_os = "android")]
+        let target: Option<output::OutputTarget> = None;
+        #[cfg(not(target_os = "android"))]
+        let target = {
+            let output_config = self.output.config();
+            Some(output::OutputTarget {
+                channels: output_config.channels,
+                sample_rate: output_config.sample_rate,
+            })
+        };
         let tx = self.output_refresh_tx.clone();
         tokio::task::spawn_blocking(move || {
             let opened_event =
@@ -1017,6 +1095,7 @@ impl AudioPlayer {
                             output_epoch,
                             output,
                             force_replace,
+                            rebuild_chain,
                         }
                     }
                     Ok(_) => OutputRefreshEvent::Stale {
@@ -1030,7 +1109,7 @@ impl AudioPlayer {
                     },
                 };
 
-            let event = if force_replace {
+            let event = if force_replace || rebuild_chain {
                 match output::open_output(selector.clone(), target) {
                     Ok(output) => opened_event(output),
                     Err(error) => OutputRefreshEvent::Failed {
@@ -1070,9 +1149,11 @@ impl AudioPlayer {
         self.output_refresh_pending = false;
         if self.output_refresh_dirty {
             let force_replace = self.output_refresh_dirty_force;
+            let rebuild_chain = self.output_refresh_dirty_rebuild_chain;
             self.output_refresh_dirty = false;
             self.output_refresh_dirty_force = false;
-            self.request_output_refresh(force_replace);
+            self.output_refresh_dirty_rebuild_chain = false;
+            self.request_output_refresh(force_replace, rebuild_chain);
         }
     }
 
@@ -1138,10 +1219,12 @@ impl AudioPlayer {
                 output_epoch,
                 output,
                 force_replace,
+                rebuild_chain,
             } => {
                 if output.device() == self.output.device()
                     && output.config() == self.output.config()
                     && !force_replace
+                    && !rebuild_chain
                 {
                     self.complete_output_refresh();
                     return;
@@ -1154,7 +1237,9 @@ impl AudioPlayer {
                 let position = self.clock.lock().set_anchor(is_playing, position);
                 self.clear_output_error();
                 info!("音频输出设备变化：{old_device} -> {new_device}");
-                if output_audio_layout_matches(self.output.config(), output.config()) {
+                if output_audio_layout_matches(self.output.config(), output.config())
+                    && !rebuild_chain
+                {
                     match self.replace_output_stream(output) {
                         Ok(()) => {
                             self.complete_output_refresh();
@@ -1191,10 +1276,17 @@ impl AudioPlayer {
 
                 let old_config = self.output.config();
                 let new_config = output.config();
-                warn!(
-                    "音频输出 layout 变化，必须重建解码器：old={:?} new={:?}",
-                    old_config, new_config
-                );
+                if rebuild_chain {
+                    warn!(
+                        "音频输出渲染停滞，重建当前播放链路：config={:?}",
+                        old_config
+                    );
+                } else {
+                    warn!(
+                        "音频输出 layout 变化，必须重建解码器：old={:?} new={:?}",
+                        old_config, new_config
+                    );
+                }
 
                 if self.current_song.is_some() {
                     self.cancel_native_automix_runtime().await;
@@ -1239,7 +1331,12 @@ impl AudioPlayer {
                     };
                     let commit_position = self.clock.lock().set_anchor(is_playing, commit_position);
                     if (commit_position - position).abs() > 0.025 {
-                        if let Err(err) = handle.seek(Duration::from_secs_f64(commit_position)) {
+                        let seek_ack = handle.seek(Duration::from_secs_f64(commit_position));
+                        let seek_result = match seek_ack {
+                            Ok(ack) => ack.wait().await,
+                            Err(err) => Err(err),
+                        };
+                        if let Err(err) = seek_result {
                             warn!(
                                 "热重建提交前同步 seek 失败，将按最新位置重新准备解码器: {err:?}"
                             );
@@ -1279,9 +1376,14 @@ impl AudioPlayer {
                         config.channels,
                     );
                     self.output.writer().set_volume(self.volume as f32);
-                    self.output.writer().set_paused(!is_playing);
-                    let _ = handle.set_paused(!is_playing);
-                    self.current_decoder_handle = Some(handle);
+                    if is_playing {
+                        self.current_decoder_handle = Some(handle);
+                        self.resume_audio_output().await;
+                    } else {
+                        self.output.writer().set_paused(true);
+                        let _ = handle.set_paused(true);
+                        self.current_decoder_handle = Some(handle);
+                    }
                     let _ = self.analysis_tx.send(AnalysisCommand::Clear);
                     self.reset_output_health();
                     self.complete_output_refresh();
@@ -1492,12 +1594,14 @@ impl AudioPlayer {
               }
 
               _ = output_device_check.tick() => {
-                self.request_output_refresh(false);
+                self.request_output_refresh(false, false);
               }
 
               _ = output_health_check.tick() => {
-                if self.output.has_failed() || self.output_render_stalled() {
-                  self.request_output_refresh(true);
+                let output_failed = self.output.has_failed();
+                let output_stalled = self.output_render_stalled();
+                if output_failed || output_stalled {
+                  self.request_output_refresh(true, output_stalled);
                 }
               }
 
@@ -1589,7 +1693,20 @@ impl AudioPlayer {
             return Ok(false);
         };
 
-        if let Err(err) = handle.seek(Duration::from_secs_f64(seek.position)) {
+        let was_playing = self.playback_intent == PlaybackIntent::Playing;
+        if was_playing {
+            self.output.writer().set_paused(true);
+        }
+
+        let seek_ack = handle.seek(Duration::from_secs_f64(seek.position));
+        let seek_result = match seek_ack {
+            Ok(ack) => ack.wait().await,
+            Err(err) => Err(err),
+        };
+        if let Err(err) = seek_result {
+            if was_playing {
+                self.output.writer().set_paused(false);
+            }
             self.pending_seek = None;
             let error = err.to_string();
             warn!("decoder 原地 seek 失败: {:.3}s, {error}", seek.position);
@@ -1599,8 +1716,11 @@ impl AudioPlayer {
         }
         self.pending_seek = None;
         let _ = self.analysis_tx.send(AnalysisCommand::Clear);
-        let is_playing = self.playback_intent == PlaybackIntent::Playing;
-        self.publish_position_anchor(is_playing, seek.position)
+        if was_playing {
+            self.wait_for_start_prebuffer().await;
+            self.output.writer().set_paused(false);
+        }
+        self.publish_position_anchor(was_playing, seek.position)
             .await;
         self.reset_output_health();
         self.emit_seek_committed(seek).await;
@@ -1656,6 +1776,41 @@ impl AudioPlayer {
         Ok(())
     }
 
+    async fn resume_audio_output(&self) {
+        if let Some(handle) = &self.current_decoder_handle {
+            let _ = handle.set_paused(false);
+        }
+        if let Some(handle) = &self.secondary_decoder_handle {
+            let _ = handle.set_paused(false);
+        }
+
+        self.wait_for_start_prebuffer().await;
+        self.output.writer().set_paused(false);
+    }
+
+    async fn wait_for_start_prebuffer(&self) {
+        if self.current_decoder_handle.is_none() && self.secondary_decoder_handle.is_none() {
+            return;
+        }
+
+        let writer = self.output.writer();
+        let channels = self.output.config().channels.max(1) as usize;
+        let target_samples = start_prebuffer_samples(channels);
+        for _ in 0..20 {
+            if writer.queued_samples() >= target_samples {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let queued = writer.queued_samples();
+        if queued < target_samples {
+            warn!(
+                "音频输出预缓冲不足: queued_samples={} target_samples={}",
+                queued, target_samples
+            );
+        }
+    }
+
     async fn process_message(
         &mut self,
         msg: AudioThreadEventMessage<AudioThreadMessage>,
@@ -1665,13 +1820,7 @@ impl AudioPlayer {
             match data {
                 AudioThreadMessage::ResumeAudio => {
                     self.playback_intent = PlaybackIntent::Playing;
-                    self.output.writer().set_paused(false);
-                    if let Some(handle) = &self.current_decoder_handle {
-                        let _ = handle.set_paused(false);
-                    }
-                    if let Some(handle) = &self.secondary_decoder_handle {
-                        let _ = handle.set_paused(false);
-                    }
+                    self.resume_audio_output().await;
                     let current_pos = self.clock_position();
                     self.publish_position_anchor(true, current_pos).await;
                     let _ = emitter
@@ -1698,13 +1847,7 @@ impl AudioPlayer {
                     let current_pos = self.clock_position();
                     if was_paused {
                         self.playback_intent = PlaybackIntent::Playing;
-                        self.output.writer().set_paused(false);
-                        if let Some(handle) = &self.current_decoder_handle {
-                            let _ = handle.set_paused(false);
-                        }
-                        if let Some(handle) = &self.secondary_decoder_handle {
-                            let _ = handle.set_paused(false);
-                        }
+                        self.resume_audio_output().await;
                     } else {
                         self.playback_intent = PlaybackIntent::Paused;
                         self.output.writer().set_paused(true);
@@ -1833,7 +1976,7 @@ impl AudioPlayer {
                     }
                     self.reset_output_refresh_backoff();
                     self.clear_output_error();
-                    self.request_output_refresh(true);
+                    self.request_output_refresh(true, false);
                 }
                 AudioThreadMessage::SyncStatus => {
                     // Explicit snapshot request from the frontend — emit it here.
@@ -1873,10 +2016,16 @@ impl AudioPlayer {
                     next_song,
                     transition_id,
                 } => {
+                    info!(
+                        "AutoMix prepare requested: current_index={}, next_index={}, transition_id={:?}",
+                        current_index, next_index, transition_id
+                    );
                     self.automix_prepare_generation =
                         self.automix_prepare_generation.wrapping_add(1);
                     let generation = self.automix_prepare_generation;
+                    self.cancel_native_automix_runtime().await;
                     let current_song = self.current_song.clone();
+                    let current_source_path = self.current_local_path.clone();
                     let current_duration = Some(self.current_audio_info.read().await.duration)
                         .filter(|duration| *duration > 0.0);
                     let (events, request) = self.automix.begin_prepare_next(
@@ -1886,6 +2035,7 @@ impl AudioPlayer {
                         *next_index,
                         current_song,
                         current_duration,
+                        current_source_path,
                         next_song.clone(),
                     );
                     if let Some(request) = request {
@@ -1959,7 +2109,7 @@ impl AudioPlayer {
             let current_id = request.current_id.clone();
             let task =
                 tokio::task::spawn_blocking(move || automix::run_prepare_request_blocking(request));
-            let result = match tokio::time::timeout(Duration::from_secs(10), task).await {
+            let result = match tokio::time::timeout(Duration::from_secs(60), task).await {
                 Ok(Ok(result)) => result,
                 Ok(Err(err)) => automix::AutoMixPrepareResult {
                     generation,
@@ -1987,10 +2137,34 @@ impl AudioPlayer {
 
         let status_index = result.current_index;
         let events = self.automix.finish_prepare(result, status_index);
-        if let Some(start_time) = self.automix.status(status_index).crossfade_start {
-            self.schedule_native_automix_trigger(start_time);
-        }
+        let status = self.automix.status(status_index);
         self.emit_many(events).await;
+
+        if status.state != AutoMixNativeState::Waiting {
+            return;
+        }
+
+        if let Err(err) = self.preload_native_automix_deck().await {
+            warn!("AutoMix preload failed: {err:?}");
+            self.cancel_native_automix_runtime().await;
+            let events = self
+                .automix
+                .mark_failed(format!("AutoMix preload failed: {err}"), status_index);
+            self.emit_many(events).await;
+            return;
+        }
+
+        if let Some(start_time) = status.crossfade_start {
+            info!(
+                "AutoMix prepared: next_index={:?}, start_time={:.3}, duration={:?}",
+                status.next_index, start_time, status.crossfade_duration
+            );
+            self.schedule_native_automix_trigger(start_time);
+        } else {
+            warn!(
+                "AutoMix prepared without crossfade_start; frontend force-start fallback is required"
+            );
+        }
     }
 
     fn inactive_deck(&self) -> DeckId {
@@ -2017,8 +2191,13 @@ impl AudioPlayer {
         self.secondary_quality = None;
 
         self.deck_mixer.clear_deck(self.inactive_deck());
-        self.deck_mixer.set_deck_gain(self.active_deck, 1.0);
+        // The current track keeps playing — only the incoming automix deck is
+        // torn down — so restore the active deck to its persistent normalization
+        // gain rather than snapping it back to 1.0.
+        self.deck_mixer
+            .set_deck_gain(self.active_deck, self.active_norm_gain);
         self.deck_mixer.set_deck_gain(self.inactive_deck(), 0.0);
+        self.secondary_norm_gain = 1.0;
     }
 
     fn schedule_native_automix_trigger(&mut self, start_time: f64) {
@@ -2064,30 +2243,56 @@ impl AudioPlayer {
         });
     }
 
-    async fn start_native_automix_crossfade(&mut self) -> anyhow::Result<()> {
+    fn secondary_matches_prepared_automix(&self, song: &SongData, local_path: &Path) -> bool {
+        let song_id = song.get_id();
+        self.secondary_decoder_handle.is_some()
+            && self.secondary_playback_id.is_some()
+            && self
+                .secondary_local_path
+                .as_ref()
+                .is_some_and(|path| path == local_path)
+            && self
+                .secondary_song
+                .as_ref()
+                .is_some_and(|secondary_song| secondary_song.get_id() == song_id)
+    }
+
+    async fn preload_native_automix_deck(&mut self) -> anyhow::Result<()> {
+        if self.native_crossfade_active {
+            return Ok(());
+        }
+
         let prepared = self
             .automix
-            .take_prepared_for_start()
-            .ok_or_else(|| anyhow::anyhow!("AutoMix has no prepared next track"))?;
-
-        let incoming_deck = self.inactive_deck();
-        let incoming_writer = match incoming_deck {
-            DeckId::Primary => self.deck_mixer.primary_writer(),
-            DeckId::Secondary => self.deck_mixer.secondary_writer(),
-        };
-        incoming_writer.set_paused(self.playback_intent == PlaybackIntent::Paused);
-        self.deck_mixer.set_deck_gain(incoming_deck, 0.0);
+            .take_prepared_for_preload()
+            .ok_or_else(|| anyhow::anyhow!("AutoMix has no prepared next track to preload"))?;
 
         if let Some(handle) = self.secondary_decoder_handle.take() {
             handle.stop();
         }
+        self.secondary_local_path = None;
+        self.secondary_temp_file = None;
+        self.secondary_song = None;
+        self.secondary_duration = 0.0;
+        self.secondary_display_info = None;
+        self.secondary_quality = None;
+        self.secondary_playback_id = None;
+
+        let incoming_deck = self.inactive_deck();
+        self.deck_mixer.clear_deck(incoming_deck);
+        let incoming_writer = match incoming_deck {
+            DeckId::Primary => self.deck_mixer.primary_writer(),
+            DeckId::Secondary => self.deck_mixer.secondary_writer(),
+        };
+        let start_paused = self.playback_intent == PlaybackIntent::Paused;
+        incoming_writer.set_paused(start_paused);
+        self.deck_mixer.set_deck_gain(incoming_deck, 0.0);
 
         let analysis_tx_for_open = self.analysis_tx.clone();
         let path_for_open = prepared.local_path.clone();
         let output_config = self.output.config();
         let playback_id = self.decoder_playback_id.wrapping_add(1);
         let decoder_event_tx = self.decoder_event_tx.clone();
-        let start_paused = self.playback_intent == PlaybackIntent::Paused;
         let analysis_enabled_for_open = Arc::clone(&self.analysis_enabled);
 
         let open_result = tokio::task::spawn_blocking(move || {
@@ -2107,11 +2312,90 @@ impl AudioPlayer {
         .await?;
 
         let incoming_handle = open_result.map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let duration = prepared.plan.as_ref().map(|p| p.duration).unwrap_or(2.0);
 
         self.secondary_decoder_handle = Some(incoming_handle);
-        self.secondary_local_path = Some(prepared.local_path.clone());
+        self.secondary_local_path = Some(prepared.local_path);
         self.secondary_temp_file = prepared._temp_file;
+        self.secondary_song = Some(prepared.song);
+        self.secondary_duration = prepared.analysis_duration;
+        self.secondary_display_info = Some(prepared.display_info);
+        self.secondary_quality = Some(prepared.quality);
+        self.secondary_playback_id = Some(playback_id);
+
+        info!(
+            "AutoMix preloaded secondary deck: next_index={}, playback_id={}",
+            prepared.next_index, playback_id
+        );
+
+        Ok(())
+    }
+
+    async fn start_native_automix_crossfade(&mut self) -> anyhow::Result<()> {
+        let prepared = self
+            .automix
+            .take_prepared_for_start()
+            .ok_or_else(|| anyhow::anyhow!("AutoMix has no prepared next track"))?;
+
+        let incoming_deck = self.inactive_deck();
+        let incoming_writer = match incoming_deck {
+            DeckId::Primary => self.deck_mixer.primary_writer(),
+            DeckId::Secondary => self.deck_mixer.secondary_writer(),
+        };
+        let start_paused = self.playback_intent == PlaybackIntent::Paused;
+        incoming_writer.set_paused(start_paused);
+        self.deck_mixer.set_deck_gain(incoming_deck, 0.0);
+        let output_config = self.output.config();
+        let preloaded =
+            self.secondary_matches_prepared_automix(&prepared.song, &prepared.local_path);
+        let playback_id = if preloaded {
+            if let Some(handle) = &self.secondary_decoder_handle {
+                let _ = handle.set_paused(start_paused);
+            }
+            self.secondary_playback_id
+                .unwrap_or_else(|| self.decoder_playback_id.wrapping_add(1))
+        } else {
+            if let Some(handle) = self.secondary_decoder_handle.take() {
+                handle.stop();
+            }
+            self.secondary_local_path = None;
+            self.secondary_temp_file = None;
+            self.secondary_song = None;
+            self.secondary_duration = 0.0;
+            self.secondary_display_info = None;
+            self.secondary_quality = None;
+            self.secondary_playback_id = None;
+            self.deck_mixer.clear_deck(incoming_deck);
+
+            let analysis_tx_for_open = self.analysis_tx.clone();
+            let path_for_open = prepared.local_path.clone();
+            let playback_id = self.decoder_playback_id.wrapping_add(1);
+            let decoder_event_tx = self.decoder_event_tx.clone();
+            let analysis_enabled_for_open = Arc::clone(&self.analysis_enabled);
+
+            let open_result = tokio::task::spawn_blocking(move || {
+                decoder::spawn_playback_decoder(
+                    &path_for_open,
+                    Some(0.0),
+                    incoming_writer,
+                    output_config.channels,
+                    output_config.sample_rate,
+                    analysis_tx_for_open,
+                    analysis_enabled_for_open,
+                    decoder_event_tx,
+                    playback_id,
+                    start_paused,
+                )
+            })
+            .await?;
+
+            let incoming_handle = open_result.map_err(|e| anyhow::anyhow!(e.to_string()))?;
+            self.secondary_decoder_handle = Some(incoming_handle);
+            self.secondary_temp_file = prepared._temp_file;
+            playback_id
+        };
+        let duration = prepared.plan.as_ref().map(|p| p.duration).unwrap_or(2.0);
+
+        self.secondary_local_path = Some(prepared.local_path.clone());
         self.secondary_song = Some(prepared.song.clone());
         self.secondary_duration = prepared.analysis_duration;
         self.secondary_display_info = Some(prepared.display_info.clone());
@@ -2119,6 +2403,10 @@ impl AudioPlayer {
         self.secondary_playback_id = Some(playback_id);
         self.native_crossfade_active = true;
         self.native_crossfade_transition_id = prepared.transition_id;
+        info!(
+            "AutoMix crossfade starting: next_index={}, preloaded={}, duration={:.3}",
+            prepared.next_index, preloaded, duration
+        );
 
         let crossfade_params = prepared
             .plan
@@ -2126,10 +2414,21 @@ impl AudioPlayer {
             .map(|plan| CrossfadeParams {
                 curve: plan.curve,
                 incoming_gain: plan.incoming_gain_adjustment as f32,
-                outgoing_gain: 1.0,
+                // The outgoing deck is already playing at its own persistent
+                // normalization gain — feed that in as the outgoing target so the
+                // crossfade starts from the current level instead of snapping the
+                // outgoing track up to 1.0.
+                outgoing_gain: self.active_norm_gain,
                 overlap_headroom_db: plan.overlap_headroom_db as f32,
             })
-            .unwrap_or_default();
+            .unwrap_or_else(|| CrossfadeParams {
+                outgoing_gain: self.active_norm_gain,
+                ..Default::default()
+            });
+        // Remember the incoming track's normalization gain so it can be promoted
+        // to `active_norm_gain` on completion — keeping the level continuous into
+        // steady-state playback and the next crossfade's outgoing side.
+        self.secondary_norm_gain = crossfade_params.incoming_gain;
 
         self.deck_mixer.start_crossfade(
             self.active_deck,
@@ -2196,6 +2495,11 @@ impl AudioPlayer {
             DeckId::Primary => DeckId::Secondary,
             DeckId::Secondary => DeckId::Primary,
         };
+        // The incoming track (now active) is already playing at its normalization
+        // gain — the mixer left the deck there at crossfade end. Adopt it as the
+        // persistent active gain so cancels/rebuilds restore the right level.
+        self.active_norm_gain = self.secondary_norm_gain;
+        self.secondary_norm_gain = 1.0;
 
         let mut display_info = self.secondary_display_info.take().unwrap_or_default();
         display_info.duration = if display_info.duration > 0.0 {
@@ -2303,6 +2607,9 @@ impl AudioPlayer {
             self.active_deck = DeckId::Primary;
             self.deck_mixer.set_deck_gain(DeckId::Primary, 1.0);
             self.deck_mixer.set_deck_gain(DeckId::Secondary, 0.0);
+            // Fresh (non-automix) load starts unnormalized at unity gain.
+            self.active_norm_gain = 1.0;
+            self.secondary_norm_gain = 1.0;
             self.native_crossfade_generation = self.native_crossfade_generation.wrapping_add(1);
             self.native_crossfade_active = false;
         }
@@ -2366,9 +2673,9 @@ impl AudioPlayer {
 
         let _output_reopened = self.ensure_output_for_source(&audio_info)?;
         self.output.writer().set_volume(self.volume as f32);
-        self.output
-            .writer()
-            .set_paused(self.playback_intent == PlaybackIntent::Paused);
+        // Keep the device callback silent until the decoder/mixer has filled
+        // the output queue; otherwise Android can underrun before the first PCM block arrives.
+        self.output.writer().set_paused(true);
 
         // `initial_position` is applied inside the decoder worker before it
         // starts pushing PCM, avoiding a separate post-load seek round trip.
@@ -2464,6 +2771,7 @@ impl AudioPlayer {
             })
             .await;
         if is_now_playing {
+            self.resume_audio_output().await;
             let _ = self
                 .emitter()
                 .emit(AudioThreadEvent::PlayStatus { is_playing: true })
@@ -2480,11 +2788,9 @@ impl Drop for AudioPlayer {
         for task in &self.tasks {
             task.abort();
         }
-        // The analysis thread exits on its own once every `AnalysisCommand`
-        // sender drops (we get `RecvTimeoutError::Disconnected`). Dropping the
-        // JoinHandle here detaches the thread; it terminates cleanly within the
-        // next `recv_timeout` interval (50 ms).
-        let _ = self.analysis_thread.take();
+        if let Some(thread) = self.analysis_thread.take() {
+            join_thread_async("audio-analysis-join", thread);
+        }
     }
 }
 
@@ -2508,6 +2814,7 @@ fn output_audio_layout_matches(a: output::OutputConfigKey, b: output::OutputConf
     a.channels == b.channels && a.sample_rate == b.sample_rate
 }
 
+#[cfg_attr(target_os = "android", allow(dead_code))]
 fn output_target_layout_matches(a: output::OutputTarget, b: output::OutputTarget) -> bool {
     a.channels == b.channels
 }

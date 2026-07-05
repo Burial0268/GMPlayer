@@ -13,6 +13,7 @@ declare global {
       };
     };
     open_taskbar_lyric_devtools?: () => Promise<void>;
+    open_window_devtools?: (label?: WindowLabel) => Promise<void>;
   }
 }
 
@@ -118,6 +119,14 @@ export const windowManager = {
    */
   async listWindows(): Promise<string[] | null> {
     return invoke<string[]>("list_windows");
+  },
+
+  /**
+   * Open DevTools for a managed window. Dev builds only.
+   */
+  async openWindowDevtools(label: WindowLabel = "main"): Promise<void> {
+    if (!import.meta.env.DEV) return;
+    await invoke("open_window_devtools", { label });
   },
 
   /**
@@ -263,4 +272,5 @@ export const windowManager = {
 
 if (import.meta.env.DEV && typeof window !== "undefined") {
   window.open_taskbar_lyric_devtools = () => windowManager.openTaskbarLyricsDevtools();
+  window.open_window_devtools = (label = "main") => windowManager.openWindowDevtools(label);
 }

@@ -72,6 +72,36 @@ fn schedule_webview_hwnd_refresh(top_hwnd_ptr: usize) {
     });
 }
 
+fn with_taskbar_service<R, F>(app: &tauri::AppHandle<R>, f: F)
+where
+    R: Runtime,
+    F: FnOnce(&TaskbarService),
+{
+    let service = {
+        let Some(state) = app.try_state::<TaskbarLyricState>() else {
+            return;
+        };
+        let service = state.service.lock().unwrap().take();
+        service
+    };
+    let Some(service) = service else {
+        return;
+    };
+
+    f(&service);
+
+    if app.get_webview_window("taskbar-lyric").is_none() {
+        return;
+    }
+
+    if let Some(state) = app.try_state::<TaskbarLyricState>() {
+        let mut guard = state.service.lock().unwrap();
+        if guard.is_none() {
+            *guard = Some(service);
+        }
+    }
+}
+
 #[tauri::command]
 pub fn close_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
     if let Some(win) = app.get_webview_window("taskbar-lyric") {
@@ -211,12 +241,10 @@ pub fn open_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
                     let _ = pointer_app.emit_to("taskbar-lyric", "taskbar-lyric:pointer", payload);
                 });
 
-                if let Some(state) = app_clone.try_state::<TaskbarLyricState>() {
-                    if let Some(srv) = state.service.lock().unwrap().as_ref() {
-                        srv.embed_window_by_ptr(hwnd_ptr);
-                        srv.update(300);
-                    }
-                }
+                with_taskbar_service(&app_clone, |srv| {
+                    srv.embed_window_by_ptr(hwnd_ptr);
+                    srv.update(300);
+                });
 
                 let mut webview_hwnd_ptr = find_webview_hwnd_ptr(top_hwnd_ptr);
                 for delay in [50, 100, 200, 400, 800] {
@@ -253,22 +281,14 @@ pub fn open_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                             if counter_clone.load(Ordering::SeqCst) == current {
-                                if let Some(s) = win_clone_inner.try_state::<TaskbarLyricState>() {
-                                    if let Some(srv) = s.service.lock().unwrap().as_ref() {
-                                        srv.update(300);
-                                    }
-                                }
+                                with_taskbar_service(&win_clone_inner, |srv| srv.update(300));
                             }
                         });
                     });
 
                     let win_clone2 = app_clone.clone();
                     let tray_cb = Box::new(move || {
-                        if let Some(s) = win_clone2.try_state::<TaskbarLyricState>() {
-                            if let Some(srv) = s.service.lock().unwrap().as_ref() {
-                                srv.update(300);
-                            }
-                        }
+                        with_taskbar_service(&win_clone2, |srv| srv.update(300));
                     });
 
                     let reg_counter = Arc::new(AtomicUsize::new(0));
@@ -283,12 +303,8 @@ pub fn open_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                             if counter_clone.load(Ordering::SeqCst) == current {
-                                if let Some(s) = win_clone_inner.try_state::<TaskbarLyricState>() {
-                                    if let Some(srv) = s.service.lock().unwrap().as_ref() {
-                                        srv.update(300);
-                                        let _ = win_clone_inner.emit("taskbar-lyric:fade-in", ());
-                                    }
-                                }
+                                with_taskbar_service(&win_clone_inner, |srv| srv.update(300));
+                                let _ = win_clone_inner.emit("taskbar-lyric:fade-in", ());
                             }
                         });
                     });

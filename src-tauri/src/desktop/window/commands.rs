@@ -89,6 +89,12 @@ pub async fn list_windows(app: AppHandle) -> Vec<String> {
     manager::list_windows(&app)
 }
 
+/// Open DevTools for a managed window. Dev builds only.
+#[command]
+pub async fn open_window_devtools(app: AppHandle, label: String) -> Result<(), String> {
+    manager::open_window_devtools(&app, &label)
+}
+
 /// Store a payload in the cache for a window label.
 #[command]
 pub async fn set_window_payload(label: String, payload: Value) -> Result<(), String> {

@@ -562,6 +562,10 @@ export const audioSendMsgAsync = audioSendMsg;
 //  Sync query command
 // ═══════════════════════════════════════════════════════════════════
 
+export async function audioPreheat(): Promise<void> {
+  await invoke("audio_preheat");
+}
+
 export async function audioGetState(): Promise<AudioStateResponse | null> {
   return invoke<AudioStateResponse>("audio_get_state");
 }

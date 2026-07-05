@@ -112,6 +112,8 @@ export interface SongSection {
   index: number;
   confidence: number;
   energy: number;
+  vocalRisk: number;
+  mixSuitability: number;
 }
 
 export interface SectionAnalysis {
@@ -119,6 +121,27 @@ export interface SectionAnalysis {
   confidence: number;
   /** Native Rust currently emits this; Web worker analysis may omit sections. */
   method: string;
+}
+
+export interface VocalActivityAnalysis {
+  windowDuration: number;
+  risk: number[];
+  confidence: number;
+  method: "multibandHeuristic" | string;
+}
+
+export interface MixPointCandidate {
+  time: number;
+  score: number;
+  reason: string;
+  sectionType?: SongSectionKind;
+  vocalRisk: number;
+  energy: number;
+}
+
+export interface MixPointAnalysis {
+  candidates: MixPointCandidate[];
+  selected?: MixPointCandidate | null;
 }
 
 export interface TrackAnalysis {
@@ -130,6 +153,8 @@ export interface TrackAnalysis {
   intro: IntroAnalysis | null;
   phrases: PhraseAnalysis | null;
   sections?: SectionAnalysis | null;
+  vocalActivity?: VocalActivityAnalysis | null;
+  mixCandidates?: MixPointAnalysis | null;
   duration: number;
 }
 

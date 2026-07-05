@@ -3,8 +3,9 @@
 
 use super::analysis::{design_biquad_bandpass, design_k_weight_shelf, iir_process};
 use super::{
-    BPMResult, EnergyAnalysis, IntroAnalysis, MultibandEnergy, OutroAnalysis, SectionAnalysis,
-    SongSection, SongSectionKind, INTRO_SCAN_SECONDS, MAX_SONG_SECTIONS, OUTRO_ANALYSIS_SECONDS,
+    BPMResult, EnergyAnalysis, IntroAnalysis, MixPointAnalysis, MixPointCandidate, MultibandEnergy,
+    OutroAnalysis, PhraseAnalysis, SectionAnalysis, SongSection, SongSectionKind,
+    VocalActivityAnalysis, INTRO_SCAN_SECONDS, MAX_SONG_SECTIONS, OUTRO_ANALYSIS_SECONDS,
     OUTRO_WINDOW_MS, SECTION_FALLBACK_SECONDS, SECTION_MAX_SECONDS, SECTION_MIN_SECONDS,
     SECTION_PHRASE_BEATS,
 };
@@ -338,6 +339,8 @@ struct LabeledSectionCandidate {
     candidate: SectionCandidate,
     section_type: SongSectionKind,
     confidence: f32,
+    vocal_risk: f32,
+    mix_suitability: f32,
 }
 
 pub(super) fn analyze_song_sections(
@@ -345,6 +348,7 @@ pub(super) fn analyze_song_sections(
     bpm: Option<&BPMResult>,
     intro: Option<&IntroAnalysis>,
     outro: Option<&OutroAnalysis>,
+    vocal_activity: Option<&VocalActivityAnalysis>,
     duration: f32,
 ) -> Option<SectionAnalysis> {
     if duration < SECTION_MIN_SECONDS * 2.0 || energy.energy_per_second.len() < 4 {
@@ -392,10 +396,16 @@ pub(super) fn analyze_song_sections(
                 duration,
                 bpm_confidence,
             );
+            let vocal_risk =
+                section_vocal_risk(vocal_activity, candidate.start, candidate.end).unwrap_or(0.5);
+            let mix_suitability =
+                section_mix_suitability(section_type, candidate.avg_energy, confidence, vocal_risk);
             LabeledSectionCandidate {
                 candidate,
                 section_type,
                 confidence,
+                vocal_risk,
+                mix_suitability,
             }
         })
         .collect::<Vec<_>>();
@@ -753,6 +763,11 @@ fn merge_labeled_sections(labeled: Vec<LabeledSectionCandidate>) -> Vec<SongSect
                     (last.confidence * last_duration + item.confidence * duration) / total_duration;
                 last.energy = (last.energy * last_duration + item.candidate.avg_energy * duration)
                     / total_duration;
+                last.vocal_risk =
+                    (last.vocal_risk * last_duration + item.vocal_risk * duration) / total_duration;
+                last.mix_suitability = (last.mix_suitability * last_duration
+                    + item.mix_suitability * duration)
+                    / total_duration;
                 last.end = item.candidate.end;
                 continue;
             }
@@ -769,10 +784,263 @@ fn merge_labeled_sections(labeled: Vec<LabeledSectionCandidate>) -> Vec<SongSect
             index: 0,
             confidence: item.confidence,
             energy: item.candidate.avg_energy,
+            vocal_risk: item.vocal_risk,
+            mix_suitability: item.mix_suitability,
         });
     }
 
     sections
+}
+
+fn section_vocal_risk(
+    vocal_activity: Option<&VocalActivityAnalysis>,
+    start: f32,
+    end: f32,
+) -> Option<f32> {
+    let vocal = vocal_activity?;
+    if vocal.risk.is_empty() || vocal.window_duration <= 0.0 || end <= start {
+        return None;
+    }
+
+    let start_idx = (start / vocal.window_duration).floor().max(0.0) as usize;
+    let end_idx = (end / vocal.window_duration)
+        .ceil()
+        .max(start_idx as f32 + 1.0) as usize;
+    let start_idx = start_idx.min(vocal.risk.len() - 1);
+    let end_idx = end_idx.clamp(start_idx + 1, vocal.risk.len());
+    let slice = &vocal.risk[start_idx..end_idx];
+    let mut sorted = slice.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    Some(percentile_sorted(&sorted, 0.7).clamp(0.0, 1.0))
+}
+
+fn vocal_risk_at(vocal_activity: Option<&VocalActivityAnalysis>, time: f32) -> f32 {
+    let Some(vocal) = vocal_activity else {
+        return 0.5;
+    };
+    if vocal.risk.is_empty() || vocal.window_duration <= 0.0 {
+        return 0.5;
+    }
+
+    let idx = (time / vocal.window_duration).round().max(0.0) as usize;
+    vocal.risk[idx.min(vocal.risk.len() - 1)].clamp(0.0, 1.0)
+}
+
+fn section_mix_suitability(
+    section_type: SongSectionKind,
+    energy: f32,
+    confidence: f32,
+    vocal_risk: f32,
+) -> f32 {
+    let base = match section_type {
+        SongSectionKind::Silence => 0.92,
+        SongSectionKind::Outro => 0.82,
+        SongSectionKind::Breakdown => 0.72,
+        SongSectionKind::Bridge => 0.55,
+        SongSectionKind::Verse => 0.26,
+        SongSectionKind::Start => 0.14,
+        SongSectionKind::Chorus => 0.08,
+    };
+
+    (base + (1.0 - energy.clamp(0.0, 1.0)) * 0.18 + confidence * 0.12 - vocal_risk * 0.35)
+        .clamp(0.0, 1.0)
+}
+
+pub(super) fn build_mix_point_analysis(
+    energy: &EnergyAnalysis,
+    bpm: Option<&BPMResult>,
+    outro: Option<&OutroAnalysis>,
+    phrases: Option<&PhraseAnalysis>,
+    sections: Option<&SectionAnalysis>,
+    vocal_activity: Option<&VocalActivityAnalysis>,
+    duration: f32,
+) -> Option<MixPointAnalysis> {
+    if duration < SECTION_MIN_SECONDS * 2.0 || energy.energy_per_second.is_empty() {
+        return None;
+    }
+
+    let content_end = (duration - energy.trailing_silence).max(0.0).min(duration);
+    let latest = (content_end - SECTION_MIN_SECONDS).max(0.0);
+    if latest <= 0.0 {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+    if let Some(outro) = outro {
+        push_mix_candidate(
+            &mut candidates,
+            outro.suggested_crossfade_start,
+            "outroClassifier",
+            None,
+            0.55 + outro.outro_confidence * 0.25,
+            energy,
+            vocal_activity,
+            latest,
+        );
+
+        if let Some(outro_start) = outro.outro_section_start {
+            push_mix_candidate(
+                &mut candidates,
+                outro_start,
+                "outroSection",
+                Some(SongSectionKind::Outro),
+                0.72 + outro.outro_confidence * 0.18,
+                energy,
+                vocal_activity,
+                latest,
+            );
+        }
+    }
+
+    push_mix_candidate(
+        &mut candidates,
+        duration - energy.outro_start_offset,
+        "energyOutro",
+        Some(SongSectionKind::Outro),
+        if energy.is_fade_out { 0.74 } else { 0.58 },
+        energy,
+        vocal_activity,
+        latest,
+    );
+
+    if let Some(phrases) = phrases {
+        if let Some(phrase) = phrases.mix_out_phrase.as_ref() {
+            push_mix_candidate(
+                &mut candidates,
+                phrase.start,
+                "phraseBoundary",
+                None,
+                0.62,
+                energy,
+                vocal_activity,
+                latest,
+            );
+        }
+    }
+
+    if let Some(sections) = sections {
+        for section in &sections.sections {
+            let section_duration = section.end - section.start;
+            if section_duration < 1.0 {
+                continue;
+            }
+            let section_time = match section.section_type {
+                SongSectionKind::Outro | SongSectionKind::Silence => section.start,
+                SongSectionKind::Breakdown | SongSectionKind::Bridge => {
+                    section.start + section_duration * 0.25
+                }
+                SongSectionKind::Verse => section.start + section_duration * 0.85,
+                SongSectionKind::Chorus => section.start + section_duration * 0.95,
+                SongSectionKind::Start => continue,
+            };
+            push_mix_candidate(
+                &mut candidates,
+                section_time,
+                "section",
+                Some(section.section_type),
+                section.mix_suitability,
+                energy,
+                vocal_activity,
+                latest,
+            );
+        }
+    }
+
+    if let Some(bpm) = bpm {
+        if bpm.confidence >= 0.3 && bpm.bpm.is_finite() && bpm.bpm > 0.0 {
+            for beat in &bpm.beat_grid {
+                let time = *beat + bpm.analysis_offset;
+                if time < latest - SECTION_MAX_SECONDS || time > latest {
+                    continue;
+                }
+                push_mix_candidate(
+                    &mut candidates,
+                    time,
+                    "beatNearOutro",
+                    None,
+                    0.46 + bpm.confidence * 0.15,
+                    energy,
+                    vocal_activity,
+                    latest,
+                );
+            }
+        }
+    }
+
+    dedupe_mix_candidates(&mut candidates);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    candidates.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let selected = candidates.first().cloned();
+
+    Some(MixPointAnalysis {
+        candidates,
+        selected,
+    })
+}
+
+fn push_mix_candidate(
+    candidates: &mut Vec<MixPointCandidate>,
+    time: f32,
+    reason: &str,
+    section_type: Option<SongSectionKind>,
+    base_score: f32,
+    energy: &EnergyAnalysis,
+    vocal_activity: Option<&VocalActivityAnalysis>,
+    latest: f32,
+) {
+    if !time.is_finite() {
+        return;
+    }
+
+    let time = time.clamp(0.0, latest);
+    let sec = time.floor().max(0.0) as usize;
+    let local_energy = energy
+        .energy_per_second
+        .get(sec.min(energy.energy_per_second.len().saturating_sub(1)))
+        .copied()
+        .unwrap_or(energy.average_energy)
+        .clamp(0.0, 1.0);
+    let vocal_risk = vocal_risk_at(vocal_activity, time);
+    let score = (base_score + (1.0 - local_energy) * 0.14 - vocal_risk * 0.38).clamp(0.0, 1.0);
+
+    candidates.push(MixPointCandidate {
+        time,
+        score,
+        reason: reason.to_string(),
+        section_type,
+        vocal_risk,
+        energy: local_energy,
+    });
+}
+
+fn dedupe_mix_candidates(candidates: &mut Vec<MixPointCandidate>) {
+    candidates.sort_by(|a, b| {
+        a.time
+            .partial_cmp(&b.time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut deduped: Vec<MixPointCandidate> = Vec::with_capacity(candidates.len());
+    for candidate in candidates.drain(..) {
+        if let Some(last) = deduped.last_mut() {
+            if (candidate.time - last.time).abs() < 0.75 {
+                if candidate.score > last.score {
+                    *last = candidate;
+                }
+                continue;
+            }
+        }
+        deduped.push(candidate);
+    }
+
+    *candidates = deduped;
 }
 
 // ─── Outro Classification (Simplified) ─────────────────────────────
@@ -917,7 +1185,7 @@ mod tests {
             multiband_energy: None,
         };
 
-        let analysis = analyze_song_sections(&energy, Some(&bpm), Some(&intro), None, 80.0)
+        let analysis = analyze_song_sections(&energy, Some(&bpm), Some(&intro), None, None, 80.0)
             .expect("expected section analysis");
         let section_types = analysis
             .sections
@@ -943,6 +1211,6 @@ mod tests {
             is_fade_out: false,
         };
 
-        assert!(analyze_song_sections(&energy, None, None, None, 3.0).is_none());
+        assert!(analyze_song_sections(&energy, None, None, None, None, 3.0).is_none());
     }
 }

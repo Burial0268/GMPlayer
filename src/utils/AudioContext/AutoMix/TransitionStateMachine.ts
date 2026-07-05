@@ -31,7 +31,7 @@ import {
 } from "../PlayerFunctions";
 import { resolveSongUrl } from "../resolveSongUrl";
 import { getAudioBackendTransport } from "../../tauri/audioIpc";
-import { isTauri, type AudioThreadEvent } from "../../tauri/audioBridge";
+import { audioSendMsg, isTauri, type AudioThreadEvent } from "../../tauri/audioBridge";
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
 import type { ISound } from "../types";
@@ -400,15 +400,16 @@ export class TransitionStateMachine {
       return;
     }
 
+    const currentSound = SoundManager.getCurrentSound();
+    if (this._isNativeAutoMixSound(currentSound)) {
+      this._startNativeAutoMixPrepare(duration);
+      return;
+    }
+
     const effectiveDuration = this._getEffectiveCrossfadeDuration(duration);
     const triggerTime = duration - effectiveDuration - PREPARE_AHEAD;
 
     if (currentTime >= triggerTime && currentTime < duration - 1) {
-      const currentSound = SoundManager.getCurrentSound();
-      if (this._isNativeAutoMixSound(currentSound)) {
-        this._startNativeAutoMixPrepare(duration);
-        return;
-      }
       this._startAnalysis();
     }
   }
@@ -462,6 +463,17 @@ export class TransitionStateMachine {
     this._state = "analyzing";
     this._updateStoreState();
 
+    if (IS_DEV) {
+      console.debug("TransitionStateMachine: Native AutoMix prepare", {
+        transitionId,
+        currentIndex,
+        nextIndex,
+        duration,
+        crossfadeStart: this._crossfadeStartTime,
+        nextSong: nextSong?.name ?? nextSong?.id,
+      });
+    }
+
     void this._sendNativeAutoMixPrepare(transitionId, currentIndex, nextIndex, nextSong)
       .then(() => {
         // Native analysis completion is event-driven. Wait for
@@ -511,7 +523,15 @@ export class TransitionStateMachine {
     const transport = getAudioBackendTransport();
     await transport.connect();
     this._ensureNativeAutoMixSubscription();
-    transport.sendOrQueue({
+    if (IS_DEV) {
+      console.debug("TransitionStateMachine: Sending native AutoMix prepare", {
+        transitionId,
+        currentIndex,
+        nextIndex,
+        source: resolved.source,
+      });
+    }
+    await audioSendMsg({
       type: "automixConfigure",
       config: {
         enabled: true,
@@ -525,7 +545,7 @@ export class TransitionStateMachine {
         vocalGuard: this._settingsVocalGuard,
       },
     });
-    transport.sendOrQueue({
+    await audioSendMsg({
       type: "automixPrepareNext",
       currentIndex,
       nextIndex,
@@ -561,6 +581,9 @@ export class TransitionStateMachine {
   }
 
   private _handleNativeAutoMixEvent(event: AudioThreadEvent): void {
+    if (IS_DEV && event.type.startsWith("automix")) {
+      console.debug("TransitionStateMachine: Native AutoMix event", event);
+    }
     switch (event.type) {
       case "automixStatus": {
         const status = event.data.status;
@@ -1267,7 +1290,7 @@ export class TransitionStateMachine {
 
   private _handleWaiting(currentTime: number): void {
     if (this._nativeAutoMixReady) {
-      if (!this._nativeForceStartSent && currentTime >= this._crossfadeStartTime + 0.25) {
+      if (!this._nativeForceStartSent && currentTime + 0.15 >= this._crossfadeStartTime) {
         this._nativeForceStartSent = true;
         getAudioBackendTransport().sendOrQueue({ type: "automixForceStart" });
       }
@@ -2043,6 +2066,11 @@ export class TransitionStateMachine {
   onTrackStarted(sound: ISound, songId: number): void {
     if (this._state === "crossfading" || this._state === "finishing") return;
 
+    if (!this._storesReady) {
+      this._loadStores();
+    }
+    this._refreshSettings();
+
     this._activeGainAdjustment = 1;
     this._preBufferManager.cleanup();
 
@@ -2051,6 +2079,12 @@ export class TransitionStateMachine {
     this._updateStoreState();
 
     if (this._isNativeAutoMixSound(sound)) {
+      if (this._enabled && this._shouldBeActive()) {
+        const duration = sound.duration();
+        if (duration && duration > 0) {
+          this._startNativeAutoMixPrepare(duration);
+        }
+      }
       return;
     }
 
@@ -2060,7 +2094,21 @@ export class TransitionStateMachine {
         !!(sound as { getSourceUrl?: () => string | null }).getSourceUrl?.())
     ) {
       this._preAnalyzeTrack(sound, songId);
+      this._startWebPreBuffer();
     }
+  }
+
+  private _startWebPreBuffer(): void {
+    if (!this._musicStoreRef) return;
+    if (!this._shouldBeActive()) return;
+    if (this._preBufferManager.isBuffering || this._preBufferManager.hasBuffer) return;
+
+    this._preBufferManager.startPreBuffer(
+      this._musicStoreRef,
+      this._analysisCache,
+      { volumeNorm: this._settingsVolumeNorm, bpmMatch: this._settingsBpmMatch },
+      () => this._state,
+    );
   }
 
   private _preAnalyzeTrack(sound: ISound, songId: number): void {

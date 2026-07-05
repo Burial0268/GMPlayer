@@ -73,6 +73,7 @@ pub fn run() {
             window::commands::focus_window,
             window::commands::get_window_state,
             window::commands::list_windows,
+            window::commands::open_window_devtools,
             window::commands::set_window_payload,
             window::commands::take_window_payload,
             window::commands::peek_window_payload,
@@ -94,6 +95,7 @@ pub fn run() {
             // AutoMix analysis (native Rust, shared by desktop/mobile)
             commands::audio_analyze_automix,
             commands::audio_analyze_automix_source,
+            commands::audio_preheat,
             // AMLL-style: single message command for all playback control
             commands::audio_send_msg,
             // Event stream subscription (Rust → frontend Tauri Channel)
@@ -160,6 +162,8 @@ pub fn run() {
                 warn!("Failed to pre-create tray popup: {}", e);
             }
 
+            spawn_audio_preheat(app_handle);
+
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -192,4 +196,17 @@ pub fn run() {
             }
         }
     });
+}
+
+fn spawn_audio_preheat(app_handle: tauri::AppHandle) {
+    let _ = std::thread::Builder::new()
+        .name("audio-preheat".into())
+        .spawn(move || {
+            let Some(player_state) = app_handle.try_state::<commands::PlayerState>() else {
+                return;
+            };
+            if let Err(e) = player_state.preheat() {
+                warn!("Failed to preheat native audio backend: {}", e);
+            }
+        });
 }

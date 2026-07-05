@@ -17,7 +17,7 @@ use ::symphonia::core::probe::Hint;
 use ::symphonia::core::units::Time;
 use rodio::source::SeekError;
 use rodio::Source;
-use tokio::sync::mpsc as tokio_mpsc;
+use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tracing::warn;
 
 use crate::analysis::AnalysisCommand;
@@ -30,6 +30,10 @@ pub(crate) trait PlaybackSink: Clone + Send + 'static {
     fn set_paused(&self, paused: bool);
     fn queued_samples(&self) -> usize;
     fn generation(&self) -> u64;
+
+    fn take_recycled_buffer(&self, capacity: usize) -> Vec<f32> {
+        Vec::with_capacity(capacity)
+    }
 }
 
 impl PlaybackSink for OutputWriter {
@@ -51,6 +55,10 @@ impl PlaybackSink for OutputWriter {
 
     fn generation(&self) -> u64 {
         OutputWriter::generation(self)
+    }
+
+    fn take_recycled_buffer(&self, capacity: usize) -> Vec<f32> {
+        OutputWriter::take_recycled_buffer(self, capacity)
     }
 }
 
@@ -93,7 +101,7 @@ enum DecoderControl {
     Seek {
         pos: Duration,
         epoch: u64,
-        ack: mpsc::Sender<Result<(), String>>,
+        ack: oneshot::Sender<Result<(), String>>,
     },
     SetPaused(bool),
     Stop,
@@ -107,11 +115,12 @@ pub struct DecoderHandle {
     control_tx: mpsc::Sender<DecoderControl>,
     stop_flag: Arc<AtomicBool>,
     seek_epoch: Arc<AtomicU64>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl DecoderHandle {
-    pub fn seek(&self, pos: Duration) -> AudioResult<()> {
-        let (ack_tx, ack_rx) = mpsc::channel();
+    pub(crate) fn seek(&self, pos: Duration) -> AudioResult<DecoderSeekAck> {
+        let (ack_tx, ack_rx) = oneshot::channel();
         let epoch = self
             .seek_epoch
             .fetch_add(1, Ordering::AcqRel)
@@ -124,16 +133,7 @@ impl DecoderHandle {
             })
             .map_err(|_| AudioError::ThreadError("decoder control channel closed".into()))?;
 
-        match ack_rx.recv_timeout(Duration::from_secs(2)) {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(err)) => Err(AudioError::Decode(err)),
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                Err(AudioError::ThreadError("decoder seek timed out".into()))
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(AudioError::ThreadError(
-                "decoder seek acknowledgement channel closed".into(),
-            )),
-        }
+        Ok(DecoderSeekAck { ack_rx })
     }
 
     pub fn set_paused(&self, paused: bool) -> AudioResult<()> {
@@ -152,7 +152,35 @@ impl DecoderHandle {
 impl Drop for DecoderHandle {
     fn drop(&mut self) {
         self.stop();
+        if let Some(thread) = self.thread.take() {
+            join_decoder_thread_async(thread);
+        }
     }
+}
+
+pub(crate) struct DecoderSeekAck {
+    ack_rx: oneshot::Receiver<Result<(), String>>,
+}
+
+impl DecoderSeekAck {
+    pub(crate) async fn wait(self) -> AudioResult<()> {
+        match tokio::time::timeout(Duration::from_secs(2), self.ack_rx).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(err))) => Err(AudioError::Decode(err)),
+            Ok(Err(_)) => Err(AudioError::ThreadError(
+                "decoder seek acknowledgement channel closed".into(),
+            )),
+            Err(_) => Err(AudioError::ThreadError("decoder seek timed out".into())),
+        }
+    }
+}
+
+fn join_decoder_thread_async(handle: std::thread::JoinHandle<()>) {
+    let _ = std::thread::Builder::new()
+        .name("audio-decode-join".into())
+        .spawn(move || {
+            let _ = handle.join();
+        });
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -437,7 +465,7 @@ where
     let output_channels = output_channels.max(1);
     let output_sample_rate = output_sample_rate.max(1);
 
-    std::thread::Builder::new()
+    let thread = std::thread::Builder::new()
         .name("audio-decode".into())
         .spawn(move || {
             let mut worker = DecodeWorker::new(
@@ -464,6 +492,7 @@ where
         control_tx,
         stop_flag,
         seek_epoch,
+        thread: Some(thread),
     })
 }
 
@@ -559,11 +588,18 @@ impl<S: PlaybackSink> DecodeWorker<S> {
 
             let block_seek_epoch = self.applied_seek_epoch;
             let generation = self.output.generation();
-            let mut block = Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize);
+            let block_capacity = DECODE_BLOCK_FRAMES * self.output_channels as usize;
+            let mut block = self.output.take_recycled_buffer(block_capacity);
+            block.clear();
+            if block.capacity() < block_capacity {
+                block.reserve(block_capacity - block.capacity());
+            }
             let mut analysis_block = if self.analysis_enabled.load(Ordering::Acquire) {
-                Some(self.analysis_recycle_rx.try_recv().unwrap_or_else(|_| {
-                    Vec::with_capacity(DECODE_BLOCK_FRAMES * self.output_channels as usize)
-                }))
+                Some(
+                    self.analysis_recycle_rx
+                        .try_recv()
+                        .unwrap_or_else(|_| Vec::with_capacity(block_capacity)),
+                )
             } else {
                 None
             };

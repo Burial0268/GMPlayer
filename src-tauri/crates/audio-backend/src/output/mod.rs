@@ -19,17 +19,29 @@ const PREFERRED_FORMATS: [cpal::SampleFormat; 3] = [
     cpal::SampleFormat::I16,
     cpal::SampleFormat::U16,
 ];
+#[cfg(target_os = "android")]
 const DEFAULT_QUEUE_BLOCKS: usize = 16;
+#[cfg(not(target_os = "android"))]
+const DEFAULT_QUEUE_BLOCKS: usize = 8;
 // Depth of the buffer-recycling channel that returns spent mix blocks from the
 // CPAL callback back to the mixer for reuse. Sized a little above the data
 // queue so every in-flight buffer has a slot; overflow simply drops the buffer
 // (a plain free on the producer side), so the callback never blocks.
 const RECYCLE_QUEUE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS + 4;
 const OUTPUT_INIT_TIMEOUT: Duration = Duration::from_secs(4);
+#[cfg(target_os = "android")]
+const STABLE_OUTPUT_BUFFER_MS: u32 = 40;
+#[cfg(not(target_os = "android"))]
 const STABLE_OUTPUT_BUFFER_MS: u32 = 20;
+#[cfg(target_os = "android")]
+const MIN_STABLE_OUTPUT_BUFFER_FRAMES: u32 = 512;
+#[cfg(not(target_os = "android"))]
 const MIN_STABLE_OUTPUT_BUFFER_FRAMES: u32 = 512;
 const UNDERRUN_FADE_FRAMES: usize = 64;
 const SEEK_FLUSH_FADE_FRAMES: usize = 256;
+const PRODUCER_YIELD_RETRIES: u32 = 8;
+const PRODUCER_MIN_PARK_US: u64 = 100;
+const PRODUCER_MAX_PARK_US: u64 = 1_000;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PushCancel<'a> {
@@ -65,6 +77,7 @@ pub struct OutputTarget {
 }
 
 impl OutputTarget {
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pub fn for_source(source_channels: u16, sample_rate: u32) -> Self {
         Self {
             channels: desired_output_channels(source_channels),
@@ -183,6 +196,7 @@ impl OutputWriter {
 
         let generation = self.generation.load(Ordering::Acquire);
         let flush_epoch = self.flush_epoch.load(Ordering::Acquire);
+        let mut retry_count = 0;
         loop {
             if cancel.is_cancelled()
                 || self.generation.load(Ordering::Acquire) != generation
@@ -190,11 +204,6 @@ impl OutputWriter {
                 || self.stream_failed.load(Ordering::Acquire)
             {
                 return false;
-            }
-
-            if self.paused.load(Ordering::Acquire) {
-                thread::sleep(Duration::from_millis(2));
-                continue;
             }
 
             let block_len = block.len();
@@ -221,7 +230,7 @@ impl OutputWriter {
                 Err(mpsc::TrySendError::Full(returned)) => {
                     saturating_sub(&self.queued_samples, block_len);
                     block = returned.samples;
-                    thread::sleep(Duration::from_millis(2));
+                    producer_retry_backoff(&mut retry_count);
                 }
                 Err(mpsc::TrySendError::Disconnected(_)) => {
                     saturating_sub(&self.queued_samples, block_len);
@@ -310,6 +319,7 @@ pub struct LowLatencyOutput {
     selector: OutputDeviceSelector,
     device: OutputDeviceKey,
     config: OutputConfigKey,
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     target: Option<OutputTarget>,
 }
 
@@ -330,6 +340,7 @@ impl LowLatencyOutput {
         &self.selector
     }
 
+    #[cfg_attr(target_os = "android", allow(dead_code))]
     pub fn target(&self) -> Option<OutputTarget> {
         self.target
     }
@@ -404,7 +415,7 @@ pub fn open_output(
         Ok(result) => result?,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             let _ = stream_stop_tx.send(());
-            drop(stream_thread);
+            join_output_thread_async(stream_thread);
             return Err("output stream init timed out".to_string());
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -639,7 +650,20 @@ fn open_output_stream(
         output_device_key_and_config(&host, &device, selector.is_default());
     let device_name = device_key.name().to_string();
 
-    let supported_config = match target {
+    #[cfg(target_os = "android")]
+    let effective_target = target.or_else(|| {
+        Some(OutputTarget {
+            channels: 2,
+            sample_rate: default_config
+                .as_ref()
+                .map(|config| config.sample_rate().0)
+                .unwrap_or(48_000),
+        })
+    });
+    #[cfg(not(target_os = "android"))]
+    let effective_target = target;
+
+    let supported_config = match effective_target {
         Some(target) => select_output_config(&device, target, default_config.as_ref())
             .or_else(|| default_config.clone())
             .ok_or_else(|| "no supported output config".to_string())?,
@@ -652,9 +676,12 @@ fn open_output_stream(
     let stream_config = stable_stream_config(&supported_config);
 
     info!(
-        "音频输出：selector={} device={device_name} channels={} rate={} format={:?} target={target:?}",
+        "音频输出：selector={} device={device_name} channels={} rate={} format={:?} buffer={:?} target={effective_target:?}",
         selector.label(),
-        stream_config.channels, stream_config.sample_rate.0, config_key.sample_format
+        stream_config.channels,
+        stream_config.sample_rate.0,
+        config_key.sample_format,
+        stream_config.buffer_size
     );
 
     let stream = match config_key.sample_format {
@@ -1077,6 +1104,19 @@ fn recycle_buffer(recycle_tx: &mpsc::SyncSender<Vec<f32>>, buf: Vec<f32>) {
     let _ = recycle_tx.try_send(buf);
 }
 
+fn producer_retry_backoff(retry_count: &mut u32) {
+    if *retry_count < PRODUCER_YIELD_RETRIES {
+        *retry_count += 1;
+        thread::yield_now();
+        return;
+    }
+
+    let shift = (*retry_count - PRODUCER_YIELD_RETRIES).min(4);
+    let park_us = (PRODUCER_MIN_PARK_US << shift).min(PRODUCER_MAX_PARK_US);
+    *retry_count = (*retry_count).saturating_add(1);
+    thread::park_timeout(Duration::from_micros(park_us));
+}
+
 fn saturating_sub(counter: &AtomicUsize, amount: usize) {
     let mut current = counter.load(Ordering::Acquire);
     loop {
@@ -1088,6 +1128,7 @@ fn saturating_sub(counter: &AtomicUsize, amount: usize) {
     }
 }
 
+#[cfg_attr(target_os = "android", allow(dead_code))]
 fn desired_output_channels(source_channels: u16) -> u16 {
     let source_channels = source_channels.max(1);
     if source_channels <= 2 {
@@ -1116,13 +1157,16 @@ fn stable_stream_config(supported_config: &cpal::SupportedStreamConfig) -> Strea
 }
 
 fn stable_buffer_size(sample_rate: u32, supported: &SupportedBufferSize) -> BufferSize {
+    let target_frames =
+        ((sample_rate.max(1) as u64 * STABLE_OUTPUT_BUFFER_MS as u64) / 1_000) as u32;
+    let target_frames = target_frames.max(MIN_STABLE_OUTPUT_BUFFER_FRAMES);
     match supported {
         SupportedBufferSize::Range { min, max } => {
-            let target_frames =
-                ((sample_rate.max(1) as u64 * STABLE_OUTPUT_BUFFER_MS as u64) / 1_000) as u32;
-            let target_frames = target_frames.max(MIN_STABLE_OUTPUT_BUFFER_FRAMES);
             BufferSize::Fixed(target_frames.clamp(*min, *max))
         }
+        #[cfg(target_os = "android")]
+        SupportedBufferSize::Unknown => BufferSize::Fixed(target_frames),
+        #[cfg(not(target_os = "android"))]
         SupportedBufferSize::Unknown => BufferSize::Default,
     }
 }
