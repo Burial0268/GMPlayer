@@ -66,7 +66,7 @@ const alignPosition = computed(() => (setting.lyricsBlock === "center" ? 0.5 : 0
 
 const mainColor = computed(() => {
   if (!setting.immersivePlayer) return "rgb(239, 239, 239)";
-  return `rgb(${site.songPicColor})`;
+  return `var(--main-cover-mix-color, rgb(${site.songPicColor}))`;
 });
 
 const lyricStyles = computed(() => ({
@@ -133,7 +133,8 @@ function syncCurrentTimeFromPlayback() {
   const player = getDomPlayer();
   if (!player) return;
 
-  player.setCurrentTime(currentTime * 1000 + (setting.lyricTimeOffset ?? 0), true);
+  const displayTime = music.persistData.playSongTime.currentTime;
+  player.setCurrentTime(displayTime * 1000 + (setting.lyricTimeOffset ?? 0), true);
   player.resetScroll();
 }
 
@@ -232,7 +233,7 @@ watch(
     amllLyricLines.value = processed;
     playerKey.value = Symbol();
   },
-  { immediate: true, deep: true },
+  { immediate: true },
 );
 </script>
 

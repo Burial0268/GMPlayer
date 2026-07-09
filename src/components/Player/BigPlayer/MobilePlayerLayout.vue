@@ -580,7 +580,6 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   grid-template-columns: 1fr;
   min-width: 0;
   min-height: 0;
-  mix-blend-mode: plus-lighter;
   will-change: transform, opacity;
 }
 
@@ -656,6 +655,7 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   display: grid;
   grid-template-rows: 8px [controls] 56px [lyric-view] minmax(0, 1fr);
   grid-template-columns: 16px [cover-side] 56px [info-side] minmax(0, 1fr) 16px;
+  mix-blend-mode: plus-lighter;
   pointer-events: none;
 
   &.active {

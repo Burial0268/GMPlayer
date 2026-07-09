@@ -69,8 +69,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
 
   const lrcTextClick = (time: number) => {
     if (typeof window.$player !== "undefined") {
-      music.persistData.playSongTime.currentTime = time;
-      window.$player.seek(time);
+      setSeek(window.$player, time);
       music.setPlayState(true);
     }
     lrcMouseStatus.value = false;
@@ -83,7 +82,6 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
 
   const handleProgressSeek = (val: number) => {
     if (typeof window.$player !== "undefined" && music.getPlaySongTime?.duration) {
-      music.persistData.playSongTime.currentTime = val;
       setSeek(window.$player, val);
     }
   };

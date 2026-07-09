@@ -168,8 +168,9 @@ export class FbmRenderer extends BaseRenderer {
 
   pause() {
     this.isPaused = true;
-    if (!this.tickHandle && !this.isNoCover && !this._disposed) {
-      this.tickHandle = requestAnimationFrame(this.tick);
+    if (this.tickHandle) {
+      cancelAnimationFrame(this.tickHandle);
+      this.tickHandle = 0;
     }
   }
 
@@ -347,7 +348,6 @@ export class FbmRenderer extends BaseRenderer {
     this.tickHandle = 0;
     if (this._disposed) return;
     if (this.isPaused || this.isStatic) {
-      this.tickHandle = requestAnimationFrame(this.tick);
       return;
     }
 
@@ -378,7 +378,10 @@ export class FbmRenderer extends BaseRenderer {
     this._disposed = true;
 
     const gl = this.gl;
-    if (this.tickHandle) cancelAnimationFrame(this.tickHandle);
+    if (this.tickHandle) {
+      cancelAnimationFrame(this.tickHandle);
+      this.tickHandle = 0;
+    }
     if (this.texture) this.texture.dispose();
     if (this.flowMapTexture) this.flowMapTexture.dispose();
     if (this.flowMapFramebuffer) gl.deleteFramebuffer(this.flowMapFramebuffer);
@@ -465,8 +468,9 @@ export class FbmRenderer extends BaseRenderer {
     if (staticMode) {
       // Render one final frame to show the static state
       this.render();
-      if (!this.tickHandle && !this.isNoCover && !this._disposed) {
-        this.tickHandle = requestAnimationFrame(this.tick);
+      if (this.tickHandle) {
+        cancelAnimationFrame(this.tickHandle);
+        this.tickHandle = 0;
       }
     } else if (!this.isPaused) {
       this.resume();

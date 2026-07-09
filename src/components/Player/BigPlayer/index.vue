@@ -290,7 +290,6 @@ const fullUiY = useMotionValue(20);
 const controlsOpacity = useMotionValue(0);
 const controlsY = useMotionValue(18);
 const backgroundVisualOpacity = useMotionValue(0);
-const backgroundGrayOpacity = useMotionValue(0);
 const backgroundTop = useMotionValue(0);
 const backgroundRadius = useMotionValue(0);
 const artworkLeft = useMotionValue(0);
@@ -329,7 +328,6 @@ const mobileAlbumLayerVisible = computed(
 const mobileBackgroundVisualStyle = computed<MotionStyleRecord>(() => ({
   opacity: backgroundVisualOpacity,
   "--mobile-player-bg-reveal-y": backgroundTop,
-  "--mobile-player-gray-opacity": backgroundGrayOpacity,
   ...(mobileInteractive.value
     ? {
         y: backgroundTop,
@@ -372,7 +370,6 @@ const MOBILE_MINI_SURFACE_FADE_END = MOBILE_MINI_BAR_HANDOFF_END;
 const MOBILE_BACKGROUND_EXPAND_END = 0.94;
 const MOBILE_ARTWORK_MID_END = 0.64;
 const MOBILE_ARTWORK_EXPAND_END = MOBILE_BACKGROUND_EXPAND_END;
-const MOBILE_BACKGROUND_GRAY_END = 0.72;
 const MOBILE_CONTENT_REVEAL_START = 0.76;
 const MOBILE_CONTENT_REVEAL_END = 0.98;
 const MOBILE_CONTROLS_REVEAL_START = 0.88;
@@ -751,7 +748,6 @@ const applyProgressState = (value: number) => {
   if (!isMobile.value) {
     clearMiniUiVars();
     backgroundVisualOpacity.set(0);
-    backgroundGrayOpacity.set(0);
     artworkOpacity.set(1);
     mobileAlbumLayerReady.value = false;
     return;
@@ -764,7 +760,6 @@ const applyProgressState = (value: number) => {
   );
   const controlsEnter = rangeProgress(progress, MOBILE_CONTROLS_REVEAL_START, 1);
   const backgroundVisible = progress > 0.001 || music.showBigPlayer || mobileTransitionActive.value;
-  const backgroundGrayEnter = rangeProgress(progress, 0, MOBILE_BACKGROUND_GRAY_END);
   const albumLayerOpacity = backgroundVisible ? 1 : 0;
   const contentVisible = progress >= MOBILE_CONTENT_REVEAL_START;
   const contentReady = progress >= MOBILE_CONTENT_INTERACTIVE_START;
@@ -786,9 +781,6 @@ const applyProgressState = (value: number) => {
   controlsOpacity.set(controlsEnter);
   controlsY.set(mix(14, 0, easeOutCubic(controlsEnter)));
   backgroundVisualOpacity.set(backgroundVisible ? 1 : 0);
-  backgroundGrayOpacity.set(
-    backgroundVisible ? mix(0, 0.32, easeOutCubic(backgroundGrayEnter)) : 0,
-  );
   artworkOpacity.set(albumLayerOpacity);
   applyMiniUiVars(progress);
 
@@ -834,7 +826,6 @@ const resetClosedMobileState = () => {
   controlsOpacity.set(0);
   controlsY.set(14);
   backgroundVisualOpacity.set(0);
-  backgroundGrayOpacity.set(0);
   backgroundTop.set(0);
   backgroundRadius.set(0);
   artworkOpacity.set(0);
@@ -1399,7 +1390,7 @@ defineExpose({
         height: 100%;
         z-index: 1;
         overflow: hidden;
-        background: transparent;
+        background: rgb(0 0 0);
         pointer-events: none;
         will-change: opacity, border-radius;
 
@@ -1408,19 +1399,6 @@ defineExpose({
           transform: translate3d(0, calc(var(--mobile-player-bg-reveal-y, 0) * -1px), 0);
           will-change: transform, opacity;
         }
-
-        :deep(.gray) {
-          background-color: rgb(0 0 0) !important;
-          opacity: var(--mobile-player-gray-opacity, 0);
-          transition: none !important;
-          -webkit-backdrop-filter: none !important;
-          backdrop-filter: none !important;
-          will-change: opacity;
-        }
-      }
-
-      :deep(.mobile-full-ui) {
-        mix-blend-mode: plus-lighter;
       }
 
       :deep(.mobile-thumb) {

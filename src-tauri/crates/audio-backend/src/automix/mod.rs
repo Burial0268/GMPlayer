@@ -237,15 +237,15 @@ use vocal::analyze_vocal_activity;
 fn decode_audio_to_mono(audio_data: Vec<u8>) -> Result<(Vec<f32>, u32, f32), String> {
     let cursor = Cursor::new(audio_data);
     let decoder = Decoder::new(cursor).map_err(|e| format!("decode audio: {e}"))?;
-    let channels = decoder.channels().max(1) as usize;
-    let sample_rate = decoder.sample_rate().max(1);
+    let channels = decoder.channels().get() as usize;
+    let sample_rate = decoder.sample_rate().get();
     let duration_hint = decoder.total_duration().map(|d| d.as_secs_f32());
 
     let mut mono = Vec::new();
     let mut frame_sum = 0.0f32;
     let mut frame_channel = 0usize;
 
-    for sample in decoder.convert_samples::<f32>() {
+    for sample in decoder {
         frame_sum += sample;
         frame_channel += 1;
 

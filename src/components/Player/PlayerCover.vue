@@ -317,7 +317,6 @@ const cyclePlayMode = () => {
 // 歌曲进度条更新
 const handleProgressSeek = (val) => {
   if (typeof $player !== "undefined" && music.getPlaySongTime?.duration) {
-    music.persistData.playSongTime.currentTime = val;
     setSeek($player, val);
   }
 };

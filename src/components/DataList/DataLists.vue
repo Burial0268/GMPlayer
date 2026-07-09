@@ -205,7 +205,7 @@
       </template>
       <!-- 右键菜单 -->
       <n-dropdown
-        style="--n-font-size: 14px; --n-border-radius: 6px"
+        :menu-props="rightMenuProps"
         placement="bottom-start"
         trigger="manual"
         size="large"
@@ -218,25 +218,26 @@
       />
       <!-- 移动端抽屉 -->
       <n-drawer
-        class="drawer"
         v-model:show="drawerShow"
+        class="data-list-action-drawer"
         placement="bottom"
         height="70vh"
         :z-index="2200"
-        style="border-radius: 8px 8px 0 0"
       >
         <n-drawer-content
           v-if="drawerData"
           :native-scrollbar="false"
+          header-class="data-list-action-drawer-header"
+          body-content-class="data-list-action-drawer-body"
           body-content-style="padding: 0"
           closable
         >
           <template #header>
             <SmallSongData :songData="drawerData" notJump />
           </template>
-          <div class="menu">
+          <div class="drawer-menu">
             <div
-              class="item"
+              class="item action-item"
               @click="
                 () => {
                   playSong(listData, drawerData);
@@ -251,7 +252,7 @@
             </div>
             <div
               v-if="!music.getPersonalFmMode && music.getPlaySongData.id != drawerData.id"
-              class="item"
+              class="item action-item"
               @click="
                 () => {
                   music.addSongToNext(drawerData);
@@ -265,7 +266,7 @@
               <n-text>{{ $t("menu.nextPlay") }}</n-text>
             </div>
             <div
-              class="item"
+              class="item action-item"
               @click="
                 () => {
                   addPlayListRef.openAddToPlaylist(drawerData.id);
@@ -279,7 +280,7 @@
               <n-text>{{ $t("menu.add") }}</n-text>
             </div>
             <div
-              class="item"
+              class="item action-item"
               @click="
                 () => {
                   downloadSongRef.openDownloadModal(drawerData);
@@ -292,14 +293,14 @@
               </n-icon>
               <n-text>{{ $t("menu.download") }}</n-text>
             </div>
-            <div class="item" @click="router.push(`/comment?id=${drawerData.id}`)">
+            <div class="item action-item" @click="router.push(`/comment?id=${drawerData.id}`)">
               <n-icon size="20">
                 <Comments theme="filled" />
               </n-icon>
               <n-text>{{ $t("menu.comment") }}</n-text>
             </div>
             <div
-              class="item"
+              class="item action-item"
               v-if="drawerData.mv"
               @click="router.push(`/video?id=${drawerData.mv}`)"
             >
@@ -309,7 +310,7 @@
               <n-text>{{ $t("menu.mv") }}</n-text>
             </div>
             <div
-              class="item"
+              class="item action-item"
               @click="
                 () => {
                   copySongData(drawerData.id);
@@ -322,7 +323,8 @@
               </n-icon>
               <n-text>{{ $t("menu.copy") }}</n-text>
             </div>
-            <div class="item">
+            <div class="drawer-menu-divider" />
+            <div class="item info-item">
               <n-icon size="20">
                 <Voice theme="filled" />
               </n-icon>
@@ -331,7 +333,7 @@
                 <AllArtists class="text-hidden" :artistsData="drawerData.artist" />
               </n-text>
             </div>
-            <div class="item" @click="router.push(`/album?id=${drawerData.album.id}`)">
+            <div class="item info-item" @click="router.push(`/album?id=${drawerData.album.id}`)">
               <n-icon size="20">
                 <RecordDisc theme="filled" />
               </n-icon>
@@ -339,7 +341,11 @@
             </div>
             <div
               v-if="router.currentRoute.value.name === 'user-cloud'"
-              class="item"
+              class="drawer-menu-divider"
+            />
+            <div
+              v-if="router.currentRoute.value.name === 'user-cloud'"
+              class="item cloud-item"
               @click="
                 () => {
                   router.push({
@@ -360,7 +366,7 @@
             </div>
             <div
               v-if="router.currentRoute.value.name === 'user-cloud'"
-              class="item"
+              class="item cloud-item"
               @click="
                 () => {
                   cloudMatchRef.openCloudMatch(drawerData);
@@ -375,7 +381,7 @@
             </div>
             <div
               v-if="router.currentRoute.value.name === 'user-cloud'"
-              class="item"
+              class="item cloud-item danger"
               @click="
                 () => {
                   delCloudSong(drawerData);
@@ -532,6 +538,24 @@ const rightMenuX = ref(0);
 const rightMenuY = ref(0);
 const rightMenuShow = ref(false);
 const rightMenuOptions = ref(null);
+const rightMenuProps = () => ({
+  class: "data-list-context-dropdown",
+  style: {
+    "--n-color": "transparent",
+    "--n-box-shadow": "none",
+    "--n-border-radius": "var(--radius-md)",
+    "--n-font-size": "14px",
+    "--n-option-height": "36px",
+    "--n-option-color-hover":
+      "color-mix(in srgb, var(--content-panel-bg, #fff) 82%, var(--main-color) 18%)",
+    "--n-option-color-active": "color-mix(in srgb, var(--main-color) 18%, transparent)",
+    "--n-option-text-color-hover": "var(--main-color)",
+    "--n-option-text-color-active": "var(--main-color)",
+    "--n-prefix-color": "var(--n-text-color-3, currentColor)",
+    "--n-suffix-color": "var(--n-text-color-3, currentColor)",
+    "--n-divider-color": "var(--acrylic-border, rgba(0, 0, 0, 0.08))",
+  },
+});
 
 // 抽屉数据
 const drawerShow = ref(false);
@@ -999,27 +1023,133 @@ const jumpLink = (id, type) => {
 .empty {
   margin: 40px 0;
 }
-.drawer {
-  .menu {
-    .item {
-      padding: 12px 24px;
+
+:global(.data-list-context-dropdown.n-dropdown-menu) {
+  --data-list-menu-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.82);
+  --data-list-menu-border: var(--acrylic-border, rgba(0, 0, 0, 0.08));
+  --data-list-menu-hover: color-mix(
+    in srgb,
+    var(--content-panel-bg, #fff) 82%,
+    var(--main-color) 18%
+  );
+  padding: 6px;
+  overflow: hidden;
+  border: 1px solid var(--data-list-menu-border);
+  border-radius: var(--radius-panel);
+  background-color: var(--data-list-menu-bg);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  box-shadow:
+    0 18px 46px rgb(0 0 0 / 14%),
+    inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
+  min-width: 188px;
+}
+
+:global(.data-list-context-dropdown .n-dropdown-option-body) {
+  border-radius: var(--radius-md);
+}
+
+:global(.data-list-context-dropdown .n-dropdown-option-body::before) {
+  left: 0;
+  right: 0;
+  border-radius: var(--radius-md);
+}
+
+:global(.data-list-context-dropdown .n-dropdown-option-body__prefix) {
+  color: var(--main-color);
+}
+
+:global(.data-list-context-dropdown .n-dropdown-option-body__label) {
+  letter-spacing: 0;
+}
+
+:global(.data-list-context-dropdown .n-dropdown-divider) {
+  margin: 6px 8px;
+}
+
+:global(.n-drawer-container .n-drawer.data-list-action-drawer) {
+  --drawer-menu-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.82);
+  --drawer-menu-border: var(--acrylic-border, rgba(0, 0, 0, 0.08));
+  --drawer-item-hover: color-mix(in srgb, var(--content-panel-bg, #fff) 82%, var(--main-color) 18%);
+
+  overflow: hidden;
+  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
+  background-color: var(--drawer-menu-bg);
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  box-shadow:
+    0 -18px 46px rgb(0 0 0 / 14%),
+    inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
+}
+
+:global(.data-list-action-drawer-header) {
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--drawer-menu-border);
+}
+
+:global(.data-list-action-drawer-body) {
+  padding: 0;
+}
+
+.drawer-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+}
+
+.drawer-menu-divider {
+  height: 1px;
+  margin: 6px 8px;
+  background-color: var(--drawer-menu-border);
+}
+
+.drawer-menu {
+  .item {
+    display: flex;
+    align-items: center;
+    flex-direction: row;
+    min-height: 44px;
+    padding: 0 12px;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition:
+      background-color var(--duration-150) var(--ease-out),
+      color var(--duration-150) var(--ease-out),
+      transform var(--duration-150) var(--ease-out);
+
+    &:hover,
+    &:active {
+      color: var(--main-color);
+      background-color: var(--drawer-item-hover);
+    }
+
+    &:active {
+      transform: scale(0.98);
+    }
+
+    &.info-item {
+      color: var(--n-text-color-2);
+    }
+
+    &.danger {
+      &:hover,
+      &:active {
+        color: var(--n-error-color, #d03050);
+        background-color: color-mix(in srgb, var(--n-error-color, #d03050) 12%, transparent);
+      }
+    }
+
+    .n-icon {
+      margin-right: 12px;
+      color: var(--main-color);
+    }
+
+    .n-text {
       display: flex;
-      align-items: center;
       flex-direction: row;
-      cursor: pointer;
-      transition: background-color var(--duration-150) var(--ease-out);
-      &:hover {
-        background-color: var(--n-close-color-hover);
-      }
-      .n-icon {
-        margin-right: 8px;
-        transform: translateY(1.5px);
-      }
-      .n-text {
-        transform: translateY(1px);
-        display: flex;
-        flex-direction: row;
-      }
+      min-width: 0;
+      transform: translateY(1px);
     }
   }
 }

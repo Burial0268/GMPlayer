@@ -621,8 +621,10 @@ const normalizeSliderPercent = (val) => {
 const previewSliderTime = (percent) => {
   const duration = music.getPlaySongTime?.duration;
   if (!duration) return;
+  const currentTime = (duration / 100) * percent;
   music.setPlaySongTime({
-    currentTime: (duration / 100) * percent,
+    currentTime,
+    displayCurrentTime: currentTime,
     duration,
   });
 };
@@ -767,7 +769,6 @@ watch(
       }
     }
   },
-  { deep: true },
 );
 
 // Tauri: cover palette extraction completes asynchronously after song metadata changes.
@@ -911,7 +912,6 @@ watch(
     broadcastPlayerLyrics(true);
     broadcastPlayerTime(true);
   },
-  { deep: true },
 );
 
 // Tauri: broadcast settings when lyric-related settings change

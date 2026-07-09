@@ -12,8 +12,8 @@ import { VueMcp } from "vite-plugin-vue-mcp";
 import vueDevTools from "vite-plugin-vue-devtools";
 import Components from "unplugin-vue-components/vite";
 import MotionResolver from "motion-v/resolver";
-import OptimizationPersist from 'vite-plugin-optimize-persist'
-import PkgConfig from 'vite-plugin-package-config'
+import OptimizationPersist from "vite-plugin-optimize-persist";
+import PkgConfig from "vite-plugin-package-config";
 
 const AUDIO_PROXY_PATH = "/api/audio-proxy";
 
@@ -82,8 +82,7 @@ function audioProxyPlugin() {
             Accept: "audio/*,*/*;q=0.8",
             Referer: `${target.origin}/`,
             "User-Agent":
-              req.headers["user-agent"] ||
-              "Mozilla/5.0 AppleWebKit/537.36 Chrome Safari",
+              req.headers["user-agent"] || "Mozilla/5.0 AppleWebKit/537.36 Chrome Safari",
           });
           const range = req.headers.range;
           if (range) headers.set("Range", range);
@@ -142,12 +141,7 @@ export default defineConfig(({ mode }) => {
         imports: [
           "vue",
           {
-            "naive-ui": [
-              "useDialog",
-              "useMessage",
-              "useNotification",
-              "useLoadingBar",
-            ],
+            "naive-ui": ["useDialog", "useMessage", "useNotification", "useLoadingBar"],
           },
         ],
       }),
@@ -155,43 +149,44 @@ export default defineConfig(({ mode }) => {
         dts: true,
         resolvers: [NaiveUiResolver(), MotionResolver()],
       }),
-      !isTauri ? VitePWA({
-        registerType: "autoUpdate",
-        workbox: {
-          clientsClaim: true,
-          skipWaiting: true,
-          cleanupOutdatedCaches: true,
-          runtimeCaching: [
-            {
-              urlPattern: /(.*?)\.(woff2|woff|ttf)/,
-              handler: "CacheFirst",
-              options: { cacheName: "file-cache" },
+      !isTauri
+        ? VitePWA({
+            registerType: "autoUpdate",
+            workbox: {
+              clientsClaim: true,
+              skipWaiting: true,
+              cleanupOutdatedCaches: true,
+              runtimeCaching: [
+                {
+                  urlPattern: /(.*?)\.(woff2|woff|ttf)/,
+                  handler: "CacheFirst",
+                  options: { cacheName: "file-cache" },
+                },
+                {
+                  urlPattern: /(.*?)\.(webp|png|jpe?g|svg|gif|bmp|psd|tiff|tga|eps)/,
+                  handler: "CacheFirst",
+                  options: { cacheName: "image-cache" },
+                },
+              ],
             },
-            {
-              urlPattern:
-                /(.*?)\.(webp|png|jpe?g|svg|gif|bmp|psd|tiff|tga|eps)/,
-              handler: "CacheFirst",
-              options: { cacheName: "image-cache" },
+            manifest: {
+              name: env.VITE_SITE_TITLE,
+              short_name: env.VITE_SITE_TITLE,
+              description: env.VITE_SITE_DES,
+              display: "standalone",
+              start_url: "/",
+              theme_color: "#fff",
+              background_color: "#efefef",
+              icons: [
+                {
+                  src: "/images/logo/favicon.png",
+                  sizes: "200x200",
+                  type: "image/png",
+                },
+              ],
             },
-          ],
-        },
-        manifest: {
-          name: env.VITE_SITE_TITLE,
-          short_name: env.VITE_SITE_TITLE,
-          description: env.VITE_SITE_DES,
-          display: "standalone",
-          start_url: "/",
-          theme_color: "#fff",
-          background_color: "#efefef",
-          icons: [
-            {
-              src: "/images/logo/favicon.png",
-              sizes: "200x200",
-              type: "image/png",
-            },
-          ],
-        },
-      }) : null,
+          })
+        : null,
       compression({
         algorithms: ["gzip", "brotliCompress"],
       }),
@@ -207,7 +202,7 @@ export default defineConfig(({ mode }) => {
       http: true,
       ssr: true,
       watch: {
-        ignored: ['**/src-tauri/**'],
+        ignored: ["**/src-tauri/**"],
       },
       headers: {
         "Cross-Origin-Opener-Policy": "same-origin",
@@ -235,10 +230,33 @@ export default defineConfig(({ mode }) => {
       "TAURI_PLATFORM_TYPE",
       "TAURI_DEBUG",
     ],
+    define: {
+      __GMPLAYER_TAURI_BUILD__: JSON.stringify(isTauri),
+    },
     resolve: {
       alias: {
+        ...(isTauri
+          ? {
+              "@/utils/AudioContext/AutoMix/TrackAnalyzerWorkerClient": fileURLToPath(
+                new URL(
+                  "./src/utils/AudioContext/AutoMix/TrackAnalyzerWorkerClient.disabled.ts",
+                  import.meta.url,
+                ),
+              ),
+            }
+          : {}),
         "@": fileURLToPath(new URL("./src", import.meta.url)),
         "vue-i18n": "vue-i18n/dist/vue-i18n.cjs.js",
+        ...(isTauri
+          ? {
+              "@player-helper/gmplayer-audio-backend": fileURLToPath(
+                new URL("./src/utils/tauri/stubs/disabledAudioBackendWasm.ts", import.meta.url),
+              ),
+              "@player-helper/audio-analysis": fileURLToPath(
+                new URL("./src/utils/tauri/stubs/disabledAudioAnalysisWasm.ts", import.meta.url),
+              ),
+            }
+          : {}),
       },
     },
     build: {

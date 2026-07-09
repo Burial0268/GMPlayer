@@ -1,6 +1,7 @@
 pub mod symphonia;
 
 use std::fs::File;
+use std::num::{NonZeroU16, NonZeroU32};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -290,7 +291,7 @@ impl SeekableSymphoniaSource {
             self.spec = spec;
             self.buffer = buffer;
             self.buffer_offset = (frames_to_skip as usize)
-                .saturating_mul(self.channels() as usize)
+                .saturating_mul(self.channels().get() as usize)
                 .min(self.buffer.len());
             return Ok(());
         }
@@ -320,16 +321,16 @@ impl Iterator for SeekableSymphoniaSource {
 }
 
 impl Source for SeekableSymphoniaSource {
-    fn current_frame_len(&self) -> Option<usize> {
+    fn current_span_len(&self) -> Option<usize> {
         Some(self.buffer.len().saturating_sub(self.buffer_offset))
     }
 
-    fn channels(&self) -> u16 {
-        self.spec.channels.count().max(1) as u16
+    fn channels(&self) -> NonZeroU16 {
+        NonZeroU16::new(self.spec.channels.count().max(1) as u16).unwrap()
     }
 
-    fn sample_rate(&self) -> u32 {
-        self.spec.rate.max(1)
+    fn sample_rate(&self) -> NonZeroU32 {
+        NonZeroU32::new(self.spec.rate.max(1)).unwrap()
     }
 
     fn total_duration(&self) -> Option<Duration> {
@@ -411,7 +412,7 @@ fn decode_packet_to_buffer(
 }
 
 fn to_seek_error(err: SymphoniaError) -> SeekError {
-    SeekError::Other(Box::new(std::io::Error::new(
+    SeekError::Other(Arc::new(std::io::Error::new(
         std::io::ErrorKind::Other,
         err.to_string(),
     )))
@@ -448,8 +449,8 @@ where
     S: PlaybackSink,
 {
     let mut source = SeekableSymphoniaSource::open(path)?;
-    let input_channels = source.channels().max(1);
-    let input_sample_rate = source.sample_rate().max(1);
+    let input_channels = source.channels().get();
+    let input_sample_rate = source.sample_rate().get();
 
     if let Some(position) = initial_position.filter(|position| *position > 0.0) {
         source
@@ -751,7 +752,12 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                 let result = match self.frames.seek(pos) {
                     Ok(()) => {
                         self.applied_seek_epoch = epoch;
-                        self.pending_seek_flush_epoch = Some(epoch);
+                        if cfg!(target_os = "android") {
+                            self.output.flush_for_seek();
+                            self.pending_seek_flush_epoch = None;
+                        } else {
+                            self.pending_seek_flush_epoch = Some(epoch);
+                        }
                         self.pre_roll_frames_remaining = 0;
                         self.start_ramp_total_frames = SEEK_RAMP_FRAMES;
                         self.start_ramp_frames_remaining = SEEK_RAMP_FRAMES;

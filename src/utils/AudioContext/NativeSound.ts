@@ -17,6 +17,7 @@ import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from ".
 // Development mode detection
 const IS_DEV = import.meta.env?.DEV ?? false;
 const EMPTY_U8 = new Uint8Array(0);
+const clampVolume = (volume: number): number => Math.max(0, Math.min(1, volume));
 
 /**
  * NativeSound - HTML5 Audio player with Web Audio API integration
@@ -91,7 +92,8 @@ export class NativeSound implements ISound {
     }
 
     // State
-    this._volume = volume;
+    this._volume = clampVolume(volume);
+    this._audio.volume = this._volume;
 
     // Compatibility structure for legacy spectrum access
     this._sounds = [{ _node: this._audio }];
@@ -152,6 +154,7 @@ export class NativeSound implements ISound {
       // Create gain node for volume control
       this._gainNode = audioCtx.createGain();
       this._gainNode.gain.value = this._volume;
+      this._audio.volume = 1;
 
       // Create effect manager (WASM FFT + AnalyserNode for lowFreqVolume)
       this._effectManager = new AudioEffectManager(audioCtx);
@@ -329,13 +332,13 @@ export class NativeSound implements ISound {
   }
 
   private async _doPlay(): Promise<void> {
-    // Initialize audio graph on first play (requires user interaction)
+    // Initialize audio graph on first play (requires user interaction).
+    // Playback can still proceed through the media element if the analysis
+    // graph is unavailable.
     if (!this._isAudioGraphInitialized) {
       const success = await this._initAudioGraph();
       if (!success) {
-        console.error("NativeSound: Failed to initialize audio graph");
-        this._emit("playerror");
-        return;
+        console.warn("NativeSound: Continuing without audio graph");
       }
     }
 
@@ -445,10 +448,13 @@ export class NativeSound implements ISound {
     if (vol === undefined) {
       return this._volume;
     }
-    this._volume = Math.max(0, Math.min(1, vol));
+    this._volume = clampVolume(vol);
     // Use GainNode for volume control (doesn't affect spectrum)
     if (this._gainNode) {
       this._gainNode.gain.value = this._volume;
+      this._audio.volume = 1;
+    } else {
+      this._audio.volume = this._volume;
     }
     return this;
   }
@@ -485,20 +491,23 @@ export class NativeSound implements ISound {
       }, duration);
     } else {
       // Fallback to requestAnimationFrame fade
-      this._volume = from;
+      this._volume = clampVolume(from);
+      this._audio.volume = this._volume;
       const startTime = performance.now();
 
       const animate = (time: number): void => {
         const progress = Math.max(0, Math.min((time - startTime) / duration, 1));
         const eased = 1 - Math.pow(1 - progress, 2);
-        const newVolume = Math.max(0, Math.min(1, from + (to - from) * eased));
+        const newVolume = clampVolume(from + (to - from) * eased);
         this._volume = newVolume;
+        this._audio.volume = newVolume;
 
         if (progress < 1) {
           this._fadeAnimationId = requestAnimationFrame(animate);
         } else {
           this._fadeAnimationId = null;
-          this._volume = Math.max(0, Math.min(1, to));
+          this._volume = clampVolume(to);
+          this._audio.volume = this._volume;
           this._emit("fade");
         }
       };

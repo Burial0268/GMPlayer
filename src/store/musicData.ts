@@ -15,6 +15,7 @@ import {
   getAudioPreloader,
 } from "@/utils/AudioContext";
 import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/NativeRustSound";
+import { applyMobileTauriAudioUiDelay } from "@/utils/tauri/audioUiDelay";
 import getLanguageData from "@/utils/getLanguageData";
 import {
   preprocessLyrics,
@@ -54,6 +55,7 @@ interface SongData {
 
 interface PlaySongTime {
   currentTime: number;
+  playbackCurrentTime?: number;
   duration: number;
   barMoveDistance: number;
   songTimePlayed: string;
@@ -163,6 +165,7 @@ const useMusicDataStore = defineStore("musicData", {
         playSongMode: "normal",
         playSongTime: {
           currentTime: 0,
+          playbackCurrentTime: 0,
           duration: 0,
           barMoveDistance: 0,
           songTimePlayed: "00:00",
@@ -632,31 +635,38 @@ const useMusicDataStore = defineStore("musicData", {
       }
     },
 
-    setPlaySongTime(value: { currentTime: number; duration: number }) {
+    setPlaySongTime(value: { currentTime: number; duration: number; displayCurrentTime?: number }) {
       const previousTime = this.persistData.playSongTime;
-      const fallbackCurrentTime = Number.isFinite(previousTime.currentTime)
-        ? previousTime.currentTime
-        : 0;
-      const previousDuration = Number.isFinite(previousTime.duration) && previousTime.duration > 0
-        ? previousTime.duration
-        : 0;
-      const incomingDuration = Number.isFinite(value.duration) && value.duration > 0
-        ? value.duration
-        : 0;
+      const fallbackCurrentTime = Number.isFinite(previousTime.playbackCurrentTime)
+        ? (previousTime.playbackCurrentTime ?? 0)
+        : Number.isFinite(previousTime.currentTime)
+          ? previousTime.currentTime
+          : 0;
+      const previousDuration =
+        Number.isFinite(previousTime.duration) && previousTime.duration > 0
+          ? previousTime.duration
+          : 0;
+      const incomingDuration =
+        Number.isFinite(value.duration) && value.duration > 0 ? value.duration : 0;
       const duration = incomingDuration > 0 ? incomingDuration : previousDuration;
       const incomingCurrentTime = Number.isFinite(value.currentTime)
         ? Math.max(0, value.currentTime)
         : fallbackCurrentTime;
-      const currentTime = duration > 0
-        ? Math.min(incomingCurrentTime, duration)
-        : incomingCurrentTime;
+      const currentTime =
+        duration > 0 ? Math.min(incomingCurrentTime, duration) : incomingCurrentTime;
+      const incomingDisplayTime = Number.isFinite(value.displayCurrentTime)
+        ? Math.max(0, value.displayCurrentTime ?? 0)
+        : applyMobileTauriAudioUiDelay(currentTime, duration);
+      const displayCurrentTime =
+        duration > 0 ? Math.min(incomingDisplayTime, duration) : incomingDisplayTime;
 
-      this.persistData.playSongTime.currentTime = currentTime;
+      this.persistData.playSongTime.playbackCurrentTime = currentTime;
+      this.persistData.playSongTime.currentTime = displayCurrentTime;
       this.persistData.playSongTime.duration = duration;
       if (duration === 0) {
         this.persistData.playSongTime.barMoveDistance = 0;
       } else {
-        this.persistData.playSongTime.barMoveDistance = (currentTime / duration) * 100;
+        this.persistData.playSongTime.barMoveDistance = (displayCurrentTime / duration) * 100;
       }
 
       if (!Number.isNaN(this.persistData.playSongTime.barMoveDistance)) {
@@ -676,7 +686,7 @@ const useMusicDataStore = defineStore("musicData", {
       }
 
       let currentIndex = this.playSongLyricIndex;
-      const offsetTime = value.currentTime + (setting.lyricTimeOffset ?? 0) / 1000;
+      const offsetTime = displayCurrentTime + (setting.lyricTimeOffset ?? 0) / 1000;
 
       if (currentIndex > 0 && lyrics[currentIndex]?.time > offsetTime) {
         currentIndex = -1;
@@ -687,6 +697,14 @@ const useMusicDataStore = defineStore("musicData", {
       }
 
       this.playSongLyricIndex = currentIndex;
+    },
+
+    getPlaySongPlaybackCurrentTime(): number {
+      const playSongTime = this.persistData.playSongTime;
+      if (Number.isFinite(playSongTime.playbackCurrentTime)) {
+        return Math.max(0, playSongTime.playbackCurrentTime ?? 0);
+      }
+      return Number.isFinite(playSongTime.currentTime) ? Math.max(0, playSongTime.currentTime) : 0;
     },
 
     setPlaySongMode(value: "normal" | "random" | "single" | null = null) {

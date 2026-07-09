@@ -284,7 +284,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
 
       try {
         const currentProgress =
-          progress ?? Math.floor((musicStore.getPlaySongTime.currentTime || 0) * 1000);
+          progress ?? Math.floor(musicStore.getPlaySongPlaybackCurrentTime() * 1000);
 
         // playStatus 逻辑：PLAY/PAUSE 直接用命令本身，GOTO/seek 保持当前实际播放状态
         let playStatus: "PLAY" | "PAUSE";
@@ -491,7 +491,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
 
         if (data.playStatus && data.currentProgress !== undefined) {
           const progressSec = data.currentProgress / 1000;
-          const currentTime = musicStore.getPlaySongTime.currentTime;
+          const currentTime = musicStore.getPlaySongPlaybackCurrentTime();
 
           if (Math.abs(currentTime - progressSec) > 3) {
             if (typeof $player !== "undefined" && $player.seek) {
@@ -538,7 +538,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
       const currentSong = musicStore.getPlaySongData;
       if (!currentSong?.id) return;
 
-      const progress = Math.floor((musicStore.getPlaySongTime.currentTime || 0) * 1000);
+      const progress = Math.floor(musicStore.getPlaySongPlaybackCurrentTime() * 1000);
       const playStatus: PlayStatus = musicStore.getPlayState ? "PLAY" : "PAUSE";
 
       listenTogether

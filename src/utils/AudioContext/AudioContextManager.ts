@@ -54,15 +54,6 @@ class AudioContextManagerClass {
     );
   }
 
-  private _isWasmAudioBackendRuntimeAvailable(): boolean {
-    return (
-      typeof window !== "undefined" &&
-      typeof Audio !== "undefined" &&
-      typeof Worker !== "undefined" &&
-      !this._isNativeTauriRuntime()
-    );
-  }
-
   private _setupGlobalListeners(): void {
     if (typeof document === "undefined") return;
 
@@ -116,7 +107,7 @@ class AudioContextManagerClass {
    * Note: On mobile, creation may fail without user interaction
    */
   getContext(): AudioContext | null {
-    if (this._isNativeTauriRuntime() || this._isWasmAudioBackendRuntimeAvailable()) {
+    if (this._isNativeTauriRuntime()) {
       return null;
     }
 
