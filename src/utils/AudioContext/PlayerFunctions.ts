@@ -87,6 +87,7 @@ const normalizePlaybackPosition = (position: number, duration = 0, fallback = 0)
 const resetPlaySongTime = (music: ReturnType<typeof musicStore>): void => {
   music.persistData.playSongTime = {
     currentTime: 0,
+    playbackCurrentTime: 0,
     duration: 0,
     barMoveDistance: 0,
     songTimePlayed: "00:00",
@@ -200,7 +201,7 @@ const scheduleScrobble = (reason: string): void => {
     if (Number(liveData?.id) !== songId) return;
     // 歌曲(总)时长由后端歌曲数据提供，作为播放时长 time 与总时长 total 上报
     const totalSec = Math.round(Number(music.getPlaySongTime?.duration) || 0);
-    const progressSec = Math.max(0, Math.round(Number(music.getPlaySongTime?.currentTime) || 0));
+    const progressSec = Math.max(0, Math.round(music.getPlaySongPlaybackCurrentTime()));
     const artist = Array.isArray(liveData?.artist)
       ? liveData.artist
           .map((a: { name?: string }) => a?.name)
@@ -586,10 +587,7 @@ const setupNativeSound = (
   const isMemoryAtLoad = settings.memoryLastPlaybackPosition;
   const savedDurationAtLoad = getUsableDuration(music.persistData.playSongTime.duration);
   const savedPosAtLoad = isMemoryAtLoad
-    ? normalizePlaybackPosition(
-        Number(music.persistData.playSongTime.currentTime),
-        savedDurationAtLoad,
-      )
+    ? normalizePlaybackPosition(music.getPlaySongPlaybackCurrentTime(), savedDurationAtLoad)
     : 0;
   if (savedPosAtLoad > 0) {
     music.setPlaySongTime({ currentTime: savedPosAtLoad, duration: savedDurationAtLoad });
@@ -861,10 +859,7 @@ export const createSound = (
     const isMemoryAtLoad = settings.memoryLastPlaybackPosition;
     const savedDurationAtLoad = getUsableDuration(music.persistData.playSongTime.duration);
     const savedPosAtLoad = isMemoryAtLoad
-      ? normalizePlaybackPosition(
-          Number(music.persistData.playSongTime.currentTime),
-          savedDurationAtLoad,
-        )
+      ? normalizePlaybackPosition(music.getPlaySongPlaybackCurrentTime(), savedDurationAtLoad)
       : 0;
 
     if (savedPosAtLoad > 0) {
@@ -1122,7 +1117,7 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
   const currentTime = normalizePlaybackPosition(
     seek,
     soundDuration,
-    music.persistData.playSongTime.currentTime,
+    music.getPlaySongPlaybackCurrentTime(),
   );
   // Cancel AutoMix crossfade on seek
   const autoMix = getAutoMixEngine();

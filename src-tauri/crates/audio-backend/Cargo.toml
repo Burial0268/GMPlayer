@@ -31,13 +31,13 @@ symphonia = { version = "0.5", default-features = false, features = [
 # formats (the default minimp3/claxon decoders mostly can't seek). The
 # `symphonia-all` feature is additive — rodio prefers Symphonia when it
 # can decode a given file.
-rodio = { version = "0.20", features = ["symphonia-all"] }
+rodio = { version = "0.22", features = ["symphonia-all"] }
 # Direct cpal dep for explicit output-stream config (force stereo so the
 # default 5.1/7.1 device layout on Windows doesn't burn CPU upmixing inside
 # the audio callback — that work gets deprioritised by EcoQoS when the app
 # is backgrounded and shows up as stutter). Version pinned to whatever
 # rodio 0.20 already brings in transitively.
-cpal = { version = "0.15", features = ["oboe-shared-stdcxx"] }
+cpal = "0.18"
 rustfft = "6"
 parking_lot = "0.12"
 log = "0.4"

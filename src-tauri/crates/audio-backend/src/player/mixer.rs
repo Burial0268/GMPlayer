@@ -11,7 +11,9 @@ use crate::output::{OutputWriter, PushCancel};
 use crate::types::{CrossfadeCurve, DspConfig};
 
 #[cfg(target_os = "android")]
-const DECK_QUEUE_BLOCKS: usize = 16;
+// Match the deeper Android output queue so decode jitter does not immediately
+// become zero-padded mixer blocks.
+const DECK_QUEUE_BLOCKS: usize = 48;
 #[cfg(not(target_os = "android"))]
 const DECK_QUEUE_BLOCKS: usize = 8;
 const DECK_RECYCLE_QUEUE_BLOCKS: usize = DECK_QUEUE_BLOCKS + 4;

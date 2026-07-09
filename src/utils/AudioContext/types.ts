@@ -66,6 +66,7 @@ export interface ISound {
  */
 export interface PlaySongTime {
   currentTime: number;
+  playbackCurrentTime?: number;
   duration: number;
   barMoveDistance?: number;
   songTimePlayed?: string;

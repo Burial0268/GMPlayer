@@ -8,14 +8,11 @@
 /// Message flow:  frontend → WebSocket → Player::send_msg() → AudioPlayer → decoder/output
 /// Event flow:   AudioPlayer → callback → WebSocket broadcast → frontend
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
-use std::thread;
 use std::time::Duration;
 
-use tauri::ipc::Channel;
-use tauri::{Emitter, Runtime};
 use tokio::sync::mpsc;
 use tokio::sync::RwLock as TokioRwLock;
 use tracing::{info, warn};
@@ -23,416 +20,28 @@ use tracing::{info, warn};
 use crate::analysis::{self, AnalysisCommand};
 use crate::decoder::{self, PlaybackSink};
 use crate::error::{AudioError, AudioResult};
-use crate::output::{self, LowLatencyOutput, OutputRenderClock};
+use crate::output::{self, LowLatencyOutput};
 use crate::types::*;
 
+mod api;
 mod automix;
+mod clock;
 mod mixer;
+mod platform;
 pub mod queue;
 
+#[allow(unused_imports)]
+pub use api::{EventBuffer, Player, PlayerHandle, PlayerShared};
+
+use api::{join_thread_async, SeekRequest};
 use automix::AutoMixManager;
+use clock::PlayerClock;
 use mixer::{CrossfadeParams, DeckId, DeckMixer};
+use platform::{
+    output_refresh_target, output_target_for_source, output_target_matches,
+    start_prebuffer_samples, START_PREBUFFER_WAIT_MS,
+};
 use queue::PlaybackQueue;
-
-// ── EventBuffer for session-scoped polling (kept for compat) ──
-
-use std::collections::VecDeque;
-
-pub struct EventBuffer {
-    session_id: u64,
-    events: VecDeque<AudioThreadEvent>,
-    max_events: usize,
-}
-
-impl EventBuffer {
-    pub fn new(session_id: u64) -> Self {
-        Self {
-            session_id,
-            events: VecDeque::new(),
-            max_events: 256,
-        }
-    }
-
-    pub fn push(&mut self, event: AudioThreadEvent) {
-        if self.events.len() >= self.max_events {
-            self.events.pop_front();
-        }
-        self.events.push_back(event);
-    }
-
-    pub fn reset(&mut self, session_id: u64) {
-        self.session_id = session_id;
-        self.events.clear();
-    }
-
-    pub fn drain(&mut self, session_id: u64) -> Vec<AudioThreadEvent> {
-        if session_id != self.session_id {
-            self.events.clear();
-            return Vec::new();
-        }
-        self.events.drain(..).collect()
-    }
-}
-
-// ── Public Player API ───────────────────────────────────────────
-
-pub struct Player {
-    msg_tx: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadMessage>>,
-    seek_tx: mpsc::UnboundedSender<SeekRequest>,
-    shared: Arc<PlayerShared>,
-    thread: Option<thread::JoinHandle<()>>,
-}
-
-pub struct PlayerShared {
-    pub state: AtomicU8,
-    pub position_ms: AtomicU64,
-    pub duration_ms: AtomicU64,
-    pub event_buf: parking_lot::Mutex<EventBuffer>,
-    /// Event sink registered by the frontend via `audio_subscribe_events`.
-    /// The forwarder streams every `AudioThreadEventMessage` here; when no
-    /// channel is registered yet (startup / secondary windows) or a send
-    /// fails (webview reload), it falls back to a Tauri global `emit`.
-    pub event_channel:
-        parking_lot::Mutex<Option<Channel<AudioThreadEventMessage<AudioThreadEvent>>>>,
-}
-
-impl Player {
-    pub fn new<R: Runtime>(app_handle: tauri::AppHandle<R>) -> AudioResult<Self> {
-        let (msg_tx, msg_rx) = mpsc::unbounded_channel();
-        let (seek_tx, seek_rx) = mpsc::unbounded_channel();
-        let (evt_tx, mut evt_rx) =
-            mpsc::unbounded_channel::<AudioThreadEventMessage<AudioThreadEvent>>();
-
-        let shared = Arc::new(PlayerShared {
-            state: AtomicU8::new(PlaybackState::Stopped as u8),
-            position_ms: AtomicU64::new(0),
-            duration_ms: AtomicU64::new(0),
-            event_buf: parking_lot::Mutex::new(EventBuffer::new(0)),
-            event_channel: parking_lot::Mutex::new(None),
-        });
-
-        // Forward events from the internal evt channel → the frontend's
-        // `Channel` (registered via `audio_subscribe_events`), falling back to
-        // a Tauri global `emit` when no channel is registered yet or a send
-        // fails. We peek at certain events to update `shared` atomics so
-        // `audio_get_state` can return up-to-date values without going through
-        // the message loop.
-        //
-        // High-rate analysis events are coalesced before forwarding. Playback
-        // controls/status events must not sit behind stale 2048-bin FFT JSON
-        // frames in the channel queue; keeping only the latest FFT/lowFreq
-        // sample preserves visual freshness while state/control events stay
-        // realtime.
-        let shared_clone = Arc::clone(&shared);
-        let app = app_handle.clone();
-        let seq_counter = Arc::new(std::sync::atomic::AtomicU64::new(0));
-        tauri::async_runtime::spawn(async move {
-            let forward_msg = |mut evt_msg: AudioThreadEventMessage<AudioThreadEvent>| {
-                evt_msg.seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-                if let Some(event) = &evt_msg.data {
-                    update_shared_from_event(&shared_clone, event);
-                    if should_buffer_poll_event(event) {
-                        shared_clone.event_buf.lock().push(event.clone());
-                    }
-                }
-                let channel = shared_clone.event_channel.lock().clone();
-                if let Some(channel) = channel {
-                    if channel.send(evt_msg.clone()).is_err() {
-                        // The webview/channel went away (e.g. reload). Drop the
-                        // stale sink so it self-heals on the next subscribe, and
-                        // fall back to a global emit for this event.
-                        *shared_clone.event_channel.lock() = None;
-                        let _ = app.emit("audio-player://event", &evt_msg);
-                    }
-                } else {
-                    let _ = app.emit("audio-player://event", &evt_msg);
-                }
-            };
-
-            while let Some(first_msg) = evt_rx.recv().await {
-                let mut realtime = Vec::new();
-                let mut latest_fft = None;
-                let mut latest_low_freq = None;
-
-                collect_forward_message(
-                    first_msg,
-                    &mut realtime,
-                    &mut latest_fft,
-                    &mut latest_low_freq,
-                );
-
-                while let Ok(next_msg) = evt_rx.try_recv() {
-                    collect_forward_message(
-                        next_msg,
-                        &mut realtime,
-                        &mut latest_fft,
-                        &mut latest_low_freq,
-                    );
-                }
-
-                for evt_msg in realtime {
-                    forward_msg(evt_msg);
-                }
-                if let Some(evt_msg) = latest_fft {
-                    forward_msg(evt_msg);
-                }
-                if let Some(evt_msg) = latest_low_freq {
-                    forward_msg(evt_msg);
-                }
-            }
-        });
-
-        // Spawn the audio player on a dedicated thread with its own tokio runtime.
-        // `AudioPlayer` owns the live `OutputStream` so it can reopen the stream
-        // with a source-aware channel count when tracks change.
-        let thread = thread::Builder::new()
-            .name("audio-player".into())
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("Build tokio runtime");
-                rt.block_on(async move {
-                    let player = match AudioPlayer::new(msg_rx, seek_rx, evt_tx).await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!("创建音频播放器失败：{e:?}");
-                            return;
-                        }
-                    };
-                    player.run().await;
-                });
-            })
-            .map_err(|e| AudioError::ThreadError(format!("spawn audio-player thread: {e}")))?;
-
-        Ok(Player {
-            msg_tx,
-            seek_tx,
-            shared,
-            thread: Some(thread),
-        })
-    }
-
-    pub fn handle(&self) -> PlayerHandle {
-        PlayerHandle {
-            msg_tx: self.msg_tx.clone(),
-            seek_tx: self.seek_tx.clone(),
-        }
-    }
-
-    pub fn send_msg(&self, msg: AudioThreadEventMessage<AudioThreadMessage>) -> AudioResult<()> {
-        // Route seeks to the dedicated priority channel (coalesced via
-        // `drain_latest_seek`) instead of the generic message queue, matching
-        // the retired WebSocket control path. The invoke `callback_id` is not
-        // used for seek correlation — the frontend correlates on `request_id`
-        // via SeekCommitted/SeekFailed — so bypassing the queue is safe.
-        if let Some(AudioThreadMessage::SeekAudio {
-            position,
-            request_id,
-            expected_music_id,
-        }) = msg.data.as_ref()
-        {
-            return self
-                .seek_tx
-                .send(SeekRequest::new(
-                    *position,
-                    *request_id,
-                    expected_music_id.clone(),
-                ))
-                .map_err(|_| AudioError::ThreadError("player seek channel closed".into()));
-        }
-        self.msg_tx
-            .send(msg)
-            .map_err(|_| AudioError::ThreadError("player channel closed".into()))
-    }
-
-    // ── Quick state accessors (for commands that need sync reads) ──
-
-    pub fn state(&self) -> PlaybackState {
-        PlaybackState::from_u8(self.shared.state.load(Ordering::Relaxed))
-    }
-
-    pub fn position(&self) -> f64 {
-        self.shared.position_ms.load(Ordering::Relaxed) as f64 / 1000.0
-    }
-
-    pub fn duration(&self) -> f64 {
-        self.shared.duration_ms.load(Ordering::Relaxed) as f64 / 1000.0
-    }
-
-    pub fn is_playing(&self) -> bool {
-        self.state() == PlaybackState::Playing
-    }
-
-    pub fn poll_events(&self, session_id: u64) -> Vec<AudioThreadEvent> {
-        self.shared.event_buf.lock().drain(session_id)
-    }
-
-    pub fn set_session(&self, session_id: u64) {
-        self.shared.event_buf.lock().reset(session_id);
-    }
-
-    /// Register the frontend event `Channel`. The event forwarder streams all
-    /// `AudioThreadEventMessage`s here until it is replaced or the webview
-    /// reloads (a failed send clears the slot and falls back to global emit).
-    pub fn set_event_channel(&self, channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>) {
-        *self.shared.event_channel.lock() = Some(channel);
-    }
-}
-
-impl Drop for Player {
-    fn drop(&mut self) {
-        let _ = self.msg_tx.send(AudioThreadEventMessage::new(
-            String::new(),
-            Some(AudioThreadMessage::Close),
-        ));
-        if let Some(thread) = self.thread.take() {
-            join_thread_async("audio-player-join", thread);
-        }
-    }
-}
-
-fn join_thread_async(name: &'static str, handle: thread::JoinHandle<()>) {
-    let _ = thread::Builder::new().name(name.into()).spawn(move || {
-        let _ = handle.join();
-    });
-}
-
-/// Update `PlayerShared` atomics from events we'd otherwise miss because
-/// state transitions happen inside `AudioPlayer` without writing through
-/// here. Keeps `audio_get_state` honest.
-fn update_shared_from_event(shared: &Arc<PlayerShared>, event: &AudioThreadEvent) {
-    match event {
-        AudioThreadEvent::PlayStatus { is_playing } => {
-            let s = if *is_playing {
-                PlaybackState::Playing
-            } else {
-                PlaybackState::Paused
-            };
-            s.store(&shared.state);
-        }
-        AudioThreadEvent::PlayPosition { position } => {
-            shared
-                .position_ms
-                .store((position * 1000.0).max(0.0) as u64, Ordering::Relaxed);
-        }
-        AudioThreadEvent::SyncStatus {
-            is_playing,
-            position,
-            duration,
-            ..
-        } => {
-            let s = if *is_playing {
-                PlaybackState::Playing
-            } else {
-                PlaybackState::Paused
-            };
-            s.store(&shared.state);
-            shared
-                .position_ms
-                .store((position * 1000.0).max(0.0) as u64, Ordering::Relaxed);
-            shared
-                .duration_ms
-                .store((duration * 1000.0).max(0.0) as u64, Ordering::Relaxed);
-        }
-        AudioThreadEvent::AudioPlayFinished { .. } => {
-            PlaybackState::Ended.store(&shared.state);
-        }
-        _ => {}
-    }
-}
-
-fn should_buffer_poll_event(event: &AudioThreadEvent) -> bool {
-    !matches!(
-        event,
-        AudioThreadEvent::FFTData { .. } | AudioThreadEvent::LowFrequencyVolume { .. }
-    )
-}
-
-fn collect_forward_message(
-    msg: AudioThreadEventMessage<AudioThreadEvent>,
-    realtime: &mut Vec<AudioThreadEventMessage<AudioThreadEvent>>,
-    latest_fft: &mut Option<AudioThreadEventMessage<AudioThreadEvent>>,
-    latest_low_freq: &mut Option<AudioThreadEventMessage<AudioThreadEvent>>,
-) {
-    let is_fft = matches!(&msg.data, Some(AudioThreadEvent::FFTData { .. }));
-    let is_low_freq = matches!(&msg.data, Some(AudioThreadEvent::LowFrequencyVolume { .. }));
-
-    if is_fft {
-        *latest_fft = Some(msg);
-    } else if is_low_freq {
-        *latest_low_freq = Some(msg);
-    } else {
-        realtime.push(msg);
-    }
-}
-
-// ── Cloneable handle for sending messages ────────────────────────
-
-#[derive(Clone, Debug)]
-pub struct PlayerHandle {
-    msg_tx: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadMessage>>,
-    seek_tx: mpsc::UnboundedSender<SeekRequest>,
-}
-
-#[derive(Clone, Debug)]
-struct SeekRequest {
-    position: f64,
-    request_id: Option<u64>,
-    expected_music_id: Option<String>,
-}
-
-impl SeekRequest {
-    fn new(position: f64, request_id: Option<u64>, expected_music_id: Option<String>) -> Self {
-        Self {
-            position,
-            request_id,
-            expected_music_id,
-        }
-    }
-
-    fn normalized(self) -> Self {
-        Self {
-            position: normalize_seek_position(self.position),
-            request_id: self.request_id,
-            expected_music_id: self.expected_music_id,
-        }
-    }
-}
-
-impl PlayerHandle {
-    pub fn send(&self, msg: AudioThreadEventMessage<AudioThreadMessage>) -> AudioResult<()> {
-        if msg.callback_id.is_empty() {
-            if let Some(AudioThreadMessage::SeekAudio {
-                position,
-                request_id,
-                expected_music_id,
-            }) = msg.data.as_ref()
-            {
-                return self.send_seek(*position, *request_id, expected_music_id.clone());
-            }
-        }
-
-        self.msg_tx
-            .send(msg)
-            .map_err(|_| AudioError::ThreadError("player channel closed".into()))
-    }
-
-    pub async fn send_anonymous(&self, msg: AudioThreadMessage) -> AudioResult<()> {
-        self.send(AudioThreadEventMessage::new("".into(), Some(msg)))
-    }
-
-    pub fn send_seek(
-        &self,
-        position: f64,
-        request_id: Option<u64>,
-        expected_music_id: Option<String>,
-    ) -> AudioResult<()> {
-        self.seek_tx
-            .send(SeekRequest::new(position, request_id, expected_music_id))
-            .map_err(|_| AudioError::ThreadError("player seek channel closed".into()))
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════════
 //  Internal AudioPlayer
@@ -550,8 +159,6 @@ enum PlaybackIntent {
     Paused,
 }
 
-const START_PREBUFFER_FRAMES: usize = 512;
-
 enum OutputRefreshEvent {
     Unchanged {
         generation: u64,
@@ -604,104 +211,6 @@ impl OutputRefreshEvent {
             | Self::Failed { output_epoch, .. } => *output_epoch,
         }
     }
-}
-
-#[derive(Debug)]
-struct PlayerClock {
-    base_position: f64,
-    base_rendered_samples: u64,
-    is_playing: bool,
-    duration: f64,
-    render_clock: Option<OutputRenderClock>,
-    sample_rate: u32,
-    channels: u16,
-}
-
-impl PlayerClock {
-    fn new() -> Self {
-        Self {
-            base_position: 0.0,
-            base_rendered_samples: 0,
-            is_playing: false,
-            duration: 0.0,
-            render_clock: None,
-            sample_rate: 44_100,
-            channels: 2,
-        }
-    }
-
-    fn set_render_clock(
-        &mut self,
-        render_clock: OutputRenderClock,
-        sample_rate: u32,
-        channels: u16,
-    ) {
-        let position = self.position();
-        self.render_clock = Some(render_clock);
-        self.sample_rate = sample_rate.max(1);
-        self.channels = channels.max(1);
-        self.base_position = self.clamp_position(position);
-        self.base_rendered_samples = self.rendered_samples();
-    }
-
-    fn set_duration(&mut self, duration: f64) {
-        self.duration = duration.max(0.0);
-        self.base_position = self.clamp_position(self.base_position);
-    }
-
-    fn set_anchor(&mut self, is_playing: bool, position: f64) -> f64 {
-        let position = self.clamp_position(position);
-        self.base_position = position;
-        self.base_rendered_samples = self.rendered_samples();
-        self.is_playing = is_playing;
-        position
-    }
-
-    fn position(&self) -> f64 {
-        let position = if self.is_playing {
-            let rendered_delta = self
-                .rendered_samples()
-                .saturating_sub(self.base_rendered_samples);
-            let samples_per_second = self.sample_rate.max(1) as f64 * self.channels.max(1) as f64;
-            self.base_position + rendered_delta as f64 / samples_per_second
-        } else {
-            self.base_position
-        };
-        self.clamp_position(position)
-    }
-
-    fn is_playing(&self) -> bool {
-        self.is_playing
-    }
-
-    fn clamp_position(&self, position: f64) -> f64 {
-        let position = normalize_seek_position(position);
-        if self.duration > 0.0 {
-            position.min(self.duration)
-        } else {
-            position
-        }
-    }
-
-    fn rendered_samples(&self) -> u64 {
-        self.render_clock
-            .as_ref()
-            .map(OutputRenderClock::rendered_samples)
-            .unwrap_or(self.base_rendered_samples)
-    }
-}
-
-fn normalize_seek_position(position: f64) -> f64 {
-    if position.is_finite() {
-        position.max(0.0)
-    } else {
-        0.0
-    }
-}
-
-fn start_prebuffer_samples(channels: usize) -> usize {
-    let channels = channels.max(1);
-    channels * START_PREBUFFER_FRAMES
 }
 
 impl AudioPlayer {
@@ -864,44 +373,21 @@ impl AudioPlayer {
     }
 
     fn ensure_output_for_source(&mut self, audio_info: &AudioInfo) -> anyhow::Result<bool> {
-        #[cfg(target_os = "android")]
+        let target = output_target_for_source(audio_info);
+        if self.output.selector() == &self.output_selector
+            && output_target_matches(self.output.target(), target)
+            && !self.output.has_failed()
         {
-            let _ = audio_info;
-            if self.output.selector() == &self.output_selector && !self.output.has_failed() {
-                return Ok(false);
-            }
-
-            self.cancel_pending_output_refresh();
-            let output = output::open_output(self.output_selector.clone(), None)
-                .map_err(AudioError::Output)?;
-            let changed =
-                output.config() != self.output.config() || output.device() != self.output.device();
-            self.install_output(output);
-            return Ok(changed);
+            return Ok(false);
         }
 
-        #[cfg(not(target_os = "android"))]
-        {
-            let target =
-                output::OutputTarget::for_source(audio_info.channels, audio_info.sample_rate);
-            if self.output.selector() == &self.output_selector
-                && self
-                    .output
-                    .target()
-                    .is_some_and(|current| output_target_layout_matches(current, target))
-                && !self.output.has_failed()
-            {
-                return Ok(false);
-            }
-
-            self.cancel_pending_output_refresh();
-            let output = output::open_output(self.output_selector.clone(), Some(target))
-                .map_err(AudioError::Output)?;
-            let changed =
-                output.config() != self.output.config() || output.device() != self.output.device();
-            self.install_output(output);
-            Ok(changed)
-        }
+        self.cancel_pending_output_refresh();
+        let output = output::open_output(self.output_selector.clone(), target)
+            .map_err(AudioError::Output)?;
+        let changed =
+            output.config() != self.output.config() || output.device() != self.output.device();
+        self.install_output(output);
+        Ok(changed)
     }
 
     fn cancel_pending_output_refresh(&mut self) {
@@ -1075,16 +561,7 @@ impl AudioPlayer {
         let current_device = self.output.device().clone();
         let force_replace = force_replace || self.output.has_failed();
         let rebuild_chain = rebuild_chain && self.current_song.is_some();
-        #[cfg(target_os = "android")]
-        let target: Option<output::OutputTarget> = None;
-        #[cfg(not(target_os = "android"))]
-        let target = {
-            let output_config = self.output.config();
-            Some(output::OutputTarget {
-                channels: output_config.channels,
-                sample_rate: output_config.sample_rate,
-            })
-        };
+        let target = output_refresh_target(self.output.config());
         let tx = self.output_refresh_tx.clone();
         tokio::task::spawn_blocking(move || {
             let opened_event =
@@ -1794,9 +1271,10 @@ impl AudioPlayer {
         }
 
         let writer = self.output.writer();
-        let channels = self.output.config().channels.max(1) as usize;
-        let target_samples = start_prebuffer_samples(channels);
-        for _ in 0..20 {
+        let output_config = self.output.config();
+        let channels = output_config.channels.max(1) as usize;
+        let target_samples = start_prebuffer_samples(channels, output_config.sample_rate);
+        for _ in 0..START_PREBUFFER_WAIT_MS {
             if writer.queued_samples() >= target_samples {
                 return;
             }
@@ -2812,11 +2290,6 @@ fn dsp_config_is_active(config: &DspConfig) -> bool {
 
 fn output_audio_layout_matches(a: output::OutputConfigKey, b: output::OutputConfigKey) -> bool {
     a.channels == b.channels && a.sample_rate == b.sample_rate
-}
-
-#[cfg_attr(target_os = "android", allow(dead_code))]
-fn output_target_layout_matches(a: output::OutputTarget, b: output::OutputTarget) -> bool {
-    a.channels == b.channels
 }
 
 // ── Metadata helpers ─────────────────────────────────────────────
