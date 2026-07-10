@@ -19,9 +19,9 @@
     "fmt:check": "oxfmt --check src/"
   },
   "dependencies": {
-    "@applemusic-like-lyrics/core": "^0.5.1",
-    "@applemusic-like-lyrics/lyric": "^1.0.1",
-    "@applemusic-like-lyrics/vue": "^0.5.1",
+    "@applemusic-like-lyrics/core": "^0.5.2",
+    "@applemusic-like-lyrics/lyric": "^1.0.2",
+    "@applemusic-like-lyrics/vue": "^0.5.2",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
     "@material/material-color-utilities": "^0.4.0",
