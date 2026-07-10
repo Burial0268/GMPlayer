@@ -18,6 +18,7 @@ const DECK_QUEUE_BLOCKS: usize = 48;
 const DECK_QUEUE_BLOCKS: usize = 8;
 const DECK_RECYCLE_QUEUE_BLOCKS: usize = DECK_QUEUE_BLOCKS + 4;
 const MIX_BLOCK_FRAMES: usize = 512;
+const CROSSFADE_RAMP_FRAMES: usize = 64;
 const PRODUCER_YIELD_RETRIES: u32 = 8;
 const PRODUCER_MIN_PARK_US: u64 = 100;
 const PRODUCER_MAX_PARK_US: u64 = 1_000;
@@ -576,6 +577,33 @@ struct CrossfadeRuntime {
     params: CrossfadeParams,
 }
 
+#[derive(Clone, Copy)]
+struct CrossfadeBlockRamp {
+    outgoing: DeckId,
+    active_frames: usize,
+    outgoing_start: f32,
+    incoming_start: f32,
+    outgoing_step: f32,
+    incoming_step: f32,
+    outgoing_final: f32,
+    incoming_final: f32,
+}
+
+impl CrossfadeBlockRamp {
+    #[inline]
+    fn gains(&self, frame: usize) -> (f32, f32) {
+        if frame >= self.active_frames {
+            return (self.outgoing_final, self.incoming_final);
+        }
+
+        let frame = frame as f32;
+        (
+            self.outgoing_start + self.outgoing_step * frame,
+            self.incoming_start + self.incoming_step * frame,
+        )
+    }
+}
+
 struct MixerWorker {
     output: OutputWriter,
     output_channels: usize,
@@ -696,29 +724,52 @@ impl MixerWorker {
         let mut consumed_primary = 0usize;
         let mut consumed_secondary = 0usize;
 
-        for _ in 0..MIX_BLOCK_FRAMES {
-            self.advance_crossfade();
-            let primary_gain = self.primary.gain;
-            let secondary_gain = self.secondary.gain;
+        // Crossfade shaping contains transcendental math (sin/cos/sqrt/powf).
+        // Evaluate it at short segment endpoints, then use a smooth linear gain
+        // ramp per frame. At 48 kHz this cuts complex gain calculations by ~32x
+        // without allocations, while a 64-frame segment keeps even the minimum
+        // 50 ms fade closely aligned with its requested curve.
+        let mut mixed_frames = 0;
+        while mixed_frames < MIX_BLOCK_FRAMES {
+            let segment_frames = (MIX_BLOCK_FRAMES - mixed_frames).min(CROSSFADE_RAMP_FRAMES);
+            let crossfade_ramp = self.crossfade_block_ramp(segment_frames);
 
-            for _ in 0..channels {
-                let primary = if primary_paused {
-                    None
-                } else {
-                    self.primary.next_sample(&mut consumed_primary)
+            for frame_index in 0..segment_frames {
+                let (primary_gain, secondary_gain) = match crossfade_ramp {
+                    Some(ramp) => {
+                        let (outgoing_gain, incoming_gain) = ramp.gains(frame_index);
+                        match ramp.outgoing {
+                            DeckId::Primary => (outgoing_gain, incoming_gain),
+                            DeckId::Secondary => (incoming_gain, outgoing_gain),
+                        }
+                    }
+                    None => (self.primary.gain, self.secondary.gain),
                 };
-                let secondary = if secondary_paused {
-                    None
-                } else {
-                    self.secondary.next_sample(&mut consumed_secondary)
-                };
-                if primary.is_some() || secondary.is_some() {
-                    has_audio = true;
+
+                for _ in 0..channels {
+                    let primary = if primary_paused {
+                        None
+                    } else {
+                        self.primary.next_sample(&mut consumed_primary)
+                    };
+                    let secondary = if secondary_paused {
+                        None
+                    } else {
+                        self.secondary.next_sample(&mut consumed_secondary)
+                    };
+                    if primary.is_some() || secondary.is_some() {
+                        has_audio = true;
+                    }
+                    let mixed = primary.unwrap_or(0.0) * primary_gain
+                        + secondary.unwrap_or(0.0) * secondary_gain;
+                    block.push(mixed.clamp(-1.0, 1.0));
                 }
-                let mixed = primary.unwrap_or(0.0) * primary_gain
-                    + secondary.unwrap_or(0.0) * secondary_gain;
-                block.push(mixed.clamp(-1.0, 1.0));
             }
+
+            if crossfade_ramp.is_some() {
+                self.commit_crossfade_block(segment_frames);
+            }
+            mixed_frames += segment_frames;
         }
 
         self.primary.commit_consumed(consumed_primary);
@@ -816,28 +867,74 @@ impl MixerWorker {
         true
     }
 
-    fn advance_crossfade(&mut self) {
+    fn crossfade_block_ramp(&self, frames: usize) -> Option<CrossfadeBlockRamp> {
         let Some(fade) = self.crossfade.as_ref() else {
+            return None;
+        };
+
+        let step = self.output_channels.max(1);
+        let remaining_samples = fade.duration_samples.saturating_sub(fade.elapsed_samples);
+        let active_frames = remaining_samples.div_ceil(step).min(frames.max(1));
+        let start_progress =
+            (fade.elapsed_samples as f32 / fade.duration_samples as f32).clamp(0.0, 1.0);
+        let (outgoing_start, incoming_start) =
+            balanced_crossfade_gains(start_progress, fade.params);
+        let completes = remaining_samples <= active_frames.saturating_mul(step);
+        let (outgoing_end, incoming_end) = if completes {
+            (0.0, fade.params.incoming_gain)
+        } else {
+            let end_elapsed = fade
+                .elapsed_samples
+                .saturating_add((active_frames.saturating_sub(1)).saturating_mul(step));
+            let end_progress = (end_elapsed as f32 / fade.duration_samples as f32).clamp(0.0, 1.0);
+            balanced_crossfade_gains(end_progress, fade.params)
+        };
+        let ramp_steps = active_frames.saturating_sub(1) as f32;
+        let (outgoing_step, incoming_step) = if ramp_steps > 0.0 {
+            (
+                (outgoing_end - outgoing_start) / ramp_steps,
+                (incoming_end - incoming_start) / ramp_steps,
+            )
+        } else {
+            (0.0, 0.0)
+        };
+
+        Some(CrossfadeBlockRamp {
+            outgoing: fade.outgoing,
+            active_frames,
+            outgoing_start: if active_frames == 1 && completes {
+                outgoing_end
+            } else {
+                outgoing_start
+            },
+            incoming_start: if active_frames == 1 && completes {
+                incoming_end
+            } else {
+                incoming_start
+            },
+            outgoing_step,
+            incoming_step,
+            outgoing_final: 0.0,
+            incoming_final: fade.params.incoming_gain,
+        })
+    }
+
+    fn commit_crossfade_block(&mut self, frames: usize) {
+        let Some(fade) = self.crossfade.as_mut() else {
             return;
         };
-        // `advance_crossfade` is called once per frame, while the fade duration
-        // is tracked in samples — step by one frame (= `output_channels`).
-        let step = self.output_channels.max(1);
-        let progress = (fade.elapsed_samples as f32 / fade.duration_samples as f32).clamp(0.0, 1.0);
-        let (out_gain, in_gain) = balanced_crossfade_gains(progress, fade.params);
-        let outgoing = fade.outgoing;
-        let incoming = fade.incoming;
-        let elapsed_samples = fade.elapsed_samples.saturating_add(step);
-        let duration_samples = fade.duration_samples;
-        let final_in_gain = fade.params.incoming_gain;
 
-        self.set_deck_gain_direct(outgoing, out_gain);
-        self.set_deck_gain_direct(incoming, in_gain);
-        if elapsed_samples >= duration_samples {
+        let elapsed_samples = fade
+            .elapsed_samples
+            .saturating_add(frames.saturating_mul(self.output_channels.max(1)));
+        if elapsed_samples >= fade.duration_samples {
+            let outgoing = fade.outgoing;
+            let incoming = fade.incoming;
+            let final_in_gain = fade.params.incoming_gain;
             self.set_deck_gain_direct(outgoing, 0.0);
             self.set_deck_gain_direct(incoming, final_in_gain);
             self.crossfade = None;
-        } else if let Some(fade) = self.crossfade.as_mut() {
+        } else {
             fade.elapsed_samples = elapsed_samples;
         }
     }
@@ -855,10 +952,10 @@ impl MixerWorker {
 }
 
 fn saturating_sub(counter: &AtomicUsize, amount: usize) {
-    let mut current = counter.load(Ordering::Acquire);
+    let mut current = counter.load(Ordering::Relaxed);
     loop {
         let next = current.saturating_sub(amount);
-        match counter.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => return,
             Err(observed) => current = observed,
         }
@@ -1005,5 +1102,49 @@ mod tests {
         let written = deck.fill_scaled(&mut dst, 2, 1.0, &mut consumed);
         assert_eq!(written, 2);
         assert_eq!(dst, vec![0.3, 0.4]); // the stale generation-0 block is dropped
+    }
+
+    #[test]
+    fn short_crossfade_ramps_track_exact_curves() {
+        let duration_samples = 2_400usize * 2;
+        let params = [
+            CrossfadeCurve::Linear,
+            CrossfadeCurve::EqualPower,
+            CrossfadeCurve::SCurve,
+        ]
+        .map(|curve| CrossfadeParams {
+            curve,
+            incoming_gain: 1.15,
+            outgoing_gain: 0.85,
+            overlap_headroom_db: -0.8,
+        });
+
+        for params in params {
+            let start = duration_samples / 3;
+            let end = start + (CROSSFADE_RAMP_FRAMES - 1) * 2;
+            let start_progress = start as f32 / duration_samples as f32;
+            let end_progress = end as f32 / duration_samples as f32;
+            let (out_start, in_start) = balanced_crossfade_gains(start_progress, params);
+            let (out_end, in_end) = balanced_crossfade_gains(end_progress, params);
+            let denominator = (CROSSFADE_RAMP_FRAMES - 1) as f32;
+            let ramp = CrossfadeBlockRamp {
+                outgoing: DeckId::Primary,
+                active_frames: CROSSFADE_RAMP_FRAMES,
+                outgoing_start: out_start,
+                incoming_start: in_start,
+                outgoing_step: (out_end - out_start) / denominator,
+                incoming_step: (in_end - in_start) / denominator,
+                outgoing_final: 0.0,
+                incoming_final: params.incoming_gain,
+            };
+
+            for frame in 0..CROSSFADE_RAMP_FRAMES {
+                let progress = (start + frame * 2) as f32 / duration_samples as f32;
+                let exact = balanced_crossfade_gains(progress, params);
+                let interpolated = ramp.gains(frame);
+                assert!((exact.0 - interpolated.0).abs() < 0.001);
+                assert!((exact.1 - interpolated.1).abs() < 0.001);
+            }
+        }
     }
 }

@@ -141,18 +141,19 @@ const memo: Record<number, string> = {};
  * @returns 格式为 "mm:ss" 的字符串
  */
 export const getSongPlayingTime = (num: number): string => {
+  const wholeSeconds = Number.isFinite(num) ? Math.max(0, Math.floor(num)) : 0;
   // Check if result is memoized
-  if (memo[num]) return memo[num];
+  if (memo[wholeSeconds]) return memo[wholeSeconds];
 
   // Calculate minutes and seconds
-  const minutes = String(Math.floor(num / 60)).padStart(2, "0");
-  const seconds = String(Math.floor(num % 60)).padStart(2, "0");
+  const minutes = String(Math.floor(wholeSeconds / 60)).padStart(2, "0");
+  const seconds = String(wholeSeconds % 60).padStart(2, "0");
 
   // Combine minutes and seconds
   const formattedTime = `${minutes}:${seconds}`;
 
   // Memoize the result
-  memo[num] = formattedTime;
+  memo[wholeSeconds] = formattedTime;
 
   return formattedTime;
 };

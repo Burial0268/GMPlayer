@@ -23,6 +23,12 @@ pub(super) struct CallbackState {
     /// inside the real-time callback. Best-effort: a full channel just drops
     /// the buffer, so this never blocks.
     recycle_tx: mpsc::SyncSender<Vec<f32>>,
+    /// A spent block that could not be returned because the bounded recycle
+    /// queue was full. Keeping ownership here is essential: dropping the
+    /// `TrySendError` in the callback would free the allocation on the real-
+    /// time thread. While this slot is occupied, the callback does not dequeue
+    /// another block that could require a second overflow slot.
+    pending_recycle: Option<Vec<f32>>,
     current_block: Vec<f32>,
     current_index: usize,
     accepted_generation: u64,
@@ -47,6 +53,7 @@ impl CallbackState {
             data_rx,
             control_rx,
             recycle_tx,
+            pending_recycle: None,
             current_block: Vec::new(),
             current_index: 0,
             accepted_generation: generation,
@@ -116,7 +123,7 @@ pub(super) fn fill_output<T>(
                     // Return the spent block to the mixer's pool instead of
                     // dropping (freeing) it inside the real-time callback.
                     let spent = std::mem::replace(&mut state.current_block, block);
-                    recycle_buffer(&state.recycle_tx, spent);
+                    retain_or_recycle_buffer(state, spent);
                     state.current_index = 0;
                 }
                 None => break,
@@ -169,7 +176,9 @@ pub(super) fn fill_output<T>(
 
     if written > 0 {
         super::saturating_sub(queued_samples, written);
-        rendered_samples.fetch_add(written as u64, Ordering::AcqRel);
+        // Position accounting is monotonic telemetry; it does not publish
+        // audio data or callback state to another thread.
+        rendered_samples.fetch_add(written as u64, Ordering::Relaxed);
     }
 }
 
@@ -178,6 +187,13 @@ fn next_current_block(
     generation: &AtomicU64,
     flush_epoch: &AtomicU64,
 ) -> Option<Vec<f32>> {
+    // Do not acquire ownership of another queue block until the previously
+    // spent allocation has left the callback. This bounds callback-owned
+    // overflow to one pre-existing Vec without allocating or blocking.
+    if !flush_pending_recycle(state) {
+        return None;
+    }
+
     loop {
         match state.data_rx.try_recv() {
             Ok(block) => {
@@ -188,11 +204,17 @@ fn next_current_block(
                 {
                     // Stale block from a superseded generation — recycle its
                     // buffer instead of freeing it in the callback.
-                    recycle_buffer(&state.recycle_tx, block.samples);
+                    retain_or_recycle_buffer(state, block.samples);
+                    if state.pending_recycle.is_some() {
+                        return None;
+                    }
                     continue;
                 }
                 if block.samples.is_empty() {
-                    recycle_buffer(&state.recycle_tx, block.samples);
+                    retain_or_recycle_buffer(state, block.samples);
+                    if state.pending_recycle.is_some() {
+                        return None;
+                    }
                     continue;
                 }
                 state.accepted_generation = block.generation;
@@ -277,10 +299,30 @@ fn underrun_fade_sample(state: &mut CallbackState, channel: usize) -> f32 {
 }
 
 #[inline]
-fn recycle_buffer(recycle_tx: &mpsc::SyncSender<Vec<f32>>, buf: Vec<f32>) {
-    // Best-effort hand-back to the mixer's pool; a full channel just drops the
-    // buffer (a normal free), so the real-time callback never blocks.
-    let _ = recycle_tx.try_send(buf);
+fn retain_or_recycle_buffer(state: &mut CallbackState, buf: Vec<f32>) {
+    debug_assert!(state.pending_recycle.is_none());
+    match state.recycle_tx.try_send(buf) {
+        Ok(()) => {}
+        Err(mpsc::TrySendError::Full(buf) | mpsc::TrySendError::Disconnected(buf)) => {
+            state.pending_recycle = Some(buf);
+        }
+    }
+}
+
+/// Attempts to hand the retained allocation back without blocking. A full or
+/// disconnected channel leaves it owned by `CallbackState`, so no allocator
+/// work occurs in the CPAL callback.
+fn flush_pending_recycle(state: &mut CallbackState) -> bool {
+    let Some(buf) = state.pending_recycle.take() else {
+        return true;
+    };
+    match state.recycle_tx.try_send(buf) {
+        Ok(()) => true,
+        Err(mpsc::TrySendError::Full(buf) | mpsc::TrySendError::Disconnected(buf)) => {
+            state.pending_recycle = Some(buf);
+            false
+        }
+    }
 }
 
 #[cfg(test)]
@@ -369,5 +411,102 @@ mod tests {
         assert_eq!(data, vec![0.25, -0.25, 0.5, -0.5]);
         assert_eq!(rendered_samples.load(Ordering::Acquire), 4);
         assert_eq!(queued_samples.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn full_recycle_queue_retains_spent_buffer_in_callback_state() {
+        let (data_tx, data_rx) = mpsc::sync_channel(2);
+        let (_control_tx, control_rx) = mpsc::channel();
+        let (recycle_tx, recycle_rx) = mpsc::sync_channel::<Vec<f32>>(1);
+        recycle_tx.send(Vec::with_capacity(1)).unwrap();
+        let paused = AtomicBool::new(false);
+        let volume_bits = AtomicU32::new(1.0f32.to_bits());
+        let generation = AtomicU64::new(0);
+        let flush_epoch = AtomicU64::new(0);
+        let queued_samples = AtomicUsize::new(8);
+        let rendered_samples = AtomicU64::new(0);
+        let mut state = CallbackState::new(data_rx, control_rx, recycle_tx, 0, 0, 2);
+        state.current_block = Vec::with_capacity(32);
+        state
+            .current_block
+            .extend_from_slice(&[0.1, -0.1, 0.2, -0.2]);
+        state.current_index = state.current_block.len();
+        data_tx
+            .send(OutputBlock {
+                samples: vec![0.3, -0.3, 0.4, -0.4],
+                generation: 0,
+                flush_epoch: 0,
+            })
+            .unwrap();
+        let mut data = [0.0f32; 4];
+
+        fill_output(
+            &mut data,
+            &mut state,
+            &paused,
+            &volume_bits,
+            &generation,
+            &flush_epoch,
+            &queued_samples,
+            &rendered_samples,
+        );
+
+        assert_eq!(data, [0.3, -0.3, 0.4, -0.4]);
+        assert_eq!(state.pending_recycle.as_ref().unwrap().capacity(), 32);
+
+        // With the recycle queue still full, the callback must not dequeue a
+        // further block and create another allocation that it cannot retain.
+        data_tx
+            .send(OutputBlock {
+                samples: vec![0.5, -0.5, 0.6, -0.6],
+                generation: 0,
+                flush_epoch: 0,
+            })
+            .unwrap();
+        fill_output(
+            &mut data,
+            &mut state,
+            &paused,
+            &volume_bits,
+            &generation,
+            &flush_epoch,
+            &queued_samples,
+            &rendered_samples,
+        );
+        assert!(state.pending_recycle.is_some());
+        let queued = state.data_rx.try_recv().unwrap();
+        assert_eq!(queued.samples, vec![0.5, -0.5, 0.6, -0.6]);
+        data_tx.send(queued).unwrap();
+
+        // Once the producer drains the pool, the retained allocation is
+        // returned and normal queue consumption resumes.
+        drop(recycle_rx.recv().unwrap());
+        fill_output(
+            &mut data,
+            &mut state,
+            &paused,
+            &volume_bits,
+            &generation,
+            &flush_epoch,
+            &queued_samples,
+            &rendered_samples,
+        );
+        assert_eq!(data, [0.5, -0.5, 0.6, -0.6]);
+        assert_eq!(recycle_rx.recv().unwrap().capacity(), 32);
+        assert!(state.pending_recycle.is_some());
+
+        // With no more queued audio, one final callback can return the last
+        // spent block without immediately needing the overflow slot again.
+        fill_output(
+            &mut data,
+            &mut state,
+            &paused,
+            &volume_bits,
+            &generation,
+            &flush_epoch,
+            &queued_samples,
+            &rendered_samples,
+        );
+        assert!(state.pending_recycle.is_none());
     }
 }

@@ -430,8 +430,13 @@ export class AudioTimelineSync {
   }
 
   commitSeek(requestId: number | null | undefined, position: number): number | null {
+    const anchor = this._pendingSeekAnchor;
     if (!this._matchesSeekRequest(requestId)) return null;
-    return this.setLocalPosition(position, { guardSeek: true });
+    return this.setLocalPosition(position, {
+      guardSeek: true,
+      requestId: anchor?.requestId,
+      atomicSeek: anchor?.atomicSeek,
+    });
   }
 
   rejectSeek(requestId: number | null | undefined): boolean {

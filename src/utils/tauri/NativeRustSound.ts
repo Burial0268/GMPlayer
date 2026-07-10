@@ -988,6 +988,13 @@ export class NativeRustSound implements ISound {
       this._unlistenTransport = null;
     }
     this._clearFFTState();
+    this._events = {};
+    this._onceEvents = {};
+    this._seenEventSeq.clear();
+    this._seenEventSeqOrder.length = 0;
+    this._state.playlist = [];
+    this._musicInfo = null;
+    this._quality = null;
     this._lowFreqVolume = 0;
     this._analysisEnabled = false;
     this._fftEventsEnabled = false;

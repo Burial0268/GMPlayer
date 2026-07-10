@@ -13,13 +13,16 @@ class TauriInvokeAudioIpc implements AudioBackendTransport {
   private _listeners: Set<AudioThreadEventCallback> = new Set();
   private _unlisten: (() => void) | null = null;
   private _connectPromise: Promise<void> | null = null;
+  private _visualFrame: number | null = null;
+  private _pendingFft: { event: AudioThreadEvent; seq?: number } | null = null;
+  private _pendingLowFreq: { event: AudioThreadEvent; seq?: number } | null = null;
 
   connect(): Promise<void> {
     if (this._unlisten) return Promise.resolve();
     if (this._connectPromise) return this._connectPromise;
 
     this._connectPromise = listenPlayerEvents((event, seq) => {
-      this._dispatch(event, seq);
+      this._dispatchOrCoalesce(event, seq);
     })
       .then((unlisten) => {
         this._unlisten = unlisten;
@@ -44,11 +47,44 @@ class TauriInvokeAudioIpc implements AudioBackendTransport {
   }
 
   shutdown(): void {
+    if (this._visualFrame !== null) {
+      cancelAnimationFrame(this._visualFrame);
+      this._visualFrame = null;
+    }
+    this._pendingFft = null;
+    this._pendingLowFreq = null;
     if (this._unlisten) {
       this._unlisten();
       this._unlisten = null;
     }
     this._listeners.clear();
+  }
+
+  private _dispatchOrCoalesce(event: AudioThreadEvent, seq?: number): void {
+    if (event.type === "fftData") {
+      this._pendingFft = { event, seq };
+      this._scheduleVisualDispatch();
+      return;
+    }
+    if (event.type === "lowFrequencyVolume") {
+      this._pendingLowFreq = { event, seq };
+      this._scheduleVisualDispatch();
+      return;
+    }
+    this._dispatch(event, seq);
+  }
+
+  private _scheduleVisualDispatch(): void {
+    if (this._visualFrame !== null) return;
+    this._visualFrame = requestAnimationFrame(() => {
+      this._visualFrame = null;
+      const fft = this._pendingFft;
+      const lowFreq = this._pendingLowFreq;
+      this._pendingFft = null;
+      this._pendingLowFreq = null;
+      if (fft) this._dispatch(fft.event, fft.seq);
+      if (lowFreq) this._dispatch(lowFreq.event, lowFreq.seq);
+    });
   }
 
   private _dispatch(event: AudioThreadEvent, seq?: number): void {
@@ -76,6 +112,9 @@ class TauriChannelAudioIpc implements AudioBackendTransport {
   private _listeners: Set<AudioThreadEventCallback> = new Set();
   private _channel: Channel<AudioThreadEventMessage<AudioThreadEvent>> | null = null;
   private _connectPromise: Promise<void> | null = null;
+  private _visualFrame: number | null = null;
+  private _pendingFft: { event: AudioThreadEvent; seq?: number } | null = null;
+  private _pendingLowFreq: { event: AudioThreadEvent; seq?: number } | null = null;
 
   connect(): Promise<void> {
     if (this._channel) return Promise.resolve();
@@ -84,7 +123,7 @@ class TauriChannelAudioIpc implements AudioBackendTransport {
     const channel = new Channel<AudioThreadEventMessage<AudioThreadEvent>>();
     channel.onmessage = (envelope) => {
       if (envelope && envelope.data) {
-        this._dispatch(envelope.data, envelope.seq);
+        this._dispatchOrCoalesce(envelope.data, envelope.seq);
       }
     };
 
@@ -112,8 +151,41 @@ class TauriChannelAudioIpc implements AudioBackendTransport {
   }
 
   shutdown(): void {
+    if (this._visualFrame !== null) {
+      cancelAnimationFrame(this._visualFrame);
+      this._visualFrame = null;
+    }
+    this._pendingFft = null;
+    this._pendingLowFreq = null;
     this._channel = null;
     this._listeners.clear();
+  }
+
+  private _dispatchOrCoalesce(event: AudioThreadEvent, seq?: number): void {
+    if (event.type === "fftData") {
+      this._pendingFft = { event, seq };
+      this._scheduleVisualDispatch();
+      return;
+    }
+    if (event.type === "lowFrequencyVolume") {
+      this._pendingLowFreq = { event, seq };
+      this._scheduleVisualDispatch();
+      return;
+    }
+    this._dispatch(event, seq);
+  }
+
+  private _scheduleVisualDispatch(): void {
+    if (this._visualFrame !== null) return;
+    this._visualFrame = requestAnimationFrame(() => {
+      this._visualFrame = null;
+      const fft = this._pendingFft;
+      const lowFreq = this._pendingLowFreq;
+      this._pendingFft = null;
+      this._pendingLowFreq = null;
+      if (fft) this._dispatch(fft.event, fft.seq);
+      if (lowFreq) this._dispatch(lowFreq.event, lowFreq.seq);
+    });
   }
 
   private _dispatch(event: AudioThreadEvent, seq?: number): void {

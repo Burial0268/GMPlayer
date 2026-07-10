@@ -38,8 +38,8 @@ use automix::AutoMixManager;
 use clock::PlayerClock;
 use mixer::{CrossfadeParams, DeckId, DeckMixer};
 use platform::{
-    output_refresh_target, output_target_for_source, output_target_matches,
-    start_prebuffer_samples, START_PREBUFFER_WAIT_MS,
+    output_refresh_target, output_target_for_source, output_target_matches, seek_prebuffer_samples,
+    start_prebuffer_samples, SEEK_PREBUFFER_WAIT_MS, START_PREBUFFER_WAIT_MS,
 };
 use queue::PlaybackQueue;
 
@@ -1194,7 +1194,9 @@ impl AudioPlayer {
         self.pending_seek = None;
         let _ = self.analysis_tx.send(AnalysisCommand::Clear);
         if was_playing {
-            self.wait_for_start_prebuffer().await;
+            // Keep the deep Android queues for steady-state playback, while
+            // using a much smaller first-audio watermark after an in-place seek.
+            self.wait_for_seek_prebuffer().await;
             self.output.writer().set_paused(false);
         }
         self.publish_position_anchor(was_playing, seek.position)
@@ -1266,6 +1268,29 @@ impl AudioPlayer {
     }
 
     async fn wait_for_start_prebuffer(&self) {
+        self.wait_for_prebuffer(
+            start_prebuffer_samples,
+            START_PREBUFFER_WAIT_MS,
+            "音频输出预缓冲不足",
+        )
+        .await;
+    }
+
+    async fn wait_for_seek_prebuffer(&self) {
+        self.wait_for_prebuffer(
+            seek_prebuffer_samples,
+            SEEK_PREBUFFER_WAIT_MS,
+            "seek 快速预缓冲不足",
+        )
+        .await;
+    }
+
+    async fn wait_for_prebuffer(
+        &self,
+        target_samples_for: fn(usize, u32) -> usize,
+        wait_ms: u64,
+        warning: &str,
+    ) {
         if self.current_decoder_handle.is_none() && self.secondary_decoder_handle.is_none() {
             return;
         }
@@ -1273,8 +1298,8 @@ impl AudioPlayer {
         let writer = self.output.writer();
         let output_config = self.output.config();
         let channels = output_config.channels.max(1) as usize;
-        let target_samples = start_prebuffer_samples(channels, output_config.sample_rate);
-        for _ in 0..START_PREBUFFER_WAIT_MS {
+        let target_samples = target_samples_for(channels, output_config.sample_rate);
+        for _ in 0..wait_ms {
             if writer.queued_samples() >= target_samples {
                 return;
             }
@@ -1283,8 +1308,8 @@ impl AudioPlayer {
         let queued = writer.queued_samples();
         if queued < target_samples {
             warn!(
-                "音频输出预缓冲不足: queued_samples={} target_samples={}",
-                queued, target_samples
+                "{}: queued_samples={} target_samples={}",
+                warning, queued, target_samples
             );
         }
     }

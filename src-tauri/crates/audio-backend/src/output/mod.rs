@@ -20,8 +20,9 @@ use render::{fill_output, CallbackState, OutputBlock, OutputControl};
 
 // Depth of the buffer-recycling channel that returns spent mix blocks from the
 // CPAL callback back to the mixer for reuse. Sized a little above the data
-// queue so every in-flight buffer has a slot; overflow simply drops the buffer
-// (a plain free on the producer side), so the callback never blocks.
+// queue so every in-flight buffer normally has a slot. If it is full, the
+// callback retains the spent block and pauses dequeuing until a slot opens;
+// this keeps allocation and deallocation off the real-time thread.
 const RECYCLE_QUEUE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS + 4;
 const OUTPUT_INIT_TIMEOUT: Duration = Duration::from_secs(4);
 const PRODUCER_YIELD_RETRIES: u32 = 8;
@@ -159,7 +160,9 @@ pub struct OutputRenderClock {
 
 impl OutputRenderClock {
     pub fn rendered_samples(&self) -> u64 {
-        self.rendered_samples.load(Ordering::Acquire)
+        // Monotonic telemetry only. PCM visibility is synchronized by the
+        // channel plus generation/flush barriers, not by this counter.
+        self.rendered_samples.load(Ordering::Relaxed)
     }
 }
 
@@ -251,6 +254,9 @@ impl OutputWriter {
     }
 
     pub fn queued_samples(&self) -> usize {
+        // Queue depth participates in prebuffer and drain decisions. Pair the
+        // read with producer/flush Release operations so control threads do
+        // not rely on a purely relaxed observation on weak-memory targets.
         self.queued_samples.load(Ordering::Acquire)
     }
 
@@ -767,10 +773,10 @@ fn producer_retry_backoff(retry_count: &mut u32) {
 }
 
 fn saturating_sub(counter: &AtomicUsize, amount: usize) {
-    let mut current = counter.load(Ordering::Acquire);
+    let mut current = counter.load(Ordering::Relaxed);
     loop {
         let next = current.saturating_sub(amount);
-        match counter.compare_exchange_weak(current, next, Ordering::AcqRel, Ordering::Acquire) {
+        match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
             Ok(_) => return,
             Err(observed) => current = observed,
         }

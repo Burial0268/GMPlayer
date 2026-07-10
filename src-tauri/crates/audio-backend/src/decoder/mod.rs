@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use ::symphonia::core::audio::{SampleBuffer, SignalSpec};
+use ::symphonia::core::audio::{AudioBufferRef, SampleBuffer, SignalSpec};
 use ::symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use ::symphonia::core::errors::Error as SymphoniaError;
 use ::symphonia::core::formats::{FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo};
@@ -202,7 +202,7 @@ struct SeekableSymphoniaSource {
     track_id: u32,
     spec: SignalSpec,
     total_duration: Option<Time>,
-    buffer: Vec<f32>,
+    buffer: SampleBuffer<f32>,
     buffer_offset: usize,
 }
 
@@ -244,9 +244,14 @@ impl SeekableSymphoniaSource {
             .make(&track.codec_params, &DecoderOptions::default())
             .map_err(|e| AudioError::Decode(e.to_string()))?;
 
-        let (spec, buffer) = decode_next_audio_buffer(format.as_mut(), decoder.as_mut(), track_id)
-            .map_err(|e| AudioError::Decode(e.to_string()))?
-            .ok_or_else(|| AudioError::Decode("no decodable audio samples".into()))?;
+        let (spec, buffer) = decode_next_audio_buffer(
+            format.as_mut(),
+            decoder.as_mut(),
+            track_id,
+            sample_buffer_from_decoded,
+        )
+        .map_err(|e| AudioError::Decode(e.to_string()))?
+        .ok_or_else(|| AudioError::Decode("no decodable audio samples".into()))?;
 
         Ok(Self {
             format,
@@ -260,12 +265,14 @@ impl SeekableSymphoniaSource {
     }
 
     fn refill(&mut self) -> Option<()> {
-        let (spec, buffer) = match decode_next_audio_buffer(
+        let buffer = &mut self.buffer;
+        let spec = match decode_next_audio_buffer(
             self.format.as_mut(),
             self.decoder.as_mut(),
             self.track_id,
+            |decoded| copy_decoded_into_sample_buffer(decoded, buffer),
         ) {
-            Ok(Some(decoded)) => decoded,
+            Ok(Some(spec)) => spec,
             Ok(None) => return None,
             Err(err) => {
                 warn!("decode failed while refilling playback buffer: {err}");
@@ -273,7 +280,6 @@ impl SeekableSymphoniaSource {
             }
         };
         self.spec = spec;
-        self.buffer = buffer;
         self.buffer_offset = 0;
         Some(())
     }
@@ -287,9 +293,8 @@ impl SeekableSymphoniaSource {
                 continue;
             }
 
-            let (spec, buffer) = decode_packet_to_buffer(self.decoder.as_mut(), &packet)?;
-            self.spec = spec;
-            self.buffer = buffer;
+            let decoded = self.decoder.decode(&packet)?;
+            self.spec = copy_decoded_into_sample_buffer(decoded, &mut self.buffer);
             self.buffer_offset = (frames_to_skip as usize)
                 .saturating_mul(self.channels().get() as usize)
                 .min(self.buffer.len());
@@ -314,7 +319,7 @@ impl Iterator for SeekableSymphoniaSource {
         if self.buffer_offset >= self.buffer.len() {
             self.refill()?;
         }
-        let sample = *self.buffer.get(self.buffer_offset)?;
+        let sample = *self.buffer.samples().get(self.buffer_offset)?;
         self.buffer_offset += 1;
         Some(sample)
     }
@@ -371,11 +376,12 @@ impl Source for SeekableSymphoniaSource {
     }
 }
 
-fn decode_next_audio_buffer(
+fn decode_next_audio_buffer<T>(
     format: &mut dyn FormatReader,
     decoder: &mut dyn ::symphonia::core::codecs::Decoder,
     track_id: u32,
-) -> Result<Option<(SignalSpec, Vec<f32>)>, SymphoniaError> {
+    mut consume: impl FnMut(AudioBufferRef<'_>) -> T,
+) -> Result<Option<T>, SymphoniaError> {
     let mut decode_errors = 0;
     loop {
         let packet = match format.next_packet() {
@@ -387,8 +393,8 @@ fn decode_next_audio_buffer(
             continue;
         }
 
-        match decode_packet_to_buffer(decoder, &packet) {
-            Ok(decoded) => return Ok(Some(decoded)),
+        match decoder.decode(&packet) {
+            Ok(decoded) => return Ok(Some(consume(decoded))),
             Err(SymphoniaError::DecodeError(_)) => {
                 decode_errors += 1;
                 if decode_errors > MAX_DECODE_RETRIES {
@@ -400,15 +406,24 @@ fn decode_next_audio_buffer(
     }
 }
 
-fn decode_packet_to_buffer(
-    decoder: &mut dyn ::symphonia::core::codecs::Decoder,
-    packet: &Packet,
-) -> Result<(SignalSpec, Vec<f32>), SymphoniaError> {
-    let decoded = decoder.decode(packet)?;
+fn sample_buffer_from_decoded(decoded: AudioBufferRef<'_>) -> (SignalSpec, SampleBuffer<f32>) {
     let spec = *decoded.spec();
     let mut sample_buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
     sample_buffer.copy_interleaved_ref(decoded);
-    Ok((spec, sample_buffer.samples().to_vec()))
+    (spec, sample_buffer)
+}
+
+fn copy_decoded_into_sample_buffer(
+    decoded: AudioBufferRef<'_>,
+    sample_buffer: &mut SampleBuffer<f32>,
+) -> SignalSpec {
+    let spec = *decoded.spec();
+    let required_samples = decoded.frames().saturating_mul(spec.channels.count());
+    if sample_buffer.capacity() < required_samples {
+        *sample_buffer = SampleBuffer::new(decoded.capacity() as u64, spec);
+    }
+    sample_buffer.copy_interleaved_ref(decoded);
+    spec
 }
 
 fn to_seek_error(err: SymphoniaError) -> SeekError {
