@@ -62,7 +62,6 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { NVirtualList } from "naive-ui";
 import { DeleteRound, QueueMusicRound } from "@vicons/material";
 import { musicStore } from "@/store";
-import { soundStop } from "@/utils/AudioContext";
 
 declare const $player: any;
 
@@ -111,12 +110,7 @@ const scrollCurrentQueueSong = () => {
 };
 
 const changeQueueIndex = (index: number) => {
-  if (music.persistData.playSongIndex === index) return;
-  if (typeof $player !== "undefined") soundStop($player);
-  music.persistData.playSongIndex = index;
-  music.isLoadingSong = true;
-  music.resetSongLyricState();
-  music.setPlayState(true);
+  music.selectPlaySongByIndex(index);
 };
 
 watch(

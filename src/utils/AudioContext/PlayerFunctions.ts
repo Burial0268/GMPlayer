@@ -48,6 +48,14 @@ const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
 // 歌曲信息更新定时器
 let timeupdateInterval: number | null = null;
 let timeupdateGeneration = 0;
+let playbackPresentationTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingPlaybackPresentation: {
+  sound: ISound;
+  music: ReturnType<typeof musicStore>;
+  currentTime: number;
+  duration: number;
+  generation: number;
+} | null = null;
 // 听歌打卡延时器
 let scrobbleTimeout: ReturnType<typeof setTimeout> | null = null;
 let pendingScrobbleKey: string | null = null;
@@ -68,8 +76,10 @@ let lastLowFreqStoreAt = 0;
 let backgroundMonitorId: ReturnType<typeof setInterval> | null = null;
 let lastBackendSyncRequestAt = 0;
 let lastBackendStateAuditAt = 0;
+let lastPlaybackPresentationAt = 0;
 
 const LOW_FREQ_STORE_INTERVAL_MS = 33;
+const PLAYBACK_PRESENTATION_INTERVAL_MS = 1000 / 30;
 const LOW_FREQ_STORE_EPSILON = 0.005;
 const SCROBBLE_DELAY_MS = 3000;
 const SCROBBLE_DUPLICATE_GUARD_MS = 10000;
@@ -85,14 +95,18 @@ const normalizePlaybackPosition = (position: number, duration = 0, fallback = 0)
 };
 
 const resetPlaySongTime = (music: ReturnType<typeof musicStore>): void => {
-  music.persistData.playSongTime = {
-    currentTime: 0,
-    playbackCurrentTime: 0,
-    duration: 0,
-    barMoveDistance: 0,
-    songTimePlayed: "00:00",
-    songTimeDuration: "00:00",
-  };
+  music.resetPlaySongTime();
+};
+
+const checkpointActivePosition = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
+  const duration = getUsableDuration(sound.duration(), music.getPlaySongTime.duration);
+  const position = normalizePlaybackPosition(
+    sound.seek(),
+    duration,
+    music.getPlaySongPlaybackCurrentTime(),
+  );
+  music.setPlaySongTime({ currentTime: position, duration, displayCurrentTime: position });
+  music.checkpointPlaySongTime(true);
 };
 
 const getPlayStateSessionId = (key: string): string => {
@@ -260,21 +274,17 @@ const applyNativeAutoMixCompletion = (
   }
 
   const changed = music.persistData.playSongIndex !== resolvedIndex;
-  if (changed) {
-    music.persistData.playSongIndex = resolvedIndex;
-    if (typeof music.resetSongLyricState === "function") {
-      music.resetSongLyricState();
-    }
-  }
-
   const position = playback?.position;
   const duration = playback?.duration;
-  if (
-    typeof position === "number" &&
-    position >= 0 &&
-    typeof duration === "number" &&
-    duration > 0
-  ) {
+  const hasPlaybackPosition =
+    typeof position === "number" && position >= 0 && typeof duration === "number" && duration > 0;
+  if (changed) {
+    music.commitPlaySongIndex(
+      resolvedIndex,
+      hasPlaybackPosition ? { currentTime: position, duration } : undefined,
+    );
+    music.resetSongLyricState();
+  } else if (hasPlaybackPosition) {
     music.setPlaySongTime({ currentTime: position, duration });
   }
 
@@ -313,17 +323,64 @@ const stopBackgroundMonitor = (): void => {
 
 const stopTimeUpdate = (): void => {
   timeupdateGeneration++;
+  pendingPlaybackPresentation = null;
+  if (playbackPresentationTimer !== null) {
+    clearTimeout(playbackPresentationTimer);
+    playbackPresentationTimer = null;
+  }
   if (timeupdateInterval !== null) {
     cancelAnimationFrame(timeupdateInterval);
     timeupdateInterval = null;
   }
 };
 
+const scheduleAudioTimePresentation = (
+  sound: ISound,
+  music: ReturnType<typeof musicStore>,
+  generation: number,
+): void => {
+  if (!sound.playing()) return;
+  if (isNativeRustSoundLike(sound)) {
+    const now = Date.now();
+    if (now - lastBackendStateAuditAt >= 2000) {
+      lastBackendStateAuditAt = now;
+      requestNativeBackendSync();
+    }
+  }
+  pendingPlaybackPresentation = {
+    sound,
+    music,
+    currentTime: sound.seek() as number,
+    duration: sound.duration(),
+    generation,
+  };
+  if (playbackPresentationTimer !== null) return;
+
+  playbackPresentationTimer = setTimeout(() => {
+    playbackPresentationTimer = null;
+    const pending = pendingPlaybackPresentation;
+    pendingPlaybackPresentation = null;
+    if (
+      !pending ||
+      pending.generation !== timeupdateGeneration ||
+      SoundManager.getCurrentSound() !== pending.sound ||
+      (window.$player && window.$player !== pending.sound)
+    ) {
+      return;
+    }
+    pending.music.setPlaySongTime({
+      currentTime: pending.currentTime,
+      duration: pending.duration,
+    });
+  }, 0);
+};
+
 const startTimeUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   stopTimeUpdate();
   const generation = timeupdateGeneration;
+  lastPlaybackPresentationAt = 0;
 
-  const timeLoop = (): void => {
+  const timeLoop = (frameTime = performance.now()): void => {
     if (
       generation !== timeupdateGeneration ||
       SoundManager.getCurrentSound() !== sound ||
@@ -332,7 +389,10 @@ const startTimeUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): v
       return;
     }
 
-    checkAudioTime(sound, music);
+    if (frameTime - lastPlaybackPresentationAt >= PLAYBACK_PRESENTATION_INTERVAL_MS) {
+      lastPlaybackPresentationAt = frameTime;
+      scheduleAudioTimePresentation(sound, music, generation);
+    }
     timeupdateInterval = requestAnimationFrame(timeLoop);
   };
 
@@ -348,6 +408,8 @@ if (typeof document !== "undefined") {
     isPageVisible = document.visibilityState === "visible";
     if (!isPageVisible) {
       disableActiveNativeAnalysis();
+      const sound = SoundManager.getCurrentSound();
+      if (sound) checkpointActivePosition(sound, musicStore());
       // RAF is paused while hidden; keep playback time and AutoMix monitoring
       // on a low-rate timer independent of visual spectrum settings.
       startBackgroundMonitor();
@@ -585,7 +647,7 @@ const setupNativeSound = (
   // with stale 0, so the progress bar would jump from 0 up to the resumed
   // position instead of starting at it.
   const isMemoryAtLoad = settings.memoryLastPlaybackPosition;
-  const savedDurationAtLoad = getUsableDuration(music.persistData.playSongTime.duration);
+  const savedDurationAtLoad = getUsableDuration(music.getPlaySongTime.duration);
   const savedPosAtLoad = isMemoryAtLoad
     ? normalizePlaybackPosition(music.getPlaySongPlaybackCurrentTime(), savedDurationAtLoad)
     : 0;
@@ -721,6 +783,7 @@ const setupNativeSound = (
     if (window.$player && window.$player !== sound) return;
     const autoMix = getAutoMixEngine();
     if (autoMix.isCrossfading()) return;
+    checkpointActivePosition(sound, music);
     stopTimeUpdate();
     if (IS_DEV) console.log("[Native] 音乐暂停");
     music.setPlayState(false);
@@ -857,7 +920,7 @@ export const createSound = (
     }
 
     const isMemoryAtLoad = settings.memoryLastPlaybackPosition;
-    const savedDurationAtLoad = getUsableDuration(music.persistData.playSongTime.duration);
+    const savedDurationAtLoad = getUsableDuration(music.getPlaySongTime.duration);
     const savedPosAtLoad = isMemoryAtLoad
       ? normalizePlaybackPosition(music.getPlaySongPlaybackCurrentTime(), savedDurationAtLoad)
       : 0;
@@ -1005,6 +1068,7 @@ export const createSound = (
         }
         return;
       }
+      checkpointActivePosition(sound, music);
       stopTimeUpdate();
       if (IS_DEV) {
         console.log("音乐暂停");
@@ -1112,7 +1176,12 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
     }
     return;
   }
-  const storedDuration = getUsableDuration(music.persistData.playSongTime.duration);
+  pendingPlaybackPresentation = null;
+  if (playbackPresentationTimer !== null) {
+    clearTimeout(playbackPresentationTimer);
+    playbackPresentationTimer = null;
+  }
+  const storedDuration = getUsableDuration(music.getPlaySongTime.duration);
   const soundDuration = getUsableDuration(target.duration(), storedDuration);
   const currentTime = normalizePlaybackPosition(
     seek,
@@ -1129,7 +1198,9 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
   music.setPlaySongTime({
     currentTime,
     duration: soundDuration,
+    displayCurrentTime: currentTime,
   });
+  music.checkpointPlaySongTime(true);
 };
 
 /**
@@ -1266,6 +1337,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
       }
       return;
     }
+    checkpointActivePosition(incomingSound, music);
     stopTimeUpdate();
     if (IS_DEV) {
       console.log("音乐暂停 (adopted sound)");

@@ -279,7 +279,6 @@ import { NVirtualList } from "naive-ui";
 import { computed, nextTick, ref, watch } from "vue";
 import { Motion, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
-import { soundStop } from "@/utils/AudioContext";
 import RollingLyrics from "../RollingLyrics.vue";
 import BouncingSlider from "../BouncingSlider.vue";
 import MobileControls from "./MobileControls.vue";
@@ -520,12 +519,7 @@ const scrollCurrentQueueSong = () => {
 };
 
 const changeQueueIndex = (index: number) => {
-  if (music.persistData.playSongIndex === index) return;
-  if (typeof $player !== "undefined") soundStop($player);
-  music.persistData.playSongIndex = index;
-  music.isLoadingSong = true;
-  music.resetSongLyricState();
-  music.setPlayState(true);
+  music.selectPlaySongByIndex(index);
 };
 
 watch(

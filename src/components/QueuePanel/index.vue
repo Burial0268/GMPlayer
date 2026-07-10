@@ -90,7 +90,6 @@
 import { NIcon, NVirtualList } from "naive-ui";
 import { DeleteFour } from "@icon-park/vue-next";
 import { musicStore } from "@/store";
-import { soundStop } from "@/utils/AudioContext";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 
 const music = musicStore();
@@ -105,11 +104,7 @@ const queueRows = computed(() =>
 );
 
 const changeIndex = (index) => {
-  if (index === music.persistData.playSongIndex) return;
-  if (typeof $player !== "undefined") soundStop($player);
-  music.persistData.playSongIndex = index;
-  music.isLoadingSong = true;
-  music.setPlayState(true);
+  music.selectPlaySongByIndex(index);
 };
 </script>
 

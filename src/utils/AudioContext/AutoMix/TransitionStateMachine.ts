@@ -699,7 +699,7 @@ export class TransitionStateMachine {
       currentIndex >= 0 ? currentIndex : this._nativeNextIndex,
     );
     if (nextIndex >= 0 && this._musicStoreRef) {
-      this._musicStoreRef.persistData.playSongIndex = nextIndex;
+      this._musicStoreRef.commitPlaySongIndex(nextIndex);
       if (typeof this._musicStoreRef.resetSongLyricState === "function") {
         this._musicStoreRef.resetSongLyricState();
       }
@@ -1710,7 +1710,7 @@ export class TransitionStateMachine {
     if (music) {
       const resolvedNextIndex = this.resolveActiveTransitionTargetIndex(nextIndex);
       if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
-        music.persistData.playSongIndex = resolvedNextIndex;
+        music.commitPlaySongIndex(resolvedNextIndex);
       }
       if (typeof music.resetSongLyricState === "function") {
         music.resetSongLyricState();
@@ -1835,7 +1835,7 @@ export class TransitionStateMachine {
       const music = this._musicStoreRef;
       const resolvedNextIndex = this.resolveActiveTransitionTargetIndex(this._pendingNextIndex);
       if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
-        music.persistData.playSongIndex = resolvedNextIndex;
+        music.commitPlaySongIndex(resolvedNextIndex);
         if (typeof music.resetSongLyricState === "function") {
           music.resetSongLyricState();
         }

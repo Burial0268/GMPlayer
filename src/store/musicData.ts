@@ -1,11 +1,11 @@
-import { defineStore, acceptHMRUpdate } from "pinia";
+import { defineStore, acceptHMRUpdate, storeToRefs } from "pinia";
 import { nextTick, h } from "vue";
-import { getSongTime, getSongPlayingTime, getDailySongsDate } from "@/utils/timeTools";
+import { getSongTime, getDailySongsDate } from "@/utils/timeTools";
 import { getPersonalFm, setFmTrash } from "@/api/home";
 import { getLikelist, setLikeSong } from "@/api/user";
 import { getPlayListCatlist } from "@/api/playlist";
 import { resolveSongUrl } from "@/utils/AudioContext/resolveSongUrl";
-import { userStore, settingStore } from "@/store";
+import { userStore } from "@/store";
 import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import {
@@ -15,68 +15,21 @@ import {
   getAudioPreloader,
 } from "@/utils/AudioContext";
 import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/NativeRustSound";
-import { applyMobileTauriAudioUiDelay } from "@/utils/tauri/audioUiDelay";
 import getLanguageData from "@/utils/getLanguageData";
+import type { SongLyric } from "@/utils/LyricsProcessor";
+import useMusicLyricStore from "./musicLyric";
+import useMusicPersistedDataStore from "./musicPersistedData";
+import useMusicPlaybackDataStore from "./musicPlaybackData";
+import useMusicPlaybackResumeStore from "./musicPlaybackResume";
 import {
-  preprocessLyrics,
-  type SongLyric,
-  type ParsedLrcLine,
-  type ParsedYrcLine,
-} from "@/utils/LyricsProcessor";
+  createDefaultPlaySongTime,
+  type PersistData,
+  type PlaySongTime,
+  type SongData,
+} from "./musicTypes";
 
 declare const $message: any;
 declare const $player: any;
-
-interface Artist {
-  id: number;
-  name: string;
-  [key: string]: any;
-}
-
-interface Album {
-  id: number;
-  name: string;
-  picUrl: string;
-  [key: string]: any;
-}
-
-interface SongData {
-  id: number;
-  name: string;
-  artist: Artist[];
-  album: Album;
-  alia?: string[];
-  time: string;
-  fee: number;
-  pc?: any;
-  mv?: number;
-  [key: string]: any;
-}
-
-interface PlaySongTime {
-  currentTime: number;
-  playbackCurrentTime?: number;
-  duration: number;
-  barMoveDistance: number;
-  songTimePlayed: string;
-  songTimeDuration: string;
-}
-
-interface PersistData {
-  searchHistory: string[];
-  personalFmMode: boolean;
-  personalFmData: SongData | Record<string, never>;
-  playListMode: string;
-  likeList: number[];
-  playlists: SongData[];
-  playSongIndex: number;
-  playSongMode: "normal" | "random" | "single";
-  playSongTime: PlaySongTime;
-  playVolume: number;
-  playVolumeMute: number;
-  playlistState: number;
-  playHistory: SongData[];
-}
 
 interface AutoMixStateData {
   phase: "idle" | "analyzing" | "waiting" | "crossfading" | "finishing";
@@ -107,33 +60,44 @@ interface MusicDataState {
   loadingStage: "idle" | "resolving" | "buffering" | "stalled" | "error";
   preloadedSongIds: Set<number>;
   autoMixState: AutoMixStateData;
+  playSongTime: PlaySongTime;
   persistData: PersistData;
 }
 
 const useMusicDataStore = defineStore("musicData", {
   state: (): MusicDataState => {
+    const persistedStore = useMusicPersistedDataStore();
+    const resumeStore = useMusicPlaybackResumeStore();
+    const snapshot = resumeStore.session;
+    if (snapshot.songId !== null) {
+      const snapshotIndex = persistedStore.persistData.playlists.findIndex(
+        (song) => song.id === snapshot.songId,
+      );
+      if (snapshotIndex >= 0) {
+        if (
+          persistedStore.persistData.playSongIndex !== snapshotIndex ||
+          snapshot.playSongIndex !== snapshotIndex
+        ) {
+          resumeStore.saveSession(snapshot.songId, snapshotIndex, snapshot.playSongTime);
+        }
+      } else {
+        const currentIndex = persistedStore.persistData.playSongIndex;
+        const currentSong = persistedStore.persistData.playlists[currentIndex];
+        resumeStore.saveSession(currentSong?.id ?? null, currentIndex, createDefaultPlaySongTime());
+      }
+    }
+    const playbackStore = useMusicPlaybackDataStore();
+    const lyricStore = useMusicLyricStore();
+    const { playSongTime } = storeToRefs(playbackStore);
+    const { songLyric, playSongLyricIndex } = storeToRefs(lyricStore);
+
     return {
       showBigPlayer: false,
       showPlayBar: true,
       showPlayList: false,
       playState: false,
-      songLyric: {
-        hasLrcTran: true,
-        hasLrcRoma: true,
-        hasYrc: false,
-        hasYrcTran: true,
-        hasYrcRoma: true,
-        hasTTML: false,
-        lrc: [],
-        yrc: [],
-        ttml: [],
-        lrcAMData: [],
-        yrcAMData: [],
-        formattedLrc: "",
-        processedLyrics: [],
-        settingsHash: "true-false-false",
-      },
-      playSongLyricIndex: -1,
+      songLyric: songLyric as unknown as SongLyric,
+      playSongLyricIndex: playSongLyricIndex as unknown as number,
       dailySongsData: [],
       dailySongsDate: "",
       catList: {},
@@ -154,28 +118,8 @@ const useMusicDataStore = defineStore("musicData", {
         incomingSongName: null,
         incomingSongId: null,
       },
-      persistData: {
-        searchHistory: [],
-        personalFmMode: false,
-        personalFmData: {},
-        playListMode: "list",
-        likeList: [],
-        playlists: [],
-        playSongIndex: 0,
-        playSongMode: "normal",
-        playSongTime: {
-          currentTime: 0,
-          playbackCurrentTime: 0,
-          duration: 0,
-          barMoveDistance: 0,
-          songTimePlayed: "00:00",
-          songTimeDuration: "00:00",
-        },
-        playVolume: 0.7,
-        playVolumeMute: 0,
-        playlistState: 0,
-        playHistory: [],
-      },
+      playSongTime: playSongTime as unknown as PlaySongTime,
+      persistData: persistedStore.persistData,
     };
   },
   getters: {
@@ -219,7 +163,7 @@ const useMusicDataStore = defineStore("musicData", {
       return state.playSongLyricIndex;
     },
     getPlaySongTime(state): PlaySongTime {
-      return state.persistData.playSongTime;
+      return state.playSongTime;
     },
     getPlayState(state): boolean {
       return state.playState;
@@ -245,23 +189,7 @@ const useMusicDataStore = defineStore("musicData", {
      * 在切换歌曲但新歌词尚未加载完成时调用，避免界面继续显示旧歌词。
      */
     resetSongLyricState() {
-      this.songLyric = {
-        lrc: [],
-        yrc: [],
-        lrcAMData: [],
-        yrcAMData: [],
-        hasTTML: false,
-        ttml: [],
-        hasLrcTran: false,
-        hasLrcRoma: false,
-        hasYrc: false,
-        hasYrcTran: false,
-        hasYrcRoma: false,
-        formattedLrc: "",
-        processedLyrics: [],
-        settingsHash: "",
-      } as unknown as SongLyric;
-      this.playSongLyricIndex = -1;
+      useMusicLyricStore().resetSongLyricState();
     },
 
     preloadUpcomingSongs() {
@@ -361,7 +289,7 @@ const useMusicDataStore = defineStore("musicData", {
         if ((this.persistData.personalFmData as SongData)?.id) {
           this.persistData.playlists = [];
           this.persistData.playlists.push(this.persistData.personalFmData as SongData);
-          this.persistData.playSongIndex = 0;
+          this.commitPlaySongIndex(0);
         } else {
           this.setPersonalFmData();
         }
@@ -393,7 +321,7 @@ const useMusicDataStore = defineStore("musicData", {
                 if (typeof $player !== "undefined") soundStop($player);
                 this.persistData.playlists = [];
                 this.persistData.playlists.push(fmData);
-                this.persistData.playSongIndex = 0;
+                this.commitPlaySongIndex(0);
                 this.setPlayState(true);
               }
             }
@@ -487,6 +415,11 @@ const useMusicDataStore = defineStore("musicData", {
 
     setPlaylists(value: SongData[]) {
       this.persistData.playlists = value.slice();
+      this.persistData.playSongIndex = Math.min(
+        Math.max(0, this.persistData.playSongIndex),
+        Math.max(0, this.persistData.playlists.length - 1),
+      );
+      this.resetPlaySongTime();
       this.preloadedSongIds.clear();
       getAudioPreloader().cleanup();
       // 切换播放列表时，清空旧歌词，等待新歌曲歌词加载
@@ -514,197 +447,50 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     setPlaySongLyric(value: any) {
-      if (value) {
-        try {
-          if (!value.lrc || value.lrc.length === 0) {
-            console.log("注意：歌词数据中缺少lrc数组，尝试从yrc创建");
-            if (value.yrc && value.yrc.length > 0) {
-              value.lrc = value.yrc.map((yrcLine: ParsedYrcLine) => ({
-                time: yrcLine.time,
-                content: yrcLine.TextContent,
-              }));
-              console.log("已从yrc数据创建lrc数组");
-            } else {
-              value.lrc = [
-                { time: 0, content: "暂无歌词" },
-                { time: 999, content: "No Lyrics Available" },
-              ];
-              console.log("创建了占位符lrc数组");
-            }
-          }
-
-          if (!value.lrcAMData || value.lrcAMData.length === 0) {
-            if (value.yrcAMData && value.yrcAMData.length > 0) {
-              console.log("使用yrcAMData作为lrcAMData的备用");
-              value.lrcAMData = [...value.yrcAMData];
-            } else {
-              console.log("创建基本的lrcAMData数组");
-              value.lrcAMData = value.lrc.map((line: ParsedLrcLine) => ({
-                startTime: line.time * 1000,
-                endTime: (line.time + 5) * 1000,
-                words: [
-                  {
-                    word: line.content,
-                    startTime: line.time * 1000,
-                    endTime: (line.time + 5) * 1000,
-                  },
-                ],
-                translatedLyric: "",
-                romanLyric: "",
-                isBG: false,
-                isDuet: false,
-              }));
-            }
-          }
-
-          if (value.hasTTML === undefined) {
-            value.hasTTML = false;
-          }
-          if (value.ttml === undefined) {
-            value.ttml = [];
-          }
-
-          console.time("预处理歌词");
-          const settings = settingStore();
-          try {
-            preprocessLyrics(value, {
-              showYrc: settings.showYrc,
-              showRoma: settings.showRoma,
-              showTransl: settings.showTransl,
-            });
-            console.log("歌词数据预处理完成");
-          } catch (err) {
-            console.warn("歌词预处理出错，将使用原始数据:", err);
-          }
-          console.timeEnd("预处理歌词");
-
-          this.songLyric = value;
-          console.log("歌词数据已存储到store:", this.songLyric);
-        } catch (err) {
-          $message.error(getLanguageData("getLrcError"));
-          console.error(getLanguageData("getLrcError"), err);
-
-          this.songLyric = {
-            lrc: [
-              { time: 0, content: "加载歌词时出错" },
-              { time: 999, content: "Error loading lyrics" },
-            ],
-            yrc: [],
-            lrcAMData: [
-              {
-                startTime: 0,
-                endTime: 5000,
-                words: [{ word: "加载歌词时出错", startTime: 0, endTime: 5000 }],
-                translatedLyric: "",
-                romanLyric: "",
-                isBG: false,
-                isDuet: false,
-              },
-            ],
-            yrcAMData: [],
-            hasTTML: false,
-            ttml: [],
-            hasLrcTran: false,
-            hasLrcRoma: false,
-            hasYrc: false,
-            hasYrcTran: false,
-            hasYrcRoma: false,
-            formattedLrc: "",
-            processedLyrics: [],
-            settingsHash: "",
-          };
-        }
-      } else {
-        console.log("该歌曲暂无歌词");
-        this.songLyric = {
-          lrc: [],
-          yrc: [],
-          lrcAMData: [],
-          yrcAMData: [],
-          hasTTML: false,
-          ttml: [],
-          hasLrcTran: false,
-          hasLrcRoma: false,
-          hasYrc: false,
-          hasYrcTran: false,
-          hasYrcRoma: false,
-          formattedLrc: "",
-          processedLyrics: [],
-          settingsHash: "",
-        };
-      }
+      useMusicLyricStore().setPlaySongLyric(value);
     },
 
     setPlaySongTime(value: { currentTime: number; duration: number; displayCurrentTime?: number }) {
-      const previousTime = this.persistData.playSongTime;
-      const fallbackCurrentTime = Number.isFinite(previousTime.playbackCurrentTime)
-        ? (previousTime.playbackCurrentTime ?? 0)
-        : Number.isFinite(previousTime.currentTime)
-          ? previousTime.currentTime
-          : 0;
-      const previousDuration =
-        Number.isFinite(previousTime.duration) && previousTime.duration > 0
-          ? previousTime.duration
-          : 0;
-      const incomingDuration =
-        Number.isFinite(value.duration) && value.duration > 0 ? value.duration : 0;
-      const duration = incomingDuration > 0 ? incomingDuration : previousDuration;
-      const incomingCurrentTime = Number.isFinite(value.currentTime)
-        ? Math.max(0, value.currentTime)
-        : fallbackCurrentTime;
-      const currentTime =
-        duration > 0 ? Math.min(incomingCurrentTime, duration) : incomingCurrentTime;
-      const incomingDisplayTime = Number.isFinite(value.displayCurrentTime)
-        ? Math.max(0, value.displayCurrentTime ?? 0)
-        : applyMobileTauriAudioUiDelay(currentTime, duration);
-      const displayCurrentTime =
-        duration > 0 ? Math.min(incomingDisplayTime, duration) : incomingDisplayTime;
+      const playbackStore = useMusicPlaybackDataStore();
+      playbackStore.setPlaySongTime(value);
+      useMusicLyricStore().syncCurrentLyricIndex(playbackStore.getPlaySongPlaybackCurrentTime());
+    },
 
-      this.persistData.playSongTime.playbackCurrentTime = currentTime;
-      this.persistData.playSongTime.currentTime = displayCurrentTime;
-      this.persistData.playSongTime.duration = duration;
-      if (duration === 0) {
-        this.persistData.playSongTime.barMoveDistance = 0;
-      } else {
-        this.persistData.playSongTime.barMoveDistance = (displayCurrentTime / duration) * 100;
+    resetPlaySongTime({ checkpoint = true }: { checkpoint?: boolean } = {}) {
+      useMusicPlaybackDataStore().resetPlaySongTime({ checkpoint: false });
+      if (checkpoint) this.checkpointPlaySongTime(true);
+    },
+
+    checkpointPlaySongTime(force = false) {
+      if (!force) return;
+      const playbackStore = useMusicPlaybackDataStore();
+      useMusicPlaybackResumeStore().saveSession(
+        this.getPlaySongData?.id ?? null,
+        this.persistData.playSongIndex,
+        playbackStore.playSongTime,
+      );
+    },
+
+    commitPlaySongIndex(
+      index: number,
+      time?: { currentTime: number; duration: number; displayCurrentTime?: number },
+    ) {
+      if (!Number.isInteger(index) || index < 0 || index >= this.persistData.playlists.length) {
+        return false;
       }
-
-      if (!Number.isNaN(this.persistData.playSongTime.barMoveDistance)) {
-        this.persistData.playSongTime.songTimePlayed = getSongPlayingTime(
-          (duration / 100) * this.persistData.playSongTime.barMoveDistance,
-        );
-        this.persistData.playSongTime.songTimeDuration = getSongPlayingTime(duration);
-      }
-
-      const setting = settingStore();
-      const lrcType = !this.songLyric.hasYrc || !setting.showYrc;
-      const lyrics = lrcType ? this.songLyric.lrc : this.songLyric.yrc;
-
-      if (!lyrics || !lyrics.length) {
-        this.playSongLyricIndex = -1;
-        return;
-      }
-
-      let currentIndex = this.playSongLyricIndex;
-      const offsetTime = displayCurrentTime + (setting.lyricTimeOffset ?? 0) / 1000;
-
-      if (currentIndex > 0 && lyrics[currentIndex]?.time > offsetTime) {
-        currentIndex = -1;
-      }
-
-      while (currentIndex < lyrics.length - 1 && lyrics[currentIndex + 1].time <= offsetTime) {
-        currentIndex++;
-      }
-
-      this.playSongLyricIndex = currentIndex;
+      const playbackStore = useMusicPlaybackDataStore();
+      if (time) playbackStore.setPlaySongTime(time);
+      else playbackStore.resetPlaySongTime({ checkpoint: false });
+      useMusicPlaybackResumeStore().saveSession(
+        this.persistData.playlists[index]?.id ?? null,
+        index,
+        playbackStore.playSongTime,
+      );
+      return true;
     },
 
     getPlaySongPlaybackCurrentTime(): number {
-      const playSongTime = this.persistData.playSongTime;
-      if (Number.isFinite(playSongTime.playbackCurrentTime)) {
-        return Math.max(0, playSongTime.playbackCurrentTime ?? 0);
-      }
-      return Number.isFinite(playSongTime.currentTime) ? Math.max(0, playSongTime.currentTime) : 0;
+      return useMusicPlaybackDataStore().getPlaySongPlaybackCurrentTime();
     },
 
     setPlaySongMode(value: "normal" | "random" | "single" | null = null) {
@@ -759,10 +545,11 @@ const useMusicDataStore = defineStore("musicData", {
       } else {
         const listLength = this.persistData.playlists.length;
         const listMode = this.persistData.playSongMode;
+        let nextIndex = this.persistData.playSongIndex;
         if (listMode === "normal") {
-          this.persistData.playSongIndex += type === "next" ? 1 : -1;
+          nextIndex += type === "next" ? 1 : -1;
         } else if (listMode === "random") {
-          this.persistData.playSongIndex = Math.floor(Math.random() * listLength);
+          nextIndex = Math.floor(Math.random() * listLength);
         } else if (listMode === "single") {
           console.log("单曲循环模式");
           fadePlayOrPause($player, "play", this.persistData.playVolume);
@@ -770,16 +557,17 @@ const useMusicDataStore = defineStore("musicData", {
           $message.error(getLanguageData("playError"));
         }
         if (listMode !== "single") {
-          if (this.persistData.playSongIndex < 0) {
-            this.persistData.playSongIndex = listLength - 1;
-          } else if (this.persistData.playSongIndex >= listLength) {
-            this.persistData.playSongIndex = 0;
+          if (nextIndex < 0) {
+            nextIndex = listLength - 1;
+          } else if (nextIndex >= listLength) {
+            nextIndex = 0;
             soundStop($player);
             fadePlayOrPause($player, "play", this.persistData.playVolume);
           }
           if (listLength > 1) {
             soundStop($player);
           }
+          this.commitPlaySongIndex(nextIndex);
           // 已经切换到下一首/上一首歌曲，先清空旧歌词，等待新歌词加载
           this.resetSongLyricState();
           nextTick().then(() => {
@@ -789,11 +577,29 @@ const useMusicDataStore = defineStore("musicData", {
       }
     },
 
+    selectPlaySongByIndex(index: number) {
+      if (
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= this.persistData.playlists.length ||
+        index === this.persistData.playSongIndex
+      ) {
+        return;
+      }
+      if (typeof $player !== "undefined") soundStop($player);
+      this.commitPlaySongIndex(index);
+      this.resetSongLyricState();
+      this.isLoadingSong = true;
+      this.setPlayState(true);
+    },
+
     addSongToPlaylists(value: SongData, play: boolean = true) {
       if (typeof $player !== "undefined") soundStop($player);
       const index = this.persistData.playlists.findIndex((o) => o.id === value.id);
+      const identityChanged =
+        value.id !== this.persistData.playlists[this.persistData.playSongIndex]?.id;
       try {
-        if (value.id !== this.persistData.playlists[this.persistData.playSongIndex]?.id) {
+        if (identityChanged) {
           console.log("Play a song that is not the same as the last one");
           if (typeof $player !== "undefined") soundStop($player);
           this.isLoadingSong = true;
@@ -804,10 +610,10 @@ const useMusicDataStore = defineStore("musicData", {
         console.error("Error:" + error);
       }
       if (index !== -1) {
-        this.persistData.playSongIndex = index;
+        if (identityChanged) this.commitPlaySongIndex(index);
       } else {
         this.persistData.playlists.push(value);
-        this.persistData.playSongIndex = this.persistData.playlists.length - 1;
+        this.commitPlaySongIndex(this.persistData.playlists.length - 1);
       }
       if (play) this.setPlayState(true);
     },
@@ -838,6 +644,7 @@ const useMusicDataStore = defineStore("musicData", {
         this.persistData.playlists.splice(insertIndex, 0, value);
         if (insertIndex <= this.persistData.playSongIndex) this.persistData.playSongIndex++;
       }
+      this.checkpointPlaySongTime(true);
       $message.success(value.name + " " + getLanguageData("addSongToNext"));
     },
 
@@ -845,6 +652,7 @@ const useMusicDataStore = defineStore("musicData", {
       if (typeof $player === "undefined") return false;
       const songId = this.persistData.playlists[index].id;
       const name = this.persistData.playlists[index].name;
+      const removedCurrentSong = index === this.persistData.playSongIndex;
       if (index < this.persistData.playSongIndex) {
         this.persistData.playSongIndex--;
       } else if (index === this.persistData.playSongIndex) {
@@ -859,6 +667,8 @@ const useMusicDataStore = defineStore("musicData", {
         this.persistData.playSongIndex = 0;
         soundStop($player);
       }
+      if (removedCurrentSong) this.resetPlaySongTime();
+      else this.checkpointPlaySongTime(true);
     },
 
     setCatList(highquality: boolean = false) {
@@ -917,16 +727,6 @@ const useMusicDataStore = defineStore("musicData", {
       if (!state) this.loadingStage = "idle";
     },
   },
-  persist: [
-    {
-      storage: localStorage,
-      pick: ["persistData"],
-      omit: ["preloadedSongIds"],
-      afterHydrate: (ctx: any) => {
-        ctx.store.preloadedSongIds = new Set();
-      },
-    },
-  ],
 });
 
 if (import.meta.hot) {

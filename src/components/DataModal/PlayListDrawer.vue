@@ -80,7 +80,6 @@
 <script setup>
 import { musicStore, siteStore } from "@/store";
 import { DeleteFour } from "@icon-park/vue-next";
-import { soundStop } from "@/utils/AudioContext";
 import { PLAYLIST_DRAWER_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { useI18n } from "vue-i18n";
 import AllArtists from "@/components/DataList/AllArtists.vue";
@@ -113,12 +112,7 @@ const handleDrawerShowUpdate = (show) => {
 // 改变播放索引
 const changeIndex = (index) => {
   try {
-    if (music.persistData.playSongIndex !== index) {
-      if (typeof $player !== "undefined") soundStop($player);
-      music.persistData.playSongIndex = index;
-      music.isLoadingSong = true;
-      music.setPlayState(true);
-    }
+    music.selectPlaySongByIndex(index);
   } catch (err) {
     console.error(t("general.message.operationFailed"), err);
     $message.error(t("general.message.operationFailed"));

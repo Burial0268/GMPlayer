@@ -5,6 +5,7 @@ export class GLProgram implements Disposable {
   program: WebGLProgram;
   private vertexShader: WebGLShader;
   private fragmentShader: WebGLShader;
+  private uniformLocations: Map<string, WebGLUniformLocation | null> = new Map();
   readonly attrs: { [name: string]: number };
   constructor(
     gl: WebGLRenderingContext | WebGL2RenderingContext,
@@ -84,32 +85,39 @@ export class GLProgram implements Disposable {
     this.notFoundUniforms.add(name);
     console.warn(`Failed to get uniform location for program "${this.label}": ${name}`);
   }
+  private getUniformLocation(name: string): WebGLUniformLocation | null {
+    if (this.uniformLocations.has(name)) {
+      return this.uniformLocations.get(name) ?? null;
+    }
+    const location = this.gl.getUniformLocation(this.program, name);
+    this.uniformLocations.set(name, location);
+    if (location === null) this.warnUniformNotFound(name);
+    return location;
+  }
   setUniform1f(name: string, value: number) {
     const gl = this.gl;
-    const location = gl.getUniformLocation(this.program, name);
-    if (!location) this.warnUniformNotFound(name);
-    else gl.uniform1f(location, value);
+    const location = this.getUniformLocation(name);
+    if (location !== null) gl.uniform1f(location, value);
   }
   setUniform2f(name: string, value1: number, value2: number) {
     const gl = this.gl;
-    const location = gl.getUniformLocation(this.program, name);
-    if (!location) this.warnUniformNotFound(name);
-    else gl.uniform2f(location, value1, value2);
+    const location = this.getUniformLocation(name);
+    if (location !== null) gl.uniform2f(location, value1, value2);
   }
   setUniform1i(name: string, value: number) {
     const gl = this.gl;
-    const location = gl.getUniformLocation(this.program, name);
-    if (!location) this.warnUniformNotFound(name);
-    else gl.uniform1i(location, value);
+    const location = this.getUniformLocation(name);
+    if (location !== null) gl.uniform1i(location, value);
   }
   setUniform3f(name: string, v1: number, v2: number, v3: number) {
     const gl = this.gl;
-    const location = gl.getUniformLocation(this.program, name);
-    if (!location) this.warnUniformNotFound(name);
-    else gl.uniform3f(location, v1, v2, v3);
+    const location = this.getUniformLocation(name);
+    if (location !== null) gl.uniform3f(location, v1, v2, v3);
   }
   dispose() {
     const gl = this.gl;
+    this.uniformLocations.clear();
+    this.notFoundUniforms.clear();
     gl.deleteShader(this.vertexShader);
     gl.deleteShader(this.fragmentShader);
     gl.deleteProgram(this.program);

@@ -1,48 +1,23 @@
 <template>
   <div
     class="lyric-player-wrapper"
+    :style="lyricStyles"
+    ref="playerEl"
     @wheel.self="passToPlayer"
     @touchstart.self="passToPlayer"
     @touchmove.self="passToPlayer"
     @touchend.self="passToPlayer"
-  >
-    <LyricPlayer
-      class="amll-lyric-player"
-      :lyric-lines="amllLyricLines"
-      :current-time="currentTime"
-      :playing="playState"
-      :enable-blur="setting.lyricsBlur"
-      :hide-passed-lines="setting.hidePassedLines"
-      :enable-spring="setting.showYrcAnimation"
-      :enable-scale="setting.showYrcAnimation"
-      :word-fade-width="0.5"
-      :align-anchor="alignAnchor"
-      :align-position="alignPosition"
-      :line-pos-x-spring-params="setting.springParams.posX"
-      :line-pos-y-spring-params="setting.springParams.posY"
-      :line-scale-spring-params="setting.springParams.scale"
-      :style="lyricStyles"
-      @line-click="jumpSeek"
-      :key="playerKey"
-      ref="playerRef"
-    />
-  </div>
+  />
 </template>
 
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  onMounted,
-  onUnmounted,
-  watch,
-  toRaw,
-  shallowRef,
-  useTemplateRef,
-} from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, toRaw, shallowRef } from "vue";
 import { musicStore, settingStore, siteStore } from "../../store";
-import { LyricPlayer, type LyricPlayerRef } from "@applemusic-like-lyrics/vue";
-import type { DomLyricPlayer, LyricLineMouseEvent } from "@applemusic-like-lyrics/core";
+import {
+  LyricPlayer as CoreLyricPlayer,
+  type DomLyricPlayer,
+  type LyricLineMouseEvent,
+} from "@applemusic-like-lyrics/core";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
 import "@applemusic-like-lyrics/core/style.css";
 
@@ -50,14 +25,14 @@ const site = siteStore();
 const music = musicStore();
 const setting = settingStore();
 
-const playerKey = shallowRef(Symbol());
-const playerRef = useTemplateRef<LyricPlayerRef>("playerRef");
+const playerEl = ref<HTMLElement | null>(null);
+const lyricPlayerRef = shallowRef<DomLyricPlayer>();
 const amllLyricLines = shallowRef<AMLLLine[]>([]);
 
 const playState = computed(() => music.playState);
 
-const currentTime = computed(
-  () => music.persistData.playSongTime.currentTime * 1000 + (setting.lyricTimeOffset ?? 0),
+const currentTime = computed(() =>
+  Math.round(music.getPlaySongPlaybackCurrentTime() * 1000 + (setting.lyricTimeOffset ?? 0)),
 );
 
 const alignAnchor = computed(() => (setting.lyricsBlock === "center" ? "center" : "top"));
@@ -90,9 +65,7 @@ const emit = defineEmits<{
 }>();
 
 function getDomPlayer(): DomLyricPlayer | undefined {
-  const player = playerRef.value?.lyricPlayer;
-  if (!player) return undefined;
-  return ("value" in player ? player.value : player) as DomLyricPlayer | undefined;
+  return lyricPlayerRef.value;
 }
 
 function lineClickStartTime(evt: LyricLineMouseEvent): number | undefined {
@@ -107,18 +80,22 @@ function getWindowPlayer(): SyncableSound | undefined {
   return (window as Window & { $player?: SyncableSound }).$player;
 }
 
-function readCurrentPlaybackTime(): { currentTime: number; duration: number } {
+function readPlaybackPosition(): number {
   const player = getWindowPlayer();
   const seekValue = player?.seek?.();
+  return typeof seekValue === "number" && Number.isFinite(seekValue)
+    ? seekValue
+    : music.getPlaySongPlaybackCurrentTime();
+}
+
+function readCurrentPlaybackTime(): { currentTime: number; duration: number } {
+  const player = getWindowPlayer();
   const durationValue = player?.duration?.();
-  const currentTime =
-    typeof seekValue === "number" && Number.isFinite(seekValue)
-      ? seekValue
-      : music.persistData.playSongTime.currentTime;
+  const currentTime = readPlaybackPosition();
   const duration =
     typeof durationValue === "number" && Number.isFinite(durationValue)
       ? durationValue
-      : music.persistData.playSongTime.duration;
+      : music.getPlaySongTime.duration;
 
   return { currentTime, duration };
 }
@@ -133,12 +110,65 @@ function syncCurrentTimeFromPlayback() {
   const player = getDomPlayer();
   if (!player) return;
 
-  const displayTime = music.persistData.playSongTime.currentTime;
-  player.setCurrentTime(displayTime * 1000 + (setting.lyricTimeOffset ?? 0), true);
+  const lyricTime = Math.round(currentTime * 1000 + (setting.lyricTimeOffset ?? 0));
+  player.setCurrentTime(lyricTime, true);
+  lastSubmittedLyricTime = lyricTime;
   player.resetScroll();
 }
 
 let syncFrameId = 0;
+let lyricFrameId = 0;
+let lastLyricFrameTime = -1;
+let lastSubmittedLyricTime = -1;
+
+function applyPlayerSettings(player: DomLyricPlayer) {
+  player.setEnableBlur(setting.lyricsBlur);
+  player.setHidePassedLines(setting.hidePassedLines);
+  player.setEnableSpring(setting.showYrcAnimation);
+  player.setEnableScale(setting.showYrcAnimation);
+  player.setWordFadeWidth(0.5);
+  player.setAlignAnchor(alignAnchor.value);
+  player.setAlignPosition(alignPosition.value);
+  player.setLinePosXSpringParams(setting.springParams.posX);
+  player.setLinePosYSpringParams(setting.springParams.posY);
+  player.setLineScaleSpringParams(setting.springParams.scale);
+}
+
+function applyLyricLines(lines: AMLLLine[]) {
+  const player = getDomPlayer();
+  if (!player) return;
+
+  const time = currentTime.value;
+  player.setLyricLines(lines, time);
+  player.setCurrentTime(time, true);
+  lastSubmittedLyricTime = time;
+}
+
+function updateLyricPlayer(frameTime: number) {
+  const player = getDomPlayer();
+  if (!player) return;
+
+  const delta = lastLyricFrameTime < 0 ? 0 : frameTime - lastLyricFrameTime;
+  lastLyricFrameTime = frameTime;
+
+  if (playState.value) {
+    const lyricTime = Math.round(readPlaybackPosition() * 1000 + (setting.lyricTimeOffset ?? 0));
+    if (lyricTime !== lastSubmittedLyricTime) {
+      player.setCurrentTime(lyricTime);
+      lastSubmittedLyricTime = lyricTime;
+    }
+  }
+
+  player.update(delta);
+  lyricFrameId = requestAnimationFrame(updateLyricPlayer);
+}
+
+function applyPlayback(playing: boolean) {
+  const player = getDomPlayer();
+  if (!player) return;
+  if (playing) player.resume();
+  else player.pause();
+}
 
 function scheduleCurrentTimeSync() {
   if (syncFrameId) return;
@@ -160,6 +190,7 @@ const jumpSeek = (evt: LyricLineMouseEvent) => {
   if (typeof time !== "number") return;
   const player = getDomPlayer();
   player?.setCurrentTime(time, true);
+  lastSubmittedLyricTime = time;
   player?.resetScroll();
   emit("lrcTextClick", time / 1000);
   emit("line-click", evt);
@@ -172,6 +203,21 @@ function passToPlayer(event: Event) {
 }
 
 onMounted(() => {
+  const host = playerEl.value;
+  if (host) {
+    const lyricPlayer = new CoreLyricPlayer();
+    lyricPlayer.addEventListener("line-click", jumpSeek);
+    const playerElement = lyricPlayer.getElement();
+    playerElement.style.width = "100%";
+    playerElement.style.height = "100%";
+    host.appendChild(playerElement);
+    lyricPlayerRef.value = lyricPlayer;
+    applyPlayerSettings(lyricPlayer);
+    applyPlayback(playState.value);
+    applyLyricLines(amllLyricLines.value);
+    lyricFrameId = requestAnimationFrame(updateLyricPlayer);
+  }
+
   window.addEventListener("focus", scheduleCurrentTimeSync);
   window.addEventListener("pageshow", scheduleCurrentTimeSync);
   document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -179,7 +225,7 @@ onMounted(() => {
   nextTick(scheduleCurrentTimeSync);
 });
 
-onUnmounted(() => {
+onBeforeUnmount(() => {
   window.removeEventListener("focus", scheduleCurrentTimeSync);
   window.removeEventListener("pageshow", scheduleCurrentTimeSync);
   document.removeEventListener("visibilitychange", handleVisibilityChange);
@@ -188,7 +234,39 @@ onUnmounted(() => {
     cancelAnimationFrame(syncFrameId);
     syncFrameId = 0;
   }
+
+  if (lyricFrameId) {
+    cancelAnimationFrame(lyricFrameId);
+    lyricFrameId = 0;
+  }
+
+  lyricPlayerRef.value?.removeEventListener("line-click", jumpSeek);
+  lyricPlayerRef.value?.dispose();
+  lastLyricFrameTime = -1;
+  lastSubmittedLyricTime = -1;
 });
+
+watch(
+  () => playState.value,
+  (playing) => applyPlayback(playing),
+);
+
+watch(
+  () => [
+    setting.lyricsBlur,
+    setting.hidePassedLines,
+    setting.showYrcAnimation,
+    setting.lyricsBlock,
+    setting.springParams.posX,
+    setting.springParams.posY,
+    setting.springParams.scale,
+  ],
+  () => {
+    const player = getDomPlayer();
+    if (player) applyPlayerSettings(player);
+  },
+  { deep: true },
+);
 
 watch(
   () => [music.songLyric, setting.showYrc, setting.showRoma, setting.showTransl],
@@ -197,6 +275,7 @@ watch(
 
     if (!rawSongLyric) {
       amllLyricLines.value = [];
+      applyLyricLines([]);
       return;
     }
 
@@ -210,28 +289,15 @@ watch(
       console.error("[LyricPlayer] 预处理歌词失败", error);
     }
 
-    const processed = getProcessedLyrics(rawSongLyric, {
-      showYrc: setting.showYrc,
-      showRoma: setting.showRoma,
-      showTransl: setting.showTransl,
-    });
-
-    if (!setting.showTransl || !setting.showRoma) {
-      for (let i = 0; i < processed.length; i++) {
-        const line = processed[i];
-        if (!setting.showTransl) line.translatedLyric = "";
-        if (!setting.showRoma) {
-          line.romanLyric = "";
-          const words = line.words;
-          for (let j = 0; j < words.length; j++) {
-            words[j].romanWord = "";
-          }
-        }
-      }
-    }
-
-    amllLyricLines.value = processed;
-    playerKey.value = Symbol();
+    const lines = structuredClone(
+      getProcessedLyrics(rawSongLyric, {
+        showYrc: setting.showYrc,
+        showRoma: setting.showRoma,
+        showTransl: setting.showTransl,
+      }),
+    );
+    amllLyricLines.value = lines;
+    applyLyricLines(lines);
   },
   { immediate: true },
 );
@@ -244,17 +310,13 @@ watch(
   touch-action: pan-y;
   container-type: size;
   overflow: hidden;
-  display: flex;
-  justify-content: center;
+  position: relative;
 
-  // Inactive bg lines should not expand the measured lyric line height.
-  :deep(
-    .amll-lyric-player[class*="_playing"] [class*="_bgWrapper"]:not([class*="_bgWrapperActive"])
-  ) {
-    position: absolute !important;
-    top: 100% !important;
-    left: 0 !important;
-    pointer-events: none;
+  // The official Core playground inherits Tailwind's border-box preflight.
+  // Keep the AMLL root's own box model, but match it for measured descendants
+  // such as interlude dots whose percentage padding affects clientHeight.
+  :deep(.amll-lyric-player *) {
+    box-sizing: border-box;
   }
 }
 </style>

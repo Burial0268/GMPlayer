@@ -479,7 +479,7 @@ const useListenTogetherStore = defineStore("listenTogether", {
             }
 
             if (index !== -1) {
-              musicStore.persistData.playSongIndex = index;
+              musicStore.commitPlaySongIndex(index);
             }
             // 无论是否找到，都更新 lastSyncedSongId 防止重复请求
             this.lastSyncedSongId = data.currentSongId;

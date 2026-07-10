@@ -135,7 +135,7 @@ export function useNativeMediaControls() {
           adapter.artworkSize
         }`
       : "";
-    const playSongTime = persistData.value.playSongTime;
+    const playSongTime = music.getPlaySongTime;
 
     return {
       title: song.name || "",
@@ -185,7 +185,7 @@ export function useNativeMediaControls() {
   async function syncProgress(seeked = false): Promise<void> {
     if (!active.value || !adapter || !music.getPlaySongData) return;
 
-    const playSongTime = persistData.value.playSongTime;
+    const playSongTime = music.getPlaySongTime;
     await adapter.updateProgress({
       isPlaying: music.getPlayState,
       position: Math.round((playSongTime?.currentTime || 0) * 1_000),
@@ -206,7 +206,7 @@ export function useNativeMediaControls() {
     await adapter.updatePlaybackState({
       state,
       isPlaying: !music.isLoadingSong && music.getPlayState,
-      position: Math.round((persistData.value.playSongTime?.currentTime || 0) * 1_000),
+      position: Math.round((music.getPlaySongTime?.currentTime || 0) * 1_000),
     });
   }
 
@@ -248,7 +248,7 @@ export function useNativeMediaControls() {
           }
           music.setPlaySongTime({
             currentTime: seekSec,
-            duration: persistData.value.playSongTime?.duration || 0,
+            duration: music.getPlaySongTime?.duration || 0,
           });
           void syncProgress(true);
         }
@@ -356,7 +356,7 @@ export function useNativeMediaControls() {
   );
 
   watch(
-    () => persistData.value.playSongTime?.duration,
+    () => music.getPlaySongTime?.duration,
     (val, oldVal) => {
       if (!active.value) return;
       if (val && !oldVal) void syncNotificationImmediate();
@@ -383,7 +383,7 @@ export function useNativeMediaControls() {
   );
 
   watch(
-    () => persistData.value.playSongTime?.currentTime,
+    () => music.getPlaySongTime?.currentTime,
     () => {
       if (!active.value) return;
       maybeSyncProgress();
