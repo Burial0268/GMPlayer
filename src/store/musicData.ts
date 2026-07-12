@@ -62,6 +62,7 @@ interface MusicDataState {
   autoMixState: AutoMixStateData;
   playSongTime: PlaySongTime;
   persistData: PersistData;
+  playingSongId: number | null;
 }
 
 const useMusicDataStore = defineStore("musicData", {
@@ -120,6 +121,10 @@ const useMusicDataStore = defineStore("musicData", {
       },
       playSongTime: playSongTime as unknown as PlaySongTime,
       persistData: persistedStore.persistData,
+      // 播放器当前实际加载的歌曲 ID。队列被 setPlaylists 整体替换时不会变，
+      // 因此它是「是否切歌」的判定基准，而不是 playlists[playSongIndex]。
+      playingSongId:
+        persistedStore.persistData.playlists[persistedStore.persistData.playSongIndex]?.id ?? null,
     };
   },
   getters: {
@@ -465,7 +470,7 @@ const useMusicDataStore = defineStore("musicData", {
       if (!force) return;
       const playbackStore = useMusicPlaybackDataStore();
       useMusicPlaybackResumeStore().saveSession(
-        this.getPlaySongData?.id ?? null,
+        this.playingSongId ?? this.getPlaySongData?.id ?? null,
         this.persistData.playSongIndex,
         playbackStore.playSongTime,
       );
@@ -481,11 +486,9 @@ const useMusicDataStore = defineStore("musicData", {
       const playbackStore = useMusicPlaybackDataStore();
       if (time) playbackStore.setPlaySongTime(time);
       else playbackStore.resetPlaySongTime({ checkpoint: false });
-      useMusicPlaybackResumeStore().saveSession(
-        this.persistData.playlists[index]?.id ?? null,
-        index,
-        playbackStore.playSongTime,
-      );
+      const songId = this.persistData.playlists[index]?.id ?? null;
+      this.playingSongId = songId;
+      useMusicPlaybackResumeStore().saveSession(songId, index, playbackStore.playSongTime);
       return true;
     },
 
@@ -594,10 +597,12 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     addSongToPlaylists(value: SongData, play: boolean = true) {
-      if (typeof $player !== "undefined") soundStop($player);
       const index = this.persistData.playlists.findIndex((o) => o.id === value.id);
-      const identityChanged =
-        value.id !== this.persistData.playlists[this.persistData.playSongIndex]?.id;
+      // 与「播放器实际加载的歌曲」(playingSongId) 比较，而不是 playlists[playSongIndex]：
+      // playSong / playAllSong 等调用方会先用 setPlaylists 替换队列，旧索引在新队列中
+      // 指向的只是恰好同位置的歌，相同 index 不代表同一首歌。
+      const activeSongId = this.playingSongId ?? this.getPlaySongData?.id;
+      const identityChanged = value.id !== activeSongId;
       try {
         if (identityChanged) {
           console.log("Play a song that is not the same as the last one");
@@ -610,7 +615,14 @@ const useMusicDataStore = defineStore("musicData", {
         console.error("Error:" + error);
       }
       if (index !== -1) {
-        if (identityChanged) this.commitPlaySongIndex(index);
+        if (identityChanged) {
+          this.commitPlaySongIndex(index);
+        } else if (index !== this.persistData.playSongIndex) {
+          // 同一首歌，只是在新队列中的位置变了：仅对齐索引，
+          // 不重置进度、不重新加载声音。
+          this.persistData.playSongIndex = index;
+          this.checkpointPlaySongTime(true);
+        }
       } else {
         this.persistData.playlists.push(value);
         this.commitPlaySongIndex(this.persistData.playlists.length - 1);
@@ -667,8 +679,11 @@ const useMusicDataStore = defineStore("musicData", {
         this.persistData.playSongIndex = 0;
         soundStop($player);
       }
-      if (removedCurrentSong) this.resetPlaySongTime();
-      else this.checkpointPlaySongTime(true);
+      if (removedCurrentSong) {
+        // 索引现在指向后继歌曲（由 watcher 接手加载），同步实际播放标识
+        this.playingSongId = this.persistData.playlists[this.persistData.playSongIndex]?.id ?? null;
+        this.resetPlaySongTime();
+      } else this.checkpointPlaySongTime(true);
     },
 
     setCatList(highquality: boolean = false) {

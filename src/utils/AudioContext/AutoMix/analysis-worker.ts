@@ -35,6 +35,7 @@ type AnalysisRequest = PcmAnalysisRequest | DecodeAndAnalyzeRequest;
 
 interface WasmDecodedAudio {
   samples(): Float32Array;
+  takeSamples?(): Float32Array;
   sampleRate(): number;
   duration(): number;
   free?: () => void;
@@ -2082,7 +2083,7 @@ async function handleAnalysisRequest(request: AnalysisRequest): Promise<Analysis
   try {
     return runAnalysis(
       request.id,
-      decoded.samples(),
+      decoded.takeSamples?.() ?? decoded.samples(),
       decoded.sampleRate(),
       decoded.duration(),
       request.analyzeBPM,
