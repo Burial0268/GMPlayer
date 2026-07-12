@@ -9,7 +9,6 @@
 /// Event flow:   AudioPlayer → callback → WebSocket broadcast → frontend
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,7 +16,7 @@ use tokio::sync::mpsc;
 use tokio::sync::RwLock as TokioRwLock;
 use tracing::{info, warn};
 
-use crate::analysis::{self, AnalysisCommand};
+use crate::analysis::{self, AnalysisCommand, AnalysisSender};
 use crate::decoder::{self, PlaybackSink};
 use crate::error::{AudioError, AudioResult};
 use crate::output::{self, LowLatencyOutput};
@@ -144,7 +143,7 @@ struct AudioPlayer {
     /// `crate::analysis`). Cloned into each `FFTFeedSource` so the audio
     /// callback thread can push interleaved PCM via the channel — replaces
     /// the previous `Arc<ParkingLotRwLock<AudioProcessor>>` lock pattern.
-    analysis_tx: std_mpsc::Sender<AnalysisCommand>,
+    analysis_tx: AnalysisSender,
     /// JoinHandle for the analysis thread. Held so `Drop for AudioPlayer`
     /// can join after dropping the `Sender` (which closes the channel and
     /// signals the thread to exit). Wrapped in `Option` so `take()` works

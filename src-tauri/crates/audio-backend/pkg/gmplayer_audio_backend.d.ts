@@ -9,6 +9,11 @@ export class DecodedAudioJs {
     duration(): number;
     sampleRate(): number;
     samples(): Float32Array;
+    /**
+     * Move PCM into JavaScript without first cloning the complete track in
+     * WASM memory. `samples()` remains available for compatibility.
+     */
+    takeSamples(): Float32Array;
 }
 
 /**

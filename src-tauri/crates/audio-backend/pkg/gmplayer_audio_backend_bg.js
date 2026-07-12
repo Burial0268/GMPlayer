@@ -52,6 +52,24 @@ export class DecodedAudioJs {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
     }
+    /**
+     * Move PCM into JavaScript without first cloning the complete track in
+     * WASM memory. `samples()` remains available for compatibility.
+     * @returns {Float32Array}
+     */
+    takeSamples() {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.decodedaudiojs_takeSamples(retptr, this.__wbg_ptr);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF32FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 4, 4);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
 }
 if (Symbol.dispose) DecodedAudioJs.prototype[Symbol.dispose] = DecodedAudioJs.prototype.free;
 
@@ -620,10 +638,10 @@ export class WasmAudioProcessor {
     }
 }
 if (Symbol.dispose) WasmAudioProcessor.prototype[Symbol.dispose] = WasmAudioProcessor.prototype.free;
-export function __wbg___wbindgen_copy_to_typed_array_c5728021fabd0236(arg0, arg1, arg2) {
+export function __wbg___wbindgen_copy_to_typed_array_4db0cbe2cc60dbee(arg0, arg1, arg2) {
     new Uint8Array(getObject(arg2).buffer, getObject(arg2).byteOffset, getObject(arg2).byteLength).set(getArrayU8FromWasm0(arg0, arg1));
 }
-export function __wbg___wbindgen_throw_ea4887a5f8f9a9db(arg0, arg1) {
+export function __wbg___wbindgen_throw_344f42d3211c4765(arg0, arg1) {
     throw new Error(getStringFromWasm0(arg0, arg1));
 }
 export function __wbindgen_cast_0000000000000001(arg0, arg1) {

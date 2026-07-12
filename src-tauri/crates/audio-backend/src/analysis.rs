@@ -10,12 +10,9 @@
 //! tried to push.
 //!
 //! Here the `AudioProcessor` lives entirely on a dedicated `audio-analysis`
-//! OS thread. Everything arrives via `AnalysisCommand` over `std::sync::mpsc`:
-//!   - `Pcm` carries interleaved samples (audio thread's native format) so
-//!     downmix-to-mono work happens on the analysis thread, not the audio
-//!     callback thread.
-//!   - `Clear` / `SetFreqRange` are control commands triggered by the
-//!     player thread on seek / track change / frequency-range updates.
+//! OS thread. Reliable controls and best-effort PCM use separate channels.
+//! The PCM channel is deliberately tiny and bounded: analysis may drop audio
+//! under load, but it can never backlog memory or stall playback/decoding.
 //!
 //! `LowFrequencyVolume` is derived from the same FFT frame here, matching
 //! AMLL's frontend low-pass path while keeping extra DSP out of the CPAL
@@ -35,36 +32,40 @@ use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 const FFT_SIZE: usize = 2048;
 const ANALYSIS_INTERVAL: Duration = Duration::from_millis(16);
 const FFT_EMIT_INTERVAL: Duration = Duration::from_millis(33);
+const PCM_QUEUE_CAPACITY: usize = 3;
+const PCM_BLOCKS_PER_TICK: usize = 2;
 
-/// Commands from the audio callback / player thread to the analysis thread.
-/// `Pcm` carries interleaved samples — the downmix runs on this thread so
-/// the audio callback thread doesn't pay the cost.
-///
-/// `Pcm.recycle` is an optional return channel: after processing, the
-/// analysis thread clears the Vec and sends it back through this channel
-/// so the audio callback thread can reuse the backing allocation instead
-/// of asking the allocator for a fresh 4 KB block ~88 times/sec. When the
-/// FFTFeedSource is dropped the receiver disappears and recycled sends
-/// silently fail — which is exactly what we want (the Vec just gets
-/// dropped).
+/// Reliable controls from the player and decoder threads.
 pub enum AnalysisCommand {
-    Pcm {
-        samples: Vec<f32>,
-        channels: u16,
-        sample_rate: u32,
-        recycle: Option<mpsc::Sender<Vec<f32>>>,
-    },
     Clear,
-    SetEnabled {
-        enabled: bool,
-    },
-    SetFftEnabled {
-        enabled: bool,
-    },
-    SetFreqRange {
-        from: f32,
-        to: f32,
-    },
+    SetEnabled { enabled: bool },
+    SetFftEnabled { enabled: bool },
+    SetFreqRange { from: f32, to: f32 },
+}
+
+pub struct AnalysisPcm {
+    pub samples: Vec<f32>,
+    pub channels: u16,
+    pub sample_rate: u32,
+    pub recycle: Option<mpsc::Sender<Vec<f32>>>,
+}
+
+#[derive(Clone)]
+pub struct AnalysisSender {
+    control_tx: mpsc::Sender<AnalysisCommand>,
+    pcm_tx: mpsc::SyncSender<AnalysisPcm>,
+}
+
+impl AnalysisSender {
+    pub fn send(&self, command: AnalysisCommand) -> Result<(), mpsc::SendError<AnalysisCommand>> {
+        self.control_tx.send(command)
+    }
+
+    /// Submit PCM without ever waiting for the analysis thread. On overload
+    /// the caller gets ownership back and can immediately recycle the buffer.
+    pub fn try_send_pcm(&self, pcm: AnalysisPcm) -> Result<(), mpsc::TrySendError<AnalysisPcm>> {
+        self.pcm_tx.try_send(pcm)
+    }
 }
 
 /// Spawn the dedicated analysis OS thread and return a `Sender` for
@@ -75,16 +76,18 @@ pub enum AnalysisCommand {
 /// returns `Disconnected`) or the event sink is closed.
 pub fn spawn_analysis_thread(
     evt_sender: tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
-) -> std::io::Result<(mpsc::Sender<AnalysisCommand>, std::thread::JoinHandle<()>)> {
-    let (tx, rx) = mpsc::channel::<AnalysisCommand>();
+) -> std::io::Result<(AnalysisSender, std::thread::JoinHandle<()>)> {
+    let (control_tx, control_rx) = mpsc::channel::<AnalysisCommand>();
+    let (pcm_tx, pcm_rx) = mpsc::sync_channel::<AnalysisPcm>(PCM_QUEUE_CAPACITY);
     let handle = std::thread::Builder::new()
         .name("audio-analysis".into())
-        .spawn(move || analysis_loop(rx, evt_sender))?;
-    Ok((tx, handle))
+        .spawn(move || analysis_loop(control_rx, pcm_rx, evt_sender))?;
+    Ok((AnalysisSender { control_tx, pcm_tx }, handle))
 }
 
 fn analysis_loop(
-    rx: mpsc::Receiver<AnalysisCommand>,
+    control_rx: mpsc::Receiver<AnalysisCommand>,
+    pcm_rx: mpsc::Receiver<AnalysisPcm>,
     evt: tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
 ) {
     let cfg = LowFreqConfig::default();
@@ -114,31 +117,28 @@ fn analysis_loop(
     proc.clear();
 
     loop {
-        let wait = if analysis_enabled {
-            ANALYSIS_INTERVAL.saturating_sub(last_analysis.elapsed())
-        } else {
-            ANALYSIS_INTERVAL
-        };
-        match rx.recv_timeout(wait) {
-            Ok(cmd) => {
-                let result = handle_cmd(&mut proc, cmd, &mut analysis_enabled, &mut fft_enabled);
-                let reset = matches!(result, HandleCmdResult::Reset);
-                apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
-                if reset && emit_low_freq(&evt, 0.0).is_err() {
-                    break;
-                }
-                while let Ok(more) = rx.try_recv() {
-                    let result =
-                        handle_cmd(&mut proc, more, &mut analysis_enabled, &mut fft_enabled);
-                    let reset = matches!(result, HandleCmdResult::Reset);
-                    apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
-                    if reset && emit_low_freq(&evt, 0.0).is_err() {
-                        return;
-                    }
-                }
+        // Controls are reliable and always drained before best-effort PCM.
+        while let Ok(cmd) = control_rx.try_recv() {
+            let result = handle_cmd(&mut proc, cmd, &mut analysis_enabled, &mut fft_enabled);
+            let reset = matches!(result, HandleCmdResult::Reset);
+            apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
+            if reset && emit_low_freq(&evt, 0.0).is_err() {
+                return;
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+
+        // Bound work per iteration so a PCM burst cannot starve controls or
+        // FFT cadence. Two blocks/tick still keeps up with 512-frame decode
+        // blocks at common sample rates during normal operation.
+        for _ in 0..PCM_BLOCKS_PER_TICK {
+            let Ok(pcm) = pcm_rx.try_recv() else {
+                break;
+            };
+            apply_cmd_result(
+                handle_pcm(&mut proc, pcm, analysis_enabled),
+                &mut pending_mono_samples,
+                &mut current_sample_rate,
+            );
         }
 
         if analysis_enabled
@@ -172,6 +172,27 @@ fn analysis_loop(
                 }
                 last_fft_emit = now;
             }
+        }
+
+        // Sleep on the reliable control channel rather than polling every
+        // millisecond. A control wakes the thread immediately; PCM remains
+        // best-effort and is sampled on the next analysis tick.
+        let wait = if analysis_enabled && pending_mono_samples >= FFT_SIZE {
+            ANALYSIS_INTERVAL.saturating_sub(last_analysis.elapsed())
+        } else {
+            ANALYSIS_INTERVAL
+        };
+        match control_rx.recv_timeout(wait) {
+            Ok(cmd) => {
+                let result = handle_cmd(&mut proc, cmd, &mut analysis_enabled, &mut fft_enabled);
+                let reset = matches!(result, HandleCmdResult::Reset);
+                apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
+                if reset && emit_low_freq(&evt, 0.0).is_err() {
+                    break;
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
     }
 }
@@ -222,30 +243,6 @@ fn handle_cmd(
     fft_enabled: &mut bool,
 ) -> HandleCmdResult {
     match cmd {
-        AnalysisCommand::Pcm {
-            mut samples,
-            channels,
-            sample_rate,
-            recycle,
-        } => {
-            let len = if *analysis_enabled {
-                proc.push_interleaved_pcm(&samples, channels, sample_rate)
-            } else {
-                0
-            };
-            if let Some(tx) = recycle {
-                samples.clear();
-                let _ = tx.send(samples);
-            }
-            if *analysis_enabled {
-                HandleCmdResult::Pushed {
-                    samples: len,
-                    sample_rate,
-                }
-            } else {
-                HandleCmdResult::None
-            }
-        }
         AnalysisCommand::Clear => {
             proc.clear();
             HandleCmdResult::Reset
@@ -266,5 +263,64 @@ fn handle_cmd(
             proc.fft.set_freq_range(from, to);
             HandleCmdResult::None
         }
+    }
+}
+
+fn handle_pcm(proc: &mut AudioProcessor, pcm: AnalysisPcm, enabled: bool) -> HandleCmdResult {
+    let AnalysisPcm {
+        mut samples,
+        channels,
+        sample_rate,
+        recycle,
+    } = pcm;
+    let len = if enabled {
+        proc.push_interleaved_pcm(&samples, channels, sample_rate)
+    } else {
+        0
+    };
+    if let Some(tx) = recycle {
+        samples.clear();
+        let _ = tx.send(samples);
+    }
+    if enabled {
+        HandleCmdResult::Pushed {
+            samples: len,
+            sample_rate,
+        }
+    } else {
+        HandleCmdResult::None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pcm(value: f32) -> AnalysisPcm {
+        AnalysisPcm {
+            samples: vec![value; 16],
+            channels: 2,
+            sample_rate: 48_000,
+            recycle: None,
+        }
+    }
+
+    #[test]
+    fn pcm_overload_is_bounded_and_returns_ownership() {
+        let (control_tx, control_rx) = mpsc::channel();
+        let (pcm_tx, _pcm_rx) = mpsc::sync_channel(2);
+        let sender = AnalysisSender { control_tx, pcm_tx };
+
+        assert!(sender.try_send_pcm(pcm(1.0)).is_ok());
+        assert!(sender.try_send_pcm(pcm(2.0)).is_ok());
+        let dropped = match sender.try_send_pcm(pcm(3.0)) {
+            Err(mpsc::TrySendError::Full(pcm)) => pcm,
+            _ => panic!("full PCM queue must reject immediately"),
+        };
+        assert_eq!(dropped.samples[0], 3.0);
+
+        // A saturated PCM queue is independent of reliable controls.
+        sender.send(AnalysisCommand::Clear).unwrap();
+        assert!(matches!(control_rx.try_recv(), Ok(AnalysisCommand::Clear)));
     }
 }

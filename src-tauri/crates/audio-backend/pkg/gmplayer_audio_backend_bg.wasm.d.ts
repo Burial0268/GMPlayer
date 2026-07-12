@@ -7,6 +7,7 @@ export const decodedaudiojs_channels: (a: number) => number;
 export const decodedaudiojs_duration: (a: number) => number;
 export const decodedaudiojs_sampleRate: (a: number) => number;
 export const decodedaudiojs_samples: (a: number, b: number) => void;
+export const decodedaudiojs_takeSamples: (a: number, b: number) => void;
 export const wasmaudiobackend_applyLoadError: (a: number, b: number, c: number, d: number) => void;
 export const wasmaudiobackend_applyLoadedTrack: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const wasmaudiobackend_applyPlayError: (a: number, b: number, c: number, d: number) => void;

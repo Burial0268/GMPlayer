@@ -8,6 +8,7 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SizedSample, Stream, StreamConfig};
 use parking_lot::Mutex;
+use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use tracing::{info, warn};
 
 mod config;
@@ -16,7 +17,7 @@ mod render;
 
 use config::{select_any_output_config, select_output_config, stable_stream_config};
 use platform::DEFAULT_QUEUE_BLOCKS;
-use render::{fill_output, CallbackState, OutputBlock, OutputControl};
+use render::{fill_output, CallbackState, OutputBlock};
 
 // Depth of the buffer-recycling channel that returns spent mix blocks from the
 // CPAL callback back to the mixer for reuse. Sized a little above the data
@@ -24,6 +25,10 @@ use render::{fill_output, CallbackState, OutputBlock, OutputControl};
 // callback retains the spent block and pauses dequeuing until a slot opens;
 // this keeps allocation and deallocation off the real-time thread.
 const RECYCLE_QUEUE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS + 4;
+// Callback-owned overflow slots for transient recycle backpressure. Reserved
+// before stream start; matching the PCM queue depth lets the callback drain a
+// full ready queue without allocating even if the mixer is briefly descheduled.
+const PENDING_RECYCLE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS;
 const OUTPUT_INIT_TIMEOUT: Duration = Duration::from_secs(4);
 const PRODUCER_YIELD_RETRIES: u32 = 8;
 const PRODUCER_MIN_PARK_US: u64 = 100;
@@ -137,10 +142,14 @@ impl OutputDeviceSelector {
 
 #[derive(Clone)]
 pub struct OutputWriter {
-    data_tx: mpsc::SyncSender<OutputBlock>,
-    control_tx: mpsc::Sender<OutputControl>,
+    /// All clones share one producer endpoint. Production playback has one
+    /// mixer thread; the mutex also preserves SPSC safety for the cloneable
+    /// public handle if another caller ever attempts to push concurrently.
+    /// The CPAL callback never takes this lock.
+    data_tx: Arc<Mutex<Producer<OutputBlock>>>,
     paused: Arc<AtomicBool>,
     stream_failed: Arc<AtomicBool>,
+    callback_alive: Arc<AtomicBool>,
     volume_bits: Arc<AtomicU32>,
     generation: Arc<AtomicU64>,
     flush_epoch: Arc<AtomicU64>,
@@ -150,7 +159,7 @@ pub struct OutputWriter {
     /// consumer (the mixer) behind a `Mutex` so `OutputWriter` stays `Sync`
     /// while remaining cloneable; the lock is only ever taken off the audio
     /// callback (on the mixer thread), so it never blocks real-time work.
-    recycle_rx: Arc<Mutex<mpsc::Receiver<Vec<f32>>>>,
+    recycle_rx: Arc<Mutex<Consumer<Vec<f32>>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -180,6 +189,7 @@ impl OutputWriter {
                 || self.generation.load(Ordering::Acquire) != generation
                 || self.flush_epoch.load(Ordering::Acquire) != flush_epoch
                 || self.stream_failed.load(Ordering::Acquire)
+                || !self.callback_alive.load(Ordering::Acquire)
             {
                 return false;
             }
@@ -191,51 +201,34 @@ impl OutputWriter {
                 flush_epoch,
             };
             self.queued_samples.fetch_add(block_len, Ordering::Release);
-            match self.data_tx.try_send(output_block) {
+            let push_result = self.data_tx.lock().push(output_block);
+            match push_result {
                 Ok(()) => {
                     // The CPAL callback subtracts samples as it writes them.
                     // This is only for end-of-track draining, not timing.
-                    if cancel.is_cancelled()
-                        || self.generation.load(Ordering::Acquire) != generation
-                        || self.flush_epoch.load(Ordering::Acquire) != flush_epoch
-                        || self.stream_failed.load(Ordering::Acquire)
-                    {
-                        saturating_sub(&self.queued_samples, block_len);
-                        return false;
-                    }
+                    // Once published into the ring, ownership cannot be
+                    // revoked. A concurrent flush/generation change makes the
+                    // block stale at the consumer barrier instead.
                     return true;
                 }
-                Err(mpsc::TrySendError::Full(returned)) => {
+                Err(PushError::Full(returned)) => {
                     saturating_sub(&self.queued_samples, block_len);
                     block = returned.samples;
                     producer_retry_backoff(&mut retry_count);
-                }
-                Err(mpsc::TrySendError::Disconnected(_)) => {
-                    saturating_sub(&self.queued_samples, block_len);
-                    return false;
                 }
             }
         }
     }
 
     pub fn flush(&self) {
-        let generation = self.generation.load(Ordering::Acquire);
-        let flush_epoch = self.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        self.flush_epoch.fetch_add(1, Ordering::AcqRel);
         self.queued_samples.store(0, Ordering::Release);
-        let _ = self.control_tx.send(OutputControl::Clear {
-            generation,
-            flush_epoch,
-        });
     }
 
     pub fn clear(&self) {
-        let generation = self.generation.fetch_add(1, Ordering::AcqRel) + 1;
-        let flush_epoch = self.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.flush_epoch.fetch_add(1, Ordering::AcqRel);
         self.queued_samples.store(0, Ordering::Release);
-        let _ = self.control_tx.send(OutputControl::Clear {
-            generation,
-            flush_epoch,
-        });
     }
 
     pub fn retire(&self) {
@@ -266,8 +259,8 @@ impl OutputWriter {
     /// callback. The returned buffer is empty (`len == 0`) with at least
     /// `capacity` capacity, ready to be filled by pushing.
     pub fn take_recycled_buffer(&self, capacity: usize) -> Vec<f32> {
-        if let Some(rx) = self.recycle_rx.try_lock() {
-            if let Ok(mut buf) = rx.try_recv() {
+        if let Some(mut rx) = self.recycle_rx.try_lock() {
+            if let Ok(mut buf) = rx.pop() {
                 buf.clear();
                 if buf.capacity() < capacity {
                     buf.reserve(capacity - buf.capacity());
@@ -335,13 +328,13 @@ pub fn open_output(
     selector: OutputDeviceSelector,
     target: Option<OutputTarget>,
 ) -> Result<LowLatencyOutput, String> {
-    let (data_tx, data_rx) = mpsc::sync_channel::<OutputBlock>(DEFAULT_QUEUE_BLOCKS);
-    let (control_tx, control_rx) = mpsc::channel::<OutputControl>();
-    let (recycle_tx, recycle_rx) = mpsc::sync_channel::<Vec<f32>>(RECYCLE_QUEUE_BLOCKS);
+    let (data_tx, data_rx) = RingBuffer::<OutputBlock>::new(DEFAULT_QUEUE_BLOCKS);
+    let (recycle_tx, recycle_rx) = RingBuffer::<Vec<f32>>::new(RECYCLE_QUEUE_BLOCKS);
     let (stream_stop_tx, stream_stop_rx) = mpsc::channel::<()>();
     let (init_tx, init_rx) = mpsc::channel::<Result<(OutputDeviceKey, OutputConfigKey), String>>();
     let paused = Arc::new(AtomicBool::new(true));
     let stream_failed = Arc::new(AtomicBool::new(false));
+    let callback_alive = Arc::new(AtomicBool::new(true));
     let volume_bits = Arc::new(AtomicU32::new(1.0f32.to_bits()));
     let generation = Arc::new(AtomicU64::new(0));
     let flush_epoch = Arc::new(AtomicU64::new(0));
@@ -350,10 +343,10 @@ pub fn open_output(
     let stream_selector = selector.clone();
 
     let writer = OutputWriter {
-        data_tx,
-        control_tx,
+        data_tx: Arc::new(Mutex::new(data_tx)),
         paused: Arc::clone(&paused),
         stream_failed: Arc::clone(&stream_failed),
+        callback_alive: Arc::clone(&callback_alive),
         volume_bits: Arc::clone(&volume_bits),
         generation: Arc::clone(&generation),
         flush_epoch: Arc::clone(&flush_epoch),
@@ -369,10 +362,10 @@ pub fn open_output(
                 stream_selector,
                 target,
                 data_rx,
-                control_rx,
                 recycle_tx,
                 paused,
                 stream_failed,
+                callback_alive,
                 volume_bits,
                 generation,
                 flush_epoch,
@@ -534,11 +527,11 @@ fn fallback_output_device_signature(host: &cpal::Host) -> Option<u64> {
 fn open_output_stream(
     selector: OutputDeviceSelector,
     target: Option<OutputTarget>,
-    data_rx: mpsc::Receiver<OutputBlock>,
-    control_rx: mpsc::Receiver<OutputControl>,
-    recycle_tx: mpsc::SyncSender<Vec<f32>>,
+    data_rx: Consumer<OutputBlock>,
+    recycle_tx: Producer<Vec<f32>>,
     paused: Arc<AtomicBool>,
     stream_failed: Arc<AtomicBool>,
+    callback_alive: Arc<AtomicBool>,
     volume_bits: Arc<AtomicU32>,
     generation: Arc<AtomicU64>,
     flush_epoch: Arc<AtomicU64>,
@@ -590,10 +583,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -604,10 +597,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -618,10 +611,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -632,10 +625,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -646,10 +639,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -660,10 +653,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -674,10 +667,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -688,10 +681,10 @@ fn open_output_stream(
             &device,
             &stream_config,
             data_rx,
-            control_rx,
             recycle_tx,
             paused,
             stream_failed,
+            callback_alive,
             volume_bits,
             generation,
             flush_epoch,
@@ -710,11 +703,11 @@ fn open_output_stream(
 fn build_stream<T>(
     device: &cpal::Device,
     config: &StreamConfig,
-    data_rx: mpsc::Receiver<OutputBlock>,
-    control_rx: mpsc::Receiver<OutputControl>,
-    recycle_tx: mpsc::SyncSender<Vec<f32>>,
+    data_rx: Consumer<OutputBlock>,
+    recycle_tx: Producer<Vec<f32>>,
     paused: Arc<AtomicBool>,
     stream_failed: Arc<AtomicBool>,
+    callback_alive: Arc<AtomicBool>,
     volume_bits: Arc<AtomicU32>,
     generation: Arc<AtomicU64>,
     flush_epoch: Arc<AtomicU64>,
@@ -726,15 +719,29 @@ where
 {
     let mut state = CallbackState::new(
         data_rx,
-        control_rx,
         recycle_tx,
+        callback_alive,
         generation.load(Ordering::Acquire),
         flush_epoch.load(Ordering::Acquire),
         config.channels.max(1) as usize,
+        PENDING_RECYCLE_BLOCKS,
     );
+    let mut reported_recoverable_errors = 0u8;
     let err_fn = move |err| {
-        if !stream_failed.swap(true, Ordering::AcqRel) {
-            warn!("音频输出流错误: {err}");
+        if let Some(error_bit) = recoverable_stream_error_bit(&err) {
+            // CPAL reports scheduling fallback, automatic route changes, and
+            // individual xruns through the same callback as terminal stream
+            // failures. These conditions leave the stream usable; stopping
+            // the producer here would turn one recoverable glitch into
+            // permanent silence on every backend that emits them.
+            // Log each category once: repeated xrun logging from an audio
+            // backend thread can itself add pressure during an overload.
+            if reported_recoverable_errors & error_bit == 0 {
+                reported_recoverable_errors |= error_bit;
+                warn!("音频输出流可恢复事件 ({:?}): {err}", err.kind());
+            }
+        } else if !stream_failed.swap(true, Ordering::AcqRel) {
+            warn!("音频输出流错误 ({:?}): {err}", err.kind());
         }
     };
 
@@ -757,6 +764,16 @@ where
             None,
         )
         .map_err(|e| format!("build output stream: {e:?}"))
+}
+
+#[inline]
+fn recoverable_stream_error_bit(err: &cpal::Error) -> Option<u8> {
+    match err.kind() {
+        cpal::ErrorKind::DeviceChanged => Some(1 << 0),
+        cpal::ErrorKind::RealtimeDenied => Some(1 << 1),
+        cpal::ErrorKind::Xrun => Some(1 << 2),
+        _ => None,
+    }
 }
 
 fn producer_retry_backoff(retry_count: &mut u32) {
@@ -787,50 +804,125 @@ fn saturating_sub(counter: &AtomicUsize, amount: usize) {
 mod tests {
     use super::*;
 
-    #[test]
-    fn flush_does_not_invalidate_output_generation() {
-        let (data_tx, _data_rx) = mpsc::sync_channel(1);
-        let (control_tx, control_rx) = mpsc::channel();
-        let (_recycle_tx, recycle_rx) = mpsc::sync_channel::<Vec<f32>>(4);
+    fn test_writer(
+        capacity: usize,
+    ) -> (
+        OutputWriter,
+        Consumer<OutputBlock>,
+        Producer<Vec<f32>>,
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+        Arc<AtomicUsize>,
+        Arc<AtomicBool>,
+    ) {
+        let (data_tx, data_rx) = RingBuffer::new(capacity);
+        let (recycle_tx, recycle_rx) = RingBuffer::new(capacity + 1);
         let generation = Arc::new(AtomicU64::new(7));
+        let flush_epoch = Arc::new(AtomicU64::new(0));
         let queued_samples = Arc::new(AtomicUsize::new(42));
+        let callback_alive = Arc::new(AtomicBool::new(true));
         let writer = OutputWriter {
-            data_tx,
-            control_tx,
+            data_tx: Arc::new(Mutex::new(data_tx)),
             paused: Arc::new(AtomicBool::new(false)),
             stream_failed: Arc::new(AtomicBool::new(false)),
+            callback_alive: Arc::clone(&callback_alive),
             volume_bits: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             generation: Arc::clone(&generation),
-            flush_epoch: Arc::new(AtomicU64::new(0)),
+            flush_epoch: Arc::clone(&flush_epoch),
             queued_samples: Arc::clone(&queued_samples),
             rendered_samples: Arc::new(AtomicU64::new(0)),
             recycle_rx: Arc::new(Mutex::new(recycle_rx)),
         };
+        (
+            writer,
+            data_rx,
+            recycle_tx,
+            generation,
+            flush_epoch,
+            queued_samples,
+            callback_alive,
+        )
+    }
+
+    #[test]
+    fn flush_does_not_invalidate_output_generation() {
+        let (writer, _data_rx, _recycle_tx, generation, flush_epoch, queued_samples, _alive) =
+            test_writer(1);
 
         writer.flush();
 
         assert_eq!(generation.load(Ordering::Acquire), 7);
+        assert_eq!(flush_epoch.load(Ordering::Acquire), 1);
         assert_eq!(queued_samples.load(Ordering::Acquire), 0);
-        assert!(matches!(
-            control_rx.try_recv(),
-            Ok(OutputControl::Clear {
-                generation: 7,
-                flush_epoch: 1,
-            })
-        ));
 
         queued_samples.store(13, Ordering::Release);
         writer.clear();
 
         assert_eq!(generation.load(Ordering::Acquire), 8);
+        assert_eq!(flush_epoch.load(Ordering::Acquire), 2);
         assert_eq!(queued_samples.load(Ordering::Acquire), 0);
-        assert!(matches!(
-            control_rx.try_recv(),
-            Ok(OutputControl::Clear {
-                generation: 8,
-                flush_epoch: 2,
-            })
+    }
+
+    #[test]
+    fn push_stops_when_callback_has_gone_away() {
+        let (writer, _data_rx, _recycle_tx, _generation, _flush, queued, callback_alive) =
+            test_writer(1);
+        callback_alive.store(false, Ordering::Release);
+        static STOP: AtomicBool = AtomicBool::new(false);
+
+        assert!(!writer.push_block(
+            vec![0.25, -0.25],
+            PushCancel {
+                stop: &STOP,
+                interrupt_epoch: None,
+            },
         ));
+        assert_eq!(queued.load(Ordering::Acquire), 42);
+    }
+
+    #[test]
+    fn cloned_writers_serialize_the_single_ring_producer() {
+        const BLOCKS_PER_THREAD: usize = 16;
+        static STOP: AtomicBool = AtomicBool::new(false);
+        let (writer, mut data_rx, _recycle_tx, _generation, _flush, queued, _alive) =
+            test_writer(BLOCKS_PER_THREAD * 2);
+        queued.store(0, Ordering::Release);
+
+        let first = {
+            let writer = writer.clone();
+            std::thread::spawn(move || {
+                for value in 0..BLOCKS_PER_THREAD {
+                    assert!(writer.push_block(
+                        vec![value as f32],
+                        PushCancel {
+                            stop: &STOP,
+                            interrupt_epoch: None,
+                        },
+                    ));
+                }
+            })
+        };
+        let second = std::thread::spawn(move || {
+            for value in BLOCKS_PER_THREAD..BLOCKS_PER_THREAD * 2 {
+                assert!(writer.push_block(
+                    vec![value as f32],
+                    PushCancel {
+                        stop: &STOP,
+                        interrupt_epoch: None,
+                    },
+                ));
+            }
+        });
+
+        first.join().unwrap();
+        second.join().unwrap();
+        let mut values = Vec::with_capacity(BLOCKS_PER_THREAD * 2);
+        while let Ok(block) = data_rx.pop() {
+            values.push(block.samples[0] as usize);
+        }
+        values.sort_unstable();
+        assert_eq!(values, (0..BLOCKS_PER_THREAD * 2).collect::<Vec<_>>());
+        assert_eq!(queued.load(Ordering::Acquire), BLOCKS_PER_THREAD * 2);
     }
 
     #[test]
@@ -847,5 +939,25 @@ mod tests {
             OutputDeviceSelector::from_name("Headphones"),
             OutputDeviceSelector::Named("Headphones".into())
         );
+    }
+
+    #[test]
+    fn recoverable_stream_events_do_not_require_rebuild() {
+        for kind in [
+            cpal::ErrorKind::DeviceChanged,
+            cpal::ErrorKind::RealtimeDenied,
+            cpal::ErrorKind::Xrun,
+        ] {
+            assert!(recoverable_stream_error_bit(&cpal::Error::new(kind)).is_some());
+        }
+
+        assert!(recoverable_stream_error_bit(&cpal::Error::new(
+            cpal::ErrorKind::StreamInvalidated,
+        ))
+        .is_none());
+        assert!(recoverable_stream_error_bit(&cpal::Error::new(
+            cpal::ErrorKind::DeviceNotAvailable,
+        ))
+        .is_none());
     }
 }

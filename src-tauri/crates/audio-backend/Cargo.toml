@@ -32,14 +32,16 @@ symphonia = { version = "0.5", default-features = false, features = [
 # `symphonia-all` feature is additive — rodio prefers Symphonia when it
 # can decode a given file.
 rodio = { version = "0.22", features = ["symphonia-all"] }
-# Direct cpal dep for explicit output-stream config (force stereo so the
-# default 5.1/7.1 device layout on Windows doesn't burn CPU upmixing inside
-# the audio callback — that work gets deprioritised by EcoQoS when the app
-# is backgrounded and shows up as stutter). Version pinned to whatever
-# rodio 0.20 already brings in transitively.
-cpal = "0.18"
+# Direct CPAL dependency for explicit output-stream configuration. On Linux,
+# prefer the shared PulseAudio protocol backend (also served by pipewire-pulse)
+# and let CPAL fall back to ALSA when no sound server is available. Unlike the
+# native PipeWire backend, this does not add a libpipewire development-package
+# requirement to Linux/CI builds. `realtime` promotes eligible WASAPI/ALSA
+# callbacks; CoreAudio already owns callback scheduling.
+cpal = { version = "0.18", features = ["pulseaudio", "realtime"] }
 rustfft = "6"
 parking_lot = "0.12"
+rtrb = "0.3.4"
 log = "0.4"
 tauri = { version = "2" }
 ureq = "2"

@@ -29,6 +29,30 @@ struct WebBackendReply {
     effects: Vec<WebBackendEffect>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisFrameReply<'a> {
+    events: [AnalysisEventMessage<'a>; 2],
+    effects: [WebBackendEffect; 0],
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AnalysisEventMessage<'a> {
+    callback_id: &'static str,
+    data: AnalysisFrameEvent<'a>,
+    seq: u64,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", content = "data")]
+enum AnalysisFrameEvent<'a> {
+    #[serde(rename = "fftData")]
+    FftData { data: &'a [f32] },
+    #[serde(rename = "lowFrequencyVolume")]
+    LowFrequencyVolume { volume: f64 },
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 enum WebBackendEffect {
@@ -76,6 +100,13 @@ impl DecodedAudioJs {
     #[wasm_bindgen(js_name = "samples")]
     pub fn samples(&self) -> Vec<f32> {
         self.samples.clone()
+    }
+
+    /// Move PCM into JavaScript without first cloning the complete track in
+    /// WASM memory. `samples()` remains available for compatibility.
+    #[wasm_bindgen(js_name = "takeSamples")]
+    pub fn take_samples(&mut self) -> Vec<f32> {
+        std::mem::take(&mut self.samples)
     }
 
     #[wasm_bindgen(js_name = "sampleRate")]
@@ -141,13 +172,13 @@ impl AnalysisState {
         self.next_sample_index = 0;
     }
 
-    fn process(&mut self, position: f64, delta_ms: f64) -> (Vec<f32>, f64) {
+    fn process(&mut self, position: f64, delta_ms: f64) -> f64 {
         let target = sample_index_for_position(position, self.sample_rate, self.samples.len());
         if target >= self.samples.len() {
             self.processor.clear();
             self.spectrum.fill(0.0);
             self.next_sample_index = self.samples.len();
-            return (self.spectrum.clone(), 0.0);
+            return 0.0;
         }
 
         let seek_back_edge = self.next_sample_index.saturating_sub(2048);
@@ -174,7 +205,7 @@ impl AnalysisState {
             33.0
         };
         let low_freq = self.processor.process_frame(delta, &mut self.spectrum);
-        (self.spectrum.clone(), low_freq as f64)
+        low_freq as f64
     }
 }
 
@@ -303,7 +334,7 @@ impl WasmAudioBackend {
     #[wasm_bindgen(js_name = "loadAnalysisBytes")]
     pub fn load_analysis_bytes(
         &mut self,
-        bytes: &[u8],
+        bytes: Vec<u8>,
         extension: String,
         music_id: String,
     ) -> String {
@@ -356,7 +387,7 @@ impl WasmAudioBackend {
     #[wasm_bindgen(js_name = "decodeAudioBytes")]
     pub fn decode_audio_bytes(
         &self,
-        bytes: &[u8],
+        bytes: Vec<u8>,
         extension: String,
     ) -> Result<DecodedAudioJs, JsValue> {
         decode_audio_bytes(bytes, &extension)
@@ -378,14 +409,28 @@ impl WasmAudioBackend {
             return self.reply(Vec::new(), Vec::new());
         };
 
-        let (spectrum, low_freq) = analysis.process(self.position, delta_ms);
-        self.reply(
-            vec![
-                AudioThreadEvent::FFTData { data: spectrum },
-                AudioThreadEvent::LowFrequencyVolume { volume: low_freq },
+        let low_freq = analysis.process(self.position, delta_ms);
+        let fft_seq = self.next_seq();
+        let low_freq_seq = self.next_seq();
+        let spectrum = &self.analysis.as_ref().expect("analysis exists").spectrum;
+        let reply = AnalysisFrameReply {
+            events: [
+                AnalysisEventMessage {
+                    callback_id: "",
+                    data: AnalysisFrameEvent::FftData { data: spectrum },
+                    seq: fft_seq,
+                },
+                AnalysisEventMessage {
+                    callback_id: "",
+                    data: AnalysisFrameEvent::LowFrequencyVolume { volume: low_freq },
+                    seq: low_freq_seq,
+                },
             ],
-            Vec::new(),
-        )
+            effects: [],
+        };
+
+        serde_json::to_string(&reply)
+            .unwrap_or_else(|err| format!(r#"{{"events":[],"effects":[],"error":"{err}"}}"#))
     }
 
     #[wasm_bindgen(js_name = "applyPlaybackState")]
@@ -693,12 +738,16 @@ impl WasmAudioBackend {
     }
 
     fn wrap_event(&mut self, event: AudioThreadEvent) -> AudioThreadEventMessage<AudioThreadEvent> {
-        self.seq = self.seq.wrapping_add(1).max(1);
         AudioThreadEventMessage {
             callback_id: String::new(),
             data: Some(event),
-            seq: self.seq,
+            seq: self.next_seq(),
         }
+    }
+
+    fn next_seq(&mut self) -> u64 {
+        self.seq = self.seq.wrapping_add(1).max(1);
+        self.seq
     }
 }
 
@@ -732,12 +781,12 @@ fn sample_index_for_position(position: f64, sample_rate: u32, sample_count: usiz
     raw.floor().min(sample_count as f64) as usize
 }
 
-fn decode_audio_bytes(bytes: &[u8], extension: &str) -> Result<DecodedAudio, String> {
+fn decode_audio_bytes(bytes: Vec<u8>, extension: &str) -> Result<DecodedAudio, String> {
     if bytes.is_empty() {
         return Err("empty audio data".into());
     }
 
-    let cursor = Cursor::new(bytes.to_vec());
+    let cursor = Cursor::new(bytes);
     let mss = MediaSourceStream::new(Box::new(cursor), Default::default());
     let mut hint = Hint::new();
     let extension = extension.trim_start_matches('.').to_ascii_lowercase();
@@ -773,7 +822,13 @@ fn decode_audio_bytes(bytes: &[u8], extension: &str) -> Result<DecodedAudio, Str
         .map(|channels| channels.count() as u16)
         .unwrap_or(1)
         .max(1);
-    let mut samples = Vec::<f32>::new();
+    let sample_capacity = track
+        .codec_params
+        .n_frames
+        .and_then(|frames| usize::try_from(frames).ok())
+        .unwrap_or(0);
+    let mut samples = Vec::<f32>::with_capacity(sample_capacity);
+    let mut sample_buf = None::<SampleBuffer<f32>>;
 
     loop {
         let packet = match format.next_packet() {
@@ -792,13 +847,27 @@ fn decode_audio_bytes(bytes: &[u8], extension: &str) -> Result<DecodedAudio, Str
                 sample_rate = spec.rate.max(1);
                 channels = (spec.channels.count() as u16).max(1);
 
-                let mut sample_buf = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-                sample_buf.copy_interleaved_ref(decoded);
                 let channel_count = channels as usize;
+                let required_samples = decoded.capacity().saturating_mul(channel_count);
+                let needs_buffer = sample_buf
+                    .as_ref()
+                    .map(|buf| buf.capacity() < required_samples)
+                    .unwrap_or(true);
+                if needs_buffer {
+                    sample_buf = Some(SampleBuffer::<f32>::new(decoded.capacity() as u64, spec));
+                }
+                let sample_buf = sample_buf.as_mut().expect("sample buffer initialized");
+                sample_buf.copy_interleaved_ref(decoded);
                 let decoded_samples = sample_buf.samples();
 
                 if channel_count == 1 {
                     samples.extend_from_slice(decoded_samples);
+                } else if channel_count == 2 {
+                    samples.extend(
+                        decoded_samples
+                            .chunks_exact(2)
+                            .map(|frame| (frame[0] + frame[1]) * 0.5),
+                    );
                 } else {
                     let inv_channels = 1.0 / channel_count as f32;
                     for frame in decoded_samples.chunks_exact(channel_count) {

@@ -21,7 +21,7 @@ use rodio::Source;
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tracing::warn;
 
-use crate::analysis::AnalysisCommand;
+use crate::analysis::{AnalysisCommand, AnalysisPcm, AnalysisSender};
 use crate::error::{AudioError, AudioResult};
 use crate::output::{OutputWriter, PushCancel};
 
@@ -310,6 +310,59 @@ impl SeekableSymphoniaSource {
             }
         }
     }
+
+    /// Append up to `max_frames` complete interleaved frames from the decoded
+    /// sample buffer. This is the steady-state passthrough hot path: copying a
+    /// contiguous slice avoids one Iterator call and bounds check per sample.
+    fn append_interleaved_frames(
+        &mut self,
+        dst: &mut Vec<f32>,
+        channels: usize,
+        max_frames: usize,
+    ) -> usize {
+        debug_assert_eq!(channels, self.channels().get() as usize);
+        let mut copied_frames = 0;
+
+        while copied_frames < max_frames {
+            if self.buffer_offset >= self.buffer.len() && self.refill().is_none() {
+                break;
+            }
+
+            let copied = append_available_interleaved_frames(
+                self.buffer.samples(),
+                &mut self.buffer_offset,
+                dst,
+                channels,
+                max_frames - copied_frames,
+            );
+            if copied == 0 {
+                // Symphonia buffers should be frame-aligned. If a malformed
+                // packet leaves a partial frame, discard it before refilling.
+                self.buffer_offset = self.buffer.len();
+                continue;
+            }
+            copied_frames += copied;
+        }
+
+        copied_frames
+    }
+}
+
+fn append_available_interleaved_frames(
+    samples: &[f32],
+    offset: &mut usize,
+    dst: &mut Vec<f32>,
+    channels: usize,
+    max_frames: usize,
+) -> usize {
+    debug_assert!(channels > 0);
+    let available_samples = samples.len().saturating_sub(*offset);
+    let frames = (available_samples / channels).min(max_frames);
+    let sample_count = frames * channels;
+    let end = *offset + sample_count;
+    dst.extend_from_slice(&samples[*offset..end]);
+    *offset = end;
+    frames
 }
 
 impl Iterator for SeekableSymphoniaSource {
@@ -454,7 +507,7 @@ pub fn spawn_playback_decoder<S>(
     output: S,
     output_channels: u16,
     output_sample_rate: u32,
-    analysis_tx: mpsc::Sender<AnalysisCommand>,
+    analysis_tx: AnalysisSender,
     analysis_enabled: Arc<AtomicBool>,
     event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
     playback_id: u64,
@@ -485,7 +538,7 @@ where
         .name("audio-decode".into())
         .spawn(move || {
             let mut worker = DecodeWorker::new(
-                Box::new(source),
+                source,
                 input_channels,
                 input_sample_rate,
                 output,
@@ -517,7 +570,7 @@ struct DecodeWorker<S: PlaybackSink> {
     output: S,
     output_channels: u16,
     output_sample_rate: u32,
-    analysis_tx: mpsc::Sender<AnalysisCommand>,
+    analysis_tx: AnalysisSender,
     analysis_enabled: Arc<AtomicBool>,
     analysis_recycle_tx: mpsc::Sender<Vec<f32>>,
     analysis_recycle_rx: mpsc::Receiver<Vec<f32>>,
@@ -537,13 +590,13 @@ struct DecodeWorker<S: PlaybackSink> {
 #[allow(clippy::too_many_arguments)]
 impl<S: PlaybackSink> DecodeWorker<S> {
     fn new(
-        source: Box<dyn Source<Item = f32> + Send>,
+        source: SeekableSymphoniaSource,
         input_channels: u16,
         input_sample_rate: u32,
         output: S,
         output_channels: u16,
         output_sample_rate: u32,
-        analysis_tx: mpsc::Sender<AnalysisCommand>,
+        analysis_tx: AnalysisSender,
         analysis_enabled: Arc<AtomicBool>,
         control_rx: mpsc::Receiver<DecoderControl>,
         event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
@@ -625,12 +678,43 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             let mut ended = false;
             let mut superseded = false;
 
-            for frame_index in 0..DECODE_BLOCK_FRAMES {
+            let mut frame_index = 0;
+            while frame_index < DECODE_BLOCK_FRAMES {
                 if frame_index % SEEK_CONTROL_CHECK_FRAMES == 0
                     && self.seek_epoch.load(Ordering::Acquire) != block_seek_epoch
                 {
                     superseded = true;
                     break;
+                }
+
+                // The common file/device layout needs neither resampling nor
+                // channel mixing. Once startup/seek shaping is complete, copy
+                // decoded interleaved PCM in contiguous chunks instead of
+                // pulling it through next_frame() sample by sample. Stop each
+                // chunk at the next control-check boundary so seek latency is
+                // unchanged.
+                if self.pre_roll_frames_remaining == 0
+                    && self.start_ramp_frames_remaining == 0
+                    && self.frames.can_bulk_passthrough()
+                {
+                    let until_control_check =
+                        SEEK_CONTROL_CHECK_FRAMES - (frame_index % SEEK_CONTROL_CHECK_FRAMES);
+                    let requested = until_control_check.min(DECODE_BLOCK_FRAMES - frame_index);
+                    let block_start = block.len();
+                    let copied = self.frames.append_passthrough_frames(&mut block, requested);
+                    if copied == 0 {
+                        ended = true;
+                        break;
+                    }
+                    if let Some(analysis_block) = analysis_block.as_mut() {
+                        analysis_block.extend_from_slice(&block[block_start..]);
+                    }
+                    frame_index += copied;
+                    if copied < requested {
+                        ended = true;
+                        break;
+                    }
+                    continue;
                 }
 
                 if self.frames.next_frame(&mut frame).is_none() {
@@ -657,6 +741,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                         block.extend_from_slice(&frame);
                     }
                 }
+                frame_index += 1;
             }
 
             if superseded || self.seek_epoch.load(Ordering::Acquire) != block_seek_epoch {
@@ -684,12 +769,22 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             if pushed && generation_current && self.analysis_enabled.load(Ordering::Acquire) {
                 if let Some(analysis_block) = analysis_block.take() {
                     if !analysis_block.is_empty() {
-                        let _ = self.analysis_tx.send(AnalysisCommand::Pcm {
+                        let pcm = AnalysisPcm {
                             samples: analysis_block,
                             channels: self.output_channels,
                             sample_rate: self.output_sample_rate,
                             recycle: Some(self.analysis_recycle_tx.clone()),
-                        });
+                        };
+                        if let Err(err) = self.analysis_tx.try_send_pcm(pcm) {
+                            // Analysis is best-effort. A full queue must never
+                            // slow decode; recover this allocation immediately.
+                            let mut samples = match err {
+                                mpsc::TrySendError::Full(pcm)
+                                | mpsc::TrySendError::Disconnected(pcm) => pcm.samples,
+                            };
+                            samples.clear();
+                            let _ = self.analysis_recycle_tx.send(samples);
+                        }
                     }
                 }
             }
@@ -801,13 +896,15 @@ impl<S: PlaybackSink> DecodeWorker<S> {
 }
 
 struct FrameConverter {
-    source: Box<dyn Source<Item = f32> + Send>,
+    // Playback always uses our Symphonia source. Keeping the concrete type
+    // here lets the compiler inline the per-sample iterator hot path instead
+    // of paying a trait-object dispatch for every decoded sample.
+    source: SeekableSymphoniaSource,
     input_channels: usize,
     output_channels: usize,
     matrix: Vec<Vec<(usize, f32)>>,
-    /// Reused scratch buffers (capacity == input_channels). They are swapped,
-    /// never reallocated, so the per-frame hot path performs zero heap
-    /// allocations regardless of how long playback runs.
+    /// Fixed-size scratch buffers. They are swapped, never reallocated or
+    /// resized, so the per-frame hot path only overwrites existing samples.
     current_frame: Vec<f32>,
     next_frame: Vec<f32>,
     has_current: bool,
@@ -825,7 +922,7 @@ struct FrameConverter {
 
 impl FrameConverter {
     fn new(
-        source: Box<dyn Source<Item = f32> + Send>,
+        source: SeekableSymphoniaSource,
         input_channels: u16,
         input_sample_rate: u32,
         output_channels: u16,
@@ -847,8 +944,8 @@ impl FrameConverter {
             input_channels,
             output_channels,
             matrix,
-            current_frame: Vec::with_capacity(input_channels),
-            next_frame: Vec::with_capacity(input_channels),
+            current_frame: vec![0.0; input_channels],
+            next_frame: vec![0.0; input_channels],
             has_current: false,
             has_next: false,
             reached_end: false,
@@ -870,8 +967,17 @@ impl FrameConverter {
         self.has_next = false;
         self.reached_end = false;
         self.frac = 0.0;
-        self.current_frame.clear();
-        self.next_frame.clear();
+    }
+
+    #[inline]
+    fn can_bulk_passthrough(&self) -> bool {
+        !self.resample && self.passthrough
+    }
+
+    fn append_passthrough_frames(&mut self, output: &mut Vec<f32>, frames: usize) -> usize {
+        debug_assert!(self.can_bulk_passthrough());
+        self.source
+            .append_interleaved_frames(output, self.output_channels, frames)
     }
 
     fn next_frame(&mut self, output: &mut [f32]) -> Option<()> {
@@ -888,7 +994,7 @@ impl FrameConverter {
                 return Some(());
             }
             if !read_input_frame(
-                self.source.as_mut(),
+                &mut self.source,
                 self.input_channels,
                 &mut self.current_frame,
             ) {
@@ -901,7 +1007,7 @@ impl FrameConverter {
         // Linear-interpolation resampling path.
         if !self.has_current {
             if !read_input_frame(
-                self.source.as_mut(),
+                &mut self.source,
                 self.input_channels,
                 &mut self.current_frame,
             ) {
@@ -910,11 +1016,7 @@ impl FrameConverter {
             self.has_current = true;
         }
         if !self.has_next && !self.reached_end {
-            if read_input_frame(
-                self.source.as_mut(),
-                self.input_channels,
-                &mut self.next_frame,
-            ) {
+            if read_input_frame(&mut self.source, self.input_channels, &mut self.next_frame) {
                 self.has_next = true;
             } else {
                 self.reached_end = true;
@@ -934,11 +1036,7 @@ impl FrameConverter {
             if self.has_next {
                 std::mem::swap(&mut self.current_frame, &mut self.next_frame);
                 self.has_next = false;
-                if read_input_frame(
-                    self.source.as_mut(),
-                    self.input_channels,
-                    &mut self.next_frame,
-                ) {
+                if read_input_frame(&mut self.source, self.input_channels, &mut self.next_frame) {
                     self.has_next = true;
                 } else {
                     self.reached_end = true;
@@ -972,19 +1070,19 @@ impl FrameConverter {
     }
 }
 
-/// Pull one interleaved input frame from `source` into `buf` (reusing its
-/// capacity). Returns `false` if the source ends, leaving any partial frame to
+/// Pull one interleaved input frame from `source` into a fixed-size scratch
+/// buffer. Returns `false` if the source ends, leaving any partial frame to
 /// be discarded by the caller — matching rodio's frame-aligned EOF behaviour.
 #[inline]
 fn read_input_frame(
-    source: &mut (dyn Source<Item = f32> + Send),
+    source: &mut SeekableSymphoniaSource,
     channels: usize,
-    buf: &mut Vec<f32>,
+    buf: &mut [f32],
 ) -> bool {
-    buf.clear();
-    for _ in 0..channels {
+    debug_assert_eq!(buf.len(), channels);
+    for slot in &mut buf[..channels] {
         match source.next() {
-            Some(sample) => buf.push(sample),
+            Some(sample) => *slot = sample,
             None => return false,
         }
     }
@@ -1046,4 +1144,35 @@ fn build_mix_matrix(input_channels: usize, output_channels: usize) -> Vec<Vec<(u
     }
 
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bulk_passthrough_copies_only_complete_frames() {
+        let samples = [0.1, -0.1, 0.2, -0.2, 9.0];
+        let mut offset = 0;
+        let mut output = Vec::new();
+
+        let frames = append_available_interleaved_frames(&samples, &mut offset, &mut output, 2, 8);
+
+        assert_eq!(frames, 2);
+        assert_eq!(offset, 4);
+        assert_eq!(output, vec![0.1, -0.1, 0.2, -0.2]);
+    }
+
+    #[test]
+    fn bulk_passthrough_respects_chunk_limit_and_offset() {
+        let samples = [0.1, -0.1, 0.2, -0.2, 0.3, -0.3];
+        let mut offset = 2;
+        let mut output = vec![7.0];
+
+        let frames = append_available_interleaved_frames(&samples, &mut offset, &mut output, 2, 1);
+
+        assert_eq!(frames, 1);
+        assert_eq!(offset, 4);
+        assert_eq!(output, vec![7.0, 0.2, -0.2]);
+    }
 }
