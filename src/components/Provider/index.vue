@@ -42,6 +42,7 @@ import {
   useMessage,
   useNotification,
 } from "naive-ui";
+import { nextTick } from "vue";
 import { settingStore } from "@/store";
 import { useDspSettings } from "@/composables/useDspSettings";
 import themeColorData from "./themeColor.json";
@@ -63,11 +64,12 @@ const themeOverrides = ref(null);
 const theme = ref(null);
 const themeColorMeta = document.querySelector('meta[name="theme-color"]');
 let themeReady = false;
+let skipNextThemeWatch = false;
 
 const prefersReducedMotion = () =>
   window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 
-const runThemeTransition = (apply) => {
+const runThemeTransition = (apply, targetTheme = setting.getSiteTheme) => {
   if (!themeReady || prefersReducedMotion()) {
     apply();
     themeReady = true;
@@ -75,16 +77,46 @@ const runThemeTransition = (apply) => {
   }
 
   const root = document.documentElement;
-  root.classList.add("theme-transitioning");
 
   if (document.startViewTransition) {
-    const transition = document.startViewTransition(apply);
+    const hasCustomOrigin = root.dataset.themeTransitionOrigin === "custom";
+    const x = hasCustomOrigin
+      ? Number.parseFloat(root.style.getPropertyValue("--theme-transition-x"))
+      : window.innerWidth / 2;
+    const y = hasCustomOrigin
+      ? Number.parseFloat(root.style.getPropertyValue("--theme-transition-y"))
+      : window.innerHeight / 2;
+    const safeX = Number.isFinite(x) ? x : window.innerWidth / 2;
+    const safeY = Number.isFinite(y) ? y : window.innerHeight / 2;
+    const radius = Math.hypot(
+      Math.max(safeX, window.innerWidth - safeX),
+      Math.max(safeY, window.innerHeight - safeY),
+    );
+
+    root.style.setProperty("--theme-transition-x", `${safeX}px`);
+    root.style.setProperty("--theme-transition-y", `${safeY}px`);
+    root.style.setProperty("--theme-transition-radius", `${radius}px`);
+    delete root.dataset.themeTransitionOrigin;
+    root.classList.add("theme-view-transition");
+    root.classList.add(
+      targetTheme === "dark" ? "theme-transition-to-dark" : "theme-transition-to-light",
+    );
+
+    const transition = document.startViewTransition(async () => {
+      apply();
+      await nextTick();
+    });
     transition.finished.finally(() => {
-      root.classList.remove("theme-transitioning");
+      root.classList.remove(
+        "theme-view-transition",
+        "theme-transition-to-dark",
+        "theme-transition-to-light",
+      );
     });
     return;
   }
 
+  root.classList.add("theme-transitioning");
   requestAnimationFrame(() => {
     apply();
     window.setTimeout(() => {
@@ -147,6 +179,17 @@ const applyTheme = () => {
 const changeTheme = () => {
   runThemeTransition(applyTheme);
 };
+
+const setSiteThemeWithTransition = (nextTheme) => {
+  if (nextTheme === setting.getSiteTheme) return;
+  skipNextThemeWatch = true;
+  runThemeTransition(() => {
+    setting.setSiteTheme(nextTheme);
+    applyTheme();
+  }, nextTheme);
+};
+
+window.$setSiteThemeWithTransition = setSiteThemeWithTransition;
 
 // 根据系统决定明暗切换
 const osThemeChange = (val) => {
@@ -215,6 +258,10 @@ const NaiveProviderContent = defineComponent({
 watch(
   () => setting.getSiteTheme,
   () => {
+    if (skipNextThemeWatch) {
+      skipNextThemeWatch = false;
+      return;
+    }
     changeTheme();
   },
 );
@@ -261,10 +308,23 @@ onMounted(() => {
   changeTheme();
   changeThemeColor(setting.themeType);
 });
+
+onBeforeUnmount(() => {
+  if (window.$setSiteThemeWithTransition === setSiteThemeWithTransition) {
+    delete window.$setSiteThemeWithTransition;
+  }
+});
 </script>
 
 <style lang="scss">
 @media (prefers-reduced-motion: no-preference) {
+  html.theme-view-transition *,
+  html.theme-view-transition *::before,
+  html.theme-view-transition *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+
   html.theme-transitioning,
   html.theme-transitioning body,
   html.theme-transitioning #app,
@@ -285,10 +345,52 @@ onMounted(() => {
       color 180ms cubic-bezier(0.22, 1, 0.36, 1) !important;
   }
 
-  ::view-transition-old(root),
-  ::view-transition-new(root) {
-    animation-duration: 260ms;
-    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  html.theme-view-transition::view-transition-old(root),
+  html.theme-view-transition::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+  }
+
+  html.theme-transition-to-dark::view-transition-old(root) {
+    z-index: 1;
+  }
+
+  html.theme-transition-to-dark::view-transition-new(root) {
+    z-index: 2;
+    animation: theme-circle-reveal 480ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  html.theme-transition-to-light::view-transition-old(root) {
+    z-index: 2;
+    animation: theme-circle-conceal 460ms cubic-bezier(0.4, 0, 0.2, 1) both;
+  }
+
+  html.theme-transition-to-light::view-transition-new(root) {
+    z-index: 1;
+  }
+}
+
+@keyframes theme-circle-conceal {
+  from {
+    clip-path: circle(
+      var(--theme-transition-radius) at var(--theme-transition-x) var(--theme-transition-y)
+    );
+  }
+
+  to {
+    clip-path: circle(0 at var(--theme-transition-x) var(--theme-transition-y));
+  }
+}
+
+@keyframes theme-circle-reveal {
+  from {
+    clip-path: circle(0 at var(--theme-transition-x) var(--theme-transition-y));
+  }
+
+  to {
+    clip-path: circle(
+      var(--theme-transition-radius) at var(--theme-transition-x) var(--theme-transition-y)
+    );
   }
 }
 </style>

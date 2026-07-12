@@ -1,170 +1,247 @@
 <template>
-  <!-- 喜欢的音乐 -->
-  <div class="like-song" @click="toLikeSongs">
-    <div class="like-song-bg" :style="`background-image: url(${cardImage})`" />
-    <div class="gray" />
-    <div class="left">
-      <n-icon class="icon" :component="CollectionRecords" size="30" />
-      <div class="title">
-        <n-text class="name">{{ $t("home.modules.likeSong.title") }}</n-text>
-        <n-text class="tip">{{ $t("home.modules.likeSong.subtitle") }}</n-text>
-      </div>
+  <article
+    class="liked-card"
+    role="link"
+    tabindex="0"
+    @click="toLikeSongs"
+    @keydown.enter="toLikeSongs"
+    @keydown.space.prevent="toLikeSongs"
+  >
+    <div class="liked-card__artwork" aria-hidden="true">
+      <img :src="cardImage" alt="" loading="lazy" @error="useFallbackCover" />
+      <span class="liked-card__artwork-icon">♥</span>
     </div>
-    <div class="right">
-      <n-icon class="icon" :component="Right" size="20" />
+    <div class="liked-card__content">
+      <span class="liked-card__eyebrow">{{ $t("home.modules.likeSong.eyebrow") }}</span>
+      <h3>{{ $t("home.modules.likeSong.title") }}</h3>
+      <p>{{ $t("home.modules.likeSong.subtitle") }}</p>
     </div>
-  </div>
+    <span class="liked-card__arrow" aria-hidden="true">
+      <n-icon :component="Right" size="18" />
+    </span>
+  </article>
 </template>
 
 <script setup>
+import { Right } from "@icon-park/vue-next";
+import { computed, onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { userStore } from "@/store";
-import { CollectionRecords, Right } from "@icon-park/vue-next";
 
+const FALLBACK_COVER = "/images/pic/pic.jpg";
 const router = useRouter();
 const user = userStore();
+const { t } = useI18n();
 
-// 卡片背景
-const cardImage = ref(null);
+const cardImage = computed(() => {
+  const cover = user.getUserPlayLists.own[0]?.cover;
+  return cover ? `${cover.replace(/^http:/, "https:")}?param=240y240` : FALLBACK_COVER;
+});
 
-// 生成卡片背景
-const getCardImage = (index) => {
-  if (user.userLogin && user.getUserPlayLists.own[0]) {
-    const num = index ?? Math.floor(Math.random() * user.getUserPlayLists.own.length);
-    cardImage.value =
-      user.getUserPlayLists.own[num]?.cover.replace(/^http:/, "https:") + "?param=100y100";
-  } else {
-    cardImage.value = "/images/pic/pic.jpg";
+const useFallbackCover = (event) => {
+  const image = event.currentTarget;
+  if (image instanceof HTMLImageElement && !image.src.endsWith(FALLBACK_COVER)) {
+    image.src = FALLBACK_COVER;
   }
 };
 
-// 跳转喜欢的音乐
 const toLikeSongs = () => {
-  if (user.userLogin) {
-    const id = user.getUserPlayLists.own[0]?.id;
-    if (id) {
-      router.push(`/playlist?id=${id}&page=1`);
-    } else {
-      console.error("发生错误");
-    }
-  } else {
-    $message.error("请登录账号后使用");
+  if (!user.userLogin) {
+    $message.error(t("general.message.needLogin"));
     router.push("/login");
+    return;
   }
+
+  const id = user.getUserPlayLists.own[0]?.id;
+  if (id) router.push(`/playlist?id=${id}&page=1`);
 };
 
 onMounted(() => {
-  getCardImage();
   if (user.userLogin && !user.getUserPlayLists.has && !user.getUserPlayLists.isLoading) {
-    user.setUserPlayLists(() => {
-      getCardImage();
-    });
+    user.setUserPlayLists();
   }
 });
 </script>
 
 <style lang="scss" scoped>
-.like-song {
+.liked-card {
   position: relative;
-  color: #fff;
-  height: 100%;
-  width: 100%;
-  display: flex;
-  flex-direction: row;
+  isolation: isolate;
+  contain: layout paint;
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) 38px;
   align-items: center;
-  justify-content: space-between;
-  border-radius: 8px;
-  padding: 0 18px;
+  gap: 15px;
+  width: 100%;
+  min-width: 0;
+  height: 118px;
+  min-height: 0;
+  padding: 12px 14px 12px 12px;
+  overflow: clip;
   box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--n-text-color) 8%, transparent);
+  border-radius: var(--radius-panel);
+  background: color-mix(in srgb, var(--n-text-color) 4%, transparent);
   cursor: pointer;
-  z-index: 0;
+  outline: none;
+  transition: background-color var(--duration-200) var(--ease-out);
+}
+
+.liked-card__artwork {
+  position: relative;
+  width: 82px;
+  height: 82px;
   overflow: hidden;
-  transform: translateZ(0);
-  perspective: 1px;
-  &:hover {
-    .left {
-      .title {
-        .name {
-          opacity: 0;
-          transform: translateY(-50px);
-        }
-        .tip {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-    }
-    .right {
-      .icon {
-        opacity: 1;
-        transform: translateX(0);
-      }
-    }
-  }
-  .like-song-bg {
-    position: absolute;
-    // 放大并超出容器，模糊后的透明边缘被 overflow:hidden 裁掉
-    inset: -48px;
-    background-repeat: no-repeat;
-    background-size: cover;
-    background-position: center;
-    // 直接模糊背景图本身，避免依赖 backdrop-filter（在 translateZ/perspective 等 3D 上下文中会失效）
-    filter: blur(20px);
-    z-index: 0;
-  }
-  .gray {
+  border-radius: calc(var(--radius-panel) - 5px);
+  background: color-mix(in srgb, var(--n-text-color) 7%, transparent);
+  aspect-ratio: 1;
+  max-width: 100%;
+
+  img {
     position: absolute;
     inset: 0;
-    background-color: rgba(0, 0, 0, 0.4);
-    pointer-events: none;
-    z-index: 1;
-  }
-  .left {
-    position: relative;
-    z-index: 2;
-    height: 100%;
+    display: block;
     width: 100%;
-    display: flex;
-    align-items: center;
-    .icon {
-      margin-right: 12px;
-    }
-    .title {
-      height: 100%;
-      width: 100%;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      .name {
-        color: #fff;
-        font-size: 18px;
-        transition: all 0.3s;
-        @media (max-width: 1020px) {
-          font-size: 16px;
-        }
-      }
-      .tip {
-        height: 100%;
-        display: flex;
-        align-items: center;
-        position: absolute;
-        color: #fff;
-        opacity: 0;
-        transform: translateY(50px);
-        transition: all 0.3s;
-      }
-    }
+    height: 100%;
+    object-fit: cover;
+    transition: transform var(--duration-400) var(--ease-out);
   }
-  .right {
-    position: relative;
-    z-index: 2;
-    display: flex;
-    .icon {
-      opacity: 0;
-      transform: translateX(-8px);
-      transition: all 0.3s;
-    }
+
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, transparent 38%, rgba(0, 0, 0, 0.38));
+  }
+}
+
+.liked-card__artwork-icon {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  z-index: 1;
+  color: #fff;
+  font-size: 18px;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+.liked-card__content {
+  min-width: 0;
+
+  h3,
+  p {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  h3 {
+    margin: 4px 0 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  p {
+    margin: 3px 0 0;
+    color: var(--n-text-color-3);
+    font-size: 12px;
+  }
+}
+
+.liked-card__eyebrow {
+  color: var(--n-text-color-3);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.liked-card__arrow {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  color: var(--n-text-color-2);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+  transition:
+    color var(--duration-200) var(--ease-out),
+    transform var(--duration-200) var(--ease-out);
+}
+
+.liked-card:hover,
+.liked-card:focus-visible {
+  background: color-mix(in srgb, var(--n-text-color) 8%, transparent);
+
+  .liked-card__artwork img {
+    transform: scale(1.04);
+  }
+
+  .liked-card__arrow {
+    color: var(--n-text-color);
+    transform: translateX(2px);
+  }
+}
+
+@container (max-width: 480px) {
+  .liked-card {
+    grid-template-columns: clamp(58px, 19cqi, 68px) minmax(0, 1fr) 32px;
+    gap: 11px;
+    height: auto;
+    min-height: 88px;
+    padding: 10px;
+  }
+
+  .liked-card__artwork {
+    width: clamp(58px, 19cqi, 68px);
+    height: auto;
+  }
+
+  .liked-card__content p {
+    display: none;
+  }
+
+  .liked-card__arrow {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@container (max-width: 360px) {
+  .liked-card {
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 10px;
+    min-height: 78px;
+    padding: 9px;
+  }
+
+  .liked-card__artwork {
+    width: 58px;
+  }
+
+  .liked-card__content h3 {
+    margin-top: 2px;
+    font-size: 15px;
+  }
+
+  .liked-card__eyebrow {
+    font-size: 8px;
+  }
+
+  .liked-card__arrow {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liked-card,
+  .liked-card__artwork img,
+  .liked-card__arrow {
+    transition: none;
   }
 }
 </style>

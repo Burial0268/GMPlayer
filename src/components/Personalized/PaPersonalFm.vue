@@ -1,82 +1,117 @@
 <template>
-  <Transition mode="out-in">
-    <div v-if="music.getPersonalFmData?.id" class="papersonalfm">
-      <div
-        class="papersonalfm-bg"
-        :style="`background-image: url(${music.getPersonalFmData.album.picUrl.replace(
-          /^http:/,
-          'https:',
-        )}?param=300y300)`"
-      />
-      <div class="gray" />
-      <img
-        class="pic"
-        :src="music.getPersonalFmData.album.picUrl.replace(/^http:/, 'https:') + '?param=300y300'"
-        alt="pic"
-      />
-      <div class="data">
-        <div class="info">
-          <span
-            class="name text-hidden"
-            @click="router.push(`/song?id=${music.getPersonalFmData.id}`)"
-          >
-            {{ music.getPersonalFmData.name }}
-          </span>
-          <AllArtists class="text-hidden" :artistsData="music.getPersonalFmData.artist" />
-        </div>
-        <div class="controls">
-          <n-icon
-            class="state"
-            size="46"
-            :component="
-              music.getPersonalFmMode
-                ? music.getPlayState
-                  ? PauseCircleFilled
-                  : PlayCircleFilled
-                : PlayCircleFilled
-            "
-            @click="fmPlayOrPause"
+  <div class="personal-fm-host">
+    <Transition mode="out-in">
+      <article v-if="fmData?.id" class="personal-fm">
+        <div class="artwork-wrap">
+          <img
+            v-if="coverUrl && !coverFailed"
+            class="artwork"
+            :src="coverUrl"
+            :alt="fmData.name || $t('home.modules.personalFm.title')"
+            loading="lazy"
+            decoding="async"
+            @error="coverFailed = true"
           />
-          <n-icon class="next" size="30" :component="SkipNextRound" @click="fmNext" />
-          <n-icon
-            class="dislike"
-            size="20"
-            :component="ThumbDownRound"
-            @click="music.setFmDislike(music.getPersonalFmData.id)"
-          />
-          <div class="radio">
-            <div class="icon">
-              <n-icon size="20" :component="RadioFilled" />
-              <span>{{ $t("home.modules.papersonalfm.title") }}</span>
-            </div>
-            <span class="tip" v-if="!user.userLogin">
-              {{ $t("home.modules.papersonalfm.subtitle") }}
-            </span>
+          <div v-else class="artwork artwork-fallback" aria-hidden="true">
+            <n-icon :component="RadioFilled" />
+          </div>
+
+          <div class="station-label">
+            <n-icon :component="RadioFilled" />
+            <span>{{ $t("home.modules.personalFm.title") }}</span>
           </div>
         </div>
-      </div>
-    </div>
-    <n-skeleton v-else class="papersonalfm" />
-  </Transition>
+
+        <div class="content">
+          <div class="track-info">
+            <button
+              class="track-name text-hidden"
+              type="button"
+              :aria-label="fmData.name"
+              @click.stop="router.push(`/song?id=${fmData.id}`)"
+            >
+              {{ fmData.name }}
+            </button>
+            <AllArtists class="artists text-hidden" :artistsData="fmData.artist || []" />
+            <span v-if="!user.userLogin" class="tip">
+              {{ $t("home.modules.personalFm.subtitle") }}
+            </span>
+          </div>
+
+          <div class="controls" @click.stop>
+            <button
+              class="control-button secondary"
+              type="button"
+              :aria-label="$t('home.modules.personalFm.dislike')"
+              :title="$t('home.modules.personalFm.dislike')"
+              @click.stop="music.setFmDislike(fmData.id)"
+            >
+              <n-icon :component="ThumbDownRound" />
+            </button>
+            <button
+              class="control-button primary"
+              type="button"
+              :aria-label="
+                isFmPlaying
+                  ? $t('home.modules.personalFm.pause')
+                  : $t('home.modules.personalFm.play')
+              "
+              :title="
+                isFmPlaying
+                  ? $t('home.modules.personalFm.pause')
+                  : $t('home.modules.personalFm.play')
+              "
+              @click.stop="fmPlayOrPause"
+            >
+              <n-icon :component="isFmPlaying ? PauseRound : PlayArrowRound" />
+            </button>
+            <button
+              class="control-button secondary"
+              type="button"
+              :aria-label="$t('home.modules.personalFm.next')"
+              :title="$t('home.modules.personalFm.next')"
+              @click.stop="fmNext"
+            >
+              <n-icon :component="SkipNextRound" />
+            </button>
+          </div>
+        </div>
+      </article>
+      <n-skeleton v-else class="personal-fm skeleton" />
+    </Transition>
+  </div>
 </template>
 
 <script setup>
-import { musicStore, userStore } from "@/store";
+import { computed, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import {
-  PlayCircleFilled,
-  PauseCircleFilled,
+  PauseRound,
+  PlayArrowRound,
+  RadioFilled,
   SkipNextRound,
   ThumbDownRound,
-  RadioFilled,
 } from "@vicons/material";
 import AllArtists from "@/components/DataList/AllArtists.vue";
+import { musicStore, userStore } from "@/store";
 
 const music = musicStore();
 const user = userStore();
 const router = useRouter();
+const coverFailed = ref(false);
 
-// 私人 fm 播放与暂停
+const fmData = computed(() => music.getPersonalFmData);
+const coverUrl = computed(() => {
+  const picUrl = fmData.value?.album?.picUrl;
+  if (typeof picUrl !== "string" || !picUrl) return "";
+  return `${picUrl.replace(/^http:/, "https:")}?param=1024y1024`;
+});
+const isFmPlaying = computed(() => music.getPersonalFmMode && music.getPlayState);
+
+watch(coverUrl, () => {
+  coverFailed.value = false;
+});
+
 const fmPlayOrPause = () => {
   if (music.getPersonalFmMode) {
     music.setPlayState(!music.getPlayState);
@@ -86,173 +121,282 @@ const fmPlayOrPause = () => {
   }
 };
 
-// 下一曲
 const fmNext = () => {
   music.setPersonalFmMode(true);
   music.setPlaySongIndex("next");
 };
 
 onMounted(() => {
-  if (!music.getPersonalFmData.id) music.setPersonalFmData();
+  if (!music.getPersonalFmData?.id) music.setPersonalFmData();
 });
 </script>
 
 <style lang="scss" scoped>
-.papersonalfm {
+.personal-fm-host {
+  container-name: personal-fm;
+  container-type: inline-size;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+.personal-fm {
   position: relative;
+  height: 100%;
+  min-height: 300px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.94);
+  background: #18191c;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-panel);
+  box-shadow: none;
+  filter: none;
+  box-sizing: border-box;
+}
+
+.artwork-wrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.artwork {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.artwork-fallback {
+  display: grid;
+  place-items: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: clamp(42px, 8vw, 72px);
+  background: linear-gradient(145deg, #34363a, #202124);
+}
+
+.station-label {
+  position: absolute;
+  top: 12px;
+  left: 12px;
   display: flex;
   align-items: center;
-  padding: 20px;
-  height: 100%;
-  border-radius: 8px;
-  box-sizing: border-box;
+  gap: 6px;
+  max-width: calc(100% - 24px);
+  padding: 7px 10px;
   overflow: hidden;
-  color: #ffffff;
-  z-index: 0;
-  transition: all 0.3s;
-  transform: translateZ(0);
-  perspective: 1px;
-  .papersonalfm-bg {
-    position: absolute;
-    // 放大并超出容器，模糊后的透明边缘被 overflow:hidden 裁掉
-    inset: -96px;
-    background-repeat: no-repeat;
-    background-size: cover;
-    background-position: center;
-    // 直接模糊背景图本身，避免依赖 backdrop-filter（在 translateZ/perspective 等 3D 上下文中会失效）
-    filter: blur(40px);
-    z-index: 0;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  z-index: 2;
+  background: rgba(14, 14, 15, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+}
+
+.content {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  min-width: 0;
+  padding: 72px 18px 18px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(8, 8, 9, 0.38) 28%,
+    rgba(8, 8, 9, 0.88) 76%,
+    rgba(8, 8, 9, 0.96)
+  );
+}
+
+.track-info {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.track-name {
+  width: fit-content;
+  max-width: 100%;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.3;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.track-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.track-name:focus-visible,
+.control-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.artists {
+  flex-wrap: nowrap;
+  min-width: 0;
+  font-size: 13px;
+
+  :deep(.artist) {
+    display: inline-block;
+    white-space: nowrap;
+
+    .name {
+      color: rgba(255, 255, 255, 0.64);
+
+      &:hover {
+        color: rgba(255, 255, 255, 0.92);
+      }
+    }
   }
-  .gray {
-    position: absolute;
-    inset: 0;
-    background-color: rgba(0, 0, 0, 0.4);
-    pointer-events: none;
-    z-index: 1;
+}
+
+.tip {
+  margin-top: 2px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.controls {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 7px;
+}
+
+.control-button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  color: inherit;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    transform 160ms ease;
+}
+
+.control-button:hover {
+  transform: translateY(-1px);
+}
+
+.control-button:active {
+  transform: scale(0.94);
+}
+
+.control-button.secondary {
+  width: 44px;
+  height: 44px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 20px;
+  background: rgba(255, 255, 255, 0.075);
+}
+
+.control-button.secondary:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.control-button.primary {
+  width: 50px;
+  height: 50px;
+  color: #111;
+  font-size: 28px;
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.skeleton {
+  height: 100%;
+  border-radius: var(--radius-panel);
+}
+
+@container personal-fm (max-width: 560px) {
+  .personal-fm {
+    min-height: clamp(220px, 72cqi, 340px);
   }
-  .pic {
-    position: relative;
-    z-index: 2;
-    // width: fit-content;
-    height: 100%;
-    border-radius: 8px;
-    margin-right: 16px;
+
+  .content {
+    padding: 64px 14px 14px;
   }
-  .data {
-    position: relative;
-    z-index: 2;
-    width: 100%;
-    height: 100%;
-    display: flex;
+}
+
+@container personal-fm (max-width: 440px) {
+  .content {
     flex-direction: column;
-    justify-content: space-between;
-    .info {
-      width: 100%;
-      box-sizing: border-box;
-      .name {
-        font-size: 24px;
-        font-weight: bold;
-        -webkit-line-clamp: 2;
-        cursor: pointer;
-      }
-      .artists {
-        flex-wrap: nowrap;
-        :deep(.artist) {
-          display: inline-block;
-          white-space: nowrap;
-          .name {
-            color: #ffffffcc;
-            &:hover {
-              color: #fff;
-            }
-          }
-        }
-      }
-    }
-    .controls {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      .state {
-        margin-right: 2px;
-        transition: transform 0.3s;
-        cursor: pointer;
-        &:hover {
-          transform: scale(1.1);
-        }
-        &:active {
-          transform: scale(1);
-        }
-      }
-      .next,
-      .dislike {
-        cursor: pointer;
-        margin: 0 4px;
-        padding: 4px;
-        border-radius: 8px;
-        transform: scale(1);
-        transition: all 0.3s;
-        @media (min-width: 640px) {
-          &:hover {
-            background-color: #ffffff30;
-          }
-        }
-        &:active {
-          transform: scale(0.9);
-        }
-      }
-      .dislike {
-        padding: 9px;
-      }
-      .radio {
-        opacity: 0.6;
-        margin-left: auto;
-        margin-top: auto;
-        margin-right: 4px;
-        transform: translateY(4px);
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        font-size: 16px;
-        font-weight: bold;
-        pointer-events: none;
-        z-index: -1;
-        @media (max-width: 490px) {
-          position: absolute;
-          right: 20px;
-          bottom: 20px;
-        }
-        .icon {
-          display: flex;
-          align-items: center;
-          .n-icon {
-            margin-right: 6px;
-            transform: translateY(-1px);
-          }
-        }
-        .tip {
-          font-size: 12px;
-          font-weight: normal;
-          display: block;
-        }
-      }
-    }
+    align-items: stretch;
+    gap: 10px;
+    padding-top: 76px;
   }
-  @media (max-width: 1020px) {
-    .pic {
-      height: 96px;
-      position: absolute;
-      top: 20px;
-      left: 20px;
-    }
-    .data {
-      .info {
-        padding-left: 116px;
-        .name {
-          font-size: 22px;
-        }
-      }
-    }
+
+  .controls {
+    justify-content: flex-start;
+  }
+}
+
+@container personal-fm (max-width: 340px) {
+  .personal-fm {
+    min-height: 270px;
+  }
+
+  .station-label {
+    top: 8px;
+    left: 8px;
+    padding: 7px;
+  }
+
+  .track-name {
+    font-size: 16px;
+  }
+
+  .controls {
+    gap: 6px;
+  }
+
+  .tip {
+    display: none;
+  }
+}
+
+@container personal-fm (max-width: 280px) {
+  .station-label span {
+    display: none;
+  }
+}
+
+@media (hover: none) {
+  .control-button:hover {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .control-button {
+    transition: none;
   }
 }
 </style>

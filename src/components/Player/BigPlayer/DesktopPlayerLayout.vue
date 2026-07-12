@@ -10,9 +10,9 @@
     </div>
 
     <div
-      v-if="lyricsReady"
       ref="rightContentRef"
       :class="['right', { 'lyrics-hidden': !showLyrics }]"
+      :aria-hidden="!showLyrics"
     >
       <DesktopLyricsPanel
         :menuShow="menuShow"
@@ -124,26 +124,34 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
   }
 
   .right {
-    flex: 0 1 60%;
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: 60%;
     min-width: 0;
     height: 100%;
+    z-index: 1;
+    box-sizing: border-box;
     mix-blend-mode: plus-lighter;
     padding-right: 1rem;
     opacity: 1;
     overflow: hidden;
+    visibility: visible;
+    transform: translate3d(0, 0, 0);
     transition:
-      flex-basis 0.34s cubic-bezier(0.25, 1, 0.5, 1),
-      padding 0.34s cubic-bezier(0.25, 1, 0.5, 1),
-      transform 0.3s cubic-bezier(0.25, 1, 0.5, 1),
-      opacity 0.24s ease;
-    will-change: flex-basis, transform, opacity;
+      transform 0.34s var(--ease-out),
+      opacity 0.18s var(--ease-out) 0.16s,
+      visibility 0s linear;
+    will-change: transform, opacity;
 
     &.lyrics-hidden {
-      flex-basis: 0;
-      padding-right: 0;
       opacity: 0;
-      transform: translateX(16px);
+      visibility: hidden;
+      transform: translate3d(24px, 0, 0);
       pointer-events: none;
+      transition:
+        opacity 0.22s var(--ease-out),
+        transform 0.28s var(--ease-out),
+        visibility 0s linear 0.28s;
     }
   }
 }

@@ -734,7 +734,9 @@ onMounted(() => {
 watch(
   () => (music ? music.getPlaySongData : null),
   (val, oldVal) => {
-    if (val !== oldVal) {
+    // 以歌曲 ID 判定是否切歌：队列被整体替换时对象引用必然变化，
+    // 但同一首歌不应重新加载；不同的歌（即使处于相同索引）必须加载。
+    if (val?.id !== oldVal?.id) {
       // During AutoMix crossfade, don't reset time — adoptIncomingSound handles it.
       // Resetting here causes duration=0 because the incoming sound's play() is async
       // and checkAudioTime only updates when playing() returns true.
@@ -1060,7 +1062,9 @@ watch(
 
   // Mobile: player sits above tab bar, no sidebar
   @media (max-width: 768px) {
-    bottom: 56px;
+    // Sit above the 56px tab bar; add safe-area-bottom so the home indicator /
+    // gesture bar on notched Android/iOS screens doesn't overlap the mini player.
+    bottom: calc(56px + var(--app-safe-area-bottom, 0px));
     left: 0;
     width: 100%;
     --n-border-color: transparent !important;

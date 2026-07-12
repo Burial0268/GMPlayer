@@ -1,7 +1,7 @@
 <template>
   <div class="discover">
     <n-text class="title">{{ $t("nav.discover") }}</n-text>
-    <n-tabs class="main-tab" type="segment" @update:value="tabChange" v-model:value="tabValue">
+    <n-tabs class="main-tab" type="line" @update:value="tabChange" v-model:value="tabValue">
       <n-tab name="playlists">{{ $t("nav.discoverChildren.playlists") }}</n-tab>
       <n-tab name="toplists">{{ $t("nav.discoverChildren.toplists") }}</n-tab>
       <n-tab name="artists">{{ $t("nav.discoverChildren.artists") }}</n-tab>

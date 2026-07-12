@@ -1,21 +1,49 @@
 <template>
-  <div class="padailysongs" @click="router.push('/dailySongs')">
-    <div class="padailysongs-bg" :style="`background-image: url(${cardImage})`" />
-    <div class="gray" />
-    <div class="text">
-      <div class="date">
-        <n-icon class="calendar" :component="CalendarTodayFilled" size="40" />
-        <n-text class="num">{{ displayDay }}</n-text>
+  <div class="daily-card-host">
+    <article
+      class="daily-card"
+      role="link"
+      tabindex="0"
+      @click="openDailySongs"
+      @keydown.enter.self="openDailySongs"
+      @keydown.space.self.prevent="openDailySongs"
+    >
+      <div class="artwork-wrap">
+        <img
+          class="artwork"
+          :src="coverUrl"
+          :alt="$t('home.modules.dailySongs.title')"
+          loading="lazy"
+          decoding="async"
+          @error="useFallbackCover"
+        />
+
+        <div class="date-badge" aria-hidden="true">
+          <span class="date-day">{{ displayDay }}</span>
+          <span class="date-copy">
+            <span>{{ displayMonth }}</span>
+            <span>{{ $t("home.modules.dailySongs.label") }}</span>
+          </span>
+        </div>
       </div>
-      <div class="desc">
-        <n-text class="title">{{ $t("home.modules.dailySongs.title") }}</n-text>
-        <n-text class="tip">{{ $t("home.modules.dailySongs.subtitle") }}</n-text>
+
+      <div class="content">
+        <div class="copy">
+          <span class="eyebrow">{{ $t("home.modules.dailySongs.subtitle") }}</span>
+          <h3>{{ $t("home.modules.dailySongs.title") }}</h3>
+        </div>
+
+        <button
+          class="play-button"
+          type="button"
+          :aria-label="$t('home.modules.dailySongs.play')"
+          :title="$t('home.modules.dailySongs.play')"
+          @click.stop="playThisSong"
+        >
+          <n-icon :component="PlayArrowRound" size="25" />
+        </button>
       </div>
-    </div>
-    <div class="control">
-      <n-avatar class="cover" :src="cardImage" fallback-src="/images/pic/default.png" />
-      <n-icon class="play" :component="PlayCircleFilled" size="50" @click.stop="playThisSong" />
-    </div>
+    </article>
   </div>
 </template>
 
@@ -24,38 +52,48 @@ import { getDailySongs } from "@/api/home";
 import { useRouter } from "vue-router";
 import { musicStore, userStore } from "@/store";
 import { getDailySongsDate } from "@/utils/timeTools";
-import { PlayCircleFilled, CalendarTodayFilled } from "@vicons/material";
+import { PlayArrowRound } from "@vicons/material";
+import { useI18n } from "vue-i18n";
+
+const FALLBACK_COVER = "/images/pic/pic.jpg";
 
 const music = musicStore();
 const user = userStore();
 const router = useRouter();
+const { locale, t } = useI18n();
+const playStartIndex = ref(0);
 
-// 卡片背景
-const cardImage = ref(null);
-const randomIndex = ref(0);
 const displayDay = computed(() => Number(getDailySongsDate().split("-")[2]));
+const displayMonth = computed(() =>
+  new Intl.DateTimeFormat(locale.value, { month: "short" }).format(new Date()).toUpperCase(),
+);
 
-const resetRandomIndex = () => {
-  randomIndex.value = music.getDailySongs.length
+const normalizeCover = (url) => {
+  if (typeof url !== "string" || !url) return FALLBACK_COVER;
+  return `${url.replace(/^http:/, "https:")}?param=1024y1024`;
+};
+
+const coverUrl = computed(() =>
+  normalizeCover(music.getDailySongs[playStartIndex.value]?.album?.picUrl),
+);
+
+const openDailySongs = () => router.push("/dailySongs");
+
+const resetPlayStartIndex = () => {
+  playStartIndex.value = music.getDailySongs.length
     ? Math.floor(Math.random() * music.getDailySongs.length)
     : 0;
 };
 
-// 生成卡片背景
-const getCardImage = () => {
-  if (user.userLogin && music.getDailySongs[0]) {
-    resetRandomIndex();
-    cardImage.value =
-      music.getDailySongs[randomIndex.value]?.album.picUrl.replace(/^http:/, "https:") +
-      "?param=100y100";
-  } else {
-    cardImage.value = "/images/pic/pic.jpg";
+const useFallbackCover = (event) => {
+  const image = event.currentTarget;
+  if (image instanceof HTMLImageElement && !image.src.endsWith(FALLBACK_COVER)) {
+    image.src = FALLBACK_COVER;
   }
 };
 
-// 获取每日推荐数据
 const getDailySongsData = () => {
-  getCardImage();
+  resetPlayStartIndex();
   const dailySongsDate = getDailySongsDate();
   if (
     user.userLogin &&
@@ -64,181 +102,276 @@ const getDailySongsData = () => {
     getDailySongs().then((res) => {
       if (res.data.dailySongs) {
         music.setDailySongs(res.data.dailySongs, dailySongsDate);
-        getCardImage();
+        resetPlayStartIndex();
       } else {
-        $message.error("每日推荐获取失败");
+        $message.error(t("home.modules.dailySongs.fetchFailed"));
       }
     });
   }
 };
 
-// 从当前歌曲开始播放
 const playThisSong = () => {
-  if (user.userLogin) {
-    if (music.getDailySongs.length !== 0) {
-      // 正在播放的歌曲id
-      const songId = music.getPlaySongData?.id;
-      // 查找是否在日推中
-      const isHas = music.getDailySongs.findIndex((o) => o.id === songId);
-      console.log(isHas);
-      music.setPersonalFmMode(false);
-      music.setPlayState(true);
-      if (isHas === -1) {
-        music.setPlaylists(music.getDailySongs);
-        music.addSongToPlaylists(music.getDailySongs[randomIndex.value]);
-      }
-    } else {
-      $message.error("每日推荐获取失败，请刷新后重试");
-    }
-  } else {
-    $message.error("请登录账号后使用");
+  if (!user.userLogin) {
+    $message.error(t("general.message.needLogin"));
+    return;
+  }
+  if (music.getDailySongs.length === 0) {
+    $message.error(t("home.modules.dailySongs.fetchRetry"));
+    return;
+  }
+
+  const songId = music.getPlaySongData?.id;
+  const isHas = music.getDailySongs.findIndex((song) => song.id === songId);
+  music.setPersonalFmMode(false);
+  music.setPlayState(true);
+  if (isHas === -1) {
+    music.setPlaylists(music.getDailySongs);
+    music.addSongToPlaylists(music.getDailySongs[playStartIndex.value]);
   }
 };
 
-onMounted(() => {
-  getDailySongsData();
-});
+onMounted(getDailySongsData);
 </script>
 
 <style lang="scss" scoped>
-.padailysongs {
+.daily-card-host {
+  container-name: daily-card;
+  container-type: inline-size;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+.daily-card {
   position: relative;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  height: 110px;
-  border-radius: 8px;
-  padding: 0 28px;
-  box-sizing: border-box;
+  isolation: isolate;
+  width: 100%;
+  height: 100%;
+  min-height: 300px;
   overflow: hidden;
-  z-index: 0;
-  margin-bottom: 20px;
-  transition: all 0.3s;
+  box-sizing: border-box;
+  color: rgba(255, 255, 255, 0.94);
+  border: 0;
+  border-radius: var(--radius-panel);
+  background: #18191c;
+  box-shadow: none;
   cursor: pointer;
-  transform: translateZ(0);
-  perspective: 1px;
-  &:hover {
-    .control {
-      .cover {
-        opacity: 0;
-      }
-      .play {
-        transform: rotate(0);
-        opacity: 1;
-        right: 5px;
-      }
-    }
-  }
-  .padailysongs-bg {
-    position: absolute;
-    // 放大并超出容器，模糊后的透明边缘被 overflow:hidden 裁掉
-    inset: -48px;
-    background-repeat: no-repeat;
-    background-size: cover;
-    background-position: center;
-    // 直接模糊背景图本身，避免依赖 backdrop-filter（在 translateZ/perspective 等 3D 上下文中会失效）
-    filter: blur(20px);
-    z-index: 0;
-  }
-  .gray {
+
+  &::after {
+    content: "";
     position: absolute;
     inset: 0;
-    background-color: rgba(0, 0, 0, 0.4);
+    z-index: 3;
     pointer-events: none;
-    z-index: 1;
+    border: 1px solid rgba(255, 255, 255, 0.34);
+    border-radius: inherit;
+    box-sizing: border-box;
+    opacity: 0.72;
+    mix-blend-mode: soft-light;
   }
-  .text {
-    position: relative;
-    z-index: 2;
-    display: flex;
-    align-items: center;
-    .date {
-      position: relative;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: #fff;
-      margin-right: 18px;
-      .num {
-        margin-top: 8px;
-        position: absolute;
-        font-size: 14px;
-        font-weight: bold;
-        color: #fff;
-      }
-    }
-    .desc {
-      display: flex;
-      flex-direction: column;
-      span {
-        color: #fff;
-      }
-      .title {
-        font-size: 20px;
-        margin-bottom: 2px;
-        @media (max-width: 1020px) {
-          font-size: 18px;
-        }
-      }
-      .tip {
-        color: #e9e9e9;
-        font-size: 13px;
-      }
-    }
+}
+
+.artwork-wrap {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.artwork {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--duration-400) var(--ease-out);
+}
+
+.date-badge {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 24px);
+  padding: 7px 10px;
+  color: rgba(255, 255, 255, 0.94);
+  background: rgba(14, 14, 15, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-pill);
+  backdrop-filter: blur(12px);
+}
+
+.date-day {
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.date-copy {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.content {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  min-width: 0;
+  padding: 76px 18px 18px;
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(8, 8, 9, 0.38) 28%,
+    rgba(8, 8, 9, 0.88) 76%,
+    rgba(8, 8, 9, 0.96)
+  );
+  border-radius: 0 0 var(--radius-panel) var(--radius-panel);
+}
+
+.copy {
+  flex: 1;
+  min-width: 0;
+}
+
+.eyebrow {
+  display: block;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.copy h3 {
+  margin: 3px 0 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: 19px;
+  font-weight: 750;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.play-button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  padding: 0;
+  color: #111;
+  background: rgba(255, 255, 255, 0.94);
+  border: 0;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-2);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-200) var(--ease-out),
+    transform var(--duration-200) var(--ease-out);
+}
+
+.daily-card:focus-visible,
+.play-button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.daily-card:hover {
+  .artwork {
+    transform: scale(1.035);
   }
-  .control {
-    position: relative;
-    z-index: 2;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    margin-left: 12px;
-    .cover {
-      position: relative;
-      background-color: transparent;
-      width: 70px;
-      height: 70px;
-      transition: all 0.3s;
-      z-index: 0;
-      overflow: inherit;
-      :deep(img) {
-        border-radius: 8px;
-      }
-      &::before,
-      &::after {
-        content: "";
-        border-radius: 8px;
-        width: 100%;
-        height: 100%;
-        position: absolute;
-        background-color: #fff;
-        opacity: 0.6;
-        transform: scale(0.85) translateX(11px);
-        z-index: -1;
-      }
-      &::after {
-        transform: scale(0.7) translateX(27px);
-        opacity: 0.4;
-        z-index: -2;
-      }
-    }
-    .play {
-      color: #fff;
-      opacity: 0;
-      right: -70px;
-      position: absolute;
-      transform: rotate(180deg);
-      transition: all 0.3s;
-      cursor: pointer;
-      &:hover {
-        transform: scale(1.1);
-      }
-      &:active {
-        transform: scale(1);
-      }
-    }
+
+  .play-button {
+    transform: translateY(-2px);
+  }
+}
+
+.play-button:hover {
+  background: #fff;
+}
+
+.play-button:active {
+  transform: scale(0.94);
+}
+
+@container daily-card (max-width: 560px) {
+  .daily-card {
+    min-height: clamp(220px, 72cqi, 340px);
+  }
+
+  .content {
+    padding: 64px 14px 14px;
+  }
+}
+
+@container daily-card (max-width: 340px) {
+  .daily-card {
+    min-height: 270px;
+  }
+
+  .date-badge {
+    top: 8px;
+    left: 8px;
+    padding: 7px 9px;
+  }
+
+  .content {
+    gap: 10px;
+  }
+
+  .copy h3 {
+    font-size: 17px;
+  }
+
+  .play-button {
+    width: 46px;
+    height: 46px;
+  }
+}
+
+@container daily-card (max-width: 280px) {
+  .date-copy span:last-child {
+    display: none;
+  }
+
+  .play-button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+@media (hover: none) {
+  .daily-card:hover .artwork,
+  .daily-card:hover .play-button {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .artwork,
+  .play-button {
+    transition: none;
   }
 }
 </style>

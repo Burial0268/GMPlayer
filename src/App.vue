@@ -417,6 +417,11 @@ onBeforeUnmount(() => {
 
   :deep(.n-scrollbar-rail--vertical) {
     right: var(--content-scrollbar-right) !important;
+    // `.main` 设了 position:relative + z-index:2，与滚动条 thumb(Naive 内部 z-index:1)
+    // 共享同一层叠上下文（.n-scrollbar / .n-scrollbar-container 均不成栈），
+    // 内容层因此盖在 thumb 之上、吞掉拖拽。抬高 rail 使 thumb 位于内容之上即可恢复拖拽；
+    // rail 轨道本身 pointer-events:none，普通内容点击不受影响。
+    z-index: 3;
   }
 
   &.settings-route {
@@ -557,6 +562,11 @@ onBeforeUnmount(() => {
 
   &.bigplayer-open::after {
     opacity: 0.75;
+    // Scrim 作为模态背板：BigPlayer 打开时吞掉未被其捕获的指针输入，
+    // 防止点击穿透到下方层级更低的 mini player(.player z-index:2) 与主内容。
+    // BigPlayer(z-index:2000) 在 scrim(1999) 之上，其自身交互不受影响；
+    // TitleBar(9999)、侧栏搜索浮层(--z-search-overlay:2200) 亦在其上，窗口控制仍可点。
+    pointer-events: auto;
   }
 
   &.native-traffic-lights {

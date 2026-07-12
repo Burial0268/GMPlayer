@@ -1,18 +1,18 @@
 <template>
   <div class="paartists">
-    <n-h3 class="title" prefix="bar">
-      {{ $t("home.title.artists") }}
-      <n-tabs class="tab" :default-value="-1" size="small" @update:value="tabChange">
+    <div class="home-section-head">
+      <h2 class="head-title">{{ $t("home.title.artists") }}</h2>
+      <n-tabs class="tab main-tab" :default-value="-1" size="small" @update:value="tabChange">
         <n-tab :name="-1"> {{ $t("general.type.all") }} </n-tab>
         <n-tab :name="7"> {{ $t("general.type.china") }} </n-tab>
         <n-tab :name="96"> {{ $t("general.type.western") }} </n-tab>
         <n-tab :name="8"> {{ $t("general.type.japan") }} </n-tab>
         <n-tab :name="16"> {{ $t("general.type.korea") }} </n-tab>
       </n-tabs>
-      <span class="more" @click="router.push('/discover/artists?page=1')">
+      <span class="head-more" @click="router.push('/discover/artists?page=1')">
         {{ $t("home.title.more") }}
       </span>
-    </n-h3>
+    </div>
     <ArtistLists :listData="artistsData" :gridCollapsed="true" />
   </div>
 </template>
@@ -48,7 +48,6 @@ const getArtistListData = (type = -1, area = -1, limit = 6) => {
 
 // Tab 切换
 const tabChange = (value) => {
-  console.log(value);
   artistsData.value = [];
   getArtistListData(-1, value);
 };
@@ -60,35 +59,16 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .paartists {
-  margin-top: 40px;
   padding: 0 4px;
-  .title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding-left: 16px;
-    .tab {
-      width: auto;
-      margin-right: auto;
-      margin-left: 20px;
-      @media (max-width: 440px) {
-        display: none;
-      }
-      :deep(.n-tabs-tab-pad) {
-        width: 12px;
-      }
+  .tab {
+    width: auto;
+    margin-right: auto;
+    margin-left: 8px;
+    @media (max-width: 440px) {
+      display: none;
     }
-    .more {
-      font-size: 14px;
-      transition: all 0.3s;
-      cursor: pointer;
-      &::after {
-        content: ">";
-        margin-left: 6px;
-      }
-      &:hover {
-        color: var(--main-color);
-      }
+    :deep(.n-tabs-tab-pad) {
+      width: 12px;
     }
   }
 }

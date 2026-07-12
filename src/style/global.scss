@@ -146,12 +146,109 @@ body,
   border-radius: var(--radius-panel) !important;
 }
 
-// Tab
+// Tab — 以 Naive n-tabs 为底，融入 shadcn 质感
 .main-tab {
   .n-tabs-tab {
+    color: var(--n-text-color-3);
+    transition: color var(--duration-200) var(--ease-out);
+
+    &:hover {
+      color: var(--n-text-color-2);
+    }
+
     &.n-tabs-tab--active {
-      font-weight: bold !important;
+      font-weight: 600 !important;
+      color: var(--main-color) !important;
       transition: all var(--duration-200) var(--ease-in-out);
+    }
+  }
+
+  // 下划线 Tabs：Apple Music / shadcn 质感的区块导航
+  &.n-tabs--line-type {
+    .n-tabs-tab {
+      font-size: 15px;
+      letter-spacing: -0.01em;
+    }
+
+    // 主色指示条：圆润端点、轻微加粗
+    .n-tabs-bar {
+      height: 2.5px;
+      border-radius: 999px;
+      background-color: var(--main-color) !important;
+    }
+  }
+
+  // 分段控制器：Apple Music / shadcn 胶囊质感
+  &.n-tabs--segment-type {
+    .n-tabs-rail {
+      padding: 4px;
+      border-radius: var(--radius-lg);
+      background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--n-text-color) 5%, transparent);
+    }
+
+    // 保留 Naive 主题自适应的胶囊底色（深浅色均正确），仅精修圆角与投影
+    .n-tabs-capsule {
+      border-radius: var(--radius-sm) !important;
+      box-shadow: var(--shadow-1);
+    }
+
+    .n-tabs-tab {
+      font-size: 13.5px;
+      font-weight: 500;
+    }
+  }
+}
+
+// Home 区块标题 — Apple Music 式区头，HomeView 与 Personalized 组件共用
+.home-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  margin-bottom: 16px;
+
+  .head-title {
+    margin: 0;
+    min-width: 0;
+    font-size: 22px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+    color: var(--n-text-color);
+  }
+
+  .head-more {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 6px 12px;
+    border-radius: var(--radius-pill);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--n-text-color-3);
+    cursor: pointer;
+    transition:
+      color var(--duration-200) var(--ease-out),
+      background-color var(--duration-200) var(--ease-out);
+
+    &::after {
+      content: "›";
+      margin-left: 4px;
+      font-size: 15px;
+      line-height: 1;
+      transition: transform var(--duration-200) var(--ease-out);
+    }
+
+    &:hover {
+      color: var(--n-text-color);
+      background-color: color-mix(in srgb, var(--n-text-color) 7%, transparent);
+
+      &::after {
+        transform: translateX(2px);
+      }
     }
   }
 }
@@ -204,7 +301,8 @@ body,
   .n-message-container {
     &.n-message-container--top,
     &.n-message-container--top-mobile {
-      top: 8px !important;
+      // Match the notification container: clear the status bar / notch via safe-area-top.
+      top: calc(8px + var(--app-safe-area-top, 0px)) !important;
       left: 12px !important;
       right: 12px !important;
       width: auto !important;
@@ -218,7 +316,9 @@ body,
   }
   .n-notification-container {
     &.n-notification-container--top {
-      top: 8px !important;
+      // Add safe-area-top so notifications clear the status bar / notch on
+      // Android/iOS notched screens (env(safe-area-inset-top) via --app-safe-area-top).
+      top: calc(8px + var(--app-safe-area-top, 0px)) !important;
       left: 12px !important;
       right: 12px !important;
       width: auto !important;

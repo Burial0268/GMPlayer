@@ -47,23 +47,44 @@ const messages: Record<string, unknown> = {
       playlists: "Playlists",
       tip: "Confirm to delete all search history ?",
       results: "search results",
+      resultsLabel: "Search Results",
     },
     officialList: "Official List",
     globalList: "Global List",
   },
   // Home
   home: {
+    banner: {
+      previous: "Previous banner",
+      next: "Next banner",
+      controls: "Banner controls",
+      switchTo: "Switch to banner {index}",
+    },
+    kicker: {
+      featured: "Featured",
+      explore: "Explore",
+    },
+    greeting: {
+      morning: "Good morning",
+      afternoon: "Good afternoon",
+      evening: "Good evening",
+    },
     title: {
-      exclusive: "Exclusive Recommend",
+      forYou: "Made for You",
+      exclusive: "Personalized Picks",
       playlists: "Recommended Playlists",
-      artists: "Artist Recommend",
+      artists: "Recommended Artists",
       newAlbum: "New Albums",
       more: "More",
     },
     modules: {
       dailySongs: {
-        title: "Daily Recommend",
+        title: "Daily Recommendations",
         subtitle: "Updated at 6:00 am based on your music preference.",
+        label: "Daily",
+        play: "Play Daily Recommendations",
+        fetchFailed: "Failed to load Daily Recommendations",
+        fetchRetry: "Failed to load Daily Recommendations. Refresh and try again.",
         today: "Today",
         historySelect: "View History",
         historyDate: "{year}-{month}-{day}",
@@ -72,14 +93,25 @@ const messages: Record<string, unknown> = {
       radar: {
         title: "Personal Radar",
         subtitle: "Created for you based on your listening history.",
+        eyebrow: "Made for You",
       },
       likeSong: {
         title: "Liked Songs",
         subtitle: "Discover your unique music taste.",
+        eyebrow: "Your Library",
       },
-      papersonalfm: {
+      personalFm: {
         title: "Personal FM",
-        subtitle: "Offline mode",
+        subtitle: "Guest mode",
+        dislike: "Dislike",
+        play: "Play Personal FM",
+        pause: "Pause Personal FM",
+        next: "Next track",
+      },
+      hotTracks: {
+        eyebrow: "Top Songs",
+        title: "Worth Hearing Now",
+        subtitle: "A fresh selection picked for you",
       },
     },
   },

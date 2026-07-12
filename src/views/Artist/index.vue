@@ -94,7 +94,7 @@
       </div>
     </div>
 
-    <n-tabs class="main-tab" type="segment" @update:value="tabChange" v-model:value="tabValue">
+    <n-tabs class="main-tab" type="line" @update:value="tabChange" v-model:value="tabValue">
       <n-tab name="songs"> {{ $t("general.name.hotSong") }} </n-tab>
       <n-tab name="albums"> {{ $t("general.name.album") }} </n-tab>
       <n-tab name="videos"> MV </n-tab>

@@ -137,7 +137,7 @@
           :lyricsVisible="desktopLyricsVisible && hasLyrics"
           :queueOpen="desktopQueueOpen"
           :hasLyrics="hasLyrics"
-          @toggleLyrics="desktopLyricsVisible = !desktopLyricsVisible"
+          @toggleLyrics="toggleDesktopLyrics"
           @toggleQueue="desktopQueueOpen = !desktopQueueOpen"
         />
 
@@ -947,6 +947,15 @@ const resetDesktopQueueState = () => {
   desktopQueueOpen.value = false;
 };
 
+const toggleDesktopLyrics = () => {
+  const rightEl = desktopLayoutRef.value?.rightContentRef;
+  if (rightEl) {
+    gsap.killTweensOf(rightEl);
+    gsap.set(rightEl, { clearProps: "opacity,transform" });
+  }
+  desktopLyricsVisible.value = !desktopLyricsVisible.value;
+};
+
 const detachMiniSharedAlbum = () => {
   window.dispatchEvent(new Event("splayer-mobile-player-detach-mini-album"));
 };
@@ -1165,7 +1174,14 @@ const animatePlayerIn = () => {
     gsap.fromTo(
       rightEl,
       { opacity: 0, scale: 0.96 },
-      { opacity: 1, scale: 1, duration: 0.5, delay: 0.25, ease: "power2.out" },
+      {
+        opacity: 1,
+        scale: 1,
+        duration: 0.5,
+        delay: 0.25,
+        ease: "power2.out",
+        onComplete: () => gsap.set(rightEl, { clearProps: "opacity,transform" }),
+      },
     );
   }
 };

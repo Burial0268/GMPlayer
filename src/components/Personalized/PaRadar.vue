@@ -1,132 +1,213 @@
 <template>
-  <!-- 私人雷达 -->
-  <div class="radar" @click="router.push(`/playlist?id=${radarId}&page=1`)">
-    <div class="radar-bg" />
-    <div class="gray" />
-    <div class="left">
-      <n-icon class="icon" :component="RadarThree" size="30" />
-      <div class="title">
-        <n-text class="name">{{ $t("home.modules.radar.title") }}</n-text>
-        <n-text class="tip">{{ $t("home.modules.radar.subtitle") }}</n-text>
-      </div>
+  <article
+    class="radar-card"
+    role="link"
+    tabindex="0"
+    @click="openRadar"
+    @keydown.enter="openRadar"
+    @keydown.space.prevent="openRadar"
+  >
+    <div class="radar-card__artwork" aria-hidden="true">
+      <img src="/images/pic/radar.jpg" alt="" loading="lazy" />
+      <span class="radar-card__artwork-icon">
+        <n-icon :component="RadarThree" size="19" />
+      </span>
     </div>
-    <div class="right">
-      <n-icon class="icon" :component="Right" size="20" />
+    <div class="radar-card__content">
+      <span class="radar-card__eyebrow">{{ $t("home.modules.radar.eyebrow") }}</span>
+      <h3>{{ $t("home.modules.radar.title") }}</h3>
+      <p>{{ $t("home.modules.radar.subtitle") }}</p>
     </div>
-  </div>
+    <span class="radar-card__arrow" aria-hidden="true">
+      <n-icon :component="Right" size="18" />
+    </span>
+  </article>
 </template>
 
 <script setup>
-import { useRouter } from "vue-router";
 import { RadarThree, Right } from "@icon-park/vue-next";
+import { useRouter } from "vue-router";
 
 const router = useRouter();
-
-// 私人雷达歌单
-const radarId = ref(3136952023);
+const radarId = 3136952023;
+const openRadar = () => router.push(`/playlist?id=${radarId}&page=1`);
 </script>
 
 <style lang="scss" scoped>
-.radar {
+.radar-card {
   position: relative;
-  color: #fff;
-  height: 100%;
-  width: 100%;
-  display: flex;
-  flex-direction: row;
+  isolation: isolate;
+  contain: layout paint;
+  container-type: inline-size;
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr) 38px;
   align-items: center;
-  justify-content: space-between;
-  border-radius: 8px;
-  padding: 0 18px;
+  gap: 15px;
+  width: 100%;
+  min-width: 0;
+  height: 118px;
+  min-height: 0;
+  padding: 12px 14px 12px 12px;
+  overflow: clip;
   box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--n-text-color) 8%, transparent);
+  border-radius: var(--radius-panel);
+  background: color-mix(in srgb, var(--n-text-color) 4%, transparent);
   cursor: pointer;
-  z-index: 0;
+  outline: none;
+  transition: background-color var(--duration-200) var(--ease-out);
+}
+
+.radar-card__artwork {
+  position: relative;
+  width: 82px;
+  height: 82px;
   overflow: hidden;
-  &:hover {
-    .left {
-      .title {
-        .name {
-          opacity: 0;
-          transform: translateY(-50px);
-        }
-        .tip {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
-    }
-    .right {
-      .icon {
-        opacity: 1;
-        transform: translateX(0);
-      }
-    }
-  }
-  .radar-bg {
-    position: absolute;
-    // 放大并超出容器，模糊后的透明边缘被 overflow:hidden 裁掉
-    inset: -48px;
-    background-image: url("/images/pic/radar.jpg");
-    background-repeat: no-repeat;
-    background-size: cover;
-    background-position: center;
-    // 直接模糊背景图本身，避免依赖 backdrop-filter（在部分 WebView2/3D 上下文中会失效）
-    filter: blur(20px);
-    z-index: 0;
-  }
-  .gray {
+  border-radius: calc(var(--radius-panel) - 5px);
+  background: color-mix(in srgb, var(--n-text-color) 7%, transparent);
+  aspect-ratio: 1;
+  max-width: 100%;
+
+  img {
     position: absolute;
     inset: 0;
-    background-color: #00000010;
-    pointer-events: none;
-    z-index: 0;
-  }
-  .left {
-    position: relative;
-    z-index: 1;
-    height: 100%;
+    display: block;
     width: 100%;
-    display: flex;
-    align-items: center;
-    .icon {
-      margin-right: 12px;
-    }
-    .title {
-      height: 100%;
-      width: 100%;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      .name {
-        color: #fff;
-        font-size: 18px;
-        transition: all 0.3s;
-        @media (max-width: 1020px) {
-          font-size: 16px;
-        }
-      }
-      .tip {
-        height: 100%;
-        display: flex;
-        align-items: center;
-        position: absolute;
-        color: #fff;
-        opacity: 0;
-        transform: translateY(50px);
-        transition: all 0.3s;
-      }
-    }
+    height: 100%;
+    object-fit: cover;
+    transition: transform var(--duration-400) var(--ease-out);
   }
-  .right {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    .icon {
-      opacity: 0;
-      transform: translateX(-8px);
-      transition: all 0.3s;
-    }
+}
+
+.radar-card__artwork-icon {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: #fff;
+  border-radius: var(--radius-pill);
+  background: rgba(12, 12, 12, 0.72);
+}
+
+.radar-card__content {
+  min-width: 0;
+
+  h3,
+  p {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  h3 {
+    margin: 4px 0 0;
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  p {
+    margin: 3px 0 0;
+    color: var(--n-text-color-3);
+    font-size: 12px;
+  }
+}
+
+.radar-card__eyebrow {
+  color: var(--n-text-color-3);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.radar-card__arrow {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  color: var(--n-text-color-2);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+  transition:
+    color var(--duration-200) var(--ease-out),
+    transform var(--duration-200) var(--ease-out);
+}
+
+.radar-card:hover,
+.radar-card:focus-visible {
+  background: color-mix(in srgb, var(--n-text-color) 8%, transparent);
+
+  .radar-card__artwork img {
+    transform: scale(1.04);
+  }
+
+  .radar-card__arrow {
+    color: var(--n-text-color);
+    transform: translateX(2px);
+  }
+}
+
+@container (max-width: 480px) {
+  .radar-card {
+    grid-template-columns: clamp(58px, 19cqi, 68px) minmax(0, 1fr) 32px;
+    gap: 11px;
+    height: auto;
+    min-height: 88px;
+    padding: 10px;
+  }
+
+  .radar-card__artwork {
+    width: clamp(58px, 19cqi, 68px);
+    height: auto;
+  }
+
+  .radar-card__content p {
+    display: none;
+  }
+
+  .radar-card__arrow {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+@container (max-width: 360px) {
+  .radar-card {
+    grid-template-columns: 58px minmax(0, 1fr);
+    gap: 10px;
+    min-height: 78px;
+    padding: 9px;
+  }
+
+  .radar-card__artwork {
+    width: 58px;
+  }
+
+  .radar-card__content h3 {
+    margin-top: 2px;
+    font-size: 15px;
+  }
+
+  .radar-card__eyebrow {
+    font-size: 8px;
+  }
+
+  .radar-card__arrow {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .radar-card,
+  .radar-card__artwork img,
+  .radar-card__arrow {
+    transition: none;
   }
 }
 </style>

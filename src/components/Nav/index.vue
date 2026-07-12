@@ -52,11 +52,23 @@ const updateCompactViewport = (event) => {
 const showNavSearch = computed(() => isMobileState.value || isCompactViewport.value);
 
 // Tauri detection
-const toggleTheme = () => {
-  if (setting.getSiteTheme === "light") {
-    setting.setSiteTheme("dark");
+const toggleTheme = (event) => {
+  const root = document.documentElement;
+  const target = event?.currentTarget;
+  const rect = target instanceof Element ? target.getBoundingClientRect() : null;
+  const pointerX = Number(event?.clientX) || 0;
+  const pointerY = Number(event?.clientY) || 0;
+  const x = pointerX || (rect ? rect.left + rect.width / 2 : window.innerWidth / 2);
+  const y = pointerY || (rect ? rect.top + rect.height / 2 : window.innerHeight / 2);
+  root.style.setProperty("--theme-transition-x", `${x}px`);
+  root.style.setProperty("--theme-transition-y", `${y}px`);
+  root.dataset.themeTransitionOrigin = "custom";
+
+  const nextTheme = setting.getSiteTheme === "light" ? "dark" : "light";
+  if (typeof window.$setSiteThemeWithTransition === "function") {
+    window.$setSiteThemeWithTransition(nextTheme);
   } else {
-    setting.setSiteTheme("light");
+    setting.setSiteTheme(nextTheme);
   }
 };
 </script>

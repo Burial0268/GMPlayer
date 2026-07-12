@@ -47,13 +47,30 @@ const messages: Record<string, unknown> = {
       playlists: "歌单",
       tip: "确认删除全部的搜索历史记录？",
       results: "的搜索结果",
+      resultsLabel: "搜索结果",
     },
     officialList: "官方榜",
     globalList: "全球榜",
   },
   // 首页
   home: {
+    banner: {
+      previous: "上一张轮播图",
+      next: "下一张轮播图",
+      controls: "轮播图控制",
+      switchTo: "切换到第 {index} 张轮播图",
+    },
+    kicker: {
+      featured: "精选推荐",
+      explore: "探索发现",
+    },
+    greeting: {
+      morning: "早上好",
+      afternoon: "下午好",
+      evening: "晚上好",
+    },
     title: {
+      forYou: "为你精选",
       exclusive: "专属推荐",
       playlists: "推荐歌单",
       artists: "歌手推荐",
@@ -64,6 +81,10 @@ const messages: Record<string, unknown> = {
       dailySongs: {
         title: "每日推荐",
         subtitle: "根据你的音乐口味 · 每日 6:00 更新",
+        label: "日推",
+        play: "播放每日推荐",
+        fetchFailed: "每日推荐获取失败",
+        fetchRetry: "每日推荐获取失败，请刷新后重试",
         today: "今日推荐",
         historySelect: "查看历史日推",
         historyDate: "{year}年{month}月{day}日",
@@ -72,14 +93,25 @@ const messages: Record<string, unknown> = {
       radar: {
         title: "私人雷达",
         subtitle: "根据听歌记录为你打造",
+        eyebrow: "为你打造",
       },
       likeSong: {
         title: "喜欢的音乐",
         subtitle: "发现你独特的音乐品味",
+        eyebrow: "你的音乐库",
       },
-      papersonalfm: {
-        title: "私人FM",
+      personalFm: {
+        title: "私人 FM",
         subtitle: "未登录模式",
+        dislike: "不喜欢",
+        play: "播放私人 FM",
+        pause: "暂停私人 FM",
+        next: "下一首",
+      },
+      hotTracks: {
+        eyebrow: "热门歌曲",
+        title: "此刻值得听",
+        subtitle: "从近期推荐中为你挑选",
       },
     },
   },

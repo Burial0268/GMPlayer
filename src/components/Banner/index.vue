@@ -1,76 +1,78 @@
 <template>
-  <n-skeleton
-    v-if="!bannerData[0]"
-    :style="{ height: bannerHeight + 'px' }"
-    width="100%"
-    :sharp="false"
-  />
-  <Transition>
-    <n-carousel
-      v-if="bannerData[0]"
-      autoplay
-      draggable
-      keyboard
-      class="banner"
-      dot-placement="bottom"
-      :effect="bannerType"
-      :show-arrow="showBannerArrow"
-      :show-dots="bannerData.length > 1"
+  <div ref="bannerRoot" class="banner-shell">
+    <n-skeleton
+      v-if="!bannerData[0]"
       :style="{ height: bannerHeight + 'px' }"
-    >
-      <n-carousel-item
-        v-for="item in bannerData"
-        :key="item"
-        class="item"
-        :style="bannerType == 'card' ? 'width:60%' : ''"
+      width="100%"
+      :sharp="false"
+    />
+    <Transition>
+      <n-carousel
+        v-if="bannerData[0]"
+        autoplay
+        draggable
+        keyboard
+        class="banner"
+        dot-placement="bottom"
+        :effect="bannerType"
+        :show-arrow="showBannerArrow"
+        :show-dots="bannerData.length > 1"
+        :style="{ height: bannerHeight + 'px' }"
       >
-        <img
-          :src="item.imageUrl.replace(/^http:/, 'https:') + '?imageView&quality=89'"
-          alt="banner"
-          @click="bannerJump(item.targetType, item.targetId, item.url)"
-        />
-      </n-carousel-item>
-      <template #arrow="{ prev, next }">
-        <button
-          class="banner-arrow banner-arrow--prev"
-          type="button"
-          aria-label="上一张轮播图"
-          @click.stop="prev"
+        <n-carousel-item
+          v-for="item in bannerData"
+          :key="item"
+          class="item"
+          :style="bannerType == 'card' ? 'width:60%' : ''"
         >
-          <n-icon size="20" :component="Left" />
-        </button>
-        <button
-          class="banner-arrow banner-arrow--next"
-          type="button"
-          aria-label="下一张轮播图"
-          @click.stop="next"
-        >
-          <n-icon size="20" :component="Right" />
-        </button>
-      </template>
-      <template #dots="{ total, currentIndex, to }">
-        <div
-          class="banner-controls"
-          role="group"
-          aria-label="轮播图控制"
-          :style="getBannerControlsStyle(total)"
-        >
+          <img
+            :src="item.imageUrl.replace(/^http:/, 'https:') + '?imageView&quality=89'"
+            alt="banner"
+            @click="bannerJump(item.targetType, item.targetId, item.url)"
+          />
+        </n-carousel-item>
+        <template #arrow="{ prev, next }">
           <button
-            v-for="index in total"
-            :key="index"
-            class="banner-control"
-            :class="{ 'is-active': currentIndex === index - 1 }"
+            class="banner-arrow banner-arrow--prev"
             type="button"
-            :aria-label="`切换到第 ${index} 张轮播图`"
-            :aria-current="currentIndex === index - 1 ? 'true' : undefined"
-            @click.stop="to(index - 1)"
+            :aria-label="$t('home.banner.previous')"
+            @click.stop="prev"
           >
-            <span />
+            <n-icon size="20" :component="Left" />
           </button>
-        </div>
-      </template>
-    </n-carousel>
-  </Transition>
+          <button
+            class="banner-arrow banner-arrow--next"
+            type="button"
+            :aria-label="$t('home.banner.next')"
+            @click.stop="next"
+          >
+            <n-icon size="20" :component="Right" />
+          </button>
+        </template>
+        <template #dots="{ total, currentIndex, to }">
+          <div
+            class="banner-controls"
+            role="group"
+            :aria-label="$t('home.banner.controls')"
+            :style="getBannerControlsStyle(total)"
+          >
+            <button
+              v-for="index in total"
+              :key="index"
+              class="banner-control"
+              :class="{ 'is-active': currentIndex === index - 1 }"
+              type="button"
+              :aria-label="$t('home.banner.switchTo', { index })"
+              :aria-current="currentIndex === index - 1 ? 'true' : undefined"
+              @click.stop="to(index - 1)"
+            >
+              <span />
+            </button>
+          </div>
+        </template>
+      </n-carousel>
+    </Transition>
+  </div>
 </template>
 
 <script setup>
@@ -81,6 +83,8 @@ import { Left, Right } from "@icon-park/vue-next";
 
 const { t } = useI18n();
 const router = useRouter();
+const bannerRoot = ref(null);
+let bannerResizeObserver = null;
 
 // 轮播图高度
 const bannerHeight = ref(0);
@@ -149,34 +153,36 @@ const bannerJump = (type, id, url) => {
 
 // 获取宽度计算轮播图高度
 const getBannerHeight = () => {
-  if (window.innerWidth > 680) {
+  const width = bannerRoot.value?.clientWidth || window.innerWidth;
+  if (width > 680) {
     bannerType.value = "card";
-    if (window.innerWidth >= 1200 && window.innerWidth <= 1500) {
-      bannerHeight.value = window.innerWidth / 5.5;
-    } else if (window.innerWidth <= 1500) {
-      bannerHeight.value = window.innerWidth / 5;
-    } else {
-      bannerHeight.value = 300;
-    }
+    bannerHeight.value = Math.min(300, Math.max(170, width / 4.8));
   } else {
     bannerType.value = "slide";
-    bannerHeight.value = window.innerWidth / 3 + mobileControlsHeight;
+    bannerHeight.value = Math.max(140, width / 3 + mobileControlsHeight);
   }
 };
 
 onMounted(() => {
   getBannerData();
-  // 监听宽度
   getBannerHeight();
-  window.addEventListener("resize", getBannerHeight);
+  bannerResizeObserver = new ResizeObserver(getBannerHeight);
+  if (bannerRoot.value) bannerResizeObserver.observe(bannerRoot.value);
 });
 
 onBeforeUnmount(() => {
-  window.removeEventListener("resize", getBannerHeight);
+  bannerResizeObserver?.disconnect();
+  bannerResizeObserver = null;
 });
 </script>
 
 <style lang="scss" scoped>
+.banner-shell {
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
+}
+
 .banner {
   position: relative;
   // max-width: 1200px;
