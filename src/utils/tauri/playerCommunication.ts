@@ -37,18 +37,36 @@ type MusicStore = ReturnType<typeof musicStore>;
 type SettingStore = ReturnType<typeof settingStore>;
 type SiteStore = ReturnType<typeof siteStore>;
 
-const TIME_BROADCAST_INTERVAL_MS = 50;
+// Anchor-based time broadcasting: slaves extrapolate locally from the last
+// anchor (see playerBridge.ts), so the master only needs to send when the
+// timeline becomes discontinuous (play/pause/seek/track/lyric-line change)
+// plus a low-rate heartbeat for drift correction — instead of a 20fps stream.
+const TIME_HEARTBEAT_MS = 2_000;
+/** Master-side drift between the real clock and the last sent anchor beyond
+ * which a correction anchor is sent (catches seeks — including while paused). */
+const TIME_DRIFT_THRESHOLD_S = 0.25;
+/** Burst guard for unforced sends. */
+const TIME_MIN_GAP_MS = 30;
 // How often to reconcile the open-content-window set against the real window
 // list (to detect closes). Only runs while at least one content window is
 // believed open; opens are tracked immediately via the `slaveReady` handshake.
 const CONTENT_WINDOW_RECONCILE_MS = 2000;
 const noop = () => {};
 
+interface TimeBroadcastAnchor {
+  time: number;
+  at: number;
+  isPlaying: boolean;
+  songId: number | null;
+  duration: number;
+  lyricIndex: number;
+}
+
 let cachedMusic: MusicStore | null = null;
 let cachedSetting: SettingStore | null = null;
 let cachedSite: SiteStore | null = null;
 let mainListenersStarted = false;
-let lastTimeBroadcastAt = 0;
+let lastTimeAnchor: TimeBroadcastAnchor | null = null;
 let timeBroadcastSeq = 0;
 let cachedLyricSource: SongLyric | null = null;
 let cachedLyricSongId: number | null = null;
@@ -141,9 +159,15 @@ async function reconcileContentWindows(): Promise<void> {
       if (openSet.has(label)) openContentWindows.add(label);
     }
   }
-  if (openContentWindows.size === 0 && contentWindowReconcileTimer !== null) {
-    clearInterval(contentWindowReconcileTimer);
-    contentWindowReconcileTimer = null;
+  if (openContentWindows.size === 0) {
+    if (contentWindowReconcileTimer !== null) {
+      clearInterval(contentWindowReconcileTimer);
+      contentWindowReconcileTimer = null;
+    }
+  } else {
+    // Windows discovered outside the handshake (e.g. a master reload while
+    // slaves stayed open) must still be pruned when they close later.
+    ensureContentWindowReconcile();
   }
 }
 
@@ -304,18 +328,40 @@ export function broadcastPlayerState() {
 
 export function broadcastPlayerTime(force = false) {
   if (!isTauri()) return;
-  const music = getMusic();
-  if (!force && !music.getPlayState) return;
 
   // Nothing to update when no content window is open — skip the payload build
   // and the per-window emit entirely (the common case).
   const labels = openContentBroadcastLabels();
   if (labels.length === 0) return;
 
-  const now = performance.now();
-  if (!force && now - lastTimeBroadcastAt < TIME_BROADCAST_INTERVAL_MS) return;
-  lastTimeBroadcastAt = now;
+  const music = getMusic();
+  const playTime = music.getPlaySongTime;
+  const currentTime = playTime?.currentTime || 0;
+  const duration = playTime?.duration || 0;
+  const isPlaying = music.getPlayState;
+  const songId = music.getPlaySongData?.id ?? null;
+  const lyricIndex = music.playSongLyricIndex;
+  const now = Date.now();
 
+  if (!force && lastTimeAnchor) {
+    if (now - lastTimeAnchor.at < TIME_MIN_GAP_MS) return;
+
+    // Only send when the timeline breaks from what slaves already extrapolate:
+    // state flips, track/duration/lyric-line changes, a seek (drift — works
+    // while paused too, fixing stale slaves after pause+drag), or heartbeat.
+    const expected = lastTimeAnchor.isPlaying
+      ? lastTimeAnchor.time + (now - lastTimeAnchor.at) / 1_000
+      : lastTimeAnchor.time;
+    const discontinuous =
+      isPlaying !== lastTimeAnchor.isPlaying ||
+      songId !== lastTimeAnchor.songId ||
+      duration !== lastTimeAnchor.duration ||
+      lyricIndex !== lastTimeAnchor.lyricIndex ||
+      Math.abs(currentTime - expected) > TIME_DRIFT_THRESHOLD_S;
+    if (!discontinuous && now - lastTimeAnchor.at < TIME_HEARTBEAT_MS) return;
+  }
+
+  lastTimeAnchor = { time: currentTime, at: now, isPlaying, songId, duration, lyricIndex };
   emitToLabels(PLAYER_COMMUNICATION_EVENTS.time, buildPlayerTimePayload(), labels);
 }
 
@@ -446,6 +492,15 @@ export async function setupMainPlayerCommunication(options: MainPlayerCommunicat
     const label = event.payload?.label;
     if (typeof label === "string") {
       markContentWindowOpen(label);
+      broadcastPlayerFullState(label);
+    }
+  });
+
+  // Master (re)started while slave windows were already open (reload, crash
+  // recovery): they never re-handshake, so discover them and re-push the full
+  // state — otherwise they keep stale lyrics/settings until the next song.
+  void reconcileContentWindows().then(() => {
+    for (const label of openContentBroadcastLabels()) {
       broadcastPlayerFullState(label);
     }
   });

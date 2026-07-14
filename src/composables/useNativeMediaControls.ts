@@ -71,6 +71,7 @@ const mobileMediaSessionAdapter: NativeMediaAdapter = {
     updateMediaProgress({
       isPlaying: payload.isPlaying,
       position: payload.position,
+      duration: payload.duration,
     }),
   updatePlaybackState: (payload) =>
     updateMediaPlaybackState({
@@ -126,6 +127,39 @@ export function useNativeMediaControls() {
 
   const PROGRESS_SYNC_INTERVAL = 5_000;
 
+  /**
+   * Live playback clock in milliseconds. Prefers the active sound's timeline
+   * (anchor + extrapolation — accurate even right after a backend-initiated
+   * track advance or a background wake-up) over the store snapshot, which is
+   * only refreshed by the RAF/interval loop and can be seconds stale.
+   */
+  function getLivePlaybackMs(): { position: number; duration: number } {
+    const playSongTime = music.getPlaySongTime;
+    let positionSec = playSongTime?.currentTime || 0;
+    let durationSec = playSongTime?.duration || 0;
+
+    const player = window.$player;
+    if (player) {
+      try {
+        const livePosition = player.seek();
+        if (typeof livePosition === "number" && Number.isFinite(livePosition)) {
+          positionSec = livePosition;
+        }
+        const liveDuration = player.duration();
+        if (Number.isFinite(liveDuration) && liveDuration > 0) {
+          durationSec = liveDuration;
+        }
+      } catch {
+        /* destroyed/mid-swap sound — store snapshot fallback is fine */
+      }
+    }
+
+    return {
+      position: Math.round(Math.max(0, positionSec) * 1_000),
+      duration: Math.round(Math.max(0, durationSec) * 1_000),
+    };
+  }
+
   function buildFullPayload(): NativeMediaPayload | null {
     const song = music.getPlaySongData;
     if (!song || !adapter) return null;
@@ -135,7 +169,7 @@ export function useNativeMediaControls() {
           adapter.artworkSize
         }`
       : "";
-    const playSongTime = music.getPlaySongTime;
+    const live = getLivePlaybackMs();
 
     return {
       title: song.name || "",
@@ -144,11 +178,25 @@ export function useNativeMediaControls() {
         : "",
       album: song.album?.name || "",
       isPlaying: music.getPlayState,
-      position: Math.round((playSongTime?.currentTime || 0) * 1_000),
-      duration: Math.round((playSongTime?.duration || 0) * 1_000),
+      position: live.position,
+      duration: live.duration,
       artworkUrl,
       trackId: typeof song.id === "number" ? song.id : undefined,
     };
+  }
+
+  /** Metadata-identity hash — position/isPlaying deliberately excluded so the
+   * debounced dedup only skips pushes when nothing user-visible changed
+   * (position rides along on every push anyway). */
+  function payloadMetaHash(payload: NativeMediaPayload): string {
+    return JSON.stringify([
+      payload.title,
+      payload.artist,
+      payload.album,
+      payload.artworkUrl,
+      payload.trackId,
+      payload.duration,
+    ]);
   }
 
   async function syncNotificationImmediate(): Promise<void> {
@@ -161,7 +209,7 @@ export function useNativeMediaControls() {
       return;
     }
 
-    lastPayloadHash = JSON.stringify(payload);
+    lastPayloadHash = payloadMetaHash(payload);
     await adapter.updateFull(payload);
     await syncPlayMode();
   }
@@ -175,7 +223,7 @@ export function useNativeMediaControls() {
       return;
     }
 
-    const hash = JSON.stringify(payload);
+    const hash = payloadMetaHash(payload);
     if (hash === lastPayloadHash) return;
     lastPayloadHash = hash;
     await adapter.updateFull(payload);
@@ -185,11 +233,11 @@ export function useNativeMediaControls() {
   async function syncProgress(seeked = false): Promise<void> {
     if (!active.value || !adapter || !music.getPlaySongData) return;
 
-    const playSongTime = music.getPlaySongTime;
+    const live = getLivePlaybackMs();
     await adapter.updateProgress({
       isPlaying: music.getPlayState,
-      position: Math.round((playSongTime?.currentTime || 0) * 1_000),
-      duration: Math.round((playSongTime?.duration || 0) * 1_000),
+      position: live.position,
+      duration: live.duration,
       seeked,
     });
     lastProgressSyncAt = Date.now();
@@ -206,7 +254,7 @@ export function useNativeMediaControls() {
     await adapter.updatePlaybackState({
       state,
       isPlaying: !music.isLoadingSong && music.getPlayState,
-      position: Math.round((music.getPlaySongTime?.currentTime || 0) * 1_000),
+      position: getLivePlaybackMs().position,
     });
   }
 
@@ -242,7 +290,9 @@ export function useNativeMediaControls() {
         break;
       case "seek":
         if (typeof payload.position === "number") {
-          const seekSec = payload.position / 1_000;
+          const durationSec = getLivePlaybackMs().duration / 1_000;
+          let seekSec = Math.max(0, payload.position / 1_000);
+          if (durationSec > 0) seekSec = Math.min(seekSec, durationSec);
           if (window.$player) {
             setSeek(window.$player, seekSec);
           }
@@ -271,25 +321,52 @@ export function useNativeMediaControls() {
     }
   }
 
+  // Audio-focus bookkeeping. Android expects apps to resume after a
+  // *transient* loss (call / navigation prompt) but stay paused after a
+  // permanent loss, and to restore the pre-duck volume on focus gain.
+  let pausedByTransientFocusLoss = false;
+  let volumeBeforeDuck: number | null = null;
+
+  function restoreDuckedVolume(): void {
+    if (volumeBeforeDuck === null) return;
+    const duckedTarget = Math.max(0.1, volumeBeforeDuck * 0.2);
+    // Only restore when the volume is still at the ducked level — a manual
+    // change while ducked is user intent and must win.
+    if (Math.abs(music.persistData.playVolume - duckedTarget) < 0.01) {
+      music.persistData.playVolume = volumeBeforeDuck;
+    }
+    volumeBeforeDuck = null;
+  }
+
   function handleAudioFocusChange(state: AudioFocusState): void {
     switch (state) {
       case "gain":
-        if (music.getPlayState && window.$player && !window.$player.playing()) {
-          music.setPlayState(true);
+        restoreDuckedVolume();
+        if (pausedByTransientFocusLoss) {
+          pausedByTransientFocusLoss = false;
+          if (!music.getPlayState) {
+            music.setPlayState(true);
+          }
         }
         break;
       case "loss":
-      case "loss_transient":
+        // Permanent loss: pause and stay paused (no auto-resume on gain).
+        restoreDuckedVolume();
+        pausedByTransientFocusLoss = false;
         if (music.getPlayState) {
           music.setPlayState(false);
         }
         break;
+      case "loss_transient":
+        if (music.getPlayState) {
+          pausedByTransientFocusLoss = true;
+          music.setPlayState(false);
+        }
+        break;
       case "loss_transient_can_duck":
-        if (music.getPlayState && window.$player) {
-          if (!window._originalVolumeBeforeDuck) {
-            window._originalVolumeBeforeDuck = music.persistData.playVolume;
-          }
-          music.persistData.playVolume = Math.max(0.1, window._originalVolumeBeforeDuck * 0.2);
+        if (music.getPlayState && volumeBeforeDuck === null) {
+          volumeBeforeDuck = music.persistData.playVolume;
+          music.persistData.playVolume = Math.max(0.1, volumeBeforeDuck * 0.2);
         }
         break;
       default:
@@ -298,8 +375,19 @@ export function useNativeMediaControls() {
   }
 
   function onVisibilityChange(): void {
-    if (!active.value || document.visibilityState !== "visible") return;
-    void syncNotificationImmediate();
+    if (!active.value) return;
+    if (document.visibilityState === "visible") {
+      // Wake-up: the backend queue window may have advanced tracks while this
+      // JS runtime was frozen — force a full metadata push (bypass the hash
+      // guard) and hard re-anchor the seekbar position.
+      lastPayloadHash = "";
+      void syncNotificationImmediate();
+      void syncProgress(true);
+    } else {
+      // Entering background: leave the freshest possible position anchor —
+      // the system extrapolates from it while our timers are frozen.
+      void syncProgress(true);
+    }
   }
 
   onMounted(async () => {
@@ -359,7 +447,9 @@ export function useNativeMediaControls() {
     () => music.getPlaySongTime?.duration,
     (val, oldVal) => {
       if (!active.value) return;
-      if (val && !oldVal) void syncNotificationImmediate();
+      // Any duration change matters: 0 → X when the source loads, and X → Y
+      // corrections (backend-advanced track adopted, more accurate decode).
+      if (val && val !== oldVal) void syncNotificationImmediate();
     },
   );
 

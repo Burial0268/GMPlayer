@@ -60,7 +60,14 @@ const defaultSettings: PlayerSettingsPayload = {
   },
 };
 
-const READY_RETRY_DELAYS = [150, 600, 1200] as const;
+const READY_RETRY_DELAYS = [150, 600, 1200, 2500, 5000] as const;
+/** Slave-local extrapolation tick. Anchors from the master are sparse
+ * (discontinuities + 2s heartbeat); this keeps `currentTime` live for
+ * consumers without their own RAF interpolation (e.g. MiniPlayer). */
+const TIME_EXTRAPOLATION_TICK_MS = 100;
+/** Max believable anchor delivery latency — beyond this, treat `sentAt` as
+ * unusable (clock skew / resumed-from-freeze burst) and use arrival time. */
+const MAX_ANCHOR_LATENCY_MS = 2_000;
 const noop = () => {};
 
 // ── Helper ─────────────────────────────────────────────────────────────────
@@ -90,10 +97,29 @@ export function usePlayerBridge() {
   const unlisteners: (() => void)[] = [];
   let lastAcceptedTimeSeq = 0;
   let lastAcceptedTimeSongId: number | null = null;
+  // Last authoritative time anchor (already latency-compensated). The local
+  // ticker extrapolates from it between the master's sparse broadcasts.
+  let anchorTimeSec = 0;
+  let anchorAtMs = 0;
+  let extrapolationTimer: number | null = null;
 
   function isStaleTimePayload(payload: PlayerTimePayload): boolean {
     const seq = payload.seq ?? 0;
     return seq > 0 && lastAcceptedTimeSeq > 0 && seq <= lastAcceptedTimeSeq;
+  }
+
+  function extrapolatedTimeSec(): number {
+    if (anchorAtMs <= 0) return currentTime.value;
+    let time = anchorTimeSec;
+    if (state.isPlaying) time += (Date.now() - anchorAtMs) / 1_000;
+    if (state.duration > 0) time = Math.min(time, state.duration);
+    return Math.max(0, time);
+  }
+
+  function refreshExtrapolatedTime(): void {
+    const time = extrapolatedTimeSec();
+    currentTime.value = time;
+    state.currentTime = time;
   }
 
   function applyStatePayload(payload: PlayerStatePayload): void {
@@ -112,7 +138,25 @@ export function usePlayerBridge() {
   function applyTimePayload(payload: PlayerTimePayload): void {
     if (isStaleTimePayload(payload)) return;
 
-    const time = Number.isFinite(payload.currentTime) ? Math.max(0, payload.currentTime) : 0;
+    let time = Number.isFinite(payload.currentTime) ? Math.max(0, payload.currentTime) : 0;
+    // The anchor was exact when the master stamped `sentAt`; compensate for
+    // the time it spent in the IPC/event queue so sparse anchors stay exact.
+    if (payload.isPlaying && typeof payload.sentAt === "number") {
+      const latencyMs = Date.now() - payload.sentAt;
+      if (latencyMs > 0 && latencyMs <= MAX_ANCHOR_LATENCY_MS) {
+        time += latencyMs / 1_000;
+      }
+    }
+    if (
+      typeof payload.duration === "number" &&
+      Number.isFinite(payload.duration) &&
+      payload.duration > 0
+    ) {
+      time = Math.min(time, payload.duration);
+    }
+
+    anchorTimeSec = time;
+    anchorAtMs = Date.now();
     currentTime.value = time;
     lyricIndex.value = payload.lyricIndex;
     state.currentTime = time;
@@ -135,6 +179,28 @@ export function usePlayerBridge() {
     const tauri = getTauri();
     if (!tauri || unlisteners.length > 0) return;
 
+    // Local extrapolation between the master's sparse time anchors. Skips
+    // work while hidden (consumers' RAF loops are paused then anyway) and
+    // recomputes instantly on wake — anchor + wall clock stays exact no
+    // matter how long the window was throttled.
+    extrapolationTimer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      if (!state.isPlaying) return;
+      refreshExtrapolatedTime();
+    }, TIME_EXTRAPOLATION_TICK_MS);
+    unlisteners.push(() => {
+      if (extrapolationTimer !== null) {
+        window.clearInterval(extrapolationTimer);
+        extrapolationTimer = null;
+      }
+    });
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshExtrapolatedTime();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    unlisteners.push(() => document.removeEventListener("visibilitychange", onVisibilityChange));
+
     // Player state (song metadata, playback state, etc.)
     const u1 = await tauri.event.listen<PlayerStatePayload>(
       PLAYER_COMMUNICATION_EVENTS.state,
@@ -144,7 +210,7 @@ export function usePlayerBridge() {
     );
     unlisteners.push(u1);
 
-    // Time updates (~20fps)
+    // Time anchors (discontinuities + low-rate heartbeat; extrapolated locally)
     const u2 = await tauri.event.listen<PlayerTimePayload>(
       PLAYER_COMMUNICATION_EVENTS.time,
       (e) => {

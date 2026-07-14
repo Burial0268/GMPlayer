@@ -27,11 +27,11 @@ symphonia = { version = "0.5", default-features = false, features = [
   "ogg",
   "wav",
 ] }
-# Use Symphonia for rodio's decoding so we get reliable try_seek across
-# formats (the default minimp3/claxon decoders mostly can't seek). The
-# `symphonia-all` feature is additive — rodio prefers Symphonia when it
-# can decode a given file.
-rodio = { version = "0.22", features = ["symphonia-all"] }
+# Rodio is used only for Decoder/Source. Disable its default playback and
+# recording adapters: rodio 0.22 otherwise pulls CPAL 0.17, whose Linux output
+# is ALSA-only. Native playback is handled below by CPAL 0.18's PulseAudio
+# backend. Keep Symphonia enabled for reliable try_seek across formats.
+rodio = { version = "0.22", default-features = false, features = ["symphonia-all"] }
 # Direct CPAL dependency for explicit output-stream configuration. On Linux,
 # prefer the shared PulseAudio protocol backend (also served by pipewire-pulse)
 # and let CPAL fall back to ALSA when no sound server is available. Unlike the

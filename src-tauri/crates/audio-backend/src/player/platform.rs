@@ -1,23 +1,28 @@
 use crate::output;
 use crate::types::AudioInfo;
 
-#[cfg(target_os = "android")]
+// Android and Linux share the latency-tolerant prebuffer profile: both sit
+// behind schedulers (Android audio HAL, Pulse/PipeWire server) that punish
+// underruns with added sink latency, so playback starts/seeks wait for a
+// deeper PCM watermark before unpausing the callback. The remaining desktop
+// platforms keep the near-instant start.
+#[cfg(any(target_os = "android", target_os = "linux"))]
 const START_PREBUFFER_MS: u32 = 160;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "linux"))]
 const SEEK_PREBUFFER_MS: u32 = 48;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "linux"))]
 const MIN_START_PREBUFFER_FRAMES: usize = 8_192;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "linux"))]
 const MIN_SEEK_PREBUFFER_FRAMES: usize = 2_048;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
 const START_PREBUFFER_FRAMES: usize = 512;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "linux"))]
 pub(super) const START_PREBUFFER_WAIT_MS: u64 = 200;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
 pub(super) const START_PREBUFFER_WAIT_MS: u64 = 20;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", target_os = "linux"))]
 pub(super) const SEEK_PREBUFFER_WAIT_MS: u64 = 80;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
 pub(super) const SEEK_PREBUFFER_WAIT_MS: u64 = 20;
 
 pub(super) fn start_prebuffer_samples(channels: usize, sample_rate: u32) -> usize {
@@ -31,14 +36,14 @@ pub(super) fn seek_prebuffer_samples(channels: usize, sample_rate: u32) -> usize
 }
 
 fn start_prebuffer_frames(sample_rate: u32) -> usize {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "linux"))]
     {
         let frame_ms = sample_rate.max(1) as u64 * START_PREBUFFER_MS as u64;
         let frames = (frame_ms + 999) / 1_000;
         (frames as usize).max(MIN_START_PREBUFFER_FRAMES)
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
     {
         let _ = sample_rate;
         START_PREBUFFER_FRAMES
@@ -46,14 +51,14 @@ fn start_prebuffer_frames(sample_rate: u32) -> usize {
 }
 
 fn seek_prebuffer_frames(sample_rate: u32) -> usize {
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "linux"))]
     {
         let frame_ms = sample_rate.max(1) as u64 * SEEK_PREBUFFER_MS as u64;
         let frames = (frame_ms + 999) / 1_000;
         (frames as usize).max(MIN_SEEK_PREBUFFER_FRAMES)
     }
 
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(any(target_os = "android", target_os = "linux")))]
     {
         let _ = sample_rate;
         START_PREBUFFER_FRAMES

@@ -44,7 +44,7 @@ export type AudioThreadMessage =
   | { type: "prevSong" }
   | { type: "nextSong" }
   | { type: "nextSongGapless" }
-  | { type: "setPlaylist"; songs: SongData[] }
+  | { type: "setPlaylist"; songs: SongData[]; windowed?: boolean }
   | { type: "setVolume"; volume: number }
   | { type: "setVolumeRelative"; volume: number }
   | { type: "setAudioOutput"; name: string }

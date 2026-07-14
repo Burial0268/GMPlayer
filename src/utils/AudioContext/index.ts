@@ -17,7 +17,15 @@ export {
   adoptIncomingSound,
   setPageVisible,
   ensureSpectrumUpdate,
+  isNativeAdvanceHoldActiveFor,
 } from "./PlayerFunctions";
+
+// Native queue-window prefill (Tauri background advance)
+export {
+  prefillNativeQueue,
+  cancelNativeQueuePrefill,
+  getNativeQueueRegistryEntry,
+} from "./NativeQueuePrefill";
 
 // Export types
 export type {

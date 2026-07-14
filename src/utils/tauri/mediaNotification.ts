@@ -44,6 +44,9 @@ export interface UpdateProgressRequest {
   isPlaying: boolean;
   /** Current playback position in **milliseconds**. */
   position: number;
+  /** Total track duration in **milliseconds** — keeps the notification
+   * seekbar range consistent when metadata pushes were deduped away. */
+  duration?: number;
 }
 
 /**
@@ -132,6 +135,10 @@ export function updateMediaProgress(req: UpdateProgressRequest): Promise<void | 
   return call("update_state", {
     isPlaying: req.isPlaying,
     position: req.position / 1_000, // ms → s
+    duration:
+      typeof req.duration === "number" && req.duration > 0
+        ? req.duration / 1_000 // ms → s
+        : undefined,
   });
 }
 

@@ -32,7 +32,12 @@ const PENDING_RECYCLE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS;
 const OUTPUT_INIT_TIMEOUT: Duration = Duration::from_secs(4);
 const PRODUCER_YIELD_RETRIES: u32 = 8;
 const PRODUCER_MIN_PARK_US: u64 = 100;
-const PRODUCER_MAX_PARK_US: u64 = 1_000;
+// Steady-state playback keeps the output ring full, so the mixer producer
+// lives in this park-poll loop: the cap IS the wakeup cadence. 4ms ≈ 2-3
+// polls per freed ~10ms block instead of ~10, cutting wakeups ~4× under CPU
+// stress. Interrupts (seek/stop/generation bump) are re-checked after every
+// park, so those paths gain at most one cap of latency.
+const PRODUCER_MAX_PARK_US: u64 = 4_000;
 
 #[derive(Clone, Copy)]
 pub(crate) struct PushCancel<'a> {
@@ -783,7 +788,7 @@ fn producer_retry_backoff(retry_count: &mut u32) {
         return;
     }
 
-    let shift = (*retry_count - PRODUCER_YIELD_RETRIES).min(4);
+    let shift = (*retry_count - PRODUCER_YIELD_RETRIES).min(6);
     let park_us = (PRODUCER_MIN_PARK_US << shift).min(PRODUCER_MAX_PARK_US);
     *retry_count = (*retry_count).saturating_add(1);
     thread::park_timeout(Duration::from_micros(park_us));

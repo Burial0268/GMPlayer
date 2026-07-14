@@ -7,7 +7,6 @@ declare global {
     $player: ISound | undefined;
     AudioContext: typeof AudioContext;
     webkitAudioContext: typeof AudioContext;
-    _originalVolumeBeforeDuck?: number;
 
     // Naive UI (mounted by Provider component)
     $message: MessageApi;

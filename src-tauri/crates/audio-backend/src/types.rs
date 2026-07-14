@@ -265,7 +265,15 @@ pub enum AudioThreadMessage {
     #[serde(rename_all = "camelCase")]
     NextSongGapless,
     #[serde(rename_all = "camelCase")]
-    SetPlaylist { songs: Vec<SongData> },
+    SetPlaylist {
+        songs: Vec<SongData>,
+        /// `true` when `songs` is a bounded prefill window (current track +
+        /// pre-resolved next tracks) rather than a full playlist: advancing
+        /// past the last entry must stop instead of wrapping around, so a
+        /// frozen frontend (Android background) never re-plays stale entries.
+        #[serde(default)]
+        windowed: bool,
+    },
     #[serde(rename_all = "camelCase")]
     SetVolume { volume: f64 },
     #[serde(rename_all = "camelCase")]

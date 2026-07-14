@@ -10,18 +10,24 @@ use crate::effects::DspChain;
 use crate::output::{OutputWriter, PushCancel};
 use crate::types::{CrossfadeCurve, DspConfig};
 
-#[cfg(target_os = "android")]
-// Match the deeper Android output queue so decode jitter does not immediately
-// become zero-padded mixer blocks.
+#[cfg(any(target_os = "android", target_os = "linux"))]
+// Match the deeper Android/Linux output queue so decode jitter does not
+// immediately become zero-padded mixer blocks (Linux: Pulse/PipeWire server
+// scheduling adds the same kind of jitter as the Android scheduler).
 const DECK_QUEUE_BLOCKS: usize = 48;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "linux")))]
 const DECK_QUEUE_BLOCKS: usize = 8;
 const DECK_RECYCLE_QUEUE_BLOCKS: usize = DECK_QUEUE_BLOCKS + 4;
 const MIX_BLOCK_FRAMES: usize = 512;
 const CROSSFADE_RAMP_FRAMES: usize = 64;
 const PRODUCER_YIELD_RETRIES: u32 = 8;
 const PRODUCER_MIN_PARK_US: u64 = 100;
-const PRODUCER_MAX_PARK_US: u64 = 1_000;
+// Steady-state playback keeps the rings full, so producers spend their lives
+// in this park-poll loop: the cap IS the wakeup cadence. 4ms ≈ 2-3 polls per
+// freed ~10ms block instead of ~10, cutting idle/full-ring wakeups ~4× under
+// CPU stress. Interrupts (seek/stop/generation bump) are re-checked after
+// every park, so the worst added latency for those paths is one cap.
+const PRODUCER_MAX_PARK_US: u64 = 4_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeckId {
@@ -977,7 +983,7 @@ fn producer_retry_backoff(retry_count: &mut u32) {
         return;
     }
 
-    let shift = (*retry_count - PRODUCER_YIELD_RETRIES).min(4);
+    let shift = (*retry_count - PRODUCER_YIELD_RETRIES).min(6);
     let park_us = (PRODUCER_MIN_PARK_US << shift).min(PRODUCER_MAX_PARK_US);
     *retry_count = (*retry_count).saturating_add(1);
     thread::park_timeout(Duration::from_micros(park_us));

@@ -27,6 +27,7 @@ import { SoundManager } from "./SoundManager";
 import { AudioContextManager } from "./AudioContextManager";
 import { getAutoMixEngine } from "./AutoMix";
 import { getAudioPreloader } from "./AudioPreloader";
+import { getNativeQueueRegistryEntry, prefillNativeQueue } from "./NativeQueuePrefill";
 import { clearSpectrumFrame, setSpectrumFrame } from "./SpectrumFrame";
 import type { ISound } from "./types";
 import {
@@ -44,6 +45,33 @@ import {
 const IS_DEV = import.meta.env?.DEV ?? false;
 const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
 const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
+/** How long a backend-initiated transition (native advance / AutoMix adoption)
+ * shields the adopted song from being torn down and re-created by the debounced
+ * `getPlaySongData` watcher. Covers the 500ms debounce plus async settling. */
+const NATIVE_ADVANCE_HOLD_MS = 4000;
+
+// Native-advance hold: identifies the song adopted from a backend-initiated
+// transition so the Player watcher reuses the already-playing sound.
+let nativeAdvanceHold: { songId: number; until: number } | null = null;
+
+const beginNativeAdvanceHold = (songId: number | undefined | null): void => {
+  if (!Number.isFinite(songId as number)) return;
+  nativeAdvanceHold = { songId: Number(songId), until: Date.now() + NATIVE_ADVANCE_HOLD_MS };
+};
+
+/**
+ * True when `songId` was just adopted from a backend-initiated transition:
+ * the active native sound is already playing it, so URL resolution and
+ * `createSound` must be skipped (lyrics/UI sync only).
+ */
+export const isNativeAdvanceHoldActiveFor = (songId: number | undefined | null): boolean => {
+  if (!nativeAdvanceHold) return false;
+  if (Date.now() > nativeAdvanceHold.until) {
+    nativeAdvanceHold = null;
+    return false;
+  }
+  return Number(songId) === nativeAdvanceHold.songId;
+};
 
 // 歌曲信息更新定时器
 let timeupdateInterval: number | null = null;
@@ -256,7 +284,7 @@ const scheduleScrobble = (reason: string): void => {
 
 const applyNativeAutoMixCompletion = (
   currentIndex: number,
-  playback?: { position?: number; duration?: number },
+  playback?: { position?: number; duration?: number; musicId?: string },
 ): void => {
   const music = musicStore();
   const sound = getActiveNativeSound();
@@ -268,10 +296,23 @@ const applyNativeAutoMixCompletion = (
   }
 
   const autoMixIndex = getAutoMixEngine().resolveActiveTransitionTargetIndex(currentIndex);
-  const resolvedIndex = autoMixIndex >= 0 ? autoMixIndex : currentIndex;
+  let resolvedIndex = autoMixIndex >= 0 ? autoMixIndex : currentIndex;
+
+  // Cross-check the backend-reported track identity against the prefill
+  // registry: if the playlist was edited while the backend advanced, the
+  // index may point at a different song — identity wins over index.
+  const registryEntry = getNativeQueueRegistryEntry(playback?.musicId);
+  if (registryEntry && playlists[resolvedIndex]?.id !== registryEntry.songId) {
+    const indexBySongId = playlists.findIndex((song) => song.id === registryEntry.songId);
+    if (indexBySongId >= 0) resolvedIndex = indexBySongId;
+  }
+
   if (resolvedIndex < 0 || resolvedIndex >= playlists.length) {
     return;
   }
+
+  // Shield the adopted song from the debounced watcher's teardown/recreate.
+  beginNativeAdvanceHold(playlists[resolvedIndex]?.id);
 
   const changed = music.persistData.playSongIndex !== resolvedIndex;
   const position = playback?.position;
@@ -758,6 +799,7 @@ const setupNativeSound = (
 
     setMediaSession(music);
     getAudioPreloader().preloadNext();
+    void prefillNativeQueue();
     music.preloadUpcomingSongs();
 
     const songId = music.getPlaySongData?.id;
@@ -1444,6 +1486,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   }
 
   getAudioPreloader().preloadNext();
+  void prefillNativeQueue();
   music.preloadUpcomingSongs();
 };
 

@@ -1,6 +1,11 @@
 use cpal::{BufferSize, SupportedBufferSize};
 
-pub(in crate::output) const DEFAULT_QUEUE_BLOCKS: usize = 8;
+// Match Android's deep software queue: Pulse/PipeWire server scheduling adds
+// the same kind of decode→callback jitter as the Android scheduler, and an
+// underrunning pulse stream accumulates extra sink latency it never gives
+// back (the mysterious multi-second delay). Absorb the jitter in our own
+// preallocated ring — NOT by requesting bigger device buffers below.
+pub(in crate::output) const DEFAULT_QUEUE_BLOCKS: usize = 48;
 
 pub(in crate::output) fn stable_buffer_size(
     _sample_rate: u32,

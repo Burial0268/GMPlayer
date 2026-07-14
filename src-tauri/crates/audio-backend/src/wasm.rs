@@ -568,7 +568,9 @@ impl WasmAudioBackend {
                     self.start_track((self.current_play_index + 1) % self.playlist.len(), 0.0)
                 }
             }
-            AudioThreadMessage::SetPlaylist { songs } => {
+            // `windowed` is a native-queue hint (Tauri prefill windows); the web
+            // backend never auto-advances, so positional semantics are enough.
+            AudioThreadMessage::SetPlaylist { songs, .. } => {
                 self.playlist = songs;
                 self.playlist_inited = true;
                 if self.current_play_index >= self.playlist.len() {

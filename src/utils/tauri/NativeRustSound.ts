@@ -35,6 +35,13 @@ const SEEN_EVENT_SEQ_LIMIT = 512;
 const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
 const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
 const SEEK_REQUEST_ID_MODULO = 1000;
+/** After AudioPlayFinished, how long to wait for the backend queue window to
+ * confirm it is advancing (LoadingAudio) before falling back to the JS-driven
+ * 'end' transition. The backend emits LoadingAudio immediately on advance. */
+const NATIVE_ADVANCE_START_TIMEOUT_MS = 2500;
+/** Once LoadingAudio confirmed the advance, how long the source download may
+ * take before giving up and falling back to the JS-driven transition. */
+const NATIVE_ADVANCE_LOAD_TIMEOUT_MS = 20_000;
 
 interface LocalState {
   musicId: string;
@@ -132,6 +139,18 @@ export class NativeRustSound implements ISound {
   private _allowInitialBackendAttach: boolean = false;
   private _backendTrackReady: boolean = false;
   private _nextSeekRequestId: number = 0;
+  /** True once a queue window has been applied to the backend: track-end
+   * transitions should then be attempted as backend-initiated advances (the
+   * fallback timer restores the JS-driven path when no advance lands). Stays
+   * true across multiple background advances — wake-up replays several
+   * AudioPlayFinished/LoadAudio pairs back-to-back, faster than the async
+   * prefill could re-arm a per-transition flag. */
+  private _nativeAdvanceWindowApplied: boolean = false;
+  /** True between AudioPlayFinished and the adoption of the backend-initiated
+   * advance (LoadAudio for the next track) — the 'end' event is suppressed
+   * while pending and re-emitted by the fallback if the advance never lands. */
+  private _nativeAdvancePending: boolean = false;
+  private _nativeAdvanceFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Pending load() promise so we can resolve from event handlers. */
   private _pendingLoad: LoadPromise | null = null;
@@ -235,7 +254,10 @@ export class NativeRustSound implements ISound {
         filePath: this._path,
         origOrder: 0,
       };
-      this._sendCommand({ type: "setPlaylist", songs: [song] });
+      // `windowed: true` — a bare single-entry queue must stop at track end
+      // instead of wrap-replaying itself; the real advance window arrives via
+      // `applyNativeQueueWindow` once playback starts.
+      this._sendCommand({ type: "setPlaylist", songs: [song], windowed: true });
       if (initPos > 0) {
         this._sendCommand({ type: "jumpToSongAt", songIndex: 0, position: initPos });
       } else {
@@ -280,6 +302,22 @@ export class NativeRustSound implements ISound {
       console.warn("[NativeRustSound] audio control command queued until reconnect", msg.type);
     }
     return sentNow;
+  }
+
+  /**
+   * Replace the backend playback queue with a prefill window: the current
+   * track plus pre-resolved next tracks, carrying real frontend playlist
+   * indices as `origOrder`. Arms the native-advance adoption path when the
+   * window gives the backend a usable next step — either further entries, or
+   * wrap-repeat when `windowed` is false (repeat-one / single-song list).
+   */
+  applyNativeQueueWindow(songs: SongData[], options: { windowed: boolean }): boolean {
+    if (this._destroyed || songs.length === 0) return false;
+    this._sendCommand({ type: "setPlaylist", songs, windowed: options.windowed });
+    this._nativeAdvanceWindowApplied = true;
+    // A usable next step exists when the window has further entries, or when
+    // wrap-repeat applies (repeat-one / single-song list, windowed=false).
+    return songs.length > 1 || !options.windowed;
   }
 
   setAnalysisEnabled(enabled: boolean): void {
@@ -393,6 +431,7 @@ export class NativeRustSound implements ISound {
       }
 
       case "loadAudio": {
+        const wasAdvancePending = this._nativeAdvancePending;
         if (this._acceptMusicId(evt.data.musicId)) {
           this._musicInfo = evt.data.musicInfo;
           this._quality = evt.data.quality;
@@ -400,11 +439,23 @@ export class NativeRustSound implements ISound {
           this._timeline.setDuration(evt.data.musicInfo.duration);
           this._backendTrackReady = true;
           this._resolvePendingLoad();
+          if (wasAdvancePending) {
+            this._completeNativeAdvanceAdoption(
+              evt.data.musicId,
+              evt.data.currentPlayIndex,
+              evt.data.musicInfo.duration,
+            );
+          }
         }
         break;
       }
 
       case "loadingAudio":
+        if (this._nativeAdvancePending) {
+          // Backend confirmed the advance and is resolving the next source —
+          // give the download room before falling back to the JS path.
+          this._armNativeAdvanceFallback(NATIVE_ADVANCE_LOAD_TIMEOUT_MS);
+        }
         break;
 
       case "playPosition": {
@@ -439,6 +490,16 @@ export class NativeRustSound implements ISound {
       case "audioPlayFinished": {
         this._pendingPlayCommand = false;
         if (evt.data.musicId === this._expectedMusicId) {
+          if (isTauri() && this._nativeAdvanceWindowApplied && this._isActiveController()) {
+            // The backend queue window holds the real next track and Rust
+            // advances on its own (`NextSongGapless`) — even while this JS
+            // runtime is frozen in the background. Suppress the legacy
+            // 'end' → setPlaySongIndex teardown and adopt the backend
+            // transition; the fallback timer re-emits 'end' if no advance
+            // lands (window exhausted, expired URL, load failure).
+            this._beginNativeAdvanceAdoption();
+            break;
+          }
           this._playbackState = "ended";
           this._setLocalPosition(this._state.duration);
           this._emit("end");
@@ -551,6 +612,12 @@ export class NativeRustSound implements ISound {
         const err = new Error(evt.data.error);
         this._pendingPlayCommand = false;
         if (evt.type === "loadError") {
+          if (this._nativeAdvancePending) {
+            // The prefilled next source failed to load (e.g. expired URL) —
+            // hand the transition back to the JS-driven path.
+            this._abandonNativeAdvanceAdoption();
+            break;
+          }
           if (this._pendingLoad) {
             this._rejectPendingLoad(err);
           } else {
@@ -687,6 +754,68 @@ export class NativeRustSound implements ISound {
     this._adoptNextBackendMusicId = false;
     if (musicId.startsWith("local:")) {
       this._path = musicId.slice("local:".length);
+    }
+  }
+
+  // ── Native queue-window advance adoption ──────────────────────
+
+  private _beginNativeAdvanceAdoption(): void {
+    this._nativeAdvancePending = true;
+    this._adoptNextBackendMusicId = true;
+    this._armNativeAdvanceFallback(NATIVE_ADVANCE_START_TIMEOUT_MS);
+  }
+
+  private _completeNativeAdvanceAdoption(
+    musicId: string,
+    currentPlayIndex: number,
+    duration: number,
+  ): void {
+    this._nativeAdvancePending = false;
+    // Repeat-one adoption keeps the same musicId, so `_acceptMusicId`'s
+    // early-return never consumed the adopt flag — clear it explicitly.
+    this._adoptNextBackendMusicId = false;
+    this._clearNativeAdvanceFallback();
+    this._state.musicId = musicId || this._expectedMusicId;
+    this._state.currentPlayIndex = currentPlayIndex;
+    if (duration > 0) {
+      this._state.duration = duration;
+      this._timeline.setDuration(duration);
+    }
+    this._setLocalPosition(0);
+    window.dispatchEvent(
+      new CustomEvent(NATIVE_AUTOMIX_SYNC_EVENT, {
+        detail: {
+          currentIndex: currentPlayIndex,
+          musicId: this._state.musicId,
+          position: 0,
+          duration: this.duration(),
+        },
+      }),
+    );
+  }
+
+  private _abandonNativeAdvanceAdoption(): void {
+    if (!this._nativeAdvancePending) return;
+    this._nativeAdvancePending = false;
+    this._adoptNextBackendMusicId = false;
+    this._clearNativeAdvanceFallback();
+    this._playbackState = "ended";
+    this._setLocalPosition(this._state.duration);
+    this._emit("end");
+  }
+
+  private _armNativeAdvanceFallback(timeoutMs: number): void {
+    this._clearNativeAdvanceFallback();
+    this._nativeAdvanceFallbackTimer = setTimeout(() => {
+      this._nativeAdvanceFallbackTimer = null;
+      this._abandonNativeAdvanceAdoption();
+    }, timeoutMs);
+  }
+
+  private _clearNativeAdvanceFallback(): void {
+    if (this._nativeAdvanceFallbackTimer !== null) {
+      clearTimeout(this._nativeAdvanceFallbackTimer);
+      this._nativeAdvanceFallbackTimer = null;
     }
   }
 
@@ -978,6 +1107,9 @@ export class NativeRustSound implements ISound {
       clearTimeout(sync.timeout);
       sync.resolve();
     }
+    this._clearNativeAdvanceFallback();
+    this._nativeAdvancePending = false;
+    this._nativeAdvanceWindowApplied = false;
     this._clearNoFFTWarning();
     if (this._unlistenTransport) {
       try {
