@@ -194,6 +194,8 @@ onMounted(() => {
   background: rgba(14, 14, 15, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 999px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
 }
 
 .content {
@@ -298,6 +300,7 @@ onMounted(() => {
   transition:
     color 160ms ease,
     background-color 160ms ease,
+    border-color 160ms ease,
     transform 160ms ease;
 }
 
@@ -312,14 +315,21 @@ onMounted(() => {
 .control-button.secondary {
   width: 44px;
   height: 44px;
-  color: rgba(255, 255, 255, 0.7);
+  color: rgba(255, 255, 255, 0.84);
   font-size: 20px;
-  background: rgba(255, 255, 255, 0.075);
+  background: rgba(24, 24, 24, 0.46);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 6px 16px rgb(0 0 0 / 14%),
+    inset 0 1px 0 rgb(255 255 255 / 12%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(16px) saturate(150%);
 }
 
 .control-button.secondary:hover {
   color: #fff;
-  background: rgba(255, 255, 255, 0.13);
+  background: rgba(36, 36, 36, 0.62);
+  border-color: rgba(255, 255, 255, 0.22);
 }
 
 .control-button.primary {
@@ -327,7 +337,18 @@ onMounted(() => {
   height: 50px;
   color: #111;
   font-size: 28px;
-  background: rgba(255, 255, 255, 0.94);
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.46);
+  box-shadow:
+    0 8px 20px rgb(0 0 0 / 16%),
+    inset 0 1px 0 rgb(255 255 255 / 48%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+.control-button.primary:hover {
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.68);
 }
 
 .skeleton {

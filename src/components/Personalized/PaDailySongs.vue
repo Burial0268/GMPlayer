@@ -201,6 +201,7 @@ onMounted(getDailySongsData);
   background: rgba(14, 14, 15, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: var(--radius-pill);
+  -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
 
@@ -281,13 +282,18 @@ onMounted(getDailySongsData);
   height: 50px;
   padding: 0;
   color: #111;
-  background: rgba(255, 255, 255, 0.94);
-  border: 0;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.46);
   border-radius: var(--radius-pill);
-  box-shadow: var(--shadow-2);
+  box-shadow:
+    0 8px 20px rgb(0 0 0 / 16%),
+    inset 0 1px 0 rgb(255 255 255 / 48%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  backdrop-filter: blur(18px) saturate(160%);
   cursor: pointer;
   transition:
     background-color var(--duration-200) var(--ease-out),
+    border-color var(--duration-200) var(--ease-out),
     transform var(--duration-200) var(--ease-out);
 }
 
@@ -308,7 +314,8 @@ onMounted(getDailySongsData);
 }
 
 .play-button:hover {
-  background: #fff;
+  background: rgba(255, 255, 255, 0.9);
+  border-color: rgba(255, 255, 255, 0.68);
 }
 
 .play-button:active {
