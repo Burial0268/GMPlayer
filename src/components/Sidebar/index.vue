@@ -34,191 +34,118 @@
     </div>
 
     <!-- Scrollable nav area -->
-    <n-scrollbar
-      v-if="!setting.sidebarCollapsed"
-      class="sidebar-scroll"
-      @scroll="handleSidebarScroll"
-    >
-      <!-- Menu section -->
-      <div :class="['sidebar-section sidebar-primary', { collapsed: setting.sidebarCollapsed }]">
-        <SidebarItem
-          :to="'/'"
-          :icon="HomeTwo"
-          :label="$t('nav.home')"
-          :collapsed="setting.sidebarCollapsed"
-        />
-        <SidebarItem
-          :to="'/discover'"
-          :icon="FindOne"
-          :label="$t('nav.discover')"
-          :collapsed="setting.sidebarCollapsed"
-        />
-        <SidebarItem
-          v-if="user.userLogin"
-          :to="'/dailySongs'"
-          :icon="CalendarThirty"
-          :label="$t('sidebar.dailySongs')"
-          :collapsed="setting.sidebarCollapsed"
-        />
-      </div>
+    <div class="sidebar-nav-viewport">
+      <AnimatePresence :initial="false">
+        <Motion
+          v-if="!setting.sidebarCollapsed"
+          key="expanded-navigation"
+          tag="div"
+          class="sidebar-nav-layer"
+          :initial="{ opacity: 0, y: -8 }"
+          :animate="{ opacity: 1, y: 0 }"
+          :exit="{ opacity: 0, y: -8 }"
+          :transition="{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }"
+        >
+          <n-virtual-list
+            class="sidebar-scroll sidebar-virtual expanded"
+            :items="expandedNavItems"
+            :item-size="38"
+            key-field="key"
+            :show-scrollbar="false"
+            @scroll="handleSidebarScroll"
+          >
+            <template #default="{ item }">
+              <div :class="['sidebar-virtual-row expanded', `type-${item.type}`]">
+                <SidebarItem
+                  v-if="item.type === 'route'"
+                  :to="item.to"
+                  :icon="item.icon"
+                  :label="item.label"
+                />
+                <SidebarPlaylistItem
+                  v-else-if="item.type === 'playlist'"
+                  :id="item.id"
+                  :cover="item.cover"
+                  :name="item.name"
+                  @navigate="goToPlaylist"
+                />
+                <div
+                  v-else-if="item.type === 'section'"
+                  class="sidebar-section-header sidebar-virtual-section-header"
+                  @click="toggleSection(item.section)"
+                >
+                  <span>{{ item.label }}</span>
+                  <n-icon
+                    class="section-chevron"
+                    :class="{ open: sectionOpen[item.section] }"
+                    :size="13"
+                    :component="Right"
+                  />
+                </div>
+                <n-skeleton
+                  v-else-if="item.type === 'skeleton'"
+                  :height="32"
+                  width="100%"
+                  :round="true"
+                />
+                <div v-else-if="item.type === 'empty'" class="sidebar-empty">
+                  {{ item.label }}
+                </div>
+                <div v-else class="sidebar-virtual-divider" />
+              </div>
+            </template>
+          </n-virtual-list>
+        </Motion>
 
-      <!-- Library section (login required) -->
-      <div
-        v-if="user.userLogin"
-        :class="['sidebar-section', { collapsed: setting.sidebarCollapsed }]"
-      >
-        <div class="sidebar-section-header" @click="toggleSection('library')">
-          <span>{{ $t("sidebar.library") }}</span>
-          <n-icon
-            class="section-chevron"
-            :class="{ open: sectionOpen.library }"
-            :size="13"
-            :component="Right"
-          />
-        </div>
-        <div v-show="sectionOpen.library" class="sidebar-section-content">
-          <SidebarItem
-            :to="'/user/playlists'"
-            :icon="MusicList"
-            :label="$t('sidebar.playlists')"
-            :collapsed="setting.sidebarCollapsed"
-          />
-          <SidebarItem
-            :to="'/user/album'"
-            :icon="RecordDisc"
-            :label="$t('sidebar.albums')"
-            :collapsed="setting.sidebarCollapsed"
-          />
-          <SidebarItem
-            :to="'/user/artists'"
-            :icon="Voice"
-            :label="$t('sidebar.artists')"
-            :collapsed="setting.sidebarCollapsed"
-          />
-          <SidebarItem
-            :to="'/user/cloud'"
-            :icon="CloudStorage"
-            :label="$t('sidebar.cloud')"
-            :collapsed="setting.sidebarCollapsed"
-          />
-        </div>
-      </div>
-
-      <!-- My Playlists section (login required) -->
-      <div
-        v-if="user.userLogin"
-        :class="['sidebar-section sidebar-playlists', { collapsed: setting.sidebarCollapsed }]"
-      >
-        <div class="sidebar-section-header" @click="toggleSection('own')">
-          <span>{{ $t("sidebar.myPlaylists") }}</span>
-          <n-icon
-            class="section-chevron"
-            :class="{ open: sectionOpen.own }"
-            :size="13"
-            :component="Right"
-          />
-        </div>
-        <div v-show="sectionOpen.own" class="sidebar-section-content">
-          <template v-if="user.getUserPlayLists.isLoading">
-            <n-skeleton
-              v-for="i in 3"
-              :key="i"
-              :height="32"
-              :width="setting.sidebarCollapsed ? 32 : '100%'"
-              :round="true"
-              style="margin-bottom: 6px"
-            />
-          </template>
-          <template v-else-if="user.getUserPlayLists.own.length">
-            <SidebarPlaylistItem
-              v-for="pl in user.getUserPlayLists.own"
-              :key="pl.id"
-              :id="pl.id"
-              :cover="pl.cover"
-              :name="pl.name"
-              :collapsed="setting.sidebarCollapsed"
-              @navigate="goToPlaylist"
-            />
-          </template>
-          <AnimatePresence>
-            <Motion
-              v-if="
-                !setting.sidebarCollapsed &&
-                !user.getUserPlayLists.isLoading &&
-                !user.getUserPlayLists.own.length
-              "
-              class="sidebar-empty"
-              :initial="{ opacity: 0 }"
-              :animate="{ opacity: 1 }"
-              :exit="{ opacity: 0 }"
-              :transition="{ duration: 0.15 }"
-            >
-              {{ $t("sidebar.noPlaylists") }}
-            </Motion>
-          </AnimatePresence>
-        </div>
-      </div>
-
-      <!-- Liked Playlists section (login required) -->
-      <div
-        v-if="user.userLogin && user.getUserPlayLists.like.length"
-        :class="['sidebar-section sidebar-playlists', { collapsed: setting.sidebarCollapsed }]"
-      >
-        <div class="sidebar-section-header" @click="toggleSection('liked')">
-          <span>{{ $t("sidebar.likedPlaylists") }}</span>
-          <n-icon
-            class="section-chevron"
-            :class="{ open: sectionOpen.liked }"
-            :size="13"
-            :component="Right"
-          />
-        </div>
-        <div v-show="sectionOpen.liked" class="sidebar-section-content">
-          <SidebarPlaylistItem
-            v-for="pl in user.getUserPlayLists.like"
-            :key="pl.id"
-            :id="pl.id"
-            :cover="pl.cover"
-            :name="pl.name"
-            :collapsed="setting.sidebarCollapsed"
-            @navigate="goToPlaylist"
-          />
-        </div>
-      </div>
-    </n-scrollbar>
-
-    <n-virtual-list
-      v-else
-      class="sidebar-scroll sidebar-virtual collapsed"
-      :items="collapsedNavItems"
-      :item-size="38"
-      key-field="key"
-      :show-scrollbar="false"
-      @scroll="handleSidebarScroll"
-    >
-      <template #default="{ item }">
-        <div class="sidebar-virtual-row">
-          <SidebarItem
-            v-if="item.type === 'route'"
-            :to="item.to"
-            :icon="item.icon"
-            :label="item.label"
-            :collapsed="true"
-            :badge="item.badge"
-          />
-          <SidebarPlaylistItem
-            v-else-if="item.type === 'playlist'"
-            :id="item.id"
-            :cover="item.cover"
-            :name="item.name"
-            :collapsed="true"
-            @navigate="goToPlaylist"
-          />
-          <n-skeleton v-else-if="item.type === 'skeleton'" :height="32" :width="32" :round="true" />
-          <div v-else class="sidebar-virtual-divider" />
-        </div>
-      </template>
-    </n-virtual-list>
+        <Motion
+          v-else
+          key="collapsed-navigation"
+          tag="div"
+          class="sidebar-nav-layer collapsed"
+          :initial="{ opacity: 0, y: 8 }"
+          :animate="{ opacity: 1, y: 0 }"
+          :exit="{ opacity: 0, y: 8 }"
+          :transition="{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }"
+        >
+          <n-virtual-list
+            class="sidebar-scroll sidebar-virtual collapsed"
+            :items="collapsedNavItems"
+            :item-size="38"
+            key-field="key"
+            :show-scrollbar="false"
+            @scroll="handleSidebarScroll"
+          >
+            <template #default="{ item }">
+              <div class="sidebar-virtual-row collapsed">
+                <SidebarItem
+                  v-if="item.type === 'route'"
+                  :to="item.to"
+                  :icon="item.icon"
+                  :label="item.label"
+                  :collapsed="true"
+                  :badge="item.badge"
+                />
+                <SidebarPlaylistItem
+                  v-else-if="item.type === 'playlist'"
+                  :id="item.id"
+                  :cover="item.cover"
+                  :name="item.name"
+                  :collapsed="true"
+                  @navigate="goToPlaylist"
+                />
+                <n-skeleton
+                  v-else-if="item.type === 'skeleton'"
+                  :height="32"
+                  :width="32"
+                  :round="true"
+                />
+                <div v-else class="sidebar-virtual-divider" />
+              </div>
+            </template>
+          </n-virtual-list>
+        </Motion>
+      </AnimatePresence>
+    </div>
 
     <!-- Footer: history, settings, avatar -->
     <div :class="['sidebar-footer', { collapsed: setting.sidebarCollapsed }]">
@@ -289,7 +216,7 @@ import {
   Logout,
   User,
 } from "@icon-park/vue-next";
-import { NIcon, NAvatar, NSkeleton, NScrollbar, NTooltip, NDropdown, NVirtualList } from "naive-ui";
+import { NIcon, NAvatar, NSkeleton, NTooltip, NDropdown, NVirtualList } from "naive-ui";
 import { Motion, AnimatePresence } from "motion-v";
 import { settingStore, siteStore, userStore } from "@/store";
 import { useRouter } from "vue-router";
@@ -307,7 +234,9 @@ const user = userStore();
 const { t } = useI18n();
 const { hasUpdate, checkForUpdate } = useAppUpdater();
 
-type CollapsedNavItem =
+type SidebarSectionKey = "library" | "own" | "liked";
+
+type SidebarNavItem =
   | {
       type: "route";
       key: string;
@@ -326,6 +255,17 @@ type CollapsedNavItem =
   | {
       type: "divider" | "skeleton";
       key: string;
+    }
+  | {
+      type: "section";
+      key: string;
+      section: SidebarSectionKey;
+      label: string;
+    }
+  | {
+      type: "empty";
+      key: string;
+      label: string;
     };
 
 // 用户条下拉菜单（登录后点击头像弹出）
@@ -372,8 +312,113 @@ const sectionOpen = reactive({
   liked: true,
 });
 
-const collapsedNavItems = computed<CollapsedNavItem[]>(() => {
-  const items: CollapsedNavItem[] = [
+const expandedNavItems = computed<SidebarNavItem[]>(() => {
+  const items: SidebarNavItem[] = [
+    { type: "route", key: "home", to: "/", icon: HomeTwo, label: t("nav.home") },
+    { type: "route", key: "discover", to: "/discover", icon: FindOne, label: t("nav.discover") },
+  ];
+
+  if (!user.userLogin) return items;
+
+  items.push({
+    type: "route",
+    key: "dailySongs",
+    to: "/dailySongs",
+    icon: CalendarThirty,
+    label: t("sidebar.dailySongs"),
+  });
+  items.push({
+    type: "section",
+    key: "section-library",
+    section: "library",
+    label: t("sidebar.library"),
+  });
+  if (sectionOpen.library) {
+    items.push(
+      {
+        type: "route",
+        key: "library-playlists",
+        to: "/user/playlists",
+        icon: MusicList,
+        label: t("sidebar.playlists"),
+      },
+      {
+        type: "route",
+        key: "library-album",
+        to: "/user/album",
+        icon: RecordDisc,
+        label: t("sidebar.albums"),
+      },
+      {
+        type: "route",
+        key: "library-artists",
+        to: "/user/artists",
+        icon: Voice,
+        label: t("sidebar.artists"),
+      },
+      {
+        type: "route",
+        key: "library-cloud",
+        to: "/user/cloud",
+        icon: CloudStorage,
+        label: t("sidebar.cloud"),
+      },
+    );
+  }
+
+  items.push({
+    type: "section",
+    key: "section-own",
+    section: "own",
+    label: t("sidebar.myPlaylists"),
+  });
+  if (sectionOpen.own) {
+    if (user.getUserPlayLists.isLoading) {
+      items.push(
+        { type: "skeleton", key: "own-skeleton-1" },
+        { type: "skeleton", key: "own-skeleton-2" },
+        { type: "skeleton", key: "own-skeleton-3" },
+      );
+    } else if (user.getUserPlayLists.own.length) {
+      for (const playlist of user.getUserPlayLists.own) {
+        items.push({
+          type: "playlist",
+          key: `own-${playlist.id}`,
+          id: playlist.id,
+          cover: playlist.cover,
+          name: playlist.name,
+        });
+      }
+    } else {
+      items.push({ type: "empty", key: "own-empty", label: t("sidebar.noPlaylists") });
+    }
+  }
+
+  if (user.getUserPlayLists.like.length) {
+    items.push({
+      type: "section",
+      key: "section-liked",
+      section: "liked",
+      label: t("sidebar.likedPlaylists"),
+    });
+    if (sectionOpen.liked) {
+      for (const playlist of user.getUserPlayLists.like) {
+        items.push({
+          type: "playlist",
+          key: `liked-${playlist.id}`,
+          id: playlist.id,
+          cover: playlist.cover,
+          name: playlist.name,
+        });
+      }
+    }
+  }
+
+  return items;
+});
+
+const collapsedNavItems = computed<SidebarNavItem[]>(() => {
+  const items: SidebarNavItem[] = [
     { type: "route", key: "home", to: "/", icon: HomeTwo, label: t("nav.home") },
     { type: "route", key: "discover", to: "/discover", icon: FindOne, label: t("nav.discover") },
   ];
@@ -461,7 +506,7 @@ const collapsedNavItems = computed<CollapsedNavItem[]>(() => {
   return items;
 });
 
-const toggleSection = (key: "library" | "own" | "liked") => {
+const toggleSection = (key: SidebarSectionKey) => {
   sectionOpen[key] = !sectionOpen[key];
   resetSidebarScrollShadow();
 };
@@ -544,9 +589,6 @@ const goToPlaylist = (id: number) => {
   }
 
   &.collapsed {
-    width: 56px;
-    min-width: 56px;
-    max-width: 56px;
     overflow: clip;
     contain: size layout paint;
   }
@@ -675,65 +717,38 @@ const goToPlaylist = (id: number) => {
   }
 }
 
-.sidebar-scroll {
+.sidebar-nav-viewport {
+  position: relative;
   flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sidebar-nav-layer {
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+  min-height: 0;
+  will-change: transform, opacity;
+
+  &.collapsed {
+    width: 56px;
+  }
+}
+
+.sidebar-scroll {
+  height: 100%;
   min-height: 0;
   max-height: 100%;
   min-width: 0;
   width: 100%;
   overflow: hidden;
   overscroll-behavior: contain;
-
-  :deep(.n-scrollbar-container),
-  :deep(.n-scrollbar-content) {
-    max-width: 100%;
-    min-width: 0;
-    box-sizing: border-box;
-    overflow-x: hidden !important;
-  }
-
-  :deep(.n-scrollbar-rail) {
-    opacity: 0;
-    transition: opacity 0.3s;
-  }
-
-  &:hover {
-    :deep(.n-scrollbar-rail) {
-      opacity: 1;
-    }
-  }
-
-  &.collapsed {
-    width: 56px;
-    min-width: 56px;
-    max-width: 56px;
-    scrollbar-width: none;
-
-    :deep(.n-scrollbar-container) {
-      width: 56px;
-      max-width: 56px;
-      overflow-x: hidden !important;
-      overscroll-behavior: contain;
-    }
-
-    :deep(.n-scrollbar-content) {
-      width: 56px;
-      min-width: 56px;
-      max-width: 56px;
-      overflow-x: hidden;
-    }
-
-    :deep(.n-scrollbar-rail) {
-      display: none;
-    }
-  }
 }
 
 .sidebar-virtual {
   flex: 1 1 auto;
-  width: 56px;
-  min-width: 56px;
-  max-width: 56px;
   min-height: 0;
   overflow: hidden;
   overscroll-behavior: contain;
@@ -743,9 +758,6 @@ const goToPlaylist = (id: number) => {
   :deep(.v-vl),
   :deep(.v-vl-items),
   :deep(.n-virtual-list) {
-    width: 56px !important;
-    min-width: 56px !important;
-    max-width: 56px !important;
     overflow-x: hidden !important;
     overscroll-behavior: contain;
   }
@@ -757,18 +769,50 @@ const goToPlaylist = (id: number) => {
   :deep(.v-vl::-webkit-scrollbar) {
     display: none;
   }
+
+  &.expanded,
+  &.expanded :deep(.v-vl),
+  &.expanded :deep(.v-vl-items),
+  &.expanded :deep(.n-virtual-list) {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  &.collapsed,
+  &.collapsed :deep(.v-vl),
+  &.collapsed :deep(.v-vl-items),
+  &.collapsed :deep(.n-virtual-list) {
+    width: 56px !important;
+    min-width: 56px !important;
+    max-width: 56px !important;
+  }
 }
 
 .sidebar-virtual-row {
-  width: 56px;
   height: 38px;
-  min-width: 56px;
-  max-width: 56px;
   display: flex;
   align-items: center;
-  justify-content: center;
   overflow: hidden;
   box-sizing: border-box;
+
+  &.expanded {
+    width: 100%;
+    min-width: 0;
+    padding: 2px 8px;
+    justify-content: stretch;
+  }
+
+  &.collapsed {
+    width: 56px;
+    min-width: 56px;
+    max-width: 56px;
+    justify-content: center;
+  }
+
+  &.type-section {
+    padding-top: 4px;
+  }
 }
 
 .sidebar-virtual-divider {
@@ -843,6 +887,12 @@ const goToPlaylist = (id: number) => {
       opacity: 1;
     }
   }
+}
+
+.sidebar-virtual-section-header {
+  width: 100%;
+  min-height: 32px;
+  box-sizing: border-box;
 }
 
 .sidebar-section-content {
