@@ -243,10 +243,15 @@ const sharedLayoutTransition = {
   restDelta: 0.001,
   restSpeed: 0.02,
 } as const;
+// 拖拽收尾用近临界弹簧：spring 从 MotionValue 继承释放速度，顺着手的惯性收尾；
+// tween 会丢速度，松手瞬间出现"顿一下再动"的断档感。
 const drawerProgressTransition = {
-  type: "tween",
-  duration: 0.34,
-  ease: [0.22, 1, 0.36, 1],
+  type: "spring",
+  stiffness: 420,
+  damping: 38,
+  mass: 0.9,
+  restDelta: 0.001,
+  restSpeed: 0.02,
 } as const;
 const backgroundLayoutTransition = {
   type: "tween",
@@ -374,7 +379,7 @@ const MOBILE_CONTENT_REVEAL_START = 0.76;
 const MOBILE_CONTENT_REVEAL_END = 0.98;
 const MOBILE_CONTROLS_REVEAL_START = 0.88;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
-const MOBILE_DRAG_DAMPING_POWER = 1.14;
+const MOBILE_DRAG_DAMPING_POWER = 1.05;
 
 const getTransitionDistance = () => Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
 const getMiniBarMaxLift = () => Math.min(44, Math.max(28, getTransitionDistance() * 0.11));
@@ -951,7 +956,7 @@ const toggleDesktopLyrics = () => {
   const rightEl = desktopLayoutRef.value?.rightContentRef;
   if (rightEl) {
     gsap.killTweensOf(rightEl);
-    gsap.set(rightEl, { clearProps: "opacity,transform" });
+    gsap.set(rightEl, { clearProps: "opacity,transform,transition" });
   }
   desktopLyricsVisible.value = !desktopLyricsVisible.value;
 };
@@ -1046,7 +1051,10 @@ const beginStoreCloseHandoff = () => {
 
 const finishMobileInteractive = (forceOpen?: boolean) =>
   new Promise<boolean>((resolve) => {
-    const shouldOpen = forceOpen ?? pendingInteractiveProgress >= 0.5;
+    // 甩动优先：释放速度足够时直接顺着惯性判向，不足半程也能一次关闭/打开
+    const velocity = playerProgress.getVelocity();
+    const shouldOpen =
+      forceOpen ?? (Math.abs(velocity) > 0.6 ? velocity > 0 : pendingInteractiveProgress >= 0.5);
     mobileTransitionDirection.value = shouldOpen ? "opening" : "closing";
     if (shouldOpen) detachMiniSharedAlbum();
     else {
@@ -1159,18 +1167,30 @@ const animateTip = (isVisible: boolean) => {
 };
 
 // GSAP 入场动画 (desktop)
+// .left/.right 自带 opacity/transform 的 CSS transition（供 noLrc / lyrics-hidden 切换用），
+// 会把 GSAP 立即写入的 from 状态再做一次过渡，造成 亮->暗->亮 闪烁；
+// 入场期间必须先禁用元素自身 transition，结束后 clearProps 恢复。
 const animatePlayerIn = () => {
   if (!bigPlayerRef.value || isMobile.value) return;
   const leftEl = desktopLayoutRef.value?.leftContentRef;
   const rightEl = desktopLayoutRef.value?.rightContentRef;
   if (leftEl) {
+    gsap.set(leftEl, { transition: "none" });
     gsap.fromTo(
       leftEl,
       { opacity: 0, scale: 0.96 },
-      { opacity: 1, scale: 1, duration: 0.5, delay: 0.15, ease: "power2.out" },
+      {
+        opacity: 1,
+        scale: 1,
+        duration: 0.5,
+        delay: 0.15,
+        ease: "power2.out",
+        onComplete: () => gsap.set(leftEl, { clearProps: "opacity,transform,transition" }),
+      },
     );
   }
   if (rightEl) {
+    gsap.set(rightEl, { transition: "none" });
     gsap.fromTo(
       rightEl,
       { opacity: 0, scale: 0.96 },
@@ -1180,7 +1200,7 @@ const animatePlayerIn = () => {
         duration: 0.5,
         delay: 0.25,
         ease: "power2.out",
-        onComplete: () => gsap.set(rightEl, { clearProps: "opacity,transform" }),
+        onComplete: () => gsap.set(rightEl, { clearProps: "opacity,transform,transition" }),
       },
     );
   }
@@ -1398,13 +1418,15 @@ defineExpose({
       will-change: transform, opacity;
       isolation: isolate;
 
+      // 不设 z-index：靠 DOM 顺序垫在 .mobile-pages 之下。若在此抬 z-index，
+      // .mobile-pages 就得跟着抬，从而变成 stacking context、隔断歌词层的
+      // plus-lighter 与背景画布的混合。
       .mobile-background-visual {
         position: absolute;
         left: 0;
         top: 0;
         width: 100%;
         height: 100%;
-        z-index: 1;
         overflow: hidden;
         background: rgb(0 0 0);
         pointer-events: none;
@@ -1422,9 +1444,8 @@ defineExpose({
       }
     }
 
-    :deep(.mobile-pages) {
-      z-index: 2;
-    }
+    // .mobile-pages 保持无 z-index（paint 顺序已由 DOM 顺序保证在背景之上）：
+    // 它是歌词 plus-lighter 混合链上的祖先，成为 stacking context 会隔断混合。
 
     :deep(.mobile-cover-frame) {
       pointer-events: none;
@@ -1501,9 +1522,12 @@ defineExpose({
     }
   }
 
+  // eplor/blur 的 WebGL 画布每帧清屏为透明且 alpha 随低频音量在 0.5~1 间浮动，
+  // 页面底色会透过画布混合：灰色会抬亮暗部并把着色器抖动压到 1 LSB 以下，
+  // 产生色带条纹；必须保持纯黑（与 AMLL 参考实现一致）。
   &.bplayer-eplor,
   &.bplayer-blur {
-    background-color: gray !important;
+    background-color: #000 !important;
   }
 
   &.mobile-player.bplayer-eplor,

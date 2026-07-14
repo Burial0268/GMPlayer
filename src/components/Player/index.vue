@@ -311,6 +311,7 @@ import {
   fadePlayOrPause,
   getAutoMixEngine,
   getAudioPreloader,
+  isNativeAdvanceHoldActiveFor,
 } from "@/utils/AudioContext";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import { useRouter } from "vue-router";
@@ -550,6 +551,20 @@ const getPlaySongData = async (data, level = setting.songLevel) => {
       if (window.$player) {
         player.value = window.$player;
       }
+      fetchAndParseLyric(id);
+      return;
+    }
+
+    // Backend-initiated native advance (queue-window prefill): the active
+    // NativeRustSound is already playing this song — reuse it instead of
+    // resolving a fresh URL and re-creating the sound (which would restart
+    // playback from 0).
+    if (isNativeAdvanceHoldActiveFor(id)) {
+      console.log("[Player] Native advance adopted, only fetching lyrics");
+      if (window.$player) {
+        player.value = window.$player;
+      }
+      music.isLoadingSong = false;
       fetchAndParseLyric(id);
       return;
     }

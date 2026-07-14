@@ -1,11 +1,7 @@
 <template>
-  <div :class="['mobile-pages', { 'queue-open': queueOpen }]">
+  <div ref="pagesRef" :class="['mobile-pages', { 'queue-open': queueOpen }]">
     <div class="mobile-player-page">
-      <Motion
-        class="mobile-player-content"
-        :animate="playerContentAnimate"
-        :transition="layoutTransition"
-      >
+      <Motion class="mobile-player-content" :style="playerPageMotionStyle">
         <div class="mobile-full-ui">
           <!-- AMLL .thumb — 抽屉把手 -->
           <Motion
@@ -15,7 +11,7 @@
             @touchstart.passive="handlePlayerTouchStart"
             @touchmove.passive="handlePlayerTouchMove"
             @touchend.passive="handlePlayerTouchEnd"
-            @touchcancel="resetPlayerTouch"
+            @touchcancel="handlePlayerTouchEnd"
           >
             <div class="handle-bar"></div>
           </Motion>
@@ -177,25 +173,21 @@
           @touchstart.passive="handlePlayerTouchStart"
           @touchmove.passive="handlePlayerTouchMove"
           @touchend.passive="handlePlayerTouchEnd"
-          @touchcancel="resetPlayerTouch"
+          @touchcancel="handlePlayerTouchEnd"
         />
       </Motion>
     </div>
 
-    <!-- 移动端待播清单 -->
-    <div
+    <!-- 移动端待播清单 — 与主内容同级的分页：共用背景，由 pager 平移切换 -->
+    <Motion
       class="mobile-queue-layout"
-      :style="contentShellStyle"
+      :style="queuePageMotionStyle"
       @touchstart.passive="handleQueueTouchStart"
-      @touchmove.passive="handleQueueTouchMove"
+      @touchmove="handleQueueTouchMove"
       @touchend.passive="handleQueueTouchEnd"
-      @touchcancel="resetQueueTouch"
+      @touchcancel="handleQueueTouchCancel"
     >
-      <Motion
-        class="mobile-queue-content"
-        :animate="queueContentAnimate"
-        :transition="layoutTransition"
-      >
+      <div class="mobile-queue-content">
         <div class="mobile-queue-panel">
           <div class="mobile-queue-header">
             <div class="queue-title">
@@ -262,8 +254,8 @@
             {{ $t("other.playlistEmpty") }}
           </div>
         </div>
-      </Motion>
-    </div>
+      </div>
+    </Motion>
   </div>
 </template>
 
@@ -276,8 +268,8 @@ import {
   StarRound,
 } from "@vicons/material";
 import { NVirtualList } from "naive-ui";
-import { computed, nextTick, ref, watch } from "vue";
-import { Motion, type MotionValue } from "motion-v";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
 import RollingLyrics from "../RollingLyrics.vue";
 import BouncingSlider from "../BouncingSlider.vue";
@@ -356,12 +348,62 @@ const contentUiMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.fullUiMotionStyle,
 }));
-const playerContentAnimate = computed(() =>
-  props.queueOpen ? { y: -18, opacity: 0.62 } : { y: 0, opacity: 1 },
-);
-const queueContentAnimate = computed(() =>
-  props.queueOpen ? { y: 0, opacity: 1 } : { y: "18%", opacity: 0 },
-);
+
+// ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──
+// 0 = 主内容，1 = Playlist。y 用像素数值而非百分比字符串：progress 归零时
+// motion 才会输出 transform: none，主内容不残留 stacking context，
+// 保住歌词层 plus-lighter 到背景画布的混合链。
+const pagesRef = ref<HTMLElement | null>(null);
+const pagerProgress = useMotionValue(props.queueOpen ? 1 : 0);
+const pagerHeightValue = useMotionValue(0);
+let pagerAnimation: ReturnType<typeof animate> | null = null;
+
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+const pagerHeight = () => pagerHeightValue.get() || window.innerHeight || 1;
+const measurePagerHeight = () => {
+  pagerHeightValue.set(pagesRef.value?.clientHeight || window.innerHeight || 1);
+};
+
+const playerPageY = useTransform(() => -clamp01(pagerProgress.get()) * pagerHeight());
+const queuePageY = useTransform(() => (1 - clamp01(pagerProgress.get())) * pagerHeight());
+const playerPageMotionStyle = computed<MotionStyleRecord>(() => ({ y: playerPageY }));
+const queuePageMotionStyle = computed<MotionStyleRecord>(() => ({
+  ...props.contentShellStyle,
+  y: queuePageY,
+}));
+
+const stopPagerAnimation = () => {
+  pagerAnimation?.stop();
+  pagerAnimation = null;
+};
+
+// 整屏平移的 settle 用近临界阻尼（ζ≈0.98）：sharedLayoutTransition 的 ζ≈0.55
+// 在约一屏的行程上会过冲 ~12%，条带两端露出背景。
+const pagerSettleTransition = {
+  type: "spring",
+  stiffness: 420,
+  damping: 38,
+  mass: 0.9,
+  restDelta: 0.001,
+  restSpeed: 0.02,
+} as const;
+
+const settlePager = (open: boolean) => {
+  stopPagerAnimation();
+  pagerAnimation = animate(pagerProgress, open ? 1 : 0, pagerSettleTransition);
+  if (open !== props.queueOpen) emit(open ? "openQueue" : "closeQueue");
+};
+
+const settlePagerFromGesture = () => {
+  const velocity = pagerProgress.getVelocity();
+  if (Math.abs(velocity) > 0.6) {
+    settlePager(velocity > 0);
+    return;
+  }
+  // 位置阈值带方向偏置：从任一端出发都需拖过 35% 行程才切页
+  settlePager(pagerProgress.get() > (props.queueOpen ? 0.65 : 0.35));
+};
+
 const queueRows = computed(() =>
   music.getPlaylists.map((item: QueueSong, index: number) => ({
     item,
@@ -418,7 +460,12 @@ const handlePlayerTouchMove = (event: TouchEvent) => {
     }
     start.dragging = true;
     start.mode = deltaY > 0 ? "close" : "queue";
-    if (start.mode === "close") emit("closeDragStart");
+    if (start.mode === "close") {
+      emit("closeDragStart");
+    } else {
+      stopPagerAnimation();
+      suppressCoverClick.value = true;
+    }
   }
 
   if (start.mode === "close") {
@@ -426,19 +473,20 @@ const handlePlayerTouchMove = (event: TouchEvent) => {
     return;
   }
 
-  if (start.y - touch.clientY > 58) {
-    suppressCoverClick.value = true;
-    emit("openQueue");
-    resetPlayerTouch();
-    window.setTimeout(() => {
-      suppressCoverClick.value = false;
-    }, 180);
-  }
+  // queue 模式：跟手平移 pager
+  pagerProgress.set(clamp01(-deltaY / pagerHeight()));
 };
 
 const handlePlayerTouchEnd = () => {
-  if (playerTouch.value?.dragging && playerTouch.value.mode === "close") {
-    emit("closeDragEnd");
+  const start = playerTouch.value;
+  if (start?.dragging) {
+    if (start.mode === "close") emit("closeDragEnd");
+    if (start.mode === "queue") {
+      settlePagerFromGesture();
+      window.setTimeout(() => {
+        suppressCoverClick.value = false;
+      }, 180);
+    }
   }
   resetPlayerTouch();
 };
@@ -488,16 +536,21 @@ const handleQueueTouchMove = (event: TouchEvent) => {
       return;
     }
     start.dragging = true;
+    stopPagerAnimation();
   }
 
-  if (touch.clientY - start.y > 58) {
-    emit("closeQueue");
-    resetQueueTouch();
-  }
+  // 拖拽期间接管手势，阻止列表同时滚动（touchmove 未加 .passive 才能 preventDefault）
+  if (event.cancelable) event.preventDefault();
+  pagerProgress.set(1 - clamp01(deltaY / pagerHeight()));
 };
 
 const handleQueueTouchEnd = () => {
+  if (queueTouch.value?.dragging) settlePagerFromGesture();
   resetQueueTouch();
+};
+
+const handleQueueTouchCancel = () => {
+  handleQueueTouchEnd();
 };
 
 const formatArtists = (artists: Artist[] = []) =>
@@ -524,8 +577,11 @@ const changeQueueIndex = (index: number) => {
 
 watch(
   () => props.queueOpen,
-  (val) => {
-    if (val) nextTick(scrollCurrentQueueSong);
+  (open) => {
+    // 由父级状态（按钮/thumb/整体关闭）驱动的开合走同一 pager 动画；
+    // 手势 settle 后 prop 翻转再次触发时，spring 从当前值与速度无缝续接。
+    settlePager(open);
+    if (open) nextTick(scrollCurrentQueueSong);
   },
 );
 
@@ -535,6 +591,16 @@ watch(
     if (props.queueOpen) nextTick(scrollCurrentQueueSong);
   },
 );
+
+onMounted(() => {
+  measurePagerHeight();
+  window.addEventListener("resize", measurePagerHeight);
+});
+
+onBeforeUnmount(() => {
+  stopPagerAnimation();
+  window.removeEventListener("resize", measurePagerHeight);
+});
 
 defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef });
 </script>
@@ -562,9 +628,11 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   transform-origin: center 22%;
 }
 
-.mobile-player-content {
-  will-change: transform, opacity;
-}
+// .mobile-player-content / .mobile-full-ui 不得挂常驻 will-change（或其他产生
+// stacking context 的属性）：它们位于 .mobile-lyric-layout 的 plus-lighter 到
+// .mobile-player-shell (isolation: isolate) 之间，一旦成为 stacking context，
+// 歌词混合就会被隔离、混不到背景画布上（取色模式下表现为歌词失去加亮）。
+// 队列推入动画的 will-change 由 motion-v 在动画期间自行添加/移除。
 
 .mobile-full-ui {
   position: absolute;
@@ -574,9 +642,10 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   grid-template-columns: 1fr;
   min-width: 0;
   min-height: 0;
-  will-change: transform, opacity;
 }
 
+// 与主内容同级的分页：共用大播放器背景，无独立底色/毛玻璃，由 pager 平移入场。
+// 平移用 y（像素）驱动，静止在两端时 transform 归零，不残留 stacking context。
 .mobile-queue-layout {
   display: grid;
   grid-template-rows: [thumb] calc(var(--app-safe-area-top, 0px) + 30px) [main-view] 1fr;
@@ -584,14 +653,6 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   color: var(--main-cover-color);
   pointer-events: none;
   overflow: hidden;
-  opacity: 0;
-  background:
-    linear-gradient(rgb(0 0 0 / 18%), rgb(0 0 0 / 18%)),
-    color-mix(in srgb, var(--main-cover-color) 10%, rgb(22 22 24));
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
-  backdrop-filter: blur(24px) saturate(140%);
-  transition: opacity 0.22s ease;
-  will-change: opacity;
 }
 
 .mobile-queue-content {
@@ -600,7 +661,6 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  will-change: transform, opacity;
 }
 
 .mobile-pages.queue-open {
@@ -609,7 +669,6 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   }
 
   .mobile-queue-layout {
-    opacity: 1;
     pointer-events: auto;
   }
 }
@@ -795,14 +854,35 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 }
 
 // ── AMLL .lyric — 歌词区域 ──
+// 上探进 header 行（小封面/标题下方），歌词行从其下穿过时靠 mask 渐隐 + AMLL
+// 逐行距离模糊构成 Apple 式过渡；否则会在 lyric-view 行顶被硬切出可见边界。
+// （RollingLyrics 的 .lyric-am 桌面 mask 在移动端被显式关闭，移动端遮罩由这里负责）
 .mobile-lyric {
-  grid-row: lyric-view;
+  grid-row: controls / -1;
   grid-column: 1 / -1;
   transition: opacity 0.5s 0.5s;
   opacity: 1;
   min-height: 0;
   position: relative;
   z-index: 1;
+  -webkit-mask: linear-gradient(
+    180deg,
+    transparent 0,
+    transparent 40px,
+    rgba(0, 0, 0, 0.55) 80px,
+    #000 116px,
+    #000 calc(100% - 48px),
+    transparent 100%
+  );
+  mask: linear-gradient(
+    180deg,
+    transparent 0,
+    transparent 40px,
+    rgba(0, 0, 0, 0.55) 80px,
+    #000 116px,
+    #000 calc(100% - 48px),
+    transparent 100%
+  );
 
   .mobile-lyric-inner {
     position: relative;

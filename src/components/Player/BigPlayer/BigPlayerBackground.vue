@@ -28,7 +28,7 @@
       />
     </template>
 
-    <div :class="grayClasses" :style="grayStyles" />
+    <div v-if="!isEplorOrBlurMode" :class="grayClasses" :style="grayStyles" />
   </div>
 </template>
 
@@ -65,20 +65,12 @@ const grayClasses = computed(() => {
   return classes;
 });
 
-const grayStyles = computed(() => {
-  if (isEplorOrBlurMode.value) {
-    return {
-      backgroundColor: "transparent",
-    };
-  }
-  const bgColor = props.backgroundImageShow === "blur" ? "#00000060" : "#00000030";
-  return {
-    backgroundColor: bgColor,
-    WebkitBackdropFilter: "blur(80px)",
-    backdropFilter: "blur(80px)",
-    transition: "backdrop-filter 0.5s ease, background-color 0.5s ease",
-  };
-});
+const grayStyles = computed(() => ({
+  backgroundColor: "#00000030",
+  WebkitBackdropFilter: "blur(80px)",
+  backdropFilter: "blur(80px)",
+  transition: "backdrop-filter 0.5s ease, background-color 0.5s ease",
+}));
 </script>
 
 <style lang="scss" scoped>
@@ -92,6 +84,8 @@ const grayStyles = computed(() => {
   pointer-events: none;
 }
 
+// 画布外层不要挂 filter/opacity 的 will-change 或 filter 过渡：
+// 那会把 WebGL 画布强制压进离屏合成层，重采样会抹掉渲染器的抖动、放大色带。
 .overlay {
   position: absolute;
   inset: 0;
@@ -99,36 +93,16 @@ const grayStyles = computed(() => {
   height: 100%;
   overflow: hidden;
   z-index: 0;
-  transition: filter 0.5s ease;
-  will-change: filter, opacity;
 
   &.solid {
     background: var(--cover-bg);
     transition: background 0.8s ease;
   }
 
-  &::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-  }
-
   &.blur {
     display: flex;
     align-items: center;
     justify-content: center;
-
-    .overlay-img {
-      width: 150%;
-      height: 150%;
-      filter: blur(80px) contrast(1.2);
-      transition: filter 0.8s ease;
-      will-change: filter, transform;
-      animation: none !important;
-    }
 
     .blur-webgl {
       position: absolute;
@@ -137,18 +111,6 @@ const grayStyles = computed(() => {
       top: 0;
       left: 0;
       overflow: hidden;
-    }
-  }
-
-  // eplor/blur mode: transparent overlay::after
-  &.eplor::after,
-  &.blur::after {
-    background-color: transparent !important;
-  }
-
-  &.none {
-    &::after {
-      display: none;
     }
   }
 }
