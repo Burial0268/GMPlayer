@@ -1,0 +1,93 @@
+# 临时工作流：仅为 claude/new-session-ak4ug5 分支产出 Windows x64 预览构建。
+# 只上传 Action Artifact，不创建 Release；合并前应随分支清理删除。
+name: Windows 预览构建 (claude branch)
+on:
+  push:
+    branches:
+      - claude/new-session-ak4ug5
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows-preview:
+    name: 构建 Windows x64 预览
+    runs-on: windows-latest
+    env:
+      BUILDER_REPO: apoint123/ffmpeg-builder
+      FFMPEG_VERSION_TAG: "7.1"
+
+    steps:
+      - uses: actions/checkout@v4
+        name: 克隆仓库
+        with:
+          fetch-depth: 0 # 为了正确生成开发版本号码
+
+      - name: 安装 PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: 配置 Rust 缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            packages/player/src-tauri -> target
+          key: windows-x64
+
+      - name: 安装 wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+        with:
+          version: "v0.13.1"
+
+      - name: 安装依赖 (包含子依赖和 WASM)
+        run: |
+          pnpm build:wasm
+          pnpm install
+
+      - name: 生成开发构建版本号
+        shell: bash
+        run: |
+          node ./scripts/gen-dev-version.mjs
+
+      - name: 构建前端产物
+        run: |
+          pnpm build
+
+      - name: 构建 Player 程序 (不发布 Release)
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: .
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: 上传产物到 Action Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GMPlayer windows-x64 preview
+          path: |
+            src-tauri/target/**/release/bundle/**/*.exe
+            src-tauri/target/**/release/bundle/**/*.msi
+            src-tauri/target/**/release/GMPlayer.exe
+            src-tauri/target/**/release/gmplayer.exe
+            src-tauri/target/**/release/app.exe
