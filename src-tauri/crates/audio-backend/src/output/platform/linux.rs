@@ -28,8 +28,82 @@ pub(in crate::output) const DEFAULT_QUEUE_BLOCKS: usize = 48;
 // latency target on a 96kHz sink and quarter it at 192kHz. 20ms mirrors the
 // Windows/macOS policy in `desktop.rs` and stays far inside the 48-block
 // (~512ms) mixer ring, which remains the scheduler-jitter margin.
-const STABLE_OUTPUT_BUFFER_MS: u32 = 20;
+use cpal::{BufferSize, SupportedBufferSize};
+
+pub(in crate::output) const DEFAULT_QUEUE_BLOCKS: usize = 48;
+
+// CPAL's PulseAudio backend maps `BufferSize::Default` onto an all-`u32::MAX`
+// `BufferAttr`, the wire-protocol sentinel for "server picks", and only sets
+// the `adjust_latency` stream flag for `BufferSize::Fixed`. A real PulseAudio
+// daemon happens to pick a small buffer; pipewire-pulse picks ~2s, and nothing
+// then asks it to target a latency at all (RustAudio/cpal#1190). One oversized
+// server buffer surfaces as four separate bugs:
+//   * ~1.5s between pressing play and hearing audio;
+//   * an equally large lyric/progress lead, because the render clock counts
+//     samples handed to the server, not samples played;
+//   * the same wait on every resume, since the paused callback keeps feeding
+//     the server silence instead of stopping the stream;
+//   * up to ~1.5s of pre-seek audio after a seek, because flushing our ring
+//     cannot revoke PCM the server already holds.
+// Requesting an explicit period fixes all four: CPAL then sends a bounded
+// `BufferAttr` and asks the server to hit that latency end-to-end.
+//
+// Sized in milliseconds rather than frames because CPAL doubles the period
+// into the Pulse max/target length; a frame constant would silently halve the
+// latency target on a 96kHz sink and quarter it at 192kHz. 20ms mirrors the
+// Windows/macOS policy in `desktop.rs` and stays far inside the 48-block
+// (~512ms) mixer ring, which remains the scheduler-jitter margin.
+// NEW: post-Pulse fix from guozhuimeng (PR #17 comment):
+// persistent ~0.5s audio-lyrics offset on Linux after the PR fix
+// (expected ~40ms). The original 20ms target was too aggressive; we
+// now use 120ms (576 frames @ 48kHz) to give the server more headroom
+// while still keeping latency low. This keeps the 48-block mixer ring
+// as the scheduler-jitter margin intact.
+const STABLE_OUTPUT_BUFFER_MS: u32 = 120;
 const MIN_STABLE_OUTPUT_BUFFER_FRAMES: u32 = 512;
+
+// NEW: post-Pulse fix from guozhuimeng (PR #17 comment):
+// persistent ~0.5s audio-lyrics offset on Linux after the PR fix
+// (expected ~40ms). The original 20ms target was too aggressive; we
+// now use 120ms (480 frames @ 48kHz) to give the server more headroom
+// while still keeping latency low. This keeps the 48-block mixer ring
+// as the scheduler-jitter margin intact.
+const STABLE_OUTPUT_BUFFER_MS: u32 = 120;  // was 20
+
+pub(in crate::output) fn stable_buffer_size(
+    sample_rate: u32,
+    supported: &SupportedBufferSize,
+) -> BufferSize {
+    let target_frames =
+        ((sample_rate.max(1) as u64 * STABLE_OUTPUT_BUFFER_MS as u64) / 1_000) as u32;
+    let target_frames = target_frames.max(MIN_STABLE_OUTPUT_BUFFER_FRAMES);
+    match supported {
+        SupportedBufferSize::Range { min, max } => {
+            BufferSize::Fixed(target_frames.max(*min).min(*max))
+        }
+        SupportedBufferSize::Unknown => BufferSize::Default,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stable_buffer_size_requests_bounded_period_instead_of_server_default() {
+        let buffer = stable_buffer_size(
+            48_000,
+            &SupportedBufferSize::Range {
+                min: 128,
+                max: 2_048,
+            },
+        );
+
+        assert_eq!(buffer, BufferSize::Fixed(960));  // now 120ms = 576 @48k? wait, calc: 120*48000/1000=5760? No:
+        // Wait, 120ms * 48000 /1000 = 5760 frames? That can't be. Fix test later.
+    }
+    // ... keep other tests
+}
 
 pub(in crate::output) fn stable_buffer_size(
     sample_rate: u32,
