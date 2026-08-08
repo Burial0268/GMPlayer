@@ -468,6 +468,26 @@ pub struct AudioThreadEventMessage<T> {
     pub data: Option<T>,
     #[serde(default)]
     pub seq: u64,
+    /// Wall-clock ms since the Unix epoch, stamped by the event forwarder
+    /// immediately before handing the envelope to the transport. Position
+    /// events describe the timeline at *stamp* time, not at arrival time, so
+    /// subscribers that extrapolate (`AudioTimelineSync`) must subtract the
+    /// delivery latency or the UI clock runs permanently behind the audio by
+    /// however long the envelope sat in the IPC queue.
+    ///
+    /// `0` means unstamped — subscribers fall back to arrival time.
+    #[serde(default)]
+    pub sent_at: f64,
+}
+
+/// Wall-clock milliseconds since the Unix epoch, matching JS `Date.now()` so
+/// the frontend can diff the two directly. Returns `0.0` (treated as
+/// "unstamped") if the system clock predates the epoch.
+pub fn epoch_millis_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64() * 1_000.0)
+        .unwrap_or(0.0)
 }
 
 impl<T> AudioThreadEventMessage<T> {
@@ -476,6 +496,7 @@ impl<T> AudioThreadEventMessage<T> {
             callback_id,
             data,
             seq: 0,
+            sent_at: 0.0,
         }
     }
 
@@ -492,6 +513,7 @@ impl<T> AudioThreadEventMessage<T> {
             callback_id: self.callback_id,
             data: Some(new_data),
             seq: self.seq,
+            sent_at: self.sent_at,
         }
     }
 
@@ -500,6 +522,7 @@ impl<T> AudioThreadEventMessage<T> {
             callback_id: self.callback_id,
             data: None,
             seq: self.seq,
+            sent_at: self.sent_at,
         }
     }
 }
@@ -591,5 +614,52 @@ impl Default for AudioQuality {
             sample_rate: 44100,
             channels: 2,
         }
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::*;
+
+    #[test]
+    fn epoch_millis_is_in_the_javascript_date_now_domain() {
+        // Frontend compares this against `Date.now()`, so it must be epoch ms,
+        // not process uptime. Lower bound: 2020-01-01.
+        let now = epoch_millis_now();
+        assert!(
+            now > 1_577_836_800_000.0,
+            "expected epoch milliseconds, got {now}"
+        );
+    }
+
+    #[test]
+    fn payload_conversions_preserve_the_send_stamp() {
+        // `to`/`to_none` rebuild the envelope field by field, so a new field is
+        // easy to drop silently — which would strip latency compensation from
+        // every acked message without any compile error.
+        let msg = AudioThreadEventMessage {
+            callback_id: "cb".to_string(),
+            data: Some(1u8),
+            seq: 7,
+            sent_at: 1_700_000_000_123.0,
+        };
+
+        let converted = msg.clone().to("next");
+        assert_eq!(converted.sent_at, 1_700_000_000_123.0);
+        assert_eq!(converted.seq, 7);
+
+        let acked = msg.to_none::<&str>();
+        assert_eq!(acked.sent_at, 1_700_000_000_123.0);
+        assert_eq!(acked.seq, 7);
+    }
+
+    #[test]
+    fn unstamped_envelopes_deserialize_to_zero() {
+        // Older/foreign producers omit the field; `0` is the frontend's
+        // "unstamped, use arrival time" sentinel.
+        let msg: AudioThreadEventMessage<u8> =
+            serde_json::from_str(r#"{"callbackId":"","data":null}"#).expect("envelope parses");
+        assert_eq!(msg.sent_at, 0.0);
+        assert_eq!(msg.seq, 0);
     }
 }
