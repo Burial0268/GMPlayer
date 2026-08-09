@@ -760,6 +760,10 @@ impl WasmAudioBackend {
             callback_id: String::new(),
             data: Some(event),
             seq: self.next_seq(),
+            // In-process backend: events are drained synchronously by the JS
+            // caller, so there is no transport latency to compensate. Leave
+            // unstamped so the frontend keeps using arrival time.
+            sent_at: 0.0,
         }
     }
 

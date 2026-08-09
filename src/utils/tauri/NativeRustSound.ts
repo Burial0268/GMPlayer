@@ -194,7 +194,9 @@ export class NativeRustSound implements ISound {
     try {
       await transport.connect();
       this._transport = transport;
-      this._unlistenTransport = transport.subscribe((evt, seq) => this._handleEvent(evt, seq));
+      this._unlistenTransport = transport.subscribe((evt, seq, sentAt) =>
+        this._handleEvent(evt, seq, sentAt),
+      );
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       this._emit("loaderror", err);
@@ -429,7 +431,7 @@ export class NativeRustSound implements ISound {
   //  Event routing                                              ║
   // ═════════════════════════════════════════════════════════════╝
 
-  private _handleEvent(evt: AudioThreadEvent, seq?: number): void {
+  private _handleEvent(evt: AudioThreadEvent, seq?: number, sentAt?: number): void {
     if (this._destroyed || this._terminallyCleared) return;
 
     if (seq !== undefined && seq > 0 && this._markSeqSeen(seq)) return;
@@ -459,6 +461,7 @@ export class NativeRustSound implements ISound {
         const pendingNativeAutoMixIndex = this._state.currentPlayIndex;
         const acceptedPosition = this._acceptIncomingPosition(
           this._coerceIncomingPosition(d.position),
+          sentAt,
         );
         this._state = {
           musicId: d.musicId,
@@ -536,7 +539,7 @@ export class NativeRustSound implements ISound {
 
       case "playPosition": {
         if (!this._backendTrackReady) break;
-        this._acceptIncomingPosition(this._coerceIncomingPosition(evt.data.position));
+        this._acceptIncomingPosition(this._coerceIncomingPosition(evt.data.position), sentAt);
         break;
       }
 
@@ -802,9 +805,9 @@ export class NativeRustSound implements ISound {
     return this._applyTimelinePosition(nextPosition);
   }
 
-  private _acceptIncomingPosition(position: number): number {
+  private _acceptIncomingPosition(position: number, sentAt?: number): number {
     this._syncTimelineClock();
-    return this._applyTimelinePosition(this._timeline.acceptIncomingPosition(position));
+    return this._applyTimelinePosition(this._timeline.acceptIncomingPosition(position, sentAt));
   }
 
   private _handleSeekCommitted(requestId: number | null | undefined, position: number): void {

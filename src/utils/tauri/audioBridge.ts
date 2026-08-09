@@ -140,6 +140,17 @@ export interface AudioThreadEventMessage<T> {
    * legacy "no dedup" behavior in that case.
    */
   seq?: number;
+  /**
+   * Wall-clock ms (`Date.now()` domain) stamped by the Rust forwarder just
+   * before the envelope enters the transport. Position events describe the
+   * timeline at *stamp* time, so extrapolating consumers must add the
+   * delivery latency (`Date.now() - sentAt`) or the UI clock sits behind the
+   * audio by however long the envelope spent in the IPC queue.
+   *
+   * `0` (or missing) means unstamped — fall back to arrival time. The WASM
+   * backend leaves this unset because it has no transport hop.
+   */
+  sentAt?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -289,6 +300,12 @@ const DEFAULT_ATOMIC_SEEK_GUARD_MS = 5000;
 const DEFAULT_SEEK_POSITION_ACCEPT_EPSILON_SECONDS = 0.35;
 const DEFAULT_SEEK_POSITION_FORWARD_TOLERANCE_SECONDS = 0.2;
 const DEFAULT_SMOOTHING_BACKSTEP_TOLERANCE_SECONDS = 0.2;
+/**
+ * Max believable event delivery latency. Beyond this, `sentAt` is treated as
+ * unusable (system clock step / resumed-from-freeze burst) and arrival time is
+ * used instead. Mirrors `MAX_ANCHOR_LATENCY_MS` in `playerBridge.ts`.
+ */
+const MAX_EVENT_LATENCY_MS = 2_000;
 
 export interface AudioTimelineSyncOptions {
   seekGuardMs?: number;
@@ -417,10 +434,11 @@ export class AudioTimelineSync {
     return nextPosition;
   }
 
-  acceptIncomingPosition(position: number): number {
+  acceptIncomingPosition(position: number, sentAt?: number): number {
     const now = this._nowMs();
     const nextPosition = this._normalizePosition(position);
     const anchor = this._pendingSeekAnchor;
+    const anchorAt = this._anchorTimeFor(now, sentAt);
 
     if (anchor) {
       if (now >= anchor.guardUntil) {
@@ -431,7 +449,7 @@ export class AudioTimelineSync {
           return this._position;
         }
 
-        this._applyAcceptedPosition(nextPosition, now, true);
+        this._applyAcceptedPosition(nextPosition, now, true, anchorAt);
         if (!anchor.atomicSeek || Math.abs(nextPosition - expected) <= this._acceptEpsilonSeconds) {
           this._pendingSeekAnchor = null;
         }
@@ -439,8 +457,28 @@ export class AudioTimelineSync {
       }
     }
 
-    this._applyAcceptedPosition(nextPosition, now);
+    this._applyAcceptedPosition(nextPosition, now, false, anchorAt);
     return this._position;
+  }
+
+  /**
+   * Time at which an incoming position was actually true. Backend events carry
+   * the timeline as of `sentAt`, so anchoring extrapolation at arrival time
+   * bakes the delivery latency in as permanent clock lag. Falls back to `now`
+   * when unstamped, when the stamp is unusable (clock skew, negative or
+   * implausible latency), or while paused — `readPosition()` does not
+   * extrapolate then, so there is nothing to compensate.
+   *
+   * Deliberately not applied to `_expectedAnchorPosition`: seek-staleness
+   * comparison is left on arrival time so this stays a fix to the extrapolation
+   * anchor alone and does not alter post-seek accept/reject behavior.
+   */
+  private _anchorTimeFor(now: number, sentAt?: number): number {
+    if (!this._isPlaying) return now;
+    if (typeof sentAt !== "number" || !Number.isFinite(sentAt) || sentAt <= 0) return now;
+    const latencyMs = now - sentAt;
+    if (latencyMs <= 0 || latencyMs > MAX_EVENT_LATENCY_MS) return now;
+    return sentAt;
   }
 
   commitSeek(requestId: number | null | undefined, position: number): number | null {
@@ -473,21 +511,33 @@ export class AudioTimelineSync {
     return this._position;
   }
 
-  private _applyAcceptedPosition(position: number, now: number, allowBackstep = false): void {
+  private _applyAcceptedPosition(
+    position: number,
+    now: number,
+    allowBackstep = false,
+    anchorAt = now,
+  ): void {
     let nextPosition = position;
+    let receivedAt = anchorAt;
 
     if (!allowBackstep && this._isPlaying && this._position > 0 && position < this._position) {
       const backstep = this._position - position;
       if (backstep > this._smoothingBackstepToleranceSeconds) {
+        // Rejected as a stale regression: re-anchor the *current* position at
+        // arrival time, since `this._position` is true now rather than at the
+        // rejected event's stamp.
         this._lastPositionEvent = { position: this._position, receivedAt: now };
         this._smoothedPosition = this._position;
         return;
       }
+      // Held at the current extrapolated value for the same reason — it is
+      // already current, so backdating it would advance the clock twice.
       nextPosition = this._position;
+      receivedAt = now;
     }
 
     this._position = nextPosition;
-    this._lastPositionEvent = { position: nextPosition, receivedAt: now };
+    this._lastPositionEvent = { position: nextPosition, receivedAt };
     this._smoothedPosition = nextPosition;
   }
 
@@ -612,7 +662,11 @@ export async function audioPollEvents(sessionId: number): Promise<AudioThreadEve
 
 const EVENT_CHANNEL = "audio-player://event";
 
-export type AudioThreadEventCallback = (event: AudioThreadEvent, seq?: number) => void;
+export type AudioThreadEventCallback = (
+  event: AudioThreadEvent,
+  seq?: number,
+  sentAt?: number,
+) => void;
 
 /**
  * Listen for push events from the Rust backend over the global
@@ -637,7 +691,7 @@ export async function listenPlayerEvents(handler: AudioThreadEventCallback): Pro
     (e) => {
       const payload = e.payload;
       if (payload && payload.data) {
-        handler(payload.data, payload.seq);
+        handler(payload.data, payload.seq, payload.sentAt);
       }
     },
   );

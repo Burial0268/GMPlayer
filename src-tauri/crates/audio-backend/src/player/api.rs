@@ -112,6 +112,10 @@ impl Player {
         tauri::async_runtime::spawn(async move {
             let forward_msg = |mut evt_msg: AudioThreadEventMessage<AudioThreadEvent>| {
                 evt_msg.seq = seq_counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                // Stamp as late as possible: everything after this point is
+                // transport latency the frontend can subtract, everything
+                // before it is already baked into `position`.
+                evt_msg.sent_at = crate::types::epoch_millis_now();
                 let mut droppable = false;
                 if let Some(event) = &evt_msg.data {
                     update_shared_from_event(&shared_clone, event);
