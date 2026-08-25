@@ -1,0 +1,81 @@
+[package]
+name = "ncm-core"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "In-process NeteaseCloudMusic protocol layer: QuickJS-hosted endpoint scripts over Rust crypto/http primitives"
+publish = false
+
+[dependencies]
+# QuickJS. The C sources ship with `rquickjs-sys` and are always compiled via
+# `cc` — there is no prebuilt engine blob, which is exactly what makes the
+# Android/iOS cross-compiles work.
+#
+# `futures` lets host ops return real JS promises, so an in-flight HTTP request
+# does not block the isolate. `parallel` is what makes AsyncRuntime/AsyncContext
+# `Send + Sync`, which in turn lets the core live in Tauri state instead of
+# behind a dedicated thread and a channel.
+rquickjs = { version = "0.12", features = [
+  "macro",
+  "array-buffer",
+  "properties",
+  "classes",
+  "futures",
+  "parallel",
+] }
+
+# Crypto primitives. These back the `node:crypto` shim; the protocol layer
+# never implements any of them in JS.
+md-5 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+ecb = { version = "0.1", features = ["alloc"] }
+aes-gcm = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+rsa = "0.9"
+base64 = "0.22"
+rand = "0.8"
+getrandom = "0.2"
+
+flate2 = "1"
+
+# Async HTTP. reqwest/hyper is already in the binary via tauri-plugin-http and
+# tauri itself, so this costs nothing in size — and unlike a blocking client it
+# lets several endpoint calls have requests in flight at once, which matters
+# because a page load fans out a dozen of them.
+#
+# Pinned to the 0.12 line and rustls to match what the Tauri plugins already
+# resolve; `default-features = false` keeps native-tls/OpenSSL out of a tree
+# that is currently pure rustls.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "gzip",
+  "charset",
+] }
+tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
+
+log = "0.4"
+
+# Only the response cache needs this, to canonicalize a query object into a
+# stable key. It adds no new stack: tauri and its plugins already link serde_json
+# into the binary.
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+# Integration tests link against dev-dependencies only, so the latency
+# benchmark needs its own handle on the client.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+
+# rquickjs-sys ships pregenerated bindings for desktop targets only; Android
+# and iOS are not in that set, so those builds must generate them at compile
+# time. Needs libclang — the NDK and Xcode toolchains both provide one.
+# Android additionally needs BINDGEN_EXTRA_CLANG_ARGS pointed at the NDK
+# sysroot and clang resource dir; see the crate README.
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+rquickjs = { version = "0.12", features = ["bindgen"] }
+
+[lib]
+name = "ncm_core"
