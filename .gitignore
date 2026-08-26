@@ -32,4 +32,14 @@ coverage
 .claude/*
 .vercel
 ref/*
+# 第三方参考代码，与 ref/ 同类：只在本地对照阅读，不入库。
+media-kit-ref/
 nul
+
+# ncm-core protocol layer.
+# The bundled output (js/ncm-protocol.js) IS committed on purpose, so a plain
+# `cargo build` never needs Node. These two are not:
+#   .cache/     the unpacked upstream tarball, refetched by the build script
+#   shim/generated-data.js   static assets inlined into the bundle at build time
+src-tauri/crates/ncm-core/.cache/
+src-tauri/crates/ncm-core/js/shim/generated-data.js

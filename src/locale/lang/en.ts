@@ -471,6 +471,11 @@ const messages: Record<string, unknown> = {
     useUnmServerShow: "Use UNM to play blocked songs",
     useUnmServerShowTip1: "Whether to use UNM to replace blocked song links",
     useUnmServerShowTip2: "Please configure UNM-Server before using unblocking feature",
+    ncmTransport: "Netease API transport",
+    ncmTransportTip:
+      '"Relay" uses the deployed API. "Direct" signs requests inside the app and talks to Netease directly, removing one network hop. The relay can be faster if you are far from Netease, and going direct sends requests from your own IP.',
+    ncmTransportRemote: "Relay server",
+    ncmTransportLocal: "Direct from this device",
     showLyricSetting: "Play Page Shortcut Settings",
     showLyricSettingTip: "Show shortcut settings on the play page",
     resetApp: "Reset the program",

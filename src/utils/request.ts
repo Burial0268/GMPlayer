@@ -5,9 +5,11 @@ import axios, {
   InternalAxiosRequestConfig,
   AxiosHeaders,
 } from "axios";
+import type { AxiosAdapter } from "axios";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { isTauri } from "@/utils/tauri/core/runtime";
+import { createLocalNcmAdapter, setNcmCookieProvider } from "@/utils/ncmLocalTransport";
 
 // Extend AxiosRequestConfig to include custom hiddenBar property
 export interface CustomAxiosRequestConfig extends AxiosRequestConfig {
@@ -48,6 +50,58 @@ if (useNativeMobileHttp) {
     fetch: tauriFetch,
   };
 }
+
+// ── NCM transport ────────────────────────────────────────────────
+// `local` serves requests from the embedded protocol layer in the Rust side,
+// removing one network hop (~38–48 ms per call, measured — see
+// docs/native-ncm-api-embedding-plan.md). `remote` keeps talking to the
+// deployed NeteaseCloudMusicApi.
+//
+// Tauri defaults to `local`; Web has no embedded layer and is forced to
+// `remote`. The remote backend is never removed: the win is geography
+// dependent — for a client far from Netease the deployed API can be the closer
+// hop — and going direct also moves the request's source IP from the server to
+// the user's machine, which changes how Netease's risk control sees it.
+
+export type NcmTransport = "remote" | "local";
+
+let currentTransport: NcmTransport = "remote";
+
+/**
+ * Adapter axios would have used on its own. Captured before any override so
+ * `local` can hand back anything it cannot represent — file uploads, progress
+ * callbacks — instead of failing them.
+ */
+const baseAdapter = axios.getAdapter(axios.defaults.adapter) as AxiosAdapter;
+
+const localAdapter = createLocalNcmAdapter(baseAdapter, (reason) => {
+  // The embedded transport is the default, so a broken isolate would otherwise
+  // fail every request in the app. Demote once and stay demoted for the
+  // session; the user's setting is left alone so a restart retries.
+  console.error(`[ncm] falling back to the remote API for this session: ${reason}`);
+  setNcmTransport("remote");
+});
+
+/**
+ * Select the transport. Safe to call repeatedly; forced to `remote` outside
+ * Tauri, where there is no embedded protocol layer to talk to.
+ */
+export const setNcmTransport = (mode: NcmTransport): void => {
+  const next = mode === "local" && isTauri() ? "local" : "remote";
+  if (next === currentTransport) return;
+  currentTransport = next;
+  axios.defaults.adapter = next === "local" ? localAdapter : baseAdapter;
+};
+
+export const getNcmTransport = (): NcmTransport => currentTransport;
+
+/**
+ * Tell the embedded transport where to read the session cookie.
+ *
+ * Called from `main.ts` after Pinia hydrates. Re-exported here so callers only
+ * ever need to know about `@/utils/request`.
+ */
+export const setNcmCookieSource = setNcmCookieProvider;
 
 // 请求拦截
 axios.interceptors.request.use(

@@ -36,6 +36,7 @@ import {
   type SongData,
 } from "./musicTypes";
 import { asRawEntries, asRawEntry } from "@/utils/rawEntry";
+import { hintTracks } from "@/utils/ncmPrefetch";
 
 declare const $message: any;
 declare const $player: any;
@@ -516,7 +517,41 @@ const useMusicDataStore = defineStore("musicData", {
       else playbackStore.resetPlaySongTime({ checkpoint: false });
       const songId = this.persistData.playlists[index]?.id ?? null;
       useMusicPlaybackResumeStore().saveSession(songId, index, playbackStore.playSongTime);
+      this.hintUpcomingSongs(index);
       return true;
+    },
+
+    /**
+     * 告诉内嵌协议层：接下来大概会用到哪几首歌的歌词和详情。
+     *
+     * 每次切歌都要取歌词，而歌词是永远不变的——所以在当前这首还在播的时候就先取
+     * 好，切过去就是 0 请求。这里只发提示，不等结果：Rust 侧对提示做了限流（并发
+     * 有上限、被网易限速时直接丢弃、排不上就不排队），所以猜错了也不会让用户正在
+     * 等的请求变慢。
+     *
+     * **只提示后面的歌，不提示当前这首。** 当前这首的歌词/详情马上就会有真实请求
+     * 发出去，提示和它是同一瞬间，`inflight` 会把两者合成一个请求——也就是说提示
+     * 当前这首不省任何东西，只是白占一个并发额度，把真正有用的提示挤掉。
+     *
+     * 播放链路的 URL 不在这里预取——它是带签名会过期的，那是
+     * `NativeQueuePrefill` 的事。
+     *
+     * 随机模式下不猜下一首：顺序由 Rust planner 的 permutation 决定，这里按下标
+     * 往后数会猜到无关的歌，白花请求。
+     */
+    hintUpcomingSongs(currentIndex: number) {
+      const playlist = this.persistData.playlists;
+      if (playlist.length < 2) return;
+      // 私人 FM 的下一首要请求才知道；随机模式的顺序不在前端手里。
+      if (this.persistData.playSongMode !== "normal" || this.persistData.personalFmMode) return;
+
+      const AHEAD = 2;
+      const ids: Array<number | string> = [];
+      for (let i = 1; i <= AHEAD; i++) {
+        const id = playlist[(currentIndex + i) % playlist.length]?.id;
+        if (id !== undefined) ids.push(id);
+      }
+      hintTracks(ids);
     },
 
     getPlaySongPlaybackCurrentTime(): number {

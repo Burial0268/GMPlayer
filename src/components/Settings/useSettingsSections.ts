@@ -158,6 +158,18 @@ export function useSettingsSections() {
           disabled: () => !hasUnmServer,
         },
         {
+          // 桌面/移动端才有内嵌协议层可用；Web 上没有可切换的对象。
+          key: "ncmTransport",
+          label: "setting.ncmTransport",
+          tip: "setting.ncmTransportTip",
+          control: "select",
+          show: () => isTauri(),
+          options: [
+            { label: "setting.ncmTransportRemote", value: "remote" },
+            { label: "setting.ncmTransportLocal", value: "local" },
+          ],
+        },
+        {
           key: "songVolumeFade",
           label: "setting.songVolumeFade",
           tip: "setting.songVolumeFadeTip",

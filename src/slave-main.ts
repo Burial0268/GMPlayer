@@ -15,6 +15,8 @@ import SlaveApp from "@/SlaveApp.vue";
 import { installTauriPinia, startTauriPiniaStores } from "@/utils/tauri/store/piniaPersistence";
 import useSettingDataStore, { repairSettingData } from "@/store/settingData";
 import useSiteDataStore, { repairSiteData } from "@/store/siteData";
+import useUserDataStore from "@/store/userData";
+import { setNcmCookieSource } from "@/utils/request";
 import { installExternalLinkInterceptor } from "@/utils/openLink";
 import "@/style/global.scss";
 import "@/style/animate.scss";
@@ -119,6 +121,13 @@ async function bootstrap() {
 
   // 外链统一出口：Tauri 交给系统浏览器，Web 走新标签页
   installExternalLinkInterceptor();
+
+  // 从窗口不 hydrate userData（登录态由主窗口拥有），但 persistedstate 会从
+  // localStorage 恢复 store 里的 cookie。内嵌链路必须显式带 cookie，而独立的
+  // "cookie" 键只在登录那一刻写过一次，所以宁可读 store。
+  // 这里只设置 cookie 来源，不动 transport：从窗口的接口调用跟随主窗口的选择，
+  // 而 setNcmTransport 的默认值本来就是 remote。
+  setNcmCookieSource(() => useUserDataStore(pinia).cookie ?? "");
 
   app.mount("#app");
 }

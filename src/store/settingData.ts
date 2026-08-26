@@ -54,6 +54,18 @@ interface SettingDataState {
   musicFrequency: boolean;
   lrcMousePause: boolean;
   useUnmServer: boolean;
+  /**
+   * NCM 接口走哪条链路。`remote` = 已部署的 NeteaseCloudMusicApi；
+   * `local` = Tauri 内嵌协议层，少一跳网络（实测约 38~48 ms/请求）。
+   *
+   * Tauri 上默认 local。Web 上没有内嵌协议层，`setNcmTransport` 会强制回落到
+   * remote，设置项也不显示——那里没有可切换的对象。
+   *
+   * remote 后端永不移除：收益与地理位置相关（离网易云远的用户，中转反而可能
+   * 更快），且本地直连会把请求出口 IP 从服务器换成用户真机，风控画像随之改变。
+   * 本地链路连续失败时会自动降级回 remote。
+   */
+  ncmTransport: "remote" | "local";
   backgroundImageShow: string;
   blurAmount: number;
   contrastAmount: number;
@@ -241,6 +253,7 @@ const useSettingDataStore = defineStore("settingData", {
       musicFrequency: false,
       lrcMousePause: false,
       useUnmServer: true,
+      ncmTransport: "local",
       backgroundImageShow: "eplor",
       blurAmount: 10,
       contrastAmount: 1.2,

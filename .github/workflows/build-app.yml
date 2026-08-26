@@ -28,9 +28,57 @@ jobs:
           fail-if-no-assets: false
           fail-if-no-release: false
 
+  # NCM 协议层（src-tauri/crates/ncm-core）的守卫。
+  #
+  # 与平台无关，所以单独跑一次而不是塞进 6 个构建 job 里各拉一遍 15 MB 上游包。
+  # ncm-core 已经是 gmplayer 的依赖、产物会进安装包，所以它是构建的 needs 前置：
+  # 协议层过期或 shim 回归时，宁可不出包。
+  verify-ncm-protocol:
+    name: 校验 NCM 协议层
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: 克隆仓库
+
+      - name: 安装 PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: 配置 Rust 缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: ncm-core
+
+      - name: 安装依赖
+        run: pnpm install
+
+      # js/ncm-protocol.js 是入库产物（让 `cargo build` 不依赖 Node）。这一步
+      # 保证它和 scripts/build-ncm-protocol.mjs 的输出逐字节一致——否则改了打包
+      # 脚本却忘了重新生成，构建照样通过但发出去的是旧协议层。
+      - name: 校验协议层产物与打包脚本同步
+        run: pnpm check:ncm-protocol
+
+      # shim 层（Buffer / URLSearchParams / node:crypto）的行为直接决定上线报文。
+      # 这些是「本地静默错、只能靠服务器拒绝才发现」的一类 bug，必须离线钉住。
+      - name: 运行 ncm-core 离线测试
+        run: cargo test -p ncm-core --manifest-path src-tauri/Cargo.toml
+
   build-tauri-desktop:
     name: 构建 Tauri 桌面版本
-    needs: clean-pre-release
+    needs: [clean-pre-release, verify-ncm-protocol]
     strategy:
       fail-fast: false
       matrix:
@@ -126,8 +174,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            . -> target
-            packages/player/src-tauri -> target
+            src-tauri -> target
           key: ${{ matrix.artifact_name_suffix }}
 
       # macOS 自带的 Xcode LLVM 不支持 WASM 目标
@@ -249,7 +296,7 @@ jobs:
             src-tauri/target/**/release/gmplayer
   build-tauri-android:
     name: 构建 Tauri 安卓移动版本
-    needs: clean-pre-release
+    needs: [clean-pre-release, verify-ncm-protocol]
     runs-on: ubuntu-latest
     env:
       ANDROID_API_LEVEL: "24"
@@ -292,8 +339,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            . -> target
-            packages/player/src-tauri -> target
+            src-tauri -> target
           key: android
 
       - name: 设置 Android SDK/NDK
@@ -308,6 +354,64 @@ jobs:
           echo "NDK_HOME=${NDK_PATH}" >> "$GITHUB_ENV"
         env:
           ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+      # rquickjs-sys 只随包发桌面端的预生成 bindings（16 个 target，没有任何
+      # *-linux-android），所以 Android 必须开 bindgen feature 现场生成。而 bindgen
+      # 自己找不到 NDK 的 sysroot 和 clang resource dir，不显式指定就会以
+      # `'stdbool.h' file not found` 失败——一个和 QuickJS 毫无关系的报错。
+      #
+      # ncm-core 是 gmplayer 的依赖，所以下面的 `tauri android build` 会为全部 4 个
+      # ABI 编译它；这段配置是构建必需，不是备用。
+      #
+      # resource dir 的版本号随 NDK 变（NDK 27 是 clang 18，NDK 29 是 20），
+      # 所以问 clang 要，不写死。
+      - name: 配置 ncm-core (QuickJS) 的 Android bindgen 环境
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_LLVM="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          RESOURCE_INCLUDE="$("${NDK_LLVM}/bin/clang" -print-resource-dir)/include"
+          SYSROOT="${NDK_LLVM}/sysroot"
+
+          LIBCLANG_DIR=""
+          for d in "${NDK_LLVM}/lib" "${NDK_LLVM}/lib64"; do
+            if ls "${d}"/libclang.so* > /dev/null 2>&1; then
+              LIBCLANG_DIR="$d"
+              break
+            fi
+          done
+          if [[ -z "${LIBCLANG_DIR}" ]]; then
+            echo "找不到 NDK 内的 libclang，bindgen 无法运行" >&2
+            exit 1
+          fi
+          echo "LIBCLANG_PATH=${LIBCLANG_DIR}" >> "$GITHUB_ENV"
+
+          # clang 的 wrapper triple 和 rust target 不是一一对应：三个 arm 变体
+          # 都编译到 armv7a-linux-androideabi。
+          for pair in \
+            "aarch64_linux_android:aarch64-linux-android" \
+            "armv7_linux_androideabi:armv7a-linux-androideabi" \
+            "thumbv7neon_linux_androideabi:armv7a-linux-androideabi" \
+            "arm_linux_androideabi:armv7a-linux-androideabi" \
+            "i686_linux_android:i686-linux-android" \
+            "x86_64_linux_android:x86_64-linux-android"; do
+            var="${pair%%:*}"
+            triple="${pair##*:}"
+            echo "BINDGEN_EXTRA_CLANG_ARGS_${var}=--target=${triple}${ANDROID_API_LEVEL} --sysroot=${SYSROOT} -I${RESOURCE_INCLUDE}" >> "$GITHUB_ENV"
+          done
+
+      # 提前把 QuickJS 的交叉编译单独跑一次。完整的 android build 后面也会编到它，
+      # 但那要先花几分钟装 OpenSSL、跑前端构建；bindgen 配错的话在这里失败，报错
+      # 短、位置明确。
+      #
+      # CC/AR 只在这一步给：cc crate 猜不出 NDK 那个带 API 版本号的 wrapper 名
+      # （aarch64-linux-android24-clang），而真正的 android build 走 cargo-ndk，
+      # 它自己会设这些——所以不往 GITHUB_ENV 里塞，免得干扰主构建。
+      - name: 交叉编译检查 ncm-core (Android arm64)
+        env:
+          CC_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android${{ env.ANDROID_API_LEVEL }}-clang
+          AR_aarch64_linux_android: ${{ env.ANDROID_NDK_HOME }}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar
+        run: cargo check -p ncm-core --manifest-path src-tauri/Cargo.toml --release --target aarch64-linux-android
 
       - name: 安装 Android OpenSSL 构建依赖
         run: |

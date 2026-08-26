@@ -470,6 +470,11 @@ const messages: Record<string, unknown> = {
     useUnmServerShow: "尝试替换无法播放的歌曲",
     useUnmServerShowTip1: "是否使用 UNM 替换无法播放的歌曲链接",
     useUnmServerShowTip2: "请配置 UNM-Server 后使用解灰功能",
+    ncmTransport: "网易云接口链路",
+    ncmTransportTip:
+      "「中转服务」走已部署的 API；「本机直连」在应用内完成加密并直接请求网易云，少一跳网络。离网易云较远时中转可能反而更快，且直连会让请求从本机 IP 发出。",
+    ncmTransportRemote: "中转服务",
+    ncmTransportLocal: "本机直连",
     showLyricSetting: "播放页快捷设置",
     showLyricSettingTip: "是否在播放页面显示快捷设置",
     resetApp: "程序重置",

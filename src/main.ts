@@ -1,4 +1,4 @@
-import { createApp } from "vue";
+import { createApp, watch } from "vue";
 import { createPinia } from "pinia";
 import { useI18n } from "@/locale";
 import { useSafeAreaVars } from "./composables/useSafeAreaVars";
@@ -13,6 +13,7 @@ import useSettingDataStore, { repairSettingData } from "@/store/settingData";
 import useSiteDataStore, { repairSiteData } from "@/store/siteData";
 import useUserDataStore from "@/store/userData";
 import { installExternalLinkInterceptor } from "@/utils/openLink";
+import { setNcmTransport, setNcmCookieSource } from "@/utils/request";
 
 // 全局样式
 import "@/style/global.scss";
@@ -73,6 +74,29 @@ async function bootstrap() {
     ]);
   } catch (err) {
     console.error("[main] persistence bootstrap failed", err);
+  }
+
+  // NCM 接口链路：必须在 hydrate 之后才知道用户选的是哪条，之后跟随设置变化。
+  // Web 环境下 setNcmTransport 自己会退回 remote，不需要在这里分支。
+  {
+    const settingData = useSettingDataStore(pinia);
+    // 内嵌链路必须显式带 cookie（远端链路靠 withCredentials）。store 才是权威副本：
+    // 桌面端 userData 落在 Tauri store 文件里，hydrate 只会填回 store，不会重写
+    // localStorage 里那个独立的 "cookie" 键——照着 localStorage 读会在已登录的情况下
+    // 读到空，而缺 cookie 的 /song/url/v1 不报错，只是安静地返回 30 秒试听片段。
+    setNcmCookieSource(() => useUserDataStore(pinia).cookie ?? "");
+    setNcmTransport(settingData.ncmTransport);
+    watch(
+      () => settingData.ncmTransport,
+      (mode) => {
+        setNcmTransport(mode);
+        // 原生播放源解析跟随同一条链路。配置是推送式的（planner 在 WebView 冻结
+        // 时仍在解析），所以切换后必须主动重推，不能等下一次自然触发。
+        void import("@/utils/AudioContext/NativeResolverConfigSync").then((m) =>
+          m.syncNativeResolverConfig({ force: true }),
+        );
+      },
+    );
   }
 
   // 国际化（读 settingData.language，必须在 hydrate 之后）
