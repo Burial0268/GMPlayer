@@ -1305,8 +1305,9 @@ onBeforeUnmount(() => {
   right: 0;
   bottom: 0;
   left: 0;
-  // The bar stack. --app-tab-bar-height already carries the home-indicator inset.
-  height: var(--app-bottom-chrome-with-player);
+  // Exactly the bars that are on screen right now — the tab bar alone, or the tab bar plus
+  // the mini player. --app-tab-bar-height already carries the home-indicator inset.
+  height: var(--app-bottom-chrome);
   z-index: 1;
   pointer-events: none;
   --bottom-glass-tint: rgba(250, 250, 252, 0.72);
@@ -1334,12 +1335,21 @@ onBeforeUnmount(() => {
   // composites the already-filtered backdrop. It would NOT be safe on an ancestor —
   // opacity < 1 there makes a backdrop root and the blur silently samples an empty group.
   opacity: var(--mobile-mini-player-surface-opacity, 1);
-  // With no mini player the whole band drops by that bar's height, leaving the glass
-  // over the tab bar alone. Transform, not height, so it animates alongside the player's
-  // own enter/leave without relayout and without re-running the blur over a growing box.
-  transform: translate3d(0, var(--app-player-bar-height), 0);
+  // Grown from the bottom edge rather than translated. The previous version kept one box
+  // as tall as the *full* bar stack and pushed the mini player's share below the window
+  // when there was no mini player — so 70 of its 126px hung outside the viewport. A
+  // backdrop-filter box that extends past the viewport edge does not get a backdrop
+  // snapshot for the part that is outside it, and Chromium (WebView2 and Android WebView
+  // included) then paints the whole box as its flat tint with no blur at all. That is why
+  // the tab bar stopped frosting the content behind it in exactly the state where the mini
+  // player was hidden, while the identical glass looked right the moment a track started.
+  // Sizing the box keeps every pixel of it on screen in both states.
+  //
+  // Height is not compositable, so this repaints the blur for the 300ms of the mini
+  // player's own enter/leave — bounded, and cheaper at rest than permanently filtering a
+  // box that was 55% off-screen.
   transition:
-    transform var(--duration-300) cubic-bezier(0.65, 0.05, 0.36, 1),
+    height var(--duration-300) cubic-bezier(0.65, 0.05, 0.36, 1),
     background-color var(--duration-300) var(--ease-out);
   // Two jobs in one property. The inset hairline is the specular top edge every real
   // glass surface has, and it is what makes this read as a pane rather than as a washed
@@ -1352,7 +1362,7 @@ onBeforeUnmount(() => {
     0 -1px 3px rgb(0 0 0 / 4%);
 
   &.has-player {
-    transform: translate3d(0, 0, 0);
+    height: var(--app-bottom-chrome-with-player);
   }
 
   &.dark {
