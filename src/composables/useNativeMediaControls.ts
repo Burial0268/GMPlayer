@@ -1,113 +1,75 @@
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import { debounce } from "throttle-debounce";
 import { storeToRefs } from "pinia";
 import { musicStore } from "@/store";
 import { isMobile, isTauri } from "@/utils/tauri";
 import { setSeek } from "@/utils/AudioContext";
 import {
-  hideMediaNotification,
-  initializeMediaNotification,
-  listenAudioFocusChange,
-  listenMediaAction,
-  updateMediaNotification,
-  updateMediaPlaybackState,
-  updateMediaProgress,
-  type AudioFocusState,
-  type MediaActionPayload,
-} from "@/utils/tauri/media/notification";
+  installSessionControlsSubscriber,
+  publishSessionControls,
+  requestNextPlayMode,
+} from "@/utils/AudioContext";
+import { initializeMediaNotification } from "@/utils/tauri/media/notification";
 import {
-  clearNowPlayingControls,
   initializeNowPlayingControls,
   listenNowPlayingAction,
   updateNowPlayingPlayMode,
-  updateNowPlayingState,
-  updateNowPlayingTimeline,
   type NowPlayingActionPayload,
 } from "@/utils/tauri/media/nowPlaying";
 
-type PlaybackState = "playing" | "paused" | "buffering";
-type PlayMode = "normal" | "random" | "single";
-type NativeMediaAction = MediaActionPayload | NowPlayingActionPayload;
+/**
+ * Native media controls — **desktop control path, plus play mode**.
+ *
+ * Metadata, playback state and the timeline are pushed to the OS media session
+ * by Rust (`src-tauri/src/media`), driven off the audio backend's event stream.
+ * That move is not an optimisation: on Android the WebView is destroyed and the
+ * page reloaded while playback continues, so anything pushed from here freezes
+ * on whatever track was showing when the WebView died — and stays wrong after
+ * the backend advances on its own.
+ *
+ * The Android *control* path moved for the same reason: notification buttons,
+ * lock screen, media keys and audio focus are delivered by the plugin straight
+ * into Rust (`media::install_controls`), which drives the backend with no JS
+ * runtime involved. A button that only reaches this file is a button that stops
+ * working exactly when the notification is the only UI the user has. The store
+ * still follows, through the backend's own events (`PlayStatus`,
+ * `NativePlannerAdvanced`), so the transport keeps a single writer.
+ *
+ * What is still owned here:
+ * - desktop system-control actions (`now-playing-controls`, SMTC/MPRIS): no
+ *   WebView-death problem there, and no Rust-side consumer
+ *
+ * Play mode used to be owned here. It is not any more: it is one of two session
+ * controls the backend holds (see `NativeSessionControlsSync`), because the
+ * Android notification renders and sets it, SMTC/MPRIS expose it as native
+ * properties, and the Rust planner has to honour it on the next hop with no page
+ * alive. This file now only *asks* — `requestNextPlayMode` — and adopts what
+ * comes back.
+ */
 
-interface NativeMediaPayload {
-  title: string;
-  artist: string;
-  album: string;
-  isPlaying: boolean;
-  position: number;
-  duration: number;
-  artworkUrl: string;
-  trackId?: number;
-}
+type PlayMode = "normal" | "random" | "single";
+type NativeMediaAction = NowPlayingActionPayload;
 
 interface NativeMediaAdapter {
   name: "media-session" | "now-playing-controls";
-  artworkSize: number;
   initialize: () => Promise<void | undefined>;
-  updateFull: (payload: NativeMediaPayload) => Promise<void | undefined>;
-  updateProgress: (payload: {
-    isPlaying: boolean;
-    position: number;
-    duration: number;
-    seeked?: boolean;
-  }) => Promise<void | undefined>;
-  updatePlaybackState: (payload: {
-    state: PlaybackState;
-    isPlaying: boolean;
-    position: number;
-  }) => Promise<void | undefined>;
   updatePlayMode: (mode: PlayMode) => Promise<void | undefined>;
-  clear: () => Promise<void | undefined>;
-  listenAction: (handler: (payload: NativeMediaAction) => void) => Promise<() => void>;
-  listenAudioFocus?: (handler: (state: AudioFocusState) => void) => Promise<() => void>;
+  /** Absent when the platform delivers its actions to Rust instead. */
+  listenAction?: (handler: (payload: NativeMediaAction) => void) => Promise<() => void>;
 }
 
 const mobileMediaSessionAdapter: NativeMediaAdapter = {
   name: "media-session",
-  artworkSize: 256,
+  // Still worth calling: this is what prompts for the notification permission.
   initialize: initializeMediaNotification,
-  updateFull: (payload) => updateMediaNotification(payload),
-  updateProgress: (payload) =>
-    updateMediaProgress({
-      isPlaying: payload.isPlaying,
-      position: payload.position,
-      duration: payload.duration,
-    }),
-  updatePlaybackState: (payload) =>
-    updateMediaPlaybackState({
-      state: payload.state,
-      position: payload.position,
-    }),
+  // Android's MediaSession has no shuffle/repeat surface in the notification.
   updatePlayMode: async () => undefined,
-  clear: hideMediaNotification,
-  listenAction: listenMediaAction,
-  listenAudioFocus: listenAudioFocusChange,
+  // No `listenAction` / audio-focus listener: Rust owns Android transport.
 };
 
 const desktopNowPlayingAdapter: NativeMediaAdapter = {
   name: "now-playing-controls",
-  artworkSize: 512,
   initialize: initializeNowPlayingControls,
-  updateFull: (payload) => updateNowPlayingState(payload),
-  updateProgress: async (payload) => {
-    await updateNowPlayingTimeline({
-      position: payload.position,
-      duration: payload.duration,
-      seeked: payload.seeked,
-    });
-    await updateNowPlayingState({
-      isPlaying: payload.isPlaying,
-      playbackState: payload.isPlaying ? "playing" : "paused",
-    });
-  },
-  updatePlaybackState: (payload) =>
-    updateNowPlayingState({
-      playbackState: payload.state,
-      isPlaying: payload.isPlaying,
-      position: payload.position,
-    }),
   updatePlayMode: (mode) => updateNowPlayingPlayMode({ mode }),
-  clear: clearNowPlayingControls,
   listenAction: listenNowPlayingAction,
 };
 
@@ -121,157 +83,52 @@ export function useNativeMediaControls() {
 
   let adapter: NativeMediaAdapter | null = null;
   let unlistenMediaAction: (() => void) | null = null;
-  let unlistenAudioFocus: (() => void) | null = null;
-  let lastPayloadHash = "";
-  let lastProgressSyncAt = 0;
+  let unlistenSessionControls: (() => void) | null = null;
   // Whether THIS instance holds the singleton slot. A non-claiming instance
   // (mounted while another was active) must not decrement the shared counter
   // on unmount, or the surviving instance is left permanently inert.
   let claimedMediaControls = false;
 
-  const PROGRESS_SYNC_INTERVAL = 5_000;
-
   /**
-   * Live playback clock in milliseconds. Prefers the active sound's timeline
+   * Live playback clock in seconds. Prefers the active sound's timeline
    * (anchor + extrapolation — accurate even right after a backend-initiated
-   * track advance or a background wake-up) over the store snapshot, which is
-   * only refreshed by the RAF/interval loop and can be seconds stale.
+   * track advance) over the store snapshot, which the RAF loop can leave
+   * seconds stale.
    */
-  function getLivePlaybackMs(): { position: number; duration: number } {
+  function livePlayback(): { position: number; duration: number } {
     const playSongTime = music.getPlaySongTime;
-    let positionSec = playSongTime?.currentTime || 0;
-    let durationSec = playSongTime?.duration || 0;
+    let position = playSongTime?.currentTime || 0;
+    let duration = playSongTime?.duration || 0;
 
     const player = window.$player;
     if (player) {
       try {
         const livePosition = player.seek();
         if (typeof livePosition === "number" && Number.isFinite(livePosition)) {
-          positionSec = livePosition;
+          position = livePosition;
         }
         const liveDuration = player.duration();
         if (Number.isFinite(liveDuration) && liveDuration > 0) {
-          durationSec = liveDuration;
+          duration = liveDuration;
         }
       } catch {
         /* destroyed/mid-swap sound — store snapshot fallback is fine */
       }
     }
-
-    return {
-      position: Math.round(Math.max(0, positionSec) * 1_000),
-      duration: Math.round(Math.max(0, durationSec) * 1_000),
-    };
+    return { position: Math.max(0, position), duration: Math.max(0, duration) };
   }
 
-  function buildFullPayload(): NativeMediaPayload | null {
-    const song = music.getPlaySongData;
-    if (!song || !adapter) return null;
-
-    const artworkUrl = song.album?.picUrl
-      ? `${song.album.picUrl.replace(/^http:/, "https:")}?param=${adapter.artworkSize}y${
-          adapter.artworkSize
-        }`
-      : "";
-    const live = getLivePlaybackMs();
-
-    return {
-      title: song.name || "",
-      artist: Array.isArray(song.artist)
-        ? song.artist.map((artist: { name: string }) => artist.name).join(", ")
-        : "",
-      album: song.album?.name || "",
-      isPlaying: music.getPlayState,
-      position: live.position,
-      duration: live.duration,
-      artworkUrl,
-      trackId: typeof song.id === "number" ? song.id : undefined,
-    };
-  }
-
-  /** Metadata-identity hash — position/isPlaying deliberately excluded so the
-   * debounced dedup only skips pushes when nothing user-visible changed
-   * (position rides along on every push anyway). */
-  function payloadMetaHash(payload: NativeMediaPayload): string {
-    return JSON.stringify([
-      payload.title,
-      payload.artist,
-      payload.album,
-      payload.artworkUrl,
-      payload.trackId,
-      payload.duration,
-    ]);
-  }
-
-  async function syncNotificationImmediate(): Promise<void> {
-    if (!active.value || !adapter) return;
-    syncNotification.cancel?.();
-
-    const payload = buildFullPayload();
-    if (!payload) {
-      await adapter.clear();
-      return;
-    }
-
-    lastPayloadHash = payloadMetaHash(payload);
-    await adapter.updateFull(payload);
-    await syncPlayMode();
-  }
-
-  const syncNotification = debounce(300, async () => {
-    if (!active.value || !adapter) return;
-
-    const payload = buildFullPayload();
-    if (!payload) {
-      await adapter.clear();
-      return;
-    }
-
-    const hash = payloadMetaHash(payload);
-    if (hash === lastPayloadHash) return;
-    lastPayloadHash = hash;
-    await adapter.updateFull(payload);
-    await syncPlayMode();
-  });
-
-  async function syncProgress(seeked = false): Promise<void> {
-    if (!active.value || !adapter || !music.getPlaySongData) return;
-
-    const live = getLivePlaybackMs();
-    await adapter.updateProgress({
-      isPlaying: music.getPlayState,
-      position: live.position,
-      duration: live.duration,
-      seeked,
-    });
-    lastProgressSyncAt = Date.now();
-  }
-
-  async function syncPlaybackState(): Promise<void> {
-    if (!active.value || !adapter || !music.getPlaySongData) return;
-
-    const state: PlaybackState = music.isLoadingSong
-      ? "buffering"
-      : music.getPlayState
-        ? "playing"
-        : "paused";
-    await adapter.updatePlaybackState({
-      state,
-      isPlaying: !music.isLoadingSong && music.getPlayState,
-      position: getLivePlaybackMs().position,
-    });
-  }
-
+  /**
+   * Push the play mode to the desktop system session.
+   *
+   * Rust projects this too, off `SessionControls` — but its projection is
+   * deliberately silent until a track is loaded (an empty session with a shuffle
+   * icon is not a session). This covers that window, and pushes the same value
+   * from the same store, so the two cannot disagree.
+   */
   async function syncPlayMode(): Promise<void> {
     if (!active.value || !adapter) return;
     await adapter.updatePlayMode(persistData.value.playSongMode || "normal");
-  }
-
-  function maybeSyncProgress(): void {
-    if (!active.value) return;
-    const now = Date.now();
-    if (now - lastProgressSyncAt < PROGRESS_SYNC_INTERVAL) return;
-    void syncProgress();
   }
 
   function handleMediaAction(payload: NativeMediaAction): void {
@@ -290,13 +147,12 @@ export function useNativeMediaControls() {
         break;
       case "stop":
         music.setPlayState(false);
-        void adapter?.clear();
         break;
       case "seek":
         if (typeof payload.position === "number") {
-          const durationSec = getLivePlaybackMs().duration / 1_000;
+          const { duration } = livePlayback();
           let seekSec = Math.max(0, payload.position / 1_000);
-          if (durationSec > 0) seekSec = Math.min(seekSec, durationSec);
+          if (duration > 0) seekSec = Math.min(seekSec, duration);
           if (window.$player) {
             setSeek(window.$player, seekSec);
           }
@@ -304,14 +160,29 @@ export function useNativeMediaControls() {
             currentTime: seekSec,
             duration: music.getPlaySongTime?.duration || 0,
           });
-          void syncProgress(true);
+          // No notification push here: the backend emits a position anchor on
+          // seek commit and the Rust bridge re-anchors the system timeline.
         }
         break;
       case "toggleShuffle":
-        music.setPlaySongMode(persistData.value.playSongMode === "random" ? "normal" : "random");
-        break;
       case "toggleRepeat":
-        music.setPlaySongMode(persistData.value.playSongMode === "single" ? "normal" : "single");
+        // Both are one press on the same three-mode ring, and the ring is the
+        // backend's — it holds the value the app, the notification and SMTC all
+        // render. Writing the store here instead would make this a second
+        // writer, which is exactly how the surfaces used to drift apart.
+        // `requestNextPlayMode` returns false only when there is no backend to
+        // ask, in which case the local setter is the whole truth.
+        if (!requestNextPlayMode()) {
+          music.setPlaySongMode(
+            payload.action === "toggleShuffle"
+              ? persistData.value.playSongMode === "random"
+                ? "normal"
+                : "random"
+              : persistData.value.playSongMode === "single"
+                ? "normal"
+                : "single",
+          );
+        }
         break;
       case "setVolume":
         if (typeof payload.volume === "number") {
@@ -325,74 +196,12 @@ export function useNativeMediaControls() {
     }
   }
 
-  // Audio-focus bookkeeping. Android expects apps to resume after a
-  // *transient* loss (call / navigation prompt) but stay paused after a
-  // permanent loss, and to restore the pre-duck volume on focus gain.
-  let pausedByTransientFocusLoss = false;
-  let volumeBeforeDuck: number | null = null;
-
-  function restoreDuckedVolume(): void {
-    if (volumeBeforeDuck === null) return;
-    const duckedTarget = Math.max(0.1, volumeBeforeDuck * 0.2);
-    // Only restore when the volume is still at the ducked level — a manual
-    // change while ducked is user intent and must win.
-    if (Math.abs(music.persistData.playVolume - duckedTarget) < 0.01) {
-      music.persistData.playVolume = volumeBeforeDuck;
-    }
-    volumeBeforeDuck = null;
-  }
-
-  function handleAudioFocusChange(state: AudioFocusState): void {
-    switch (state) {
-      case "gain":
-        restoreDuckedVolume();
-        if (pausedByTransientFocusLoss) {
-          pausedByTransientFocusLoss = false;
-          if (!music.getPlayState) {
-            music.setPlayState(true);
-          }
-        }
-        break;
-      case "loss":
-        // Permanent loss: pause and stay paused (no auto-resume on gain).
-        restoreDuckedVolume();
-        pausedByTransientFocusLoss = false;
-        if (music.getPlayState) {
-          music.setPlayState(false);
-        }
-        break;
-      case "loss_transient":
-        if (music.getPlayState) {
-          pausedByTransientFocusLoss = true;
-          music.setPlayState(false);
-        }
-        break;
-      case "loss_transient_can_duck":
-        if (music.getPlayState && volumeBeforeDuck === null) {
-          volumeBeforeDuck = music.persistData.playVolume;
-          music.persistData.playVolume = Math.max(0.1, volumeBeforeDuck * 0.2);
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  function onVisibilityChange(): void {
-    if (!active.value) return;
-    if (document.visibilityState === "visible") {
-      // Wake-up: the backend queue window may have advanced tracks while this
-      // JS runtime was frozen — force a full metadata push (bypass the hash
-      // guard) and hard re-anchor the seekbar position.
-      lastPayloadHash = "";
-      void syncNotificationImmediate();
-      void syncProgress(true);
-    } else {
-      // Entering background: leave the freshest possible position anchor —
-      // the system extrapolates from it while our timers are frozen.
-      void syncProgress(true);
-    }
-  }
+  // Audio focus is handled natively: the Android plugin decides what a focus
+  // change means (pause on transient loss and resume after it, let the
+  // framework duck for a can-duck loss) and drives the backend directly, so it
+  // keeps working with no page loaded. The old JS bookkeeping that used to live
+  // here could only run while the WebView was alive — which is never the case
+  // when a call comes in with the app in the background.
 
   onMounted(async () => {
     if (instanceCount > 0) return;
@@ -401,17 +210,25 @@ export function useNativeMediaControls() {
 
     if (!isTauri()) return;
 
+    // Before anything that can reject. `adapter.initialize()` is a JNI round
+    // trip that also raises the notification-permission prompt, and an async
+    // `onMounted` that throws is swallowed by Vue — which used to leave the
+    // subscriber uninstalled and the app deaf to every notification button.
+    unlistenSessionControls = installSessionControlsSubscriber();
+
     adapter = (await isMobile()) ? mobileMediaSessionAdapter : desktopNowPlayingAdapter;
     adapterName.value = adapter.name;
     active.value = true;
 
+    // Still worth calling: on Android this is what prompts for the
+    // notification permission. The session itself is created lazily by the
+    // first push from Rust.
     await adapter.initialize();
-    unlistenMediaAction = await adapter.listenAction(handleMediaAction);
-    if (adapter.listenAudioFocus) {
-      unlistenAudioFocus = await adapter.listenAudioFocus(handleAudioFocusChange);
+    if (adapter.listenAction) {
+      unlistenMediaAction = await adapter.listenAction(handleMediaAction);
     }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    void syncNotificationImmediate();
+    publishSessionControls({ force: true });
+    void syncPlayMode();
   });
 
   onUnmounted(() => {
@@ -421,72 +238,15 @@ export function useNativeMediaControls() {
     }
     unlistenMediaAction?.();
     unlistenMediaAction = null;
-    unlistenAudioFocus?.();
-    unlistenAudioFocus = null;
-    document.removeEventListener("visibilitychange", onVisibilityChange);
-    if (active.value) {
-      void adapter?.clear();
-    }
+    unlistenSessionControls?.();
+    unlistenSessionControls = null;
+    // Deliberately NOT clearing the session: Rust owns its lifetime now and
+    // playback outlives this component (WebView reload, HMR). The bridge
+    // clears it when the backend reports no track.
     active.value = false;
     adapterName.value = null;
     adapter = null;
   });
-
-  watch(
-    () => music.getPlaySongData,
-    (val, oldVal) => {
-      if (!active.value) return;
-      if (val?.id !== oldVal?.id) {
-        lastPayloadHash = "";
-        lastProgressSyncAt = 0;
-        void syncNotificationImmediate();
-      } else {
-        void syncNotification();
-      }
-
-      if (!val) {
-        void adapter?.clear();
-      }
-    },
-    { deep: true },
-  );
-
-  watch(
-    () => music.getPlaySongTime?.duration,
-    (val, oldVal) => {
-      if (!active.value) return;
-      // Any duration change matters: 0 → X when the source loads, and X → Y
-      // corrections (backend-advanced track adopted, more accurate decode).
-      if (val && val !== oldVal) void syncNotificationImmediate();
-    },
-  );
-
-  watch(
-    () => music.getPlayState,
-    () => {
-      if (!active.value) return;
-      void syncProgress();
-    },
-  );
-
-  watch(
-    () => music.isLoadingSong,
-    (isLoading) => {
-      if (!active.value) return;
-      void syncPlaybackState();
-      if (!isLoading) {
-        void syncProgress();
-      }
-    },
-  );
-
-  watch(
-    () => music.getPlaySongTime?.currentTime,
-    () => {
-      if (!active.value) return;
-      maybeSyncProgress();
-    },
-  );
 
   watch(
     () => persistData.value.playSongMode,
@@ -495,13 +255,5 @@ export function useNativeMediaControls() {
     },
   );
 
-  return {
-    active,
-    adapterName,
-    syncNotification,
-    syncNotificationImmediate,
-    syncProgress,
-    syncPlaybackState,
-    syncPlayMode,
-  };
+  return { active, adapterName, syncPlayMode };
 }

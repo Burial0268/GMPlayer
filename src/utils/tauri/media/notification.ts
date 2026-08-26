@@ -1,18 +1,20 @@
 /**
  * JS/TS bridge to `tauri-plugin-media-session`.
  *
- * This module is the mobile adapter used by `useNativeMediaControls.ts`.
- * Internally it translates between our ms-based API and the plugin's
- * seconds-based API.
+ * Push direction only. Metadata and playback state are normally written by
+ * Rust (`src-tauri/src/media`), and the *control* direction — buttons, media
+ * keys, audio focus — never comes back through here at all; see the note at
+ * the bottom of this file. What is left is a thin, correct wrapper for the
+ * plugin's commands, translating our ms-based API to its seconds-based one.
  *
  * Plugin identifier : "media-session"
- * Repo             : https://github.com/sak96/tauri-plugin-media-session
+ * Vendored at      : `src-tauri/crates/tauri-plugin-media-session`
  *
  * All exported functions are safe to call outside Tauri (browser / desktop):
  * they check `isTauri()` first and return silently if the environment is wrong.
  */
 
-import { invoke, addPluginListener } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "../core/runtime";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -51,7 +53,10 @@ export interface UpdateProgressRequest {
 
 /**
  * Playback state payload for `updateMediaPlaybackState`.
- * Used to indicate buffering, playing, or paused states.
+ *
+ * `buffering` is a distinct state, not "paused with a spinner": the native
+ * session renders it as `STATE_BUFFERING`, which is what tells the system
+ * controls to show a spinner instead of a play button that looks inert.
  */
 export interface UpdatePlaybackStateRequest {
   /** Current playback state */
@@ -59,21 +64,6 @@ export interface UpdatePlaybackStateRequest {
   /** Current playback position in **milliseconds**. */
   position: number;
 }
-
-/**
- * Media action event delivered by `listenMediaAction`.
- * `position` is in **milliseconds** when present (seek target).
- */
-export interface MediaActionPayload {
-  action: "play" | "pause" | "next" | "previous" | "stop" | "seek";
-  /** Seek target in **milliseconds** — only present when `action === "seek"`. */
-  position?: number;
-}
-
-/**
- * Audio focus state delivered by `listenAudioFocusChange`.
- */
-export type AudioFocusState = "gain" | "loss" | "loss_transient" | "loss_transient_can_duck";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Internal
@@ -150,7 +140,8 @@ export function updateMediaPlaybackState(
   req: UpdatePlaybackStateRequest,
 ): Promise<void | undefined> {
   return call("update_state", {
-    playbackState: req.state,
+    isLoading: req.state === "buffering",
+    isPlaying: req.state === "playing",
     position: req.position / 1_000, // ms → s
   });
 }
@@ -163,71 +154,14 @@ export function hideMediaNotification(): Promise<void | undefined> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Events  (native → JS)
+// Events  (native → Rust)
 // ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Subscribe to media control actions from the notification panel,
- * lock screen, or hardware media keys.
- *
- * Normalises the plugin event format (seekPosition in **seconds**) to our
- * internal format (position in **milliseconds**) so call-sites are unchanged.
- *
- * @returns An unlisten function — call it in `onUnmounted` to clean up.
- */
-export async function listenMediaAction(
-  handler: (payload: MediaActionPayload) => void,
-): Promise<() => void> {
-  if (!isTauri()) return () => {};
-
-  try {
-    // The plugin emits { action, seekPosition?: number } where seekPosition is seconds.
-    const listener = await addPluginListener<{ action: string; seekPosition?: number }>(
-      PLUGIN,
-      "media_action",
-      (event) => {
-        const payload: MediaActionPayload = {
-          action: event.action as MediaActionPayload["action"],
-        };
-        // Convert seekPosition (seconds) → position (milliseconds) for our handlers.
-        if (event.action === "seek" && typeof event.seekPosition === "number") {
-          payload.position = Math.round(event.seekPosition * 1_000);
-        }
-        handler(payload);
-      },
-    );
-    return () => listener.unregister();
-  } catch (err) {
-    console.warn("[MediaSession] listenMediaAction failed:", err);
-    return () => {};
-  }
-}
-
-/**
- * Subscribe to audio focus changes from the Android system.
- *
- * When another app requests audio focus (e.g. phone call, voice message),
- * the system will notify us so we can pause or duck playback.
- *
- * @returns An unlisten function — call it in `onUnmounted` to clean up.
- */
-export async function listenAudioFocusChange(
-  handler: (state: AudioFocusState) => void,
-): Promise<() => void> {
-  if (!isTauri()) return () => {};
-
-  try {
-    const listener = await addPluginListener<{ state: string }>(
-      PLUGIN,
-      "audio_focus_change",
-      (event) => {
-        handler(event.state as AudioFocusState);
-      },
-    );
-    return () => listener.unregister();
-  } catch (err) {
-    // Plugin may not support audio_focus_change yet — log and return no-op
-    console.warn("[MediaSession] listenAudioFocusChange failed (plugin may not support it):", err);
-    return () => {};
-  }
-}
+//
+// There is deliberately no listener here.
+//
+// Media buttons, the lock screen and audio focus are delivered by the Android
+// plugin over its Rust `Channel` and handled in `src-tauri/src/media` — a JNI
+// hop with no WebView in it. That is not a preference: the WebView is destroyed
+// while playback continues, and a notification whose buttons only reach JS
+// stops working exactly when the notification is the only UI left. Routing them
+// back through here would also make two writers for one transport.

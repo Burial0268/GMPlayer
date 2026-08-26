@@ -73,7 +73,13 @@ pub struct MediaActionPayload {
 }
 
 impl NowPlayingState {
-    fn ensure_session<R: Runtime>(
+    /// Get (creating on first use) the live system-media session.
+    ///
+    /// Public so the in-process media bridge can drive the session directly:
+    /// on Android the WebView dies while playback continues, and the desktop
+    /// path must stay symmetrical with it rather than keeping a second,
+    /// JS-only entry point alive.
+    pub fn ensure_session<R: Runtime>(
         &self,
         app: &tauri::AppHandle<R>,
     ) -> Result<NowPlayingSession, String> {
@@ -114,6 +120,12 @@ impl NowPlayingState {
         }
     }
 
+    /// Last duration handed to the session, used when a timeline update omits
+    /// one. Public for the same reason as [`Self::ensure_session`].
+    pub fn last_duration_secs(&self) -> f64 {
+        self.last_duration()
+    }
+
     fn last_duration(&self) -> f64 {
         self.inner
             .lock()
@@ -121,7 +133,7 @@ impl NowPlayingState {
             .unwrap_or_default()
     }
 
-    fn clear_session(&self) {
+    pub fn clear_session(&self) {
         if let Ok(mut inner) = self.inner.lock() {
             if let Some(session) = inner.session.take() {
                 session.disable_system_media();
@@ -130,6 +142,107 @@ impl NowPlayingState {
             inner.last_duration_secs = 0.0;
         }
     }
+}
+
+// ── Rust-callable surface ────────────────────────────────────────
+//
+// The media bridge (`src-tauri/src/media`) drives the session straight from the
+// audio backend's event stream, so these must not live only behind
+// `#[tauri::command]`. The commands below are thin wrappers over them — one
+// implementation, two entry points.
+
+/// Push metadata. `cover_data` is fetched by the caller (it is I/O).
+pub fn apply_metadata<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &NowPlayingState,
+    title: String,
+    artist: String,
+    album: String,
+    artwork_url: Option<String>,
+    cover_data: Option<Vec<u8>>,
+    track_id: Option<i64>,
+    duration_secs: Option<f64>,
+) -> Result<(), String> {
+    let session = state.ensure_session(app)?;
+    if let Some(duration) = duration_secs {
+        state.set_last_duration(duration);
+    }
+    session.update_metadata(MetadataPayload {
+        song_name: title,
+        author_name: artist,
+        album_name: album,
+        cover_data,
+        original_cover_url: artwork_url,
+        genre: Vec::new(),
+        track_id,
+        discord_buttons: None,
+        duration: positive_duration(duration_secs),
+    });
+    Ok(())
+}
+
+pub fn apply_play_state<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &NowPlayingState,
+    is_playing: bool,
+) -> Result<(), String> {
+    let session = state.ensure_session(app)?;
+    session.update_play_state(PlayStatePayload {
+        status: if is_playing {
+            PlaybackStatus::Playing
+        } else {
+            PlaybackStatus::Paused
+        },
+    });
+    Ok(())
+}
+
+pub fn apply_timeline<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &NowPlayingState,
+    position_secs: f64,
+    duration_secs: Option<f64>,
+    seeked: Option<bool>,
+) -> Result<(), String> {
+    let session = state.ensure_session(app)?;
+    if let Some(duration) = duration_secs {
+        state.set_last_duration(duration);
+    }
+    session.update_timeline(TimelinePayload {
+        current_time: duration_from_secs(position_secs),
+        total_time: duration_from_secs(duration_secs.unwrap_or_else(|| state.last_duration())),
+        seeked,
+    });
+    Ok(())
+}
+
+/// Download cover art for [`apply_metadata`]. Blocking — call from a worker.
+pub fn fetch_cover_blocking(url: &str) -> Option<Vec<u8>> {
+    fetch_cover_data_blocking(url)
+}
+
+/// Project the play mode onto the system session.
+///
+/// The Rust-side twin of the [`update_play_mode`] command. Both exist because
+/// the value has one owner (the audio backend) and two ways in: the backend's
+/// own projection, which is what keeps SMTC/MPRIS right while the WebView is
+/// gone, and the command, which is the web/legacy path.
+///
+/// Windows exposes this as `AutoRepeatMode` + `ShuffleEnabled` and MPRIS as
+/// `LoopStatus` + `Shuffle`, so unlike Android there is nothing custom to draw —
+/// the OS renders its own controls once the properties are set.
+pub fn apply_play_mode<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    state: &NowPlayingState,
+    is_shuffling: bool,
+    repeat: RepeatMode,
+) -> Result<(), String> {
+    let session = state.ensure_session(app)?;
+    session.update_play_mode(PlayModePayload {
+        is_shuffling,
+        repeat_mode: repeat,
+    });
+    Ok(())
 }
 
 impl From<SystemMediaEvent> for MediaActionPayload {

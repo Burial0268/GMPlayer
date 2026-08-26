@@ -2595,10 +2595,10 @@
           "markdownDescription": "Denies the log command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`\n- `allow-register-listener`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`",
           "type": "string",
           "const": "media-session:default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`\n- `allow-register-listener`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`"
         },
         {
           "description": "Enables the clear command without any pre-configured scope.",
@@ -2617,6 +2617,12 @@
           "type": "string",
           "const": "media-session:allow-register-listener",
           "markdownDescription": "Enables the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-session:allow-remove-listener",
+          "markdownDescription": "Enables the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Enables the update_state command without any pre-configured scope.",
@@ -2647,6 +2653,12 @@
           "type": "string",
           "const": "media-session:deny-register-listener",
           "markdownDescription": "Denies the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-session:deny-remove-listener",
+          "markdownDescription": "Denies the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Denies the update_state command without any pre-configured scope.",
@@ -2725,6 +2737,312 @@
           "type": "string",
           "const": "orientation:deny-set-screen-orientation",
           "markdownDescription": "Denies the setOrientation command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for tauri-plugin-pinia.\n#### This default permission set includes:\n\n- `allow-allow-save`\n- `allow-allow-sync`\n- `allow-clear-autosave`\n- `allow-deny-save`\n- `allow-deny-sync`\n- `allow-destroy`\n- `allow-get-default-save-strategy`\n- `allow-get-save-strategy`\n- `allow-get-store-collection-path`\n- `allow-get-store-ids`\n- `allow-get-store-path`\n- `allow-get-store-state`\n- `allow-load`\n- `allow-patch`\n- `allow-save`\n- `allow-save-all`\n- `allow-save-all-now`\n- `allow-save-now`\n- `allow-save-some`\n- `allow-save-some-now`\n- `allow-set-autosave`\n- `allow-set-save-strategy`\n- `allow-set-store-collection-path`\n- `allow-set-store-options`\n- `allow-unload`",
+          "type": "string",
+          "const": "pinia:default",
+          "markdownDescription": "Default permissions for tauri-plugin-pinia.\n#### This default permission set includes:\n\n- `allow-allow-save`\n- `allow-allow-sync`\n- `allow-clear-autosave`\n- `allow-deny-save`\n- `allow-deny-sync`\n- `allow-destroy`\n- `allow-get-default-save-strategy`\n- `allow-get-save-strategy`\n- `allow-get-store-collection-path`\n- `allow-get-store-ids`\n- `allow-get-store-path`\n- `allow-get-store-state`\n- `allow-load`\n- `allow-patch`\n- `allow-save`\n- `allow-save-all`\n- `allow-save-all-now`\n- `allow-save-now`\n- `allow-save-some`\n- `allow-save-some-now`\n- `allow-set-autosave`\n- `allow-set-save-strategy`\n- `allow-set-store-collection-path`\n- `allow-set-store-options`\n- `allow-unload`"
+        },
+        {
+          "description": "Enables the allow_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-allow-save",
+          "markdownDescription": "Enables the allow_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the allow_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-allow-sync",
+          "markdownDescription": "Enables the allow_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the clear_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-clear-autosave",
+          "markdownDescription": "Enables the clear_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deny_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-deny-save",
+          "markdownDescription": "Enables the deny_save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the deny_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-deny-sync",
+          "markdownDescription": "Enables the deny_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the destroy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-destroy",
+          "markdownDescription": "Enables the destroy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_default_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-get-default-save-strategy",
+          "markdownDescription": "Enables the get_default_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-get-save-strategy",
+          "markdownDescription": "Enables the get_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-get-store-collection-path",
+          "markdownDescription": "Enables the get_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_ids command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-get-store-ids",
+          "markdownDescription": "Enables the get_store_ids command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-get-store-path",
+          "markdownDescription": "Enables the get_store_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the get_store_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-get-store-state",
+          "markdownDescription": "Enables the get_store_state command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the load command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-load",
+          "markdownDescription": "Enables the load command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the patch command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-patch",
+          "markdownDescription": "Enables the patch command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-save",
+          "markdownDescription": "Enables the save command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-save-all",
+          "markdownDescription": "Enables the save_all command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_all_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-save-all-now",
+          "markdownDescription": "Enables the save_all_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-save-now",
+          "markdownDescription": "Enables the save_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_some command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-save-some",
+          "markdownDescription": "Enables the save_some command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save_some_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-save-some-now",
+          "markdownDescription": "Enables the save_some_now command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-set-autosave",
+          "markdownDescription": "Enables the set_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-set-save-strategy",
+          "markdownDescription": "Enables the set_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-set-store-collection-path",
+          "markdownDescription": "Enables the set_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_store_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-set-store-options",
+          "markdownDescription": "Enables the set_store_options command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:allow-unload",
+          "markdownDescription": "Enables the unload command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the allow_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-allow-save",
+          "markdownDescription": "Denies the allow_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the allow_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-allow-sync",
+          "markdownDescription": "Denies the allow_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the clear_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-clear-autosave",
+          "markdownDescription": "Denies the clear_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deny_save command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-deny-save",
+          "markdownDescription": "Denies the deny_save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the deny_sync command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-deny-sync",
+          "markdownDescription": "Denies the deny_sync command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the destroy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-destroy",
+          "markdownDescription": "Denies the destroy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_default_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-get-default-save-strategy",
+          "markdownDescription": "Denies the get_default_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-get-save-strategy",
+          "markdownDescription": "Denies the get_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-get-store-collection-path",
+          "markdownDescription": "Denies the get_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_ids command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-get-store-ids",
+          "markdownDescription": "Denies the get_store_ids command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-get-store-path",
+          "markdownDescription": "Denies the get_store_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the get_store_state command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-get-store-state",
+          "markdownDescription": "Denies the get_store_state command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the load command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-load",
+          "markdownDescription": "Denies the load command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the patch command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-patch",
+          "markdownDescription": "Denies the patch command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-save",
+          "markdownDescription": "Denies the save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_all command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-save-all",
+          "markdownDescription": "Denies the save_all command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_all_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-save-all-now",
+          "markdownDescription": "Denies the save_all_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-save-now",
+          "markdownDescription": "Denies the save_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_some command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-save-some",
+          "markdownDescription": "Denies the save_some command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_some_now command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-save-some-now",
+          "markdownDescription": "Denies the save_some_now command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_autosave command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-set-autosave",
+          "markdownDescription": "Denies the set_autosave command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_save_strategy command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-set-save-strategy",
+          "markdownDescription": "Denies the set_save_strategy command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_store_collection_path command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-set-store-collection-path",
+          "markdownDescription": "Denies the set_store_collection_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_store_options command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-set-store-options",
+          "markdownDescription": "Denies the set_store_options command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the unload command without any pre-configured scope.",
+          "type": "string",
+          "const": "pinia:deny-unload",
+          "markdownDescription": "Denies the unload command without any pre-configured scope."
         },
         {
           "description": "This permission set configures what kind of\noperations are available from the window state plugin.\n\n#### Granted Permissions\n\nAll operations are enabled by default.\n\n\n#### This default permission set includes:\n\n- `allow-filename`\n- `allow-restore-state`\n- `allow-save-window-state`",

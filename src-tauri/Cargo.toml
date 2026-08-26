@@ -6,6 +6,8 @@ members = [
   "crates/taskbar-lyric",
   "crates/now-playing-controls",
   "crates/tauri-plugin-now-playing-controls",
+  "crates/tauri-plugin-media-session",
+  "crates/ncm-core",
 ]
 resolver = "2"
 
@@ -42,6 +44,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 [dependencies]
 gmplayer-orientation = { package = "tauri-plugin-orientation", path = "crates/orientation" }
 gmplayer-audio-backend = { path = "crates/audio-backend" }
+# In-process NCM protocol layer. Removes the proxy hop to a deployed
+# NeteaseCloudMusicApi; see docs/native-ncm-api-embedding-plan.md.
+ncm-core = { path = "crates/ncm-core" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
@@ -49,9 +54,13 @@ tauri-plugin-decorum = "1.1.1"
 tauri-plugin-http = { version = "2.5.7", features = ["charset", "cookies", "http2", "macos-system-configuration", "brotli", "gzip"] }
 tauri-plugin-window-state = "2"
 parking_lot = "0.12"
+# 媒体桥的有序命令队列。tokio 已经在 tauri 的依赖树里，这里只是显式取用 sync。
+tokio = { version = "1", features = ["sync"] }
 log = "0.4"
 tauri-plugin-log = "2"
-tauri-plugin-media-session = "0.2.4"
+# Vendored: upstream (solrmax) went closed-source after 0.2.4, so there is
+# nobody to send fixes to. See crates/tauri-plugin-media-session/VENDORING.md.
+tauri-plugin-media-session = { path = "crates/tauri-plugin-media-session" }
 tauri-plugin-opener = "2.5.4"
 # Pinia store 持久化 + 跨窗口同步。版本必须与前端 @tauri-store/pinia 一致；
 # 5.x 需要 pinia 4，本项目还在 pinia 3。

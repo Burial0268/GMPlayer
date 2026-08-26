@@ -1,4 +1,6 @@
 pub mod algorithms;
+pub mod media;
+pub mod ncm;
 pub mod shared;
 
 #[cfg(not(mobile))]

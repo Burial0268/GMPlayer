@@ -18,6 +18,7 @@ import {
   publishNativeManifest,
   clearNativeManifest,
   reseedRandomTraversal,
+  publishSessionControls,
 } from "@/utils/AudioContext";
 import {
   NativeRustSound,
@@ -383,6 +384,29 @@ const useMusicDataStore = defineStore("musicData", {
       return this.likeSet.has(id);
     },
 
+    /**
+     * Record a like state the account already has, without calling the API.
+     *
+     * Used when the *backend* performed the `/like` — the notification's heart
+     * works with no WebView alive, so by the time the frontend hears about it the
+     * call is done. Refetching the likelist to learn what we were just told would
+     * be a second round trip; `changeLikeList` remains the path for a change the
+     * frontend originates.
+     */
+    applyLikeState(id: number, like: boolean) {
+      const exists = this.likeSet.has(id);
+      if (like === exists) return;
+      const list = this.persistData.likeList;
+      if (like) {
+        list.push(id);
+        this.likeSet.add(id);
+      } else {
+        const index = list.indexOf(id);
+        if (index !== -1) list.splice(index, 1);
+        this.likeSet.delete(id);
+      }
+    },
+
     async changeLikeList(id: number, like: boolean = true) {
       const user = userStore();
       const list = this.persistData.likeList;
@@ -416,6 +440,9 @@ const useMusicDataStore = defineStore("musicData", {
         console.error(getLanguageData("loveSongError"), error);
         $message.error(getLanguageData("loveSongError"));
       }
+      // The OS session renders a heart for the playing track, so it has to be
+      // told when the list it reflects changed under it.
+      publishSessionControls();
     },
 
     setPlayState(value: boolean) {
@@ -592,6 +619,9 @@ const useMusicDataStore = defineStore("musicData", {
         reseedRandomTraversal();
       }
       publishNativeManifest({ force: true });
+      // The OS session shows this too, and the backend's planner has to honour
+      // it on the next hop. One writer: see NativeSessionControlsSync.
+      publishSessionControls();
       $message.info(getLanguageData(value!), {
         icon: () =>
           h(NIcon, null, {

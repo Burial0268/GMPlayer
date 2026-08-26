@@ -54,11 +54,16 @@ pub fn run() {
             commands::audio_send_msg,
             commands::audio_subscribe_events,
             commands::audio_get_state,
+            commands::audio_get_session,
             commands::audio_preheat,
             commands::audio_analyze_automix,
             commands::audio_analyze_automix_source,
             commands::audio_set_session,
             commands::audio_poll_events,
+            // In-process NCM protocol layer (QuickJS + Rust primitives)
+            crate::ncm::ncm_request,
+            crate::ncm::ncm_protocol_info,
+            crate::ncm::ncm_prefetch,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -67,7 +72,23 @@ pub fn run() {
                 commands::set_android_context_ready_check(android_ndk_context_ready);
                 init_android_ndk_context(app);
             }
-            app.manage(commands::PlayerState::new(app_handle));
+            app.manage(commands::PlayerState::new(app_handle.clone()));
+            // The isolate itself is built lazily on first request, so this only
+            // records where its session state lives.
+            app.manage(crate::ncm::NcmState::new(&app_handle));
+            // ...and this builds it in the background, so the home page's
+            // opening fan-out does not queue behind a ~440 ms cold start.
+            crate::ncm::warm(&app_handle);
+            // Playback source resolution follows the same transport as the UI.
+            crate::ncm::install_resolver_hook(&app_handle);
+            // Drive the Android MediaSession straight from the audio backend:
+            // the WebView is destroyed under memory pressure while playback
+            // continues, so a JS-driven notification freezes on a stale track.
+            app.state::<commands::PlayerState>()
+                .subscribe_events(crate::media::MediaSessionBridge::new(app_handle.clone()));
+            // …and take its buttons back the same way, for the same reason.
+            #[cfg(target_os = "android")]
+            crate::media::install_controls(&app_handle);
             Ok(())
         })
         .build(context)

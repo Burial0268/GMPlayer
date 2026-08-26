@@ -63,16 +63,17 @@ export type {
 } from "./player/types";
 
 // ── media ───────────────────────────────────────────────────────────
-// Android media notification plugin bridge
+// Android media notification plugin bridge (push only — the control
+// direction is owned by Rust, see `media/notification.ts`)
 export {
   initializeMediaNotification,
   updateMediaNotification,
   updateMediaProgress,
+  updateMediaPlaybackState,
   hideMediaNotification,
-  listenMediaAction,
   type MediaNotificationRequest,
   type UpdateProgressRequest,
-  type MediaActionPayload,
+  type UpdatePlaybackStateRequest,
 } from "./media/notification";
 
 // Desktop now playing controls bridge

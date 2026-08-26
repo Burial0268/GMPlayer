@@ -2595,10 +2595,10 @@
           "markdownDescription": "Denies the log command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`\n- `allow-register-listener`",
+          "description": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`",
           "type": "string",
           "const": "media-session:default",
-          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`\n- `allow-register-listener`"
+          "markdownDescription": "Default permissions for the plugin\n#### This default permission set includes:\n\n- `allow-initialize`\n- `allow-update-state`\n- `allow-update-timeline`\n- `allow-clear`"
         },
         {
           "description": "Enables the clear command without any pre-configured scope.",
@@ -2617,6 +2617,12 @@
           "type": "string",
           "const": "media-session:allow-register-listener",
           "markdownDescription": "Enables the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-session:allow-remove-listener",
+          "markdownDescription": "Enables the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Enables the update_state command without any pre-configured scope.",
@@ -2647,6 +2653,12 @@
           "type": "string",
           "const": "media-session:deny-register-listener",
           "markdownDescription": "Denies the register_listener command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the remove_listener command without any pre-configured scope.",
+          "type": "string",
+          "const": "media-session:deny-remove-listener",
+          "markdownDescription": "Denies the remove_listener command without any pre-configured scope."
         },
         {
           "description": "Denies the update_state command without any pre-configured scope.",

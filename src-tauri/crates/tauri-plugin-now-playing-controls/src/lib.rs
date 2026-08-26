@@ -1,5 +1,14 @@
 mod commands;
 
+pub use commands::{
+    apply_metadata, apply_play_mode, apply_play_state, apply_timeline, fetch_cover_blocking,
+    NowPlayingState,
+};
+
+/// Re-exported so callers can name a repeat mode without depending on the
+/// system-media crate directly.
+pub use now_playing_controls::model::RepeatMode;
+
 use tauri::{
     plugin::{Builder, TauriPlugin},
     Manager, Runtime,

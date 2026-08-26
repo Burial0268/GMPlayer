@@ -119,13 +119,31 @@ pub fn run() {
             commands::audio_subscribe_events,
             // Sync query commands
             commands::audio_get_state,
+            commands::audio_get_session,
             // Session-based event polling (backward compat)
             commands::audio_set_session,
             commands::audio_poll_events,
+            // In-process NCM protocol layer (QuickJS + Rust primitives)
+            crate::ncm::ncm_request,
+            crate::ncm::ncm_protocol_info,
+            crate::ncm::ncm_prefetch,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
             app.manage(commands::PlayerState::new(app_handle.clone()));
+            // The isolate itself is built lazily on first request, so this only
+            // records where its session state lives.
+            app.manage(crate::ncm::NcmState::new(&app_handle));
+            // ...and this builds it in the background, so the home page's
+            // opening fan-out does not queue behind a ~440 ms cold start.
+            crate::ncm::warm(&app_handle);
+            // Playback source resolution follows the same transport as the UI.
+            crate::ncm::install_resolver_hook(&app_handle);
+            // Drive the OS media session straight from the audio backend, so it
+            // stays correct through backend-initiated track advances and does
+            // not depend on a live WebView. Queued until the player is created.
+            app.state::<commands::PlayerState>()
+                .subscribe_events(crate::media::MediaSessionBridge::new(app_handle.clone()));
 
             // Create the primary desktop window from the Rust-side preset.
             // `tauri.conf.json` intentionally has no static windows so desktop

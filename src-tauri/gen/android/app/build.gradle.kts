@@ -19,7 +19,10 @@ android {
     defaultConfig {
         manifestPlaceholders["usesCleartextTraffic"] = "false"
         applicationId = "com.gbclstudio.gmplayer"
-        minSdk = 24
+        // Matches `tauri.android.conf.json`. CPAL 0.18's only Android output
+        // backend is AAudio, which does not exist before API 26 — a 24/25 device
+        // would install and then have no audio at all.
+        minSdk = 26
         targetSdk = 36
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")

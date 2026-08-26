@@ -1,0 +1,5 @@
+/target/
+/dist-js/
+/node_modules/
+.idea
+/android/.gradle/

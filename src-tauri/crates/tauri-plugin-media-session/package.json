@@ -1,0 +1,33 @@
+{
+  "name": "tauri-plugin-media-session-api",
+  "version": "0.1.0",
+  "description": "TypeScript bindings for tauri-plugin-media-session",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist-js/index.mjs",
+      "types": "./dist-js/index.d.ts"
+    }
+  },
+  "files": [
+    "dist-js",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rollup -c"
+  },
+  "peerDependencies": {
+    "@tauri-apps/api": "^2.0.0"
+  },
+  "devDependencies": {
+    "@rollup/plugin-typescript": "^12.1.0",
+    "rollup": "^4.0.0",
+    "tslib": "^2.8.0",
+    "typescript": "^5.0.0"
+  },
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/solrmax/tauri-plugin-media-session"
+  }
+}
