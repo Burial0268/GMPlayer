@@ -332,10 +332,20 @@ export default defineConfig(({ mode }) => {
                 test: /node_modules[\\/](artplayer|plyr|swiper|screenfull)[\\/]/,
                 priority: 10,
               },
-              // Animation libs
+              // Animation libs.
+              //
+              // gsap 和 motion 拆开：两者在同一块里时，分配采样只会给出
+              // 混淆的 chunk 名（minify 后是 `h` / `g` 这种），没法判断
+              // 该优化哪一个。motion-dom / motion-utils / framer-motion 是
+              // motion-v 的运行时依赖，必须一起归组，否则会散进 vendor。
               {
-                name: "animation",
-                test: /node_modules[\\/](gsap|motion-v)[\\/]/,
+                name: "gsap",
+                test: /node_modules[\\/]gsap[\\/]/,
+                priority: 10,
+              },
+              {
+                name: "motion",
+                test: /node_modules[\\/](motion-v|motion-dom|motion-utils|framer-motion)[\\/]/,
                 priority: 10,
               },
               // AudioContext module
