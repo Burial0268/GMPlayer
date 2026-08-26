@@ -133,6 +133,12 @@ export class AudioAnalysisProcessor {
         smoothingFactor,
       );
     } catch (err) {
+      // 只会走到一次：置空 _WasmCtor 之后上面的守卫会挡住所有后续调用
+      // （pushData 每个 PCM block 都会重试一次）。
+      //
+      // 常见成因是产物里的 WASM 模块被替换成了 disabled stub——Tauri 口味的
+      // 构建会这么做，因为那边分析数据来自 native audio-backend。此时不是
+      // 致命错误：AudioEffectManager 会回落到 AnalyserNode 路径。
       console.error("AudioAnalysisProcessor: Failed to create processor", err);
       _WasmCtor = null; // Prevent future retries
     }
