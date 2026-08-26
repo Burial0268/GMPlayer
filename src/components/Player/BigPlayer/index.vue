@@ -1463,7 +1463,9 @@ defineExpose({
         overflow: hidden;
         background: rgb(0 0 0);
         pointer-events: none;
-        will-change: opacity, border-radius;
+        // border-radius 改动要重绘，合成器接不了；opacity 一项已足以保持图层。
+        // 这一层正好裹着背景画布（下面的 :deep(.big-player-background)）。
+        will-change: opacity;
 
         :deep(.big-player-background) {
           z-index: 0;

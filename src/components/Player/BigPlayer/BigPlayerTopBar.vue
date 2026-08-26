@@ -66,7 +66,8 @@ defineEmits<{
       border-radius: var(--radius-md);
       transition: all var(--duration-300) cubic-bezier(0.34, 1.56, 0.64, 1);
       cursor: pointer;
-      will-change: transform, opacity, background-color;
+      // background-color 走重绘，合成器接不了。
+      will-change: transform, opacity;
 
       &:hover {
         background-color: #ffffff20;

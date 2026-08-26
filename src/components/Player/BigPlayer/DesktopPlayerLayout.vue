@@ -313,7 +313,8 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
       width 0.34s cubic-bezier(0.25, 1, 0.5, 1),
       transform 0.34s cubic-bezier(0.25, 1, 0.5, 1),
       opacity 0.24s ease;
-    will-change: width, transform, opacity;
+    // width 走布局，合成器接不了；留在 will-change 里只是白占一个常驻图层。
+    will-change: transform, opacity;
   }
 
   .left-stage {

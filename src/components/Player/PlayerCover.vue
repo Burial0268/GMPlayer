@@ -370,40 +370,35 @@ const routerJump = (url, query) => {
 // removed on unmount so playerStyle toggles don't stack orphaned closures.
 const coverContainerRef = ref(null);
 const buttonAnimationCleanups = [];
+// 卸载时要 kill 的目标。不能用 gsap.context：context 只在它那个函数**同步执行
+// 期间**把新建的 tween 记进作用域（gsap-core 里 Context.add 在调用前后设置 /
+// 还原模块级的 _context，Animation 构造函数只在 _context 有值时 push 自己）。
+// 这里 tween 全是之后在事件回调里建的，那时 _context 早已还原成 null，
+// ctx.data 始终是空的，revert() 什么都不会 kill、也不会还原内联样式。
+// 直接留住节点、卸载时 killTweensOf 才真的有效。
+let animatedButtons = [];
+
+// 每个交互的时长/缓动是刻意不同的（按下更快更硬），所以这里保留 gsap.to 而
+// 不是收敛成一个 quickTo。overwrite: "auto" 是关键：快速进出时新 tween 会
+// 接管同一目标上同属性的旧 tween，否则两条 tween 会同时 tick 并互相抢写。
+const BUTTON_SCALE_TWEENS = {
+  enter: { scale: 1.1, duration: 0.2, ease: "power1.out" },
+  leave: { scale: 1, duration: 0.2, ease: "power1.inOut" },
+  down: { scale: 0.9, duration: 0.1, ease: "power1.in" },
+  up: { scale: 1.1, duration: 0.2, ease: "power1.out" },
+};
 
 onMounted(() => {
   const root = coverContainerRef.value;
   if (!root) return;
-  const buttons = root.querySelectorAll(".button-icon");
-  buttons.forEach((button) => {
-    const onMouseEnter = () => {
-      gsap.to(button, {
-        scale: 1.1,
-        duration: 0.2,
-        ease: "power1.out",
-      });
-    };
-    const onMouseLeave = () => {
-      gsap.to(button, {
-        scale: 1,
-        duration: 0.2,
-        ease: "power1.inOut",
-      });
-    };
-    const onMouseDown = () => {
-      gsap.to(button, {
-        scale: 0.9,
-        duration: 0.1,
-        ease: "power1.in",
-      });
-    };
-    const onMouseUp = () => {
-      gsap.to(button, {
-        scale: 1.1,
-        duration: 0.2,
-        ease: "power1.out",
-      });
-    };
+  animatedButtons = Array.from(root.querySelectorAll(".button-icon"));
+  animatedButtons.forEach((button) => {
+    const tweenTo = (vars) => gsap.to(button, { ...vars, overwrite: "auto" });
+    const onMouseEnter = () => tweenTo(BUTTON_SCALE_TWEENS.enter);
+    const onMouseLeave = () => tweenTo(BUTTON_SCALE_TWEENS.leave);
+    const onMouseDown = () => tweenTo(BUTTON_SCALE_TWEENS.down);
+    const onMouseUp = () => tweenTo(BUTTON_SCALE_TWEENS.up);
+
     button.addEventListener("mouseenter", onMouseEnter);
     button.addEventListener("mouseleave", onMouseLeave);
     button.addEventListener("mousedown", onMouseDown);
@@ -420,6 +415,14 @@ onMounted(() => {
 onUnmounted(() => {
   buttonAnimationCleanups.forEach((cleanup) => cleanup());
   buttonAnimationCleanups.length = 0;
+  if (animatedButtons.length) {
+    // 悬停中卸载（点歌手名跳转、切 playerStyle）时 tween 还在飞：不 kill 的话
+    // 它会继续对着已脱离文档的节点跑完。clearProps 抹掉 GSAP 写在行内的
+    // transform，这样 DOM 被复用时不会残留 scale。
+    gsap.killTweensOf(animatedButtons);
+    gsap.set(animatedButtons, { clearProps: "transform" });
+    animatedButtons = [];
+  }
 });
 </script>
 
