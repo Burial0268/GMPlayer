@@ -485,6 +485,49 @@ const useMusicDataStore = defineStore("musicData", {
       this.resetSongLyricState();
     },
 
+    /**
+     * 采纳一起听房间的共享播放列表。
+     *
+     * 一起听的语义是「一份列表，两个消费者」：任何一方加歌，两边都加。所以本地
+     * 要跟随房间的列表，但**跟随不等于重来** —— 别人在我前面插了一首歌，不该让
+     * 我正在听的这首从头开始。
+     *
+     * 与 setPlaylists 的区别，逐条都是为了这个：
+     * - 按 playingSongId 重新锚定索引，而不是按位置 clamp（别人插队会让位置整体后移）
+     * - 不 resetPlaySongTime：进度是本地播放状态，与列表内容无关
+     * - 不 resetSongLyricState：歌没变，歌词不该闪
+     * - 不 reseedRandomTraversal：重新洗牌就是 rebase，不是 merge
+     */
+    adoptSharedPlaylist(value: SongData[]): boolean {
+      if (!value?.length) return false;
+      const autoMix = getAutoMixEngine();
+      if (autoMix.isHandoffActive()) autoMix.cancelCrossfade();
+      cancelNativeQueuePrefill();
+
+      const activeSongId = this.playingSongId ?? this.getPlaySongData?.id ?? null;
+      this.persistData.playlists = asRawEntries(value);
+
+      const nextIndex =
+        activeSongId === null
+          ? -1
+          : this.persistData.playlists.findIndex((song) => song.id === activeSongId);
+      if (nextIndex >= 0) {
+        this.persistData.playSongIndex = nextIndex;
+        this.checkpointPlaySongTime(true);
+      } else {
+        // 正在放的歌被移出了共享列表：夹回范围内，让 Player 的 watcher 接手换歌。
+        this.persistData.playSongIndex = Math.min(
+          Math.max(0, this.persistData.playSongIndex),
+          this.persistData.playlists.length - 1,
+        );
+      }
+
+      this.preloadedSongIds.clear();
+      getAudioPreloader().cleanup();
+      publishNativeManifest();
+      return true;
+    },
+
     setDailySongs(value: any[], date = getDailySongsDate()) {
       if (value) {
         this.dailySongsData = [];
