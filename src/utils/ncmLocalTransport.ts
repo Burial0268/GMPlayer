@@ -135,8 +135,29 @@ const buildQuery = (config: InternalAxiosRequestConfig): Record<string, unknown>
   // The deployed server merges query string and body into one bag before
   // handing it to the endpoint module; mirror that so call sites that split
   // parameters across `params` and `data` behave identically.
-  Object.assign(query, config.params ?? {});
+  //
+  // `params` is what becomes a URL query on the remote transport, and a query
+  // carries only text: axios writes a boolean as `like=false`, so every endpoint
+  // module is written against the *string* `"false"`. Handing one a real boolean
+  // is not a harmless type difference — `like.js` normalises with
+  // `query.like != "false"`, and `!=` coerces both sides to numbers there
+  // (`Number(false)` is `0`, `Number("false")` is `NaN`), so a boolean `false`
+  // compares *unequal* to `"false"` and an **unlike is rewritten into a like**.
+  // Netease answers an ordinary `code: 200`, `changeLikeList` takes that as
+  // success and drops the track from `likeList`, and the account keeps it — so
+  // the un-like looks like it only ever touched the local store.
+  //
+  // Numbers are deliberately left as they are. They coerce cleanly in every
+  // module, and the cache is keyed on the whole parameter set — `{"id":1}` and
+  // `{"id":"1"}` are different entries — so restringing them would unpair every
+  // prefetch hint from its real call, silently and with no symptom but the
+  // absence of a speed-up. No hint sends a boolean, so this pass cannot.
+  for (const [key, value] of Object.entries(config.params ?? {})) {
+    query[key] = typeof value === "boolean" ? String(value) : value;
+  }
   if (config.data && typeof config.data === "object") {
+    // Body, not query: a JSON body reaches the deployed server's parser with its
+    // types intact, so booleans stay booleans here.
     Object.assign(query, config.data);
   } else if (typeof config.data === "string" && config.data.length > 0) {
     try {

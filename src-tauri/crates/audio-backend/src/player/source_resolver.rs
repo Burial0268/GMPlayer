@@ -608,18 +608,41 @@ pub(super) fn set_favourite(
     }
 }
 
+/// Query for the `like` endpoint.
+///
+/// `like` is spelled as a **string**, never as a JSON boolean, and that is
+/// load-bearing. The endpoint module normalises it with `query.like != "false"`,
+/// and JavaScript's `!=` coerces both sides to numbers — `Number(false)` is `0`,
+/// `Number("false")` is `NaN`, so `false != "false"` is *true*. A boolean unlike
+/// therefore reaches Netease as a **like**: the account keeps the track, the
+/// response is a perfectly ordinary `code: 200`, and nothing on this side can
+/// tell that the write did the opposite of what was asked. The symptom is a
+/// heart that empties optimistically and is filled again by the next likelist
+/// fetch — i.e. a button that appears to do nothing.
+///
+/// The deployed API is reached over a query string, where `"true"`/`"false"` is
+/// the only representation there is, which is why this only ever bit the
+/// in-process transport — the default one.
+fn favourite_query(song_id: &str, like: bool, cookie: Option<&str>) -> String {
+    let mut query = serde_json::json!({
+        "id": song_id,
+        "like": if like { "true" } else { "false" },
+    });
+    if let Some(cookie) = trimmed(cookie) {
+        query["cookie"] = serde_json::Value::String(cookie.to_string());
+    }
+    query.to_string()
+}
+
 fn favourite_body_local(
     hook: &NcmCallHook,
     song_id: &str,
     like: bool,
     config: &NativeResolverConfig,
 ) -> Result<String, ResolveError> {
-    let mut query = serde_json::json!({ "id": song_id, "like": like });
-    if let Some(cookie) = trimmed(config.cookie.as_deref()) {
-        query["cookie"] = serde_json::Value::String(cookie.to_string());
-    }
+    let query = favourite_query(song_id, like, config.cookie.as_deref());
 
-    let envelope = hook("like", &query.to_string()).map_err(|e| {
+    let envelope = hook("like", &query).map_err(|e| {
         ResolveError::new(
             ResolveErrorKind::Transient,
             format!("in-process NCM call failed: {}", redact(&e)),
@@ -851,6 +874,39 @@ mod tests {
         for body in ["", "{", "null", "[]", r#"{"code":301}"#, r#"{"ids":null}"#] {
             assert!(!likelist_contains(body, "1"), "body {body:?} must not claim a like");
         }
+    }
+
+    // ── Like / unlike ────────────────────────────────────────────
+
+    /// `like` must reach the endpoint module as a string.
+    ///
+    /// The module normalises it with `query.like != "false"`, which coerces
+    /// through numbers: `Number(false)` is `0` and `Number("false")` is `NaN`, so
+    /// the boolean `false` compares *unequal* to `"false"` and an unlike is
+    /// rewritten into a like. Netease then answers `200`, so the only visible
+    /// symptom is a heart that comes back filled — the press looked dead.
+    #[test]
+    fn an_unlike_is_spelled_the_way_the_endpoint_reads_it() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&favourite_query("1234", false, Some("MUSIC_U=secret"))).unwrap();
+        assert_eq!(parsed["like"], serde_json::json!("false"));
+        assert_eq!(parsed["id"], serde_json::json!("1234"));
+        assert_eq!(parsed["cookie"], serde_json::json!("MUSIC_U=secret"));
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&favourite_query("1234", true, None)).unwrap();
+        assert_eq!(parsed["like"], serde_json::json!("true"));
+        // A blank cookie is omitted rather than sent empty: the endpoint reads it
+        // as an object, and an empty one is not the same as none.
+        assert!(parsed.get("cookie").is_none());
+    }
+
+    /// Whitespace-only credentials are not credentials.
+    #[test]
+    fn a_blank_cookie_is_not_attached() {
+        let parsed: serde_json::Value =
+            serde_json::from_str(&favourite_query("1", true, Some("   "))).unwrap();
+        assert!(parsed.get("cookie").is_none());
     }
 
     // ── Rule 2: VIP pre-check ────────────────────────────────────

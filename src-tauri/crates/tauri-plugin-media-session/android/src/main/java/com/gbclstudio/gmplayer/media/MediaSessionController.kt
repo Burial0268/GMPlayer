@@ -111,6 +111,28 @@ internal object MediaSessionController {
     private var currentAlbum: String = ""
     private var currentDuration: Double = 0.0
     private var currentPosition: Double = 0.0
+
+    /**
+     * When [currentPosition] was true, on the same clock the framework
+     * extrapolates from.
+     *
+     * A position is meaningless without its instant. `PlaybackState` is an
+     * *anchor* — the OS renders `position + (now - updateTime) * speed` — and
+     * steady playback deliberately pushes no positions at all, because that
+     * extrapolation is already correct and each push costs a JNI round trip plus
+     * a notification rebuild. So [currentPosition] is routinely minutes old, and
+     * stamping it with `elapsedRealtime()` at publish time claimed it was true
+     * *now*: any rebuild that carried no position of its own — the favourite and
+     * play-mode pushes, which change only a glyph — reset the progress bar to
+     * wherever the last real push left it, normally 0:00. Pause/resume appeared
+     * to "fix" it only because those commands carry a fresh position.
+     *
+     * Re-publishing the original pair instead leaves the OS's extrapolation
+     * exactly as it was, so a glyph change is invisible to the timeline. Every
+     * discontinuity (seek, pause, track change) carries a position and re-anchors
+     * here, which is what keeps the pair honest.
+     */
+    private var positionAnchorRealtime: Long = SystemClock.elapsedRealtime()
     private var currentPlaybackSpeed: Double = 1.0
     private var currentIsPlaying: Boolean = false
     private var currentIsLoading: Boolean = false
@@ -250,7 +272,7 @@ internal object MediaSessionController {
         args.artist?.trim()?.let { currentArtist = it }
         args.album?.trim()?.let { currentAlbum = it }
         args.duration?.let { currentDuration = it }
-        args.position?.let { currentPosition = it }
+        args.position?.let { anchorPosition(it) }
         args.playbackSpeed?.let { currentPlaybackSpeed = it }
         args.isPlaying?.let { currentIsPlaying = it }
         args.isLoading?.let { currentIsLoading = it }
@@ -295,7 +317,7 @@ internal object MediaSessionController {
     fun updateTimeline(args: UpdateTimelineArgs) {
         val session = mediaSession
             ?: throw IllegalStateException("media session not initialized — call updateState first")
-        args.position?.let { currentPosition = it }
+        args.position?.let { anchorPosition(it) }
         args.duration?.let { currentDuration = it }
         args.playbackSpeed?.let { currentPlaybackSpeed = it }
 
@@ -338,7 +360,7 @@ internal object MediaSessionController {
         }
 
         currentTitle = ""; currentArtist = ""; currentAlbum = ""
-        currentDuration = 0.0; currentPosition = 0.0; currentPlaybackSpeed = 1.0
+        currentDuration = 0.0; anchorPosition(0.0); currentPlaybackSpeed = 1.0
         currentIsPlaying = false; currentIsLoading = false
         currentCanPrev = false; currentCanNext = false; currentCanSeek = true
         currentPlayMode = "normal"; currentFavourite = false
@@ -429,9 +451,21 @@ internal object MediaSessionController {
 
         return PlaybackStateCompat.Builder()
             .setActions(actions)
-            .setState(state, positionMs, speed, SystemClock.elapsedRealtime())
+            // The anchor's own instant, never "now" — see [positionAnchorRealtime].
+            .setState(state, positionMs, speed, positionAnchorRealtime)
             .also(::addSessionControlActions)
             .build()
+    }
+
+    /**
+     * Record a position together with the instant it was true at.
+     *
+     * The only way [currentPosition] may be written: the two fields are one
+     * value, and updating either alone makes the OS extrapolate from a lie.
+     */
+    private fun anchorPosition(seconds: Double) {
+        currentPosition = seconds
+        positionAnchorRealtime = SystemClock.elapsedRealtime()
     }
 
     /**

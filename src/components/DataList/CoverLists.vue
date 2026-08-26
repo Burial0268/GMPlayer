@@ -352,7 +352,9 @@ const toChangeLike = async (id) => {
   const likeMsg = listType === "playlist" ? t("general.name.playlist") : t("general.name.album");
   const isThereASpace = setting.language === "zh-CN" ? "" : " ";
   try {
-    const res = await likeFn(type, id);
+    // 两个接口都是 (id, t)。这里原先写成 likeFn(type, id)，参数反了：
+    // 请求发出去的是 id=1|2、t=歌单号，收藏/取消收藏从未真正生效过。
+    const res = await likeFn(id, type);
     if (res.code === 200) {
       $message.success(
         `${likeMsg + isThereASpace}${

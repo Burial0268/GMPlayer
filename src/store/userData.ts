@@ -238,6 +238,29 @@ const useUserDataStore = defineStore("userData", {
       }
       if ((await playListsInFlight) && typeof callback === "function") callback();
     },
+    /**
+     * 歌单曲目数 ±delta。歌单写入后立即生效，无需重新拉取整份列表。
+     *
+     * 条目是 markRaw 的（见 `utils/rawEntry`）：写 `entry.trackCount` 不会触发任何
+     * 响应式更新，所以这里整体替换数组槽位，而不是就地改字段。侧边栏与各处卡片
+     * 因此能跟着开着的歌单页一起动。
+     *
+     * 只有自建歌单带 `trackCount`，收藏的歌单没有这个字段，所以只找 `own`。
+     * 由 `utils/playlistMutations` 统一调用 —— 每个写入点各自记得改计数是行不通的，
+     * 漏掉了也看不出来，直到数字对不上。
+     */
+    applyPlaylistTrackDelta(playlistId: number, delta: number) {
+      if (!delta) return;
+      const own = this.userPlayLists.own;
+      const index = own.findIndex((item) => Number(item.id) === Number(playlistId));
+      if (index === -1) return;
+      const entry = own[index];
+      if (typeof entry.trackCount !== "number") return;
+      own[index] = asRawEntry({
+        ...entry,
+        trackCount: Math.max(0, entry.trackCount + delta),
+      });
+    },
     async setUserArtistLists(callback?: () => void) {
       if (!this.userLogin) {
         $message.error(getLanguageData("needLogin"));

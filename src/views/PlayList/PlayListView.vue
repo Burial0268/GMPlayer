@@ -201,6 +201,8 @@ import { useRouter } from "vue-router";
 import { userStore, musicStore, settingStore } from "@/store";
 import { getLongTime } from "@/utils/timeTools";
 import { transformSongData } from "@/utils/ncm/transformSongData";
+import { asRawEntry } from "@/utils/rawEntry";
+import { onPlaylistChanged, type PlaylistChange } from "@/utils/playlistMutations";
 import { renderIcon } from "@/utils/ui/renderIcon";
 import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
@@ -360,6 +362,9 @@ const getPlayListDetailData = (id: string | number | string[]) => {
 // 获取歌单所有歌曲
 const getAllPlayListData = (id: string | number | string[], limit = 30, offset = 0) => {
   const sourceId = normalizePlaylistId(id);
+  // 这是「明确要一份权威数据」的路径（进页面、翻页、换歌单），本地那些还没对完
+  // 账的增删到此为止：留着只会被套用到另一份列表上。
+  resetPendingDelta();
   getAllPlayList(sourceId, limit, offset).then((res) => {
     if (res.songs) {
       playListData.value = transformSongData(res.songs, {
@@ -378,6 +383,178 @@ const getAllPlayListData = (id: string | number | string[], limit = 30, offset =
 const playAllSong = () => {
   playAll(playListData.value);
 };
+
+// ── 歌单写入后的就地更新 ──────────────────────────────────────
+//
+// 歌单页是 keep-alive 的，路由再次进入时 watch 会重新拉取，所以真正会停在错误
+// 状态的只有「页面开着的时候」：在这里取消喜欢、在播放器或通知栏点红心、把歌加
+// 进歌单，行都不会动，总数也不会变。
+//
+// 先就地改（无请求、无闪烁），再安静对账（补上只有服务端知道的插入位置、分页
+// 边界和真实总数）。顺序不能反：网易对 /playlist/track/all 是写后读不一致的，
+// 紧跟着 /like 拉回来的可能还是写入前的列表 —— 先对账会把刚删掉的行又放回来，
+// 比不更新更糟。所以 pending 增删会一直盖在服务端结果之上，直到服务端认账。
+
+/** 等网易把写入落盘。太短会拿到旧列表，太长则总数看着不对。 */
+const RECONCILE_DELAY = 1200;
+/** 超过这个次数还对不上，更可能是我们猜错了，而不是服务端慢 —— 以服务端为准。 */
+const MAX_RECONCILE_ATTEMPTS = 3;
+
+const pendingRemoved = new Set<number>();
+const pendingAdded = new Set<number>();
+let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+let reconcileAttempts = 0;
+/** keep-alive 隐藏时不对账：回到本页时路由 watch 本来就会重拉。 */
+let isActive = true;
+
+const rowId = (row: unknown): number => Number((row as { id?: unknown } | null)?.id);
+
+/** 丢掉未对完账的本地增删，并取消排队中的对账。 */
+const resetPendingDelta = () => {
+  pendingRemoved.clear();
+  pendingAdded.clear();
+  reconcileAttempts = 0;
+  if (reconcileTimer) {
+    clearTimeout(reconcileTimer);
+    reconcileTimer = null;
+  }
+};
+
+/** 重排 num。整体换条目对象——条目是 markRaw 的，就地改字段不会重渲染。 */
+const renumber = (rows: unknown[]): unknown[] => {
+  const offset = (pageNumber.value - 1) * pagelimit.value;
+  return rows.map((row, index) => asRawEntry({ ...(row as object), num: index + 1 + offset }));
+};
+
+/** 把尚未被服务端确认的增删盖到 `rows` 上。 */
+const applyPendingDelta = (rows: unknown[], added: unknown[]): unknown[] => {
+  let next = rows.filter((row) => !pendingRemoved.has(rowId(row)));
+  // 只有第一页谈得上「插到最前面」：网易把新增曲目放在列表头部，其余页的归属
+  // 只能由服务端说了算。
+  if (pageNumber.value === 1 && added.length) {
+    const present = new Set(next.map(rowId));
+    const missing = added.filter((song) => !present.has(rowId(song)));
+    if (missing.length) next = [...missing, ...next];
+  }
+  // 一页最多就是 limit 条，多出来的那条属于下一页；最后一页不满时 slice 不会补齐。
+  return next.slice(0, pagelimit.value);
+};
+
+const scheduleReconcile = () => {
+  if (reconcileTimer) clearTimeout(reconcileTimer);
+  reconcileTimer = setTimeout(() => {
+    reconcileTimer = null;
+    void reconcileQuietly();
+  }, RECONCILE_DELAY);
+};
+
+/**
+ * 重新拉取当前页与详情，但不显示 loading、不回顶。
+ *
+ * 拉的是分页后的一页（默认 30 条），不是整份歌单，所以这一次请求很小 ——
+ * AGENTS.md 里 `playlist_track_all` 动辄上兆说的是不带 limit 的那种拉法。
+ */
+const reconcileQuietly = async () => {
+  if (!isActive || !playListId.value) return;
+  const sourceId = normalizePlaylistId(playListId.value);
+  const offset = (pageNumber.value - 1) * pagelimit.value;
+  reconcileAttempts += 1;
+  try {
+    const [detail, tracks] = await Promise.all([
+      getPlayListDetail(sourceId).catch(() => null),
+      getAllPlayList(sourceId, pagelimit.value, offset),
+    ]);
+    // 请求期间用户可能已经翻页或切歌单了，那这份结果就不再是当前视图的。
+    if (
+      !playListId.value ||
+      normalizePlaylistId(playListId.value) !== sourceId ||
+      (pageNumber.value - 1) * pagelimit.value !== offset
+    ) {
+      return;
+    }
+    if (!tracks?.songs) return;
+
+    const fresh = transformSongData(tracks.songs, { offset, sourceId });
+    // 服务端已经认账的从 pending 里划掉，剩下的继续盖着。
+    // 迭代中删当前元素对 Set 迭代器是安全的，不必先复制一份。
+    const ids = new Set(fresh.map(rowId));
+    for (const id of pendingRemoved) if (!ids.has(id)) pendingRemoved.delete(id);
+    for (const id of pendingAdded) if (ids.has(id)) pendingAdded.delete(id);
+
+    if (pendingRemoved.size || pendingAdded.size) {
+      if (reconcileAttempts < MAX_RECONCILE_ATTEMPTS) {
+        // 还没落盘：保住本地这份，稍后再问一次。总数也不能覆盖，否则数字会跳。
+        playListData.value = renumber(applyPendingDelta(fresh, []));
+        scheduleReconcile();
+        return;
+      }
+      pendingRemoved.clear();
+      pendingAdded.clear();
+    }
+
+    reconcileAttempts = 0;
+    playListData.value = fresh;
+    if (detail?.playlist) {
+      totalCount.value = detail.playlist.trackCount;
+      playListDetail.value = detail.playlist;
+    }
+  } catch (err) {
+    // 对账是尽力而为：失败了就维持本地这份，下次进页面照常重拉。
+    console.error("[playlist] quiet reconcile failed", err);
+  }
+};
+
+const handlePlaylistChange = (change: PlaylistChange) => {
+  if (!playListId.value) return;
+  if (change.playlistId !== normalizePlaylistId(playListId.value)) return;
+
+  if (change.kind === "meta") {
+    // 侧边栏由调用点的 setUserPlayLists 负责，标题/简介/标签这份是本页自己的。
+    getPlayListDetailData(playListId.value);
+    return;
+  }
+
+  const added = change.added ?? [];
+  const addedIds = change.addedIds ?? [];
+  const removedIds = change.removedIds ?? [];
+  reconcileAttempts = 0;
+
+  // 说不清增删了什么（例如 fm_trash）——只对账，不猜。
+  if (!added.length && !addedIds.length && !removedIds.length) {
+    scheduleReconcile();
+    return;
+  }
+
+  for (const id of removedIds) {
+    pendingRemoved.add(id);
+    pendingAdded.delete(id);
+  }
+  for (const id of [...added.map(rowId), ...addedIds]) {
+    pendingAdded.add(id);
+    pendingRemoved.delete(id);
+  }
+
+  totalCount.value = Math.max(
+    0,
+    totalCount.value + added.length + addedIds.length - removedIds.length,
+  );
+  playListData.value = renumber(applyPendingDelta(playListData.value, added));
+  scheduleReconcile();
+};
+
+let stopPlaylistChanges: (() => void) | null = null;
+
+onActivated(() => {
+  isActive = true;
+});
+onDeactivated(() => {
+  isActive = false;
+});
+onUnmounted(() => {
+  stopPlaylistChanges?.();
+  stopPlaylistChanges = null;
+  if (reconcileTimer) clearTimeout(reconcileTimer);
+});
 
 // 删除歌单
 const toDelPlayList = (data: { id: number; name: any }) => {
@@ -426,6 +603,7 @@ const toChangeLike = async (id: string | number | string[]) => {
 };
 
 onMounted(() => {
+  stopPlaylistChanges ??= onPlaylistChanged(handlePlaylistChange);
   if (playListId.value) {
     getPlayListDetailData(playListId.value);
     getAllPlayListData(playListId.value, pagelimit.value, (pageNumber.value - 1) * pagelimit.value);

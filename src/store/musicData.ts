@@ -25,6 +25,11 @@ import {
   isAudioBackendRuntimeAvailable,
 } from "@/utils/tauri/audio/nativeRustSound";
 import getLanguageData from "@/utils/getLanguageData";
+import {
+  likedPlaylistId,
+  notifyPlaylistNeedsReconcile,
+  notifyTrackInPlaylist,
+} from "@/utils/playlistMutations";
 import type { SongLyric } from "@/utils/LyricsProcessor";
 import useMusicLyricStore from "./musicLyric";
 import useMusicPersistedDataStore from "./musicPersistedData";
@@ -361,6 +366,11 @@ const useMusicDataStore = defineStore("musicData", {
           if (res.code === 200) {
             this.persistData.personalFmMode = true;
             this.setPlaySongIndex("next");
+            // Trashing an FM track also takes it out of 我喜欢的音乐 when it was
+            // in there. Reconcile rather than patch: the exact effect is
+            // Netease's to decide, and a guessed count would stay wrong until
+            // the next navigation.
+            notifyPlaylistNeedsReconcile(likedPlaylistId());
           } else {
             $message.error(getLanguageData("fmTrashError"));
           }
@@ -405,6 +415,24 @@ const useMusicDataStore = defineStore("musicData", {
         if (index !== -1) list.splice(index, 1);
         this.likeSet.delete(id);
       }
+      // 我喜欢的音乐 gained or lost a track. The account write already happened —
+      // in Rust, with the page possibly not even alive at the time — so this is
+      // the only moment the rest of the UI can hear about it.
+      notifyTrackInPlaylist(likedPlaylistId(), this.knownSongById(id) ?? id, like);
+    },
+
+    /**
+     * A full song row for `id`, if the store happens to hold one.
+     *
+     * Only used to make a patched row appear complete straight away. A miss is
+     * not a failure: the quiet reconcile that follows fetches the real row, so
+     * the id alone is enough to get the count and the refetch right.
+     */
+    knownSongById(id: number): SongData | undefined {
+      if (this.playingSongId === id && this.getPlaySongData?.id === id) {
+        return this.getPlaySongData as SongData;
+      }
+      return this.persistData.playlists.find((song) => song.id === id);
     },
 
     async changeLikeList(id: number, like: boolean = true) {
@@ -415,16 +443,22 @@ const useMusicDataStore = defineStore("musicData", {
         $message.error(getLanguageData("needLogin"));
         return;
       }
+      // Captured before the list is edited: on an un-like the row is about to be
+      // dropped from the queue lookup this reads.
+      const song = this.knownSongById(id);
+      let changed = false;
       try {
         const res = await setLikeSong(id, like);
         if (res.code === 200) {
           if (like && !exists) {
             list.push(id);
             this.likeSet.add(id);
+            changed = true;
             $message.info(getLanguageData("loveSong"));
           } else if (!like && exists) {
             list.splice(list.indexOf(id), 1);
             this.likeSet.delete(id);
+            changed = true;
             $message.info(getLanguageData("loveSongRemove"));
           } else if (like && exists) {
             $message.info(getLanguageData("loveSongRepeat"));
@@ -443,6 +477,10 @@ const useMusicDataStore = defineStore("musicData", {
       // The OS session renders a heart for the playing track, so it has to be
       // told when the list it reflects changed under it.
       publishSessionControls();
+      // Reported only for a change the account actually accepted — a refused
+      // write must not move a row or a count. Gated on `changed` rather than on
+      // `res.code` so a no-op ("already liked") stays silent too.
+      if (changed) notifyTrackInPlaylist(likedPlaylistId(), song ?? id, like);
     },
 
     setPlayState(value: boolean) {

@@ -238,7 +238,11 @@ fn invalidated_by(endpoint: &str) -> &'static [&'static str] {
         }
         "album_sub" => &["album_sublist"],
         "artist_sub" => &["artist_sublist"],
-        "fm_trash" => &["likelist"],
+        // Trashing an FM track takes it out of 我喜欢的音乐 when it was in
+        // there, so the liked playlist's rows and count are stale too — not
+        // just the id list. Without these the frontend's reconcile after a
+        // dislike would be answered from the cache with the pre-write page.
+        "fm_trash" => &["likelist", "playlist_track_all", "playlist_detail"],
         // Logging in or out changes which cookie the keys carry, so the old
         // entries are unreachable rather than wrong — but the *anonymous* ones
         // are now the wrong answer for a user who has an account.

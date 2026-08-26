@@ -67,6 +67,34 @@ impl AudioPlayer {
 
     /// Merge a patch and fan the result out if it changed anything.
     pub(super) async fn apply_session_controls(&mut self, patch: &SessionControlsPatch) {
+        // A claimed like is news about the *account*, not just about the
+        // projection, and the frontend is the only side that hears about one
+        // performed in the app. Recording it in the like list is what keeps the
+        // toggle pointing the right way: `refresh_favourite_for_current_track`
+        // re-derives `favourite` from that list at every load, so a list that
+        // never learned about an in-app like makes the backend believe the track
+        // is unliked — and the next press on the notification's heart *likes it
+        // again* instead of unliking, which reads as a button that does nothing.
+        //
+        // Safe to trust because the frontend withholds `favourite` entirely
+        // while its own `likeList` is still empty (see
+        // `NativeSessionControlsSync.publishSessionControls`), so a present
+        // value is one it actually knows — never a cold-start `false`.
+        //
+        // Done before the change check: the projection and the list can disagree
+        // (a value published before the list was fetched settles the former and
+        // not the latter), and an unchanged patch is exactly that case.
+        if let Some(favourite) = patch.favourite {
+            if let Some(id) = self
+                .current_identity
+                .as_ref()
+                .and_then(|identity| identity.netease_id())
+                .map(str::to_string)
+            {
+                self.remember_favourite(&id, favourite);
+            }
+        }
+
         let previous_mode = self.session_controls.play_mode;
         if !self.session_controls.apply(patch) {
             return;
@@ -319,10 +347,18 @@ impl AudioPlayer {
 
     /// Record a like the account now holds, so the next track load derives the
     /// right value without another fetch.
+    ///
+    /// Starts a list when there is none rather than dropping the fact. `None` and
+    /// an empty set already behave identically in
+    /// [`Self::refresh_favourite_for_current_track`] — both answer `false` for
+    /// every track — so remembering can only ever improve the derivation, and it
+    /// is the only thing that keeps the heart correct on an account whose
+    /// `/likelist` never landed (no uid yet, or a failed fetch). Without it every
+    /// press on such an account re-derives `false` at the next load and toggles
+    /// in the same direction forever. A completed fetch replaces the list
+    /// wholesale, and signing out drops it, so nothing accumulates.
     fn remember_favourite(&mut self, netease_id: &str, favourite: bool) {
-        let Some(list) = self.likelist.as_mut() else {
-            return;
-        };
+        let list = self.likelist.get_or_insert_with(HashSet::new);
         if favourite {
             list.insert(netease_id.to_string());
         } else {
