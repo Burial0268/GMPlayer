@@ -11,6 +11,7 @@ use crate::output;
 use crate::types::*;
 
 use super::api::SeekRequest;
+use super::planner_runtime::PlannerDirection;
 use super::{AudioPlayer, PlaybackIntent};
 
 impl AudioPlayer {
@@ -99,18 +100,38 @@ impl AudioPlayer {
                         .await;
                 }
                 AudioThreadMessage::NextSong => {
+                    // Planner first, for the same reason `handle_decoder_finished`
+                    // prefers it: it can reach any track in the list and
+                    // re-resolve expired URLs, while the bounded queue holds
+                    // only what a live frontend last pushed into it. That is the
+                    // difference between the OS media-session "next" button
+                    // working and doing nothing once the WebView is gone.
+                    if self.planner_can_advance()
+                        && self.advance_via_planner_in(PlannerDirection::Next).await
+                    {
+                        return self.finish_message(msg).await;
+                    }
                     if self.playback_queue.next().is_none() || !self.sync_current_from_queue() {
                         return self.finish_message(msg).await;
                     }
                     self.start_playing_song(true, None, None).await?;
                 }
                 AudioThreadMessage::NextSongGapless => {
+                    // Deliberately queue-only: this is what `handle_decoder_finished`
+                    // falls back to *after* the planner already declined or
+                    // failed, so re-entering the planner here would retry a
+                    // transition that just lost.
                     if self.playback_queue.next().is_none() || !self.sync_current_from_queue() {
                         return self.finish_message(msg).await;
                     }
                     self.start_playing_song(true, None, None).await?;
                 }
                 AudioThreadMessage::PrevSong => {
+                    if self.planner_can_advance()
+                        && self.advance_via_planner_in(PlannerDirection::Prev).await
+                    {
+                        return self.finish_message(msg).await;
+                    }
                     if self.playback_queue.prev().is_none() || !self.sync_current_from_queue() {
                         return self.finish_message(msg).await;
                     }
@@ -142,6 +163,7 @@ impl AudioPlayer {
                 } => {
                     let current_id = self.current_song.as_ref().map(SongData::get_id);
                     self.playback_queue.set_playlist(songs.clone(), *windowed);
+                    let mut reanchored = false;
                     if play_index.is_none() {
                         if let Some(current_id) = current_id.as_deref() {
                             // Identity wins over the clamped positional index: prefill
@@ -149,7 +171,7 @@ impl AudioPlayer {
                             // contain an entry whose orig_order collides with the stale
                             // index (end-of-list wrap `[cur@5, next@0]`). Re-anchoring by
                             // id keeps `current_song` on what is audibly playing.
-                            self.playback_queue.set_index_by_song_id(current_id);
+                            reanchored = self.playback_queue.set_index_by_song_id(current_id);
                         }
                     }
                     self.playlist = self.playback_queue.playlist_cloned();
@@ -158,7 +180,21 @@ impl AudioPlayer {
                         let synced = self.sync_current_from_queue();
                         positioned && synced
                     } else {
-                        self.sync_current_from_queue();
+                        // Adopt the queue's idea of "current" only when it is safe to.
+                        //
+                        // `sync_current_from_queue` rewrites `current_song`,
+                        // `pending_display` *and* `current_play_index` from whatever
+                        // entry the clamped index lands on. Once the planner is
+                        // driving, the id match above can never succeed — the backend
+                        // holds a Rust-resolved `local:<url>` while the window carries
+                        // the frontend's own resolution of the same track — so doing it
+                        // unconditionally silently repointed the media session's
+                        // metadata and the reported playlist index at a neighbouring
+                        // song. That is what made the lock screen show the wrong track
+                        // and the frontend correct `index N` on every advance.
+                        if reanchored || self.current_song.is_none() {
+                            self.sync_current_from_queue();
+                        }
                         false
                     };
                     self.playlist_inited = true;
@@ -323,11 +359,26 @@ impl AudioPlayer {
                 AudioThreadMessage::SetNativeResolverConfig { config } => {
                     self.set_native_resolver_config(config.clone());
                 }
+                AudioThreadMessage::AnnounceTrack { identity, display } => {
+                    self.announce_track(identity.clone(), display.clone()).await;
+                }
                 AudioThreadMessage::SetNativePlannerEnabled { enabled } => {
                     self.set_native_planner_enabled(*enabled).await;
                 }
                 AudioThreadMessage::SyncNativePlannerStatus => {
                     self.emit_planner_status().await;
+                }
+                AudioThreadMessage::SetListenTogetherRoom { room_id } => {
+                    self.set_listen_together_room(room_id.clone());
+                }
+                AudioThreadMessage::SetSessionControls { controls } => {
+                    self.apply_session_controls(controls).await;
+                }
+                AudioThreadMessage::SetNextPlayMode => {
+                    self.cycle_play_mode().await;
+                }
+                AudioThreadMessage::ToggleFavourite => {
+                    self.toggle_favourite().await;
                 }
             }
         }

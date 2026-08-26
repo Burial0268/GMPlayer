@@ -14,6 +14,7 @@ import type {
   AudioThreadEventCallback,
   AudioThreadEventMessage,
   AudioThreadMessage,
+  NativeSessionSnapshot,
 } from "./protocol";
 
 /** Sync query response for `audio_get_state` (no round-trip through the message loop). */
@@ -80,6 +81,25 @@ export async function audioPreheat(): Promise<void> {
 
 export async function audioGetState(): Promise<AudioStateResponse | null> {
   return invoke<AudioStateResponse>("audio_get_state");
+}
+
+/**
+ * Authoritative read of what the backend is playing right now.
+ *
+ * The boot path must call this *before* resolving a URL for its persisted
+ * track: the Rust process (and playback) survives a WebView reload, so the
+ * rehydrated frontend state describes the past, not the present. Returns `null`
+ * outside Tauri or when the command is unavailable — callers then fall back to
+ * the normal startup path.
+ */
+export async function audioGetSession(): Promise<NativeSessionSnapshot | null> {
+  if (!isTauri()) return null;
+  try {
+    return (await invoke<NativeSessionSnapshot>("audio_get_session")) ?? null;
+  } catch (err) {
+    console.warn("[audioBridge] audio_get_session failed", err);
+    return null;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════

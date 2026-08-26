@@ -102,6 +102,14 @@ pub(super) fn output_refresh_target(
     }
 }
 
+/// Whether the currently open stream already satisfies what the next source
+/// wants.
+///
+/// Sample rate is deliberately not part of this: `select_sample_rate` pins the
+/// stream to the endpoint's mix rate rather than the source's, so the open
+/// stream's rate is a property of the device and never of the track. Android and
+/// Linux keep a single device-native stream (both targets are `None`) and
+/// resample into it.
 pub(super) fn output_target_matches(
     current: Option<output::OutputTarget>,
     requested: Option<output::OutputTarget>,

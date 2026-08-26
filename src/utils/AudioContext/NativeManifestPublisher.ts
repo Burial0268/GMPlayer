@@ -29,6 +29,7 @@ import { NativeRustSound, setPlannerRevisionObserver } from "@/utils/tauri/audio
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
 import type { SongData } from "@/store/musicTypes";
+import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -82,6 +83,7 @@ export const reconcileNativeManifestRevision = (backendRevision: number): void =
   }
   // Our last-published state no longer describes what the backend holds.
   lastFingerprint = "";
+  plannerEnabled = null;
 };
 
 // Adopt the backend's revision as soon as it reports one, so a reload can never
@@ -146,6 +148,92 @@ const buildOrder = (length: number, cursorPosition: number, mode: string): numbe
     if (at > 0) [order[0], order[at]] = [order[at], order[0]];
   }
   return order;
+};
+
+/**
+ * Best-effort track length in milliseconds.
+ *
+ * The store drops the raw `dt` during normalization (`transformSongData`) and
+ * keeps only a formatted `mm:ss` string, so parse that back when no numeric
+ * field survived. This is a *hint* for the media session before the track is
+ * decoded — the backend replaces it with the real duration on load — so the
+ * `mm:ss` wrap past one hour is acceptable here.
+ */
+const toDurationMs = (song: SongData): number | null => {
+  const numeric = Number(song?.dt ?? song?.duration);
+  if (Number.isFinite(numeric) && numeric > 0) return Math.round(numeric);
+
+  const time = song?.time;
+  if (typeof time !== "string") return null;
+  const parts = time.split(":");
+  if (parts.length !== 2) return null;
+  const minutes = Number(parts[0]);
+  const seconds = Number(parts[1]);
+  if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
+  const total = (minutes * 60 + seconds) * 1000;
+  return total > 0 ? total : null;
+};
+
+/** Cover art URL, normalized to https and sized for a media notification. */
+const toArtworkUrl = (song: SongData): string | null => {
+  const picUrl = song?.album?.picUrl;
+  if (typeof picUrl !== "string" || !picUrl) return null;
+  return `${picUrl.replace(/^http:/, "https:")}?param=512y512`;
+};
+
+/**
+ * Display metadata for one track, in the shape the backend's `TrackDisplay`
+ * expects.
+ *
+ * Exported because the *queue* needs it too, not just the manifest: a queued
+ * track arrives as `local` with an https path that Rust downloads to a temp
+ * file, so without this the media session shows that temp file's random stem
+ * until a decoded tag or a `/song/detail` round trip corrects it. Same
+ * normalization in both places on purpose — two extractors would drift.
+ */
+export const toTrackDisplay = (song: SongData): TrackDisplay | undefined => {
+  const artist = Array.isArray(song?.artist)
+    ? song.artist
+        .map((a: any) => a?.name)
+        .filter(Boolean)
+        .join(" / ") || undefined
+    : undefined;
+  const display: TrackDisplay = {
+    title: song?.name || undefined,
+    artist,
+    album: song?.album?.name || undefined,
+    artworkUrl: toArtworkUrl(song) ?? undefined,
+  };
+  // Omit entirely when there is nothing to say, so the backend's "no display
+  // info" path stays distinguishable from "sent an empty one".
+  return display.title || display.artist || display.album || display.artworkUrl
+    ? display
+    : undefined;
+};
+
+/**
+ * Last planner gate pushed to the backend, so repeated publishes do not spam
+ * IPC. `null` means "never pushed this session" — a WebView reload resets this
+ * while the backend keeps its own value, so the first publish after a reload
+ * must always send one.
+ */
+let plannerEnabled: boolean | null = null;
+
+/**
+ * Gate whether the backend may pick the next track itself.
+ *
+ * Manifest and planner are two different powers and must not be conflated:
+ * the manifest is "tracks I may be *told* to play", the planner is "may I
+ * choose the next one myself". Personal FM and listen-together have their
+ * next track decided by a server, so they keep the manifest (the backend
+ * still needs identity → resolvable source, e.g. to honour a remote GOTO)
+ * but lose the planner.
+ */
+const applyPlannerGate = (sound: NativeRustSound, enabled: boolean): void => {
+  if (plannerEnabled === enabled) return;
+  plannerEnabled = enabled;
+  sound.setNativePlannerEnabled(enabled);
+  if (IS_DEV) console.log(`[NativeManifest] planner ${enabled ? "enabled" : "gated off"}`);
 };
 
 /**
@@ -214,18 +302,19 @@ const flushNativeManifest = (): void => {
   const music = useMusicDataStore();
   const listenTogether = useListenTogetherStore();
 
-  // Personal FM and listen-together transitions need live JS (server picks the
-  // next track), so the backend must not plan ahead. Clear any stale manifest.
-  if (music.persistData.personalFmMode || listenTogether.isInRoom) {
-    clearNativeManifest();
-    return;
-  }
-
   const playlists = music.persistData.playlists;
   if (!playlists?.length) {
     clearNativeManifest();
     return;
   }
+
+  // Personal FM and listen-together have their next track chosen by a server.
+  // Keep publishing the manifest — the backend still needs to resolve tracks it
+  // is told to play — but take away its right to advance on its own. This runs
+  // before the dedup check below because the gate can change while the playlist
+  // (and therefore the signature) stays identical.
+  const serverDrivenOrder = music.persistData.personalFmMode || listenTogether.isInRoom;
+  applyPlannerGate(sound, !serverDrivenOrder);
 
   const entries: NativeManifestEntry[] = [];
   let cursorPosition = -1;
@@ -252,7 +341,9 @@ const flushNativeManifest = (): void => {
             .filter(Boolean)
             .join(" / ") || null
         : null,
-      durationMs: null,
+      album: song.album?.name ?? null,
+      artworkUrl: toArtworkUrl(song),
+      durationMs: toDurationMs(song),
       fee: Number.isFinite(song.fee) ? Number(song.fee) : null,
       hasPc: song.pc !== null && song.pc !== undefined,
     });
@@ -303,6 +394,9 @@ export const clearNativeManifest = (): void => {
   const sound = window.$player;
   if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
   lastFingerprint = "";
+  // `ClearNativeManifest` rebuilds the backend `Planner` from scratch, which
+  // re-enables it. Drop our cached gate so the next publish always re-asserts.
+  plannerEnabled = null;
   const cleared = nextRevision();
   sound.clearNativeManifest(cleared);
   if (IS_DEV) console.log(`[NativeManifest] cleared at rev=${cleared}`);

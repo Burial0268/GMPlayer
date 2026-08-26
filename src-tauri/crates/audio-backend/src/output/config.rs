@@ -66,6 +66,39 @@ pub(super) fn select_output_config(
         .map(|(_, config)| config)
 }
 
+/// Pick the stream rate for one candidate config range.
+///
+/// The device's own mix rate wins whenever the range offers it, even when the
+/// source rate is also on offer. Opening at the mix rate is the only way to keep
+/// the OS out of the conversion business:
+///
+/// * On Windows, CPAL initializes every *output* stream with
+///   `AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM | AUDCLNT_STREAMFLAGS_SRC_DEFAULT_QUALITY`,
+///   and for that reason its enumeration marks every probed format usable for
+///   output without ever calling `IsFormatSupported` (`host/wasapi/device.rs`,
+///   `let usable = is_output || is_format_supported(..)`). Requesting the source
+///   rate therefore always succeeds and always inserts Microsoft's
+///   default-quality SRC, replacing our polyphase filter with a worse one — and,
+///   because nothing ever fails, giving the caller no way to detect it happened.
+/// * On CoreAudio the cost is different but larger: CPAL does *not* leave the
+///   device alone. `build_output_stream_raw` calls `set_physical_format` and
+///   falls back to `set_sample_rate`, i.e.
+///   `AudioObjectSetPropertyData(kAudioDevicePropertyNominalSampleRate)` with a
+///   property-listener wait. Chasing the source rate there mutates a
+///   system-wide device property — audible to every other app on the machine —
+///   and blocks stream construction while the hardware relocks.
+///
+/// Note the *shape* of the choice this scores: CPAL enumerates one range per
+/// rate with `min_sample_rate == max_sample_rate` (both on WASAPI and
+/// CoreAudio), so `rate_supported` is a real test and this is a contest
+/// *between* ranges, not a tiebreak within one. That is why the returned score
+/// has to keep a mix-rate range ahead of a source-rate range by a wide margin
+/// (1 vs 50) rather than by a distance-weighted amount — see
+/// `select_sample_rate_prefers_a_mix_rate_range_over_a_native_rate_range`.
+///
+/// Matching the mix rate also keeps the stream config constant across a
+/// playlist, so a rate change between tracks never has to be considered as a
+/// reason to rebuild the output chain.
 fn select_sample_rate(
     range: &cpal::SupportedStreamConfigRange,
     target_rate: u32,
@@ -73,15 +106,15 @@ fn select_sample_rate(
 ) -> (SampleRate, u32) {
     if let Some(default_rate) = default_rate {
         if rate_supported(range, default_rate) {
-            let score = if default_rate == target_rate {
-                0
-            } else {
-                10 + default_rate.abs_diff(target_rate) / 100
-            };
-            return (default_rate, score);
+            // Rate-matched content still scores best, so that among otherwise
+            // equal ranges the one needing no conversion at all is chosen.
+            return (default_rate, u32::from(default_rate != target_rate));
         }
     }
 
+    // No device mix rate to match (or this range does not cover it): the source
+    // rate is the next best thing, since our own resampler is then the only one
+    // in the chain.
     if rate_supported(range, target_rate) {
         return (target_rate, 50);
     }
@@ -146,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn select_sample_rate_prefers_default_mix_rate_over_source_rate() {
+    fn select_sample_rate_prefers_the_device_mix_rate_over_the_source_rate() {
         let range = cpal::SupportedStreamConfigRange::new(
             2,
             44_100,
@@ -155,9 +188,98 @@ mod tests {
             cpal::SampleFormat::F32,
         );
 
+        // A 44.1 kHz track on a device mixing at 48 kHz. Both rates are on
+        // offer, but opening at 44.1 would hand the conversion to the OS.
         let (sample_rate, score) = select_sample_rate(&range, 44_100, Some(48_000));
 
         assert_eq!(sample_rate, 48_000);
         assert!(score > 0);
+    }
+
+    #[test]
+    fn select_sample_rate_keeps_the_device_rate_for_distant_sources() {
+        let range = cpal::SupportedStreamConfigRange::new(
+            2,
+            44_100,
+            192_000,
+            SupportedBufferSize::Unknown,
+            cpal::SampleFormat::F32,
+        );
+
+        // A 96 kHz source must not drag the endpoint up to 96 kHz just because
+        // the gap to the mix rate is large; the device rate is not a proximity
+        // contest.
+        let (sample_rate, _) = select_sample_rate(&range, 96_000, Some(48_000));
+
+        assert_eq!(sample_rate, 48_000);
+    }
+
+    #[test]
+    fn select_sample_rate_scores_a_rate_matched_device_best() {
+        let range = cpal::SupportedStreamConfigRange::new(
+            2,
+            44_100,
+            48_000,
+            SupportedBufferSize::Unknown,
+            cpal::SampleFormat::F32,
+        );
+
+        let (matched, matched_score) = select_sample_rate(&range, 48_000, Some(48_000));
+        let (converted, converted_score) = select_sample_rate(&range, 44_100, Some(48_000));
+
+        assert_eq!((matched, converted), (48_000, 48_000));
+        assert!(matched_score < converted_score);
+    }
+
+    #[test]
+    fn select_sample_rate_falls_back_to_the_source_rate_without_a_device_rate() {
+        let range = cpal::SupportedStreamConfigRange::new(
+            2,
+            44_100,
+            48_000,
+            SupportedBufferSize::Unknown,
+            cpal::SampleFormat::F32,
+        );
+
+        // `default_output_config()` failed, or this range does not cover the
+        // mix rate: our own resampler is then the only one in the chain, so
+        // matching the source is what avoids a conversion.
+        let (sample_rate, score) = select_sample_rate(&range, 44_100, None);
+
+        assert_eq!(sample_rate, 44_100);
+        assert!(score < 100);
+    }
+
+    #[test]
+    fn select_sample_rate_prefers_a_mix_rate_range_over_a_native_rate_range() {
+        // The ordering the whole policy rests on, and the only one the other
+        // tests here cannot see: CPAL enumerates one range per rate with
+        // `min == max`, so choosing the mix rate is a contest *between* ranges
+        // that `select_output_config`'s `min_by_key` resolves on this score.
+        // A device offering {44.1, 48, 96} kHz with a 48 kHz mix rate, playing a
+        // 96 kHz source: the 48 kHz range has to win, or the endpoint is
+        // retuned per track.
+        let fixed = |rate| {
+            cpal::SupportedStreamConfigRange::new(
+                2,
+                rate,
+                rate,
+                SupportedBufferSize::Unknown,
+                cpal::SampleFormat::F32,
+            )
+        };
+
+        let (mix_rate, mix_score) = select_sample_rate(&fixed(48_000), 96_000, Some(48_000));
+        let (native_rate, native_score) = select_sample_rate(&fixed(96_000), 96_000, Some(48_000));
+
+        assert_eq!((mix_rate, native_rate), (48_000, 96_000));
+        // Distance-weighting the mix-rate score (an earlier implementation
+        // scored it `10 + |default - target| / 100`, i.e. 490 here) loses this
+        // contest to the source-rate range's 50 for every source more than
+        // 4 kHz from the mix rate — every hi-res track.
+        assert!(
+            mix_score < native_score,
+            "mix-rate range scored {mix_score}, native-rate range {native_score}"
+        );
     }
 }

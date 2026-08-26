@@ -34,6 +34,12 @@ struct PlayerStateInner {
     app_handle: tauri::AppHandle,
     init_lock: parking_lot::Mutex<()>,
     player: parking_lot::Mutex<Option<Arc<Player>>>,
+    /// Subscribers registered before the player existed.
+    ///
+    /// The player is created lazily (it opens an audio device), and forcing
+    /// that at startup just to attach the media bridge would move device-open
+    /// failures into app launch. Queue instead, attach on creation.
+    pending_subscribers: parking_lot::Mutex<Vec<Arc<dyn crate::player::PlayerEventSubscriber>>>,
 }
 
 impl PlayerState {
@@ -43,12 +49,52 @@ impl PlayerState {
                 app_handle,
                 init_lock: parking_lot::Mutex::new(()),
                 player: parking_lot::Mutex::new(None),
+                pending_subscribers: parking_lot::Mutex::new(Vec::new()),
             }),
         }
     }
 
+    /// Attach an in-process event consumer (see
+    /// [`crate::player::PlayerEventSubscriber`]).
+    ///
+    /// Safe to call before playback has ever started: the subscriber is queued
+    /// and attached when the player is first created, so registering the media
+    /// bridge at startup does not itself open an audio device.
+    pub fn subscribe_events(&self, subscriber: Arc<dyn crate::player::PlayerEventSubscriber>) {
+        // Hold the pending list across the check so a player created
+        // concurrently cannot drain an empty list and leave us unattached.
+        let mut pending = self.inner.pending_subscribers.lock();
+        if let Some(player) = self.inner.player.lock().as_ref() {
+            player.subscribe(subscriber);
+            return;
+        }
+        pending.push(subscriber);
+    }
+
     pub fn preheat(&self) -> Result<(), String> {
         self.inner.preheat()
+    }
+
+    /// Send a control message from in-process glue (the OS media session),
+    /// without creating a player that does not exist yet.
+    ///
+    /// Synchronous on purpose: the caller is a platform callback — a
+    /// notification button, a media key, an audio-focus change — that must not
+    /// await anything. Creating the player here is deliberately *not* done: a
+    /// media button can only be pressed while a session is live, so "no player"
+    /// means the press is stale, and opening an audio device in response would
+    /// be worse than dropping it.
+    pub fn try_send_msg(&self, msg: AudioThreadMessage) -> Result<(), String> {
+        let player = self
+            .inner
+            .player
+            .lock()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "native audio player has not been created yet".to_string())?;
+        player
+            .send_msg(AudioThreadEventMessage::new(String::new(), Some(msg)))
+            .map_err(|e| e.to_string())
     }
 
     async fn preheat_async(&self) -> Result<(), String> {
@@ -85,7 +131,17 @@ impl PlayerStateInner {
         wait_for_android_context_ready()?;
 
         let next = Player::new(self.app_handle.clone()).map_err(|e| e.to_string())?;
-        *self.player.lock() = Some(Arc::new(next));
+        let next = Arc::new(next);
+        // Attach anything registered before the player existed, while the init
+        // lock is still held — a `subscribe_events` racing this either sees the
+        // player (and attaches directly) or lands in the list before we drain.
+        {
+            let mut pending = self.pending_subscribers.lock();
+            for subscriber in pending.drain(..) {
+                next.subscribe(subscriber);
+            }
+            *self.player.lock() = Some(next);
+        }
         Ok(())
     }
 
@@ -185,6 +241,20 @@ pub async fn audio_get_state(state: State<'_, PlayerState>) -> Result<AudioState
         position: p.position(),
         duration: p.duration(),
     })
+}
+
+/// Authoritative read of what the backend is playing right now.
+///
+/// The Rust process (and playback) outlives the WebView on Android: the page is
+/// destroyed and reloaded while audio keeps going. A reloaded frontend must ask
+/// here *before* it resolves a URL for its persisted track, otherwise it
+/// replaces live playback with a stale snapshot from when the app was
+/// backgrounded. Synchronous — reads a mutex, never touches the message loop.
+#[tauri::command]
+pub async fn audio_get_session(
+    state: State<'_, PlayerState>,
+) -> Result<NativeSessionSnapshot, String> {
+    Ok(state.player().await?.session())
 }
 
 /// Register the frontend event `Channel` (Rust → frontend event stream:

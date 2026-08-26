@@ -231,6 +231,10 @@ pub struct WasmAudioBackend {
     analysis_freq_min: f32,
     analysis_freq_max: f32,
     seq: u64,
+    /// Mirrors the native `PlayerClock::epoch`: bumped whenever a new track's
+    /// timeline starts, so the shared frontend controller can apply one rule on
+    /// both transports instead of special-casing the web one.
+    timeline_epoch: u64,
 }
 
 #[wasm_bindgen]
@@ -252,6 +256,7 @@ impl WasmAudioBackend {
             analysis_freq_min: 80.0,
             analysis_freq_max: 2000.0,
             seq: 0,
+            timeline_epoch: 0,
         }
     }
 
@@ -320,6 +325,11 @@ impl WasmAudioBackend {
             quality: self.quality.clone(),
             current_play_index: self.current_play_index,
             load_request_id: None,
+            // The web backend has no identity to report: there is no manifest
+            // and no planner here, and `local:<url>` is already an exact key
+            // because the page that resolved the URL is the page consuming this.
+            identity: None,
+            timeline_epoch: self.timeline_epoch,
         }];
 
         events.push(self.sync_status_event());
@@ -377,6 +387,8 @@ impl WasmAudioBackend {
                     quality: self.quality.clone(),
                     current_play_index: self.current_play_index,
                     load_request_id: None,
+                    identity: None,
+                    timeline_epoch: self.timeline_epoch,
                 },
                 self.sync_status_event(),
             ],
@@ -457,6 +469,7 @@ impl WasmAudioBackend {
         self.reply(
             vec![AudioThreadEvent::PlayPosition {
                 position: self.position,
+                timeline_epoch: self.timeline_epoch,
             }],
             Vec::new(),
         )
@@ -550,6 +563,7 @@ impl WasmAudioBackend {
                 self.reply(
                     vec![AudioThreadEvent::PlayPosition {
                         position: self.position,
+                        timeline_epoch: self.timeline_epoch,
                     }],
                     vec![WebBackendEffect::Seek {
                         position: self.position,
@@ -654,7 +668,20 @@ impl WasmAudioBackend {
             | AudioThreadMessage::ClearNativeManifest { .. }
             | AudioThreadMessage::SetNativeResolverConfig { .. }
             | AudioThreadMessage::SetNativePlannerEnabled { .. }
-            | AudioThreadMessage::SyncNativePlannerStatus => {
+            | AudioThreadMessage::SyncNativePlannerStatus
+            // `AnnounceTrack` and the listen-together keepalive exist to drive
+            // the OS media session and an out-of-WebView heartbeat. Neither has
+            // a web counterpart: `navigator.mediaSession` is fed from the page,
+            // and the page owns the keepalive timer because it is never frozen.
+            | AudioThreadMessage::AnnounceTrack { .. }
+            | AudioThreadMessage::SetListenTogetherRoom { .. }
+            // Session controls are an OS-session concern. On the web the page
+            // *is* the only surface: it owns the play-mode setting and the like
+            // button directly, so routing them through here would add a hop and
+            // a second copy of the value for no gain.
+            | AudioThreadMessage::SetSessionControls { .. }
+            | AudioThreadMessage::SetNextPlayMode
+            | AudioThreadMessage::ToggleFavourite => {
                 self.reply(Vec::new(), Vec::new())
             }
             AudioThreadMessage::SyncStatus => {
@@ -703,6 +730,9 @@ impl WasmAudioBackend {
         };
 
         self.current_play_index = song_index;
+        // New source, new timeline — the same boundary the native backend marks
+        // in `start_playing_song_inner`.
+        self.timeline_epoch = self.timeline_epoch.wrapping_add(1);
         self.position = finite_nonnegative(initial_position);
         self.load_position = self.position;
         self.duration = 0.0;
@@ -744,6 +774,8 @@ impl WasmAudioBackend {
             current_play_index: self.current_play_index,
             playlist_inited: self.playlist_inited,
             quality: self.quality.clone(),
+            identity: None,
+            timeline_epoch: self.timeline_epoch,
         }
     }
 

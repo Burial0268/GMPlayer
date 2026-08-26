@@ -36,6 +36,11 @@ const MIXER_OUTPUT_FAILED_WAIT: Duration = Duration::from_millis(20);
 const MIXER_STARVED_SPIN_RETRIES: u32 = 2;
 const MIXER_STARVED_MIN_PARK_US: u64 = 250;
 const MIXER_STARVED_MAX_PARK_US: u64 = 32_000;
+// Underrun telemetry window. A track's last block is legitimately short, so a
+// threshold above one keeps normal track ends silent while a real starvation
+// storm still reports.
+const UNDERRUN_REPORT_WINDOW: Duration = Duration::from_secs(5);
+const UNDERRUN_REPORT_THRESHOLD: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeckId {
@@ -321,6 +326,15 @@ impl DeckMixer {
         let thread = thread::Builder::new()
             .name("audio-deck-mixer".into())
             .spawn(move || {
+                // The mixer is the last thread between decoded PCM and the
+                // device callback, so it carries the tightest deadline of the
+                // two producers — and it is strictly periodic, emitting exactly
+                // one MIX_BLOCK_FRAMES block per wake.
+                let _priority = crate::rt_priority::promote_current_thread(
+                    crate::rt_priority::AudioThreadKind::Mixer,
+                    MIX_BLOCK_FRAMES,
+                    output_sample_rate,
+                );
                 let _ = mixer_worker_handle.set(thread::current());
                 let mut dsp = DspChain::new(output_sample_rate, output_channels);
                 dsp.set_dsp(&dsp_config);
@@ -347,6 +361,8 @@ impl DeckMixer {
                     control_epoch,
                     stop_flag: mixer_stop,
                     spare_block: None,
+                    underruns_in_window: 0,
+                    underrun_window_start: None,
                 };
                 worker.run();
             })
@@ -678,6 +694,9 @@ struct MixerWorker {
     /// would free an allocation the output callback recycled for us and force
     /// the next iteration to allocate again.
     spare_block: Option<Vec<f32>>,
+    /// Windowed underrun telemetry; see `note_underrun`.
+    underruns_in_window: u32,
+    underrun_window_start: Option<std::time::Instant>,
 }
 
 impl MixerWorker {
@@ -713,6 +732,14 @@ impl MixerWorker {
                 continue;
             }
 
+            // Whether anything was *supposed* to be rendered this iteration.
+            // Sampled before `mix_block`, which advances the crossfade schedule
+            // and may retire it. Without this the starved case below is
+            // indistinguishable from an idle deck.
+            let deck_live = self.crossfade.is_some()
+                || (!primary_paused && self.primary.gain != 0.0)
+                || (!secondary_paused && self.secondary.gain != 0.0);
+
             // Reserve exact capacity and fill by pushing — no zero-fill pass,
             // since every slot is written below. The buffer is recycled from
             // the output callback when available, so steady playback does not
@@ -726,6 +753,13 @@ impl MixerWorker {
 
             if has_audio {
                 starved_retries = 0;
+                // A short block means the deck ran dry part-way through the
+                // render: the output callback fades the gap, which is the
+                // audible dropout. One of these per track is just the final
+                // partial block, so only a sustained rate is worth reporting.
+                if block.len() < frame_capacity {
+                    self.note_underrun();
+                }
                 let control_epoch = self.control_epoch.load(Ordering::Acquire);
                 if !self.dsp.is_bypassed() {
                     self.dsp.process_interleaved(&mut block);
@@ -744,10 +778,61 @@ impl MixerWorker {
                     continue;
                 }
             } else {
+                // A live deck that produced nothing at all is the *worst* kind
+                // of underrun — the deck queue is completely dry, so the output
+                // ring drains and the callback fades to silence. Because the
+                // deck and mix block sizes match, this (not a partial block) is
+                // what a decoder that cannot keep up actually looks like, so it
+                // has to count. An idle deck reaches the same branch and must
+                // not.
+                if deck_live {
+                    self.note_underrun();
+                }
                 self.spare_block = Some(block);
                 starved_retry_backoff(&mut starved_retries);
             }
         }
+    }
+
+    /// Count a deck underrun and report a sustained rate of them.
+    ///
+    /// Both shapes count: a partial block (the deck ran dry part-way through a
+    /// render) and a completely empty one from a deck that should have been
+    /// playing. The second is the common shape — deck blocks and mix blocks are
+    /// both `512 * channels` samples, so a deck that falls behind hands over
+    /// nothing at all rather than a fragment, and counting only partial blocks
+    /// would have made this warning fire for track ends and nothing else.
+    ///
+    /// This is deliberately *not* symphonia's `invalid main_data_begin`
+    /// warning: that one fires whenever a Layer III decoder starts cold
+    /// (including the run-up frames a seek decodes and discards, and the
+    /// separate AutoMix analysis decoder that never reaches the speakers), so
+    /// it says nothing about whether the output stream broke.
+    ///
+    /// The window is tumbling and evaluated on entry, so the count and the span
+    /// reported always describe each other. A genuine stall keeps this method
+    /// being called from the starved branch above, so it crosses a window
+    /// boundary and reports while the stall is still happening; a burst shorter
+    /// than one window is only summarised when the next underrun arrives, which
+    /// is why the elapsed time is logged rather than assumed.
+    fn note_underrun(&mut self) {
+        let now = std::time::Instant::now();
+        let window_start = *self.underrun_window_start.get_or_insert(now);
+        let elapsed = now.duration_since(window_start);
+
+        if elapsed >= UNDERRUN_REPORT_WINDOW {
+            if self.underruns_in_window > UNDERRUN_REPORT_THRESHOLD {
+                tracing::warn!(
+                    "混音器欠载：{:.1}s 内 {} 次，解码跟不上输出（输出回调已淡出，听感为断音）",
+                    elapsed.as_secs_f32(),
+                    self.underruns_in_window
+                );
+            }
+            self.underruns_in_window = 0;
+            self.underrun_window_start = Some(now);
+        }
+
+        self.underruns_in_window = self.underruns_in_window.saturating_add(1);
     }
 
     /// Mix one output block worth of samples into `block`, returning whether
@@ -756,9 +841,13 @@ impl MixerWorker {
     /// Fast path: with no crossfade in progress the deck gains are constant for
     /// the whole block, so when exactly one deck is contributing we bulk-copy
     /// it (gain + clamp over contiguous runs, which autovectorizes) instead of
-    /// running the per-sample two-deck mixer. The per-sample path still runs
-    /// during crossfades (gains move per frame) and in the rare case where both
-    /// decks are simultaneously active without a crossfade.
+    /// running the per-sample two-deck mixer. On a starved deck this path emits
+    /// a *short* block so the output callback can fade the gap. The per-sample
+    /// path still runs during crossfades (gains move per frame) and in the rare
+    /// case where both decks are simultaneously active without a crossfade;
+    /// there a starved deck still contributes silence mid-block, because the
+    /// other deck's samples and the crossfade's per-frame gain schedule have to
+    /// keep advancing in lockstep.
     fn mix_block(
         &mut self,
         block: &mut Vec<f32>,
@@ -786,10 +875,16 @@ impl MixerWorker {
                     self.secondary.commit_consumed(consumed);
                     written
                 };
-                // Pad the tail with silence on underrun so the block is a whole
-                // number of frames.
-                block.resize(block.len() + (want - written), 0.0);
-                return written > 0;
+                // Hand a short block downstream instead of padding the tail with
+                // silence. Padding hard-cuts to zero and back on every decode
+                // hiccup, and because the block still looks full it also hides
+                // the underrun from the output callback, whose
+                // UNDERRUN_FADE_FRAMES ramp is the thing that keeps that edge
+                // from clicking. A short block is frame-aligned, plays out what
+                // we actually have, and lets `render.rs` own the fade.
+                let frame_aligned = written - (written % channels);
+                block.truncate(frame_aligned);
+                return frame_aligned > 0;
             }
 
             if !primary_active && !secondary_active {

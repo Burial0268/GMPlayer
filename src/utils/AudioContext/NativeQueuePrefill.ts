@@ -19,6 +19,7 @@ import { isTauri } from "@/utils/tauri/core/runtime";
 import type { SongData as QueueSongData } from "@/utils/tauri/audio/protocol";
 import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
 import { resolveSongUrl } from "./resolveSongUrl";
+import { toTrackDisplay } from "./NativeManifestPublisher";
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
@@ -131,6 +132,11 @@ export async function prefillNativeQueue(): Promise<void> {
     type: "local",
     filePath: sound.getSourceUrl(),
     origOrder: currentIndex,
+    // Sent with the track so the OS media session is correct on the first
+    // frame. The backend downloads this https path to a temp file before
+    // decoding, so without it the only name available at load time is that
+    // temp file's random stem.
+    display: toTrackDisplay(currentSong),
   };
 
   let nextIndices: number[] = [];
@@ -161,7 +167,12 @@ export async function prefillNativeQueue(): Promise<void> {
       try {
         const result = await resolveSongUrl(songData, undefined, { signal });
         if (!result?.url) return null;
-        return { index, songId: songData.id as number, url: result.url };
+        return {
+          index,
+          songId: songData.id as number,
+          url: result.url,
+          display: toTrackDisplay(songData),
+        };
       } catch {
         return null;
       }
@@ -195,7 +206,12 @@ export async function prefillNativeQueue(): Promise<void> {
     // Truncate at the first failure: a gap would make the backend jump the
     // playback order (entries advance positionally).
     if (!entry) break;
-    entries.push({ type: "local", filePath: entry.url, origOrder: entry.index });
+    entries.push({
+      type: "local",
+      filePath: entry.url,
+      origOrder: entry.index,
+      display: entry.display,
+    });
     registry.set(`local:${entry.url}`, { songId: entry.songId, index: entry.index });
   }
   persistRegistry();

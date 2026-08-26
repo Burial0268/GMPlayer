@@ -21,12 +21,14 @@
 import type { ISound, SoundEventCallback, SoundEventType } from "../../AudioContext/types";
 import { isTauri } from "../core/runtime";
 import { AudioTimelineSync } from "./timeline";
+import { sameTrackIdentity } from "./identity";
 import type {
   AudioQuality,
   AudioThreadEvent,
   DisplayAudioInfo,
   NativePlannerStatus,
   SongData,
+  TrackDisplay,
   TrackIdentity,
 } from "./protocol";
 import {
@@ -81,6 +83,30 @@ export function isNativeAudioBackendAvailable(): boolean {
   return isTauri();
 }
 
+/**
+ * Tell the backend which track is about to load, before its URL is resolved.
+ *
+ * Module-level rather than a method because the sound for the new track does
+ * not exist yet — it is created only after `resolveSongUrl` returns, and the
+ * whole point is to update the OS media session before that round trip (plus
+ * the download that follows) has happened. Sent through the shared transport,
+ * so it reaches the same backend the outgoing sound is talking to.
+ *
+ * Best-effort: if the transport is not up there is nothing to announce to, and
+ * the normal load path will publish the metadata anyway.
+ */
+export function announceNativeTrack(
+  identity: TrackIdentity,
+  display: TrackDisplay | undefined,
+): void {
+  if (!isTauri() || !display) return;
+  try {
+    getAudioBackendTransport().sendOrQueue({ type: "announceTrack", identity, display });
+  } catch (err) {
+    if (IS_DEV) console.warn("[NativeRustSound] announce failed", err);
+  }
+}
+
 export function isAudioBackendRuntimeAvailable(): boolean {
   return isTauri() || isWasmAudioBackendAvailable();
 }
@@ -100,6 +126,17 @@ type SyncPromise = {
 
 type NativeLoadOptions = {
   allowInitialBackendAttach?: boolean;
+  /**
+   * Adopt a track the backend is *already* playing, matched on stable identity
+   * rather than on `local:<url>`.
+   *
+   * The URL is re-resolved with a fresh CDN token every session, so after a
+   * WebView reload the id-based comparison can never match and the controller
+   * would replace live playback with the frontend's persisted (stale) track.
+   * When this is set and the backend reports the same identity, `load()`
+   * attaches without sending `setPlaylist`/`jumpToSong` at all.
+   */
+  attachIdentity?: TrackIdentity | null;
 };
 
 export class NativeRustSound implements ISound {
@@ -109,6 +146,14 @@ export class NativeRustSound implements ISound {
   private _unlistenTransport: (() => void) | null = null;
 
   private _path: string;
+  /**
+   * Display metadata for this track, sent with the very first `setPlaylist`.
+   *
+   * Without it the backend's only name at load time is the temp file it
+   * downloads this URL into — a random stem — so SMTC/MediaSession showed
+   * garbage on every track change until a decoded tag caught up.
+   */
+  private _display?: TrackDisplay;
   private _volume: number = 1;
   private _muted: boolean = false;
 
@@ -165,6 +210,8 @@ export class NativeRustSound implements ISound {
   private _adoptNextBackendMusicId: boolean = false;
   private _nativeAutoMixSyncPending: boolean = false;
   private _allowInitialBackendAttach: boolean = false;
+  /** Identity to match when attaching to an already-playing backend track. */
+  private _attachIdentity: TrackIdentity | null = null;
   private _backendTrackReady: boolean = false;
   private _nextLoadRequestId: number = 0;
   private _nextSeekRequestId: number = 0;
@@ -188,6 +235,35 @@ export class NativeRustSound implements ISound {
     identity: TrackIdentity;
     playlistIndex: number;
   } | null = null;
+  /**
+   * Stable identity of the track the backend currently has loaded, as reported
+   * on every `syncStatus` / `loadAudio`.
+   *
+   * Unlike `_lastPlannerAdvance` this is not consumed: a single backend track
+   * change produces several adoption events (the load's own, then the sync that
+   * follows it, then any audit sync), and only the first of them could read a
+   * one-shot value. The later ones then fell back to the index — which is how a
+   * stale AutoMix transition target dragged the store back onto a song the
+   * backend had already left, and, once republished as a manifest cursor, took
+   * the media session's metadata with it.
+   */
+  private _backendIdentity: TrackIdentity | null = null;
+  /**
+   * Which backend timeline this controller's clock is anchored to.
+   *
+   * The backend stamps every position anchor, load and status snapshot with a
+   * monotonic epoch that it bumps only where playback restarts from a new
+   * source. That single number answers the question this side used to guess at:
+   * a position *behind* the one we hold is a stale packet within the same
+   * epoch, and a fresh track's timeline in a new one. Guessing from the
+   * magnitude meant a new track's `0` was rejected as a rewind and the clock
+   * carried on extrapolating the retired track — the media-session "next"
+   * button showed the previous track's elapsed time plus the new track's.
+   *
+   * `null` until the first stamped event: a backend too old to send one, or the
+   * moment before the first sync, both fall back to the identity/id checks.
+   */
+  private _backendTimelineEpoch: number | null = null;
   /** True between AudioPlayFinished and the adoption of the backend-initiated
    * advance (LoadAudio for the next track) — the 'end' event is suppressed
    * while pending and re-emitted by the fallback if the advance never lands. */
@@ -203,8 +279,9 @@ export class NativeRustSound implements ISound {
   private _fftReceived: boolean = false;
   private _noFFTWarnTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(src: string | string[]) {
+  constructor(src: string | string[], display?: TrackDisplay) {
     this._path = Array.isArray(src) ? src[0] : src;
+    this._display = display;
     // Rust computes `local:<file_path>` (see types.rs::SongData::get_id);
     // the reference AMLL hashes the path, but our backend uses the raw
     // path so we mirror that here.
@@ -240,19 +317,29 @@ export class NativeRustSound implements ISound {
     const initPos = this._normalizeSeekPosition(initialPosition ?? 0);
     this._backendTrackReady = false;
     this._timeline.reset(initPos);
+    this._attachIdentity = options?.attachIdentity ?? null;
 
     // Only the native/Tauri runtime can have a real backend that outlives the
     // current frontend controller. The Web/WASM runtime is page-local and uses a
     // singleton JS transport, so adopting its previous state after SoundManager
     // clears window.$player can bind a new NativeRustSound to a stale <audio>.
-    const canAttachExistingBackend = isTauri() && options?.allowInitialBackendAttach === true;
+    const canAttachExistingBackend =
+      isTauri() && (options?.allowInitialBackendAttach === true || this._attachIdentity !== null);
     if (canAttachExistingBackend) {
       this._allowInitialBackendAttach = true;
       await this.requestStatusSync(400);
       this._allowInitialBackendAttach = false;
       if (this._destroyed || this._terminallyCleared) return;
       if (this._state.musicId && this._state.duration > 0) {
-        if (initPos > 0 && Math.abs(this._state.position - initPos) > 1) {
+        // An identity attach must NOT correct the position: the caller derived
+        // `initPos` from the same backend snapshot, and the gap between reading
+        // it and getting here is real elapsed playback. Seeking back to the
+        // sampled value would rewind ~a second on every app resume.
+        if (
+          this._attachIdentity === null &&
+          initPos > 0 &&
+          Math.abs(this._state.position - initPos) > 1
+        ) {
           this.seek(initPos);
         }
         this._loaded = true;
@@ -260,6 +347,9 @@ export class NativeRustSound implements ISound {
         this._emit("load");
         return;
       }
+      // The backend is not on this track after all — fall through to a normal
+      // load so the caller still gets audio.
+      this._attachIdentity = null;
     }
 
     // Pre-seed local state from `initialPosition` so seekers (e.g. the
@@ -299,6 +389,7 @@ export class NativeRustSound implements ISound {
         type: "local",
         filePath: this._path,
         origOrder: 0,
+        display: this._display,
       };
       // `windowed: true` — a bare single-entry queue must stop at track end
       // instead of wrap-replaying itself; the real advance window arrives via
@@ -412,6 +503,17 @@ export class NativeRustSound implements ISound {
   }
 
   /**
+   * Hand the listen-together keepalive to the backend, or take it back with
+   * `null`. Returns `false` when there is no native backend to hand it to
+   * (web), so the caller can keep running its own timer.
+   */
+  setListenTogetherRoom(roomId: string | null): boolean {
+    if (!isTauri() || this._destroyed || this._terminallyCleared) return false;
+    this._sendCommand({ type: "setListenTogetherRoom", roomId });
+    return true;
+  }
+
+  /**
    * Permanently stop this controller and clear the backend queue.
    *
    * Unlike `stop()`, this also removes every queued track so a native backend
@@ -509,11 +611,11 @@ export class NativeRustSound implements ISound {
         const expectingNativeAutoMixAdoption =
           this._adoptNextBackendMusicId || this._nativeAutoMixSyncPending;
         const allowInitialTauriAttach = isTauri() && this._allowInitialBackendAttach;
-        // Initial attach is only safe when the surviving backend is already on
-        // the exact source requested by this controller. Silently adopting an
-        // unrelated backend track would pair the new store metadata with stale
-        // audio from the previous WebView session.
-        if (allowInitialTauriAttach && d.musicId !== expectedBefore) {
+        // Initial attach is only safe when the surviving backend is on the
+        // track this controller was built for. Silently adopting an unrelated
+        // backend track would pair the new store metadata with stale audio from
+        // the previous WebView session.
+        if (allowInitialTauriAttach && !this._acceptInitialAttach(d.musicId, d.identity)) {
           this._resolvePendingSyncs();
           return;
         }
@@ -524,10 +626,19 @@ export class NativeRustSound implements ISound {
           return;
         }
         const adoptedBackendTrack = !!d.musicId && d.musicId !== expectedBefore;
+        // The backend's own answer to "is the clock you hold still the right
+        // one". Identity and `musicId` say *which song*, which is a different
+        // question and one they each get wrong on some path: `musicId` is
+        // `local:<url>` and changes on a re-resolve of the same track, and
+        // identity is absent whenever the backend was not told one.
+        const timelineChanged = this._isNewTimeline(d.timelineEpoch);
+        this._recordTimelineEpoch(d.timelineEpoch);
+        const backendTrackChanged =
+          timelineChanged || adoptedBackendTrack || this._isBackendTrackChange(d.identity);
         const pendingNativeAutoMixIndex = this._state.currentPlayIndex;
-        const acceptedPosition = this._acceptIncomingPosition(
-          this._coerceIncomingPosition(d.position),
-        );
+        const acceptedPosition = backendTrackChanged
+          ? this._beginTrackTimeline(d.position, d.duration)
+          : this._acceptIncomingPosition(this._coerceIncomingPosition(d.position));
         this._state = {
           musicId: d.musicId,
           position: acceptedPosition,
@@ -541,6 +652,7 @@ export class NativeRustSound implements ISound {
           ? { ...d.musicInfo, position: acceptedPosition }
           : d.musicInfo;
         this._quality = d.quality;
+        this._backendIdentity = d.identity ?? null;
         this._timeline.setDuration(d.duration);
         this._backendTrackReady = true;
         if (isTauri() && this._allowInitialBackendAttach && this._playbackState === "stopped") {
@@ -548,9 +660,15 @@ export class NativeRustSound implements ISound {
           this._syncTimelineClock();
         }
         this._resolvePendingSyncs();
-        const shouldNotifyNativeAutoMixSync = this._nativeAutoMixSyncPending
-          ? adoptedBackendTrack || d.currentPlayIndex === pendingNativeAutoMixIndex
-          : (expectingNativeAutoMixAdoption || this._isActiveController()) && adoptedBackendTrack;
+        const shouldNotifyNativeAutoMixSync =
+          // A boot attach already reconciled the store from the session
+          // snapshot before this controller existed; re-announcing it as a
+          // backend-initiated transition would re-enter the adoption path.
+          !allowInitialTauriAttach &&
+          (this._nativeAutoMixSyncPending
+            ? adoptedBackendTrack || d.currentPlayIndex === pendingNativeAutoMixIndex
+            : (expectingNativeAutoMixAdoption || this._isActiveController()) &&
+              adoptedBackendTrack);
         if (shouldNotifyNativeAutoMixSync) {
           this._nativeAutoMixSyncPending = false;
           window.dispatchEvent(
@@ -558,6 +676,7 @@ export class NativeRustSound implements ISound {
               detail: {
                 currentIndex: d.currentPlayIndex,
                 musicId: d.musicId,
+                identity: this._backendIdentity,
                 position: acceptedPosition,
                 duration: d.duration,
               },
@@ -575,19 +694,53 @@ export class NativeRustSound implements ISound {
       case "loadAudio": {
         if (!this._matchesPendingLoadRequest(evt.data.loadRequestId)) break;
         const wasAdvancePending = this._nativeAdvancePending;
+        // A load this frontend never asked for (no `loadRequestId`) is the
+        // backend starting a track by itself: a planner advance driven by the
+        // OS media-session buttons, a natural end, a native AutoMix hand-off,
+        // or a repeat-one restart. It has just anchored its own clock at
+        // `musicInfo.position`, and that anchor is the authority — this side
+        // only extrapolates between anchors, so it adopts rather than
+        // reconciles. Running it through the intra-track reconciler instead is
+        // what made the frontend read `old elapsed + new elapsed`: a fresh
+        // track's 0 looks exactly like a stale pre-seek packet.
+        const requestedByFrontend =
+          evt.data.loadRequestId !== undefined && evt.data.loadRequestId !== null;
+        const backendInitiated = isTauri() && !requestedByFrontend && this._isActiveController();
+        // The load starts a new timeline, and the backend says so outright.
+        // Everything below is the fallback for a backend that did not stamp
+        // one: its own arming event (`NativePlannerAdvanced`) is emitted only
+        // *after* this one and after the `SyncStatus` behind it, so waiting for
+        // the flag dropped both authoritative snapshots of the new track and
+        // left the next periodic audit sync — up to two seconds later — to
+        // reconcile a track that was already playing.
+        const timelineChanged = this._isNewTimeline(evt.data.timelineEpoch);
+        const trackChanged =
+          backendInitiated &&
+          (timelineChanged ||
+            this._isBackendTrackChange(evt.data.identity) ||
+            (!!evt.data.musicId && evt.data.musicId !== this._expectedMusicId));
+        if (trackChanged) this._adoptNextBackendMusicId = true;
         if (this._acceptMusicId(evt.data.musicId)) {
+          this._recordTimelineEpoch(evt.data.timelineEpoch);
           this._musicInfo = evt.data.musicInfo;
           this._quality = evt.data.quality;
+          this._backendIdentity = evt.data.identity ?? null;
           this._state.duration = evt.data.musicInfo.duration;
           this._timeline.setDuration(evt.data.musicInfo.duration);
           this._backendTrackReady = true;
           this._resolvePendingLoad();
-          if (wasAdvancePending) {
+          if (wasAdvancePending || trackChanged) {
             this._completeNativeAdvanceAdoption(
               evt.data.musicId,
               evt.data.currentPlayIndex,
               evt.data.musicInfo.duration,
+              evt.data.musicInfo.position,
             );
+          } else if (backendInitiated) {
+            // Same track, and the backend restarted it (repeat-one) or reopened
+            // the decoder behind it (output-device rebuild). No store adoption
+            // is due, but the clock still has to follow the new anchor.
+            this._beginTrackTimeline(evt.data.musicInfo.position, evt.data.musicInfo.duration);
           }
         }
         break;
@@ -604,6 +757,9 @@ export class NativeRustSound implements ISound {
 
       case "playPosition": {
         if (!this._backendTrackReady) break;
+        // Authoritative, but only about the timeline it names. One that is not
+        // ours belongs to a track the load/status behind it will anchor us to.
+        if (this._isForeignTimeline(evt.data.timelineEpoch)) break;
         this._acceptIncomingPosition(this._coerceIncomingPosition(evt.data.position));
         break;
       }
@@ -680,9 +836,14 @@ export class NativeRustSound implements ISound {
         const status = evt.data;
         this._nativePlannerStatus = status.status;
         const planner = status.status;
-        // The planner can drive advancement whenever it holds a live manifest
-        // and has not given up on it.
-        this._nativePlannerActive = planner.manifestRevision > 0 && !planner.exhausted;
+        // The planner can drive advancement only when it holds a live manifest,
+        // is allowed to pick the next track, and has not given up on it.
+        // `enabled` matters because server-driven modes (personal FM, listen
+        // together) publish a manifest but gate advancement off — treating that
+        // as "active" would suppress the JS-driven `end` transition and stall
+        // every track change behind the adoption fallback timer.
+        this._nativePlannerActive =
+          planner.manifestRevision > 0 && planner.enabled !== false && !planner.exhausted;
         // Keep our revision counter ahead of the backend's. Without this a
         // WebView reload (module state resets, backend does not) would leave
         // every subsequent publish rejected as stale.
@@ -840,6 +1001,9 @@ export class NativeRustSound implements ISound {
       case "loadProgress":
       case "automixStatus":
       case "automixAnalysisReady":
+      // The OS media session is driven from Rust off this event; nothing for
+      // this controller to do with it.
+      case "nowPlayingChanged":
         break;
     }
   }
@@ -924,6 +1088,78 @@ export class NativeRustSound implements ISound {
     return this._applyTimelinePosition(this._timeline.acceptIncomingPosition(position));
   }
 
+  /**
+   * Hard-anchor the local clock on a track the backend has just loaded.
+   *
+   * The backend owns the timeline; this side extrapolates between its anchors.
+   * A track boundary invalidates every reconciliation guard the timeline holds
+   * (see `AudioTimelineSync.beginTrack`), so the reported position is taken
+   * verbatim instead of being weighed against the position the *previous* track
+   * had reached.
+   */
+  private _beginTrackTimeline(position: number, duration: number): number {
+    const nextDuration = duration > 0 ? duration : this.duration();
+    if (nextDuration > 0) this._state.duration = nextDuration;
+    this._syncTimelineClock();
+    // A zero is the absence of an answer rather than one — a republished-empty
+    // `musicInfo` must not blank the total the timeline already holds, or the UI
+    // shows 0:00 while the position keeps ticking.
+    const anchored =
+      nextDuration > 0
+        ? this._timeline.beginTrack(position, nextDuration)
+        : this._timeline.beginTrack(position);
+    return this._applyTimelinePosition(anchored);
+  }
+
+  /**
+   * Whether `identity` names a track other than the one this controller is
+   * anchored to.
+   *
+   * This is the authoritative signal for a backend-initiated track change and
+   * needs nothing armed in advance, which is the point: the backend arms the
+   * frontend's adoption flags *after* it has already published the new track's
+   * load and status. A `null` on either side is not an answer — the id-based
+   * comparison covers those.
+   */
+  private _isBackendTrackChange(identity: TrackIdentity | null | undefined): boolean {
+    if (!identity || !this._backendIdentity) return false;
+    return !sameTrackIdentity(identity, this._backendIdentity);
+  }
+
+  /**
+   * Whether `epoch` retires the timeline this controller is anchored to.
+   *
+   * Pure — recording is [`_recordTimelineEpoch`], and the two are separate
+   * because an event may still be rejected after this is asked (a controller
+   * that is no longer driving playback, a load that is not ours). Adopting the
+   * epoch of an event we then ignore would make us accept that track's position
+   * packets while still holding the previous track's clock.
+   *
+   * A first observation is not a change: a controller that has just attached
+   * has no timeline of its own to retire.
+   */
+  private _isNewTimeline(epoch: number | undefined): boolean {
+    if (typeof epoch !== "number" || !Number.isFinite(epoch)) return false;
+    return this._backendTimelineEpoch !== null && this._backendTimelineEpoch !== epoch;
+  }
+
+  private _recordTimelineEpoch(epoch: number | undefined): void {
+    if (typeof epoch !== "number" || !Number.isFinite(epoch)) return;
+    this._backendTimelineEpoch = epoch;
+  }
+
+  /**
+   * Whether a stamped position packet describes a timeline we have not adopted.
+   *
+   * Dropping is the only correct answer: the packet is authoritative about a
+   * track this controller knows nothing about yet, and the `loadAudio` /
+   * `syncStatus` carrying the same epoch — which does describe it — is already
+   * behind it in the stream.
+   */
+  private _isForeignTimeline(epoch: number | undefined): boolean {
+    return this._isNewTimeline(epoch);
+  }
+
   private _handleSeekCommitted(requestId: number | null | undefined, position: number): void {
     this._syncTimelineClock();
     const nextPosition = this._timeline.commitSeek(requestId, position);
@@ -961,6 +1197,24 @@ export class NativeRustSound implements ISound {
 
   isDestroyed(): boolean {
     return this._destroyed;
+  }
+
+  /**
+   * Decide whether a `syncStatus` describes the track this controller should
+   * attach to at startup.
+   *
+   * With an `attachIdentity` the match is on stable identity and the backend's
+   * `musicId` is adopted wholesale — that is the only comparison that survives
+   * a WebView reload, because the frontend re-resolves a different CDN URL
+   * every session. Without one, fall back to the exact-source check.
+   */
+  private _acceptInitialAttach(musicId: string, identity?: TrackIdentity | null): boolean {
+    if (this._attachIdentity) {
+      if (!sameTrackIdentity(identity, this._attachIdentity)) return false;
+      this._adoptMusicId(musicId);
+      return true;
+    }
+    return musicId === this._expectedMusicId;
   }
 
   private _acceptMusicId(musicId: string, allowBackendAdoption = false): boolean {
@@ -1021,6 +1275,7 @@ export class NativeRustSound implements ISound {
     musicId: string,
     currentPlayIndex: number,
     duration: number,
+    position = 0,
   ): void {
     this._nativeAdvancePending = false;
     // Repeat-one adoption keeps the same musicId, so `_acceptMusicId`'s
@@ -1033,13 +1288,17 @@ export class NativeRustSound implements ISound {
       this._state.duration = duration;
       this._timeline.setDuration(duration);
     }
-    this._setLocalPosition(0);
+    // The backend's own anchor for the adopted track, not a blind zero: a
+    // planner advance starts at 0, but the same funnel serves hand-offs that
+    // start elsewhere, and the store is seeded from what this reports.
+    const startPosition = this._beginTrackTimeline(position, duration);
     window.dispatchEvent(
       new CustomEvent(NATIVE_AUTOMIX_SYNC_EVENT, {
         detail: {
           currentIndex: currentPlayIndex,
           musicId: this._state.musicId,
-          position: 0,
+          identity: this._backendIdentity,
+          position: startPosition,
           duration: this.duration(),
         },
       }),
@@ -1192,7 +1451,13 @@ export class NativeRustSound implements ISound {
   }
 
   duration(): number {
-    return this._musicInfo?.duration ?? this._state.duration;
+    // `??` would let a *zero* duration win, and zero is the absence of an
+    // answer rather than one: `musicInfo` arrives empty whenever the backend
+    // republishes between tracks, and a 0 there shadowed a perfectly good
+    // `_state.duration` — the UI then showed 0:00 total while the position
+    // kept ticking, because the timeline extrapolates independently.
+    const reported = this._musicInfo?.duration;
+    return typeof reported === "number" && reported > 0 ? reported : this._state.duration;
   }
 
   volume(vol?: number): number | this {
@@ -1364,6 +1629,8 @@ export class NativeRustSound implements ISound {
     this._nativeAdvanceWindowApplied = false;
     this._nativePlannerActive = false;
     this._lastPlannerAdvance = null;
+    this._backendIdentity = null;
+    this._backendTimelineEpoch = null;
     this._clearNoFFTWarning();
     if (this._unlistenTransport) {
       try {

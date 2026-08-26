@@ -28,8 +28,10 @@ import { AudioContextManager } from "./AudioContextManager";
 import { getAutoMixEngine } from "./AutoMix";
 import { getAudioPreloader } from "./AudioPreloader";
 import { getNativeQueueRegistryEntry, prefillNativeQueue } from "./NativeQueuePrefill";
-import { publishNativeManifest } from "./NativeManifestPublisher";
+import { publishNativeManifest, toTrackDisplay } from "./NativeManifestPublisher";
+import type { TrackDisplay } from "@/utils/tauri/audio/protocol";
 import { syncNativeResolverConfig } from "./NativeResolverConfigSync";
+import { publishSessionControls } from "./NativeSessionControlsSync";
 import { clearSpectrumFrame, setSpectrumFrame } from "./SpectrumFrame";
 import { publishLowFreqVolume, resetLowFreqVolume } from "./lowFreqVolume";
 import type { ISound } from "./types";
@@ -39,6 +41,7 @@ import {
   isNativeAudioBackendAvailable,
 } from "../tauri/audio/nativeRustSound";
 import { getAudioBackendTransport } from "../tauri/audio/transport";
+import type { TrackIdentity } from "../tauri/audio/protocol";
 import {
   buildNeteaseDesktopCookie,
   buildNeteaseDesktopUserAgent,
@@ -112,9 +115,30 @@ const SCROBBLE_DUPLICATE_GUARD_MS = 10000;
 interface SoundLoadContext {
   songId?: number;
   loadAttempt?: number;
+  /**
+   * Attach to a track the backend is already playing instead of loading it,
+   * matched on stable identity. Set by the boot path after
+   * `adoptNativeBackendSession()` — see `NativeSessionAdopt.ts`.
+   */
+  attachIdentity?: TrackIdentity | null;
 }
 
 let soundLoadAttempt = 0;
+
+/**
+ * Display metadata for a song id, looked up from the store.
+ *
+ * Resolved here rather than threaded through `createSound`'s signature: the
+ * store is the authoritative copy and every caller already has the id. Returns
+ * `undefined` when the song is not in the current list, which is the correct
+ * "nothing to say" signal for the backend.
+ */
+const displayForSongId = (songId?: number | null): TrackDisplay | undefined => {
+  if (songId === null || songId === undefined) return undefined;
+  const list = musicStore().persistData.playlists;
+  const song = list.find((item: any) => Number(item?.id) === Number(songId));
+  return song ? toTrackDisplay(song) : undefined;
+};
 const loadRetryCountBySongId = new Map<number, number>();
 const MAX_LOAD_RETRIES = 4;
 /** Songs that error a few times but never succeed leave entries behind —
@@ -297,7 +321,12 @@ const scheduleScrobble = (reason: string): void => {
 
 const applyNativeAutoMixCompletion = (
   currentIndex: number,
-  playback?: { position?: number; duration?: number; musicId?: string },
+  playback?: {
+    position?: number;
+    duration?: number;
+    musicId?: string;
+    identity?: TrackIdentity | null;
+  },
 ): void => {
   const music = musicStore();
   const sound = getActiveNativeSound();
@@ -320,9 +349,26 @@ const applyNativeAutoMixCompletion = (
   // advancing on and the current store playlist (edits, random reshuffle)
   // then surfaces as "displayed song is not the playing song", and it
   // accumulates over a long session. Identity always wins over index.
+  //
+  // `playback.identity` is what the backend reports for the track it has
+  // loaded, on *every* sync — and one backend track change produces several
+  // adoption events (the load's own, the sync behind it, the periodic audit
+  // sync). `takePlannerAdvance()` is one-shot by design, so only the first of
+  // them could ever read it; the rest fell through to `resolvedIndex`, which a
+  // lingering AutoMix transition target pins to a song the backend has already
+  // left. That silently walked the store *backwards* mid-session, and because
+  // the manifest cursor is derived from it the stale cursor then went back to
+  // Rust and took the media-session metadata with it. So prefer the live
+  // identity, and keep the one-shot value only as its fallback.
   const plannerAdvance = sound.takePlannerAdvance?.() ?? null;
-  if (plannerAdvance?.identity?.provider === "netease") {
-    const advancedSongId = Number(plannerAdvance.identity.id);
+  const backendIdentity =
+    playback?.identity?.provider === "netease"
+      ? playback.identity
+      : plannerAdvance?.identity?.provider === "netease"
+        ? plannerAdvance.identity
+        : null;
+  if (backendIdentity) {
+    const advancedSongId = Number(backendIdentity.id);
     if (Number.isFinite(advancedSongId) && playlists[resolvedIndex]?.id !== advancedSongId) {
       const indexByIdentity = playlists.findIndex((song) => song.id === advancedSongId);
       if (indexByIdentity >= 0) {
@@ -511,6 +557,7 @@ if (typeof window !== "undefined") {
         event as CustomEvent<{
           currentIndex?: number;
           musicId?: string;
+          identity?: TrackIdentity | null;
           position?: number;
           duration?: number;
         }>
@@ -524,6 +571,7 @@ if (typeof window !== "undefined") {
         event as CustomEvent<{
           currentIndex?: number;
           musicId?: string;
+          identity?: TrackIdentity | null;
           position?: number;
           duration?: number;
         }>
@@ -722,10 +770,20 @@ const setupNativeSound = (
     return Number(music.getPlaySongData?.id) === boundSongId;
   };
 
+  /**
+   * Whether this sound is the one currently driving playback.
+   *
+   * Identity, deliberately not `boundSongId`. A backend-driven advance
+   * *reuses* this sound object for the next track — that is what the
+   * native-advance hold exists to allow — so the song it was created for goes
+   * stale the moment the backend moves on. Gating the lifecycle handlers on
+   * that id meant every `play` / `pause` / `end` silently stopped firing after
+   * the first such advance, which is why the UI stopped following the
+   * notification's transport buttons a few tracks in. `boundSongId` still
+   * guards the *load race* below, which is what it is actually for.
+   */
   const isActiveBoundSound = (): boolean =>
-    isRequestCurrent() &&
-    SoundManager.isCurrentSoundForSong(sound, boundSongId) &&
-    window.$player === sound;
+    window.$player === sound && SoundManager.getCurrentSound() === sound;
 
   const isCurrentLoadOwner = (): boolean =>
     loadAttempt === soundLoadAttempt &&
@@ -873,6 +931,10 @@ const setupNativeSound = (
     // kept as a same-track safety net for when no manifest is published.
     syncNativeResolverConfig();
     publishNativeManifest();
+    // The heart is per-track, so the projection needs the new track's like
+    // state — the backend cleared it on load precisely so a stale `true` cannot
+    // survive into a song the user never liked.
+    publishSessionControls({ force: true });
     void prefillNativeQueue();
     music.preloadUpcomingSongs();
 
@@ -946,6 +1008,7 @@ const setupNativeSound = (
 
   void sound.load(savedPosAtLoad, {
     allowInitialBackendAttach: options.allowInitialBackendAttach === true,
+    attachIdentity: context.attachIdentity ?? null,
   });
   return sound;
 };
@@ -979,8 +1042,12 @@ export const createSound = (
       autoMix.cancelCrossfade();
     }
 
+    // An identity attach is an explicit "adopt what is already playing"
+    // request, so it must enable the attach path even when a controller
+    // already exists (e.g. a retry after a failed boot load).
     const allowInitialBackendAttach =
-      isNativeAudioBackendAvailable() && !SoundManager.hasSound() && !window.$player;
+      isNativeAudioBackendAvailable() &&
+      (!!context.attachIdentity || (!SoundManager.hasSound() && !window.$player));
     const loadAttempt = ++soundLoadAttempt;
     const loadContext: SoundLoadContext = { ...context, loadAttempt };
 
@@ -1013,7 +1080,9 @@ export const createSound = (
           ? "[createSound] Using NATIVE audio backend"
           : "[createSound] Using WASM audio backend",
       );
-      const sound = new NativeRustSound(src);
+      // Hand the backend the display metadata up front: it downloads this URL
+      // into a temp file, so its own only name would be that temp stem.
+      const sound = new NativeRustSound(src, displayForSongId(context.songId));
       return setupNativeSound(sound, autoPlay, { allowInitialBackendAttach }, loadContext);
     }
     console.log("[createSound] Using WEB audio backend");
@@ -1618,8 +1687,22 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   getAudioPreloader().preloadNext();
   syncNativeResolverConfig();
   publishNativeManifest();
+  publishSessionControls({ force: true });
   void prefillNativeQueue();
   music.preloadUpcomingSongs();
+
+  // Re-arm AutoMix on the track that is now playing. `handleNativePlay` does
+  // this for a JS-driven load; this funnel is the *backend*-driven equivalent
+  // and used to skip it, which left the state machine holding the previous
+  // track's prepared transition. Non-destructive on purpose: it resets to idle
+  // and re-prepares against the new track, superseding the stale plan. It must
+  // NOT be a `cancelCrossfade()` — that tears down a transition, and on the
+  // path where one has just committed it unloads the sound that is playing and
+  // reverts `window.$player` to the retired one, which is a hard stall.
+  // Internally a no-op while a real crossfade is completing.
+  if (Number.isFinite(songId) && songId > 0) {
+    getAutoMixEngine().onTrackStarted(sound, songId);
+  }
 };
 
 /**
@@ -1642,7 +1725,7 @@ export const handoffAutoMixToNativeBackend = async (
   const music = musicStore();
   const position = Math.max(0, (currentSound.seek() as number) || 0);
   const volume = music.persistData.playVolume;
-  const nativeSound = new NativeRustSound(sourceUrl);
+  const nativeSound = new NativeRustSound(sourceUrl, displayForSongId(music.playingSongId));
 
   try {
     await nativeSound.load(position);

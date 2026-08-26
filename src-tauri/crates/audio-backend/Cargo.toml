@@ -32,23 +32,52 @@ symphonia = { version = "0.5", default-features = false, features = [
 # is ALSA-only. Native playback is handled below by CPAL 0.18's PulseAudio
 # backend. Keep Symphonia enabled for reliable try_seek across formats.
 rodio = { version = "0.22", default-features = false, features = ["symphonia-all"] }
-# Direct CPAL dependency for explicit output-stream configuration. On Linux,
-# prefer the shared PulseAudio protocol backend (also served by pipewire-pulse)
-# and let CPAL fall back to ALSA when no sound server is available. Unlike the
-# native PipeWire backend, this does not add a libpipewire development-package
-# requirement to Linux/CI builds. `realtime` promotes eligible WASAPI/ALSA
-# callbacks; CoreAudio already owns callback scheduling.
-cpal = { version = "0.18", features = ["pulseaudio", "realtime"] }
+# Direct CPAL dependency for explicit output-stream configuration. Declared
+# per-target because the `realtime` feature means two unrelated things depending
+# on the host — see the two `cpal` tables below. `resolver = "2"` at the
+# workspace root is what keeps those feature sets from being unified across
+# targets.
 rustfft = "6"
 parking_lot = "0.12"
 rtrb = "0.3.4"
 log = "0.4"
 tauri = { version = "2" }
-ureq = "2"
+# `json` 只是启用 ureq 与 serde_json 的集成；serde_json 本来就在依赖里。
+ureq = { version = "2", features = ["json"] }
 tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 anyhow = "1"
 tracing = "0.1"
 tempfile = "3"
+# Promotes the two audio producer threads. CPAL already depends on this for its
+# own callback thread; `default-features = false` matches how CPAL declares it,
+# which notably leaves the Linux RealtimeKit backend (and its libdbus build
+# dependency) off. See `src/rt_priority.rs` for what that costs on Linux.
+audio_thread_priority = { version = "0.35", default-features = false }
+
+# Desktop CPAL. On Linux, prefer the shared PulseAudio protocol backend (also
+# served by pipewire-pulse) and let CPAL fall back to ALSA when no sound server
+# is available. Unlike the native PipeWire backend, this does not add a
+# libpipewire development-package requirement to Linux/CI builds. Here
+# `realtime` does what its name says: it promotes eligible WASAPI/ALSA callback
+# threads. CoreAudio already owns callback scheduling.
+[target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
+cpal = { version = "0.18", features = ["pulseaudio", "realtime"] }
+
+# Android CPAL, deliberately without `realtime`. In CPAL's AAudio backend that
+# feature is not a thread-priority knob at all — the only thing it changes is
+# `performance_mode(LowLatency)` on the stream builder (plus a one-shot
+# RealtimeDenied report from the first data callback). LOW_LATENCY hands us a
+# one-to-two-burst device buffer, i.e. a ~2-4 ms callback deadline that no amount
+# of software queue depth can cover, and Google's own guidance puts
+# "previously generated music" players on POWER_SAVING rather than LOW_LATENCY.
+# Without the feature the stream opens in AAUDIO_PERFORMANCE_MODE_NONE: a larger
+# device buffer, real headroom for the xrun tuning in `output/platform/android.rs`
+# to grow into, and the normal mixer path — which is also where device
+# post-processing (MiSound, Dolby, AudioFX) lives. Our own producer threads are
+# promoted by `audio_thread_priority` above, whose `rt_android` backend is not
+# feature-gated, so nothing is lost here.
+[target.'cfg(target_os = "android")'.dependencies]
+cpal = "0.18"
 
 [target.'cfg(all(not(target_arch = "wasm32"), target_os = "windows"))'.dependencies.windows]
 version = "0.54"

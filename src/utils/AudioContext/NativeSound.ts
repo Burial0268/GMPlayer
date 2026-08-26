@@ -9,7 +9,7 @@
  * - Reduced console.log for production performance
  */
 
-import { AudioEffectManager } from "./AudioEffectManager";
+import { AudioEffectManager, NEUTRAL_LOW_FREQ_VOLUME } from "./AudioEffectManager";
 import { ensureWasmReady } from "./AudioAnalysisProcessor";
 import { AudioContextManager } from "./AudioContextManager";
 import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from "./types";
@@ -575,7 +575,9 @@ export class NativeSound implements ISound {
    * @returns number in 0-1 range
    */
   getLowFrequencyVolume(): number {
-    return this._effectManager ? this._effectManager.getLowFrequencyVolume() : 0;
+    return this._effectManager
+      ? this._effectManager.getLowFrequencyVolume()
+      : NEUTRAL_LOW_FREQ_VOLUME;
   }
 
   /**

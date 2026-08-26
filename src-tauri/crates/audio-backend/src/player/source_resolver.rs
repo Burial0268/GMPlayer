@@ -1,10 +1,15 @@
 //! Just-in-time playback source resolution.
 //!
 //! This is a deliberate *port of the frontend policy*, not a reimplementation
-//! of the Netease API. All crypto (weapi/eapi, anonymous_token, cookie signing)
-//! stays in the deployed NeteaseCloudMusicApi service that the frontend already
-//! talks to — from here it is a plain HTTP GET. The only thing duplicated is the
-//! five-rule fallback policy in `src/utils/AudioContext/resolveSongUrl.ts`:
+//! of the Netease API. All crypto (weapi/eapi/xeapi, anonymous_token, cookie
+//! signing) lives elsewhere: either in the deployed NeteaseCloudMusicApi
+//! service, or — when the user selects the in-process transport — in the
+//! embedded protocol layer that the frontend is already using, reached here
+//! through a callback (see `NcmCallHook`). From this module both look like
+//! "ask for `/song/url/v1`, get JSON back".
+//!
+//! The only thing duplicated is the five-rule fallback policy in
+//! `src/utils/AudioContext/resolveSongUrl.ts`:
 //!
 //! 1. quality level selection
 //! 2. VIP pre-check (`fee == 1 || fee == 4`, and not cloud-uploaded) → UNM first
@@ -20,9 +25,43 @@
 //! Secrets discipline: the cookie is sent as a header, is never logged, and
 //! never enters a persisted snapshot or an emitted event.
 
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::types::{NativeManifestEntry, NativeResolverConfig, TrackIdentity};
+
+// ── In-process protocol layer hook ───────────────────────────────
+//
+// The embedded NCM protocol layer (`ncm-core`) lives in the host application,
+// not here: this crate also compiles to `wasm32-unknown-unknown` for the web
+// build, where a QuickJS isolate has no place. So the dependency is inverted —
+// the app installs a callback and this module uses it when present.
+//
+// Signature mirrors `NcmCore::call`: `(endpoint, query_json) -> envelope_json`.
+
+pub type NcmCallHook = Arc<dyn Fn(&str, &str) -> Result<String, String> + Send + Sync>;
+
+static NCM_HOOK: OnceLock<NcmCallHook> = OnceLock::new();
+
+/// Install the in-process protocol layer. Idempotent by construction — the
+/// first installation wins and later ones are ignored, which is what we want
+/// for something wired once at startup.
+///
+/// Returns whether this call was the one that installed it.
+pub fn install_ncm_call_hook(hook: NcmCallHook) -> bool {
+    NCM_HOOK.set(hook).is_ok()
+}
+
+/// Whether an in-process protocol layer is available.
+pub fn has_ncm_call_hook() -> bool {
+    NCM_HOOK.get().is_some()
+}
+
+/// The installed protocol layer, for other backend modules that need to reach
+/// Netease without a live WebView (see `metadata_fetch`).
+pub(super) fn ncm_call_hook() -> Option<&'static NcmCallHook> {
+    NCM_HOOK.get()
+}
 
 /// Assumed lifetime of a resolved Netease CDN URL. Their links are typically
 /// valid for ~20 minutes; we treat them as good for 10 with a safety margin so
@@ -283,7 +322,21 @@ pub fn resolve_blocking(
     }
 }
 
-fn agent() -> ureq::Agent {
+/// HTTP agent for resolver traffic, built per call.
+///
+/// A shared `ureq::Agent` — i.e. a live connection pool — was tried here and on
+/// the download path in `decoder`, to save a DNS+TCP+TLS handshake per resolve.
+/// It came back as tracks decoding to the *previous* track's length plus their
+/// own: the signature of a pooled connection handing over a body that was not
+/// fully drained, and for an MP3 with no Xing header symphonia estimates
+/// duration from file size, so a concatenated body reads as a longer song
+/// instead of failing. Both were reverted together; do not reintroduce one
+/// without the other, and not without first proving the drain behaviour.
+///
+/// The pooling that *did* stay is `ncm-core`'s reqwest client, which is a
+/// different stack, was already pooling before, and only had its idle window
+/// widened.
+pub(super) fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout_connect(CONNECT_TIMEOUT)
         .timeout_read(READ_TIMEOUT)
@@ -294,17 +347,6 @@ fn resolve_via_ncm(
     entry: &NativeManifestEntry,
     config: &NativeResolverConfig,
 ) -> Result<ResolvedSource, ResolveError> {
-    let Some(base) = config
-        .ncm_base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|base| !base.is_empty())
-    else {
-        return Err(ResolveError::new(
-            ResolveErrorKind::NotConfigured,
-            "no NCM API base URL configured",
-        ));
-    };
     let Some(song_id) = entry.identity.netease_id() else {
         return Err(ResolveError::new(
             ResolveErrorKind::Unavailable,
@@ -313,25 +355,16 @@ fn resolve_via_ncm(
     };
     let level = config.level.as_deref().unwrap_or("exhigh");
 
-    let url = join_url(base, "song/url/v1");
-    let mut request = agent()
-        .get(&url)
-        .query("id", song_id)
-        .query("level", level)
-        // The deployed API accepts `realIP`-style params and cookies; we only
-        // need the cookie for VIP-quality entitlement.
-        .set("X-Requested-With", "XMLHttpRequest");
-    if let Some(cookie) = config
-        .cookie
-        .as_deref()
-        .map(str::trim)
-        .filter(|c| !c.is_empty())
-    {
-        request = request.set("Cookie", cookie);
-    }
+    // Honour the same transport the frontend picked. Playback resolving through
+    // the deployed API while the UI talks in-process (or the reverse) would
+    // mean two different sessions, two different source IPs, and one of them
+    // silently not benefiting from the change.
+    let raw_body = match (config.use_local_ncm, NCM_HOOK.get()) {
+        (true, Some(hook)) => resolve_ncm_body_local(hook, song_id, level, config)?,
+        _ => resolve_ncm_body_remote(song_id, level, config)?,
+    };
 
-    let body = send_and_read(request)?;
-    let parsed: serde_json::Value = serde_json::from_str(&body)
+    let parsed: serde_json::Value = serde_json::from_str(&raw_body)
         .map_err(|_| ResolveError::new(ResolveErrorKind::Transient, "malformed NCM JSON"))?;
 
     let raw_url = parsed
@@ -351,6 +384,98 @@ fn resolve_via_ncm(
             "NCM returned no playable URL",
         )),
     }
+}
+
+/// `/song/url/v1` through the in-process protocol layer.
+///
+/// Returns the same JSON body shape the deployed API would have produced, so
+/// the caller's parsing and the `classify_ncm_url` policy are untouched.
+fn resolve_ncm_body_local(
+    hook: &NcmCallHook,
+    song_id: &str,
+    level: &str,
+    config: &NativeResolverConfig,
+) -> Result<String, ResolveError> {
+    let mut query = serde_json::json!({ "id": song_id, "level": level });
+    if let Some(cookie) = config
+        .cookie
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        query["cookie"] = serde_json::Value::String(cookie.to_string());
+    }
+
+    let envelope = hook("song_url_v1", &query.to_string()).map_err(|e| {
+        // The hook redacts before returning; this is safe to surface.
+        ResolveError::new(
+            ResolveErrorKind::Transient,
+            format!("in-process NCM call failed: {}", redact(&e)),
+        )
+    })?;
+
+    let parsed: serde_json::Value = serde_json::from_str(&envelope).map_err(|_| {
+        ResolveError::new(ResolveErrorKind::Transient, "malformed NCM envelope")
+    })?;
+
+    // The envelope wraps the upstream body. A non-200 upstream code is a real
+    // answer, not a transport failure — 401/403 must stay distinguishable so
+    // the planner's retry policy does not burn attempts on a credential
+    // problem.
+    let status = parsed.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
+    if parsed.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let kind = match status {
+            401 | 403 => ResolveErrorKind::Auth,
+            _ => ResolveErrorKind::Transient,
+        };
+        return Err(ResolveError::new(
+            kind,
+            format!("in-process NCM call returned status {status}"),
+        ));
+    }
+
+    let body = parsed
+        .get("body")
+        .ok_or_else(|| ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body"))?;
+    Ok(body.to_string())
+}
+
+/// `/song/url/v1` through the deployed NeteaseCloudMusicApi.
+fn resolve_ncm_body_remote(
+    song_id: &str,
+    level: &str,
+    config: &NativeResolverConfig,
+) -> Result<String, ResolveError> {
+    let Some(base) = config
+        .ncm_base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|base| !base.is_empty())
+    else {
+        return Err(ResolveError::new(
+            ResolveErrorKind::NotConfigured,
+            "no NCM API base URL configured",
+        ));
+    };
+
+    let url = join_url(base, "song/url/v1");
+    let mut request = agent()
+        .get(&url)
+        .query("id", song_id)
+        .query("level", level)
+        // The deployed API accepts `realIP`-style params and cookies; we only
+        // need the cookie for VIP-quality entitlement.
+        .set("X-Requested-With", "XMLHttpRequest");
+    if let Some(cookie) = config
+        .cookie
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+    {
+        request = request.set("Cookie", cookie);
+    }
+
+    send_and_read(request)
 }
 
 fn resolve_via_unm(
@@ -443,6 +568,227 @@ fn send_and_read(request: ureq::Request) -> Result<String, ResolveError> {
     }
 }
 
+// ── Account writes ───────────────────────────────────────────────
+
+/// Add or remove the track from 我喜欢的音乐 (`/like`).
+///
+/// Lives here rather than in the frontend because the notification's heart has
+/// to work with no WebView alive — the same reason the transport buttons are
+/// wired into Rust. It reuses the resolver's transport choice for the reason
+/// spelled out in `resolve_via_ncm`: playing through one session and writing
+/// through another means two source IPs for one user action, and Netease's risk
+/// control is entitled to notice.
+///
+/// Blocking: call it from `spawn_blocking`.
+pub(super) fn set_favourite(
+    song_id: &str,
+    like: bool,
+    config: &NativeResolverConfig,
+) -> Result<(), String> {
+    let body = match (config.use_local_ncm, NCM_HOOK.get()) {
+        (true, Some(hook)) => favourite_body_local(hook, song_id, like, config),
+        _ => favourite_body_remote(song_id, like, config),
+    }
+    .map_err(|err| redact(&err.message))?;
+
+    // Netease answers HTTP 200 with the real verdict in the body, so the status
+    // line says nothing. A missing `code` is treated as success: the deployed
+    // API has more than one envelope shape and a like that worked must not be
+    // reverted in the UI because we could not find a field.
+    let parsed: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(parsed) => parsed,
+        Err(_) => return Ok(()),
+    };
+    match parsed.get("code").and_then(|code| code.as_i64()) {
+        Some(200) | None => Ok(()),
+        // 301 is "not logged in", which is the one worth naming: it is what the
+        // user sees when their cookie expired while the app sat in the tray.
+        Some(301) => Err("not logged in".into()),
+        Some(code) => Err(format!("netease returned code {code}")),
+    }
+}
+
+fn favourite_body_local(
+    hook: &NcmCallHook,
+    song_id: &str,
+    like: bool,
+    config: &NativeResolverConfig,
+) -> Result<String, ResolveError> {
+    let mut query = serde_json::json!({ "id": song_id, "like": like });
+    if let Some(cookie) = trimmed(config.cookie.as_deref()) {
+        query["cookie"] = serde_json::Value::String(cookie.to_string());
+    }
+
+    let envelope = hook("like", &query.to_string()).map_err(|e| {
+        ResolveError::new(
+            ResolveErrorKind::Transient,
+            format!("in-process NCM call failed: {}", redact(&e)),
+        )
+    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&envelope)
+        .map_err(|_| ResolveError::new(ResolveErrorKind::Transient, "malformed NCM envelope"))?;
+
+    if parsed.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let status = parsed.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
+        let kind = match status {
+            401 | 403 => ResolveErrorKind::Auth,
+            _ => ResolveErrorKind::Transient,
+        };
+        return Err(ResolveError::new(
+            kind,
+            format!("in-process NCM call returned status {status}"),
+        ));
+    }
+    let body = parsed
+        .get("body")
+        .ok_or_else(|| ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body"))?;
+    Ok(body.to_string())
+}
+
+fn favourite_body_remote(
+    song_id: &str,
+    like: bool,
+    config: &NativeResolverConfig,
+) -> Result<String, ResolveError> {
+    let Some(base) = trimmed(config.ncm_base_url.as_deref()) else {
+        return Err(ResolveError::new(
+            ResolveErrorKind::NotConfigured,
+            "no NCM API base URL configured",
+        ));
+    };
+
+    let url = join_url(base, "like");
+    let mut request = agent()
+        .get(&url)
+        .query("id", song_id)
+        .query("like", if like { "true" } else { "false" })
+        .set("X-Requested-With", "XMLHttpRequest");
+    if let Some(cookie) = trimmed(config.cookie.as_deref()) {
+        request = request.set("Cookie", cookie);
+    }
+    send_and_read(request)
+}
+
+/// Non-empty, whitespace-trimmed view of an optional config string.
+fn trimmed(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|text| !text.is_empty())
+}
+
+/// Fetch the signed-in account's liked track ids (`/likelist`).
+///
+/// The backend needs this to answer "is the playing track liked" on its own. The
+/// notification's heart is drawn while the WebView is dead — the only time the
+/// notification is the user's only UI — so a state that only the frontend can
+/// supply is a state that is missing exactly when it matters.
+///
+/// Blocking: call it from `spawn_blocking`.
+pub(super) fn fetch_likelist(config: &NativeResolverConfig) -> Result<Vec<String>, String> {
+    let Some(uid) = trimmed(config.user_id.as_deref()) else {
+        // Signed out. Not an error — there is simply no list.
+        return Ok(Vec::new());
+    };
+
+    let body = match (config.use_local_ncm, NCM_HOOK.get()) {
+        (true, Some(hook)) => likelist_body_local(hook, uid, config),
+        _ => likelist_body_remote(uid, config),
+    }
+    .map_err(|err| redact(&err.message))?;
+
+    let parsed: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|_| "malformed likelist JSON".to_string())?;
+    let ids = parsed
+        .get("ids")
+        .and_then(|ids| ids.as_array())
+        .ok_or_else(|| "likelist response has no ids".to_string())?;
+
+    // Ids arrive as JSON numbers; keep them as strings so they compare directly
+    // against `TrackIdentity::netease_id` without a lossy round trip through f64.
+    Ok(ids
+        .iter()
+        .filter_map(|id| {
+            id.as_i64()
+                .map(|n| n.to_string())
+                .or_else(|| id.as_str().map(str::to_string))
+        })
+        .collect())
+}
+
+/// Whether a `/likelist` body claims `id` is liked.
+///
+/// Split out so the shape handling is testable without a network. Ids are kept
+/// as strings deliberately: `TrackIdentity::netease_id` is a string, and routing
+/// a Netease id through `f64` would silently corrupt anything past 2^53.
+#[cfg(test)]
+fn likelist_contains(body: &str, id: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|parsed| parsed.get("ids").and_then(|ids| ids.as_array()).cloned())
+        .is_some_and(|ids| {
+            ids.iter().any(|entry| {
+                entry
+                    .as_i64()
+                    .map(|n| n.to_string())
+                    .or_else(|| entry.as_str().map(str::to_string))
+                    .is_some_and(|entry| entry == id)
+            })
+        })
+}
+
+fn likelist_body_local(
+    hook: &NcmCallHook,
+    uid: &str,
+    config: &NativeResolverConfig,
+) -> Result<String, ResolveError> {
+    let mut query = serde_json::json!({ "uid": uid });
+    if let Some(cookie) = trimmed(config.cookie.as_deref()) {
+        query["cookie"] = serde_json::Value::String(cookie.to_string());
+    }
+    let envelope = hook("likelist", &query.to_string()).map_err(|e| {
+        ResolveError::new(
+            ResolveErrorKind::Transient,
+            format!("in-process NCM call failed: {}", redact(&e)),
+        )
+    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&envelope)
+        .map_err(|_| ResolveError::new(ResolveErrorKind::Transient, "malformed NCM envelope"))?;
+    if parsed.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let status = parsed.get("status").and_then(|s| s.as_u64()).unwrap_or(0);
+        return Err(ResolveError::new(
+            if matches!(status, 401 | 403) {
+                ResolveErrorKind::Auth
+            } else {
+                ResolveErrorKind::Transient
+            },
+            format!("in-process NCM call returned status {status}"),
+        ));
+    }
+    let body = parsed
+        .get("body")
+        .ok_or_else(|| ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body"))?;
+    Ok(body.to_string())
+}
+
+fn likelist_body_remote(
+    uid: &str,
+    config: &NativeResolverConfig,
+) -> Result<String, ResolveError> {
+    let Some(base) = trimmed(config.ncm_base_url.as_deref()) else {
+        return Err(ResolveError::new(
+            ResolveErrorKind::NotConfigured,
+            "no NCM API base URL configured",
+        ));
+    };
+    let url = join_url(base, "likelist");
+    let mut request = agent()
+        .get(&url)
+        .query("uid", uid)
+        .set("X-Requested-With", "XMLHttpRequest");
+    if let Some(cookie) = trimmed(config.cookie.as_deref()) {
+        request = request.set("Cookie", cookie);
+    }
+    send_and_read(request)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,6 +799,8 @@ mod tests {
             playlist_index: 0,
             title: None,
             artist: None,
+            album: None,
+            artwork_url: None,
             duration_ms: None,
             fee,
             has_pc,
@@ -465,7 +813,43 @@ mod tests {
             unm_base_url: Some("https://unm.example.com/".into()),
             unm_enabled,
             cookie: Some("MUSIC_U=secret".into()),
+            user_id: Some("42".into()),
             level: Some("exhigh".into()),
+            // The policy tests cover transport-independent behaviour; the
+            // remote path is the one with a base URL to point at.
+            use_local_ncm: false,
+        }
+    }
+
+    // ── Like list ────────────────────────────────────────────────
+
+    /// Netease ids exceed 2^53, so the parse must never route them through a
+    /// float. `serde_json` would happily hand back `1.9e18` for an `as_f64`, and
+    /// the id would come back off by a few — matching nothing, so the heart would
+    /// read empty for exactly the tracks with the largest ids.
+    #[test]
+    fn likelist_ids_survive_being_larger_than_a_float_can_hold() {
+        let big = "1234567890123456789";
+        let body = format!(r#"{{"ids":[{big},2001]}}"#);
+        assert!(likelist_contains(&body, big));
+        assert!(likelist_contains(&body, "2001"));
+        assert!(!likelist_contains(&body, "1234567890123456788"));
+    }
+
+    /// The deployed API and the in-process layer have both been seen to answer
+    /// with string ids; a heart must not depend on which.
+    #[test]
+    fn likelist_accepts_string_ids() {
+        assert!(likelist_contains(r#"{"ids":["17","18"]}"#, "17"));
+        assert!(!likelist_contains(r#"{"ids":["17"]}"#, "19"));
+    }
+
+    /// A malformed or empty answer means "not liked", never a crash and never a
+    /// filled heart — one tap on a wrongly-filled heart *unlikes* a real track.
+    #[test]
+    fn a_broken_likelist_is_not_a_like() {
+        for body in ["", "{", "null", "[]", r#"{"code":301}"#, r#"{"ids":null}"#] {
+            assert!(!likelist_contains(body, "1"), "body {body:?} must not claim a like");
         }
     }
 
@@ -530,6 +914,8 @@ mod tests {
             playlist_index: 3,
             title: None,
             artist: None,
+            album: None,
+            artwork_url: None,
             duration_ms: None,
             fee: Some(1),
             has_pc: false,

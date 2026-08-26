@@ -6,7 +6,24 @@
  * `audio_send_msg` command carries every one of these, AMLL-style, instead of
  * one Tauri command per playback action — keep both sides in lockstep.
  */
-import type { NativePlaybackManifest, NativeResolverConfig } from "./manifest";
+import type { NativePlaybackManifest, NativeResolverConfig, TrackIdentity } from "./manifest";
+
+/**
+ * Display metadata carried with a queued track.
+ *
+ * The backend drives the OS media session (SMTC / MediaSession) on its own, and
+ * on Android it keeps doing so after the WebView is gone. Every streamed track
+ * is sent as `local` with an https `filePath`, which Rust downloads to a temp
+ * file before decoding — so without this the only name available at load time
+ * is that temp file's random stem. Send the real metadata and the notification
+ * is correct on the first frame.
+ */
+export interface TrackDisplay {
+  title?: string;
+  artist?: string;
+  album?: string;
+  artworkUrl?: string;
+}
 
 export interface SongData {
   type: "local" | "custom";
@@ -14,8 +31,8 @@ export interface SongData {
   id?: string;
   songJsonData?: string;
   origOrder: number;
+  display?: TrackDisplay;
 }
-
 export interface AutoMixConfig {
   enabled: boolean;
   crossfadeDuration: number;
@@ -101,5 +118,39 @@ export type AudioThreadMessage =
   | { type: "setNativeManifest"; manifest: NativePlaybackManifest }
   | { type: "clearNativeManifest"; revision: number }
   | { type: "setNativeResolverConfig"; config: NativeResolverConfig }
+  /**
+   * Announce the track about to load, before its URL is resolved. Swaps the OS
+   * media session immediately instead of after the resolve + download.
+   */
+  | { type: "announceTrack"; identity: TrackIdentity; display: TrackDisplay }
   | { type: "setNativePlannerEnabled"; enabled: boolean }
-  | { type: "syncNativePlannerStatus" };
+  | { type: "syncNativePlannerStatus" }
+  /**
+   * Arm/disarm the listen-together keepalive in the backend. `roomId: null`
+   * disarms. The heartbeat must outlive the WebView — on Android the page is
+   * destroyed while playback continues, and a missed heartbeat drops the user
+   * out of the room server-side.
+   */
+  | { type: "setListenTogetherRoom"; roomId: string | null }
+  /**
+   * Push what the frontend knows about the session controls. A patch: omitted
+   * fields are left alone, so the store can report the play mode without
+   * claiming to know the like state and vice versa.
+   */
+  | {
+      type: "setSessionControls";
+      controls: {
+        playMode?: "normal" | "random" | "single";
+        favourite?: boolean;
+        canFavourite?: boolean;
+      };
+    }
+  /**
+   * Advance the play mode one step. An intent rather than a value, because the
+   * caller may be a notification button that cannot know the current mode — the
+   * backend holds it. Sent by the desktop system-control handler for the same
+   * reason: one writer.
+   */
+  | { type: "setNextPlayMode" }
+  /** Toggle the loaded track's like state. The backend performs the call. */
+  | { type: "toggleFavourite" };

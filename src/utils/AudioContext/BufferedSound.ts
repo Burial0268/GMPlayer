@@ -14,6 +14,7 @@
  */
 
 import { NativeSound } from "./NativeSound";
+import { NEUTRAL_LOW_FREQ_VOLUME } from "./AudioEffectManager";
 import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from "./types";
 
 // Development mode detection
@@ -375,7 +376,7 @@ export class BufferedSound implements ISound {
   }
 
   getLowFrequencyVolume(): number {
-    return this._inner?.getLowFrequencyVolume() ?? 0;
+    return this._inner?.getLowFrequencyVolume() ?? NEUTRAL_LOW_FREQ_VOLUME;
   }
 
   getAverageAmplitude(): number {

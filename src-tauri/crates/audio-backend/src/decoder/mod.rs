@@ -1,3 +1,5 @@
+mod convert;
+mod resample;
 pub mod symphonia;
 
 use std::fs::File;
@@ -24,6 +26,8 @@ use tracing::warn;
 use crate::analysis::{AnalysisCommand, AnalysisPcm, AnalysisSender};
 use crate::error::{AudioError, AudioResult};
 use crate::output::{OutputWriter, PushCancel};
+
+use convert::FrameConverter;
 
 pub(crate) trait PlaybackSink: Clone + Send + 'static {
     fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool;
@@ -73,6 +77,15 @@ pub fn is_http_url(s: &str) -> bool {
 
 /// Download `url` to a temporary file. The returned `TempPath` deletes the
 /// file when dropped — keep it alive for the lifetime of playback.
+///
+/// The agent is built per call, and must stay that way. Sharing one — i.e.
+/// pooling the connection between track downloads — saves a TLS handshake per
+/// track and was tried; the next track then decoded as the *previous* track's
+/// length plus its own, which is what a reused connection handing over an
+/// undrained body looks like. A whole audio body is the one response here, so
+/// any framing slip corrupts the file rather than erroring, and the file is the
+/// thing playback is built on. One handshake per track, on a path the planner
+/// already runs a track ahead, is not worth that.
 pub fn download_to_temp_path(url: &str) -> AudioResult<tempfile::TempPath> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
@@ -229,6 +242,11 @@ impl SeekableSymphoniaSource {
         let file = File::open(path)?;
         let mss = MediaSourceStream::new(Box::new(file), Default::default());
         let mut hint = Hint::new();
+        // symphonia 0.5's `Probe::format` takes the hint as `_hint` and never
+        // reads it — format detection is a pure magic-byte scan, so a container
+        // is identified correctly no matter what the file is named (or that
+        // downloaded sources land on a `.tmp` path). Kept because it costs
+        // nothing and later symphonia releases do consult it.
         if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
             hint.with_extension(ext);
         }
@@ -297,21 +315,75 @@ impl SeekableSymphoniaSource {
                 return None;
             }
         };
+
+        // The channel count and sample rate were sampled once, when the decoder
+        // was opened, and are baked into `FrameConverter`'s mix matrix, its
+        // resampler and the bulk-passthrough stride. A mid-stream change would
+        // therefore be reinterpreted at the wrong stride and come out as noise,
+        // so end the track instead. Symphonia's MP3 and FLAC decoders reject
+        // such a change themselves, but container-level readers do not all.
+        if spec.channels.count() != self.spec.channels.count() || spec.rate != self.spec.rate {
+            warn!(
+                "音轨中途改变音频规格 ({} ch @ {} Hz -> {} ch @ {} Hz)，停止解码",
+                self.spec.channels.count(),
+                self.spec.rate,
+                spec.channels.count(),
+                spec.rate
+            );
+            return None;
+        }
+
         self.spec = spec;
         self.buffer_offset = 0;
         Some(())
     }
 
+    /// Decode forward from the seek landing point to the exact requested
+    /// position, discarding the output produced along the way.
+    ///
+    /// `format.seek()` deliberately lands *before* the requested timestamp.
+    /// MPEG Layer III granules reference up to 511 bytes of "main data" carried
+    /// by earlier frames — the bit reservoir — so symphonia's demuxer walks back
+    /// far enough that those references resolve and reports the rewound position
+    /// as `actual_ts`. Those run-up packets have to be fed through the decoder:
+    /// skipping them undoes the rewind and leaves the first audible frame
+    /// pointing at a reservoir that was never filled, which symphonia reports as
+    /// `invalid main_data_begin, underflow by N bytes` and renders as a dropped,
+    /// silent granule. Only the run-up's *samples* are thrown away.
     fn refine_position(&mut self, seeked: SeekedTo) -> Result<(), SymphoniaError> {
         let mut frames_to_skip = seeked.required_ts.saturating_sub(seeked.actual_ts);
         loop {
             let packet = self.next_track_packet()?;
-            if packet.dur() <= frames_to_skip {
-                frames_to_skip -= packet.dur();
+            let duration = packet.dur();
+
+            let decoded = match self.decoder.decode(&packet) {
+                Ok(decoded) => decoded,
+                // A run-up packet that will not decode leaves the reservoir cold
+                // for one more frame, but it must not abort the seek. Note the
+                // variant: Layer III reports a granule whose `main_data_begin`
+                // points past what the reservoir actually holds as an `IoError`
+                // from the bit reader running off the end of the packet buffer,
+                // *not* as a `DecodeError` — and that is exactly the packet a
+                // run-up is most likely to land on, since the run-up exists
+                // because the reservoir starts cold. Both are therefore
+                // tolerated here; `ResetRequired` and the fatal variants still
+                // propagate. `decode()` reads only from the already-demuxed
+                // packet, so this cannot swallow a failure of the file itself —
+                // that surfaces from `next_track_packet` above.
+                Err(SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_))
+                    if duration <= frames_to_skip =>
+                {
+                    frames_to_skip -= duration;
+                    continue;
+                }
+                Err(err) => return Err(err),
+            };
+
+            if duration <= frames_to_skip {
+                frames_to_skip -= duration;
                 continue;
             }
 
-            let decoded = self.decoder.decode(&packet)?;
             self.spec = copy_decoded_into_sample_buffer(decoded, &mut self.buffer);
             self.buffer_offset = (frames_to_skip as usize)
                 .saturating_mul(self.channels().get() as usize)
@@ -332,6 +404,9 @@ impl SeekableSymphoniaSource {
     /// Append up to `max_frames` complete interleaved frames from the decoded
     /// sample buffer. This is the steady-state passthrough hot path: copying a
     /// contiguous slice avoids one Iterator call and bounds check per sample.
+    ///
+    /// `channels` is fixed for the life of the source — `refill` ends the track
+    /// rather than let a mid-stream spec change reach this stride.
     fn append_interleaved_frames(
         &mut self,
         dst: &mut Vec<f32>,
@@ -457,7 +532,15 @@ fn decode_next_audio_buffer<T>(
     loop {
         let packet = match format.next_packet() {
             Ok(packet) => packet,
-            Err(SymphoniaError::IoError(_)) => return Ok(None),
+            // Symphonia signals a clean end of stream as an `UnexpectedEof` IO
+            // error. Anything else is a genuine read failure — a vanished file,
+            // a truncated download — and must not be reported to the caller as
+            // a track that simply finished.
+            Err(SymphoniaError::IoError(err))
+                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                return Ok(None)
+            }
             Err(err) => return Err(err),
         };
         if packet.track_id() != track_id {
@@ -555,6 +638,15 @@ where
     let thread = std::thread::Builder::new()
         .name("audio-decode".into())
         .spawn(move || {
+            // Held for the thread's lifetime: this thread is the only producer
+            // for the deck queue, so its scheduling latency is playback's. It
+            // renders one DECODE_BLOCK_FRAMES block per wake, which is the
+            // period the deadline-based backends want to know about.
+            let _priority = crate::rt_priority::promote_current_thread(
+                crate::rt_priority::AudioThreadKind::Decode,
+                DECODE_BLOCK_FRAMES,
+                output_sample_rate,
+            );
             let mut worker = DecodeWorker::new(
                 source,
                 input_channels,
@@ -603,6 +695,22 @@ struct DecodeWorker<S: PlaybackSink> {
     start_ramp_frames_remaining: usize,
     applied_seek_epoch: u64,
     pending_seek_flush_epoch: Option<u64>,
+}
+
+/// Frames of pre-roll silence to emit in one run of the decode loop.
+///
+/// Must never return zero while `remaining > 0`: the loop `continue`s on this
+/// value without consuming a source frame, so a zero-length run would spin the
+/// decode thread forever. It also must not run past the next control-check
+/// boundary (seek latency) or the end of the block (reserved capacity).
+#[inline]
+fn pre_roll_run_frames(remaining: usize, frame_index: usize) -> usize {
+    debug_assert!(remaining > 0);
+    debug_assert!(frame_index < DECODE_BLOCK_FRAMES);
+    let until_control_check = SEEK_CONTROL_CHECK_FRAMES - (frame_index % SEEK_CONTROL_CHECK_FRAMES);
+    remaining
+        .min(until_control_check)
+        .min(DECODE_BLOCK_FRAMES - frame_index)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -705,21 +813,36 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                     break;
                 }
 
-                // The common file/device layout needs neither resampling nor
-                // channel mixing. Once startup/seek shaping is complete, copy
-                // decoded interleaved PCM in contiguous chunks instead of
-                // pulling it through next_frame() sample by sample. Stop each
+                // Prime the sink with silence before any audio is emitted. This
+                // must not pull from the source: doing so discarded the frame it
+                // decoded, which truncated the first PRE_ROLL_SILENCE_FRAMES
+                // (~21 ms at 48 kHz) of every track. Emitting the run in one
+                // resize keeps the reserved capacity intact and costs no source
+                // frames, so the pre-roll now only delays audio, never drops it.
+                // Clamped to the next control-check boundary so seek latency is
+                // unchanged.
+                if self.pre_roll_frames_remaining > 0 {
+                    let frames =
+                        pre_roll_run_frames(self.pre_roll_frames_remaining, frame_index);
+                    block.resize(block.len() + frames * self.output_channels as usize, 0.0);
+                    self.pre_roll_frames_remaining -= frames;
+                    frame_index += frames;
+                    continue;
+                }
+
+                // The common file/device layout needs no channel mixing. Once
+                // startup/seek shaping is complete, append whole runs of output
+                // frames — copied straight through when the rates match,
+                // produced by the resampler when they do not — instead of
+                // pulling them one at a time through next_frame(). Stop each
                 // chunk at the next control-check boundary so seek latency is
                 // unchanged.
-                if self.pre_roll_frames_remaining == 0
-                    && self.start_ramp_frames_remaining == 0
-                    && self.frames.can_bulk_passthrough()
-                {
+                if self.start_ramp_frames_remaining == 0 && self.frames.can_bulk_append() {
                     let until_control_check =
                         SEEK_CONTROL_CHECK_FRAMES - (frame_index % SEEK_CONTROL_CHECK_FRAMES);
                     let requested = until_control_check.min(DECODE_BLOCK_FRAMES - frame_index);
                     let block_start = block.len();
-                    let copied = self.frames.append_passthrough_frames(&mut block, requested);
+                    let copied = self.frames.append_frames(&mut block, requested);
                     if copied == 0 {
                         ended = true;
                         break;
@@ -740,24 +863,19 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                     break;
                 }
 
-                if self.pre_roll_frames_remaining > 0 {
-                    self.pre_roll_frames_remaining -= 1;
-                    block.extend(std::iter::repeat(0.0).take(self.output_channels as usize));
-                } else {
-                    if self.start_ramp_frames_remaining > 0 {
-                        let ramp_total = self.start_ramp_total_frames.max(1);
-                        let elapsed = ramp_total.saturating_sub(self.start_ramp_frames_remaining);
-                        let t = (elapsed as f32 / ramp_total as f32).clamp(0.0, 1.0);
-                        let gain = t * t * (3.0 - 2.0 * t);
-                        for sample in &mut frame {
-                            *sample *= gain;
-                        }
-                        self.start_ramp_frames_remaining -= 1;
+                if self.start_ramp_frames_remaining > 0 {
+                    let ramp_total = self.start_ramp_total_frames.max(1);
+                    let elapsed = ramp_total.saturating_sub(self.start_ramp_frames_remaining);
+                    let t = (elapsed as f32 / ramp_total as f32).clamp(0.0, 1.0);
+                    let gain = t * t * (3.0 - 2.0 * t);
+                    for sample in &mut frame {
+                        *sample *= gain;
                     }
+                    self.start_ramp_frames_remaining -= 1;
+                }
+                block.extend_from_slice(&frame);
+                if let Some(block) = analysis_block.as_mut() {
                     block.extend_from_slice(&frame);
-                    if let Some(block) = analysis_block.as_mut() {
-                        block.extend_from_slice(&frame);
-                    }
                 }
                 frame_index += 1;
             }
@@ -913,273 +1031,64 @@ impl<S: PlaybackSink> DecodeWorker<S> {
     }
 }
 
-struct FrameConverter {
-    // Playback always uses our Symphonia source. Keeping the concrete type
-    // here lets the compiler inline the per-sample iterator hot path instead
-    // of paying a trait-object dispatch for every decoded sample.
-    source: SeekableSymphoniaSource,
-    input_channels: usize,
-    output_channels: usize,
-    matrix: Vec<Vec<(usize, f32)>>,
-    /// Fixed-size scratch buffers. They are swapped, never reallocated or
-    /// resized, so the per-frame hot path only overwrites existing samples.
-    current_frame: Vec<f32>,
-    next_frame: Vec<f32>,
-    has_current: bool,
-    has_next: bool,
-    reached_end: bool,
-    frac: f64,
-    step: f64,
-    /// `true` when input and output sample rates match, letting us skip the
-    /// linear-interpolation resampler (and its lookahead frame) entirely.
-    resample: bool,
-    /// `true` when channels map 1:1 (identity matrix), letting the no-resample
-    /// path read straight into the output frame with no matrix mixing.
-    passthrough: bool,
-}
-
-impl FrameConverter {
-    fn new(
-        source: SeekableSymphoniaSource,
-        input_channels: u16,
-        input_sample_rate: u32,
-        output_channels: u16,
-        output_sample_rate: u32,
-    ) -> Self {
-        let input_channels = input_channels.max(1) as usize;
-        let output_channels = output_channels.max(1) as usize;
-        let input_sample_rate = input_sample_rate.max(1);
-        let output_sample_rate = output_sample_rate.max(1);
-        let step = input_sample_rate as f64 / output_sample_rate as f64;
-        let matrix = build_mix_matrix(input_channels, output_channels);
-        let passthrough = input_channels == output_channels
-            && matrix
-                .iter()
-                .enumerate()
-                .all(|(out, row)| row.len() == 1 && row[0].0 == out && row[0].1 == 1.0);
-        Self {
-            source,
-            input_channels,
-            output_channels,
-            matrix,
-            current_frame: vec![0.0; input_channels],
-            next_frame: vec![0.0; input_channels],
-            has_current: false,
-            has_next: false,
-            reached_end: false,
-            frac: 0.0,
-            step,
-            resample: input_sample_rate != output_sample_rate,
-            passthrough,
-        }
-    }
-
-    fn seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
-        self.source.try_seek(pos)?;
-        self.reset();
-        Ok(())
-    }
-
-    fn reset(&mut self) {
-        self.has_current = false;
-        self.has_next = false;
-        self.reached_end = false;
-        self.frac = 0.0;
-    }
-
-    #[inline]
-    fn can_bulk_passthrough(&self) -> bool {
-        !self.resample && self.passthrough
-    }
-
-    fn append_passthrough_frames(&mut self, output: &mut Vec<f32>, frames: usize) -> usize {
-        debug_assert!(self.can_bulk_passthrough());
-        self.source
-            .append_interleaved_frames(output, self.output_channels, frames)
-    }
-
-    fn next_frame(&mut self, output: &mut [f32]) -> Option<()> {
-        debug_assert_eq!(output.len(), self.output_channels);
-
-        if !self.resample {
-            // No sample-rate conversion: one input frame maps to one output frame.
-            if self.passthrough {
-                // Hottest path (e.g. stereo file → stereo device): pull straight
-                // into the output frame — no buffering, no matrix, no alloc.
-                for slot in output.iter_mut() {
-                    *slot = self.source.next()?;
-                }
-                return Some(());
-            }
-            if !read_input_frame(
-                &mut self.source,
-                self.input_channels,
-                &mut self.current_frame,
-            ) {
-                return None;
-            }
-            apply_mix_matrix(&self.matrix, &self.current_frame, output);
-            return Some(());
-        }
-
-        // Linear-interpolation resampling path.
-        if !self.has_current {
-            if !read_input_frame(
-                &mut self.source,
-                self.input_channels,
-                &mut self.current_frame,
-            ) {
-                return None;
-            }
-            self.has_current = true;
-        }
-        if !self.has_next && !self.reached_end {
-            if read_input_frame(&mut self.source, self.input_channels, &mut self.next_frame) {
-                self.has_next = true;
-            } else {
-                self.reached_end = true;
-            }
-        }
-
-        self.mix_current(output);
-
-        if self.reached_end && !self.has_next {
-            self.has_current = false;
-            return Some(());
-        }
-
-        self.frac += self.step;
-        while self.frac >= 1.0 {
-            self.frac -= 1.0;
-            if self.has_next {
-                std::mem::swap(&mut self.current_frame, &mut self.next_frame);
-                self.has_next = false;
-                if read_input_frame(&mut self.source, self.input_channels, &mut self.next_frame) {
-                    self.has_next = true;
-                } else {
-                    self.reached_end = true;
-                }
-            } else {
-                self.has_current = false;
-                break;
-            }
-        }
-
-        Some(())
-    }
-
-    fn mix_current(&self, output: &mut [f32]) {
-        let current = &self.current_frame;
-        let frac = self.frac as f32;
-
-        if self.has_next {
-            let next = &self.next_frame;
-            for (out, row) in output.iter_mut().zip(&self.matrix) {
-                let mut mixed = 0.0;
-                for &(input, gain) in row {
-                    let sample = current[input] + (next[input] - current[input]) * frac;
-                    mixed += sample * gain;
-                }
-                *out = mixed;
-            }
-        } else {
-            apply_mix_matrix(&self.matrix, current, output);
-        }
-    }
-}
-
-/// Pull one interleaved input frame from `source` into a fixed-size scratch
-/// buffer. Returns `false` if the source ends, leaving any partial frame to
-/// be discarded by the caller — matching rodio's frame-aligned EOF behaviour.
-#[inline]
-fn read_input_frame(
-    source: &mut SeekableSymphoniaSource,
-    channels: usize,
-    buf: &mut [f32],
-) -> bool {
-    debug_assert_eq!(buf.len(), channels);
-
-    // Fast path: the whole frame sits inside the current decoded buffer, so
-    // copy it as one slice — the resample/mix hot loop calls this per output
-    // frame and the per-sample `next()` chain costs a branch per sample.
-    let samples = source.buffer.samples();
-    let offset = source.buffer_offset;
-    if offset + channels <= samples.len() {
-        buf[..channels].copy_from_slice(&samples[offset..offset + channels]);
-        source.buffer_offset = offset + channels;
-        return true;
-    }
-
-    // Slow path: the frame straddles a refill boundary (or the source ends).
-    for slot in &mut buf[..channels] {
-        match source.next() {
-            Some(sample) => *slot = sample,
-            None => return false,
-        }
-    }
-    true
-}
-
-/// Apply the channel mix matrix for a single frame (no interpolation).
-#[inline]
-fn apply_mix_matrix(matrix: &[Vec<(usize, f32)>], frame: &[f32], output: &mut [f32]) {
-    for (out, row) in output.iter_mut().zip(matrix) {
-        let mut mixed = 0.0;
-        for &(input, gain) in row {
-            mixed += frame[input] * gain;
-        }
-        *out = mixed;
-    }
-}
-
-fn build_mix_matrix(input_channels: usize, output_channels: usize) -> Vec<Vec<(usize, f32)>> {
-    debug_assert!(input_channels > 0);
-    debug_assert!(output_channels > 0);
-
-    if output_channels == 1 {
-        let gain = 1.0 / input_channels as f32;
-        return vec![(0..input_channels).map(|ch| (ch, gain)).collect()];
-    }
-
-    if input_channels == 1 {
-        return (0..output_channels).map(|_| vec![(0, 1.0)]).collect();
-    }
-
-    if output_channels == 2 {
-        let mut rows = vec![vec![(0, 1.0)], vec![(1, 1.0)]];
-        if input_channels > 2 {
-            let gain = 0.5 / (input_channels - 2) as f32;
-            for ch in 2..input_channels {
-                rows[0].push((ch, gain));
-                rows[1].push((ch, gain));
-            }
-        }
-        return rows;
-    }
-
-    let mut rows = Vec::with_capacity(output_channels);
-    for out in 0..output_channels {
-        if out < input_channels {
-            rows.push(vec![(out, 1.0)]);
-        } else {
-            rows.push(Vec::new());
-        }
-    }
-
-    if input_channels > output_channels {
-        let extra_count = input_channels - output_channels;
-        let gain = 0.5 / extra_count as f32;
-        for ch in output_channels..input_channels {
-            rows[ch % output_channels].push((ch, gain));
-        }
-    }
-
-    rows
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pre_roll_silence_never_stalls_and_lands_on_control_boundaries() {
+        // Zero would spin the decode loop forever: the pre-roll branch
+        // `continue`s without consuming a source frame.
+        let mut frame_index = 0;
+        let mut remaining = PRE_ROLL_SILENCE_FRAMES;
+        let mut runs = 0;
+        while remaining > 0 {
+            if frame_index == DECODE_BLOCK_FRAMES {
+                frame_index = 0; // next block
+            }
+            let frames = pre_roll_run_frames(remaining, frame_index);
+            assert!(frames > 0, "pre-roll run of 0 frames would spin forever");
+            assert!(frame_index + frames <= DECODE_BLOCK_FRAMES, "ran past the block");
+            frame_index += frames;
+            assert_eq!(
+                frame_index % SEEK_CONTROL_CHECK_FRAMES,
+                0,
+                "a run must end on a control-check boundary"
+            );
+            remaining -= frames;
+            runs += 1;
+            assert!(runs <= PRE_ROLL_SILENCE_FRAMES, "failed to converge");
+        }
+
+        // The whole pre-roll is emitted, and it is a whole number of blocks
+        // here, so no partial block precedes the first audio.
+        assert_eq!(remaining, 0);
+        assert_eq!(
+            runs,
+            PRE_ROLL_SILENCE_FRAMES / SEEK_CONTROL_CHECK_FRAMES,
+            "pre-roll should advance one control-check span per run"
+        );
+    }
+
+    #[test]
+    fn pre_roll_emits_silence_without_consuming_source_frames() {
+        // The regression this guards: the pre-roll branch used to call
+        // `next_frame()` and then throw the decoded frame away, silently
+        // truncating the first PRE_ROLL_SILENCE_FRAMES of every track. The run
+        // length is derived from the pre-roll counter alone — no source is
+        // touched — so a reintroduced `next_frame()` call would have to be
+        // added back explicitly rather than hidden in the arithmetic.
+        const CHANNELS: usize = 2;
+        let mut block: Vec<f32> = Vec::with_capacity(DECODE_BLOCK_FRAMES * CHANNELS);
+        let frames = pre_roll_run_frames(PRE_ROLL_SILENCE_FRAMES, 0);
+
+        block.resize(block.len() + frames * CHANNELS, 0.0);
+
+        assert_eq!(block.len(), frames * CHANNELS);
+        assert!(block.iter().all(|&s| s == 0.0), "pre-roll must be silence");
+        // Filling in place must not outgrow the block the sink recycled for us.
+        assert!(block.len() <= DECODE_BLOCK_FRAMES * CHANNELS);
+    }
 
     #[test]
     fn bulk_passthrough_copies_only_complete_frames() {

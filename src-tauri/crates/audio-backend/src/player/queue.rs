@@ -137,6 +137,7 @@ mod tests {
         SongData::Local {
             file_path: path.to_string(),
             orig_order,
+            display: None,
         }
     }
 

@@ -94,6 +94,27 @@ export class AudioTimelineSync {
     this.reanchor(position);
   }
 
+  /**
+   * Adopt the backend's anchor for a track it has just loaded.
+   *
+   * Every other guard on this type is an *intra-track* heuristic: the seek
+   * anchor rejects packets that describe the pre-seek timeline, and
+   * `_applyAcceptedPosition`'s backstep tolerance refuses a rewind nothing
+   * asked for. Neither means anything across a track boundary — a fresh track
+   * legitimately starts behind the one it replaced, which as a position packet
+   * is indistinguishable from a stale one, so it was rejected and the clock
+   * kept extrapolating the *previous* track's elapsed time into the new one.
+   *
+   * Unlike `reset` this keeps the playback state: the track changed, the
+   * transport did not.
+   */
+  beginTrack(position: number, duration = this._duration): number {
+    this._duration = Number.isFinite(duration) && duration > 0 ? duration : 0;
+    this._pendingSeekAnchor = null;
+    this.reanchor(position);
+    return this._position;
+  }
+
   setPlaybackState(isPlaying: boolean, pendingPlayCommand = false): void {
     const changed =
       this._isPlaying !== isPlaying || this._pendingPlayCommand !== pendingPlayCommand;

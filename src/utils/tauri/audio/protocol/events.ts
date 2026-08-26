@@ -65,7 +65,19 @@ export interface AutoMixNativeStatus {
 }
 
 export type AudioThreadEvent =
-  | { type: "playPosition"; data: { position: number } }
+  | {
+      type: "playPosition";
+      data: {
+        position: number;
+        /**
+         * Which timeline this position belongs to. A subscriber holding a
+         * different epoch has not adopted this track yet and must drop the
+         * packet rather than weigh it against the clock it still holds — a
+         * fresh track's `0` is otherwise indistinguishable from a stale packet.
+         */
+        timelineEpoch?: number;
+      };
+    }
   | { type: "loadProgress"; data: { position: number } }
   | {
       type: "loadAudio";
@@ -75,6 +87,14 @@ export type AudioThreadEvent =
         quality: AudioQuality;
         currentPlayIndex: number;
         loadRequestId?: number | null;
+        /**
+         * Stable identity of the loaded track, when the backend knows it.
+         * `musicId` is `local:<cdn-url>` and changes on every re-resolve, so it
+         * can never reconcile across a WebView reload — this can.
+         */
+        identity?: TrackIdentity | null;
+        /** Timeline this load started — see `playPosition.timelineEpoch`. */
+        timelineEpoch?: number;
       };
     }
   | {
@@ -96,6 +116,10 @@ export type AudioThreadEvent =
         currentPlayIndex: number;
         playlistInited: boolean;
         quality: AudioQuality;
+        /** Stable identity of the playing track — see `loadAudio.identity`. */
+        identity?: TrackIdentity | null;
+        /** Timeline this snapshot describes — see `playPosition.timelineEpoch`. */
+        timelineEpoch?: number;
       };
     }
   | {
@@ -160,6 +184,48 @@ export type AudioThreadEvent =
   | {
       type: "nativePlannerExhausted";
       data: { manifestRevision: number; attempted: number; reason: string };
-    };
+    }
+  | { type: "nowPlayingChanged"; data: { info: NowPlayingInfo } }
+  | { type: "sessionControlsChanged"; data: { controls: SessionControls } };
+
+/**
+ * Session controls: state that is *not* audio state.
+ *
+ * Play mode and favourite are the user's own choices, but they are rendered
+ * next to the transport on every surface and settable from every surface. The
+ * backend holds the one copy all of them agree on — see
+ * `src-tauri/crates/audio-backend/src/player/session_controls.rs`. A surface
+ * sends an intent and adopts what comes back; it never writes its own copy.
+ */
+export interface SessionControls {
+  playMode: "normal" | "random" | "single";
+  /** Whether the loaded track is in the user's 我喜欢的音乐. */
+  favourite: boolean;
+  /** Whether toggling is possible at all (logged in, Netease track). */
+  canFavourite: boolean;
+}
+
+/**
+ * Resolved display metadata for the current track, merged by the backend from
+ * the manifest entry (streamed tracks have no file tags) and the decoder's tag
+ * read (local files).
+ *
+ * The OS media session is driven from Rust off this same event, so the frontend
+ * does not push notifications any more — it only consumes this for UI.
+ */
+export interface NowPlayingInfo {
+  hasTrack: boolean;
+  identity: TrackIdentity | null;
+  title: string;
+  artist: string;
+  album: string;
+  artworkUrl: string | null;
+  duration: number;
+  position: number;
+  isPlaying: boolean;
+  playlistIndex: number;
+  /** Session controls carried with the projection — see [`SessionControls`]. */
+  controls: SessionControls;
+}
 
 export type AudioThreadEventCallback = (event: AudioThreadEvent, seq?: number) => void;

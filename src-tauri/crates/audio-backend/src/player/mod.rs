@@ -16,6 +16,7 @@
 /// - `output_runtime`  — device polling/health, hot-swap refresh, chain rebuilds
 /// - `automix_runtime` — native AutoMix deck preload/crossfade scheduling
 /// - `planner_runtime` — manifest/planner ownership, one-ahead prefetch, advance
+/// - `session_controls`— play mode / favourite: the state every surface shares
 /// - `status`          — `EventEmitter` + position/seek/SyncStatus publishing
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -36,9 +37,12 @@ mod api;
 mod automix;
 mod automix_runtime;
 mod clock;
+mod listen_together;
 pub mod manifest;
 mod messages;
+mod metadata_fetch;
 mod mixer;
+mod now_playing;
 mod output_runtime;
 mod planner;
 mod planner_runtime;
@@ -46,12 +50,13 @@ mod platform;
 mod playback;
 pub mod queue;
 mod seek;
+mod session_controls;
 mod source_cache;
 pub mod source_resolver;
 mod status;
 
 #[allow(unused_imports)]
-pub use api::{EventBuffer, Player, PlayerHandle, PlayerShared};
+pub use api::{EventBuffer, Player, PlayerEventSubscriber, PlayerHandle, PlayerShared, SubscriberId};
 
 use api::{join_thread_async, SeekRequest};
 use automix::AutoMixManager;
@@ -158,6 +163,23 @@ struct AudioPlayer {
     playlist_inited: bool,
     current_play_index: usize,
     current_song: Option<SongData>,
+    /// Display metadata for `current_song`, parsed once when the track was
+    /// picked up from the queue. Lets the OS media session show the real title
+    /// immediately instead of a decoded tag that is not available yet — or, for
+    /// a stream with no tags, a CDN path stem. See `now_playing`.
+    pending_display: now_playing::PendingDisplay,
+    /// Track announced by the frontend but not loaded yet. Lets the OS media
+    /// session swap the moment the user presses next, rather than after the
+    /// URL resolve and download. See `metadata_fetch::announce_track`.
+    announced_track: Option<(TrackIdentity, TrackDisplay)>,
+    /// A load is in flight: source resolve, download, or decoder open.
+    ///
+    /// Exists for the OS media session, which otherwise shows "paused" for the
+    /// entire resolve+download window — the user presses play and the button
+    /// flips back, with no indication that anything is happening. Mirrors the
+    /// `LoadingAudio` → `LoadAudio` event pair, and is cleared on the failure
+    /// paths those events do not cover.
+    load_in_flight: bool,
 
     // Manifest-driven planning. The bounded `playback_queue` above stays the
     // transport to the decoder; these own *what plays next* across the full
@@ -169,13 +191,51 @@ struct AudioPlayer {
     /// Stable identity of the loaded track. Survives URL re-resolution, unlike
     /// `current_song`'s `local:<url>` id.
     current_identity: Option<TrackIdentity>,
+    /// Identity the *next* `start_playing_song` should adopt. Only a
+    /// planner-driven load knows the identity up front; every other caller
+    /// (frontend `SetPlaylist`, legacy queue hop) leaves this `None` so
+    /// `current_identity` is cleared rather than inheriting the previous
+    /// track's — otherwise a reloading frontend would adopt the wrong song.
+    pending_identity: Option<TrackIdentity>,
+    /// Room whose server-side presence this backend keeps alive. `None`
+    /// when not in a listen-together session. See `listen_together`.
+    listen_together_room: Option<String>,
+    /// The one authoritative copy of the user-facing session controls (play
+    /// mode, favourite). Every surface reads it through `NowPlayingChanged` /
+    /// `SessionControlsChanged` and writes it through a message — see
+    /// `session_controls`.
+    session_controls: SessionControls,
+    /// A like/unlike call is in flight, so a second press is ignored rather
+    /// than racing the first to the opposite value.
+    favourite_in_flight: bool,
+    favourite_tx: mpsc::UnboundedSender<session_controls::FavouriteResult>,
+    favourite_rx: mpsc::UnboundedReceiver<session_controls::FavouriteResult>,
+    /// Liked track ids for the signed-in account, fetched by the backend itself.
+    ///
+    /// `None` means "not known" — signed out, or the fetch has not landed. The
+    /// backend needs its own copy because the notification's heart is rendered
+    /// while the WebView is destroyed, which is precisely when the frontend
+    /// cannot answer. Netease ids as strings, matching `TrackIdentity`.
+    likelist: Option<std::collections::HashSet<String>>,
+    likelist_in_flight: bool,
+    likelist_tx: mpsc::UnboundedSender<session_controls::LikelistResult>,
+    likelist_rx: mpsc::UnboundedReceiver<session_controls::LikelistResult>,
     prefetch_tx: mpsc::UnboundedSender<PrefetchResult>,
     prefetch_rx: mpsc::UnboundedReceiver<PrefetchResult>,
+    /// Backend-side display metadata hydration. Separate channel from the
+    /// resolver so a slow `/song/detail` can never delay a source resolve.
+    metadata_tx: mpsc::UnboundedSender<metadata_fetch::MetadataResult>,
+    metadata_rx: mpsc::UnboundedReceiver<metadata_fetch::MetadataResult>,
 
     // Shared state snapshots
     current_audio_info: Arc<TokioRwLock<DisplayAudioInfo>>,
     current_position: Arc<TokioRwLock<f64>>,
     current_audio_quality: Arc<TokioRwLock<AudioQuality>>,
+    /// Authoritative session snapshot, shared with `PlayerShared` so the
+    /// `audio_get_session` command can read it without a message round-trip.
+    /// Written from `sync_ui` (full) and `publish_position_anchor` (clock only)
+    /// — i.e. every point where playback identity or the timeline changes.
+    session: Arc<parking_lot::Mutex<NativeSessionSnapshot>>,
 
     // Background tasks
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -204,6 +264,7 @@ impl AudioPlayer {
         msg_receiver: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
         seek_rx: mpsc::UnboundedReceiver<SeekRequest>,
         evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
+        session: Arc<parking_lot::Mutex<NativeSessionSnapshot>>,
     ) -> AudioResult<Self> {
         let output_selector = output::OutputDeviceSelector::Default;
         let output =
@@ -260,15 +321,16 @@ impl AudioPlayer {
 
             loop {
                 time_it.tick().await;
-                let (is_playing, current_pos) = {
+                let (is_playing, current_pos, timeline_epoch) = {
                     let clock = clock_reader.lock();
-                    (clock.is_playing(), clock.position())
+                    (clock.is_playing(), clock.position(), clock.epoch())
                 };
                 if is_playing {
                     *position_writer.write().await = current_pos;
                     let _ = emitter_pos
                         .emit(AudioThreadEvent::PlayPosition {
                             position: current_pos,
+                            timeline_epoch,
                         })
                         .await;
                 }
@@ -287,6 +349,9 @@ impl AudioPlayer {
         let (automix_prepare_tx, automix_prepare_rx) = mpsc::unbounded_channel();
         let (output_refresh_tx, output_refresh_rx) = mpsc::unbounded_channel();
         let (prefetch_tx, prefetch_rx) = mpsc::unbounded_channel();
+        let (metadata_tx, metadata_rx) = mpsc::unbounded_channel();
+        let (favourite_tx, favourite_rx) = mpsc::unbounded_channel();
+        let (likelist_tx, likelist_rx) = mpsc::unbounded_channel();
 
         Ok(Self {
             msg_receiver,
@@ -347,16 +412,32 @@ impl AudioPlayer {
             playlist_inited: false,
             current_play_index: 0,
             current_song: None,
+            pending_display: now_playing::PendingDisplay::default(),
+            announced_track: None,
+            load_in_flight: false,
             manifest: ManifestStore::new(),
             planner: Planner::new(),
             source_cache: SourceCache::new(),
             resolver_config: NativeResolverConfig::default(),
             current_identity: None,
+            pending_identity: None,
+            listen_together_room: None,
+            session_controls: SessionControls::default(),
+            favourite_in_flight: false,
+            favourite_tx,
+            favourite_rx,
+            likelist: None,
+            likelist_in_flight: false,
+            likelist_tx,
+            likelist_rx,
             prefetch_tx,
             prefetch_rx,
+            metadata_tx,
+            metadata_rx,
             current_audio_info,
             current_position,
             current_audio_quality,
+            session,
             tasks,
             analysis_tx,
             analysis_thread,
@@ -369,6 +450,13 @@ impl AudioPlayer {
         output_device_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut output_health_check = tokio::time::interval(Duration::from_millis(100));
         output_health_check.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Listen-together keepalive. Ticks unconditionally — the handler is a
+        // no-op when no room is armed, and at 30 s it is negligible next to the
+        // 100 ms output-health tick already running.
+        let mut listen_together_beat = tokio::time::interval(Duration::from_secs(
+            listen_together::HEARTBEAT_PERIOD_SECS,
+        ));
+        listen_together_beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
             tokio::select! {
@@ -420,6 +508,24 @@ impl AudioPlayer {
                 }
               }
 
+              result = self.metadata_rx.recv() => {
+                if let Some(result) = result {
+                  self.handle_metadata_result(result).await;
+                }
+              }
+
+              result = self.favourite_rx.recv() => {
+                if let Some(result) = result {
+                  self.handle_favourite_result(result).await;
+                }
+              }
+
+              result = self.likelist_rx.recv() => {
+                if let Some(result) = result {
+                  self.handle_likelist_result(result).await;
+                }
+              }
+
               _ = output_device_check.tick() => {
                 self.poll_output_device_tick();
               }
@@ -436,6 +542,10 @@ impl AudioPlayer {
                 if let Some(event) = event {
                   self.handle_output_refresh_event(event).await;
                 }
+              }
+
+              _ = listen_together_beat.tick() => {
+                self.send_listen_together_heartbeat();
               }
             }
         }
@@ -471,10 +581,15 @@ impl AudioPlayer {
     fn sync_current_from_queue(&mut self) -> bool {
         let Some(song) = self.playback_queue.current_song() else {
             self.current_song = None;
+            self.pending_display = now_playing::PendingDisplay::default();
             self.current_play_index = 0;
             return false;
         };
         self.current_play_index = self.playback_queue.current_index();
+        // Captured here rather than at emit time: this is the earliest point at
+        // which we know what is loading, so the media session can show real
+        // metadata before a byte is decoded instead of a CDN path stem.
+        self.pending_display = now_playing::PendingDisplay::from_song(&song);
         self.current_song = Some(song);
         true
     }

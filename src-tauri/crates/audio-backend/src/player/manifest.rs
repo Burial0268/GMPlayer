@@ -118,6 +118,49 @@ impl ManifestStore {
         self.order.get(slot).copied()
     }
 
+    /// Switch the traversal mode in place, without a republish.
+    ///
+    /// The frontend normally owns the order and ships the whole permutation, but
+    /// a mode change can arrive from a notification button while the WebView is
+    /// dead — and the next hop has to honour it immediately, not whenever the
+    /// page comes back. So the backend rebuilds its own order: a shuffle pinned
+    /// so the playing track stays put (`keep_position`), and natural order on
+    /// the way out of random. Returns `false` when nothing changed.
+    ///
+    /// The frontend republishes at a higher revision when it wakes, which
+    /// replaces this order with its own — that is the convergence point, and it
+    /// is why this deliberately does not touch `revision`.
+    pub fn set_mode(&mut self, mode: NativePlaybackMode, keep_position: Option<usize>) -> bool {
+        let Some(manifest) = self.manifest.as_mut() else {
+            return false;
+        };
+        if manifest.mode == mode {
+            return false;
+        }
+        let previous = manifest.mode;
+        manifest.mode = mode;
+
+        match (previous, mode) {
+            // Into random: shuffle, then pin the playing track to slot 0 so the
+            // mode change alone never moves what is currently audible.
+            (_, NativePlaybackMode::Random) => {
+                self.reshuffle_random(None);
+                if let Some(position) = keep_position {
+                    if let Some(slot) = self.slot_of_position(position) {
+                        self.order.swap(0, slot);
+                    }
+                }
+            }
+            // Out of random: back to the list the user sees.
+            (NativePlaybackMode::Random, _) => {
+                self.order = sanitize_order(&[], self.len());
+            }
+            // Normal ↔ single is a repeat decision, not a traversal one.
+            _ => {}
+        }
+        true
+    }
+
     /// Reshuffle the traversal order for the next random pass. Deterministic in
     /// `(random_seed, revision, shuffle_pass)` so a resumed snapshot reproduces
     /// the same permutation instead of diverging from what the UI last saw.
@@ -232,6 +275,8 @@ mod tests {
             playlist_index,
             title: None,
             artist: None,
+            album: None,
+            artwork_url: None,
             duration_ms: None,
             fee: None,
             has_pc: false,
@@ -258,6 +303,74 @@ mod tests {
         assert_eq!(store.revision(), 0);
         assert!(!store.is_loaded());
         assert!(store.is_empty());
+    }
+
+    /// A mode change must never move what is audible. The notification's button
+    /// changes the traversal for the *next* hop; if the shuffle also reordered
+    /// the playing track out of slot 0 the planner's cursor would be pointing at
+    /// a different song than the one in the user's ears.
+    #[test]
+    fn switching_into_random_keeps_the_playing_track_first() {
+        for seed in 0..24u64 {
+            let mut store = ManifestStore::new();
+            let mut m = manifest(1, &["a", "b", "c", "d", "e"]);
+            m.random_seed = Some(seed);
+            store.set(m);
+
+            let playing = 2; // "c"
+            assert!(store.set_mode(NativePlaybackMode::Random, Some(playing)));
+            assert_eq!(
+                store.position_at_slot(0),
+                Some(playing),
+                "seed {seed} moved the playing track out of slot 0"
+            );
+            let mut sorted = store.order().to_vec();
+            sorted.sort_unstable();
+            assert_eq!(sorted, vec![0, 1, 2, 3, 4], "seed {seed} is not a permutation");
+        }
+    }
+
+    /// Leaving random restores the list the user is looking at, rather than
+    /// stranding them in whatever permutation the shuffle produced.
+    ///
+    /// Both non-random modes get natural order, which is not an arbitrary choice:
+    /// it is what the frontend's own `buildOrder` publishes for `normal` and
+    /// `single` alike. The interim order this sets has to match the manifest that
+    /// replaces it, or the traversal would visibly change twice for one press.
+    #[test]
+    fn leaving_random_restores_natural_order() {
+        for target in [NativePlaybackMode::Normal, NativePlaybackMode::Single] {
+            let mut store = ManifestStore::new();
+            let mut m = manifest(1, &["a", "b", "c", "d"]);
+            m.random_seed = Some(7);
+            store.set(m);
+
+            store.set_mode(NativePlaybackMode::Random, Some(1));
+            assert!(store.set_mode(target, Some(1)));
+            assert_eq!(store.order(), &[0, 1, 2, 3], "leaving random for {target:?}");
+        }
+    }
+
+    /// Normal ↔ single is a repeat decision, so it must not reshuffle anything.
+    #[test]
+    fn normal_and_single_share_one_traversal() {
+        let mut store = ManifestStore::new();
+        store.set(manifest(1, &["a", "b", "c", "d"]));
+
+        assert!(store.set_mode(NativePlaybackMode::Single, Some(0)));
+        assert_eq!(store.order(), &[0, 1, 2, 3]);
+        assert!(store.set_mode(NativePlaybackMode::Normal, Some(0)));
+        assert_eq!(store.order(), &[0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn setting_the_same_mode_is_a_no_op() {
+        let mut store = ManifestStore::new();
+        store.set(manifest(1, &["a", "b"]));
+        assert!(!store.set_mode(NativePlaybackMode::Normal, Some(0)));
+        // Nothing loaded: there is no traversal to change.
+        let mut empty = ManifestStore::new();
+        assert!(!empty.set_mode(NativePlaybackMode::Random, None));
     }
 
     #[test]

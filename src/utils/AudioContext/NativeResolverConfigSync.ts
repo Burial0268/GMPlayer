@@ -1,13 +1,13 @@
 /**
- * NativeResolverConfigSync — hands the Rust backend the endpoints and
- * credentials it needs to resolve playback URLs itself.
+ * NativeResolverConfigSync — hands the Rust backend the endpoints, credentials
+ * and transport choice it needs to resolve playback URLs itself.
  *
- * The backend does NOT reimplement the Netease API: all weapi/eapi crypto,
- * anonymous_token and cookie signing stay in the deployed
- * NeteaseCloudMusicApi service the frontend already talks to. From Rust it is
- * a plain HTTP GET against the same base URL. This module is the single place
- * that decides *which* base URL and *which* credentials that is, so the two
- * runtimes can never drift apart.
+ * The backend does NOT reimplement the Netease API. Depending on the selected
+ * transport it either calls the deployed NeteaseCloudMusicApi over plain HTTP,
+ * or the in-process protocol layer (`crates/ncm-core`) that the UI is already
+ * using — the same code either way, never a second implementation. This module
+ * is the single place that decides which endpoints, which credentials and which
+ * transport that is, so the two runtimes can never drift apart.
  *
  * What is duplicated in Rust is only the five-rule fallback policy from
  * `resolveSongUrl.ts` (level, VIP pre-check, trial detection, UNM fallback,
@@ -23,6 +23,7 @@ import type { NativeResolverConfig } from "@/utils/tauri/audio/protocol";
 import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
 import useSettingDataStore from "@/store/settingData";
 import { userStore } from "@/store";
+import { getNcmTransport } from "@/utils/request";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -45,6 +46,15 @@ const resolveUnmBase = (): string | null => {
   return configured?.trim() || null;
 };
 
+/** Netease id of the signed-in account, or `null` when signed out. */
+const resolveUserId = (user: ReturnType<typeof userStore>): string | null => {
+  if (!user.userLogin) return null;
+  const profile = user.userData as { userId?: number | string; id?: number | string } | undefined;
+  const raw = profile?.userId ?? profile?.id;
+  const id = raw === undefined || raw === null ? "" : String(raw).trim();
+  return id && id !== "0" ? id : null;
+};
+
 /**
  * Push the current resolver config to the backend. Idempotent — skips IPC when
  * nothing changed. Call on startup, login/logout and quality-setting changes.
@@ -63,7 +73,20 @@ export const syncNativeResolverConfig = (options: { force?: boolean } = {}): voi
     unmBaseUrl,
     unmEnabled: Boolean(unmBaseUrl) && Boolean(setting.useUnmServer),
     cookie: user.cookie ?? null,
+    // Lets the backend fetch `/likelist` for itself, which is what makes the
+    // notification's heart correct while the WebView is destroyed.
+    //
+    // `userId` first: that is the field the profile actually carries (see
+    // `userData.userId` in the user store). `id` is kept as a fallback because
+    // some responses use it, and reading only `id` silently yielded `null` —
+    // which cost nothing visible except that the like list never loaded.
+    userId: resolveUserId(user),
     level: setting.songLevel || "exhigh",
+    // Playback resolution follows the same transport as the UI. Splitting them
+    // would mean two sessions and two source IPs, with only one half getting
+    // the benefit — and the native planner keeps resolving while the WebView is
+    // frozen, so it has to be told rather than asked.
+    useLocalNcm: getNcmTransport() === "local",
   };
 
   const serialized = JSON.stringify(config);
@@ -75,7 +98,9 @@ export const syncNativeResolverConfig = (options: { force?: boolean } = {}): voi
     // Never log the cookie itself — only whether one is present.
     console.log(
       `[NativeResolver] config synced: ncm=${Boolean(config.ncmBaseUrl)}, ` +
-        `unm=${config.unmEnabled}, level=${config.level}, auth=${Boolean(config.cookie)}`,
+        `local=${config.useLocalNcm}, unm=${config.unmEnabled}, ` +
+        `level=${config.level}, auth=${Boolean(config.cookie)}, ` +
+        `uid=${Boolean(config.userId)}`,
     );
   }
 };

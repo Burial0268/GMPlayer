@@ -293,6 +293,7 @@ import {
   getAutoMixEngine,
   getAudioPreloader,
   isNativeAdvanceHoldActiveFor,
+  adoptNativeBackendSession,
   SoundManager,
 } from "@/utils/AudioContext";
 import { useRouter } from "vue-router";
@@ -302,7 +303,9 @@ import { isTauri } from "@/utils/tauri";
 import {
   NativeRustSound,
   isAudioBackendRuntimeAvailable,
+  announceNativeTrack,
 } from "@/utils/tauri/audio/nativeRustSound";
+import { toTrackDisplay } from "@/utils/AudioContext/NativeManifestPublisher";
 import { windowManager } from "@/utils/tauri/window/manager";
 import {
   broadcastPlayerLyrics,
@@ -516,6 +519,12 @@ const player = shallowRef(null);
 let _songLoadGeneration = 0;
 const failedAutoSkipSongIds = new Set();
 let failedAutoSkipQueueKey = "";
+/**
+ * Descriptor from `adoptNativeBackendSession()`, consumed once by the matching
+ * `getPlaySongData` call. Non-null only during boot, and only when the Rust
+ * backend outlived the WebView and is still playing a track we can name.
+ */
+let pendingBackendAttach = null;
 
 // 获取歌曲播放数据
 const getPlaySongData = async (data, level = setting.songLevel, requestedGeneration = null) => {
@@ -539,6 +548,21 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
     );
 
     const autoMix = getAutoMixEngine();
+
+    // Boot adoption: the Rust backend survived a WebView reload and is already
+    // playing this exact track. Attach to it instead of resolving a fresh URL —
+    // that would restart playback from the stale persisted position.
+    if (pendingBackendAttach && Number(pendingBackendAttach.songId) === Number(id)) {
+      const attach = pendingBackendAttach;
+      pendingBackendAttach = null;
+      console.log(`[Player] Attaching to live backend playback for ID: ${id}`);
+      player.value = createSound(attach.sourceUrl, attach.isPlaying, undefined, {
+        songId: id,
+        attachIdentity: attach.identity,
+      });
+      fetchAndParseLyric(id);
+      return;
+    }
 
     // Backend-initiated native advance (queue-window prefill): the active
     // NativeRustSound is already playing this song — reuse it instead of
@@ -598,6 +622,13 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       fetchAndParseLyric(id);
       return;
     }
+
+    // Swap the OS media session to the new track *before* resolving its URL.
+    // Resolution is a network round trip and the download that follows is
+    // another; without this SMTC / MediaSession keeps showing the previous
+    // track for that whole window, so pressing next looks like nothing
+    // happened. The backend shows it as not-yet-playing until the load lands.
+    announceNativeTrack({ provider: "netease", id: String(id) }, toTrackDisplay(data));
 
     // Unified URL resolution (NCM + trial detection + UNM fallback + kuwo proxy)
     const result = await resolveSongUrl({ id, fee, pc, name: data.name }, level);
@@ -711,13 +742,72 @@ const setupPlayerCommunication = () => {
   });
 };
 
+// 一起听歌：把本地列表变更推给房间。
+//
+// 一起听是「一份列表，两个消费者」—— 任何一方加歌 / 删歌 / 插播下一首，两边都要
+// 跟上。此前只有房主、且只在切歌时才整表上报一次，房客加的歌根本传不出去。
+//
+// 签名只在房间里才计算：不在房间时 getter 不触碰 playlists，也就不登记依赖，
+// 对普通播放路径零开销。
+const roomPlaylistSignature = () => {
+  if (!listenTogether.isInRoom) return "";
+  const list = music.persistData.playlists;
+  let signature = `${list.length}`;
+  for (let i = 0; i < list.length; i++) signature += `,${list[i]?.id}`;
+  return signature;
+};
+
+const syncRoomPlaylist = debounce(400, () => {
+  if (!listenTogether.isInRoom) return;
+  // 回推抑制靠 store 里的 lastPlaylistSignature（内容比对），不靠这里的时序 ——
+  // 这个回调是 debounce 之后才跑的，任何「正在处理远端命令」的标志早已清掉。
+  void listenTogether.syncCurrentPlaylist();
+});
+
+watch(roomPlaylistSignature, (val, oldVal) => {
+  // 空签名 = 不在房间，进出房间本身不该触发上报。
+  if (!val || !oldVal || val === oldVal) return;
+  syncRoomPlaylist();
+});
+
 onMounted(() => {
   // 挂载方法
   window.$getPlaySongData = getPlaySongData;
-  // 获取音乐数据
-  if (music.getPlaylists[0] && music.getPlaySongData) {
-    const generation = ++_songLoadGeneration;
-    getPlaySongData(music.getPlaySongData, setting.songLevel, generation);
+
+  const startRestoredPlayback = () => {
+    if (music.getPlaylists[0] && music.getPlaySongData) {
+      const generation = ++_songLoadGeneration;
+      getPlaySongData(music.getPlaySongData, setting.songLevel, generation);
+    }
+  };
+
+  if (isTauri()) {
+    // The Rust process — and playback — outlives the WebView on Android: the
+    // page is destroyed and reloaded while audio keeps going. Ask the backend
+    // what it is playing BEFORE touching the restored (stale) snapshot,
+    // otherwise we resolve a URL for the track that was playing when the app
+    // was backgrounded and cut off live audio.
+    adoptNativeBackendSession()
+      .then((adopted) => {
+        pendingBackendAttach = adopted;
+      })
+      .catch((err) => {
+        console.warn("[Player] Backend session adoption failed:", err);
+        pendingBackendAttach = null;
+      })
+      .finally(() => {
+        // Adoption moves playSongIndex, which fires the sync song watcher and
+        // schedules its own debounced load. Drop that one and drive the load
+        // from here so the attach descriptor is consumed exactly once.
+        songChange.cancel({ upcomingOnly: true });
+        startRestoredPlayback();
+        // `getPlaySongData` consumes the descriptor synchronously when the ids
+        // match. Anything left over describes a track we are not loading, and
+        // must not be applied to some later selection of the same song.
+        pendingBackendAttach = null;
+      });
+  } else {
+    startRestoredPlayback();
   }
 
   // Tauri: wire up tray control listeners + state broadcasting
@@ -725,9 +815,12 @@ onMounted(() => {
     setupPlayerCommunication();
   }
 
-  // 一起听歌：从 URL 参数自动加入房间
+  // 一起听歌：URL 邀请优先（用户的显式动作），否则尝试恢复重载前的房间。
+  // 只在主窗口执行 —— 从窗口走 slave-main.ts / SlaveApp.vue，不挂载本组件。
   setTimeout(() => {
-    listenTogether.joinFromUrl();
+    void listenTogether.joinFromUrl().then((joined) => {
+      if (!joined) void listenTogether.resumePersistedRoom();
+    });
   }, 1000);
 });
 
@@ -760,10 +853,6 @@ watch(
       // 一起听歌：发送切歌命令（房主和房客均可）
       if (listenTogether.isInRoom && val?.id && !listenTogether.isProcessingRemoteCommand) {
         listenTogether.sendPlayCommand("GOTO");
-        // 仅房主同步播放列表
-        if (listenTogether.isHost) {
-          listenTogether.syncCurrentPlaylist();
-        }
       }
 
       // Update tray tooltip with current song info

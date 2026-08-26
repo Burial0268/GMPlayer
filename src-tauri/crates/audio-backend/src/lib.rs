@@ -25,6 +25,8 @@ mod output;
 #[cfg(not(target_arch = "wasm32"))]
 mod player;
 #[cfg(not(target_arch = "wasm32"))]
+mod rt_priority;
+#[cfg(not(target_arch = "wasm32"))]
 mod spectrum;
 mod types;
 #[cfg(target_arch = "wasm32")]
@@ -32,10 +34,16 @@ mod wasm;
 
 pub use error::{AudioError, AudioResult};
 #[cfg(not(target_arch = "wasm32"))]
-pub use player::Player;
+pub use player::{Player, PlayerEventSubscriber, SubscriberId};
+// The in-process NCM protocol layer lives in the host app (this crate also
+// builds for wasm32, where a QuickJS isolate has no place), so it is injected
+// rather than depended on. See `player::source_resolver`.
+#[cfg(not(target_arch = "wasm32"))]
+pub use player::source_resolver::{has_ncm_call_hook, install_ncm_call_hook, NcmCallHook};
 pub use types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
-    DisplayAudioInfo, PlaybackState, SongData, SpectrumConfig,
+    DisplayAudioInfo, NativePlaybackMode, NativeSessionSnapshot, NowPlayingInfo, PlaybackState,
+    SessionControls, SessionControlsPatch, SongData, SpectrumConfig, TrackIdentity,
 };
 #[cfg(target_arch = "wasm32")]
 pub use wasm::WasmAudioBackend;

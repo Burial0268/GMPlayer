@@ -345,6 +345,24 @@ pub enum AudioThreadMessage {
     /// changes, and at startup.
     #[serde(rename_all = "camelCase")]
     SetNativeResolverConfig { config: NativeResolverConfig },
+    /// Announce the track that is *about to* load, before its URL is resolved.
+    ///
+    /// Resolving a playback URL is a network round trip, and the download that
+    /// follows is another. Without this the OS media session keeps showing the
+    /// previous track for that whole window — the user presses next and nothing
+    /// visibly happens. Announcing decouples "what is playing" from "is it
+    /// ready", so the session swaps instantly and simply shows it as not yet
+    /// playing.
+    ///
+    /// Superseded by the real load: once a track with this identity is actually
+    /// loaded, the announcement is dropped and the normal projection takes
+    /// over. An announcement for a track that never loads is cleared by the
+    /// next announcement or by a load of anything else.
+    #[serde(rename_all = "camelCase")]
+    AnnounceTrack {
+        identity: TrackIdentity,
+        display: TrackDisplay,
+    },
     /// Enable/disable planner-driven advancement without dropping the
     /// manifest. Used to gate personal FM / listen-together.
     #[serde(rename_all = "camelCase")]
@@ -352,6 +370,31 @@ pub enum AudioThreadMessage {
     /// Request an authoritative `NativePlannerStatus` emission.
     #[serde(rename_all = "camelCase")]
     SyncNativePlannerStatus,
+    /// Arm or disarm the listen-together keepalive. `room_id: None` disarms.
+    ///
+    /// The heartbeat must outlive the WebView — on Android the page is
+    /// destroyed while playback continues, and a missed heartbeat drops the
+    /// user out of the room server-side.
+    #[serde(rename_all = "camelCase")]
+    SetListenTogetherRoom {
+        #[serde(default)]
+        room_id: Option<String>,
+    },
+    /// Push what the frontend knows about the session controls. A patch, so it
+    /// can report the play mode without claiming to know the like state and
+    /// vice versa.
+    #[serde(rename_all = "camelCase")]
+    SetSessionControls { controls: SessionControlsPatch },
+    /// Advance the play mode one step around the ring. An *intent*, not a value:
+    /// it comes from a notification button that cannot know what the current
+    /// mode is, so the backend — which does — resolves it.
+    SetNextPlayMode,
+    /// Toggle the loaded track's like state, performing the account call.
+    ///
+    /// The backend owns the side effect because the button has to work with no
+    /// WebView alive, which is the only time the notification is the user's
+    /// only UI.
+    ToggleFavourite,
 }
 
 /// Events emitted from player → frontend (via Tauri event emit).
@@ -360,7 +403,17 @@ pub enum AudioThreadMessage {
 #[serde(tag = "type", content = "data")]
 pub enum AudioThreadEvent {
     #[serde(rename_all = "camelCase")]
-    PlayPosition { position: f64 },
+    PlayPosition {
+        position: f64,
+        /// Which timeline this position belongs to — see `PlayerClock::epoch`.
+        ///
+        /// A subscriber that holds a different epoch has not adopted this track
+        /// yet and must drop the packet rather than reconcile it against the
+        /// clock it still holds: the `LoadAudio`/`SyncStatus` carrying the same
+        /// epoch is what anchors it, and that one arrives right behind this.
+        #[serde(default)]
+        timeline_epoch: u64,
+    },
     #[serde(rename_all = "camelCase")]
     LoadProgress { position: f64 },
     #[serde(rename_all = "camelCase")]
@@ -370,6 +423,18 @@ pub enum AudioThreadEvent {
         quality: AudioQuality,
         current_play_index: usize,
         load_request_id: Option<u64>,
+        /// Stable identity of the loaded track, when the backend knows it
+        /// (planner-driven load, or a frontend load already re-anchored by a
+        /// manifest). `music_id` is `local:<cdn-url>` and therefore changes on
+        /// every re-resolve, so it can never be used to reconcile across a
+        /// WebView reload — this can.
+        #[serde(default)]
+        identity: Option<TrackIdentity>,
+        /// Timeline this load started. Authoritative signal that the clock the
+        /// subscriber holds is retired, on every path — including the ones where
+        /// neither `identity` nor `music_id` changed observably.
+        #[serde(default)]
+        timeline_epoch: u64,
     },
     #[serde(rename_all = "camelCase")]
     LoadingAudio {
@@ -392,6 +457,12 @@ pub enum AudioThreadEvent {
         current_play_index: usize,
         playlist_inited: bool,
         quality: AudioQuality,
+        /// Stable identity of the playing track — see `LoadAudio::identity`.
+        #[serde(default)]
+        identity: Option<TrackIdentity>,
+        /// Timeline this snapshot describes — see `LoadAudio::timeline_epoch`.
+        #[serde(default)]
+        timeline_epoch: u64,
     },
     #[serde(rename_all = "camelCase")]
     PlayListChanged {
@@ -486,6 +557,18 @@ pub enum AudioThreadEvent {
         attempted: usize,
         reason: String,
     },
+    /// Resolved display metadata for the current track. Consumed in-process by
+    /// the OS media-session bridge (which keeps working while the WebView is
+    /// gone) and by the frontend for reconciliation.
+    #[serde(rename_all = "camelCase")]
+    NowPlayingChanged { info: NowPlayingInfo },
+    /// The authoritative session controls changed, whoever asked for it.
+    ///
+    /// Emitted only on a real change (see [`SessionControls::apply`]) so the
+    /// frontend can adopt it unconditionally without the adopt→republish→adopt
+    /// loop an echo would create.
+    #[serde(rename_all = "camelCase")]
+    SessionControlsChanged { controls: SessionControls },
 }
 
 /// Wrapper message that carries a `callback_id` for request/response
@@ -591,6 +674,15 @@ pub struct NativeManifestEntry {
     pub title: Option<String>,
     #[serde(default)]
     pub artist: Option<String>,
+    /// Album name. Display-only, but the backend needs it because it drives the
+    /// OS media session for tracks it advanced to on its own — the frontend may
+    /// not be alive to describe them.
+    #[serde(default)]
+    pub album: Option<String>,
+    /// Cover art URL (https). Same rationale as `album`; the platform media
+    /// session fetches it natively, so no bytes cross this boundary.
+    #[serde(default)]
+    pub artwork_url: Option<String>,
     #[serde(default)]
     pub duration_ms: Option<u64>,
     /// Netease `fee` field, mirrored so the Rust resolver can apply the same
@@ -666,14 +758,34 @@ pub struct NativeResolverConfig {
     /// NCM cookie (`MUSIC_U=...`). Sensitive: redacted in all logs.
     #[serde(default)]
     pub cookie: Option<String>,
+    /// Netease user id of the signed-in account.
+    ///
+    /// Needed because `/likelist` is keyed by `uid`, and the backend has to be
+    /// able to answer "is this track liked" for itself: the notification's heart
+    /// is drawn while the WebView is dead, which is exactly when nothing can
+    /// tell it. `None` means signed out — no like list, no heart.
+    #[serde(default)]
+    pub user_id: Option<String>,
     /// Quality level string passed straight through to `/song/url/v1`.
     #[serde(default)]
     pub level: Option<String>,
+    /// Whether the frontend selected the in-process protocol layer. Playback
+    /// resolution follows the same choice as the UI: split transports would
+    /// mean two sessions and two source IPs, with only one of them benefiting.
+    #[serde(default)]
+    pub use_local_ncm: bool,
 }
 
 impl NativeResolverConfig {
     /// Whether the config can drive an NCM lookup at all.
     pub fn is_usable(&self) -> bool {
+        // The in-process layer needs no base URL, but it does need to actually
+        // be installed. On the web build there is no `player` module at all,
+        // hence the cfg — a QuickJS isolate has no place in wasm32.
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.use_local_ncm && crate::player::source_resolver::has_ncm_call_hook() {
+            return true;
+        }
         self.ncm_base_url
             .as_deref()
             .is_some_and(|base| !base.trim().is_empty())
@@ -702,6 +814,186 @@ pub struct NativePlannerStatus {
     pub prepared_identity: Option<TrackIdentity>,
     pub failure_count: usize,
     pub exhausted: bool,
+    /// Whether the planner is allowed to choose the next track at all.
+    ///
+    /// Distinct from "a manifest is loaded": server-driven modes (personal FM,
+    /// listen-together) still publish a manifest so the backend can resolve a
+    /// track it is *told* to play, but must not advance on their own. The
+    /// frontend needs this to decide whether to wait for a backend-initiated
+    /// advance at track end or run its own transition immediately.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// Authoritative snapshot of the live playback session, readable synchronously
+/// (no round-trip through the player message loop) via the `audio_get_session`
+/// command.
+///
+/// This exists for one reason: on Android the WebView is destroyed and the page
+/// reloaded while the Rust process — and playback — survives. The reloaded
+/// frontend rehydrates from persisted storage, which describes the track that
+/// was playing when the app went to the background, not what is playing now.
+/// Without an authoritative read the frontend would re-`SetPlaylist` that stale
+/// track and roll playback back. The boot path asks here first and adopts.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSessionSnapshot {
+    /// `false` when nothing is loaded — the frontend then owns startup as before.
+    pub has_track: bool,
+    /// Transport id (`local:<url>`). Only useful for re-seeding a controller's
+    /// expected id; never for reconciliation (see `identity`).
+    pub music_id: String,
+    /// Stable identity of the playing track, when known.
+    pub identity: Option<TrackIdentity>,
+    pub playlist_index: usize,
+    pub position: f64,
+    pub duration: f64,
+    pub is_playing: bool,
+    pub volume: f64,
+    /// Manifest revision the backend currently holds, so the frontend can keep
+    /// its own monotonic counter ahead of it without waiting for an event.
+    pub manifest_revision: u64,
+    /// Whether the planner is in a position to drive advancement right now.
+    pub planner_active: bool,
+}
+
+/// Resolved "what is playing" for OS media sessions.
+///
+/// The backend must be able to describe a track it advanced to on its own, with
+/// no JS runtime alive — that is the whole point of driving the media session
+/// from Rust. Streamed tracks carry no file tags, so the display fields come
+/// from the manifest entry; local files fall back to the decoder's tag read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NowPlayingInfo {
+    /// `false` when nothing is loaded — the session should be cleared.
+    pub has_track: bool,
+    pub identity: Option<TrackIdentity>,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    /// Cover art URL. Fetched natively by the platform layer, so no image bytes
+    /// cross this boundary.
+    pub artwork_url: Option<String>,
+    pub duration: f64,
+    pub position: f64,
+    pub is_playing: bool,
+    /// A source resolve / download / decoder open is in flight for this track.
+    ///
+    /// Distinct from `!is_playing`: "paused" is a state the user chose, this
+    /// one is "working on it". The OS session renders it as buffering, which
+    /// is the only thing that makes a slow start look different from a dead
+    /// play button.
+    pub is_loading: bool,
+    pub playlist_index: usize,
+    /// User-facing controls projected alongside the track — see
+    /// [`SessionControls`]. Carried here rather than on a separate event because
+    /// the OS session renders them next to the metadata and a subscriber that
+    /// received one without the other would render a half-updated notification.
+    pub controls: SessionControls,
+}
+
+/// Session controls that are *not* audio state.
+///
+/// The transport fields on [`NowPlayingInfo`] are derived from the decoder;
+/// these are the user's own choices (play mode) and their account state
+/// (favourite). They are projected onto every surface and settable from every
+/// surface, so the backend holds the one copy all three agree on: the frontend
+/// pushes what it knows through `SetSessionControls`, the OS pushes intents
+/// through `CyclePlayMode` / `ToggleFavourite`, and `SessionControlsChanged`
+/// fans the result back out. Nothing else may write them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionControls {
+    pub play_mode: NativePlaybackMode,
+    /// Whether the loaded track is in the user's 我喜欢的音乐.
+    pub favourite: bool,
+    /// Whether toggling is possible at all. A logged-out user, or a track with
+    /// no Netease identity, has nothing to like — and a control the OS renders
+    /// but cannot honour is worse than one it does not render.
+    pub can_favourite: bool,
+}
+
+/// Partial update to [`SessionControls`]. Absent fields are left alone, which is
+/// what lets the frontend push what it knows (play mode, likelist membership)
+/// without claiming authority over the rest.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionControlsPatch {
+    #[serde(default)]
+    pub play_mode: Option<NativePlaybackMode>,
+    #[serde(default)]
+    pub favourite: Option<bool>,
+    #[serde(default)]
+    pub can_favourite: Option<bool>,
+}
+
+impl SessionControls {
+    /// Apply a patch, reporting whether anything actually changed.
+    ///
+    /// The bool is load-bearing: every writer round-trips through
+    /// `SessionControlsChanged`, so an unconditional emit would have the
+    /// frontend adopt its own push, republish, and emit again.
+    pub fn apply(&mut self, patch: &SessionControlsPatch) -> bool {
+        let next = SessionControls {
+            play_mode: patch.play_mode.unwrap_or(self.play_mode),
+            favourite: patch.favourite.unwrap_or(self.favourite),
+            can_favourite: patch.can_favourite.unwrap_or(self.can_favourite),
+        };
+        let changed = next != *self;
+        *self = next;
+        changed
+    }
+}
+
+impl NativePlaybackMode {
+    /// Next mode for a single OS-side press.
+    ///
+    /// Mirrors the frontend's own cycle in `musicData.setPlaySongMode`, because
+    /// a user cycling from the notification and from the app must walk the same
+    /// ring — they are the same setting.
+    pub fn cycled(self) -> Self {
+        match self {
+            Self::Normal => Self::Random,
+            Self::Random => Self::Single,
+            Self::Single => Self::Normal,
+        }
+    }
+}
+
+impl Default for NowPlayingInfo {
+    fn default() -> Self {
+        Self {
+            has_track: false,
+            identity: None,
+            title: String::new(),
+            artist: String::new(),
+            album: String::new(),
+            artwork_url: None,
+            duration: 0.0,
+            position: 0.0,
+            is_playing: false,
+            is_loading: false,
+            playlist_index: 0,
+            controls: SessionControls::default(),
+        }
+    }
+}
+
+impl NowPlayingInfo {
+    /// Whether two snapshots describe the same track with the same display
+    /// text. Position/playing/loading state deliberately excluded: those ride
+    /// on `PlayPosition`/`PlayStatus`/`LoadingAudio` and must not force a
+    /// metadata rebuild (which on Android re-downloads the artwork).
+    pub fn same_metadata(&self, other: &Self) -> bool {
+        self.has_track == other.has_track
+            && self.identity == other.identity
+            && self.title == other.title
+            && self.artist == other.artist
+            && self.album == other.album
+            && self.artwork_url == other.artwork_url
+            && self.duration == other.duration
+    }
 }
 
 /// Song data matching AMLL's `SongData` — used in SetPlaylist and SyncStatus.
@@ -712,13 +1004,45 @@ pub enum SongData {
     Local {
         file_path: String,
         orig_order: usize,
+        /// Display metadata for the OS media session, sent with the track.
+        ///
+        /// Every streamed track arrives as `Local` with an https `file_path`,
+        /// and the backend downloads it to a temp file before decoding. Without
+        /// this the only name available at load time is that temp file's stem —
+        /// a random string — so the notification showed garbage until a decoded
+        /// tag or a `/song/detail` round trip corrected it.
+        ///
+        /// Optional so older frontends and hand-built rows still deserialize;
+        /// absent simply means "fall back to tags".
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<TrackDisplay>,
     },
     #[serde(rename_all = "camelCase")]
     Custom {
         id: String,
         song_json_data: String,
         orig_order: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        display: Option<TrackDisplay>,
     },
+}
+
+/// Caller-supplied display metadata, carried alongside a queued track.
+///
+/// Deliberately a flat typed struct rather than a JSON blob: this is on the hot
+/// path of every track change, and the backend should not be parsing an
+/// arbitrary song document to find a title.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct TrackDisplay {
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    #[serde(default)]
+    pub artwork_url: Option<String>,
 }
 
 impl SongData {
@@ -791,5 +1115,287 @@ impl Default for AudioQuality {
             sample_rate: 44100,
             channels: 2,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The frontend reconciles a WebView reload by comparing these exact
+    /// strings (`src/utils/tauri/audio/identity.ts::trackIdentityKey`). A change
+    /// here silently breaks adoption — playback would rewind to the persisted
+    /// track on every app resume — so pin the format.
+    #[test]
+    fn track_identity_key_format_is_pinned() {
+        assert_eq!(
+            TrackIdentity::Netease { id: "123".into() }.key(),
+            "netease:123"
+        );
+        assert_eq!(
+            TrackIdentity::Local {
+                path: "/music/a.flac".into()
+            }
+            .key(),
+            "local-file:/music/a.flac"
+        );
+    }
+
+    /// `audio_get_session` is read by the boot path before it commits to
+    /// loading anything; the field names must match
+    /// `NativeSessionSnapshot` in `src/utils/tauri/audio/protocol/manifest.ts`.
+    #[test]
+    fn session_snapshot_uses_camel_case_wire_names() {
+        let snapshot = NativeSessionSnapshot {
+            has_track: true,
+            music_id: "local:https://cdn/a.mp3".into(),
+            identity: Some(TrackIdentity::Netease { id: "7".into() }),
+            playlist_index: 4,
+            position: 12.5,
+            duration: 200.0,
+            is_playing: true,
+            volume: 0.8,
+            manifest_revision: 9,
+            planner_active: true,
+        };
+        let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
+        let object = value.as_object().expect("object");
+
+        for key in [
+            "hasTrack",
+            "musicId",
+            "identity",
+            "playlistIndex",
+            "position",
+            "duration",
+            "isPlaying",
+            "volume",
+            "manifestRevision",
+            "plannerActive",
+        ] {
+            assert!(object.contains_key(key), "missing wire field `{key}`");
+        }
+        assert_eq!(object["identity"]["provider"], "netease");
+        assert_eq!(object["identity"]["id"], "7");
+    }
+
+    /// A `SyncStatus` without an identity must still deserialize: the backend
+    /// omits it for frontend-driven loads that no manifest has anchored yet.
+    #[test]
+    fn sync_status_identity_is_optional_on_the_wire() {
+        let json = serde_json::json!({
+            "type": "syncStatus",
+            "data": {
+                "musicId": "local:x",
+                "musicInfo": serde_json::to_value(DisplayAudioInfo::default()).unwrap(),
+                "isPlaying": false,
+                "duration": 0.0,
+                "position": 0.0,
+                "volume": 1.0,
+                "loadPosition": 0.0,
+                "playlist": [],
+                "currentPlayIndex": 0,
+                "playlistInited": false,
+                "quality": serde_json::to_value(AudioQuality::default()).unwrap(),
+            }
+        });
+        let event: AudioThreadEvent = serde_json::from_value(json).expect("deserialize");
+        match event {
+            AudioThreadEvent::SyncStatus { identity, .. } => assert!(identity.is_none()),
+            other => panic!("unexpected variant: {other:?}"),
+        }
+    }
+
+    /// Server-driven modes (personal FM, listen-together) publish a manifest but
+    /// gate the planner off. The frontend reads `enabled` to decide whether to
+    /// wait for a backend advance at track end; if it went missing, every track
+    /// change in those modes would stall behind the adoption fallback timer.
+    #[test]
+    fn planner_status_carries_the_gate_and_defaults_to_enabled() {
+        let status = NativePlannerStatus {
+            manifest_revision: 3,
+            cursor_identity: None,
+            cursor_index: None,
+            playback_state: NativePlannerPlaybackState::Playing,
+            prepared_identity: None,
+            failure_count: 0,
+            exhausted: false,
+            enabled: false,
+        };
+        let value = serde_json::to_value(&status).expect("serialize");
+        assert_eq!(value["enabled"], false, "gate must reach the frontend");
+
+        // An older payload without the field must read as enabled — that was
+        // the behaviour before the gate existed.
+        let legacy = serde_json::json!({
+            "manifestRevision": 1,
+            "cursorIdentity": null,
+            "cursorIndex": null,
+            "playbackState": "playing",
+            "preparedIdentity": null,
+            "failureCount": 0,
+            "exhausted": false,
+        });
+        let back: NativePlannerStatus = serde_json::from_value(legacy).expect("deserialize");
+        assert!(back.enabled);
+    }
+
+    /// The media bridge rebuilds notification metadata only when this says the
+    /// track changed. On Android a rebuild re-downloads the artwork, and
+    /// `NowPlayingChanged` is emitted from `sync_ui` — which also fires on
+    /// seeks and output-device rebuilds. If position or playing state leaked
+    /// into the comparison, every seek would re-fetch the cover.
+    #[test]
+    fn now_playing_metadata_equality_ignores_position_and_play_state() {
+        let base = NowPlayingInfo {
+            has_track: true,
+            identity: Some(TrackIdentity::Netease { id: "1".into() }),
+            title: "t".into(),
+            artist: "a".into(),
+            album: "al".into(),
+            artwork_url: Some("https://img/x".into()),
+            duration: 200.0,
+            position: 10.0,
+            is_playing: true,
+            is_loading: false,
+            playlist_index: 3,
+            controls: SessionControls::default(),
+        };
+
+        let seeked = NowPlayingInfo {
+            position: 150.0,
+            is_playing: false,
+            playlist_index: 9,
+            ..base.clone()
+        };
+        assert!(base.same_metadata(&seeked), "a seek must not rebuild metadata");
+
+        // Buffering rides on the load events, not on a metadata rebuild —
+        // otherwise every track start would re-download the cover twice.
+        let buffering = NowPlayingInfo {
+            is_loading: true,
+            ..base.clone()
+        };
+        assert!(
+            base.same_metadata(&buffering),
+            "a load transition must not rebuild metadata"
+        );
+
+        let next_track = NowPlayingInfo {
+            identity: Some(TrackIdentity::Netease { id: "2".into() }),
+            ..base.clone()
+        };
+        assert!(!base.same_metadata(&next_track), "a track change must rebuild");
+
+        let retitled = NowPlayingInfo {
+            title: "t2".into(),
+            ..base.clone()
+        };
+        assert!(!base.same_metadata(&retitled));
+
+        let recovered_duration = NowPlayingInfo {
+            duration: 201.0,
+            ..base.clone()
+        };
+        assert!(
+            !base.same_metadata(&recovered_duration),
+            "duration reaches the seek bar, so it must refresh"
+        );
+
+        // Session controls travel *with* the projection but must not force a
+        // rebuild on their own — `apply_controls` handles them, and cycling
+        // shuffle should not cost an artwork download.
+        let shuffled = NowPlayingInfo {
+            controls: SessionControls {
+                play_mode: NativePlaybackMode::Random,
+                favourite: true,
+                can_favourite: true,
+            },
+            ..base.clone()
+        };
+        assert!(
+            base.same_metadata(&shuffled),
+            "a controls change must not rebuild metadata"
+        );
+
+        let stopped = NowPlayingInfo::default();
+        assert!(!base.same_metadata(&stopped));
+    }
+
+    /// A patch reports whether it changed anything, and that bool gates the
+    /// event. Without it every writer would re-emit its own push, the frontend
+    /// would adopt it, republish, and the three surfaces would trade the same
+    /// value forever.
+    #[test]
+    fn a_no_op_patch_reports_no_change() {
+        let mut controls = SessionControls {
+            play_mode: NativePlaybackMode::Random,
+            favourite: true,
+            can_favourite: true,
+        };
+
+        // Empty patch: nothing claimed, nothing changed.
+        assert!(!controls.apply(&SessionControlsPatch::default()));
+        // Same values restated — this is the echo case.
+        assert!(!controls.apply(&SessionControlsPatch {
+            play_mode: Some(NativePlaybackMode::Random),
+            favourite: Some(true),
+            can_favourite: Some(true),
+        }));
+        assert!(controls.apply(&SessionControlsPatch {
+            favourite: Some(false),
+            ..Default::default()
+        }));
+        assert!(!controls.favourite);
+        assert_eq!(
+            controls.play_mode,
+            NativePlaybackMode::Random,
+            "an absent field must be left alone, not defaulted"
+        );
+    }
+
+    /// The OS button sends "next mode", so both rings have to agree — the app's
+    /// own cycle is normal → random → single.
+    #[test]
+    fn play_mode_cycles_the_same_ring_as_the_app() {
+        let mut mode = NativePlaybackMode::Normal;
+        let mut seen = Vec::new();
+        for _ in 0..4 {
+            mode = mode.cycled();
+            seen.push(mode);
+        }
+        assert_eq!(
+            seen,
+            vec![
+                NativePlaybackMode::Random,
+                NativePlaybackMode::Single,
+                NativePlaybackMode::Normal,
+                NativePlaybackMode::Random,
+            ]
+        );
+    }
+
+    /// Manifest entries carry the display metadata the OS media session needs
+    /// for tracks the backend advanced to on its own.
+    #[test]
+    fn manifest_entry_round_trips_display_metadata() {
+        let entry = NativeManifestEntry {
+            identity: TrackIdentity::Netease { id: "1".into() },
+            playlist_index: 0,
+            title: Some("t".into()),
+            artist: Some("a".into()),
+            album: Some("al".into()),
+            artwork_url: Some("https://img/x?param=512y512".into()),
+            duration_ms: Some(225_000),
+            fee: Some(1),
+            has_pc: false,
+        };
+        let json = serde_json::to_string(&entry).expect("serialize");
+        assert!(json.contains("\"artworkUrl\""), "camelCase artworkUrl: {json}");
+        assert!(json.contains("\"durationMs\""), "camelCase durationMs: {json}");
+
+        let back: NativeManifestEntry = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.album.as_deref(), Some("al"));
+        assert_eq!(back.duration_ms, Some(225_000));
     }
 }

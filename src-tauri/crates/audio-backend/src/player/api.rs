@@ -53,6 +53,29 @@ impl EventBuffer {
 
 // ── Public Player API ───────────────────────────────────────────
 
+/// An in-process consumer of the player's event stream.
+///
+/// Registered through [`Player::subscribe`]. This is how platform glue that
+/// must keep working while the WebView is dead — the OS media session,
+/// listen-together keepalive — observes playback without going through JS.
+///
+/// Subscribers see every event the frontend sees **except** the high-rate
+/// analysis frames (`FFTData`, `LowFrequencyVolume`). Those are ~30 Hz of
+/// multi-kilobyte payloads that go straight to the webview channel without a
+/// clone; no in-process consumer has a use for them, and putting them through a
+/// fan-out would add a per-subscriber copy to the hot path for nothing.
+///
+/// Implementations must not block: `on_event` runs on the single event
+/// forwarding task, ahead of every later event. They must also not call
+/// [`Player::subscribe`] / [`Player::unsubscribe`] from inside `on_event` —
+/// the registry lock is held across the call.
+pub trait PlayerEventSubscriber: Send + Sync {
+    fn on_event(&self, event: &AudioThreadEvent);
+}
+
+/// Handle returned by [`Player::subscribe`], used to detach again.
+pub type SubscriberId = u64;
+
 pub struct Player {
     msg_tx: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadMessage>>,
     seek_tx: mpsc::UnboundedSender<SeekRequest>,
@@ -76,6 +99,13 @@ pub struct PlayerShared {
     /// fails (webview reload), it falls back to a Tauri global `emit`.
     pub event_channel:
         parking_lot::Mutex<Option<Channel<AudioThreadEventMessage<AudioThreadEvent>>>>,
+    /// Authoritative session snapshot, written by the `AudioPlayer` thread and
+    /// read synchronously by `audio_get_session`. Shares the same allocation as
+    /// `AudioPlayer::session`.
+    pub session: Arc<parking_lot::Mutex<NativeSessionSnapshot>>,
+    /// In-process event consumers. See [`PlayerEventSubscriber`].
+    pub subscribers: parking_lot::RwLock<Vec<(SubscriberId, Arc<dyn PlayerEventSubscriber>)>>,
+    next_subscriber_id: AtomicU64,
 }
 
 impl Player {
@@ -85,6 +115,7 @@ impl Player {
         let (evt_tx, mut evt_rx) =
             mpsc::unbounded_channel::<AudioThreadEventMessage<AudioThreadEvent>>();
 
+        let session = Arc::new(parking_lot::Mutex::new(NativeSessionSnapshot::default()));
         let shared = Arc::new(PlayerShared {
             state: AtomicU8::new(PlaybackState::Stopped as u8),
             position_ms: AtomicU64::new(0),
@@ -92,6 +123,9 @@ impl Player {
             event_poll_active: AtomicBool::new(false),
             event_buf: parking_lot::Mutex::new(EventBuffer::new(0)),
             event_channel: parking_lot::Mutex::new(None),
+            session: Arc::clone(&session),
+            subscribers: parking_lot::RwLock::new(Vec::new()),
+            next_subscriber_id: AtomicU64::new(1),
         });
 
         // Forward events from the internal evt channel → the frontend's
@@ -115,16 +149,25 @@ impl Player {
                 let mut droppable = false;
                 if let Some(event) = &evt_msg.data {
                     update_shared_from_event(&shared_clone, event);
-                    if should_buffer_poll_event(event) {
-                        if shared_clone.event_poll_active.load(Ordering::Relaxed) {
-                            shared_clone.event_buf.lock().push(event.clone());
-                        }
-                    } else {
+                    if is_analysis_frame(event) {
                         // High-rate FFT/lowFreq frames: the next frame supersedes
                         // this one anyway, so skip the fallback global emit and
                         // the pre-emptive clone it requires (an ~8KB copy at
-                        // 30 Hz for FFT during steady playback).
+                        // 30 Hz for FFT during steady playback). Deliberately
+                        // also skipped for the poll buffer and the subscriber
+                        // fan-out — see `PlayerEventSubscriber`.
                         droppable = true;
+                    } else {
+                        if shared_clone.event_poll_active.load(Ordering::Relaxed) {
+                            shared_clone.event_buf.lock().push(event.clone());
+                        }
+                        // Fan out to in-process consumers (media session,
+                        // listen-together keepalive). These keep working while
+                        // the WebView is gone, which is the whole point.
+                        let subscribers = shared_clone.subscribers.read();
+                        for (_, subscriber) in subscribers.iter() {
+                            subscriber.on_event(event);
+                        }
                     }
                 }
                 let channel = shared_clone.event_channel.lock().clone();
@@ -189,7 +232,7 @@ impl Player {
                     .build()
                     .expect("Build tokio runtime");
                 rt.block_on(async move {
-                    let player = match AudioPlayer::new(msg_rx, seek_rx, evt_tx).await {
+                    let player = match AudioPlayer::new(msg_rx, seek_rx, evt_tx, session).await {
                         Ok(p) => p,
                         Err(e) => {
                             warn!("创建音频播放器失败：{e:?}");
@@ -260,6 +303,13 @@ impl Player {
         self.state() == PlaybackState::Playing
     }
 
+    /// Snapshot of the live playback session. Synchronous — no round-trip
+    /// through the player message loop, so a booting frontend can ask "what are
+    /// you playing?" before it commits to loading anything.
+    pub fn session(&self) -> NativeSessionSnapshot {
+        self.shared.session.lock().clone()
+    }
+
     pub fn poll_events(&self, session_id: u64) -> Vec<AudioThreadEvent> {
         self.shared.event_poll_active.store(true, Ordering::Relaxed);
         self.shared.event_buf.lock().drain(session_id)
@@ -268,6 +318,24 @@ impl Player {
     pub fn set_session(&self, session_id: u64) {
         self.shared.event_poll_active.store(true, Ordering::Relaxed);
         self.shared.event_buf.lock().reset(session_id);
+    }
+
+    /// Register an in-process event consumer. See [`PlayerEventSubscriber`].
+    ///
+    /// Returns a [`SubscriberId`] for [`Player::unsubscribe`]. Registering the
+    /// same logical consumer twice delivers every event twice — hold the id.
+    pub fn subscribe(&self, subscriber: Arc<dyn PlayerEventSubscriber>) -> SubscriberId {
+        let id = self.shared.next_subscriber_id.fetch_add(1, Ordering::Relaxed);
+        self.shared.subscribers.write().push((id, subscriber));
+        id
+    }
+
+    /// Detach a subscriber. Unknown ids are ignored.
+    pub fn unsubscribe(&self, id: SubscriberId) {
+        self.shared
+            .subscribers
+            .write()
+            .retain(|(existing, _)| *existing != id);
     }
 
     /// Register the frontend event `Channel`. The event forwarder streams all
@@ -309,7 +377,7 @@ fn update_shared_from_event(shared: &Arc<PlayerShared>, event: &AudioThreadEvent
             };
             s.store(&shared.state);
         }
-        AudioThreadEvent::PlayPosition { position } => {
+        AudioThreadEvent::PlayPosition { position, .. } => {
             shared
                 .position_ms
                 .store((position * 1000.0).max(0.0) as u64, Ordering::Relaxed);
@@ -340,8 +408,12 @@ fn update_shared_from_event(shared: &Arc<PlayerShared>, event: &AudioThreadEvent
     }
 }
 
-fn should_buffer_poll_event(event: &AudioThreadEvent) -> bool {
-    !matches!(
+/// High-rate analysis output. These are excluded from the poll buffer, the
+/// global-emit fallback and the subscriber fan-out: each frame is superseded by
+/// the next, so a dropped one costs nothing, while copying it per consumer at
+/// ~30 Hz costs real bandwidth on the forwarding task.
+fn is_analysis_frame(event: &AudioThreadEvent) -> bool {
+    matches!(
         event,
         AudioThreadEvent::FFTData { .. } | AudioThreadEvent::LowFrequencyVolume { .. }
     )
@@ -433,5 +505,71 @@ impl PlayerHandle {
         self.seek_tx
             .send(SeekRequest::new(position, request_id, expected_music_id))
             .map_err(|_| AudioError::ThreadError("player seek channel closed".into()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{AudioQuality, DisplayAudioInfo};
+
+    /// The subscriber fan-out and the poll buffer are both gated on this. It is
+    /// the only thing keeping ~30 Hz multi-kilobyte frames off the bus, so a new
+    /// high-rate event that forgets to land here would silently start copying
+    /// itself to every in-process consumer.
+    #[test]
+    fn only_fft_and_low_freq_count_as_analysis_frames() {
+        assert!(is_analysis_frame(&AudioThreadEvent::FFTData {
+            data: vec![0.0; 2048]
+        }));
+        assert!(is_analysis_frame(&AudioThreadEvent::LowFrequencyVolume {
+            volume: 0.5
+        }));
+
+        // Everything a subscriber actually needs must pass through.
+        assert!(!is_analysis_frame(&AudioThreadEvent::PlayStatus {
+            is_playing: true
+        }));
+        assert!(!is_analysis_frame(&AudioThreadEvent::PlayPosition {
+            position: 12.0,
+            timeline_epoch: 1,
+        }));
+        assert!(!is_analysis_frame(&AudioThreadEvent::LoadAudio {
+            music_id: "local:x".into(),
+            music_info: DisplayAudioInfo::default(),
+            quality: AudioQuality::default(),
+            current_play_index: 0,
+            load_request_id: None,
+            identity: None,
+            timeline_epoch: 1,
+        }));
+        assert!(!is_analysis_frame(&AudioThreadEvent::AudioPlayFinished {
+            music_id: "local:x".into()
+        }));
+    }
+
+    /// `PlayerShared` is what the forwarder walks; registration must be
+    /// append-only and removal must be exact, or an unsubscribed media-session
+    /// sink would keep receiving events after its window is gone.
+    #[test]
+    fn subscriber_registry_adds_and_removes_by_id() {
+        struct Noop;
+        impl PlayerEventSubscriber for Noop {
+            fn on_event(&self, _event: &AudioThreadEvent) {}
+        }
+
+        let registry: parking_lot::RwLock<Vec<(SubscriberId, Arc<dyn PlayerEventSubscriber>)>> =
+            parking_lot::RwLock::new(Vec::new());
+        registry.write().push((1, Arc::new(Noop)));
+        registry.write().push((2, Arc::new(Noop)));
+        assert_eq!(registry.read().len(), 2);
+
+        registry.write().retain(|(existing, _)| *existing != 1);
+        assert_eq!(registry.read().len(), 1);
+        assert_eq!(registry.read()[0].0, 2);
+
+        // Unknown ids are a no-op, not a panic.
+        registry.write().retain(|(existing, _)| *existing != 99);
+        assert_eq!(registry.read().len(), 1);
     }
 }
