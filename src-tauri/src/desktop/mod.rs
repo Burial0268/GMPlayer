@@ -99,6 +99,7 @@ pub fn run() {
             window::commands::set_ignore_cursor_events,
             window::commands::resize_window,
             window::commands::quit_app,
+            window::commands::flush_persisted_state,
             window::commands::get_cursor_position,
             window::commands::get_window_bounds,
             // Desktop lyrics commands

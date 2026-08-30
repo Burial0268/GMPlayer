@@ -1,6 +1,6 @@
 import { computed, markRaw, reactive } from "vue";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
-import { isTauri } from "@/utils/tauri";
+import { isTauri, windowManager } from "@/utils/tauri";
 
 type UpdaterStatus =
   | "idle"
@@ -65,6 +65,19 @@ const releaseUpdate = async () => {
   state.update = null;
 };
 
+/**
+ * Persist what the run loop would have persisted, because the installer will
+ * not let it run. Best effort: a failure here is not worth aborting an update
+ * the user already accepted.
+ */
+const flushPersistedStateBeforeExit = async () => {
+  try {
+    await windowManager.flushPersistedState();
+  } catch (error) {
+    console.warn("[app-updater] flushing persisted state failed:", error);
+  }
+};
+
 export function useAppUpdater() {
   const supported = computed(() => isTauri());
   const hasUpdate = computed(() => state.status === "available" && !!state.update);
@@ -127,7 +140,7 @@ export function useAppUpdater() {
       resetDownloadStats();
 
       try {
-        await update.downloadAndInstall((event: DownloadEvent) => {
+        await update.download((event: DownloadEvent) => {
           if (event.event === "Started") {
             state.status = "downloading";
             state.contentLength = event.data.contentLength ?? 0;
@@ -153,6 +166,18 @@ export function useAppUpdater() {
             state.downloadSpeed = 0;
           }
         });
+
+        // Deliberately not `downloadAndInstall`: `install()` hands off to the
+        // NSIS/MSI installer and ends in `std::process::exit(0)`, which skips
+        // the Tauri run loop — so `RunEvent::Exit` never fires and the two
+        // plugins that only write there (window-state, pinia) lose everything
+        // they were holding. That is why window geometry came back wrong after
+        // an update. Splitting the call gives us a point where the process is
+        // still ours; doing it from the `Finished` callback would not, since
+        // nothing on the Rust side waits for that channel message.
+        await flushPersistedStateBeforeExit();
+
+        await update.install();
         state.installedVersion = update.version;
         state.status = "installed";
         await releaseUpdate();

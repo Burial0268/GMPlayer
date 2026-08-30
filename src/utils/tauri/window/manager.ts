@@ -130,6 +130,18 @@ export const windowManager = {
   },
 
   /**
+   * Write out everything that is otherwise only persisted on `RunEvent::Exit`
+   * (window geometry, Pinia stores).
+   *
+   * For callers that end the process without going through the Tauri run loop —
+   * in practice the OTA updater, which spawns the installer and then calls
+   * `std::process::exit(0)`.
+   */
+  async flushPersistedState(): Promise<void> {
+    await invoke("flush_persisted_state");
+  },
+
+  /**
    * Update the native window effect tint color (e.g. Acrylic on Windows).
    */
   async setWindowEffectColor(
