@@ -1,5 +1,5 @@
 <template>
-  <div class="album" v-if="albumDetail">
+  <div :class="['album', { 'is-dark': setting.getSiteTheme === 'dark' }]" v-if="albumDetail">
     <div class="left">
       <div class="cover">
         <n-image
@@ -97,13 +97,28 @@
           </div>
         </n-space>
       </div>
+      <div class="list-toolbar">
+        <n-input
+          class="list-search"
+          :class="{ 'has-value': !!searchKeyword }"
+          v-model:value="searchKeyword"
+          clearable
+          size="small"
+          :placeholder="t('general.name.filterInList')"
+        >
+          <template #prefix>
+            <n-icon :component="Filter" />
+          </template>
+        </n-input>
+      </div>
       <DataLists
-        :listData="albumData"
+        :listData="displayData"
         hideAlbum
-        virtual
-        virtual-height="min(68vh, 760px)"
+        page-window
         :virtual-item-size="54"
         :virtual-threshold="40"
+        show-header
+        :loading="false"
       />
       <!-- 专辑简介 -->
       <n-modal
@@ -168,11 +183,22 @@ import { getAlbum, likeAlbum } from "@/api/album";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";
 import { transformSongData } from "@/utils/ncm/transformSongData";
+import { fuzzyFilterSongs } from "@/utils/fuzzySearch";
 import { renderIcon } from "@/utils/ui/renderIcon";
 import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
-import { MusicList, LinkTwo, More, Like, Unlike, People, Time, City } from "@icon-park/vue-next";
+import {
+  MusicList,
+  LinkTwo,
+  More,
+  Like,
+  Unlike,
+  People,
+  Time,
+  City,
+  Filter,
+} from "@icon-park/vue-next";
 import { userStore, musicStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
@@ -191,6 +217,24 @@ const albumId = ref(router.currentRoute.value.query.id);
 const albumDetail = ref(null);
 const albumData = ref([]);
 const albumDescShow = ref(false);
+
+// ── 列表内搜索 ──────────────────────────────────────────────
+//
+// 专辑一次就把全部曲目取回来了（`getAlbum` 无分页），所以这里是纯本地过滤，不需要
+// 像歌单那样补块。
+const searchKeyword = ref("");
+const normalizedKeyword = computed(() => searchKeyword.value.trim());
+
+const displayData = computed(() =>
+  normalizedKeyword.value
+    ? fuzzyFilterSongs(albumData.value, normalizedKeyword.value)
+    : albumData.value,
+);
+
+watch(normalizedKeyword, (keyword, prev) => {
+  // 同 PlayList：过滤结果是按相关度重排的新列表，停在原滚动位置没有意义。
+  if (keyword !== prev && typeof $scrollToTop !== "undefined") $scrollToTop();
+});
 
 // 判断收藏还是取消
 const isLikeOrDislike = (id) => {
@@ -318,6 +362,29 @@ watch(
 <style lang="scss" scoped>
 .album,
 .loading {
+  // 悬浮搜索控件的玻璃参数。值抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
+  // 定义在 `.nav` 内部的、拿不到，所以这里重新声明一份同名不同前缀的。
+  // 暗色钩子和 Nav 一致：`setting.getSiteTheme === "dark"`。
+  --list-search-bg: rgba(255, 255, 255, 0.48);
+  --list-search-border: rgba(0, 0, 0, 0.06);
+
+  &.is-dark {
+    --list-search-bg: rgba(24, 24, 24, 0.5);
+    --list-search-border: rgba(255, 255, 255, 0.11);
+  }
+
+  // 移动端顶部那条带子本身就是模糊 + 着色的，控件要在它之上仍读得出是一个层，
+  // 所以抬高填充、收紧描边。这是 Nav 移动端得出的同一个结论。
+  @media (max-width: 768px) {
+    --list-search-bg: rgba(255, 255, 255, 0.62);
+    --list-search-border: rgba(0, 0, 0, 0.07);
+
+    &.is-dark {
+      --list-search-bg: rgba(32, 32, 38, 0.6);
+      --list-search-border: rgba(255, 255, 255, 0.11);
+    }
+  }
+
   display: flex;
   flex-direction: column;
   gap: 22px;
@@ -331,7 +398,8 @@ watch(
     grid-template-columns: minmax(176px, 278px) minmax(0, 1fr);
     align-items: center;
     gap: clamp(22px, 4vw, 38px);
-    padding: 18px 2px 24px;
+    // 底部收窄，理由同歌单页。
+    padding: 18px 2px 10px;
 
     .cover {
       position: relative;
@@ -537,6 +605,18 @@ watch(
     }
 
     :deep(.datalists) {
+      // 列宽的唯一出处：`.songs` 的行和 `.song-list-head` 的列头都读这组变量，
+      // 所以不可能出现「改了行没改列头」的错位。
+      // name:album 给到 1.6:1（NCM 官方大致是这个比例）——两边都 flex:1 会把专辑名
+      // 顶到正中间，中间空一大段。
+      --song-lead-size: 38px;
+      --song-lead-gap: 14px;
+      --song-action-width: 76px;
+      --song-time-width: 46px;
+      --song-name-flex: 1.6;
+      --song-album-flex: 1;
+      --song-row-padding-x: 12px;
+
       --detail-song-list-radius: var(--radius-md);
 
       margin-top: 2px;
@@ -552,12 +632,78 @@ watch(
       box-shadow: none;
     }
 
-    :deep(.datalists .songs:nth-child(odd)),
+    // 只用 `song-row-*` 类，不用 `:nth-child`。页面窗口模式下行被包在
+    // `.song-plain-list` 里且前面有一个占位块，`:nth-child` 的奇偶会整体错位，
+    // 而这些类是按**绝对下标**打的，滚到哪里都对。
     :deep(.datalists .songs.song-row-odd) {
       background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
     }
 
-    :deep(.datalists .songs:nth-child(even)),
+    // 见歌单页同名规则：靠右锚在列表右边缘，不在左边浮着。
+    // 悬浮，沿用 Nav 的那套语言（见 `components/Nav/index.vue`）。
+    //
+    // 关键是**横条整条透明，只有药丸自己有玻璃底**。给整条填实色是行不通的：这一页
+    // 的底色是封面取样出来的渐变（`--content-panel-stage-gradient` 叠在
+    // `--content-panel-bg` 上），实色盖上去必然是一条突兀的横条——试过
+    // `--app-shell-bg`，那是渐变底下那层 `#f2f2f4` 冷灰。只让一个控件大小的区域走
+    // backdrop-filter，模糊面积和 Nav 的按钮同级，代价可以接受。
+    .list-toolbar {
+      position: sticky;
+      // 移动端顶部那条 42px 的玻璃带（`--nav-blur-edge`）会把滚过它的东西洗白，
+      // 所以钉在带子**下沿**；桌面端没这个变量，回退 0。
+      top: var(--nav-blur-edge, 0px);
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      margin: 2px 0 10px;
+      // 一条横跨整宽的透明 sticky 元素会把下面每一行的点击都吃掉。空白处必须放行，
+      // 只有药丸本身接收事件。
+      pointer-events: none;
+
+      > * {
+        pointer-events: auto;
+      }
+    }
+
+    // 药丸形，对齐 NCM 的观感。见歌单页同名规则。
+    .list-search {
+      width: 170px;
+      transition: width var(--duration-300) var(--ease-out);
+
+      :deep(.n-input__border),
+      :deep(.n-input__state-border) {
+        border-radius: 999px;
+      }
+
+      // 要在**两种**背景上都站得住：封面取样的渐变底，以及滚动时罩在上面那条 42px
+      // 玻璃带。带子会把低对比度的东西直接洗掉——纯靠 `--n-text-color` 的淡色 tint
+      // 滚进去就只剩一个幽灵轮廓（试过 5%、7%，都不行）。
+      //
+      // 参数直接取自 Nav 的悬浮按钮，包括它移动端那条注释的结论：带子后面要**抬高**
+      // 填充不透明度，并且收紧阴影——宽而软的投影压在模糊上只会糊成一团灰光晕。
+      :deep(&.n-input) {
+        border-radius: var(--radius-pill);
+        background-color: var(--list-search-bg);
+        box-shadow:
+          0 8px 22px rgb(0 0 0 / 10%),
+          inset 0 1px 0 rgb(255 255 255 / 24%);
+        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        backdrop-filter: blur(18px) saturate(160%);
+      }
+
+      :deep(.n-input__border),
+      :deep(.n-input__state-border) {
+        border: 1px solid var(--list-search-border);
+        border-radius: var(--radius-pill);
+      }
+
+      &:focus-within,
+      &.has-value {
+        width: min(300px, 100%);
+      }
+    }
+
     :deep(.datalists .songs.song-row-even) {
       background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
     }
@@ -585,15 +731,11 @@ watch(
 
     :deep(.datalists .songs .n-card__content) {
       min-height: 52px;
-      padding: 8px 12px !important;
+      padding: 8px var(--song-row-padding-x) !important;
     }
 
     :deep(.datalists .songs .pic),
     :deep(.datalists .songs .num) {
-      width: 38px;
-      height: 38px;
-      min-width: 38px;
-      margin-right: 14px;
       border-radius: var(--radius-sm);
       font-size: 13px;
     }
@@ -614,10 +756,6 @@ watch(
     :deep(.datalists .songs .time) {
       font-size: 12px;
       opacity: 0.64;
-    }
-
-    :deep(.datalists .songs .action) {
-      width: 76px;
     }
   }
 
@@ -689,6 +827,28 @@ watch(
     }
 
     .right {
+      :deep(.datalists) {
+        --song-lead-size: 42px;
+        --song-lead-gap: 11px;
+        --song-row-padding-x: 6px;
+      }
+
+      // 窄屏上「靠右的窄输入框 + 左边一大片空」很怪，而且手指要伸到角上。
+      // 直接占满一行，也就不需要聚焦展开了。
+      // 填充抬高、描边收紧在根的 token 块里按断点声明（见文件上方），这里不重复。
+      .list-toolbar {
+        margin: 0 0 8px;
+      }
+
+      .list-search {
+        width: 100%;
+
+        &:focus-within,
+        &.has-value {
+          width: 100%;
+        }
+      }
+
       :deep(.datalists .songs) {
         margin-bottom: 0;
         border-radius: 0;
@@ -696,15 +856,7 @@ watch(
 
       :deep(.datalists .songs .n-card__content) {
         min-height: 58px;
-        padding: 9px 6px !important;
-      }
-
-      :deep(.datalists .songs .pic),
-      :deep(.datalists .songs .num) {
-        width: 42px;
-        height: 42px;
-        min-width: 42px;
-        margin-right: 11px;
+        padding: 9px var(--song-row-padding-x) !important;
       }
 
       :deep(.datalists .songs .name) {

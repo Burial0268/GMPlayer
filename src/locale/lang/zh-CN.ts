@@ -237,6 +237,12 @@ const messages: Record<string, unknown> = {
       add: "添加",
       comment: "评论",
       noKeywords: "参数不完整",
+      // 「筛选」而不是「搜索」：放大镜/搜索留给会跳走的全局检索，这里只是收窄眼前
+      // 这份列表。两个语义各自有图标（放大镜 vs 漏斗），移动端两者同屏也不会读成重复。
+      filterInList: "筛选这份列表",
+      noSearchResult: "没有匹配的歌曲",
+      colTitle: "标题",
+      colDuration: "时长",
       goBack: "返回上一级",
       reload: "重新载入",
       allComments: "全部评论",

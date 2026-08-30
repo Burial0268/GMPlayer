@@ -1,6 +1,20 @@
 <template>
   <Transition mode="out-in">
     <div class="datalists" id="datalists" v-if="listData[0]">
+      <!--
+        列头。默认关闭——14 个视图共用这个组件，只有详情页那种长列表需要它。
+        列宽全部走 `--song-*` 变量，和行内部用的是同一组值，两边不会各自漂移。
+
+        **没有 `#` 列标签**：首列渲染的是 `.pic` 专辑封面，`.num` 只在没有封面时
+        才作为兜底出现。在一列封面上写「#」是错的。
+      -->
+      <div v-if="showHeader" class="song-list-head" aria-hidden="true">
+        <div class="head-lead" />
+        <div class="head-name">{{ $t("general.name.colTitle") }}</div>
+        <div class="head-album" v-if="!hideAlbum">{{ $t("general.name.album") }}</div>
+        <div class="head-action" />
+        <div class="head-time">{{ $t("general.name.colDuration") }}</div>
+      </div>
       <n-virtual-list
         v-if="useVirtualList"
         class="song-virtual-list"
@@ -10,6 +24,7 @@
         :style="virtualListStyle"
         key-field="key"
         :show-scrollbar="false"
+        @scroll="onVirtualScroll"
       >
         <template #default="{ item: row }">
           <n-card
@@ -109,89 +124,116 @@
         </template>
       </n-virtual-list>
       <template v-else>
-        <n-card
-          v-for="(item, index) in listData"
-          :key="item"
-          :id="'song' + index"
-          :class="getSongClass(item, index)"
-          :content-style="songCardContentStyle"
-          hoverable
-          @dblclick="setting.listClickMode === 'dblclick' ? playSong(listData, item) : null"
-          @click="checkCanClick(listData, item)"
-          @contextmenu="openRightMenu($event, item)"
-        >
-          <n-avatar
-            v-if="item.album?.picUrl"
-            lazy
-            class="pic"
-            :src="item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'"
-            fallback-src="/images/pic/default.png"
+        <div ref="plainRootRef" class="song-plain-list">
+          <div
+            v-if="windowActive"
+            class="page-window-spacer"
+            :style="{ height: `${topSpacerPx}px` }"
+            aria-hidden="true"
           />
-          <div class="num" v-else-if="item?.num">
-            <n-text :depth="2">{{ item?.num }}</n-text>
-          </div>
-          <div class="name">
-            <div class="title">
-              <n-text class="text-hidden" depth="2" @click.stop="jumpLink(item?.id, 1)">
-                {{ item?.name }}
-              </n-text>
-              <n-tag
-                v-if="item?.fee == 1 || item?.fee == 4"
-                class="vip"
-                round
-                :bordered="false"
-                size="small"
-              >
-                {{ item?.fee == 1 ? "VIP" : "EP" }}
-              </n-tag>
-              <n-tag v-if="item?.pc" class="cloud" round type="info" size="small" :bordered="false">
-                {{ $t("general.name.cloud") }}
-              </n-tag>
-              <n-tag
-                v-if="item?.mv"
-                class="mv"
-                round
-                type="warning"
-                size="small"
-                :bordered="false"
-                @click.stop="router.push(`/video?id=${item.mv}`)"
-              >
-                MV
-              </n-tag>
+          <n-card
+            v-for="row in plainRows"
+            :key="row.item"
+            :id="'song' + row.index"
+            :class="getSongClass(row.item, row.index)"
+            :content-style="songCardContentStyle"
+            hoverable
+            @dblclick="setting.listClickMode === 'dblclick' ? playSong(listData, row.item) : null"
+            @click="checkCanClick(listData, row.item)"
+            @contextmenu="openRightMenu($event, row.item)"
+          >
+            <n-avatar
+              v-if="row.item.album?.picUrl"
+              lazy
+              class="pic"
+              :src="row.item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'"
+              fallback-src="/images/pic/default.png"
+            />
+            <div class="num" v-else-if="row.item?.num">
+              <n-text :depth="2">{{ row.item?.num }}</n-text>
             </div>
-            <div class="meta">
-              <AllArtists v-if="item?.artist" class="text-hidden" :artistsData="item?.artist" />
-              <n-text class="alia text-hidden" depth="3" v-if="item?.alia[0]">
-                {{ item.alia[0] }}
+            <div class="name">
+              <div class="title">
+                <n-text class="text-hidden" depth="2" @click.stop="jumpLink(row.item?.id, 1)">
+                  {{ row.item?.name }}
+                </n-text>
+                <n-tag
+                  v-if="row.item?.fee == 1 || row.item?.fee == 4"
+                  class="vip"
+                  round
+                  :bordered="false"
+                  size="small"
+                >
+                  {{ row.item?.fee == 1 ? "VIP" : "EP" }}
+                </n-tag>
+                <n-tag
+                  v-if="row.item?.pc"
+                  class="cloud"
+                  round
+                  type="info"
+                  size="small"
+                  :bordered="false"
+                >
+                  {{ $t("general.name.cloud") }}
+                </n-tag>
+                <n-tag
+                  v-if="row.item?.mv"
+                  class="mv"
+                  round
+                  type="warning"
+                  size="small"
+                  :bordered="false"
+                  @click.stop="router.push(`/video?id=${row.item.mv}`)"
+                >
+                  MV
+                </n-tag>
+              </div>
+              <div class="meta">
+                <AllArtists
+                  v-if="row.item?.artist"
+                  class="text-hidden"
+                  :artistsData="row.item?.artist"
+                />
+                <n-text class="alia text-hidden" depth="3" v-if="row.item?.alia[0]">
+                  {{ row.item.alia[0] }}
+                </n-text>
+              </div>
+            </div>
+            <div class="album" v-if="!hideAlbum && row.item?.album">
+              <n-text @click.stop="jumpLink(row.item.album.id, 10)">
+                {{ row.item.album.name }}
               </n-text>
             </div>
-          </div>
-          <div class="album" v-if="!hideAlbum && item?.album">
-            <n-text @click.stop="jumpLink(item.album.id, 10)">{{ item.album.name }}</n-text>
-          </div>
-          <div class="action">
-            <n-icon
-              class="like"
-              size="20"
-              @click.stop="
-                music.getSongIsLike(item?.id)
-                  ? music.changeLikeList(item?.id, false)
-                  : music.changeLikeList(item?.id, true)
-              "
-            >
-              <Like :theme="music.getSongIsLike(item?.id) ? 'filled' : 'outline'" />
-            </n-icon>
-            <n-icon
-              class="download"
-              size="20"
-              @click.stop="downloadSongRef.openDownloadModal(item)"
-            >
-              <DownloadFour theme="filled" />
-            </n-icon>
-            <n-icon class="more" size="20" :component="More" @click.stop="openDrawer(item)" />
-          </div>
-          <n-text class="time">{{ item.time }}</n-text>
-        </n-card>
+            <div class="action">
+              <n-icon
+                class="like"
+                size="20"
+                @click.stop="
+                  music.getSongIsLike(row.item?.id)
+                    ? music.changeLikeList(row.item?.id, false)
+                    : music.changeLikeList(row.item?.id, true)
+                "
+              >
+                <Like :theme="music.getSongIsLike(row.item?.id) ? 'filled' : 'outline'" />
+              </n-icon>
+              <n-icon
+                class="download"
+                size="20"
+                @click.stop="downloadSongRef.openDownloadModal(row.item)"
+              >
+                <DownloadFour theme="filled" />
+              </n-icon>
+              <n-icon class="more" size="20" :component="More" @click.stop="openDrawer(row.item)" />
+            </div>
+            <n-text class="time">{{ row.item.time }}</n-text>
+          </n-card>
+          <div
+            v-if="windowActive"
+            class="page-window-spacer"
+            :style="{ height: `${bottomSpacerPx}px` }"
+            aria-hidden="true"
+          />
+        </div>
       </template>
       <!-- 右键菜单 -->
       <n-dropdown
@@ -398,7 +440,7 @@
       <!-- 歌曲下载 -->
       <DownloadSong ref="downloadSongRef" />
     </div>
-    <n-empty v-else-if="loading === false" class="empty" />
+    <n-empty v-else-if="loading === false" class="empty" :description="emptyText || undefined" />
     <n-spin class="loading" size="small" v-else />
   </Transition>
 </template>
@@ -478,7 +520,68 @@ const props = defineProps({
     type: Boolean,
     default: true,
   },
+  // 距离底部多少像素算「到底」。虚拟滚动与页面窗口两种模式都有效。
+  reachEndThreshold: {
+    type: Number,
+    default: 400,
+  },
+  /**
+   * 按**页面**滚动容器做窗口化，而不是自带一个滚动盒。
+   *
+   * `n-virtual-list` 自带滚动容器，于是详情页会出现两层滚动：头部信息永远滚不
+   * 走，列表在一个 68vh 的框里自己动——这不是「一条长流」的观感。开启本模式后
+   * 列表不再有自己的滚动条，而是相对祖先 `.n-scrollbar-container`（App 布局那
+   * 一个）计算可视区间，只渲染窗口内的行，上下用等高占位撑开总高度。于是整页
+   * 只有一个滚动条，头部随手势自然滚走。
+   */
+  pageWindow: {
+    type: Boolean,
+    default: false,
+  },
+  /** 窗口上下各多渲染几行，避免快速滚动时露白。 */
+  overscan: {
+    type: Number,
+    default: 8,
+  },
+  /** 是否显示列头（`# / 标题 / 专辑 / 时长`）。详情页用，列表页默认不要。 */
+  showHeader: {
+    type: Boolean,
+    default: false,
+  },
+  /** 空状态文案。留空则用 naive-ui 的默认「无数据」。 */
+  emptyText: {
+    type: String,
+    default: "",
+  },
+  /**
+   * 最终会有多少行（含尚未 hydrate 的）。长流页面把 manifest 长度传进来。
+   *
+   * 不传则退化为 `listData.length`——那样每加载一块总高就变一次，滚动条会抽搐。
+   */
+  totalRows: {
+    type: Number,
+    default: 0,
+  },
 });
+
+/**
+ * `reach-end`：虚拟列表滚动到接近底部。
+ *
+ * 给长流页面（歌单/专辑）驱动增量 hydrate 用。非虚拟分支不会触发——那条分支没有
+ * 自己的滚动容器，数据也已经全部渲染。监听方必须自己防重入：滚动事件在一次惯性
+ * 滚动里会连续触发很多次，而这里刻意不做节流，因为「是否还有下一块」只有调用方
+ * 知道。
+ */
+const emit = defineEmits(["reach-end"]);
+
+const onVirtualScroll = (e) => {
+  const el = e?.target;
+  if (!el) return;
+  const { scrollTop, scrollHeight, clientHeight } = el;
+  if (scrollHeight - scrollTop - clientHeight <= props.reachEndThreshold) {
+    emit("reach-end");
+  }
+};
 
 const songCardContentStyle = {
   padding: "16px",
@@ -491,8 +594,196 @@ const songCardContentStyle = {
 const normalizeCssSize = (size) => (typeof size === "number" ? `${size}px` : size);
 
 const useVirtualList = computed(
-  () => props.virtual && props.listData.length > props.virtualThreshold,
+  () => props.virtual && !props.pageWindow && props.listData.length > props.virtualThreshold,
 );
+
+// ── 页面级窗口化 ────────────────────────────────────────────
+//
+// 只在 `pageWindow` 且量足够大时启用；否则照旧整列表渲染，行为与从前完全一致。
+const usePageWindow = computed(
+  () => props.pageWindow && props.listData.length > props.virtualThreshold,
+);
+
+const plainRootRef = ref(null);
+const rangeStart = ref(0);
+const rangeEnd = ref(0);
+/**
+ * 是否真的挂上了页面滚动容器。
+ *
+ * 没挂上就**退化为整列表渲染**，而不是留一个空列表。窗口区间的初值是 `[0,0)`，
+ * 若因为祖先里没有 `.n-scrollbar-container`（换了布局、被挪进弹窗等）而始终算不
+ * 出区间，页面就会一行都不显示——这种静默失败比多渲染几行糟得多。它同时也遮掉了
+ * 挂载后第一个 tick 的空窗期。
+ */
+const scrollRootReady = ref(false);
+
+/**
+ * 一共会有多少行——包括还没 hydrate 的。
+ *
+ * **这是滚动条不抽搐的关键。** 若按已加载行数算总高，每 hydrate 一块总高就长
+ * 5400px，滚动条滑块当场缩一截；越往下滚越频繁，看起来就是抽搐。长流的行数是
+ * manifest 一开始就知道的，所以从第一帧起就按最终高度撑开，之后永不变化。
+ */
+const totalRows = computed(() => Math.max(props.totalRows || 0, props.listData.length));
+
+/**
+ * 实测行高。
+ *
+ * 不能直接信 `virtualItemSize`：详情页在移动端把行改高了（`min-height` 52 → 58），
+ * 占位块一旦和真实行高不符，滚动位置就会随着滚动线性漂移。
+ *
+ * 但**测量本身不能进滚动回路**：`getBoundingClientRect()` 在非整数缩放 /
+ * devicePixelRatio 下返回小数，逐行之间还会因亚像素舍入差个零点几；如果每帧重测
+ * 并写回，占位块高度就会来回跳，总高跟着抖，滚动条也跟着抖。所以只在挂载、行数
+ * 从无到有、以及窗口尺寸变化时测，滚动过程中一律不测。
+ */
+const measuredItemSize = ref(0);
+const rowSize = computed(() => measuredItemSize.value || props.virtualItemSize);
+
+let scrollRootEl = null;
+let rafId = 0;
+let reachEndFired = false;
+
+const measureRow = () => {
+  const root = plainRootRef.value;
+  if (!root) return;
+  const card = root.querySelector(".songs");
+  const h = card?.getBoundingClientRect().height;
+  // 量到就定下来。四舍五入到 0.5px，免得亚像素噪声把它变成一个会抖的值。
+  if (h) measuredItemSize.value = Math.round(h * 2) / 2;
+};
+
+const recomputeWindow = () => {
+  if (!usePageWindow.value) return;
+  const root = plainRootRef.value;
+  const scroller = scrollRootEl;
+  if (!root || !scroller) return;
+
+  const size = rowSize.value;
+  if (!size) return;
+  const total = totalRows.value;
+  const loaded = props.listData.length;
+
+  // 列表在滚动内容里的偏移 = 两者 rect 之差 + 容器已滚动的距离。
+  const listTop =
+    root.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  const viewTop = scroller.scrollTop - listTop;
+  const viewBottom = viewTop + scroller.clientHeight;
+
+  // `start` 必须落在**已加载区间内**。列表会突然变短——搜索过滤就是——而 `scrollTop`
+  // 不会跟着变，于是旧的 start 远大于新长度，`slice(start, end)` 切出空数组：一行都
+  // 不渲染。更糟的是 `topSpacerPx = start * size` 还会算成上万像素，把页面撑得又高又
+  // 空，`scrollTop` 因此也不会被浏览器夹回来，自我修复的机会都没有。
+  // 症状就是「搜索完全不工作」。
+  const maxStart = Math.max(0, loaded - 1);
+  const start = Math.min(maxStart, Math.max(0, Math.floor(viewTop / size) - props.overscan));
+  // 只渲染已 hydrate 的行；没到的那一截由下方占位块占位，高度已经算进总高。
+  // 至少给一行，保证 `loaded > 0` 时永远渲染得出东西。
+  const end = Math.min(loaded, Math.max(start + 1, Math.ceil(viewBottom / size) + props.overscan));
+  if (start !== rangeStart.value) rangeStart.value = start;
+  if (end !== rangeEnd.value) rangeEnd.value = end;
+
+  // 逼近**已加载**的边缘就催下一块，而不是逼近整个列表的末尾——后者在长流里要
+  // 滚很久才成立。`reachEndFired` 让它在一次接近里只喊一次，不然 rAF 每帧都喊。
+  const distanceToLoadedEnd =
+    listTop + loaded * size - (scroller.scrollTop + scroller.clientHeight);
+  if (distanceToLoadedEnd <= props.reachEndThreshold) {
+    if (!reachEndFired && loaded < total) {
+      reachEndFired = true;
+      emit("reach-end");
+    }
+  } else {
+    reachEndFired = false;
+  }
+};
+
+const onPageScroll = () => {
+  if (rafId) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = 0;
+    recomputeWindow();
+  });
+};
+
+const onViewportResize = () => {
+  measureRow();
+  recomputeWindow();
+};
+
+const attachScrollRoot = () => {
+  if (!usePageWindow.value || scrollRootEl) return;
+  const root = plainRootRef.value;
+  const found = root?.closest(".n-scrollbar-container");
+  if (!(found instanceof HTMLElement)) return;
+  scrollRootEl = found;
+  scrollRootEl.addEventListener("scroll", onPageScroll, { passive: true });
+  window.addEventListener("resize", onViewportResize, { passive: true });
+  scrollRootReady.value = true;
+  measureRow();
+  recomputeWindow();
+};
+
+const detachScrollRoot = () => {
+  if (rafId) {
+    cancelAnimationFrame(rafId);
+    rafId = 0;
+  }
+  scrollRootEl?.removeEventListener("scroll", onPageScroll);
+  window.removeEventListener("resize", onViewportResize);
+  scrollRootEl = null;
+  scrollRootReady.value = false;
+};
+
+/** 窗口化真正生效的条件：开了开关、量够大、且确实挂上了滚动容器。 */
+const windowActive = computed(() => usePageWindow.value && scrollRootReady.value);
+
+const topSpacerPx = computed(() =>
+  windowActive.value ? Math.max(0, rangeStart.value * rowSize.value) : 0,
+);
+/** 尾部占位覆盖到**全部**行，含未 hydrate 的，所以总高从头到尾恒定。 */
+const bottomSpacerPx = computed(() =>
+  windowActive.value ? Math.max(0, (totalRows.value - rangeEnd.value) * rowSize.value) : 0,
+);
+
+const plainRows = computed(() => {
+  if (!windowActive.value) return props.listData.map((item, index) => ({ item, index }));
+  return props.listData
+    .slice(rangeStart.value, rangeEnd.value)
+    .map((item, i) => ({ item, index: rangeStart.value + i }));
+});
+
+// 列表变了就重算窗口。这里盯的是**数组引用**而不是长度：搜索过滤每次都产生新数组，
+// 而过滤前后长度完全可能相同（换个关键词命中数一样），只盯长度就不会重算，窗口会停
+// 在上一份数据的区间上。
+// 这里不重测行高：行高只在挂载/尺寸变化时测，见 `measuredItemSize`。
+watch(
+  () => props.listData,
+  (next, prev) => {
+    if (!usePageWindow.value) return;
+    // 新的一块落地了，把 `reach-end` 的闩锁解开。
+    //
+    // 闩锁只在「滚离底部」的分支里复位，而装载一块之后用户往往还停在底部且**已经
+    // 停止滚动**——没有新的 scroll 事件，`recomputeWindow` 里那次判断又被闩锁挡住，
+    // 于是一次滚动手势只装载一块，列表看起来永远补不齐。
+    // 这里清掉闩锁，让紧接着的重算能继续要下一块，直到滚不动或装满为止。
+    reachEndFired = false;
+    nextTick(() => {
+      attachScrollRoot();
+      // 从「一行都没有」到「有行了」是唯一需要补测的时机——之前根本没东西可量。
+      if (!prev?.length && next?.length) measureRow();
+      recomputeWindow();
+    });
+  },
+);
+
+onMounted(() => {
+  if (usePageWindow.value) nextTick(attachScrollRoot);
+});
+onActivated(() => {
+  if (usePageWindow.value) nextTick(attachScrollRoot);
+});
+onDeactivated(detachScrollRoot);
+onUnmounted(detachScrollRoot);
 
 const virtualListItems = computed(() =>
   props.listData.map((item, index) => ({
@@ -879,6 +1170,74 @@ const jumpLink = (id, type) => {
   opacity: 0;
 }
 .datalists {
+  // 列头：列宽必须和 `.songs` 内部完全一致，所以两边都读同一组变量。
+  // `.songs .n-card__content` 的左右内边距在详情页被改小，列头用
+  // `--song-row-padding-x` 跟随，否则文字会整体偏出半个字。
+  //
+  // 刻意克制：行是带底色的圆角卡片（卡片列表），不是无边框表格。一条粗分隔线 +
+  // 深色标签会把它拽向表格体裁，两边都不像。所以只留很淡的一条线和小字标签，
+  // 作用是给「专辑 / 时长」两列一个名字，不是画表头。
+  .song-list-head {
+    display: flex;
+    align-items: center;
+    // 没有 border-bottom。一条通栏的分隔线是**表格**构件，而行是圆角卡片
+    // （`.song-row-first` 有 `border-radius: <md> <md> 0 0`）：线的两端会直接越过
+    // 那个圆角伸出去，接不上。这是体裁冲突最后残留的一块表格零件，去掉它，让列头
+    // 退回成「卡片堆上方的一行说明文字」，靠留白和行自身的底色分隔。
+    padding: 0 var(--song-row-padding-x, 16px) 10px;
+    color: var(--n-text-color-3);
+    font-size: 12px;
+    opacity: 0.75;
+    user-select: none;
+
+    .head-lead {
+      width: var(--song-lead-size, 50px);
+      min-width: var(--song-lead-size, 50px);
+      margin-right: var(--song-lead-gap, 16px);
+      text-align: center;
+    }
+
+    .head-name {
+      flex: var(--song-name-flex, 1);
+      min-width: 0;
+      padding-right: 20px;
+    }
+
+    .head-album {
+      flex: var(--song-album-flex, 1);
+      min-width: 0;
+      padding-right: 20px;
+    }
+
+    .head-action {
+      width: var(--song-action-width, 80px);
+    }
+
+    .head-time {
+      width: var(--song-time-width, 40px);
+    }
+
+    // 移动端整条不要。窄屏下行内的 `.album` / `.time` 都被隐藏了，列头只剩一个
+    // 「标题」标签、一块 42px 的封面位空白和一块 76px 的操作位空白，加一条分隔线
+    // ——信息量为零，只剩噪声。列头是给「有多列要区分」的宽屏用的。
+    @media (max-width: 768px) {
+      display: none;
+    }
+  }
+
+  // 占位块高度会随窗口滑动而变。浏览器的 scroll anchoring 会试图「锚住」内容去
+  // 补偿这种变化，而我们自己已经算好了偏移——两边同时纠正就是抖动。这里显式关掉，
+  // 让窗口计算成为唯一的位置来源。
+  .page-window-spacer {
+    overflow-anchor: none;
+    flex: none;
+  }
+
+  .song-plain-list {
+    // 同理：列表整体也不参与锚定。
+    overflow-anchor: none;
+  }
+
   .song-virtual-list {
     width: 100%;
     overflow-x: clip;
@@ -951,11 +1310,11 @@ const jumpLink = (id, type) => {
     }
     .pic,
     .num {
-      width: 50px;
-      height: 50px;
-      min-width: 50px;
+      width: var(--song-lead-size, 50px);
+      height: var(--song-lead-size, 50px);
+      min-width: var(--song-lead-size, 50px);
       border-radius: var(--radius-md);
-      margin-right: 16px;
+      margin-right: var(--song-lead-gap, 16px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -963,13 +1322,19 @@ const jumpLink = (id, type) => {
       font-weight: bold;
     }
     .name {
-      flex: 1;
+      flex: var(--song-name-flex, 1);
+      // flex item 默认 `min-width: auto`，即 min-content 宽度。标题一长，`.title`
+      // 就撑宽 → `.name` 撑宽 → 把专辑/时长往右顶，于是**专辑列在不同行的 x 不一
+      // 样**，跨行根本不对齐；`.text-hidden` 的省略号也因为祖先不肯收缩而永远不生
+      // 效。整条 flex 链都要 `min-width: 0`，缺一环就白搭。
+      min-width: 0;
       display: flex;
       flex-direction: column;
       justify-content: center;
       padding-right: 20px;
       .title {
         font-size: 16px;
+        min-width: 0;
         display: flex;
         align-items: center;
         flex-direction: row;
@@ -1016,7 +1381,8 @@ const jumpLink = (id, type) => {
       }
     }
     .album {
-      flex: 1;
+      flex: var(--song-album-flex, 1);
+      min-width: 0;
       padding-right: 20px;
       .n-text {
         transition: color var(--duration-150) var(--ease-out);
@@ -1026,7 +1392,7 @@ const jumpLink = (id, type) => {
       }
     }
     .action {
-      width: 80px;
+      width: var(--song-action-width, 80px);
       display: flex;
       align-items: center;
       justify-content: space-evenly;
@@ -1060,7 +1426,7 @@ const jumpLink = (id, type) => {
       }
     }
     .time {
-      width: 40px;
+      width: var(--song-time-width, 40px);
       text-align: center;
     }
   }
