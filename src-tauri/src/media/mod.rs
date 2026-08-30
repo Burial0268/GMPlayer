@@ -13,7 +13,10 @@
 //! The same argument applies to the control direction, which is why
 //! [`install_controls`] exists: a notification button that only reaches a
 //! WebView is a button that stops working exactly when the notification is the
-//! only UI the user has.
+//! only UI the user has. Desktop has no WebView-death problem, but it went the
+//! same way for the weaker-but-sufficient reason: the JS hop can fail silently
+//! in a way the push direction cannot reveal, and routing SMTC/MPRIS through
+//! the store made play/pause a second writer on the transport.
 //!
 //! Ordering: `on_event` runs on the backend's single forwarding task and must
 //! not block, but the pushes themselves are I/O (artwork download on desktop, a
@@ -666,20 +669,20 @@ mod platform {
     }
 }
 
-// ── Control direction (Android) ──────────────────────────────────
+// ── Control direction ────────────────────────────────────────────
 
 /// Route OS media-session actions straight into the audio backend.
 ///
-/// This is the half that the WebView cannot own. The notification, the lock
-/// screen, a headset button and the audio-focus handler all originate in
-/// Kotlin, and the Kotlin side reaches Rust over the plugin's `Channel` — a
+/// On Android this is the half that the WebView cannot own. The notification,
+/// the lock screen, a headset button and the audio-focus handler all originate
+/// in Kotlin, and the Kotlin side reaches Rust over the plugin's `Channel` — a
 /// JNI hop into this process, with no WebView anywhere in it. Handling them
 /// here is what makes the buttons work while the page is destroyed, which is
 /// the only time the notification is the user's only UI.
 ///
 /// Transport only: play/pause/next/previous/seek. Anything that is a *view*
-/// concern (play mode, volume UI) stays in the frontend, and the frontend
-/// follows this through the backend's own event stream — `PlayStatus` and
+/// concern (volume UI) stays in the frontend, and the frontend follows this
+/// through the backend's own event stream — `PlayStatus` and
 /// `NativePlannerAdvanced` are already adopted there, so there is one writer.
 #[cfg(target_os = "android")]
 pub fn install_controls<R: Runtime>(app: &AppHandle<R>) {
@@ -718,6 +721,87 @@ pub fn install_controls<R: Runtime>(app: &AppHandle<R>) {
 
         if let Err(err) = handle.state::<PlayerState>().try_send_msg(msg) {
             warn!("media action dropped: {err}");
+        }
+    });
+}
+
+/// The desktop twin: SMTC / MPRIS / `MPRemoteCommandCenter` actions, in Rust.
+///
+/// Desktop has no WebView-death problem, so this used to be the one direction
+/// that still went out to JS — the plugin emitted a Tauri event and
+/// `useNativeMediaControls` wrote the store. That hop is a liability rather
+/// than a shortcut. It only works while a page happens to be mounted *and*
+/// listening, `AppHandle::emit` reports success even when no webview has
+/// registered a listener, and the push direction is entirely independent — so
+/// the whole failure mode is "the flyout shows the right track, the log shows
+/// the button press, and nothing happens", with no error anywhere. That is
+/// exactly what it did.
+///
+/// Handling it here also removes the second writer on the transport: play/pause
+/// no longer travels store → watcher → `fadePlayOrPause`, it goes to the one
+/// component that owns playback, and the frontend adopts the result through
+/// `PlayStatus` like it already does on Android.
+///
+/// Three deliberate asymmetries with Android:
+/// - shuffle and repeat arrive as *separate* OS properties on both Windows and
+///   MPRIS, but this app has one three-mode ring, so both requests are the same
+///   intent — `SetNextPlayMode` — and the backend resolves it.
+/// - there is no favourite surface on any desktop platform, so
+///   `ToggleFavourite` has nothing to bind to here.
+/// - volume is not taken at all; see the `SetVolume` arm.
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub fn install_controls<R: Runtime>(app: &AppHandle<R>) {
+    use gmplayer_audio_backend::{commands::PlayerState, AudioThreadMessage};
+    use gmplayer_now_playing_controls::SystemMediaEventType;
+    use log::{info, warn};
+    use tauri::Manager;
+
+    let handle = app.clone();
+    gmplayer_now_playing_controls::on_action(move |event| {
+        info!("system media action: {:?}", event.type_);
+        let msg = match event.type_ {
+            SystemMediaEventType::Play => AudioThreadMessage::ResumeAudio,
+            SystemMediaEventType::Pause | SystemMediaEventType::Stop => {
+                AudioThreadMessage::PauseAudio
+            }
+            SystemMediaEventType::NextSong => AudioThreadMessage::NextSong,
+            SystemMediaEventType::PreviousSong => AudioThreadMessage::PrevSong,
+            // One ring, two OS properties. See the doc comment above.
+            SystemMediaEventType::ToggleShuffle | SystemMediaEventType::ToggleRepeat => {
+                AudioThreadMessage::SetNextPlayMode
+            }
+            SystemMediaEventType::Seek => {
+                let Some(position) = event.position else {
+                    return;
+                };
+                AudioThreadMessage::SeekAudio {
+                    position: position.as_secs_f64(),
+                    request_id: None,
+                    expected_music_id: None,
+                }
+            }
+            SystemMediaEventType::SetVolume => {
+                // Not ours to take. Volume's owner is the frontend store —
+                // `persistData.playVolume` is what the sound follows, and every
+                // track load re-asserts it (`PlayerFunctions` sets it on the new
+                // sound). Sending it to the backend here would change the output
+                // and then have it snap back at the next track, which is worse
+                // than not moving. Wiring it properly means teaching the store
+                // to adopt the volume `SyncStatus` already carries; until then
+                // this is inert, which only MPRIS can even reach — Windows has
+                // no volume surface and `update_volume` is unimplemented there.
+                return;
+            }
+            // Variable-rate playback is not implemented anywhere in the chain;
+            // the SMTC handler only exists because Windows raises the request.
+            SystemMediaEventType::SetRate => return,
+        };
+
+        // `try_send_msg` deliberately does not create a player: a press with no
+        // player behind it is a stale one, and opening an audio device in
+        // response would be worse than dropping it.
+        if let Err(err) = handle.state::<PlayerState>().try_send_msg(msg) {
+            warn!("system media action dropped: {err}");
         }
     });
 }

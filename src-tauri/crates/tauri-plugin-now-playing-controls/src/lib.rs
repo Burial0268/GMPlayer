@@ -2,12 +2,18 @@ mod commands;
 
 pub use commands::{
     apply_metadata, apply_play_mode, apply_play_state, apply_timeline, fetch_cover_blocking,
-    NowPlayingState,
+    on_action, NowPlayingState,
 };
 
 /// Re-exported so callers can name a repeat mode without depending on the
 /// system-media crate directly.
 pub use now_playing_controls::model::RepeatMode;
+
+/// Re-exported for [`on_action`] consumers: an in-process handler matches on
+/// these rather than on the wire strings the frontend path uses, so adding a
+/// system-media action is a compile error at the consumer instead of an
+/// unrecognised string at runtime.
+pub use now_playing_controls::model::{SystemMediaEvent, SystemMediaEventType};
 
 use tauri::{
     plugin::{Builder, TauriPlugin},

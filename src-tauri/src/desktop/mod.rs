@@ -145,6 +145,11 @@ pub fn run() {
             // not depend on a live WebView. Queued until the player is created.
             app.state::<commands::PlayerState>()
                 .subscribe_events(crate::media::MediaSessionBridge::new(app_handle.clone()));
+            // ...and the other direction: SMTC / MPRIS / MPRemoteCommandCenter
+            // buttons drive the backend from Rust, so a press does not depend on
+            // a page being mounted and listening, and the transport keeps one
+            // writer. The frontend follows through `PlayStatus`.
+            crate::media::install_controls(&app_handle);
 
             // Create the primary desktop window from the Rust-side preset.
             // `tauri.conf.json` intentionally has no static windows so desktop

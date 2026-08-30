@@ -1,6 +1,6 @@
 use std::{
     io::Read,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -18,6 +18,32 @@ use tracing::warn;
 const MEDIA_ACTION_EVENT: &str = "now-playing-controls:media-action";
 const MAX_COVER_BYTES: u64 = 4 * 1024 * 1024;
 
+/// In-process consumer of system-media actions.
+type ActionHandler = Arc<dyn Fn(SystemMediaEvent) + Send + Sync>;
+
+/// Where an installed [`on_action`] handler lives.
+///
+/// Process-wide rather than managed state, for the same reason the session is:
+/// there is one media session per process and one OS that talks to it, and a
+/// `static` sidesteps any question about whether the plugin's `setup` has run
+/// by the time the app's own `setup` installs the handler.
+static ACTION_HANDLER: OnceLock<ActionHandler> = OnceLock::new();
+
+/// Take system-media actions in Rust instead of forwarding them to the frontend.
+///
+/// Installing a handler makes it the **only** consumer: nothing is emitted to
+/// the webview afterwards, so the transport keeps exactly one writer. That is
+/// the point — a media-key or flyout press that has to cross into JS to reach
+/// the player is a press that depends on a live, listening page, and it is
+/// indistinguishable from a working one right up until it silently isn't.
+///
+/// Only the first call takes effect.
+pub fn on_action(handler: impl Fn(SystemMediaEvent) + Send + Sync + 'static) {
+    if ACTION_HANDLER.set(Arc::new(handler)).is_err() {
+        warn!("now playing action handler was already installed; ignoring the second one");
+    }
+}
+
 #[derive(Default)]
 pub struct NowPlayingState {
     inner: Mutex<NowPlayingStateInner>,
@@ -26,6 +52,12 @@ pub struct NowPlayingState {
 #[derive(Default)]
 struct NowPlayingStateInner {
     session: Option<NowPlayingSession>,
+    /// Whether the live session is currently projecting to the OS.
+    ///
+    /// Tracked separately from `session` because a clear only *disables* the
+    /// session now — see [`NowPlayingState::clear_session`] — so "we have one"
+    /// and "it is showing" stopped being the same question.
+    enabled: bool,
     last_duration_secs: f64,
 }
 
@@ -89,7 +121,16 @@ impl NowPlayingState {
             .map_err(|_| "now playing state lock poisoned".to_string())?;
 
         if let Some(session) = &inner.session {
-            return Ok(session.clone());
+            let session = session.clone();
+            // Re-arm a session a clear left disabled. Cheap and idempotent on
+            // every backend (SMTC flips `IsEnabled`, MPRIS a flag, macOS the
+            // command targets), and it is what lets a clear stop short of
+            // destroying the object.
+            if !inner.enabled {
+                session.enable_system_media();
+                inner.enabled = true;
+            }
+            return Ok(session);
         }
 
         let options = NowPlayingOptions {
@@ -100,13 +141,31 @@ impl NowPlayingState {
 
         let event_app = app.clone();
         let callback: EventCallback = Arc::new(move |event| {
+            // In-process first. When the app has claimed the actions there is
+            // no frontend hop at all, which is what makes the buttons work
+            // without depending on a page being mounted and listening.
+            if let Some(handler) = ACTION_HANDLER.get() {
+                handler(event);
+                return;
+            }
+
             let payload = MediaActionPayload::from(event);
-            let _ = event_app.emit(MEDIA_ACTION_EVENT, payload);
+            let action = payload.action.clone();
+            // Not swallowed. This is the only hop between a system-media button
+            // and the frontend that handles it, and it is the half that has no
+            // visible symptom of its own: the push direction keeps working, so
+            // the flyout looks perfectly healthy while every button is inert.
+            // Note `emit` reports success even when no webview has registered a
+            // listener, so a clean return here is not proof of delivery.
+            if let Err(err) = event_app.emit(MEDIA_ACTION_EVENT, payload) {
+                warn!("failed to forward media action {action}: {err}");
+            }
         });
 
         let session = NowPlayingSession::new(options, callback)
             .map_err(|err| format!("failed to initialize now playing controls: {err}"))?;
         session.enable_system_media();
+        inner.enabled = true;
         inner.session = Some(session.clone());
         Ok(session)
     }
@@ -133,12 +192,29 @@ impl NowPlayingState {
             .unwrap_or_default()
     }
 
+    /// Stop projecting to the OS, keeping the session object alive.
+    ///
+    /// It used to `shutdown()` the session and drop it, which is a race on
+    /// Windows: `shutdown` only *sends* a message, and the coordinator thread
+    /// runs `WindowsImpl::shutdown` whenever it gets round to it — but
+    /// `GetForWindow` hands out one `SystemMediaTransportControls` **per
+    /// window**, so a session created in the meantime is talking to the same
+    /// object. The late teardown then calls `SetIsEnabled(false)` and
+    /// `RemoveButtonPressed` on the *new* session's SMTC, leaving a
+    /// `WindowsImpl` whose own `is_enabled` says `true`: every later push
+    /// succeeds and changes nothing.
+    ///
+    /// Disabling instead is what a clear actually means — the shell drops the
+    /// card, and the next track re-enables through
+    /// [`Self::ensure_session`]. Nothing needs the object destroyed: the
+    /// session is process-scoped by design (playback outlives every window),
+    /// and the OS releases it when the process goes.
     pub fn clear_session(&self) {
         if let Ok(mut inner) = self.inner.lock() {
-            if let Some(session) = inner.session.take() {
+            if let Some(session) = &inner.session {
                 session.disable_system_media();
-                session.shutdown();
             }
+            inner.enabled = false;
             inner.last_duration_secs = 0.0;
         }
     }

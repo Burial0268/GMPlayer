@@ -49,18 +49,14 @@ impl WindowsImpl {
         let smtc: SystemMediaTransportControls = unsafe { interop.GetForWindow(HWND(hwnd as _)) }?;
 
         smtc.SetIsEnabled(false)?;
-        smtc.SetIsPlayEnabled(true)?;
-        smtc.SetIsPauseEnabled(true)?;
-        smtc.SetIsStopEnabled(true)?;
-        smtc.SetIsNextEnabled(true)?;
-        smtc.SetIsPreviousEnabled(true)?;
+        Self::apply_button_availability(&smtc)?;
 
         let cb_clone = callback.clone();
         let handler = TypedEventHandler::new(
             move |_, args: Ref<SystemMediaTransportControlsButtonPressedEventArgs>| {
                 if let Some(args) = args.as_ref() {
                     let button = args.Button()?;
-                    debug!(?button, "SMTC 按钮被按下");
+                    info!(?button, "SMTC 按钮被按下");
                     let event = match button {
                         SystemMediaTransportControlsButton::Play => {
                             Some(SystemMediaEvent::new(SystemMediaEventType::Play))
@@ -147,6 +143,29 @@ impl WindowsImpl {
     pub async fn enable(&mut self) -> Result<()> {
         self.is_enabled = true;
         self.smtc.SetIsEnabled(true)?;
+        // Re-asserted *after* enabling, not only at construction. The session
+        // is built disabled (so a half-populated card never reaches the shell)
+        // and only enabled once a push is due, which meant every
+        // `IsXxxEnabled` was written to a disabled SMTC — a state Windows is
+        // free not to carry over. The display survives that regardless, because
+        // `DisplayUpdater::Update` runs later; the transport buttons do not,
+        // which reads as "the flyout shows the right track and every button is
+        // inert". Cheap enough to just do both.
+        Self::apply_button_availability(&self.smtc)?;
+        Ok(())
+    }
+
+    /// Which transport buttons the shell should offer.
+    ///
+    /// Shuffle and repeat are deliberately absent: those are driven by
+    /// [`Self::update_play_mode`], and the shell derives their availability from
+    /// `ShuffleEnabled` / `AutoRepeatMode` having been set at all.
+    fn apply_button_availability(smtc: &SystemMediaTransportControls) -> Result<()> {
+        smtc.SetIsPlayEnabled(true)?;
+        smtc.SetIsPauseEnabled(true)?;
+        smtc.SetIsStopEnabled(true)?;
+        smtc.SetIsNextEnabled(true)?;
+        smtc.SetIsPreviousEnabled(true)?;
         Ok(())
     }
 

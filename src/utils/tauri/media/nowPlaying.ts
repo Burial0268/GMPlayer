@@ -1,9 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 import { isTauri } from "../core/runtime";
 
 const PLUGIN = "now-playing-controls";
-const MEDIA_ACTION_EVENT = "now-playing-controls:media-action";
 
 export interface NowPlayingStateRequest {
   title?: string;
@@ -27,23 +25,6 @@ export interface NowPlayingTimelineRequest {
 
 export interface NowPlayingPlayModeRequest {
   mode: "normal" | "random" | "single";
-}
-
-export interface NowPlayingActionPayload {
-  action:
-    | "play"
-    | "pause"
-    | "next"
-    | "previous"
-    | "stop"
-    | "seek"
-    | "toggleShuffle"
-    | "toggleRepeat"
-    | "setRate"
-    | "setVolume";
-  position?: number;
-  rate?: number;
-  volume?: number;
 }
 
 async function call<T = void>(
@@ -116,18 +97,10 @@ export function clearNowPlayingControls(): Promise<void | undefined> {
   return call("clear");
 }
 
-export async function listenNowPlayingAction(
-  handler: (payload: NowPlayingActionPayload) => void,
-): Promise<() => void> {
-  if (!isTauri()) return () => {};
-
-  try {
-    const unlisten = await listen<NowPlayingActionPayload>(MEDIA_ACTION_EVENT, (event) => {
-      handler(event.payload);
-    });
-    return unlisten;
-  } catch (err) {
-    console.warn("[NowPlayingControls] listenNowPlayingAction failed:", err);
-    return () => {};
-  }
-}
+// There is deliberately no action listener here. System-media actions are taken
+// in Rust (`media::install_controls` → `gmplayer_now_playing_controls::on_action`)
+// and sent to the audio backend directly; the plugin only falls back to emitting
+// `now-playing-controls:media-action` when no in-process handler is installed,
+// which never happens in this app. Listening for it again would put a second
+// writer on a transport the backend owns — and would reintroduce a path that
+// silently does nothing whenever no page is mounted and listening.

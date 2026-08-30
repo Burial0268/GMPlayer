@@ -84,9 +84,7 @@ export {
   updateNowPlayingPlayMode,
   setNowPlayingEnabled,
   clearNowPlayingControls,
-  listenNowPlayingAction,
   type NowPlayingStateRequest,
   type NowPlayingTimelineRequest,
   type NowPlayingPlayModeRequest,
-  type NowPlayingActionPayload,
 } from "./media/nowPlaying";
