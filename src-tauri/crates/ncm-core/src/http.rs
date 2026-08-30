@@ -10,20 +10,68 @@
 //! linked into the app through `tauri-plugin-http` and `tauri` itself — this
 //! adds no new stack.
 //!
-//! Keep-alive is worth a lot on one host and very little on another, and the two
-//! constants below carry the measurement rather than a rule of thumb:
-//! `music.163.com` reuses a connection for 25–390 ms of saving per call, while
-//! `interface3.music.163.com` closes early enough that reuse past a few seconds
-//! is a wasted round trip. reqwest's pool is per-client, so the timeout favours
-//! the host that is asked far more often and [`TCP_KEEPALIVE`] plus
-//! [`ATTEMPT_TIMEOUT`] bound what being wrong costs.
+//! ## The transport is HTTP/2, and used to be so by accident
 //!
-//! The failure that shape exists to prevent: a request written into a socket the
-//! peer has silently dropped produces neither a response nor an error. It hangs.
-//! Without a per-attempt ceiling it hangs for the entire call budget and then
-//! surfaces as `transport error (timeout)`, which upstream `util/request.js`
-//! reports as a 502 — a failure the user sees, invented entirely on this side of
-//! the socket.
+//! Both Netease hosts negotiate `h2`. That contradicts what this module used to
+//! say, and the way it was wrong is worth keeping: this crate did not declare
+//! reqwest's `http2` feature, so its client never offered `h2` in ALPN and was
+//! handed back the only thing it asked for. `tauri-plugin-http` *does* declare
+//! that feature on the same reqwest version, and Cargo unifies features across
+//! a build — so the shipped app has been on HTTP/2 while `cargo test -p
+//! ncm-core`, which builds this crate alone, measured HTTP/1.1. Every constant
+//! below was tuned against a transport the app does not use.
+//!
+//! The feature is now declared here, so the two agree — and note the tree
+//! carries *two* reqwests (0.12 here and under `tauri-plugin-http`, 0.13 under
+//! `tauri-plugin-updater`). Different majors do not unify, so the inherited
+//! `http2` was one dependency bump away from silently reverting this crate to
+//! HTTP/1.1 with no build error and no failing test.
+//! `tests/live_transport.rs` holds the measurements and asserts the negotiated
+//! version, so it is a property of the wire rather than of the build graph.
+//!
+//! The lesson worth more than the fix: a measurement that contradicts a
+//! documented capability is far more likely to be measuring the *client*.
+//! `openssl s_client -alpn h2,http/1.1 -connect music.163.com:443` answers it
+//! in one line, independently of anything Rust is doing, and confirms `h2` on
+//! both hosts.
+//!
+//! **Declaring the feature is the fix; h2 being faster is not the reason.** On
+//! the path this was measured from, h1 was in fact the quicker of the two for a
+//! burst — cold *and* warm (`tests/live_transport::burst_cost_cold_and_warm`,
+//! 12 concurrent: 36 ms h1 vs 47 ms h2 warm on `music.163.com`, 49 vs 62 on
+//! `interface3`). Cold that is expected, since twelve h1 connections handshake
+//! concurrently and get an `initcwnd` each where h2 queues them behind one
+//! handshake and one congestion window. Warm it is not, and the honest reading
+//! is that these numbers are the local path's — a VPN or TUN-mode proxy relays
+//! ALPN unchanged but owns every millisecond — so they are not evidence for
+//! either protocol. What the change rests on instead:
+//!
+//! * **Reproducibility.** A crate whose wire protocol depends on what a sibling
+//!   crate happens to enable cannot be measured, and every constant below was
+//!   tuned against a transport the app does not run.
+//! * **Connection reuse stopped being a compromise**, which is the real win, and
+//!   it is a same-path *relative* comparison rather than an absolute — see
+//!   [`POOL_IDLE_TIMEOUT`].
+//! * **A dead connection got more expensive**, which is the real cost — see
+//!   [`H2_KEEP_ALIVE_INTERVAL`].
+//!
+//! HTTP/3 is not on offer, despite a header that reads like it is.
+//! `interface3.music.163.com` intermittently answers
+//! `alt-svc: quic=":443"; ma=2592000; v="44,43,39"` — that is *gQUIC*, Google's
+//! pre-standard QUIC, frozen around 2018, and not something an RFC 9114 client
+//! can speak; a real offer would name `h3`. It is intermittent because these are
+//! anycast CDN edges and they are not configured alike: repeated runs get the
+//! header on one request and nothing on the next.
+//! `tests/live_transport::no_http3_is_advertised` keys on `h3` for exactly that
+//! reason — absence proves nothing here, so it is written as a tripwire for the
+//! one reading that would change a decision rather than as a measurement.
+//!
+//! The failure that the timeout shape exists to prevent: a request written into
+//! a socket the peer has silently dropped produces neither a response nor an
+//! error. It hangs. Without a per-attempt ceiling it hangs for the entire call
+//! budget and then surfaces as `transport error (timeout)`, which upstream
+//! `util/request.js` reports as a 502 — a failure the user sees, invented
+//! entirely on this side of the socket.
 //!
 //! ## Bursts
 //!
@@ -71,53 +119,101 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long a connection may sit unused before the pool drops it.
 ///
-/// **The two hosts disagree about this, and the measurement was worth redoing.**
-/// An earlier version set 300 s on the reasoning that a per-track resolve would
-/// otherwise always handshake; that was cut to 5 s after measuring
-/// `interface3.music.163.com` and finding a pooled connection *slower* than a
-/// fresh one after an idle gap. Both readings were real, and generalizing from
-/// the second one was the mistake — it made the other host much worse:
+/// **Redone on h2, and the disagreement between the two hosts turned out to be
+/// an h1 artifact.** The committed table below was measured on HTTP/1.1 — this
+/// crate never declared reqwest's `http2` feature, so it never offered `h2` in
+/// ALPN — and found `interface3.music.163.com` closing idle connections far
+/// sooner than `music.163.com`:
 ///
-/// | idle | `music.163.com` pooled / fresh | `interface3` pooled / fresh |
+/// | idle | `music.163.com` pooled / fresh (h1) | `interface3` pooled / fresh (h1) |
 /// |------|-------------------------------|-----------------------------|
 /// | 0 ms | **21 / 46 ms** | 100 / 217 ms |
 /// | 3 s | **30 / 266 ms** | 132 / 195 ms |
 /// | 8 s | **19 / 56 ms** | **523** / 203 ms |
 /// | 12 s | **20 / 410 ms** | 296 / 202 ms |
 ///
-/// `music.163.com` — weapi, so `song_detail`, `cloudsearch`, login — holds a
-/// connection open happily and reuse is worth 25–390 ms every single call.
-/// `interface3` (xeapi, `song_url_v1`) closes early and reuse turns into a
-/// wasted round trip past ~5 s.
+/// That was correct for h1, where nginx's own keepalive timeout — typically
+/// single-digit seconds — is what closed the connection. It is not a property
+/// of the *host*, only of the protocol it was asked over. Rerun on h2
+/// (`tests/live_transport::pooled_versus_fresh_across_idle_gaps`), both hosts
+/// behave alike and reuse stays worthwhile out to a minute. Three runs, because
+/// one was not enough last time — `+ping` is [`H2_KEEP_ALIVE_INTERVAL`]:
 ///
-/// reqwest's pool timeout is per-client, not per-host, so this is one number for
-/// both and it is set to favour the host that is asked more often: search runs
-/// while the user types, `song_detail` backs every list, and a track resolve
-/// happens once every few minutes. Being occasionally stale on `interface3`
-/// costs one slow resolve; reconnecting on `music.163.com` costs every call.
+/// | idle | `music.163.com` pooled/+ping/fresh | `interface3` pooled/+ping/fresh |
+/// |------|-------------------------------|-----------------------------|
+/// | 0 s | 145/25/68 · 19/25/57 · 22/25/69 | 42/37/97 · 39/45/105 · 41/47/155 |
+/// | 3 s | — · 26/31/83 · 27/24/66 | — · 36/48/**337** · 35/37/189 |
+/// | 8 s | 47/25/82 · 28/20/68 · 29/18/69 | 37/34/**456** · 36/38/**586** · 43/40/116 |
+/// | 12 s | — · 27/29/107 · 27/24/**520** | — · **122**/31/115 · 45/46/147 |
+/// | 30 s | 31/26/79 · 22/29/**461** · 26/20/**440** | 141/33/162 · 35/36/**498** · 38/42/**449** |
+/// | 60 s | 160/175/226 · 21/22/389 · 35/19/114 | 97/83/**504** · 41/54/247 · 49/37/**530** |
 ///
-/// [`TCP_KEEPALIVE`] is what makes the long form safe — see there.
-const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
+/// The robust part — and the only part worth setting a constant from, since
+/// these are same-path relative comparisons rather than absolute latencies — is
+/// the *fresh* column: a new connection costs 2–15× a reused one and tends to
+/// worsen as the gap grows, on both hosts, in every run. Reuse at 60 s is still
+/// clearly right, so the timeout is set well past it.
+///
+/// Whether the `+ping` column earns its keep is the genuinely marginal call,
+/// and three runs disagree about how much. Pooled-without-ping is fine *most*
+/// of the time and occasionally is not — the bolded 122 ms and 145 ms are a
+/// reuse attempt discovering a connection that died during the gap, which is
+/// exactly the failure [`TCP_KEEPALIVE`] catches at the TCP layer but cannot
+/// see at the h2 layer (an intermediary can drop an HTTP/2 session while the
+/// socket under it still answers ACKs). The third run showed no pooled spike at
+/// all, so this is a tail that does not appear on every path. Ping never spiked
+/// in any run. It is kept as insurance rather than as a speedup: its median
+/// cost is nil and the cost of not having it is paid by a user waiting on a
+/// track.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Bounds what the pool retains. Kept in step with `throttle::MAX_IN_FLIGHT`,
 /// which is the concurrency a healthy host gets: a request beyond it would open
 /// a connection this pool then immediately drops.
 const POOL_MAX_IDLE_PER_HOST: usize = 6;
 
-/// Keepalive probes on pooled connections.
+/// TCP-layer keepalive probes on pooled connections.
 ///
-/// This is what makes [`POOL_IDLE_TIMEOUT`]'s long form safe, so the two move
-/// together. A graceful close is already handled — the peer's FIN makes the
-/// socket readable and hyper drops it from the pool before handing it out — but a
-/// *silent* drop, which is what a cellular NAT or a stateful firewall does to an
-/// idle binding, leaves a socket that looks alive and swallows whatever is
-/// written to it. That is the case that used to hang for the whole call budget.
+/// Necessary but not sufficient on h2: it detects a peer that has vanished —
+/// the cellular NAT or stateful firewall case, where a *silent* drop leaves a
+/// socket that looks alive and swallows whatever is written to it — but an h2
+/// session can be torn down by something in front of the peer (a load
+/// balancer, a reverse proxy resetting an idle stream) while the TCP
+/// connection under it answers ACKs normally. That gap is what
+/// [`H2_KEEP_ALIVE_INTERVAL`] closes; the two operate at different layers and
+/// neither substitutes for the other.
 ///
-/// Probing every few seconds means the OS discovers the dead peer while the
+/// Probing every few seconds means the OS discovers a truly dead peer while the
 /// connection is still idle, so the pool has already discarded it by the time a
 /// request wants one. Short enough to beat the pool timeout to the problem,
 /// long enough not to keep a phone's radio busy.
 const TCP_KEEPALIVE: Duration = Duration::from_secs(10);
+
+/// h2 PING keepalive interval, sent while a connection is idle.
+///
+/// This is the setting [`POOL_IDLE_TIMEOUT`]'s long form is safe *because of*:
+/// a PING at the HTTP/2 layer both proves the multiplexed session itself is
+/// alive (not just the TCP socket under it — see [`TCP_KEEPALIVE`]) and resets
+/// any idle timer the origin's edge is running, so an h2 connection that is
+/// being pinged does not get closed for looking idle.
+///
+/// Measured with `H2_KEEP_ALIVE_TIMEOUT` below, across three runs of the
+/// [`POOL_IDLE_TIMEOUT`] table: pinged reuse stayed between 18 and 54 ms at
+/// every idle gap on both hosts and never once spiked, where unpinged reuse hit
+/// 122 ms and 145 ms in one run (and nothing unusual in another). That is a
+/// tail difference and not a median one — pinging is not faster, it is *less
+/// occasionally slow* — which is the whole argument for it, since the
+/// occasional slow one is a user waiting on a track.
+///
+/// `while_idle(true)` is required: the default only pings while a request is
+/// outstanding, which is exactly when a ping is least needed.
+const H2_KEEP_ALIVE_INTERVAL: Duration = Duration::from_secs(20);
+
+/// How long a PING may go unanswered before the connection is considered dead
+/// and dropped from the pool. Bounded well under [`POOL_IDLE_TIMEOUT`] so a
+/// truly dead connection is discovered and evicted long before its slot would
+/// otherwise expire on its own.
+const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Refuse absurd response bodies rather than letting a malformed or hostile
 /// response drive an unbounded allocation.
@@ -282,6 +378,36 @@ impl HttpClient {
             .pool_idle_timeout(POOL_IDLE_TIMEOUT)
             .tcp_keepalive(TCP_KEEPALIVE)
             .pool_max_idle_per_host(POOL_MAX_IDLE_PER_HOST)
+            // What makes the widened `POOL_IDLE_TIMEOUT` safe on h2: see
+            // `H2_KEEP_ALIVE_INTERVAL`. `while_idle(true)` is required — the
+            // default only pings while a request is outstanding, which is
+            // exactly when a ping is least needed.
+            .http2_keep_alive_interval(H2_KEEP_ALIVE_INTERVAL)
+            .http2_keep_alive_timeout(H2_KEEP_ALIVE_TIMEOUT)
+            .http2_keep_alive_while_idle(true)
+            // Deliberately *not* `http2_adaptive_window`. h2's default
+            // per-stream receive window is 64 KiB, which ceilings a single
+            // stream at `window / RTT` — a real trap for large bodies, and the
+            // reason to check rather than assume. Measured
+            // (`tests/live_transport::large_bodies_are_not_starved_by_the_
+            // default_window`) at a 43 ms path RTT, so a ~1.5 MB/s ceiling: the
+            // largest CDN asset reachable unsigned (146 KiB) ran at 3.5–5.5x
+            // that ceiling across runs, so flow control is not what limits
+            // these bodies.
+            //
+            // Adaptive was never *faster* in any run, and once was much slower
+            // (40 ms vs 28 ms; another run had it 22 vs 20, i.e. noise). BDP
+            // estimation has to slow-start before it can widen anything, and
+            // every body here finishes before that pays off. Absolute times
+            // vary with the path — the durable part is the ordering, not the
+            // milliseconds.
+            //
+            // The sizes are the point: this layer's largest response is a few
+            // hundred KB, not megabytes (asserted by
+            // `the_largest_real_response_is_not_window_starved`), because
+            // `playlist_track_all` chunks its `song_detail` fan-out. Revisit
+            // only if a response is measured pinned near the ceiling.
+            //
             // Netease answers 302 on some endpoints and the protocol layer
             // wants to see them, exactly as they surfaced through the deployed
             // server.

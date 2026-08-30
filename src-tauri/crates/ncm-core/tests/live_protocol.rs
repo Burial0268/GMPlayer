@@ -416,11 +416,16 @@ async fn login_qr_key_issues_a_unikey() {
 async fn concurrent_calls_overlap() {
     let core = std::sync::Arc::new(core().await);
 
-    // Warm the connection pool so the comparison is not dominated by TLS.
-    let _ = core.call("song_detail", r#"{"ids":"347230"}"#).await;
+    // Warm the connection pool. Deliberately a different id than every
+    // measurement below — `song_detail` is `TTL_STATIC`-cached, so reusing an
+    // id here would make a later "measurement" a cache hit instead of a
+    // network call, and cache hits are µs while network calls are ms: any
+    // baseline that accidentally lands on a warmed id will always beat N
+    // concurrent fresh calls, regardless of whether the HTTP op overlaps.
+    let _ = core.call("song_detail", r#"{"ids":"347239"}"#).await;
 
     let single = std::time::Instant::now();
-    let _ = core.call("song_detail", r#"{"ids":"347230"}"#).await.unwrap();
+    let _ = core.call("song_detail", r#"{"ids":"347240"}"#).await.unwrap();
     let single = single.elapsed();
 
     const N: usize = 6;

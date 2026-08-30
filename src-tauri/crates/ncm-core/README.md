@@ -72,11 +72,14 @@ Measured, because it decides where optimizing is worth anything:
 | 1.5 MB JSON round trip through QuickJS | ~7 ms |
 | cold isolate + bootstrap handshake | ~350–650 ms |
 
-A call *is* its round trip. Netease answers HTTP/1.1 only, so there is no
-multiplexing either — six connections per host is the ceiling, which is what
-`throttle::MAX_IN_FLIGHT` and `http::POOL_MAX_IDLE_PER_HOST` both encode. **The
-only way to be faster is to make fewer requests**, which is what the layers in
-front of `call` do:
+A call *is* its round trip. Netease negotiates HTTP/2 on both hosts, so requests
+to one host share a connection rather than needing one each — but the ceiling of
+six in flight per host stays, because it is a *politeness* limit rather than a
+connection limit: bursting past it is what gets a client shed (see `throttle`),
+and `throttle::MAX_IN_FLIGHT` and `http::POOL_MAX_IDLE_PER_HOST` both encode it.
+Multiplexing makes a burst cheaper to hold open; it does not make one round trip
+shorter. **The only way to be faster is to make fewer requests**, which is what
+the layers in front of `call` do:
 
 - **`cache` / `disk`** — an answer already held, in memory or from a previous
   launch. Past its TTL but inside its stale window it is still served, at once,

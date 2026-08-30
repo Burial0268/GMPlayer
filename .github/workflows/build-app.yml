@@ -299,7 +299,15 @@ jobs:
     needs: [clean-pre-release, verify-ncm-protocol]
     runs-on: ubuntu-latest
     env:
-      ANDROID_API_LEVEL: "24"
+      # 必须与 `gen/android/app/build.gradle.kts` 的 minSdk 和
+      # `tauri.android.conf.json` 的 minSdkVersion 保持一致。这不是「取个够低的
+      # 值更兼容」：它经 CARGO_NDK_ANDROID_PLATFORM 决定 cargo-ndk 链接哪个
+      # sysroot 目录，而 cpal 0.18 的 Android 后端是 AAudio
+      # （ndk features = ["audio", "api-level-26"] → ndk-sys 的
+      # `#[link(name = "aaudio")]`），libaaudio.so 在 NDK sysroot 里最早出现在
+      # `usr/lib/<triple>/26/`。填 24 时四个 ABI 全部以
+      # `unable to find library -laaudio` 链接失败——一个和 API 版本看不出关系的报错。
+      ANDROID_API_LEVEL: "26"
       ANDROID_NDK_VERSION: "27.2.12479018"
       OPENSSL_VERSION: "3.4.1"
       ANDROID_OPENSSL_DIR: ${{ github.workspace }}/.android-openssl

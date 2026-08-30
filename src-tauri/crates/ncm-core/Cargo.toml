@@ -49,8 +49,27 @@ flate2 = "1"
 # Pinned to the 0.12 line and rustls to match what the Tauri plugins already
 # resolve; `default-features = false` keeps native-tls/OpenSSL out of a tree
 # that is currently pure rustls.
+#
+# `http2` is declared here rather than inherited. It was missing, and because
+# `tauri-plugin-http` enables it on the *same* reqwest version, Cargo's feature
+# unification switched it on for this crate too — so the app has been speaking
+# HTTP/2 to Netease while `cargo test -p ncm-core`, which builds this crate
+# alone, spoke HTTP/1.1. Every latency number measured through the live tests
+# therefore described a transport the app does not use, including the claim that
+# Netease is HTTP/1.1 only. A crate's own wire protocol must not depend on what
+# a sibling happens to enable.
+#
+# How narrow that accident was: the tree already carries *two* reqwests —
+# 0.12.28 here and with `tauri-plugin-http`, and 0.13.4 under
+# `tauri-plugin-updater`. Different majors are different crates and do not
+# unify, so the inherited `http2` only ever arrived because the http plugin
+# happened to sit on the same 0.12 line. It bumping to 0.13 would have silently
+# dropped this crate back to HTTP/1.1 with no build error and no test failure.
+# Verify with `cargo tree -e features -i reqwest@0.12 | grep -A3 'feature "http2"'`,
+# which should list ncm-core in its own right.
 reqwest = { version = "0.12", default-features = false, features = [
   "rustls-tls",
+  "http2",
   "gzip",
   "charset",
 ] }
@@ -66,8 +85,10 @@ serde_json = "1"
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 # Integration tests link against dev-dependencies only, so the latency
-# benchmark needs its own handle on the client.
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+# benchmark needs its own handle on the client. `http2` matches the library
+# dependency above, so a test can build an h1-only and an ALPN client side by
+# side and compare them on the transport the app actually ships.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2"] }
 
 # rquickjs-sys ships pregenerated bindings for desktop targets only; Android
 # and iOS are not in that set, so those builds must generate them at compile
