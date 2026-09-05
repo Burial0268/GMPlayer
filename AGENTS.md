@@ -4,6 +4,24 @@
 
 Address the project owner as the Operator. Treat this file as the shared guide for all coding agents; `CLAUDE.md` is only a compatibility link.
 
+## Working Rules
+
+1. **Never guess an interface.** Read the source or the docs before calling it.
+2. **Clarify an ambiguous requirement first.** Ask, get the answer, then write code.
+3. **Never invent the workflow.** Unclear product behaviour is confirmed, not reconstructed.
+4. **Reuse before you add.** Look in `shared/`, then the feature package.
+5. **Never break the architecture for convenience.** The layering is enforced by tests.
+6. **Say what you do not know.** Name the gap instead of writing over it.
+7. **Map the blast radius before changing logic.** Grep the callers; measure DSP changes.
+8. **Test by risk, not by volume.**
+9. **Verify before you fix.** Reproduce the problem, do not hypothesise it.
+10. **No speculative defensive code.** Handle the boundaries that actually occur.
+11. **Comments are short and explain why.**
+12. **Do not reinvent the wheel.** Prefer a maintained dependency or what is already in the tree.
+13. **Write plainly.** No padding; bold labels a term, it does not make a sentence truer.
+14. **Log deliberately.** At a level that matches the event — no silence, no flood.
+15. **Never touch git history on your own.** Commit, push, tag and branch wait for an instruction.
+
 ## Project Overview
 
 GMPlayer is a Vue 3 + Vite music player with Tauri 2 desktop/mobile support. It integrates with Netease Cloud Music API, local playback, Apple Music-like lyrics, real-time spectrum analysis, AutoMix/crossfade, PWA features, and i18n. License: AGPL-3.0.
