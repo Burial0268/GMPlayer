@@ -95,7 +95,7 @@ const currentCookie = (): string => {
 };
 
 /** Shape returned by the `ncm_request` command. */
-interface Envelope {
+export interface Envelope {
   ok: boolean;
   status: number;
   body: unknown;
@@ -110,8 +110,11 @@ interface Envelope {
  * it has differed across transports (custom protocol vs. postMessage). Accept
  * the byte forms and a plain string so a change there degrades into a slower
  * path rather than breaking every request.
+ *
+ * Exported for `@/utils/ncm/projectedRequest`, which talks to a second raw-bytes
+ * command and must read its envelope the same way.
  */
-const decodeEnvelope = (raw: unknown): Envelope => {
+export const decodeEnvelope = (raw: unknown): Envelope => {
   let text: string;
   if (typeof raw === "string") {
     text = raw;

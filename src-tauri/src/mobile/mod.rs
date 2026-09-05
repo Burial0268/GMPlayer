@@ -62,6 +62,7 @@ pub fn run() {
             commands::audio_poll_events,
             // In-process NCM protocol layer (QuickJS + Rust primitives)
             crate::ncm::ncm_request,
+            crate::ncm::ncm_request_projected,
             crate::ncm::ncm_protocol_info,
             crate::ncm::ncm_prefetch,
         ])

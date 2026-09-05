@@ -23,6 +23,8 @@ use serde::Serialize;
 use tauri::Manager;
 use tokio::sync::OnceCell;
 
+mod projection;
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ProtocolInfo {
@@ -247,6 +249,73 @@ pub async fn ncm_request(
         })?
         .map_err(|e| e.to_string())?;
     Ok(tauri::ipc::Response::new(json.into_bytes()))
+}
+
+/// [`ncm_request`], with the answer cut down to what the list rows read.
+///
+/// Same endpoint, same query, **same cache entry**: `query` is spelled by the
+/// frontend with the shared `withCookie`, and the cache canonicalises key order
+/// and drops `timestamp`, so this call, the axios path and the matching prefetch
+/// hint all land on one entry. `batch` and `inflight` are equally unaffected, and
+/// what they store is the *full* envelope — projection happens after, per call,
+/// so a caller that needs the dropped fields keeps using `ncm_request` and is
+/// answered from the same bytes.
+///
+/// It exists because two endpoints here answer in megabytes and the `JSON.parse`
+/// at the far end is the only step in the path — network, isolate, transport,
+/// IPC — that runs on the thread drawing the UI. See [`projection`] for the
+/// measurements and for why streaming is the wrong answer to the same problem.
+///
+/// An endpoint with no projection, or an answer whose shape does not match, is
+/// forwarded verbatim, so this is never *less* correct than `ncm_request` — at
+/// worst it is the same bytes.
+///
+/// `fresh` skips the cache *read* — see `NcmCore::call_fresh`. It is for the one
+/// question a held answer cannot settle: whether the account has accepted a write,
+/// which no amount of invalidation can cover for a write that never passed through
+/// this isolate (the `remote` transport, another device, the web). The answer is
+/// still stored, so the entry the next ordinary caller finds is the new one, and it
+/// still costs exactly one round trip. Do not pass it on a hot path.
+#[tauri::command]
+pub async fn ncm_request_projected(
+    state: tauri::State<'_, NcmState>,
+    endpoint: String,
+    query: String,
+    fresh: Option<bool>,
+) -> Result<tauri::ipc::Response, String> {
+    let core = state.core().await?;
+    let call = async {
+        if fresh.unwrap_or(false) {
+            core.call_fresh(&endpoint, &query).await
+        } else {
+            core.call(&endpoint, &query).await
+        }
+    };
+    let json = tokio::time::timeout(CALL_TIMEOUT, call)
+        .await
+        .map_err(|_| {
+            log::error!(target: "ncm", "endpoint {endpoint} did not settle within {CALL_TIMEOUT:?}");
+            format!("the embedded protocol layer did not answer within {CALL_TIMEOUT:?}")
+        })?
+        .map_err(|e| e.to_string())?;
+
+    if !projection::is_projectable(&endpoint) {
+        return Ok(tauri::ipc::Response::new(json.into_bytes()));
+    }
+
+    // `spawn_blocking`, not inline: this is a serde_json parse of a couple of
+    // megabytes — tens of milliseconds of straight CPU — and an async worker
+    // parked on that is a worker not driving anyone's network wait. It is also
+    // exactly the work we are moving *off* the WebView's main thread, so putting
+    // it on a thread whose job is to block is the whole point.
+    let projected = tokio::task::spawn_blocking(move || {
+        let out = projection::project(&endpoint, &json);
+        out.unwrap_or(json)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+
+    Ok(tauri::ipc::Response::new(projected.into_bytes()))
 }
 
 /// Whether the in-process transport is usable, and what it is running.
