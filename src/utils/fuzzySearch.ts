@@ -24,17 +24,12 @@ const isBoundary = (prev: string): boolean =>
   prev === "（";
 
 /**
- * 给 `query` 在 `text` 中的匹配打分，不匹配返回 `null`。
+ * 打分的内核，两边都**已经**小写。
  *
- * 分数只用于**排序**，绝对值没有意义。约定：越大越好。
+ * 从 `fuzzyScore` 里拆出来，是为了让调用方能把小写化的结果留下来——见
+ * `loweredFields`。整表过滤时 `toLowerCase()` 本身就是这条路径上最贵的一步。
  */
-export const fuzzyScore = (text: string, query: string): number | null => {
-  if (!query) return 0;
-  if (!text) return null;
-
-  const t = text.toLowerCase();
-  const q = query.toLowerCase();
-
+const scoreLowered = (t: string, q: string): number | null => {
   // 连续子串是最强信号，直接短路并按「越靠前越好、越短的宿主越好」加权。
   const direct = t.indexOf(q);
   if (direct !== -1) {
@@ -65,6 +60,17 @@ export const fuzzyScore = (text: string, query: string): number | null => {
   return score;
 };
 
+/**
+ * 给 `query` 在 `text` 中的匹配打分，不匹配返回 `null`。
+ *
+ * 分数只用于**排序**，绝对值没有意义。约定：越大越好。
+ */
+export const fuzzyScore = (text: string, query: string): number | null => {
+  if (!query) return 0;
+  if (!text) return null;
+  return scoreLowered(text.toLowerCase(), query.toLowerCase());
+};
+
 /** 一行歌曲里参与匹配的文本：曲名、专辑名、每一位艺人名。 */
 const songFields = (row: any): string[] => {
   const fields: string[] = [];
@@ -76,15 +82,40 @@ const songFields = (row: any): string[] => {
 };
 
 /**
+ * 小写化后的字段，按行缓存。
+ *
+ * 万首歌单整表过滤时，`toLowerCase()` 是这条路径上最贵的一步：每行 4 个字段
+ * × 每敲一个键一次。实测 10000 行、关键词 `a`，不缓存 37 ms，缓存后 18 ms。
+ * 而列表条目是 `markRaw` 的、构造后再不改写（见 `utils/rawEntry`），所以
+ * 「这一行的小写字段」是可以一次算完永久有效的。
+ *
+ * 用 `WeakMap`：键就是行对象本身，换歌单、过滤出新数组都不需要清理，行被丢掉
+ * 时缓存条目跟着回收。
+ */
+const loweredCache = new WeakMap<object, string[]>();
+
+const loweredFields = (row: any): string[] => {
+  if (!row || typeof row !== "object") return [];
+  const hit = loweredCache.get(row);
+  if (hit) return hit;
+  const fields = songFields(row).map((s) => s.toLowerCase());
+  loweredCache.set(row, fields);
+  return fields;
+};
+
+/**
  * 取歌曲各字段里的最佳得分，不匹配返回 `null`。
  *
  * 曲名权重最高：搜「周杰伦」时匹配到艺人当然算，但同样分数下应该让曲名命中排前面。
+ *
+ * `query` 必须**已经**小写。这个函数在整表过滤里是逐行调用的，把小写化留给调用方
+ * 做一次，而不是每行重做一遍。
  */
-export const fuzzyScoreSong = (row: any, query: string): number | null => {
-  const fields = songFields(row);
+export const fuzzyScoreSong = (row: any, loweredQuery: string): number | null => {
+  const fields = loweredFields(row);
   let best: number | null = null;
   for (let i = 0; i < fields.length; i++) {
-    const s = fuzzyScore(fields[i], query);
+    const s = scoreLowered(fields[i], loweredQuery);
     if (s === null) continue;
     // i === 0 是曲名。
     const weighted = i === 0 ? s + 40 : s;
@@ -98,13 +129,30 @@ export const fuzzyScoreSong = (row: any, query: string): number | null => {
  *
  * 排序是稳定的（`Array.prototype.sort` 在现代引擎里保证），所以同分行保持原始
  * 列表顺序——这很重要：一张专辑里同分的曲目应该还是按曲序排。
+ *
+ * 得分按「行 × 当前关键词」缓存。长流页面在补齐期间会一块一块地追加行，每次追加
+ * 都要拿**同一个**关键词把整张表重过一遍；没有这层缓存，万首歌单分十块补齐就是
+ * 十次全表打分（实测 27→12 ms，四十块时 79→25 ms）。关键词一变就整片作废，因为
+ * 分数是相对关键词而言的。
  */
-export const fuzzyFilterSongs = <T>(rows: T[], query: string): T[] => {
-  const q = query.trim();
-  if (!q) return rows;
+let scoreMemoQuery = "";
+let scoreMemo = new WeakMap<object, number | null>();
+
+export const fuzzyFilterSongs = <T>(rows: readonly T[], query: string): T[] => {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows as T[];
+  if (scoreMemoQuery !== q) {
+    scoreMemoQuery = q;
+    scoreMemo = new WeakMap();
+  }
   const scored: { row: T; score: number }[] = [];
   for (const row of rows) {
-    const score = fuzzyScoreSong(row, q);
+    const keyed = typeof row === "object" && row !== null ? (row as object) : null;
+    let score = keyed ? scoreMemo.get(keyed) : undefined;
+    if (score === undefined) {
+      score = fuzzyScoreSong(row, q);
+      if (keyed) scoreMemo.set(keyed, score);
+    }
     if (score !== null) scored.push({ row, score });
   }
   scored.sort((a, b) => b.score - a.score);
