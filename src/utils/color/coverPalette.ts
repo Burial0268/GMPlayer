@@ -1,11 +1,8 @@
 import ColorThief from "colorthief";
-import {
-  Hct,
-  QuantizerCelebi,
-  Score,
-  themeFromSourceColor,
-} from "@material/material-color-utilities";
+import { Hct, themeFromSourceColor } from "@material/material-color-utilities";
 import { settingStore, siteStore } from "@/store";
+import { isAssetUrl } from "@/utils/coverUrl";
+import { quantizeCoverPixels } from "./quantizeClient";
 
 export type RGB = [number, number, number];
 export type HSL = [number, number, number];
@@ -136,7 +133,16 @@ export const normalizeColor = (rgb: RGB): RGB => {
 export const calcWhiteShadeColor = (rgb: RGB, amount = 0.5): RGB =>
   rgb.map((channel) => roundChannel(channel * (1 - amount) + 255 * amount)) as RGB;
 
-const normalizeCoverUrl = (coverSrc: string): string => coverSrc.replace(/^http:/, "https:");
+/**
+ * The cache key and load URL for a cover.
+ *
+ * Skips the `http:` → `https:` upgrade for an asset-protocol URL: on Windows and
+ * Android `convertFileSrc` yields `http://asset.localhost/…`, and rewriting that
+ * points at an origin with no protocol handler — the image then fails to load and
+ * every local track silently falls back to the default palette.
+ */
+const normalizeCoverUrl = (coverSrc: string): string =>
+  isAssetUrl(coverSrc) ? coverSrc : coverSrc.replace(/^http:/, "https:");
 
 // Palette extraction only ever samples a 64x64 grid, so there is no reason to
 // pull the original artwork. NCM's CDN resizes server-side via `param`, which
@@ -213,23 +219,33 @@ const loadImage = (coverSrc: string): Promise<HTMLImageElement> =>
     image.src = toPaletteSourceUrl(coverSrc);
   });
 
-const getImagePixels = (sample: ImageData): number[] => {
+/**
+ * Opaque pixels as packed `0xAARRGGBB`, in a transferable buffer.
+ *
+ * `Uint32Array` rather than `number[]` because this crosses to the quantize
+ * worker by transfer, and a plain array would be structured-cloned instead —
+ * 4096 boxed numbers copied per cover, which is exactly the kind of cost the
+ * worker exists to remove.
+ */
+const getImagePixels = (sample: ImageData): Uint32Array => {
   const data = sample.data;
-  const pixels: number[] = [];
+  const pixels = new Uint32Array(data.length >> 2);
+  let count = 0;
 
   for (let i = 0; i < data.length; i += 4) {
     const alpha = data[i + 3];
     if (alpha < 128) continue;
-    pixels.push(
+    pixels[count++] =
       (((alpha << 24) >>> 0) |
         ((data[i] << 16) >>> 0) |
         ((data[i + 1] << 8) >>> 0) |
         data[i + 2]) >>>
-        0,
-    );
+      0;
   }
 
-  return pixels;
+  // Exact length: the worker transfers this buffer, so trailing zeros would be
+  // quantized as opaque black.
+  return pixels.subarray(0, count).slice();
 };
 
 const isLowChromaArgb = (argb: number): boolean => {
@@ -244,17 +260,23 @@ const liftLowChromaSource = (argb: number): number => {
   return Hct.from(hue, 34, clamp(hct.tone, 42, 58)).toInt();
 };
 
-const getScoredSourceColor = (sample: ImageData, fallbackPalette: RGB[]): number => {
+/**
+ * Score the cover's source colour.
+ *
+ * Async because the quantizer runs in a worker — it is 30–140 ms of Wu box
+ * splitting, and on a playlist page it used to land in the same frame as the
+ * first rows. Everything else here is a few milliseconds and stays inline.
+ */
+const getScoredSourceColor = async (sample: ImageData, fallbackPalette: RGB[]): Promise<number> => {
   const pixels = getImagePixels(sample);
   if (!pixels.length) return argbFromTriplet(fallbackPalette[0] ?? DEFAULT_SOURCE_RGB);
 
-  const quantizedColors = QuantizerCelebi.quantize(pixels, 128);
-  const ranked = Score.score(quantizedColors);
-  if (ranked[0]) return liftLowChromaSource(ranked[0]);
+  const { argb } = await quantizeCoverPixels(pixels, 128);
+  if (argb !== null) return liftLowChromaSource(argb);
 
   const fallback = fallbackPalette
     .map((rgb) => argbFromTriplet(normalizeColor(rgb)))
-    .find((argb) => !isLowChromaArgb(argb));
+    .find((candidate) => !isLowChromaArgb(candidate));
 
   return liftLowChromaSource(fallback ?? argbFromTriplet(DEFAULT_SOURCE_RGB));
 };
@@ -385,7 +407,7 @@ const extractCoverPalette = async (image: HTMLImageElement): Promise<CoverPalett
   // whole thing back. Its result only seeds edge-case fallbacks below, so it
   // never justified a full-resolution pass.
   const fallbackPalette = colorThief.getPalette(sample, 12, 6) ?? [];
-  const sourceArgb = getScoredSourceColor(sample, fallbackPalette);
+  const sourceArgb = await getScoredSourceColor(sample, fallbackPalette);
   return createCoverPalette(sourceArgb);
 };
 
