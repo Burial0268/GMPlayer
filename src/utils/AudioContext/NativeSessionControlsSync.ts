@@ -159,16 +159,13 @@ const adoptSessionControls = (controls: SessionControls): void => {
   let modeChanged = false;
   adopting = true;
   try {
-    if (
-      controls.playMode &&
-      controls.playMode !== music.persistData.playSongMode &&
-      // `setPlaySongMode` is the interactive path: it toasts, reseeds the random
-      // traversal and republishes the manifest. None of that is right for a
-      // value the backend has *already* applied to its own planner.
-      ["normal", "random", "single"].includes(controls.playMode)
-    ) {
-      music.persistData.playSongMode = controls.playMode;
-      modeChanged = true;
+    if (controls.playMode && ["normal", "random", "single"].includes(controls.playMode)) {
+      // `setPlaySongMode` is the interactive path: it toasts and re-publishes the
+      // controls, neither of which is right for a value the backend has *already*
+      // applied to its own planner. `adoptPlaySongMode` is the quiet half — but it
+      // still reorders the queue, because in random mode the traversal order *is*
+      // the queue order.
+      modeChanged = music.adoptPlaySongMode(controls.playMode);
     }
 
     const songId = Number(music.playingSongId ?? music.getPlaySongData?.id);
@@ -194,11 +191,12 @@ const adoptSessionControls = (controls: SessionControls): void => {
   lastPublished = "";
 
   if (modeChanged) {
-    // The backend rebuilt its own traversal when it applied the mode, and the
-    // frontend now has a different one — its own list order. Republishing is
-    // the convergence point: it hands the backend the order the UI is actually
-    // showing, so "next up" and what plays next are the same thing. Safe from a
-    // loop because a manifest publish never publishes controls.
+    // The backend built its own shuffle when it applied the mode (it had to —
+    // there may have been no page alive to ask), and the frontend has just
+    // reordered its queue. Republishing is the convergence point: it hands the
+    // backend the order the UI is actually showing, so "next up" and what plays
+    // next are the same thing. Safe from a loop because a manifest publish never
+    // publishes controls.
     publishNativeManifest({ force: true });
   }
 };

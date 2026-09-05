@@ -799,6 +799,10 @@ onMounted(() => {
   // 挂载方法
   window.$getPlaySongData = getPlaySongData;
 
+  // 随机模式的顺序装在队列里，所以在读索引的人（下面的恢复播放、后端会话采纳）
+  // 之前先把队列摆正。老版本升级上来时才真的会动，之后都是空转。
+  music.ensureShuffledInRandomMode();
+
   const startRestoredPlayback = () => {
     if (music.getPlaylists[0] && music.getPlaySongData) {
       const generation = ++_songLoadGeneration;

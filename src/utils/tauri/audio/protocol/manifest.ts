@@ -42,14 +42,20 @@ export interface NativePlaybackManifest {
   entries: NativeManifestEntry[];
   /**
    * Explicit traversal order as indices into `entries`. Empty means natural
-   * order. Random mode ships a full permutation so both sides agree without
-   * duplicating a PRNG; the backend reshuffles later passes from `randomSeed`.
+   * order, which is what the frontend now ships for *every* mode: random mode
+   * shuffles the playlist itself, so the permutation is the entry order and
+   * there is nothing separate to send.
    */
   order: number[];
   cursorIdentity: TrackIdentity | null;
   cursorIndex: number;
   mode: "normal" | "single" | "random";
   repeatList: boolean;
+  /**
+   * Seed for the one shuffle the backend builds on its own: a play-mode press on
+   * the OS notification with no WebView alive (`ManifestStore::set_mode`). The
+   * frontend's next publish replaces that order with the playlist's own.
+   */
   randomSeed?: number | null;
 }
 

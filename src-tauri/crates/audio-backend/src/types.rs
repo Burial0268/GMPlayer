@@ -719,8 +719,8 @@ pub struct NativePlaybackManifest {
     pub revision: u64,
     pub entries: Vec<NativeManifestEntry>,
     /// Explicit traversal order as indices into `entries`. Empty means natural
-    /// order. For random mode the frontend ships the whole shuffled
-    /// permutation so both sides agree without duplicating a PRNG.
+    /// order, which is what the frontend ships for every mode: random mode
+    /// shuffles the playlist itself, so the permutation *is* the entry order.
     #[serde(default)]
     pub order: Vec<usize>,
     #[serde(default)]
@@ -732,7 +732,9 @@ pub struct NativePlaybackManifest {
     /// Whether running off the end of the traversal wraps.
     #[serde(default = "default_true")]
     pub repeat_list: bool,
-    /// Seed for backend-side reshuffles on random wrap.
+    /// Seed for the one order the backend builds itself: the shuffle
+    /// `ManifestStore::set_mode` installs for a play-mode press that arrives
+    /// with no WebView alive to republish one.
     #[serde(default)]
     pub random_seed: Option<u64>,
 }

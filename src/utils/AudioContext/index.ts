@@ -28,11 +28,7 @@ export {
 } from "./NativeQueuePrefill";
 
 // Native manifest planner (Tauri unbounded background advance)
-export {
-  publishNativeManifest,
-  clearNativeManifest,
-  reseedRandomTraversal,
-} from "./NativeManifestPublisher";
+export { publishNativeManifest, clearNativeManifest } from "./NativeManifestPublisher";
 export {
   syncNativeResolverConfig,
   invalidateNativeResolverConfig,

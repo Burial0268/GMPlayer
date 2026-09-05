@@ -13,6 +13,12 @@
  * - JS owns policy: list contents, traversal order, play mode, credentials.
  * - Rust owns execution: when to resolve, what to play next, retry on failure.
  *
+ * Traversal order is the *playlist* order, in every mode. Random mode shuffles
+ * `persistData.playlists` itself (`musicData.shufflePlaylistOrder`) instead of
+ * shipping a separate permutation, so the order is persisted with the queue,
+ * survives a killed WebView, and a republish can never reshuffle it under the
+ * backend mid-pass.
+ *
  * Tauri-only. The web backend accepts and ignores these messages (playback is
  * owned by the browser media host and JS is never frozen), so callers do not
  * need to branch — but we still gate here to avoid pointless IPC.
@@ -91,16 +97,16 @@ export const reconcileNativeManifestRevision = (backendRevision: number): void =
 setPlannerRevisionObserver(reconcileNativeManifestRevision);
 
 /**
- * Stable seed for random traversal. Regenerated whenever a *new* shuffle is
- * wanted (mode switch, list replace) rather than per publish, so re-publishing
- * the same list does not reshuffle under the user.
+ * Stable seed for the backend's *own* reshuffle.
+ *
+ * The traversal order is not seeded from here any more: random mode reorders the
+ * store playlist itself (`musicData.shufflePlaylistOrder`), so the manifest ships
+ * natural order and both sides just walk positions. What still needs a seed is
+ * the one case where the backend has to invent an order — a play-mode press on
+ * the OS notification with no WebView alive (`ManifestStore::set_mode`). One seed
+ * per session is enough: the backend mixes it with the revision and the pass.
  */
-let randomSeed = Math.floor(Math.random() * 0xffffffff);
-
-export const reseedRandomTraversal = (): void => {
-  randomSeed = Math.floor(Math.random() * 0xffffffff);
-  lastFingerprint = "";
-};
+const randomSeed = Math.floor(Math.random() * 0xffffffff);
 
 /**
  * Derive a backend identity from a store song.
@@ -125,38 +131,6 @@ const toIdentity = (song: SongData): TrackIdentity | null => {
   const id = Number(song.id);
   if (!Number.isFinite(id) || id <= 0) return null;
   return { provider: "netease", id: String(id) };
-};
-
-/**
- * Build the traversal order for the current mode.
- *
- * - normal/single: natural list order.
- * - random: a full shuffled permutation with the *current* track pinned to slot
- *   0, so the backend can walk an entire pass without JS and without repeats.
- *   The backend reshuffles subsequent passes itself from `randomSeed`.
- */
-const buildOrder = (length: number, cursorPosition: number, mode: string): number[] => {
-  const order = Array.from({ length }, (_, i) => i);
-  if (mode !== "random" || length <= 1) return order;
-
-  // Fisher-Yates seeded off randomSeed so a re-publish of the same list is
-  // stable. Math.random() here would reshuffle on every unrelated store write.
-  let state = randomSeed | 1;
-  const next = () => {
-    state ^= state << 13;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    return (state >>> 0) / 0x100000000;
-  };
-  for (let i = length - 1; i > 0; i--) {
-    const j = Math.floor(next() * (i + 1));
-    [order[i], order[j]] = [order[j], order[i]];
-  }
-  if (cursorPosition >= 0) {
-    const at = order.indexOf(cursorPosition);
-    if (at > 0) [order[0], order[at]] = [order[at], order[0]];
-  }
-  return order;
 };
 
 /**
@@ -313,8 +287,9 @@ const playlistSignature = (
     h2 = ((Math.imul(h2, 33) ^ token) >>> 0) + index;
     h2 >>>= 0;
   }
-  const seed = mode === "random" ? randomSeed : 0;
-  return `${mode}|${seed}|${cursorSongId ?? "?"}|${counted}|${h1.toString(36)}:${h2.toString(36)}`;
+  // No seed term: the traversal order is the playlist order (the index is mixed
+  // into both hashes above), so a reshuffle *is* a playlist change.
+  return `${mode}|${cursorSongId ?? "?"}|${counted}|${h1.toString(36)}:${h2.toString(36)}`;
 };
 
 const flushNativeManifest = (): void => {
@@ -390,7 +365,11 @@ const flushNativeManifest = (): void => {
     schemaVersion: 1,
     revision: nextRevision(),
     entries,
-    order: buildOrder(entries.length, cursorPosition, mode),
+    // Empty = natural order, for every mode. Random mode's permutation is the
+    // playlist itself, so there is no separate order to ship — and nothing for a
+    // republish to reshuffle, which is what used to restart the pass (and repeat
+    // tracks) every time the Android WebView was killed and came back.
+    order: [],
     cursorIdentity,
     cursorIndex,
     // `single` repeats one track; list repeat is the normal/random default.

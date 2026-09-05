@@ -81,6 +81,17 @@ export interface PersistData {
   playlists: SongData[];
   playSongIndex: number;
   playSongMode: "normal" | "random" | "single";
+  /**
+   * Song ids of `playlists` as they were ordered *before* the shuffle, or empty
+   * when the queue is not shuffled.
+   *
+   * Random mode reorders `playlists` itself instead of drawing a new index at
+   * every track change, so the permutation is persisted with the queue and
+   * survives a WebView the OS killed. This is the other half of that: the way
+   * back out. Ids, not positions — positions are exactly what a list edit
+   * invalidates.
+   */
+  preShuffleOrder: number[];
   playSongTime: PlaySongTime;
   playbackSnapshot: PlaybackSessionSnapshot;
   playVolume: number;
@@ -116,6 +127,7 @@ export const createDefaultPersistData = (): PersistData => ({
   playlists: [],
   playSongIndex: 0,
   playSongMode: "normal",
+  preShuffleOrder: [],
   playSongTime: createDefaultPlaySongTime(),
   playbackSnapshot: createDefaultPlaybackSnapshot(),
   playVolume: 0.7,

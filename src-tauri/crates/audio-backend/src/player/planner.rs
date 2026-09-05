@@ -2,11 +2,13 @@
 //! decision of "what plays next" — independent of how a track is resolved to a
 //! playable source.
 //!
-//! The planner walks `ManifestStore::order()`, so random mode is a full
-//! permutation traversal rather than a per-hop dice roll: every track plays
-//! once per pass, and wrapping reshuffles deterministically. This is what lets
-//! random mode advance indefinitely with the JS runtime frozen, with no
-//! prefill depth limit.
+//! The planner walks `ManifestStore::order()` positionally, in every mode.
+//! Random mode is not a per-hop dice roll and not a permutation the planner
+//! maintains either: the frontend shuffles the *playlist* and publishes it in
+//! that order, so one pass covers every track exactly once and a hop is always
+//! "the next slot". That is what lets random mode advance indefinitely with the
+//! JS runtime frozen — and, unlike a permutation rebuilt per publish, what stops
+//! a WebView restart from restarting the pass and replaying tracks.
 //!
 //! All state here is plain data on the player's control path — no allocation
 //! or blocking work happens in an audio callback.
@@ -47,20 +49,18 @@ pub struct Planner {
     /// Identity keys of tracks that actually played, oldest first.
     ///
     /// "Previous" means the track you just heard. That is only the same thing
-    /// as "the entry before this one in the list" in normal mode: random mode
-    /// traverses a permutation, and the manifest pins the current track to
-    /// slot 0 on every publish, so walking the order backwards there lands on
-    /// an unrelated track. Keyed by identity rather than position because
-    /// positions are exactly what list edits, reshuffles and manifest
+    /// as "the entry before this one in the list" once the order the backend
+    /// holds is the order the user is looking at — which is not true of a
+    /// shuffle the backend built itself for a notification press
+    /// (`ManifestStore::set_mode`). Keyed by identity rather than position
+    /// because positions are exactly what list edits, reorders and manifest
     /// replacement invalidate.
     history: Vec<String>,
     /// Memoized successor of `cursor_position`.
     ///
-    /// Deciding the next track is NOT idempotent in random mode: crossing the
-    /// pass boundary reshuffles the traversal order. Prefetch and the actual
-    /// advance both need "what plays next", so recomputing per call would
-    /// reshuffle twice — the prefetched source and the played track would
-    /// diverge, skipping some tracks and repeating others. Compute once, reuse
+    /// Prefetch and the actual advance both need "what plays next", and they
+    /// must agree: a recomputation that landed on a different track would leave
+    /// the prefetched source unused and the played one cold. Compute once, reuse
     /// until the cursor actually moves.
     pending_next: Option<PlannedTrack>,
     /// Positions that failed within the current revision; skipped when
@@ -190,13 +190,12 @@ impl Planner {
     /// Decide the successor of the current cursor without moving it.
     ///
     /// Memoized: repeated calls return the same track until the cursor moves or
-    /// the plan is invalidated. This matters because the random-mode wrap
-    /// reshuffles the traversal order, so a recomputation would hand back a
-    /// different track than the one already prefetched.
+    /// the plan is invalidated, so the prefetcher and the advance cannot pick
+    /// different tracks.
     ///
     /// `single` mode repeats the current position. Otherwise this walks the
-    /// traversal order, skipping known-failed positions, and — for random mode
-    /// on wrap — asks the manifest to reshuffle for the next pass.
+    /// traversal order, skipping known-failed positions, and wraps to the front
+    /// when `repeat_list` allows it.
     pub fn peek_next(&mut self, manifest: &mut ManifestStore) -> Option<PlannedTrack> {
         if !self.enabled || self.exhausted || manifest.is_empty() {
             return None;
@@ -218,7 +217,7 @@ impl Planner {
         planned
     }
 
-    fn compute_next(&self, manifest: &mut ManifestStore) -> Option<PlannedTrack> {
+    fn compute_next(&self, manifest: &ManifestStore) -> Option<PlannedTrack> {
         if manifest.mode() == NativePlaybackMode::Single {
             let position = self.cursor_position?;
             return self.planned_at(manifest, position);
@@ -234,28 +233,7 @@ impl Planner {
         let start = current_slot.map(|slot| slot + 1).unwrap_or(0);
         for step in 0..len {
             let raw_slot = start + step;
-            let wrapped = raw_slot >= len;
-            if wrapped && !manifest.repeat_list() {
-                return None;
-            }
-
-            // Crossing the pass boundary in random mode: reshuffle so the next
-            // pass is a different permutation, pinning the just-finished track
-            // away from the front to avoid an audible immediate repeat. The
-            // memoization above guarantees this runs once per boundary.
-            if wrapped && raw_slot == len && manifest.mode() == NativePlaybackMode::Random {
-                manifest.reshuffle_random(self.cursor_position);
-                // The order was rebuilt: restart the walk from the new slot 0
-                // rather than indexing the old permutation.
-                for slot in 0..len {
-                    let Some(position) = manifest.position_at_slot(slot) else {
-                        continue;
-                    };
-                    if self.failed.contains(&position) {
-                        continue;
-                    }
-                    return self.planned_at(manifest, position);
-                }
+            if raw_slot >= len && !manifest.repeat_list() {
                 return None;
             }
 
@@ -275,13 +253,11 @@ impl Planner {
     /// Decide what "previous" means right now, without moving the cursor.
     ///
     /// History first, list order only as a cold-start fallback. Walking the
-    /// traversal order backwards looks equivalent and is not: the manifest
-    /// pins the playing track to slot 0 of the random permutation on every
-    /// publish, and a publish follows every track change, so a backwards walk
-    /// in random mode wraps to the tail of the permutation — an unrelated
-    /// track. Worse, it silently *loses* the track in between (a list of
-    /// A,B,C sitting on B would go back to A and then never see B again),
-    /// which is the bug this replaced.
+    /// traversal order backwards looks equivalent and is not: it is only honest
+    /// while the order the backend holds is the order the user is looking at.
+    /// A shuffle the backend built for itself (`ManifestStore::set_mode`, for a
+    /// notification press with no page alive) is not, so random mode declines
+    /// the fallback rather than playing a track the user has never heard.
     ///
     /// Deliberately does not touch `pending_next`: nothing prefetches
     /// backwards, so a "previous" press must not throw away the successor the
@@ -309,7 +285,8 @@ impl Planner {
 
         // Nothing has played yet this session (cold start, or playback adopted
         // from a previous WebView). Falling back to the list order is only
-        // defensible when the list order is what the user is hearing.
+        // defensible when the list order is what the user is hearing — see the
+        // doc comment.
         if manifest.mode() == NativePlaybackMode::Random {
             return None;
         }
@@ -609,18 +586,25 @@ mod tests {
         );
     }
 
-    /// Random mode is where a positional walk fails hardest: the manifest pins
-    /// the playing track to slot 0 on every publish, so "the slot before this
-    /// one" is the tail of the permutation — an unrelated song.
+    /// Random mode is where a positional walk for "previous" fails hardest —
+    /// not because of the order the frontend publishes (that one *is* the queue
+    /// the user sees), but because of the shuffle the backend builds for a
+    /// notification press: it pins the playing track to slot 0, so "the slot
+    /// before this one" wraps to the tail of the permutation, an unrelated song.
     #[test]
     fn prev_uses_history_not_the_permutation_in_random_mode() {
         let ids: Vec<String> = (0..8).map(|i| i.to_string()).collect();
         let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-        let mut store = store(&refs, NativePlaybackMode::Random, true);
+        let mut store = store(&refs, NativePlaybackMode::Normal, true);
         let mut planner = planner_at(&store, "netease:0");
 
         let hop = planner.peek_next(&mut store).expect("advance");
         planner.commit(&hop);
+
+        // The notification's mode button, with no page alive to republish: the
+        // backend shuffles on its own and pins what is playing to slot 0.
+        assert!(store.set_mode(NativePlaybackMode::Random, Some(hop.position)));
+        assert_eq!(store.position_at_slot(0), Some(hop.position));
 
         let back = planner.peek_prev(&store).expect("go back");
         assert_eq!(
@@ -896,8 +880,10 @@ mod tests {
         );
     }
 
-    /// The headline property: random mode must traverse the whole list without
+    /// The headline property: random mode traverses the whole list without
     /// repeats and without any prefill depth limit, driven only by the backend.
+    /// The permutation is the published entry order — the frontend shuffles its
+    /// own playlist — so this is the same positional walk normal mode does.
     #[test]
     fn random_mode_covers_every_track_once_per_pass() {
         let ids: Vec<String> = (0..25).map(|i| i.to_string()).collect();
@@ -941,43 +927,29 @@ mod tests {
         }
     }
 
+    /// A wrap must not reorder anything.
+    ///
+    /// Random mode's permutation is the playlist the frontend published, and a
+    /// republish follows every track change — so a backend-side reshuffle at the
+    /// pass boundary would disagree with the queue the user is looking at, and
+    /// the next republish would yank the traversal back and replay tracks. That
+    /// is what made a long Android background session bounce between a handful
+    /// of songs. The order is rebuilt in exactly one place: `set_mode`.
     #[test]
-    fn random_wrap_does_not_immediately_replay_the_same_track() {
-        let ids: Vec<String> = (0..6).map(|i| i.to_string()).collect();
+    fn a_random_wrap_keeps_the_published_order() {
+        let ids: Vec<String> = (0..8).map(|i| i.to_string()).collect();
         let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let mut store = store(&refs, NativePlaybackMode::Random, true);
+        let order_before = store.order().to_vec();
+        let mut planner = planner_at(&store, "netease:7");
 
-        for seed in 0..32u64 {
-            let mut store = ManifestStore::new();
-            store.set(NativePlaybackManifest {
-                schema_version: 1,
-                revision: 1,
-                entries: refs
-                    .iter()
-                    .enumerate()
-                    .map(|(i, id)| entry(id, i))
-                    .collect(),
-                order: Vec::new(),
-                cursor_identity: None,
-                cursor_index: 0,
-                mode: NativePlaybackMode::Random,
-                repeat_list: true,
-                random_seed: Some(seed),
-            });
-            let mut planner = Planner::new();
-            planner.reset_for_new_manifest(&store, None);
-            planner.anchor_to_key(&store, "netease:0");
-
-            let mut previous = planner.cursor_position().unwrap();
-            for _ in 0..30 {
-                let next = planner.peek_next(&mut store).expect("advance");
-                assert_ne!(
-                    next.position, previous,
-                    "seed {seed}: back-to-back repeat of the same track"
-                );
-                planner.commit(&next);
-                previous = next.position;
-            }
-        }
+        let wrapped = planner.peek_next(&mut store).expect("a wrap must plan");
+        assert_eq!(wrapped.identity.key(), "netease:0", "wrap lands on slot 0");
+        assert_eq!(
+            store.order(),
+            order_before.as_slice(),
+            "the pass boundary must not reshuffle"
+        );
     }
 
     #[test]
@@ -1018,14 +990,14 @@ mod tests {
 
     #[test]
     fn peek_is_stable_across_repeated_calls_in_random_mode() {
-        // Prefetch and the actual advance both ask "what's next". Before
-        // memoization, the random-mode wrap reshuffled on every call, so the
-        // prefetched track and the played track diverged.
+        // Prefetch and the actual advance both ask "what's next", and they have
+        // to get the same answer or the downloaded source is not the track that
+        // plays. Memoization is what guarantees it.
         let ids: Vec<String> = (0..6).map(|i| i.to_string()).collect();
         let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
         let mut store = store(&refs, NativePlaybackMode::Random, true);
         // Park the cursor on the final slot so the next hop crosses the pass
-        // boundary — the only place a reshuffle can happen.
+        // boundary — the one place the answer used to be non-idempotent.
         let last_position = store.position_at_slot(store.len() - 1).unwrap();
         let last_key = store.entry_at(last_position).unwrap().identity.key();
         let mut planner = planner_at(&store, &last_key);

@@ -9,11 +9,12 @@
 //! stored one is rejected, which is what makes stale in-flight frontend state
 //! (a wake-up replay, a racing list edit) unable to overwrite newer state.
 //!
-//! Traversal order is explicit (`order`), not derived. For random mode the
-//! frontend ships a full shuffled permutation so both sides walk the list
-//! identically without duplicating a PRNG. `random_seed` lets the backend
-//! generate the *next* pass deterministically when it wraps while JS is
-//! frozen — that is what removes the old depth-1 random limitation.
+//! Traversal order is explicit (`order`), not derived — but the frontend now
+//! ships natural order for every mode, because random mode shuffles the
+//! *playlist* rather than sending a separate permutation. The order the backend
+//! builds itself (`random_seed`, `reshuffle_random`) is therefore reserved for
+//! the one case with no frontend to ask: a play-mode press on the OS
+//! notification while the WebView is dead.
 
 use crate::types::{NativeManifestEntry, NativePlaybackManifest, NativePlaybackMode};
 
@@ -23,8 +24,9 @@ pub struct ManifestStore {
     /// Traversal order as positions into `entries`, always fully populated and
     /// validated (the wire `order` may be empty, partial or contain garbage).
     order: Vec<usize>,
-    /// Which pass of a random traversal we are on. Bumped on every wrap so a
-    /// backend-side reshuffle produces a different permutation each pass.
+    /// Which pass of a random traversal we are on. Bumped on every backend-side
+    /// reshuffle so two presses of the notification's mode button do not produce
+    /// the same permutation.
     shuffle_pass: u64,
 }
 
@@ -120,12 +122,13 @@ impl ManifestStore {
 
     /// Switch the traversal mode in place, without a republish.
     ///
-    /// The frontend normally owns the order and ships the whole permutation, but
-    /// a mode change can arrive from a notification button while the WebView is
-    /// dead — and the next hop has to honour it immediately, not whenever the
-    /// page comes back. So the backend rebuilds its own order: a shuffle pinned
-    /// so the playing track stays put (`keep_position`), and natural order on
-    /// the way out of random. Returns `false` when nothing changed.
+    /// The frontend normally owns the order — random mode ships the shuffled
+    /// playlist itself — but a mode change can arrive from a notification button
+    /// while the WebView is dead, and the next hop has to honour it immediately,
+    /// not whenever the page comes back. So this is the one place the backend
+    /// builds an order of its own: a shuffle pinned so the playing track stays
+    /// put (`keep_position`), and natural order on the way out of random.
+    /// Returns `false` when nothing changed.
     ///
     /// The frontend republishes at a higher revision when it wakes, which
     /// replaces this order with its own — that is the convergence point, and it
@@ -144,7 +147,7 @@ impl ManifestStore {
             // Into random: shuffle, then pin the playing track to slot 0 so the
             // mode change alone never moves what is currently audible.
             (_, NativePlaybackMode::Random) => {
-                self.reshuffle_random(None);
+                self.reshuffle_random();
                 if let Some(position) = keep_position {
                     if let Some(slot) = self.slot_of_position(position) {
                         self.order.swap(0, slot);
@@ -161,13 +164,10 @@ impl ManifestStore {
         true
     }
 
-    /// Reshuffle the traversal order for the next random pass. Deterministic in
+    /// Build a traversal order the backend owns. Deterministic in
     /// `(random_seed, revision, shuffle_pass)` so a resumed snapshot reproduces
     /// the same permutation instead of diverging from what the UI last saw.
-    ///
-    /// `keep_first` pins one position away from slot 0 — used to avoid
-    /// replaying the track that just finished as the first track of the pass.
-    pub fn reshuffle_random(&mut self, keep_first: Option<usize>) {
+    pub fn reshuffle_random(&mut self) {
         let len = self.len();
         if len <= 1 {
             return;
@@ -183,15 +183,6 @@ impl ManifestStore {
 
         let mut order: Vec<usize> = (0..len).collect();
         fisher_yates(&mut order, seed);
-
-        // Avoid an immediate repeat across the pass boundary: if the finished
-        // track landed at slot 0, swap it with a later slot.
-        if let Some(keep) = keep_first {
-            if order.first() == Some(&keep) && len > 1 {
-                let target = 1 + (splitmix64(seed ^ 0xD6E8_FEB8_6659_FD93) as usize % (len - 1));
-                order.swap(0, target);
-            }
-        }
         self.order = order;
     }
 
@@ -333,9 +324,9 @@ mod tests {
     /// Leaving random restores the list the user is looking at, rather than
     /// stranding them in whatever permutation the shuffle produced.
     ///
-    /// Both non-random modes get natural order, which is not an arbitrary choice:
-    /// it is what the frontend's own `buildOrder` publishes for `normal` and
-    /// `single` alike. The interim order this sets has to match the manifest that
+    /// Natural order is not an arbitrary choice: it is what the frontend
+    /// publishes for every mode, random included (its shuffle is the playlist
+    /// order). The interim order this sets has to match the manifest that
     /// replaces it, or the traversal would visibly change twice for one press.
     #[test]
     fn leaving_random_restores_natural_order() {
@@ -476,9 +467,9 @@ mod tests {
         m.random_seed = Some(42);
         store.set(m);
 
-        store.reshuffle_random(None);
+        store.reshuffle_random();
         let first = store.order().to_vec();
-        store.reshuffle_random(None);
+        store.reshuffle_random();
         let second = store.order().to_vec();
 
         for pass in [&first, &second] {
@@ -498,48 +489,17 @@ mod tests {
             let mut m = manifest(7, &refs);
             m.random_seed = Some(99);
             store.set(m);
-            store.reshuffle_random(None);
+            store.reshuffle_random();
             store.order().to_vec()
         };
         assert_eq!(build(), build(), "resume must reproduce the same pass");
     }
 
     #[test]
-    fn reshuffle_avoids_replaying_the_finished_track_first() {
-        let ids: Vec<String> = (0..8).map(|i| i.to_string()).collect();
-        let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
-
-        for seed in 0..64u64 {
-            let mut store = ManifestStore::new();
-            let mut m = manifest(1, &refs);
-            m.random_seed = Some(seed);
-            store.set(m);
-
-            store.reshuffle_random(None);
-            let natural_first = store.order()[0];
-
-            let mut pinned = ManifestStore::new();
-            let mut m2 = manifest(1, &refs);
-            m2.random_seed = Some(seed);
-            pinned.set(m2);
-            pinned.reshuffle_random(Some(natural_first));
-
-            assert_ne!(
-                pinned.order()[0],
-                natural_first,
-                "seed {seed}: finished track must not lead the next pass"
-            );
-            let mut sorted = pinned.order().to_vec();
-            sorted.sort_unstable();
-            assert_eq!(sorted, (0..8).collect::<Vec<_>>());
-        }
-    }
-
-    #[test]
     fn single_entry_reshuffle_is_a_noop() {
         let mut store = ManifestStore::new();
         store.set(manifest(1, &["only"]));
-        store.reshuffle_random(Some(0));
+        store.reshuffle_random();
         assert_eq!(store.order(), &[0]);
     }
 }

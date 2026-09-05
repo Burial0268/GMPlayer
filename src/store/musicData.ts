@@ -17,7 +17,6 @@ import {
   cancelNativeQueuePrefill,
   publishNativeManifest,
   clearNativeManifest,
-  reseedRandomTraversal,
   publishSessionControls,
 } from "@/utils/AudioContext";
 import {
@@ -47,6 +46,20 @@ import { hintTracks } from "@/utils/ncmPrefetch";
 
 declare const $message: any;
 declare const $player: any;
+
+/**
+ * Fisher-Yates，就地打乱。
+ *
+ * 只在普通数组上用（调用方先 slice）：直接洗 reactive 数组的话，每次交换都是
+ * 两次写入，会把整条队列的依赖反复通知一遍。
+ */
+const shuffleInPlace = <T>(list: T[]): T[] => {
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+  return list;
+};
 
 interface AutoMixStateData {
   phase: "idle" | "analyzing" | "waiting" | "crossfading" | "finishing";
@@ -227,7 +240,9 @@ const useMusicDataStore = defineStore("musicData", {
       }
       const playlist = this.persistData.playlists;
       const listLength = playlist.length;
-      if (listLength < 2 || this.persistData.playSongMode !== "normal") {
+      // 单曲循环没有「下一首」可预取。随机模式有：顺序就装在队列里
+      // （见 shufflePlaylistOrder），下一首就是下一格。
+      if (listLength < 2 || this.persistData.playSongMode === "single") {
         console.log(
           `预加载已跳过：歌曲数 ${listLength} / 播放模式 ${this.persistData.playSongMode}`,
         );
@@ -573,7 +588,16 @@ const useMusicDataStore = defineStore("musicData", {
       if (autoMix.isHandoffActive()) autoMix.cancelCrossfade();
       cancelNativeQueuePrefill();
       // asRawEntries 顺带完成 slice 的拷贝职责：新数组 + 逐项标记为 raw。
-      this.persistData.playlists = asRawEntries(value);
+      const incoming = asRawEntries(value);
+      // 整表替换视为一次新的随机序。随机模式下队列本身就是随机顺序，所以在
+      // 这里一次性打乱，而不是让之后每次切歌各自摇骰子。
+      if (this.persistData.playSongMode === "random" && incoming.length > 1) {
+        this.persistData.preShuffleOrder = incoming.map((song) => song.id);
+        shuffleInPlace(incoming);
+      } else {
+        this.persistData.preShuffleOrder = [];
+      }
+      this.persistData.playlists = incoming;
       this.persistData.playSongIndex = Math.min(
         Math.max(0, this.persistData.playSongIndex),
         Math.max(0, this.persistData.playlists.length - 1),
@@ -581,8 +605,6 @@ const useMusicDataStore = defineStore("musicData", {
       this.resetPlaySongTime();
       this.preloadedSongIds.clear();
       getAudioPreloader().cleanup();
-      // 整表替换视为一次新的随机序：重新播种，避免沿用旧列表的排列。
-      reseedRandomTraversal();
       publishNativeManifest();
       // 切换播放列表时，清空旧歌词，等待新歌曲歌词加载
       this.resetSongLyricState();
@@ -599,7 +621,7 @@ const useMusicDataStore = defineStore("musicData", {
      * - 按 playingSongId 重新锚定索引，而不是按位置 clamp（别人插队会让位置整体后移）
      * - 不 resetPlaySongTime：进度是本地播放状态，与列表内容无关
      * - 不 resetSongLyricState：歌没变，歌词不该闪
-     * - 不 reseedRandomTraversal：重新洗牌就是 rebase，不是 merge
+     * - 不打乱：重新洗牌就是 rebase，不是 merge
      */
     adoptSharedPlaylist(value: SongData[]): boolean {
       if (!value?.length) return false;
@@ -609,6 +631,8 @@ const useMusicDataStore = defineStore("musicData", {
 
       const activeSongId = this.playingSongId ?? this.getPlaySongData?.id ?? null;
       this.persistData.playlists = asRawEntries(value);
+      // 房间的顺序就是现在的顺序，本地那份「打乱前的次序」已经不描述这张表了。
+      this.persistData.preShuffleOrder = [];
 
       const nextIndex =
         activeSongId === null
@@ -709,14 +733,14 @@ const useMusicDataStore = defineStore("musicData", {
      * 播放链路的 URL 不在这里预取——它是带签名会过期的，那是
      * `NativeQueuePrefill` 的事。
      *
-     * 随机模式下不猜下一首：顺序由 Rust planner 的 permutation 决定，这里按下标
-     * 往后数会猜到无关的歌，白花请求。
+     * 随机模式照常提示：顺序已经在队列里（见 shufflePlaylistOrder），下一首就是
+     * 下一格，猜得准。
      */
     hintUpcomingSongs(currentIndex: number) {
       const playlist = this.persistData.playlists;
       if (playlist.length < 2) return;
-      // 私人 FM 的下一首要请求才知道；随机模式的顺序不在前端手里。
-      if (this.persistData.playSongMode !== "normal" || this.persistData.personalFmMode) return;
+      // 私人 FM 的下一首要请求才知道；单曲循环的「下一首」就是这一首。
+      if (this.persistData.playSongMode === "single" || this.persistData.personalFmMode) return;
 
       const AHEAD = 2;
       const ids: Array<number | string> = [];
@@ -733,12 +757,145 @@ const useMusicDataStore = defineStore("musicData", {
       return useMusicPlaybackDataStore().getPlaySongPlaybackCurrentTime();
     },
 
+    /**
+     * 用 `next`（同一批歌的另一种排列）就地替换队列顺序，并把游标挪到它原本那
+     * 首歌的新位置。
+     *
+     * 写入次序是刻意安排的，不是风格问题。Player 的切歌 watcher 是
+     * `flush: "sync"` 的，它唯一认的值就是 `playlists[playSongIndex]`：先整表
+     * 赋值再改索引会留下一个中间态——游标指着另一首歌——watcher 立刻当成切歌，
+     * 清掉进度，并在 500ms 后把正在播的这首从头加载一遍。
+     *
+     * 所以这里先把锚点写进它的新槽位（此刻它在新旧两个槽位上各有一份），再移动
+     * 游标，最后才写其余槽位：全过程 `playlists[playSongIndex]` 始终是同一首歌，
+     * watcher 一次都不会被触发。
+     */
+    applyQueueOrder(next: SongData[]): boolean {
+      const list = this.persistData.playlists;
+      if (!list.length || next.length !== list.length) return false;
+      const anchorId = list[this.persistData.playSongIndex]?.id;
+      const cursorIndex = next.findIndex((song) => song?.id === anchorId);
+      if (cursorIndex < 0) return false;
+
+      list[cursorIndex] = next[cursorIndex];
+      this.persistData.playSongIndex = cursorIndex;
+      for (let i = 0; i < next.length; i++) {
+        if (i !== cursorIndex) list[i] = next[i];
+      }
+      return true;
+    },
+
+    /**
+     * 打乱队列本身，把随机模式变成「对一个已经乱了的队列做顺序遍历」。
+     *
+     * 不在即将切歌时摇骰子，因为「下一首」必须在没有 JS 的情况下也算得出来。
+     * 安卓后台会被 binder 直接杀掉 WebView：现摇的下标只活在那一次调用里，进程
+     * 一重启就什么都不记得，于是刚放过的歌立刻又被抽中，听起来就是在几首歌之间
+     * 来回打转。排列一旦落在 playlists 里，就跟着 persistData 一起持久化，前后端
+     * 都只需要「当前下标 ± 1」，一轮之内每首歌恰好一次。
+     *
+     * 正在播的那首钉在队首：这一轮剩下的都还没放过，和后端
+     * `ManifestStore::set_mode` 把它钉在 slot 0 的约定一致。
+     *
+     * 打乱前的次序按 id 记进 preShuffleOrder，退出随机模式时用它还原。
+     */
+    shufflePlaylistOrder(): boolean {
+      const list = this.persistData.playlists;
+      if (list.length < 2) return false;
+      if (!this.persistData.preShuffleOrder.length) {
+        this.persistData.preShuffleOrder = list.map((song) => song.id);
+      }
+      const next = shuffleInPlace<SongData>(list.slice());
+      const anchorId = list[this.persistData.playSongIndex]?.id;
+      const at = next.findIndex((song) => song?.id === anchorId);
+      if (at > 0) [next[0], next[at]] = [next[at], next[0]];
+      return this.applyQueueOrder(next);
+    },
+
+    /**
+     * 还原打乱前的顺序。打乱期间新加进来的歌不在快照里，按当前相对次序排在末尾。
+     */
+    restorePlaylistOrder(): boolean {
+      const snapshot = this.persistData.preShuffleOrder;
+      if (!snapshot.length) return false;
+      const rank = new Map<number, number>();
+      for (let i = 0; i < snapshot.length; i++) {
+        if (!rank.has(snapshot[i])) rank.set(snapshot[i], i);
+      }
+      const known: SongData[] = [];
+      const added: SongData[] = [];
+      for (const song of this.persistData.playlists) {
+        (rank.has(song.id) ? known : added).push(song);
+      }
+      known.sort((a, b) => (rank.get(a.id) as number) - (rank.get(b.id) as number));
+      this.persistData.preShuffleOrder = [];
+      return this.applyQueueOrder(known.concat(added));
+    },
+
+    /**
+     * 启动时补一次打乱：老版本的随机模式是在切歌时摇骰子的，队列本身是自然序，
+     * 升级上来后 preShuffleOrder 是空的。不补的话，用户会看到「开着随机却按列表
+     * 顺序播」，一直持续到他下次换歌单或切一轮模式。
+     *
+     * 打乱过之后 preShuffleOrder 就不空了，所以之后每次启动都是空转。
+     */
+    ensureShuffledInRandomMode() {
+      if (this.persistData.playSongMode !== "random") return;
+      if (this.persistData.preShuffleOrder.length) return;
+      if (this.shufflePlaylistOrder()) publishNativeManifest();
+    },
+
+    /**
+     * 让队列顺序跟上播放模式：进随机就打乱，出随机就还原。
+     *
+     * 单曲循环也算「出随机」——随机顺序只在 playSongMode === "random" 期间存在，
+     * 这样「列表是否被打乱」永远能从模式一眼看出来，不需要额外的状态位。
+     *
+     * 重发 manifest 由调用方负责（它们本来就要发）。
+     */
+    syncQueueOrderToMode(previousMode: "normal" | "random" | "single") {
+      const mode = this.persistData.playSongMode;
+      if (mode === previousMode) return;
+      const reordered =
+        mode === "random"
+          ? this.shufflePlaylistOrder()
+          : previousMode === "random"
+            ? this.restorePlaylistOrder()
+            : false;
+      if (!reordered) return;
+      // 已经解析好的「下一首」全是按旧顺序算的，一律作废。
+      cancelNativeQueuePrefill();
+      getAudioPreloader().cleanup();
+      // 已 prepare 但还没发声的过渡指向旧的下一首；正在发声的 crossfade 不打断。
+      const autoMix = getAutoMixEngine();
+      if (!autoMix.isCrossfading() && autoMix.isHandoffActive()) autoMix.cancelCrossfade();
+      // 索引变了，恢复快照要跟上。
+      this.checkpointPlaySongTime(true);
+      this.hintUpcomingSongs(this.persistData.playSongIndex);
+    },
+
+    /**
+     * 采纳后端上报的播放模式。
+     *
+     * 通知栏按钮按下时后端才是唯一权威，此时可能连 WebView 都没有。与
+     * setPlaySongMode 的区别是不吐司、不回推 controls（那会绕回来），但队列顺序
+     * 必须照样跟着变——随机模式的顺序就装在 playlists 里。
+     */
+    adoptPlaySongMode(mode: "normal" | "random" | "single"): boolean {
+      const previousMode = this.persistData.playSongMode;
+      if (mode === previousMode) return false;
+      this.persistData.playSongMode = mode;
+      this.syncQueueOrderToMode(previousMode);
+      return true;
+    },
+
     setPlaySongMode(value: "normal" | "random" | "single" | null = null) {
       const modeObj = {
         normal: PlayCycle,
         random: ShuffleOne,
         single: PlayOnce,
       };
+      const previousMode = this.persistData.playSongMode;
       if (value && value in modeObj) {
         this.persistData.playSongMode = value;
       } else {
@@ -757,15 +914,13 @@ const useMusicDataStore = defineStore("musicData", {
             break;
         }
       }
-      // Clean up preloader when mode is not normal (can't predict next song)
-      if (this.persistData.playSongMode !== "normal") {
+      // 随机模式的顺序就是队列的顺序，所以模式一变，队列跟着重排。
+      this.syncQueueOrderToMode(previousMode);
+      // 单曲循环没有可预加载的下一首。
+      if (this.persistData.playSongMode === "single") {
         getAudioPreloader().cleanup();
       }
-      // 进入随机模式时重新播种，让本次随机与上一轮不同；
-      // 然后重发 manifest，把新的遍历顺序交给后端 planner。
-      if (this.persistData.playSongMode === "random") {
-        reseedRandomTraversal();
-      }
+      // 重发 manifest，把新的遍历顺序交给后端 planner。
       publishNativeManifest({ force: true });
       // The OS session shows this too, and the backend's planner has to honour
       // it on the next hop. One writer: see NativeSessionControlsSync.
@@ -798,10 +953,10 @@ const useMusicDataStore = defineStore("musicData", {
         const activePlayer = typeof $player !== "undefined" ? $player : undefined;
         const listMode = this.persistData.playSongMode;
         let nextIndex = this.persistData.playSongIndex;
-        if (listMode === "normal") {
+        if (listMode === "normal" || listMode === "random") {
+          // 随机模式也走下标：队列本身已经是打乱的（见 shufflePlaylistOrder）。
+          // 这里再摇一次骰子会和后端 planner 的遍历打架，一轮之内还会重复。
           nextIndex += type === "next" ? 1 : -1;
-        } else if (listMode === "random") {
-          nextIndex = Math.floor(Math.random() * listLength);
         } else if (listMode === "single") {
           console.log("单曲循环模式");
           const currentSong = this.persistData.playlists[this.persistData.playSongIndex];
@@ -934,7 +1089,8 @@ const useMusicDataStore = defineStore("musicData", {
 
     addSongToNext(value: SongData) {
       cancelNativeQueuePrefill();
-      this.persistData.playSongMode = "normal";
+      // 不再强制切回顺序播放：随机模式下的「下一首」也是下一格，插到当前索引后面
+      // 就是插播。原先那行会把用户踢出随机模式，还会顺带还原整条队列的顺序。
       const autoMix = getAutoMixEngine();
       // 与 addSongToPlaylists 一致：以 playingSongId 为「正在发声的歌」的唯一判据。
       // playSongIndex 可能因 setPlaylists 的 clamp 而落在别的歌上。
@@ -1034,6 +1190,7 @@ const useMusicDataStore = defineStore("musicData", {
       this.persistData.personalFmMode = false;
       this.persistData.playlists = [];
       this.persistData.playSongIndex = 0;
+      this.persistData.preShuffleOrder = [];
       this.playingSongId = null;
       this.playState = false;
       this.isLoadingSong = false;

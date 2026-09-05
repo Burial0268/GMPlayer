@@ -444,11 +444,7 @@ export class TransitionStateMachine {
     const listLength = playlist.length;
     if (listLength < 2) return;
 
-    const nextIndex = this._selectNextIndex(
-      currentIndex,
-      listLength,
-      music.persistData.playSongMode,
-    );
+    const nextIndex = this._selectNextIndex(currentIndex, listLength);
     const nextSong = playlist[nextIndex];
     if (!nextSong) return;
 
@@ -510,18 +506,17 @@ export class TransitionStateMachine {
       });
   }
 
-  private _selectNextIndex(currentIndex: number, listLength: number, playMode: string): number {
-    if (playMode !== "random") return (currentIndex + 1) % listLength;
+  /**
+   * The track a transition will cross into.
+   *
+   * Positional in every mode: random mode shuffles the queue itself
+   * (`musicData.shufflePlaylistOrder`), so drawing an index here would cross into
+   * a song neither the store nor the Rust planner is about to play — and the
+   * crossfade would be prepared for the wrong track.
+   */
+  private _selectNextIndex(currentIndex: number, listLength: number): number {
     if (listLength <= 1) return currentIndex;
-
-    let nextIndex = currentIndex;
-    for (let i = 0; i < 8 && nextIndex === currentIndex; i++) {
-      nextIndex = Math.floor(Math.random() * listLength);
-    }
-    if (nextIndex === currentIndex) {
-      nextIndex = (currentIndex + 1) % listLength;
-    }
-    return nextIndex;
+    return (currentIndex + 1) % listLength;
   }
 
   private async _sendNativeAutoMixPrepare(
@@ -1457,11 +1452,7 @@ export class TransitionStateMachine {
     const currentIndex = music.persistData.playSongIndex;
     const listLength = playlist.length;
 
-    const nextIndex = this._selectNextIndex(
-      currentIndex,
-      listLength,
-      music.persistData.playSongMode,
-    );
+    const nextIndex = this._selectNextIndex(currentIndex, listLength);
 
     const nextSong = playlist[nextIndex];
     if (!nextSong) throw new Error("No next song");

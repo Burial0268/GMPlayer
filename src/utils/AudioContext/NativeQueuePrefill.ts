@@ -8,9 +8,10 @@
  * the browser media host) and pure-web playback keeps using AudioPreloader.
  *
  * Window semantics (see docs/native-queue-background-playback-plan.md):
- * - normal mode:  [cur@i, next@(i+1)%L, ...] windowed=true (stop when exhausted)
- * - random mode:  [cur@i, prePicked@k]       windowed=true (depth 1 — duplicate
- *                 origOrder entries would break the backend's identity matching)
+ * - normal / random mode: [cur@i, next@(i+1)%L, ...] windowed=true (stop when
+ *                 exhausted). Random needs no special case and no depth cap:
+ *                 the queue itself is shuffled (`musicData.shufflePlaylistOrder`),
+ *                 so "next" is the next index in both modes.
  * - single mode / single-song list: [cur@i]  windowed=false (native wrap = repeat)
  * - personal FM / listen-together: no prefill (transitions need live JS)
  */
@@ -139,16 +140,14 @@ export async function prefillNativeQueue(): Promise<void> {
     display: toTrackDisplay(currentSong),
   };
 
-  let nextIndices: number[] = [];
+  const nextIndices: number[] = [];
   let windowed = true;
   if (mode === "single" || listLength === 1) {
     // Native wrap-around on a single-entry queue IS repeat: keep it.
     windowed = false;
-  } else if (mode === "random") {
-    let pick = Math.floor(Math.random() * listLength);
-    if (pick === currentIndex) pick = (pick + 1) % listLength;
-    nextIndices = [pick];
-  } else if (mode === "normal") {
+  } else {
+    // normal and random share this: the random permutation is the queue's own
+    // order, so the window is just the next few indices in both cases.
     const seen = new Set<number>([currentIndex]);
     for (let i = 1; i <= PREFILL_DEPTH; i++) {
       const nextIndex = (currentIndex + i) % listLength;
@@ -156,8 +155,6 @@ export async function prefillNativeQueue(): Promise<void> {
       seen.add(nextIndex);
       nextIndices.push(nextIndex);
     }
-  } else {
-    return;
   }
 
   const resolved = await Promise.all(

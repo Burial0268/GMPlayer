@@ -52,13 +52,9 @@ export class PreBufferManager {
     const currentIndex = musicStore.persistData.playSongIndex;
     const listLength = playlist.length;
 
-    // Determine next song index (same logic as _doCrossfade)
-    let nextIndex: number;
-    if (musicStore.persistData.playSongMode === "random") {
-      nextIndex = Math.floor(Math.random() * listLength);
-    } else {
-      nextIndex = (currentIndex + 1) % listLength;
-    }
+    // Next song index (same rule as _doCrossfade / the store's own advance):
+    // positional in every mode, because random mode shuffles the queue itself.
+    const nextIndex = listLength > 0 ? (currentIndex + 1) % listLength : currentIndex;
 
     const nextSong = playlist[nextIndex];
     if (!nextSong) return;
