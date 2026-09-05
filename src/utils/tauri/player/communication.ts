@@ -1,6 +1,9 @@
 import { toRaw } from "vue";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { getProcessedLyrics, type AMLLLine, type SongLyric } from "@/utils/LyricsProcessor";
+// Aliased: this module has its own `coverUrl` wrapper that adds the empty-string
+// contract the slave windows expect.
+import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
 import { isTauri } from "../core/runtime";
 import { windowManager } from "../window/manager";
 import {
@@ -209,8 +212,19 @@ async function reconcileContentWindows(): Promise<void> {
   }
 }
 
+/**
+ * Cover URL for a slave window's payload.
+ *
+ * Returns `""` rather than the default image when there is no cover: the slave
+ * windows treat an empty string as "draw no artwork", and a placeholder would
+ * paint a grey square over their own fallback.
+ *
+ * A local track's cover is an asset-protocol URL, which every window can load —
+ * each webview registers its own handler — but which must not be rewritten,
+ * hence the shared helper.
+ */
 function coverUrl(picUrl: string | undefined, size: number) {
-  return picUrl ? `${picUrl.replace(/^http:/, "https:")}?param=${size}y${size}` : "";
+  return picUrl ? toCoverUrl(picUrl, size) : "";
 }
 
 function buildPlayerStatePayload(): PlayerStatePayload {

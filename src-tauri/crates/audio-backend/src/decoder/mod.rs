@@ -2,7 +2,6 @@ mod convert;
 mod resample;
 pub mod symphonia;
 
-use std::fs::File;
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -239,17 +238,17 @@ struct SeekableSymphoniaSource {
 
 impl SeekableSymphoniaSource {
     fn open(path: &Path) -> AudioResult<Self> {
-        let file = File::open(path)?;
-        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let opened = crate::source::open(crate::source::SourceLocator::from_path(path))?;
         let mut hint = Hint::new();
         // symphonia 0.5's `Probe::format` takes the hint as `_hint` and never
         // reads it — format detection is a pure magic-byte scan, so a container
         // is identified correctly no matter what the file is named (or that
         // downloaded sources land on a `.tmp` path). Kept because it costs
         // nothing and later symphonia releases do consult it.
-        if let Some(ext) = path.extension().and_then(|ext| ext.to_str()) {
+        if let Some(ext) = opened.extension() {
             hint.with_extension(ext);
         }
+        let mss = MediaSourceStream::new(Box::new(opened), Default::default());
 
         let format_opts = FormatOptions {
             enable_gapless: true,

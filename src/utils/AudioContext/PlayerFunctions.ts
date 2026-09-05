@@ -22,6 +22,7 @@ import { NIcon } from "naive-ui";
 import { MusicNoteFilled } from "@vicons/material";
 import getLanguageData from "@/utils/getLanguageData";
 import { applyGlobalCoverPalette } from "@/utils/color/coverPalette";
+import { coverUrl } from "@/utils/coverUrl";
 import { BufferedSound } from "./BufferedSound";
 import { SoundManager } from "./SoundManager";
 import { AudioContextManager } from "./AudioContextManager";
@@ -262,6 +263,8 @@ const scheduleScrobble = (reason: string): void => {
   const songId = Number(music.getPlaySongData?.id);
   const sourceId = Number(music.getPlaySongData?.sourceId || 0);
 
+  // Deliberately positive-only, unlike the identity checks: this reports a play
+  // to the *Netease account*, and a local file has no id there.
   if (!user.userLogin || !Number.isFinite(songId) || songId <= 0) return;
 
   const scrobbleKey = `${music.persistData.playSongIndex}:${songId}:${sourceId}`;
@@ -708,11 +711,14 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
   if ("mediaSession" in navigator && Object.keys(music.getPlaySongData).length) {
     const artists = music.getPlaySongData.artist.map((a: { name: string }) => a.name);
     const picUrl = music.getPlaySongData.album?.picUrl;
+    // Three sizes so the OS picks the one it wants — but for a local file all
+    // three are the same asset URL, since the resize hint is Netease's and the
+    // scheme rewrite would break the asset protocol's origin.
     const artwork = picUrl
       ? [
-          { src: picUrl.replace(/^http:/, "https:") + "?param=96y96", sizes: "96x96" },
-          { src: picUrl.replace(/^http:/, "https:") + "?param=128y128", sizes: "128x128" },
-          { src: picUrl.replace(/^http:/, "https:") + "?param=512x512", sizes: "512x512" },
+          { src: coverUrl(picUrl, 96), sizes: "96x96" },
+          { src: coverUrl(picUrl, 128), sizes: "128x128" },
+          { src: coverUrl(picUrl, 512), sizes: "512x512" },
         ]
       : [];
 
@@ -765,8 +771,17 @@ const setupNativeSound = (
   const boundSongId = Number(context.songId ?? music.getPlaySongData?.id);
   const loadAttempt = context.loadAttempt ?? ++soundLoadAttempt;
 
+  /**
+   * Whether the store still points at the track this load was started for.
+   *
+   * `!== 0` rather than `> 0`: an imported local file's id is a *negative* hash
+   * of its path, so a positive-only test made every local load look stale — the
+   * `load` handler then discarded the sound it had just loaded and the track
+   * spun forever. `0` stays rejected because that is what a missing id coerces
+   * to, and two unrelated loads must not compare equal.
+   */
   const isRequestCurrent = (): boolean => {
-    if (!Number.isFinite(boundSongId) || boundSongId <= 0) return false;
+    if (!Number.isFinite(boundSongId) || boundSongId === 0) return false;
     return Number(music.getPlaySongData?.id) === boundSongId;
   };
 
@@ -1094,8 +1109,10 @@ export const createSound = (
     const user = userStore();
     const boundSongId = Number(context.songId ?? music.getPlaySongData?.id);
 
+    // Same rule as the native path: a local id is negative. The web backend
+    // never plays a local file today, but the two must not drift.
     const isRequestCurrent = (): boolean => {
-      if (!Number.isFinite(boundSongId) || boundSongId <= 0) return false;
+      if (!Number.isFinite(boundSongId) || boundSongId === 0) return false;
       return Number(music.getPlaySongData?.id) === boundSongId;
     };
 
@@ -1506,7 +1523,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   const songId = Number(music.getPlaySongData?.id);
 
   SoundManager.setCurrentSongId(songId, incomingSound);
-  music.playingSongId = Number.isFinite(songId) && songId > 0 ? songId : null;
+  music.playingSongId = Number.isFinite(songId) && songId !== 0 ? songId : null;
 
   // Stop any existing tracking from outgoing sound
   stopSpectrumUpdate();
@@ -1648,7 +1665,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   stopTimeUpdate();
 
   SoundManager.setCurrentSongId(songId, sound);
-  music.playingSongId = Number.isFinite(songId) && songId > 0 ? songId : null;
+  music.playingSongId = Number.isFinite(songId) && songId !== 0 ? songId : null;
   music.setPlayState(true);
   music.isLoadingSong = false;
 
@@ -1700,7 +1717,10 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   // path where one has just committed it unloads the sound that is playing and
   // reverts `window.$player` to the retired one, which is a hard stall.
   // Internally a no-op while a real crossfade is completing.
-  if (Number.isFinite(songId) && songId > 0) {
+  // Local tracks participate in AutoMix like any other (`songId !== 0`, not
+  // `> 0`): their ids are negative, and gating on positivity silently left the
+  // state machine holding the previous track's prepared transition.
+  if (Number.isFinite(songId) && songId !== 0) {
     getAutoMixEngine().onTrackStarted(sound, songId);
   }
 };

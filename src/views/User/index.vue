@@ -15,6 +15,24 @@
         <n-text class="key">{{ user.getUserData.nickname }}</n-text>
         <n-text class="tip" v-html="$t('nav.userChildren.results')" />
       </div>
+      <!--
+        Mobile's only route into the local library: the bottom bar's "library" tab
+        goes to `/user` once signed in, so without this there is no way back to
+        `/local` on a phone (the sidebar entry is desktop-only).
+      -->
+      <n-button
+        v-if="isTauriRuntime()"
+        class="local-btn"
+        strong
+        secondary
+        round
+        @click="router.push('/local')"
+      >
+        <template #icon>
+          <n-icon :component="FolderMusic" />
+        </template>
+        {{ $t("sidebar.localMusic") }}
+      </n-button>
       <n-button class="logout-btn" strong secondary round type="error" @click="handleLogout">
         <template #icon>
           <n-icon :component="Logout" />
@@ -45,8 +63,9 @@
 import { userStore } from "@/store";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { Logout } from "@icon-park/vue-next";
+import { FolderMusic, Logout } from "@icon-park/vue-next";
 import { useTabTransition } from "@/composables/useTabTransition";
+import { isTauri as isTauriRuntime } from "@/utils/tauri/core/runtime";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -112,10 +131,20 @@ watch(
       margin-right: 16px;
       box-shadow: 0 6px 8px -2px rgb(0 0 0 / 16%);
     }
-    .logout-btn {
+    .local-btn {
       margin-left: auto;
       flex-shrink: 0;
       align-self: center;
+    }
+    .logout-btn {
+      // `margin-left: auto` on whichever of the two comes first, so the pair
+      // stays right-aligned when the local button is absent (web build).
+      margin-left: 10px;
+      flex-shrink: 0;
+      align-self: center;
+      &:first-of-type {
+        margin-left: auto;
+      }
     }
     .text {
       display: flex;

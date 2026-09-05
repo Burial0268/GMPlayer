@@ -116,6 +116,70 @@ const routes: RouteRecordRaw[] = [
       },
     ],
   },
+  // 本地音乐
+  //
+  // 刻意**不带** `needLogin`：导入的文件夹与网易账号无关，未登录也要能用；
+  // 移动端底栏在未登录时正是落到这里（见 `MobileTabBar.vue`）。
+  {
+    path: "/local",
+    name: "local",
+    meta: {
+      title: "本地音乐",
+    },
+    component: () => import("@/views/Local/index.vue"),
+    redirect: "/local/songs",
+    children: [
+      {
+        path: "songs",
+        name: "local-songs",
+        component: () => import("@/views/Local/songs.vue"),
+      },
+      {
+        path: "albums",
+        name: "local-albums",
+        component: () => import("@/views/Local/albums.vue"),
+      },
+      {
+        path: "artists",
+        name: "local-artists",
+        component: () => import("@/views/Local/artists.vue"),
+      },
+      {
+        path: "folders",
+        name: "local-folders",
+        component: () => import("@/views/Local/folders.vue"),
+      },
+      {
+        path: "playlists",
+        name: "local-playlists",
+        component: () => import("@/views/Local/playlists.vue"),
+      },
+    ],
+  },
+  // 本地集合详情（全部/喜欢/专辑/艺人/文件夹/本地歌单共用一页，靠 query 区分）
+  //
+  // 放在 `/local` 的兄弟位置而不是子路由：它有自己的头部，不该套在标签页里。
+  {
+    path: "/local/playlist",
+    name: "local-playlist-detail",
+    meta: {
+      title: "本地音乐",
+    },
+    component: () => import("@/views/Local/LocalPlaylistView.vue"),
+  },
+  // 本地曲目详情：基本信息 / 元数据覆盖 / 歌词导入。
+  //
+  // 不复用 `/song`：那是网易云的详情页，按正数 id 拉详情、评论和相似歌单，而本地
+  // 曲目的 id 是路径哈希出来的负数，在网易那边什么都不是。定位符走 query 而不是
+  // 路径段——它是 Windows 路径或 `content://` URI，两者都过不了路径段。
+  {
+    path: "/local/song",
+    name: "local-song-detail",
+    meta: {
+      title: "本地音乐",
+    },
+    component: () => import("@/views/Local/LocalSongView.vue"),
+  },
   // 用户主页（公开，可查看任意用户）
   {
     path: "/profile",

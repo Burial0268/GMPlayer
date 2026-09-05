@@ -153,6 +153,8 @@ import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import { musicStore, settingStore, userStore } from "@/store";
+// Aliased: this file already exposes a `coverUrl` computed of its own.
+import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import BouncingSlider from "../BouncingSlider.vue";
@@ -180,11 +182,7 @@ const isTauriEnv = ref(typeof window !== "undefined" && "__TAURI__" in window);
 
 const artistList = computed(() => music.getPlaySongData?.artist ?? []);
 // 「假玻璃」用的封面副本，和 ImmersivePlayerLayout 的全幅封面同一张同一尺寸
-const coverUrl = computed(() => {
-  const picUrl = music.getPlaySongData?.album?.picUrl;
-  if (!picUrl) return "/images/pic/default.png";
-  return picUrl.replace(/^http:/, "https:") + "?param=1024y1024";
-});
+const coverUrl = computed(() => toCoverUrl(music.getPlaySongData?.album?.picUrl, 1024));
 const isLiked = computed(
   () => !!music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id),
 );

@@ -25,18 +25,31 @@
       <QueuePanel ref="queuePanelRef" />
     </n-drawer-content>
   </n-drawer>
+  <PlayListSheet v-else-if="useSheetLayout" />
 </template>
 
 <script setup>
+/**
+ * 播放队列的浮层宿主：按外壳形态挑一种呈现，两者互斥。
+ *
+ * - 769–1040px：右侧 n-drawer。仍是桌面外壳（有 Sidebar、没有 TabBar），且刻意不带
+ *   遮罩、不锁滚动 —— 队列在旁边开着，主内容照样能用。
+ * - ≤768px：`PlayListSheet` 底部抽屉。移动外壳下右侧抽屉是桌面习惯：整屏从右侧推入、
+ *   只能靠右上角那颗 × 关闭，而那颗 × 在无刘海留白的全高面板里正好压在状态栏下面。
+ * - ≥1041px 由 App.vue 的内联队列列接管，这里什么都不渲染。
+ */
 import { musicStore } from "@/store";
-import { PLAYLIST_DRAWER_MEDIA_QUERY } from "@/utils/playlistLayout";
+import { PLAYLIST_DRAWER_MEDIA_QUERY, PLAYLIST_SHEET_MEDIA_QUERY } from "@/utils/playlistLayout";
 import QueuePanel from "@/components/QueuePanel/index.vue";
+import PlayListSheet from "@/components/DataModal/PlayListSheet.vue";
 
 const music = musicStore();
 
 // 播放列表显隐
 const useDrawerLayout = ref(false);
+const useSheetLayout = ref(false);
 let drawerMediaQuery = null;
+let sheetMediaQuery = null;
 const playListShow = ref(false);
 const queuePanelRef = ref(null);
 
@@ -67,6 +80,10 @@ const syncDrawerLayout = (event) => {
   useDrawerLayout.value = event?.matches ?? drawerMediaQuery?.matches ?? true;
 };
 
+const syncSheetLayout = (event) => {
+  useSheetLayout.value = event?.matches ?? sheetMediaQuery?.matches ?? false;
+};
+
 watch(
   () => music.showPlayList,
   (show) => {
@@ -90,8 +107,11 @@ watch(
 onMounted(() => {
   if (typeof window !== "undefined") {
     drawerMediaQuery = window.matchMedia(PLAYLIST_DRAWER_MEDIA_QUERY);
+    sheetMediaQuery = window.matchMedia(PLAYLIST_SHEET_MEDIA_QUERY);
     syncDrawerLayout();
+    syncSheetLayout();
     drawerMediaQuery.addEventListener("change", syncDrawerLayout);
+    sheetMediaQuery.addEventListener("change", syncSheetLayout);
   } else {
     useDrawerLayout.value = true;
   }
@@ -99,6 +119,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   drawerMediaQuery?.removeEventListener("change", syncDrawerLayout);
+  sheetMediaQuery?.removeEventListener("change", syncSheetLayout);
 });
 </script>
 
@@ -117,11 +138,6 @@ onBeforeUnmount(() => {
   .n-drawer-body-content-wrapper {
     padding: 0 !important;
     height: 100%;
-  }
-
-  @media (max-width: 700px) {
-    width: 100% !important;
-    border-radius: 0;
   }
 }
 </style>

@@ -9,6 +9,7 @@ import {
   SubtitlesRound,
   AutoAwesomeRound,
   BuildRound,
+  DownloadRound,
   InfoRound,
 } from "@vicons/material";
 import { settingStore, userStore } from "@/store";
@@ -195,6 +196,21 @@ export function useSettingsSections() {
           tip: "setting.dspTip",
           control: "custom",
           slot: "dspSettings",
+        },
+      ],
+    },
+    {
+      key: "download",
+      label: "setting.sectionDownload",
+      icon: DownloadRound,
+      searchText: "download folder directory quality 下载 目录 音质 并发",
+      items: [
+        {
+          key: "downloadSettings",
+          label: "setting.download.title",
+          tip: "setting.download.tip",
+          control: "custom",
+          slot: "downloadSettings",
         },
       ],
     },

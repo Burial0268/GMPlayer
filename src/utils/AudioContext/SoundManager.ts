@@ -158,9 +158,22 @@ class SoundManagerClass {
     return this._currentSound?.playing() ?? false;
   }
 
+  /**
+   * Normalize a song id for identity comparison.
+   *
+   * Accepts **negative** ids: an imported local file's `SongData.id` is a
+   * negative hash of its path (`local::index::local_song_id`), so a
+   * positive-only filter turned every local track's id into `null` — which made
+   * `isCurrentSoundForSong` answer for the wrong sound and, through
+   * `isCurrentLoadOwner`, had the load handler discard the sound it had just
+   * loaded. The symptom was a local track that spun forever and never played.
+   *
+   * `0` is still rejected: it is what an absent or unparsable id coerces to, and
+   * treating that as an identity would let two unrelated sounds match.
+   */
   private _normalizeSongId(songId: number | null | undefined): number | null {
     const value = Number(songId);
-    return Number.isFinite(value) && value > 0 ? value : null;
+    return Number.isFinite(value) && value !== 0 ? value : null;
   }
 }
 

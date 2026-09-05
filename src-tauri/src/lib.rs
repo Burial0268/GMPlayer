@@ -1,4 +1,6 @@
 pub mod algorithms;
+pub mod download;
+pub mod local;
 pub mod media;
 pub mod ncm;
 pub mod shared;

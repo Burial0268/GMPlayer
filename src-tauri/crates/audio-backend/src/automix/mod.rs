@@ -501,10 +501,17 @@ pub fn analyze_audio_file(
     // the encoded bytes would otherwise stay resident (owned by the decoder's
     // Cursor) for the entire full-track decode, adding the whole file size on
     // top of the PCM buffer at the peak.
-    let file = std::fs::File::open(path.as_ref()).map_err(|e| format!("read audio source: {e}"))?;
+    //
+    // Goes through `source::open` rather than `File::open` so an Android
+    // `content://` track gets analysed — and therefore crossfaded — like any
+    // other. This failure is invisible if it is missed: analysis runs on its
+    // own thread and a miss only logs a warning, so AutoMix quietly degrades to
+    // hard cuts on exactly one platform.
+    let opened = crate::source::open(crate::source::SourceLocator::from_path(path.as_ref()))
+        .map_err(|e| format!("read audio source: {e}"))?;
     let io_error = Arc::new(Mutex::new(None));
     let reader = IoErrorLatchReader {
-        inner: std::io::BufReader::new(file),
+        inner: std::io::BufReader::new(opened),
         latch: Arc::clone(&io_error),
     };
     let decoded = decode_source_to_mono(reader);

@@ -105,14 +105,23 @@ export const reseedRandomTraversal = (): void => {
 /**
  * Derive a backend identity from a store song.
  *
- * Every song in this app is Netease-sourced, so identity is the numeric id.
- * (`TrackIdentity` also has a `local` variant for on-disk files; nothing in the
- * current store produces one.) Returning `null` means "not plannable" — the
- * manifest omits it rather than shipping an entry the resolver would always
- * fail on.
+ * Two providers. A song carrying `local` is an imported file and its identity is
+ * the source locator (an absolute path, or an Android `content://` document
+ * URI); everything else is Netease and its identity is the numeric id.
+ *
+ * The local branch is load-bearing rather than cosmetic: without it a local
+ * track is dropped from the manifest, the planner never learns about it, and
+ * playback simply stops at the end of the current song whenever the WebView is
+ * not alive to drive the JS advance path — which on Android is most of the time.
+ * In the foreground the JS fallback hides it completely.
+ *
+ * Returning `null` means "not plannable" — the manifest omits it rather than
+ * shipping an entry the resolver would always fail on.
  */
 const toIdentity = (song: SongData): TrackIdentity | null => {
   if (!song) return null;
+  const localUri = song.local?.uri;
+  if (typeof localUri === "string" && localUri) return { provider: "local", path: localUri };
   const id = Number(song.id);
   if (!Number.isFinite(id) || id <= 0) return null;
   return { provider: "netease", id: String(id) };
@@ -176,6 +185,13 @@ const toDurationMs = (song: SongData): number | null => {
 
 /** Cover art URL, normalized to https and sized for a media notification. */
 const toArtworkUrl = (song: SongData): string | null => {
+  // A local track's cover was extracted by the scan and lives on disk. The
+  // *backend* is what fetches this (SMTC / MPRIS / the Android notification), so
+  // it must be the real path, not the `asset://` URL the WebView uses — nothing
+  // outside the webview can resolve that host.
+  const coverPath = song?.local?.coverPath;
+  if (typeof coverPath === "string" && coverPath) return coverPath;
+
   const picUrl = song?.album?.picUrl;
   if (typeof picUrl !== "string" || !picUrl) return null;
   return `${picUrl.replace(/^http:/, "https:")}?param=512y512`;
@@ -277,14 +293,24 @@ const playlistSignature = (
   let h2 = 5381;
   let counted = 0;
   for (let index = 0; index < playlists.length; index++) {
-    const id = Number(playlists[index]?.id);
+    const song = playlists[index];
+    const id = Number(song?.id);
     // Mirror `toIdentity`: unplannable songs are omitted from entries, so they
-    // must not contribute to the signature either.
-    if (!Number.isFinite(id) || id <= 0) continue;
+    // must not contribute to the signature either. A local track *is*
+    // plannable despite its negative id — leaving it out here would freeze the
+    // signature for an all-local playlist, so edits to it would never publish.
+    const localUri = song?.local?.uri;
+    const plannable =
+      typeof localUri === "string" && localUri ? true : Number.isFinite(id) && id > 0;
+    if (!plannable) continue;
     counted++;
-    h1 = Math.imul(h1 ^ id, 0x01000193) >>> 0;
+    // A local row always carries the Rust-assigned id, but hash the locator's
+    // length as a backstop so a row built without one cannot make two different
+    // files hash the same.
+    const token = Number.isFinite(id) && id !== 0 ? id : (localUri?.length ?? 0) + 1;
+    h1 = Math.imul(h1 ^ token, 0x01000193) >>> 0;
     h1 = Math.imul(h1 ^ index, 0x01000193) >>> 0;
-    h2 = ((Math.imul(h2, 33) ^ id) >>> 0) + index;
+    h2 = ((Math.imul(h2, 33) ^ token) >>> 0) + index;
     h2 >>>= 0;
   }
   const seed = mode === "random" ? randomSeed : 0;

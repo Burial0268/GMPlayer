@@ -79,6 +79,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { NVirtualList } from "naive-ui";
 import { DeleteRound, QueueMusicRound } from "@vicons/material";
 import { musicStore } from "@/store";
+import { coverUrl } from "@/utils/coverUrl";
 
 declare const $player: any;
 
@@ -114,10 +115,7 @@ const formatArtists = (artists: Artist[] = []) =>
     .map((item) => item.name)
     .join(" / ");
 
-const getQueueCover = (item: QueueSong) => {
-  const picUrl = item.album?.picUrl;
-  return picUrl ? picUrl.replace(/^http:/, "https:") + "?param=96y96" : "/images/pic/default.png";
-};
+const getQueueCover = (item: QueueSong) => coverUrl(item.album?.picUrl, 96);
 
 const scrollCurrentQueueSong = () => {
   queueListRef.value?.scrollTo({

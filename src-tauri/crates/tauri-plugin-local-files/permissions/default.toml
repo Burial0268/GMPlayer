@@ -1,0 +1,11 @@
+[default]
+description = """
+Default permissions for the local-files plugin.
+
+Deliberately empty of `allow-*`: every command is invoked from Rust through
+`run_mobile_plugin`, which does not consult the ACL. Nothing in the frontend
+addresses `plugin:local-files|…` directly — it goes through the app's own
+`local_*` commands, which run under `core:default` — so granting these to the
+webview would widen the surface for no gain.
+"""
+permissions = []

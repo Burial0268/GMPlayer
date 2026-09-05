@@ -8,7 +8,8 @@
  * - musicData.ts (preloadUpcomingSongs)
  *
  * Handles: quality level, VIP pre-check, trial version detection,
- * UNM fallback, and kuwo proxy URL.
+ * UNM fallback, and kuwo proxy URL — and short-circuits an imported local file,
+ * whose locator is already the answer.
  */
 
 import { getMusicUrl, getMusicNumUrl } from "@/api/song";
@@ -23,11 +24,17 @@ export interface SongUrlInput {
   fee?: number;
   pc?: any;
   name?: string;
+  /**
+   * Set for an imported local file. Its presence — never `id < 0` — is the
+   * dispatch key, and it must be carried by every caller that passes a narrowed
+   * object instead of the store row.
+   */
+  local?: { uri?: string | null } | null;
 }
 
 export interface ResolveSongUrlResult {
   url: string;
-  source: "ncm" | "unm";
+  source: "ncm" | "unm" | "local";
 }
 
 export interface ResolveSongUrlOptions {
@@ -89,6 +96,34 @@ export async function resolveSongUrl(
   level?: MusicLevel | string,
   options?: ResolveSongUrlOptions,
 ): Promise<ResolveSongUrlResult | null> {
+  // An imported local file *is* its own source: the locator is the answer, so
+  // there is nothing to resolve and nothing to share in flight.
+  //
+  // This has to live here rather than at each call site. Six subsystems resolve
+  // upcoming tracks — the preloader, `musicData.preloadUpcomingSongs`,
+  // `NativeQueuePrefill`, AutoMix's pre-buffer and its native prepare, plus the
+  // player itself — and a local track that slips past one of them does not fail
+  // loudly: `song_url_v1` answers nothing for a negative id, the UNM fallback
+  // then asks a *third-party* server about a track id that exists nowhere, and
+  // AutoMix retries the prepare for as long as the track plays. That is the
+  // steady stream of UNM requests seen while playing local files.
+  const localUri = song.local?.uri;
+  if (typeof localUri === "string" && localUri) {
+    return { url: localUri, source: "local" };
+  }
+
+  // Backstop for a row that lost its `local` marker (an older persisted queue,
+  // a caller that narrowed the song object). A Netease id is always positive, so
+  // there is no question to ask here — and asking it is exactly what the
+  // negative-id scheme exists to prevent.
+  const numericId = Number(song.id);
+  if (!Number.isFinite(numericId) || numericId <= 0) {
+    if (IS_DEV) {
+      console.warn(`[resolveSongUrl] ${song.name ?? song.id}: not a Netease id, refusing to ask`);
+    }
+    return null;
+  }
+
   const settingStoreForKey = useSettingDataStore();
   const keyLevel = (level || settingStoreForKey.songLevel || "exhigh") as MusicLevel;
   const key = `${song.id}:${keyLevel}`;

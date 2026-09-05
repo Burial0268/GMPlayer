@@ -489,6 +489,12 @@ export class TransitionStateMachine {
       })
       .catch((err) => {
         if (!this._isTransitionActive(transitionId, "native")) return;
+        // Back off exactly as a backend-reported failure does. Without this the
+        // state goes straight back to `idle`, and `_handleIdle` runs per frame —
+        // so a prepare that cannot get off the ground (an unresolvable URL, a
+        // document whose grant is gone) re-fires at frame rate for the whole
+        // track instead of once. `onTrackStarted` clears it.
+        this._lastFailureTime = Date.now();
         this._nativeNextIndex = -1;
         this._clearTransition(transitionId);
         if (this._state === "analyzing") {

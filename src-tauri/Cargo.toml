@@ -7,6 +7,7 @@ members = [
   "crates/now-playing-controls",
   "crates/tauri-plugin-now-playing-controls",
   "crates/tauri-plugin-media-session",
+  "crates/tauri-plugin-local-files",
   "crates/ncm-core",
 ]
 resolver = "2"
@@ -49,22 +50,83 @@ gmplayer-audio-backend = { path = "crates/audio-backend" }
 ncm-core = { path = "crates/ncm-core" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2", features = ["tray-icon", "image-png", "devtools"] }
+# `protocol-asset` is required by `app.security.assetProtocol.enable` in
+# `tauri.conf.json`: without it the build script rejects the config. It serves
+# exactly one thing — `convertFileSrc` on extracted local cover art, scoped to
+# `$APPCACHE/local-covers/*` and nothing else.
+tauri = { version = "2", features = ["tray-icon", "image-png", "devtools", "protocol-asset"] }
 tauri-plugin-decorum = "1.1.1"
 tauri-plugin-http = { version = "2.5.7", features = ["charset", "cookies", "http2", "macos-system-configuration", "brotli", "gzip"] }
 tauri-plugin-window-state = "2"
 parking_lot = "0.12"
-# 媒体桥的有序命令队列。tokio 已经在 tauri 的依赖树里，这里只是显式取用 sync。
-tokio = { version = "1", features = ["sync"] }
+# 媒体桥的有序命令队列 + 下载队列的文件写入。tokio 已经在 tauri 的依赖树里，这里
+# 只是显式取用：`fs`/`io-util` 给下载的异步落盘，`time` 给协议层调用的超时。按
+# ncm-core 那条教训，用到的 feature 一律自己声明，不从兄弟 crate 继承。
+tokio = { version = "1", features = ["sync", "fs", "io-util", "time"] }
 log = "0.4"
 tauri-plugin-log = "2"
 # Vendored: upstream (solrmax) went closed-source after 0.2.4, so there is
 # nobody to send fixes to. See crates/tauri-plugin-media-session/VENDORING.md.
 tauri-plugin-media-session = { path = "crates/tauri-plugin-media-session" }
+# Android SAF bridge for the local music library: persistable directory grants
+# and file descriptors for the native decoder. A no-op registration off Android.
+tauri-plugin-local-files = { path = "crates/tauri-plugin-local-files" }
 tauri-plugin-opener = "2.5.4"
+# Local library scan (desktop path sources). Android trees go through SAF.
+walkdir = "2"
+# Song downloads: one streaming, resumable transfer per task.
+#
+# The hyper stack, reached through reqwest, rather than a second blocking client.
+# `audio-backend` uses `ureq` on the playback source path and that is fine there —
+# it decodes on its own threads — but a download queue is long-lived, concurrent
+# and cancellable, which is exactly what an async client is for: a blocking one
+# would park a thread per task for the length of a multi-megabyte transfer.
+#
+# Pinned to the 0.12 line and rustls to match what the Tauri plugins already
+# resolve (the tree is pure rustls — `default-features = false` keeps
+# native-tls/OpenSSL out of it), and `http2`/`stream` are declared here **in their
+# own right** rather than inherited from `tauri-plugin-http`, which sits on the
+# same 0.12. See the long note in `crates/ncm-core/Cargo.toml`: that inheritance
+# already caused one silent protocol mismatch, and it survives only until a
+# sibling bumps a major.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls",
+  "http2",
+  "stream",
+] }
+# The track index. Regenerable by re-scanning, so a format that tolerates no
+# schema evolution is the right trade for its size; the *user's* local playlists
+# and favourites are not regenerable and live in JSON instead. See
+# `src/local/index.rs`.
+bincode = "1.3"
+# Content-addressed names for extracted cover art.
+sha2 = "0.10"
+# Only for `local_cover_import`: a picked picture crosses IPC base64-encoded.
+# Already in the lock tree, so this adds no download.
+base64 = "0.22"
+# Downscaling extracted cover art at scan time. `image` is already in the tree
+# (tauri pulls it for the tray/window icon, with only `png` on); this adds the
+# `jpeg` codec, which is what taggers overwhelmingly embed. Pure Rust, so it
+# costs nothing on the Android cross-build. Without it every consumer decodes a
+# 1500-3000px picture to draw a 60px avatar — see `src/local/cover.rs`.
+#
+# Pinned exactly: 0.25.10's `jpeg` feature pulls `zune-core ^0.5.0`, which has
+# only ever been published as release candidates, so enabling the codec on that
+# version does not resolve at all. Cargo unifies this with tauri's own `image`
+# dependency, so the pin decides the version for both.
+image = { version = "=0.25.9", default-features = false, features = ["jpeg", "png"] }
 # Pinia store 持久化 + 跨窗口同步。版本必须与前端 @tauri-store/pinia 一致；
 # 5.x 需要 pinia 4，本项目还在 pinia 3。
 tauri-plugin-pinia = "4.2.1"
+# Writing tags into a downloaded file. Symphonia (through `audio-backend`) reads
+# tags and cannot write them, and Netease's streaming sources carry neither the
+# lyric nor the artwork, so a downloaded track has to be tagged by us or it has no
+# metadata at all beyond its filename.
+#
+# Held at 0.22 by this crate's `rust-version = 1.80`: 0.25 requires 1.89. Kept to
+# the one non-default feature `id3v2_compression_support`, since an MP3 in the wild
+# may carry compressed frames and lofty otherwise refuses the whole tag.
+lofty = { version = "0.22", default-features = false, features = ["id3v2_compression_support"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "linux"))'.dependencies]
 mimalloc = "*"
@@ -72,6 +134,11 @@ mimalloc = "*"
 [target.'cfg(all(not(target_os = "android"), not(target_os = "ios")))'.dependencies]
 rdev = "0.5"
 gmplayer-now-playing-controls = { package = "tauri-plugin-now-playing-controls", path = "crates/tauri-plugin-now-playing-controls" }
+# Desktop's directory/file picker. Used through its *Rust* API
+# (`app.dialog().file()`), not from JS, so no `dialog:allow-*` capability is
+# needed — and a desktop picker returns a real path, which `File::open` and
+# `Path::exists` both accept, so nothing downstream needs the SAF machinery.
+tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]
 gmplayer-taskbar-lyric = { package = "tauri-plugin-taskbar-lyric", path = "crates/taskbar-lyric" }
@@ -116,3 +183,7 @@ tauri-plugin-single-instance = "2.4.2"
 # If you use cargo directly instead of tauri's cli you can use this feature flag to switch between tauri's `dev` and `build` modes.
 # DO NOT REMOVE!!
 custom-protocol = [ "tauri/custom-protocol" ]
+
+[dev-dependencies]
+# The local library index round-trips through real files in its tests.
+tempfile = "3"

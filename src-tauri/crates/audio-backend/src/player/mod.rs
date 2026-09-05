@@ -50,7 +50,7 @@ mod platform;
 mod playback;
 pub mod queue;
 mod seek;
-mod session_controls;
+pub mod session_controls;
 mod source_cache;
 pub mod source_resolver;
 mod status;

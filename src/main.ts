@@ -86,6 +86,23 @@ async function bootstrap() {
     // 读到空，而缺 cookie 的 /song/url/v1 不报错，只是安静地返回 30 秒试听片段。
     setNcmCookieSource(() => useUserDataStore(pinia).cookie ?? "");
     setNcmTransport(settingData.ncmTransport);
+    // 下载队列活在 Rust 里，所以它拿不到 store——凭据必须推给它。用 watch 而不是
+    // 只在启动时推一次：队列会比开启它的那个页面活得更久（Android 上 WebView 被系统
+    // 回收是常态），而它没法在需要的时候回头问页面要 cookie。
+    if (isTauri()) {
+      const userData = useUserDataStore(pinia);
+      watch(
+        () => userData.cookie,
+        (cookie) => {
+          void import("@/utils/download").then((m) =>
+            m.downloadSetCredentials(cookie || null).catch((err) => {
+              console.warn("[main] could not push download credentials", err);
+            }),
+          );
+        },
+        { immediate: true },
+      );
+    }
     watch(
       () => settingData.ncmTransport,
       (mode) => {

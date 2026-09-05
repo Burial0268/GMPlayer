@@ -2511,6 +2511,72 @@
           "markdownDescription": "Denies the show_snap_overlay command without any pre-configured scope."
         },
         {
+          "description": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-message`\n- `allow-save`\n- `allow-open`",
+          "type": "string",
+          "const": "dialog:default",
+          "markdownDescription": "This permission set configures the types of dialogs\navailable from the dialog plugin.\n\n#### Granted Permissions\n\nAll dialog types are enabled.\n\n\n\n#### This default permission set includes:\n\n- `allow-message`\n- `allow-save`\n- `allow-open`"
+        },
+        {
+          "description": "Enables the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:allow-ask",
+          "markdownDescription": "Enables the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)"
+        },
+        {
+          "description": "Enables the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:allow-confirm",
+          "markdownDescription": "Enables the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `allow-message` and will be removed in v3)"
+        },
+        {
+          "description": "Enables the message command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:allow-message",
+          "markdownDescription": "Enables the message command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:allow-open",
+          "markdownDescription": "Enables the open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:allow-save",
+          "markdownDescription": "Enables the save command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:deny-ask",
+          "markdownDescription": "Denies the ask command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)"
+        },
+        {
+          "description": "Denies the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)",
+          "type": "string",
+          "const": "dialog:deny-confirm",
+          "markdownDescription": "Denies the confirm command without any pre-configured scope. (**DEPRECATED**: This is now an alias to `deny-message` and will be removed in v3)"
+        },
+        {
+          "description": "Denies the message command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:deny-message",
+          "markdownDescription": "Denies the message command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:deny-open",
+          "markdownDescription": "Denies the open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save command without any pre-configured scope.",
+          "type": "string",
+          "const": "dialog:deny-save",
+          "markdownDescription": "Denies the save command without any pre-configured scope."
+        },
+        {
           "description": "This permission set configures what kind of\nfetch operations are available from the http plugin.\n\nThis enables all fetch operations but does not\nallow explicitly any origins to be fetched. This needs to\nbe manually configured before usage.\n\n#### Granted Permissions\n\nAll fetch operations are enabled.\n\n\n#### This default permission set includes:\n\n- `allow-fetch`\n- `allow-fetch-cancel`\n- `allow-fetch-send`\n- `allow-fetch-read-body`\n- `allow-fetch-cancel-body`",
           "type": "string",
           "const": "http:default",
@@ -2575,6 +2641,204 @@
           "type": "string",
           "const": "http:deny-fetch-send",
           "markdownDescription": "Denies the fetch_send command without any pre-configured scope."
+        },
+        {
+          "description": "Default permissions for the local-files plugin.\n\nDeliberately empty of `allow-*`: every command is invoked from Rust through\n`run_mobile_plugin`, which does not consult the ACL. Nothing in the frontend\naddresses `plugin:local-files|…` directly — it goes through the app's own\n`local_*` commands, which run under `core:default` — so granting these to the\nwebview would widen the surface for no gain.\n",
+          "type": "string",
+          "const": "local-files:default",
+          "markdownDescription": "Default permissions for the local-files plugin.\n\nDeliberately empty of `allow-*`: every command is invoked from Rust through\n`run_mobile_plugin`, which does not consult the ACL. Nothing in the frontend\naddresses `plugin:local-files|…` directly — it goes through the app's own\n`local_*` commands, which run under `core:default` — so granting these to the\nwebview would widen the surface for no gain.\n"
+        },
+        {
+          "description": "Enables the cancel_enumerate command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-cancel-enumerate",
+          "markdownDescription": "Enables the cancel_enumerate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the create_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-create-document",
+          "markdownDescription": "Enables the create_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the delete_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-delete-document",
+          "markdownDescription": "Enables the delete_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the document_exists command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-document-exists",
+          "markdownDescription": "Enables the document_exists command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the enumerate_tree command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-enumerate-tree",
+          "markdownDescription": "Enables the enumerate_tree command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the find_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-find-document",
+          "markdownDescription": "Enables the find_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the list_persisted command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-list-persisted",
+          "markdownDescription": "Enables the list_persisted command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_fd command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-open-fd",
+          "markdownDescription": "Enables the open_fd command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_write_fd command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-open-write-fd",
+          "markdownDescription": "Enables the open_write_fd command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-pick-files",
+          "markdownDescription": "Enables the pick_files command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_text_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-pick-text-document",
+          "markdownDescription": "Enables the pick_text_document command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_tree command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-pick-tree",
+          "markdownDescription": "Enables the pick_tree command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pick_writable_tree command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-pick-writable-tree",
+          "markdownDescription": "Enables the pick_writable_tree command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the read_bytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-read-bytes",
+          "markdownDescription": "Enables the read_bytes command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the release_uri command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-release-uri",
+          "markdownDescription": "Enables the release_uri command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the rename_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:allow-rename-document",
+          "markdownDescription": "Enables the rename_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the cancel_enumerate command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-cancel-enumerate",
+          "markdownDescription": "Denies the cancel_enumerate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-create-document",
+          "markdownDescription": "Denies the create_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the delete_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-delete-document",
+          "markdownDescription": "Denies the delete_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the document_exists command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-document-exists",
+          "markdownDescription": "Denies the document_exists command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enumerate_tree command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-enumerate-tree",
+          "markdownDescription": "Denies the enumerate_tree command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the find_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-find-document",
+          "markdownDescription": "Denies the find_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the list_persisted command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-list-persisted",
+          "markdownDescription": "Denies the list_persisted command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_fd command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-open-fd",
+          "markdownDescription": "Denies the open_fd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_write_fd command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-open-write-fd",
+          "markdownDescription": "Denies the open_write_fd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_files command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-pick-files",
+          "markdownDescription": "Denies the pick_files command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_text_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-pick-text-document",
+          "markdownDescription": "Denies the pick_text_document command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_tree command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-pick-tree",
+          "markdownDescription": "Denies the pick_tree command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pick_writable_tree command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-pick-writable-tree",
+          "markdownDescription": "Denies the pick_writable_tree command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the read_bytes command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-read-bytes",
+          "markdownDescription": "Denies the read_bytes command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the release_uri command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-release-uri",
+          "markdownDescription": "Denies the release_uri command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the rename_document command without any pre-configured scope.",
+          "type": "string",
+          "const": "local-files:deny-rename-document",
+          "markdownDescription": "Denies the rename_document command without any pre-configured scope."
         },
         {
           "description": "Allows the log command\n#### This default permission set includes:\n\n- `allow-log`",

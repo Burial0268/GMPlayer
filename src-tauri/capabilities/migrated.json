@@ -50,6 +50,7 @@
     "updater:default",
     "opener:allow-open-url",
     "opener:allow-default-urls",
+    "opener:allow-reveal-item-in-dir",
     "now-playing-controls:default",
     "pinia:default"
   ]

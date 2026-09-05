@@ -18,7 +18,13 @@
   <link rel="stylesheet" href="https://s1.hdslb.com/bfs/static/jinkela/long/font/regular.css" />
   <!-- IE Out -->
   <script>
+    // 只吞掉原生菜单。挂在 document 冒泡阶段且不调 stopPropagation，所以元素上的
+    // @contextmenu(DataLists / CoverLists / ArtistLists 的右键菜单)一定先执行，不受影响。
+    // 文本输入区放行：那里的原生复制/粘贴菜单在桌面端仍然是需要的。
     document.addEventListener('contextmenu', function (event) {
+      var target = event.target;
+      var tag = target && target.tagName;
+      if (target && (target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA')) return;
       event.preventDefault();
     });
     if (

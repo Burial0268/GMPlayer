@@ -107,6 +107,10 @@
         <SettingsDsp />
       </template>
 
+      <template #downloadSettings>
+        <SettingsDownload />
+      </template>
+
       <template #aboutApp>
         <SettingsAbout />
       </template>
@@ -213,6 +217,7 @@
 </template>
 
 <script setup lang="ts">
+import { NCheckbox, NText } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import { settingStore } from "@/store";
@@ -221,6 +226,7 @@ import themeColorData from "@/components/Provider/themeColor.json";
 import SettingsPanel from "./SettingsPanel.vue";
 import SettingsAppUpdate from "./SettingsAppUpdate.vue";
 import SettingsDsp from "./SettingsDsp.vue";
+import SettingsDownload from "./SettingsDownload.vue";
 import SettingsAbout from "./SettingsAbout.vue";
 import { SETTINGS_SECTION_ALIASES, useSettingsSections } from "./useSettingsSections";
 
@@ -344,23 +350,47 @@ const changeThemeColor = (data: ThemeColorItem | null, reset = false) => {
 };
 
 const resetApp = () => {
+  /**
+   * 是否连本地音乐库一起清掉。
+   *
+   * 默认不勾，而且这是本对话框里唯一一个需要用户自己决定的开关：本地库不在
+   * localStorage、也不在 Tauri store 里，重置本来就碰不到它——但「碰巧幸存」不是
+   * 一种可依赖的语义，所以把它摆成一个明确的选择。
+   */
+  const clearLocalLibrary = ref(false);
+
   const cleanAll = async () => {
     $message?.success(t("other.cleanAll"));
-    await resetPersistedStorage();
+    await resetPersistedStorage({ clearLocalLibrary: clearLocalLibrary.value });
     window.location.href = "/";
   };
 
   $dialog.warning({
     class: "s-dialog",
     title: t("setting.resetApp"),
-    content: t("setting.resetAppWarning"),
+    // 渲染函数而不是纯文本：勾选项必须和警告文案在同一个对话框里，
+    // 否则用户会在不知道自己选了什么的情况下按下确认。
+    content: () =>
+      h("div", { style: "display: flex; flex-direction: column; gap: 12px;" }, [
+        h(NText, null, { default: () => t("setting.resetAppWarning") }),
+        h(
+          NCheckbox,
+          {
+            checked: clearLocalLibrary.value,
+            "onUpdate:checked": (value: boolean) => (clearLocalLibrary.value = value),
+          },
+          { default: () => t("setting.resetAppClearLocal") },
+        ),
+      ]),
     positiveText: t("setting.resetApp"),
     negativeText: t("general.dialog.cancel"),
     onPositiveClick: () => {
-      if (typeof $cleanAll !== "undefined" && $cleanAll) {
-        void $cleanAll();
-      } else {
+      // `$cleanAll` is the main window's own reset and does not know about the
+      // checkbox, so it is only used when this local path is unavailable.
+      if (clearLocalLibrary.value || typeof $cleanAll === "undefined" || !$cleanAll) {
         void cleanAll();
+      } else {
+        void $cleanAll();
       }
     },
   });

@@ -15,19 +15,41 @@
 <script setup>
 import { NIcon } from "naive-ui";
 import { HomeTwo, FindOne, Me, SettingTwo } from "@icon-park/vue-next";
-import { settingStore } from "@/store";
+import { settingStore, userStore } from "@/store";
 import { useRouter, useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
+import { isTauri } from "@/utils/tauri/core/runtime";
 
 const { t } = useI18n();
 const router = useRouter();
 const route = useRoute();
 const setting = settingStore();
+const user = userStore();
+
+/**
+ * The "library" tab's destination depends on being signed in.
+ *
+ * `/user` is behind a `needLogin` guard, so for a signed-out user it bounces to
+ * `/login` with an error toast — which was, in practice, the *only* way to sign
+ * in on mobile: the other two login entry points in the app are the sidebar
+ * avatar (desktop-only) and a card on the home page. Sending the tab to
+ * `/local` instead removes that bounce, so `views/Local/index.vue` carries a
+ * login banner to replace it. The two changes belong together; splitting them
+ * leaves a mobile build with no way to log in at all.
+ */
+const libraryTarget = computed(() => (user.userLogin || !isTauri() ? "/user" : "/local"));
 
 const tabs = computed(() => [
   { key: "home", to: "/", icon: HomeTwo, label: t("sidebar.tab.home") },
   { key: "discover", to: "/discover", icon: FindOne, label: t("sidebar.tab.discover") },
-  { key: "library", to: "/user", icon: Me, label: t("sidebar.tab.library") },
+  {
+    key: "library",
+    to: libraryTarget.value,
+    icon: Me,
+    label: t("sidebar.tab.library"),
+    // Both prefixes, or the tab never highlights while signed out.
+    matches: ["/user", "/local"],
+  },
   {
     key: "settings",
     to: "/setting/appearance",
@@ -38,7 +60,8 @@ const tabs = computed(() => [
 
 const isActive = (tab) => {
   if (tab.key === "home") return route.path === "/";
-  return route.path.startsWith(tab.to);
+  const prefixes = tab.matches ?? [tab.to];
+  return prefixes.some((prefix) => route.path.startsWith(prefix));
 };
 </script>
 

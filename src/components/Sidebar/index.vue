@@ -75,12 +75,25 @@
                   @click="toggleSection(item.section)"
                 >
                   <span>{{ item.label }}</span>
-                  <n-icon
-                    class="section-chevron"
-                    :class="{ open: sectionOpen[item.section] }"
-                    :size="13"
-                    :component="Right"
-                  />
+                  <div class="section-actions">
+                    <n-tooltip v-if="item.action === 'create'" placement="top" :delay="300">
+                      <template #trigger>
+                        <n-icon
+                          class="section-action"
+                          :size="15"
+                          :component="Plus"
+                          @click.stop="openCreatePlaylistModal"
+                        />
+                      </template>
+                      {{ $t("menu.create") }}
+                    </n-tooltip>
+                    <n-icon
+                      class="section-chevron"
+                      :class="{ open: sectionOpen[item.section] }"
+                      :size="13"
+                      :component="Right"
+                    />
+                  </div>
                 </div>
                 <n-skeleton
                   v-else-if="item.type === 'skeleton'"
@@ -196,6 +209,9 @@
         </n-tooltip>
       </n-dropdown>
     </div>
+
+    <!-- 新建歌单弹窗（我的歌单标题栏的 `+`） -->
+    <CreatePlaylist ref="createPlaylistRef" />
   </Motion>
 </template>
 
@@ -208,10 +224,12 @@ import {
   RecordDisc,
   Voice,
   CloudStorage,
+  FolderMusic,
   History,
   SettingTwo,
   IndentLeft,
   IndentRight,
+  Plus,
   Right,
   Logout,
   User,
@@ -219,10 +237,12 @@ import {
 import { NIcon, NAvatar, NSkeleton, NTooltip, NDropdown, NVirtualList } from "naive-ui";
 import { Motion, AnimatePresence } from "motion-v";
 import { settingStore, siteStore, userStore } from "@/store";
+import { isTauri as isTauriRuntime } from "@/utils/tauri/core/runtime";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import type { Component } from "vue";
 import SidebarItem from "./SidebarItem.vue";
+import CreatePlaylist from "@/components/DataModal/CreatePlaylist.vue";
 import SidebarPlaylistItem from "./SidebarPlaylistItem.vue";
 import SearchInp from "@/components/SearchInp/index.vue";
 import { useAppUpdater } from "@/composables/useAppUpdater";
@@ -261,6 +281,14 @@ type SidebarNavItem =
       key: string;
       section: SidebarSectionKey;
       label: string;
+      /**
+       * A trailing action button on the section header.
+       *
+       * `create` is 我的歌单's `+`. It sits inside the header rather than in a
+       * separate row so it stays put while the section collapses, and its click
+       * must stop propagation — the header itself is the collapse toggle.
+       */
+      action?: "create";
     }
   | {
       type: "empty";
@@ -318,6 +346,19 @@ const expandedNavItems = computed<SidebarNavItem[]>(() => {
     { type: "route", key: "discover", to: "/discover", icon: FindOne, label: t("nav.discover") },
   ];
 
+  // Before the login gate on purpose: an imported folder is not the account's,
+  // so requiring a Netease session to reach it would be wrong — and on mobile
+  // this is the destination the bottom bar falls back to when signed out.
+  if (isTauriRuntime()) {
+    items.push({
+      type: "route",
+      key: "local",
+      to: "/local",
+      icon: FolderMusic,
+      label: t("sidebar.localMusic"),
+    });
+  }
+
   if (!user.userLogin) return items;
 
   items.push({
@@ -371,6 +412,7 @@ const expandedNavItems = computed<SidebarNavItem[]>(() => {
     key: "section-own",
     section: "own",
     label: t("sidebar.myPlaylists"),
+    action: "create",
   });
   if (sectionOpen.own) {
     if (user.getUserPlayLists.isLoading) {
@@ -422,6 +464,19 @@ const collapsedNavItems = computed<SidebarNavItem[]>(() => {
     { type: "route", key: "home", to: "/", icon: HomeTwo, label: t("nav.home") },
     { type: "route", key: "discover", to: "/discover", icon: FindOne, label: t("nav.discover") },
   ];
+
+  // Before the login gate on purpose: an imported folder is not the account's,
+  // so requiring a Netease session to reach it would be wrong — and on mobile
+  // this is the destination the bottom bar falls back to when signed out.
+  if (isTauriRuntime()) {
+    items.push({
+      type: "route",
+      key: "local",
+      to: "/local",
+      icon: FolderMusic,
+      label: t("sidebar.localMusic"),
+    });
+  }
 
   if (user.userLogin) {
     items.push({
@@ -509,6 +564,18 @@ const collapsedNavItems = computed<SidebarNavItem[]>(() => {
 const toggleSection = (key: SidebarSectionKey) => {
   sectionOpen[key] = !sectionOpen[key];
   resetSidebarScrollShadow();
+};
+
+const createPlaylistRef = ref<InstanceType<typeof CreatePlaylist> | null>(null);
+
+/**
+ * Open the create-playlist dialog, and make sure 我的歌单 is expanded so the new
+ * entry is visible when it lands — creating a playlist into a collapsed section
+ * looks like nothing happened.
+ */
+const openCreatePlaylistModal = () => {
+  sectionOpen.own = true;
+  createPlaylistRef.value?.openCreatePlaylist();
 };
 
 const resetSidebarScrollShadow = () => {
@@ -856,6 +923,31 @@ const goToPlaylist = (id: number) => {
     transition: opacity var(--duration-200) var(--ease-out);
   }
 
+  .section-actions {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+
+  .section-action {
+    // Only shown on hover/focus of the header: a permanently visible `+` in an
+    // 11px uppercase label row reads as clutter. Kept at opacity 0 rather than
+    // `display: none` so it does not reflow the header on hover.
+    opacity: 0;
+    padding: 2px;
+    border-radius: var(--radius-sm, 4px);
+    transition:
+      opacity 0.18s ease,
+      background-color 0.18s ease,
+      color 0.18s ease;
+
+    &:hover {
+      color: var(--sidebar-text);
+      background-color: var(--sidebar-item-hover, rgba(128, 128, 128, 0.16));
+    }
+  }
+
   .section-chevron {
     opacity: 0.68;
     transition:
@@ -873,6 +965,17 @@ const goToPlaylist = (id: number) => {
     .section-chevron {
       opacity: 1;
     }
+
+    .section-action {
+      opacity: 0.72;
+    }
+  }
+}
+
+// Touch has no hover, so the action would be unreachable there.
+@media (hover: none) {
+  .sidebar-section-header .section-action {
+    opacity: 0.72;
   }
 }
 

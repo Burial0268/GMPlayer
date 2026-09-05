@@ -16,14 +16,14 @@
             :layout-id="sharedLayoutIds.cover"
             :transition="sharedContentTransition"
           >
+            <!-- `decoding="async"` because a local cover is stored at whatever
+                 resolution the file embedded — often 1500-3000px, with no
+                 server-side `?param=` resize to lean on — and a synchronous
+                 decode of that lands on the main thread at every track change. -->
             <img
               class="album"
-              :src="
-                music.getPlaySongData && music.getPlaySongData.album
-                  ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
-                    '?param=1024y1024'
-                  : '/images/pic/default.png'
-              "
+              decoding="async"
+              :src="coverUrl(music.getPlaySongData?.album?.picUrl, 1024)"
               alt="cover"
             />
           </Motion>
@@ -184,6 +184,7 @@ import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";
+import { coverUrl } from "@/utils/coverUrl";
 import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
 import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";

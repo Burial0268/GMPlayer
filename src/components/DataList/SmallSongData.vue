@@ -3,11 +3,7 @@
     <n-avatar
       class="pic"
       :size="48"
-      :src="
-        songDetail && songDetail.album
-          ? songDetail.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'
-          : '/images/pic/default.png'
-      "
+      :src="coverUrl(songDetail?.album?.picUrl, 60)"
       fallback-src="/images/pic/default.png"
     />
     <div class="name" :style="notJump ? 'pointer-events: none' : null">
@@ -29,6 +25,7 @@
 <script setup>
 import { useRouter } from "vue-router";
 import { getMusicDetail } from "@/api/song";
+import { coverUrl } from "@/utils/coverUrl";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
 

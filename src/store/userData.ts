@@ -222,6 +222,13 @@ const useUserDataStore = defineStore("userData", {
       this.userPlayLists = { isLoading: false, has: false, own: [], like: [] };
       this.userAlbum = { isLoading: false, has: false, list: [] };
       this.userArtistLists = { isLoading: false, has: false, list: [] };
+      // 本地音乐库**不在这里**，也不要加进来。
+      //
+      // 本地来源、本地歌单、本地收藏的真源是 Rust 侧的
+      // `$APPDATA/local-library.bin` 与 `local-user-data.json`，与账号态不共享
+      // 任何一层；`localLibrary` store 里的字段只是它们的缓存，与账号无关，退出
+      // 后重读一遍纯属浪费。硬要求是「登录/退出/换账号都不得清除本地数据」，只要
+      // 不把本地数据搬进账号这一层，这个不变量就是结构性的。
       clearInFlight();
       localStorage.removeItem("cookie");
       apiUserLogOut();

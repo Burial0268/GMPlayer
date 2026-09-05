@@ -30,6 +30,7 @@
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { audioGetSession } from "@/utils/tauri/audio/bridge";
 import type { TrackIdentity } from "@/utils/tauri/audio/protocol";
+import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 // Import the store directly to avoid a cycle through the barrel export.
 import useMusicDataStore from "@/store/musicData";
 import { reconcileNativeManifestRevision } from "./NativeManifestPublisher";
@@ -104,28 +105,34 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   const sourceUrl = snapshot.musicId.slice(MUSIC_ID_PREFIX.length);
   if (!sourceUrl) return null;
 
-  // Only Netease identities map onto a store song; a `local` one would need a
-  // path lookup the store cannot do today.
-  if (snapshot.identity.provider !== "netease") return null;
-  const identityId = snapshot.identity.id;
-
   const music = useMusicDataStore();
   const playlists = music.persistData.playlists;
   if (!playlists?.length) return null;
 
-  const index = playlists.findIndex((song) => String(song?.id) === identityId);
+  // Both providers map onto a store row, by the key each one is identified by:
+  // a Netease id, or a local file's locator. Refusing `local` here would send an
+  // imported track down the "resolve a fresh URL and restart" path on every
+  // reload — which for a local file means restarting from the persisted position
+  // while the backend is still playing it.
+  const index =
+    snapshot.identity.provider === "netease"
+      ? playlists.findIndex((song) => String(song?.id) === snapshot.identity!.id)
+      : playlists.findIndex((song) => song?.local?.uri === snapshot.identity!.path);
   if (index < 0) {
     // The backend is on a track this frontend no longer lists (playlist edited
     // in another window, storage rolled back). Let the normal startup path
     // replace it rather than adopting something the UI cannot describe.
     if (IS_DEV) {
-      console.warn(`[NativeSessionAdopt] backend track netease:${identityId} not in playlist`);
+      console.warn(
+        `[NativeSessionAdopt] backend track ${trackIdentityKey(snapshot.identity)} not in playlist`,
+      );
     }
     return null;
   }
 
   const songId = Number(playlists[index]?.id);
-  if (!Number.isFinite(songId) || songId <= 0) return null;
+  // `!== 0`: a local id is negative. `0` is what a missing id coerces to.
+  if (!Number.isFinite(songId) || songId === 0) return null;
 
   const duration =
     Number.isFinite(snapshot.duration) && snapshot.duration > 0 ? snapshot.duration : 0;

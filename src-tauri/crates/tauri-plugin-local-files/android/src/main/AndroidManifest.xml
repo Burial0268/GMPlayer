@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Deliberately empty of permissions.
+
+  SAF grants come from the user picking a directory in the system UI, not from a
+  manifest permission. That is the main reason this feature uses
+  `ACTION_OPEN_DOCUMENT_TREE` rather than `MediaStore` + `READ_MEDIA_AUDIO`:
+  zero runtime prompts, and nothing for Play Store review to question.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />

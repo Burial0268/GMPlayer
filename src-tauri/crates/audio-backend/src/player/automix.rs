@@ -489,6 +489,10 @@ fn analysis_cache() -> &'static Mutex<Vec<CachedTrackAnalysis>> {
 }
 
 fn analysis_cache_key(path: &Path) -> String {
+    // A `content://` URI cannot be stat'd, so both fields fall to 0 and the key
+    // degenerates to the URI. That is still correct as an identity — SAF
+    // document ids are stable — it just means a document replaced in place
+    // keeps its cached analysis until the process restarts.
     let meta = std::fs::metadata(path).ok();
     let len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
     let mtime = meta

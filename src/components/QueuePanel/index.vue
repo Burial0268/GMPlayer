@@ -3,15 +3,7 @@
     <section class="queue-now">
       <div class="queue-title">{{ $t("player.queue.nowPlaying") }}</div>
       <div v-if="currentSong" class="now-card">
-        <img
-          class="now-cover"
-          :src="
-            currentSong.album?.picUrl
-              ? currentSong.album.picUrl.replace(/^http:/, 'https:') + '?param=80y80'
-              : '/images/pic/default.png'
-          "
-          alt="cover"
-        />
+        <img class="now-cover" :src="coverUrl(currentSong.album?.picUrl, 80)" alt="cover" />
         <div class="now-meta">
           <div class="now-name text-hidden">{{ currentSong.name }}</div>
           <AllArtists class="now-artists text-hidden" :artistsData="currentSong.artist" />
@@ -66,11 +58,7 @@
             </div>
             <img
               class="queue-cover"
-              :src="
-                row.item.album?.picUrl
-                  ? row.item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'
-                  : '/images/pic/default.png'
-              "
+              :src="coverUrl(row.item.album?.picUrl, 60)"
               alt="cover"
               loading="lazy"
             />
@@ -96,6 +84,7 @@
 import { NIcon, NVirtualList } from "naive-ui";
 import { DeleteFour } from "@icon-park/vue-next";
 import { musicStore } from "@/store";
+import { coverUrl } from "@/utils/coverUrl";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 
 const music = musicStore();
@@ -133,7 +122,9 @@ defineExpose({ scrollToCurrent });
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background-color: var(--app-shell-bg, var(--layout-bg, #fff));
+  // 容器可以自己提供底色。底部抽屉把它设成 transparent，因为玻璃在抽屉那一层，
+  // 这里再刷一层实色就把模糊盖掉了。
+  background-color: var(--queue-surface-bg, var(--app-shell-bg, var(--layout-bg, #fff)));
 }
 
 .queue-now {
@@ -241,7 +232,8 @@ defineExpose({ scrollToCurrent });
 .queue-scroll {
   min-height: 0;
   flex: 1;
-  padding: 0 8px 12px;
+  // 底边留量由容器给：底部抽屉贴着屏幕底边，要在这里让出 home indicator 的高度。
+  padding: 0 8px var(--queue-pad-bottom, 12px);
   overflow-x: clip;
   overscroll-behavior: contain;
   contain: layout paint style;

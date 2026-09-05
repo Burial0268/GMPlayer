@@ -20,11 +20,7 @@
         >
           <img
             class="album"
-            :src="
-              music.getPlaySongData
-                ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500'
-                : '/images/pic/default.png'
-            "
+            :src="coverUrl(music.getPlaySongData?.album?.picUrl, 500)"
             alt="cover"
           />
         </Motion>
@@ -176,6 +172,7 @@ import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
 import IconPause from "./icons/IconPause.vue";
 import { musicStore, settingStore, userStore } from "@/store";
+import { coverUrl } from "@/utils/coverUrl";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { setSeek } from "@/utils/AudioContext";

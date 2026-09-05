@@ -211,8 +211,8 @@
 <script setup lang="ts">
 import type { DropdownMixedOption } from "naive-ui/es/dropdown/src/interface";
 import { NIcon, NText } from "naive-ui";
-import { getPlayListDetail, delPlayList, likePlaylist } from "@/api/playlist";
-import { getMusicDetail } from "@/api/song";
+import { delPlayList, likePlaylist } from "@/api/playlist";
+import { fetchPlaylistDetail, fetchSongDetail } from "@/utils/ncm/projectedRequest";
 import { useRouter } from "vue-router";
 import { userStore, musicStore, settingStore } from "@/store";
 import { getLongTime } from "@/utils/timeTools";
@@ -223,12 +223,14 @@ import { fuzzyFilterSongs } from "@/utils/fuzzySearch";
 import { renderIcon } from "@/utils/ui/renderIcon";
 import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
+import { useDownloadSongs } from "@/composables/useDownloadSongs";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
 import {
   MusicList,
   LinkTwo,
   More,
   DeleteFour,
+  DownloadFour,
   Like,
   Unlike,
   Newlybuild,
@@ -246,6 +248,7 @@ const user = userStore();
 const music = musicStore();
 const setting = settingStore();
 const { playAllSong: playAll } = usePlayAllSong();
+const { enqueue: downloadSongs } = useDownloadSongs();
 const { applyContentPanelAccent } = useContentPanelAccent();
 
 // 歌单数据
@@ -269,23 +272,41 @@ interface PlaylistDetail {
 }
 
 const playListDetail = ref<PlaylistDetail | null>(null);
-const playListData = ref<unknown[]>([]);
+/**
+ * 已 hydrate 的行。
+ *
+ * `shallowRef` 而非 `ref`：写入永远是**整体替换**（追加一块、重排 num、采用服务端
+ * manifest），从来不是就地改某一项，所以深层响应式在这里没有任何用处，只有代价。
+ * 而代价是按元素数量算的：`ref` 会把数组包成 reactive proxy，此后每一次索引读取
+ * 都过一遍 handler——万首歌单遍历一遍就是 2.2 ms（shallowRef 0.3 ms）。这条路径
+ * 每次搜索过滤、每次窗口重算都要走，`DataLists` 里的 `slice`/`map` 也一样。
+ *
+ * 条目本身已经是 `markRaw` 的（见 `utils/rawEntry`），所以这只是把「数组这一层」
+ * 也从代理里摘出来，语义上和条目那一层是同一个决定。
+ */
+const playListData = shallowRef<unknown[]>([]);
 const playListDescShow = ref(false);
 const loadingState = ref(true);
 const totalCount = ref(0);
 
 // ── 长流：manifest + 分块 hydrate ────────────────────────────
 //
-// `/playlist/detail` 返回的 `trackIds` 是**完整**的（tracks 只有 10 条，这是网易
-// 的接口限制），上游文档给的做法就是「拿全部 trackIds 请求 song/detail」。所以
-// 这里把列表拆成两层：manifest 是有序 id 全集，一次取到；行数据按可视区间分块
-// hydrate，密集且连续地追加。
+// `/playlist/detail` 返回的 `trackIds` 是**完整**的，而 `tracks` 只有前一段（服务
+// 端截到 1000，见 `seedFromDetail`），上游文档给的做法就是「拿全部 trackIds 请求
+// song/detail」。所以这里把列表拆成两层：manifest 是有序 id 全集，一次取到；行数据
+// 按可视区间分块 hydrate，密集且连续地追加。
 //
 // 这样做同时更省：旧的分页走 `/playlist/track/all`，而它内部**每翻一页都重新拉
 // 一次完整 manifest**（`n: 1e5`，实测 247 KB）只为切出 30 个 id。现在 manifest
 // 只取一次，之后每块只花一次 `song_detail` —— 而 song_detail 会被 ncm-core 的
 // batch 层按 id 合并、TTL 30 分钟、持久化 7 天 stale。
-const manifestIds = ref<number[]>([]);
+/**
+ * 有序 id 全集。同样用 `shallowRef`：这是一个上万元素的数字数组，只整体替换。
+ *
+ * `ref` 包出来的代理会让 `slice`（每次补块）和 `filter`（每次打补丁）逐元素过
+ * handler，而里面一个数字都不需要被单独追踪。
+ */
+const manifestIds = shallowRef<number[]>([]);
 const isHydrating = ref(false);
 
 /**
@@ -298,7 +319,9 @@ const isHydrating = ref(false);
  * 里照样成立：一次调用的成本就是它那个 round trip，唯一值得优化的是请求**次数**。
  *
  * 1000 不是拍脑袋的上限：ncm-core 的磁盘缓存单条上限是 4 MB（`disk.rs`
- * `MAX_ENTRY_BYTES`），而 1000 首的 `song_detail` 响应约 2.1 MB，仍在里面。
+ * `MAX_ENTRY_BYTES`），而 1000 首的 `song_detail` 响应实测约 2.06 MB，仍在里面。
+ * 注意缓存存的是**完整**信封，所以这个上限跟投影无关——`fetchSongDetail` 只是把
+ * 过 IPC 的那一份裁到 0.36 MB。
  */
 const HYDRATE_CHUNK = 1000;
 
@@ -371,6 +394,23 @@ const setDropdownOptions = () => {
       icon: renderIcon(h(LinkTwo) as any),
     },
     {
+      key: "downloadAll",
+      // 「已加载的行」而不是整张歌单：一个上万首的歌单没有「全部下载」这种意思，而且
+      // 分块 hydrate 还没走到的行这里根本没有 id。
+      //
+      // 因此 `show` 只看登录态：`setDropdownOptions` 在 onMounted 就跑了，那时第一块
+      // 还没落地，按行数判断等于永远隐藏。行数在点击那一刻才读，空列表由
+      // `useDownloadSongs` 自己说明。
+      label: t("download.downloadAll"),
+      show: user.userLogin,
+      props: {
+        onClick: () => {
+          void downloadSongs(playListData.value as any[]);
+        },
+      },
+      icon: renderIcon(h(DownloadFour) as any),
+    },
+    {
       key: "del",
       label: t("menu.del"),
       show: user.userLogin && isCanDelete(playListId.value),
@@ -404,6 +444,11 @@ const setDropdownOptions = () => {
  * 调 `getPlayListDetailData` 和 `getAllPlayListData`，而后者内部又拉一次同参数的
  * `/api/v6/playlist/detail` —— 两者在 ncm-core 里是不同 endpoint 名、不同缓存
  * 键，`inflight` 合并不了，所以每次开歌单页都把那份 247 KB 下载了两遍。
+ *
+ * 走 `fetchPlaylistDetail` / `fetchSongDetail` 而不是 `getPlayListDetail` /
+ * `getMusicDetail`：同一个端点、同一个缓存条目，只是让 Rust 先把响应裁到这一页真正
+ * 会读的字段再过 IPC。原始信封实测 2.4 MB，其中 79% 没有任何人读，而 `JSON.parse`
+ * 是这条链上**唯一**跑在绘制线程上的一步。
  */
 const loadPlaylist = (id: string | number | string[], minRows = 0) => {
   const sourceId = normalizePlaylistId(id);
@@ -414,7 +459,11 @@ const loadPlaylist = (id: string | number | string[], minRows = 0) => {
   manifestIds.value = [];
   playListData.value = [];
   hydrateCursor.value = 0;
-  getPlayListDetail(sourceId)
+  // 在**发出请求时**记账，不等它回来：这个时间戳的语义是「问到哪一刻为止」，而
+  // `onActivated` 首次挂载就会跑一次，那时首屏请求还在路上——用响应时间会让它当场
+  // 判定为过期，再白发一次。
+  lastSyncedAt = Date.now();
+  fetchPlaylistDetail(sourceId)
     .then((res) => {
       if (token !== loadToken) return;
       const pl = res?.playlist;
@@ -440,9 +489,20 @@ const loadPlaylist = (id: string | number | string[], minRows = 0) => {
     });
 };
 
-/** `trackIds` 是 `[{id, v, t, ...}]`，只有 id 是我们要的身份。 */
-const extractManifestIds = (pl: any): number[] =>
-  Array.isArray(pl?.trackIds) ? pl.trackIds.map((t: any) => Number(t?.id)).filter(Boolean) : [];
+/**
+ * `trackIds` 的每一项只有 id 是我们要的身份。
+ *
+ * 两种形状都要认。`ncm_request_projected` 已经在 Rust 侧把它压成 `number[]`（见
+ * `src-tauri/src/ncm/projection.rs` 的 `flatten_track_ids`）——上游那 14 个字段里
+ * 13 个从来没人读，而一万首的歌单光这一段就是 1.6 MB 的 JSON；但 remote 传输和
+ * Web 根本不经过那条路，拿回来的仍是原始的 `[{id, v, t, …}]`。
+ */
+const extractManifestIds = (pl: any): number[] => {
+  if (!Array.isArray(pl?.trackIds)) return [];
+  return pl.trackIds
+    .map((entry: any) => Number(entry !== null && typeof entry === "object" ? entry.id : entry))
+    .filter(Boolean);
+};
 
 /**
  * 用 `/playlist/detail` 自己带回来的 `tracks` 铺开头那一段。
@@ -518,7 +578,7 @@ const hydrateMore = (): Promise<boolean> => {
 const fetchChunk = async (ids: number[], token: number): Promise<boolean> => {
   const sourceId = normalizePlaylistId(playListId.value!);
   try {
-    const res = await getMusicDetail(ids);
+    const res = await fetchSongDetail(ids);
     if (token !== loadToken) return false;
     const songs: any[] = res?.songs ?? [];
     // 游标按**请求出去的 id 数**推进，不管回来几条。下架/不可用的曲目不会出现在
@@ -541,8 +601,9 @@ const fetchChunk = async (ids: number[], token: number): Promise<boolean> => {
 };
 
 /** 连续补块直到至少有 `count` 行（用于 `?page=` 兼容与首屏）。 */
-const hydrateUntil = async (count: number) => {
+const hydrateUntil = async (count: number, keepGoing?: () => boolean) => {
   const token = loadToken;
+  let first = true;
   // 用**游标**判终止，不用已渲染行数：两者会因为丢弃的曲目而分叉，拿行数当条件在
   // 有下架曲目的歌单上就是个死循环。
   while (
@@ -550,9 +611,43 @@ const hydrateUntil = async (count: number) => {
     hydrateCursor.value < manifestIds.value.length &&
     playListData.value.length < count
   ) {
+    // 块与块之间让出主线程。投影之后一块过 IPC 的 JSON 是 0.36 MB（解析约 2.5 ms，
+    // 投影前是 2.06 MB / 约 12 ms），但还要建 1000 个行对象，所以一块仍然是十几毫秒
+    // 量级；十块连着跑照样是一次看得见的长任务。
+    //
+    // 而**缓存命中时恰恰最糟**：`song_detail` 有 30 分钟 TTL、7 天磁盘 stale，所以
+    // 第二次搜同一个歌单时十块几乎同时返回——网络延迟本来是唯一在替我们隔开这些
+    // 解析的东西，一旦没有了，整个补齐就退化成一个不可打断的长任务。
+    if (!first) await yieldToBrowser();
+    first = false;
+    if (token !== loadToken) return;
+    // 让位期间用户可能已经不需要整表了（清掉了搜索框）。这一步之前是没有的，于是
+    // 敲一个字再退格，也会把整张万首歌单**下载并解析完**才停。
+    if (keepGoing && !keepGoing()) return;
     if (!(await hydrateMore())) break;
   }
 };
+
+/**
+ * 让出主线程一帧。
+ *
+ * rAF 里再套一个 `setTimeout(0)`：rAF 的回调在绘制**前**跑，挂在它后面的宏任务才
+ * 落在这一帧提交之后，于是补齐的下一块不会和刚提交的那批行挤在同一个长任务里。
+ *
+ * 兜底的定时器是必须的：页面不可见时（最小化、切到托盘）rAF 根本不回调，补齐会
+ * 就此停住并一直占着单飞标记。
+ */
+const yieldToBrowser = (): Promise<void> =>
+  new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      resolve();
+    };
+    requestAnimationFrame(() => setTimeout(finish, 0));
+    setTimeout(finish, 32);
+  });
 
 /** manifest 全部请求过了。此后不必再催 `reach-end`。 */
 const hydrationDone = computed(
@@ -568,6 +663,11 @@ const hydrationDone = computed(
 //
 // 正因如此，补全必须复用 `hydrateMore` 的**同一个** `HYDRATE_CHUNK`。换成更大的
 // 分块会生成一批全新的缓存键，把已经拿到的全部重下一遍——比不缓存还糟。
+//
+// 便宜的是**网络**，不是主线程。一块 1000 首是 1~2 MB JSON 要 parse 加 1000 个行
+// 对象要建，约 25 ms；缓存全中时十一块会一口气回来，于是「零网络」反而意味着一次
+// 250 ms 的连续长任务。所以补齐在块之间让位（见 `hydrateUntil`），并且这里只在
+// 用户停下手时才启动——每敲一个键都驱动一次，会让上面那串解析和输入抢同一条线程。
 const searchKeyword = ref("");
 const normalizedKeyword = computed(() => searchKeyword.value.trim());
 const isSearching = computed(() => !!normalizedKeyword.value);
@@ -590,13 +690,32 @@ const displayTotalRows = computed(() => {
   return hydrationDone.value ? playListData.value.length : manifestIds.value.length;
 });
 
+/**
+ * 整表补齐的启动延迟。
+ *
+ * 不用 `utils/debounce`：那是一个**模块级共享**的定时器，全 app 一个，别处一次防抖
+ * 就会把这里的取消掉（AGENTS.md 里明说了这件事）。
+ *
+ * 220 ms 与本地音乐页的筛选防抖同一个数量级：短于一次连续输入的键间隔，又长到
+ * 「打完一个词」只驱动一次。
+ */
+const SEARCH_HYDRATE_DELAY = 220;
+let searchHydrateTimer: ReturnType<typeof setTimeout> | null = null;
+
 watch(normalizedKeyword, (keyword, prev) => {
   // 换了关键词就回到列表顶部。过滤后的结果是一份全新的、按相关度重排的列表，停在
   // 原来的滚动位置没有任何意义——用户要看的第一条在最上面。
   if (keyword !== prev && typeof $scrollToTop !== "undefined") $scrollToTop();
+  if (searchHydrateTimer) clearTimeout(searchHydrateTimer);
   // 补齐已经跑完就不必再驱动一遍：这个 watch 每敲一个键都会响，而 `hydrateUntil`
   // 在补齐完成后每次都要重新跑一遍循环条件才退出。
-  if (keyword && !hydrationDone.value) void hydrateUntil(manifestIds.value.length);
+  if (!keyword || hydrationDone.value) return;
+  searchHydrateTimer = setTimeout(() => {
+    searchHydrateTimer = null;
+    // 交给 `hydrateUntil` 一个「还要不要继续」的判据：整表补齐横跨很多次让位，
+    // 期间用户完全可能已经清掉了搜索框，那剩下的块就没人要了。
+    void hydrateUntil(manifestIds.value.length, () => isSearching.value);
+  }, SEARCH_HYDRATE_DELAY);
 });
 
 // 播放歌单所有歌曲
@@ -620,12 +739,47 @@ const RECONCILE_DELAY = 1200;
 /** 超过这个次数还对不上，更可能是我们猜错了，而不是服务端慢 —— 以服务端为准。 */
 const MAX_RECONCILE_ATTEMPTS = 3;
 
+/**
+ * 回到本页时，隔多久就重新问一次服务端。
+ *
+ * 这一条是 keep-alive 的必然代价。路由 watch 只在 **id 变了** 时重载（见文件末尾那
+ * 段注释：判据一旦放宽成「和上一个路由不一样」，每次回到已缓存的歌单页都会把几千行
+ * hydrate 进度和滚动位置一起丢掉），而 `<keep-alive :max="10">` 会把这个实例连着它
+ * 的数据留着。两者合起来的结果是：**再次进入同一个歌单，不会有任何一次请求**——在
+ * 别处（网页版、手机、另一个窗口）加进来的歌，回到这一页永远看不到。
+ *
+ * 所以补一条按时间的重新校验，走的是和写后对账**同一条**安静路径
+ * （`reconcileQuietly` → `adoptManifest`）：不显示 loading、不回顶、已 hydrate 的
+ * 前缀原地保留，只有成员和顺序以服务端为准。代价是一次 `playlist_detail`。
+ *
+ * 5 分钟＝`TTL_LIST`（`ncm-core` 的 `cache.rs`）。短于它的话，这次请求本来就会被缓
+ * 存命中，等于白跑一趟 IPC 却什么都不会变；长于它则是自己给自己留一段说不清的窗口。
+ */
+const REVALIDATE_AFTER = 5 * 60 * 1000;
+
 const pendingRemoved = new Set<number>();
 const pendingAdded = new Set<number>();
 let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
 let reconcileAttempts = 0;
-/** keep-alive 隐藏时不对账：回到本页时路由 watch 本来就会重拉。 */
+/**
+ * keep-alive 隐藏时不对账，改为记账，回到本页时补上。
+ *
+ * 原先这里直接丢掉，理由写的是「回到本页时路由 watch 本来就会重拉」—— 那句话在
+ * 路由 watch 改成只认 id 变化之后就不再成立了。于是隐藏期间发生的写入只剩本地补丁：
+ * `pendingRemoved` / `pendingAdded` 永远对不完账，`totalCount` 停在猜的那个数，
+ * 而且没有任何东西会再问一次。
+ */
 let isActive = true;
+/** 有一次对账因为页面不可见而没做。 */
+let reconcileOwed = false;
+/**
+ * 上一次**向服务端问过**这个歌单的时刻。
+ *
+ * 在 `loadPlaylist` 入口就写，而不是等响应回来：语义是「问到哪一刻为止」，而且
+ * `onActivated` 在首次挂载时也会跑（Vue 里 mounted 之后紧接着就是 activated），
+ * 那时首屏请求还在路上，用响应时间会让它当场判定为「过期」再多发一次。
+ */
+let lastSyncedAt = 0;
 
 const rowId = (row: unknown): number => Number((row as { id?: unknown } | null)?.id);
 
@@ -634,6 +788,8 @@ const resetPendingDelta = () => {
   pendingRemoved.clear();
   pendingAdded.clear();
   reconcileAttempts = 0;
+  // 这条路径本身就是一次权威读取，欠的那次对账因此作废。
+  reconcileOwed = false;
   if (reconcileTimer) {
     clearTimeout(reconcileTimer);
     reconcileTimer = null;
@@ -679,14 +835,36 @@ const scheduleReconcile = () => {
  *
  * 这比旧实现更强也更省：旧实现重拉「当前那一页」，只能回答这一页对不对，而在长
  * 流里根本没有当前页——重拉已加载的前缀会变成 AGENTS.md 警告的无限拉取。
+ *
+ * `fresh: true` 是这条路径的**前提**，不是优化。对账问的是「账号认没认」，而这个
+ * 问题按定义不能由一份已经握着的答案回答：
+ *
+ * - `invalidated_by` 只在写入**经过这个 isolate** 时才起作用。remote 传输走 axios、
+ *   Rust 侧解析器的 `/like` 走 ureq、别的设备和网页版根本不碰这个进程——那些写入
+ *   一条缓存都没清。（默认传输下通知栏的红心是**会**清的：它经
+ *   `install_ncm_call_hook` 走同一个 `NcmCore::call`。）
+ * - `playlist_detail` 有 24 小时 stale 窗口，过期后仍然**立即**返回旧的那份，只在
+ *   背后刷新。所以「对账」会拿到写入前的列表，`pendingRemoved` 一条都对不上，重试
+ *   到 `MAX_RECONCILE_ATTEMPTS` 后本地补丁被丢弃，删掉的行当场回来——比不对账更糟，
+ *   而这正是 `playlistMutations` 那段注释在防的事。
+ *
+ * 只跳过缓存的**读**：答案照常写回去，`batch`/`inflight` 照常合并，所以代价是一次
+ * round trip，而不是绕开缓存层。
  */
 const reconcileQuietly = async () => {
-  if (!isActive || !playListId.value) return;
+  if (!playListId.value) return;
+  // 页面在 keep-alive 里被藏起来了：不发请求，但把这件事记下来，`onActivated` 会补。
+  // 直接丢掉是不行的——路由 watch 只认 id 变化，回到本页时不会有任何一次重拉。
+  if (!isActive) {
+    reconcileOwed = true;
+    return;
+  }
   const sourceId = normalizePlaylistId(playListId.value);
   const token = loadToken;
   reconcileAttempts += 1;
   try {
-    const detail = await getPlayListDetail(sourceId);
+    lastSyncedAt = Date.now();
+    const detail = await fetchPlaylistDetail(sourceId, { fresh: true });
     // 请求期间用户可能已经切歌单了，那这份结果就不再是当前视图的。
     if (token !== loadToken) return;
     if (!playListId.value || normalizePlaylistId(playListId.value) !== sourceId) return;
@@ -711,9 +889,11 @@ const reconcileQuietly = async () => {
     }
 
     reconcileAttempts = 0;
+    reconcileOwed = false;
     await adoptManifest(serverIds, pl, sourceId, token);
   } catch (err) {
-    // 对账是尽力而为：失败了就维持本地这份，下次进页面照常重拉。
+    // 对账是尽力而为：失败了就维持本地这份，下次回到本页时再试。
+    reconcileOwed = true;
     console.error("[playlist] quiet reconcile failed", err);
   }
 };
@@ -744,7 +924,7 @@ const adoptManifest = async (
   const missing = target.filter((id) => !have.has(id));
   if (missing.length) {
     try {
-      const res = await getMusicDetail(missing);
+      const res = await fetchSongDetail(missing);
       if (token !== loadToken) return;
       for (const row of transformSongData(res?.songs ?? [], { sourceId })) {
         have.set(rowId(row), row);
@@ -805,13 +985,20 @@ const handlePlaylistChange = (change: PlaylistChange) => {
   scheduleReconcile();
 };
 
-/** 只刷新详情文案，不动 manifest 与已 hydrate 的行。 */
+/**
+ * 只刷新详情文案，不动 manifest 与已 hydrate 的行。
+ *
+ * 同样要 `fresh`：这条路径的唯一触发点是「刚刚改完歌单信息」（`PlaylistUpdate.vue`
+ * 的 `meta` 事件）。改名成功后紧接着重拉，若那次写入没经过这个 isolate（remote
+ * 传输、另一台设备、网页版），缓存里那条 `playlist_detail` 一条都没被清，于是页面
+ * 标题继续显示旧名字——正是这个函数被加进来要解决的那件事。
+ */
 const refreshDetailOnly = async () => {
   if (!playListId.value) return;
   const sourceId = normalizePlaylistId(playListId.value);
   const token = loadToken;
   try {
-    const res = await getPlayListDetail(sourceId);
+    const res = await fetchPlaylistDetail(sourceId, { fresh: true });
     if (token !== loadToken) return;
     if (res?.playlist) playListDetail.value = res.playlist;
   } catch (err) {
@@ -821,8 +1008,27 @@ const refreshDetailOnly = async () => {
 
 let stopPlaylistChanges: (() => void) | null = null;
 
+/**
+ * 回到本页时补上隐藏期间该做而没做的事。
+ *
+ * 两件：一是隐藏时被记账、没能发出的那次写后对账；二是单纯待久了的重新校验。两者
+ * 走同一条安静路径，所以只需要一次请求。
+ *
+ * 这个钩子存在的原因是路由 watch 故意**不**在再次进入时重载（见文件末尾）：它把
+ * hydrate 进度和滚动位置留住了，代价就是没有任何东西会再问一次服务端。
+ */
+const revalidateIfStale = () => {
+  if (!playListId.value || !playListDetail.value) return;
+  if (reconcileTimer) return; // 已经排着一次了
+  if (reconcileOwed || Date.now() - lastSyncedAt >= REVALIDATE_AFTER) {
+    reconcileAttempts = 0;
+    void reconcileQuietly();
+  }
+};
+
 onActivated(() => {
   isActive = true;
+  revalidateIfStale();
 });
 onDeactivated(() => {
   isActive = false;
@@ -831,6 +1037,7 @@ onUnmounted(() => {
   stopPlaylistChanges?.();
   stopPlaylistChanges = null;
   if (reconcileTimer) clearTimeout(reconcileTimer);
+  if (searchHydrateTimer) clearTimeout(searchHydrateTimer);
 });
 
 // 删除歌单
@@ -906,17 +1113,34 @@ const initialRowsFromQuery = (): number => {
   return Number.isFinite(page) && page > 1 ? page * LEGACY_PAGE_SIZE : 0;
 };
 
-// 监听路由参数变化
+/**
+ * 监听路由参数变化。
+ *
+ * 判据是「路由的 id 和**本实例**手上这个不一样」，而不是「和上一个路由不一样」。
+ * 后者把每一次**再次进入**都当成换歌单：App 的 keep-alive key 里带着 `query.id`
+ * （`App.vue` 的 `<component :key>`），所以从别处回到一个已经缓存的歌单页时，
+ * `oldVal` 是那个别处 —— 它的 `query.id` 当然不等于本页的（本地音乐详情页带的是
+ * 自己那套 id，`/local` 和首页干脆没有 id），于是每次回来都把 `playListData` 清空
+ * 重拉一遍。白花一次 247 KB 的 `playlist_detail` 是小事，真正的代价是把用户滚出来
+ * 的那几千行 hydrate 进度和滚动位置一起丢掉 —— 正是上面那条 `?page=` 注释想避免
+ * 的事，只是它只挡住了同一个 id 连着出现的情形。
+ *
+ * 更糟的是「清空 → 重新有行」这一趟本身：`DataLists` 的页面窗口化探测挨不住它
+ * （见那边 `plainRootRef` 的 watch），于是从本地音乐切回一个开过的大歌单之后，
+ * 列表就再也补不上下一块了。
+ *
+ * `isActive` 那一半是另一个方向：换歌单换的是**实例**，所以「歌单 A → 歌单 B」时
+ * 被收进 keep-alive 的 A 的这个 watch 也会响。它照着 B 重载等于把一份缓存实例填成
+ * 另一个歌单的内容，用户退回 A 时看到的是 B。
+ */
 watch(
   () => router.currentRoute.value,
-  (val, oldVal) => {
-    if (val.name === "playlist") {
-      // 同一个歌单只是 `?page=` 变了（例如浏览器后退到旧链接）不需要重载：长流
-      // 已经把那些行加载过了，重载只会把用户滚到的位置丢掉。
-      if (val.query.id === oldVal?.query?.id) return;
-      playListId.value = val.query.id;
-      loadPlaylist(playListId.value, initialRowsFromQuery());
-    }
+  (val) => {
+    if (val.name !== "playlist" || !isActive) return;
+    const nextId = val.query.id as string | string[] | undefined;
+    if (!nextId || String(nextId) === String(playListId.value)) return;
+    playListId.value = nextId;
+    loadPlaylist(nextId, initialRowsFromQuery());
   },
 );
 </script>
@@ -924,25 +1148,43 @@ watch(
 <style lang="scss" scoped>
 .playlist,
 .loading {
-  // 悬浮搜索控件的玻璃参数。值抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
+  // 悬浮搜索控件的玻璃参数。结构抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
   // 定义在 `.nav` 内部的、拿不到，所以这里重新声明一份同名不同前缀的。
   // 暗色钩子和 Nav 一致：`setting.getSiteTheme === "dark"`。
-  --list-search-bg: rgba(255, 255, 255, 0.48);
+  //
+  // 填充**不**照抄 Nav 的纯白半透明：这里掺了封面强调色，也更实一点。原因是这一处的
+  // `backdrop-filter` 静止时无事可做——药丸背后是 `.content-panel-frame` 画的面板底，
+  // `--content-panel-bg` 是不透明近白，上面只叠了一层峰值 16%、向下衰减到透明的径向
+  // wash（见 `coverPalette` 的 `getPanelStageGradient`）。模糊一片平坦的近白得到的还是
+  // 同一片近白，`saturate(160%)` 对着几乎无饱和度的底色同理。Nav 用同一组参数看着像
+  // 玻璃，是因为它钉在整页滚动内容之上、底下随时有行经过；而这条工具栏在列表**上方**，
+  // 只有滚动时行才从它底下过——那时滤镜确实生效（行和药丸同在 `n-layout-content` 的
+  // `clip-path` 隔离出来的那个组里），但静止时的层次只能由填充自己给。
+  //
+  // `--content-panel-accent-rgb` 由 `useContentPanelAccent` 按当前封面写在 `:root` 上，
+  // 所以药丸跟着专辑走，而不是一块和面板同色的白片；没有取色的页面回退成中性白。
+  --list-search-tint: 12%;
+  --list-search-base: rgba(255, 255, 255, 0.72);
+  --list-search-bg: color-mix(
+    in srgb,
+    rgb(var(--content-panel-accent-rgb, 255, 255, 255)) var(--list-search-tint),
+    var(--list-search-base)
+  );
   --list-search-border: rgba(0, 0, 0, 0.06);
 
   &.is-dark {
-    --list-search-bg: rgba(24, 24, 24, 0.5);
+    --list-search-base: rgba(24, 24, 24, 0.62);
     --list-search-border: rgba(255, 255, 255, 0.11);
   }
 
   // 移动端顶部那条带子本身就是模糊 + 着色的，控件要在它之上仍读得出是一个层，
   // 所以抬高填充、收紧描边。这是 Nav 移动端得出的同一个结论。
   @media (max-width: 768px) {
-    --list-search-bg: rgba(255, 255, 255, 0.62);
+    --list-search-base: rgba(255, 255, 255, 0.8);
     --list-search-border: rgba(0, 0, 0, 0.07);
 
     &.is-dark {
-      --list-search-bg: rgba(32, 32, 38, 0.6);
+      --list-search-base: rgba(32, 32, 38, 0.72);
       --list-search-border: rgba(255, 255, 255, 0.11);
     }
   }
@@ -1271,9 +1513,10 @@ watch(
     // backdrop-filter，模糊面积和 Nav 的按钮同级，代价可以接受。
     .list-toolbar {
       position: sticky;
-      // 移动端顶部那条 42px 的玻璃带（`--nav-blur-edge`）会把滚过它的东西洗白，
-      // 所以钉在带子**下沿**；桌面端没这个变量，回退 0。
-      top: var(--nav-blur-edge, 0px);
+      // 钉在 Nav 下沿，由 shell 提供（见 `App.vue` 的 `--content-sticky-top`）：滚动
+      // 视口的顶端在 Nav 底下，而且还被 `clip-path` 切掉一截，所以钉 0 等于钉到看不见
+      // 的地方——移动端还会被顶部那条玻璃带洗白。这个变量两端都算好了。
+      top: var(--content-sticky-top, 0px);
       z-index: 3;
       display: flex;
       align-items: center;
@@ -1294,27 +1537,30 @@ watch(
       width: 170px;
       transition: width var(--duration-300) var(--ease-out);
 
-      :deep(.n-input__border),
-      :deep(.n-input__state-border) {
-        border-radius: 999px;
-      }
-
       // 要在**两种**背景上都站得住：封面取样的渐变底，以及滚动时罩在上面那条 42px
       // 玻璃带。带子会把低对比度的东西直接洗掉——纯靠 `--n-text-color` 的淡色 tint
       // 滚进去就只剩一个幽灵轮廓（试过 5%、7%，都不行）。
       //
       // 参数直接取自 Nav 的悬浮按钮，包括它移动端那条注释的结论：带子后面要**抬高**
       // 填充不透明度，并且收紧阴影——宽而软的投影压在模糊上只会糊成一团灰光晕。
-      :deep(&.n-input) {
-        border-radius: var(--radius-pill);
-        background-color: var(--list-search-bg);
-        box-shadow:
-          0 8px 22px rgb(0 0 0 / 10%),
-          inset 0 1px 0 rgb(255 255 255 / 24%);
-        -webkit-backdrop-filter: blur(18px) saturate(160%);
-        backdrop-filter: blur(18px) saturate(160%);
-      }
+      //
+      // 直接写在 `.list-search` 上，**不要**套 `:deep()`：这个 class 落在 `n-input` 的
+      // 根元素上，而子组件根元素同时带着父组件的 scope id，scoped 规则本来就够得到。
+      // 原先写的是 `:deep(&.n-input)`，而 SASS 不解析 `:deep()` 里的 `&`，编译结果是
+      // `.list-search[data-v-x] &.n-input` —— 顶层带 `&` 的选择器浏览器整条丢弃，所以
+      // 这块玻璃从来没生效过。露出来的就是 naive 自己的 `.n-input`：亮色主题下
+      // `--n-color` 是纯白、圆角只有 3px，而下面两个 border 覆盖层又被改成了药丸，于是
+      // 白色底从药丸四角漏在描边外面——那正是「border 有白边」。
+      border-radius: var(--radius-pill);
+      background-color: var(--list-search-bg);
+      box-shadow:
+        0 8px 22px rgb(0 0 0 / 10%),
+        inset 0 1px 0 rgb(255 255 255 / 24%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      backdrop-filter: blur(18px) saturate(160%);
 
+      // naive 的描边画在两个绝对定位的覆盖层上，它们 `border-radius: inherit`，所以
+      // 根上的药丸圆角会自己跟上；这里写一遍是为了不依赖那个 inherit。
       :deep(.n-input__border),
       :deep(.n-input__state-border) {
         border: 1px solid var(--list-search-border);

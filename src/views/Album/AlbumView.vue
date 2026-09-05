@@ -188,10 +188,12 @@ import { renderIcon } from "@/utils/ui/renderIcon";
 import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
+import { useDownloadSongs } from "@/composables/useDownloadSongs";
 import {
   MusicList,
   LinkTwo,
   More,
+  DownloadFour,
   Like,
   Unlike,
   People,
@@ -210,6 +212,7 @@ const user = userStore();
 const music = musicStore();
 const setting = settingStore();
 const { playAllSong: playAll } = usePlayAllSong();
+const { enqueue: downloadSongs } = useDownloadSongs();
 const { applyContentPanelAccent } = useContentPanelAccent();
 
 // 专辑数据
@@ -269,6 +272,19 @@ const setDropdownOptions = () => {
         },
       },
       icon: renderIcon(h(LinkTwo)),
+    },
+    {
+      key: "downloadAll",
+      label: t("download.downloadAll"),
+      // 行数在点击那一刻才读：`setDropdownOptions` 可能比 `getAlbum` 先跑完，按
+      // 长度判断会把这一项永久藏掉。空专辑由 `useDownloadSongs` 自己说明。
+      show: user.userLogin,
+      props: {
+        onClick: () => {
+          void downloadSongs(albumData.value);
+        },
+      },
+      icon: renderIcon(h(DownloadFour)),
     },
     {
       key: "like",
@@ -362,25 +378,35 @@ watch(
 <style lang="scss" scoped>
 .album,
 .loading {
-  // 悬浮搜索控件的玻璃参数。值抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
+  // 悬浮搜索控件的玻璃参数。结构抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
   // 定义在 `.nav` 内部的、拿不到，所以这里重新声明一份同名不同前缀的。
   // 暗色钩子和 Nav 一致：`setting.getSiteTheme === "dark"`。
-  --list-search-bg: rgba(255, 255, 255, 0.48);
+  //
+  // 填充掺封面强调色、也比 Nav 那份更实：这一处的 `backdrop-filter` 静止时无事可做
+  // （背后是不透明近白的面板底），层次只能由填充自己给。完整理由见
+  // `views/PlayList/PlayListView.vue` 同名 token 块。
+  --list-search-tint: 12%;
+  --list-search-base: rgba(255, 255, 255, 0.72);
+  --list-search-bg: color-mix(
+    in srgb,
+    rgb(var(--content-panel-accent-rgb, 255, 255, 255)) var(--list-search-tint),
+    var(--list-search-base)
+  );
   --list-search-border: rgba(0, 0, 0, 0.06);
 
   &.is-dark {
-    --list-search-bg: rgba(24, 24, 24, 0.5);
+    --list-search-base: rgba(24, 24, 24, 0.62);
     --list-search-border: rgba(255, 255, 255, 0.11);
   }
 
   // 移动端顶部那条带子本身就是模糊 + 着色的，控件要在它之上仍读得出是一个层，
   // 所以抬高填充、收紧描边。这是 Nav 移动端得出的同一个结论。
   @media (max-width: 768px) {
-    --list-search-bg: rgba(255, 255, 255, 0.62);
+    --list-search-base: rgba(255, 255, 255, 0.8);
     --list-search-border: rgba(0, 0, 0, 0.07);
 
     &.is-dark {
-      --list-search-bg: rgba(32, 32, 38, 0.6);
+      --list-search-base: rgba(32, 32, 38, 0.72);
       --list-search-border: rgba(255, 255, 255, 0.11);
     }
   }
@@ -649,9 +675,9 @@ watch(
     // backdrop-filter，模糊面积和 Nav 的按钮同级，代价可以接受。
     .list-toolbar {
       position: sticky;
-      // 移动端顶部那条 42px 的玻璃带（`--nav-blur-edge`）会把滚过它的东西洗白，
-      // 所以钉在带子**下沿**；桌面端没这个变量，回退 0。
-      top: var(--nav-blur-edge, 0px);
+      // 见歌单页同名规则：钉在 Nav 下沿，由 shell 提供（`App.vue` 的
+      // `--content-sticky-top`）。钉 0 是钉到 Nav 背后、`clip-path` 切口以外。
+      top: var(--content-sticky-top, 0px);
       z-index: 3;
       display: flex;
       align-items: center;
@@ -671,26 +697,23 @@ watch(
       width: 170px;
       transition: width var(--duration-300) var(--ease-out);
 
-      :deep(.n-input__border),
-      :deep(.n-input__state-border) {
-        border-radius: 999px;
-      }
-
       // 要在**两种**背景上都站得住：封面取样的渐变底，以及滚动时罩在上面那条 42px
       // 玻璃带。带子会把低对比度的东西直接洗掉——纯靠 `--n-text-color` 的淡色 tint
       // 滚进去就只剩一个幽灵轮廓（试过 5%、7%，都不行）。
       //
       // 参数直接取自 Nav 的悬浮按钮，包括它移动端那条注释的结论：带子后面要**抬高**
       // 填充不透明度，并且收紧阴影——宽而软的投影压在模糊上只会糊成一团灰光晕。
-      :deep(&.n-input) {
-        border-radius: var(--radius-pill);
-        background-color: var(--list-search-bg);
-        box-shadow:
-          0 8px 22px rgb(0 0 0 / 10%),
-          inset 0 1px 0 rgb(255 255 255 / 24%);
-        -webkit-backdrop-filter: blur(18px) saturate(160%);
-        backdrop-filter: blur(18px) saturate(160%);
-      }
+      //
+      // 直接写在 `.list-search` 上而不是 `:deep(&.n-input)`：原因见歌单页同名规则，
+      // 后者编译出来是顶层带 `&` 的选择器，浏览器整条丢弃，白底 3px 圆角就从药丸描边
+      // 的四角漏出来。
+      border-radius: var(--radius-pill);
+      background-color: var(--list-search-bg);
+      box-shadow:
+        0 8px 22px rgb(0 0 0 / 10%),
+        inset 0 1px 0 rgb(255 255 255 / 24%);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      backdrop-filter: blur(18px) saturate(160%);
 
       :deep(.n-input__border),
       :deep(.n-input__state-border) {

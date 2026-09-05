@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-find-document"
+description = "Enables the find_document command without any pre-configured scope."
+commands.allow = ["find_document"]
+
+[[permission]]
+identifier = "deny-find-document"
+description = "Denies the find_document command without any pre-configured scope."
+commands.deny = ["find_document"]

@@ -51,6 +51,13 @@ pub fn run() {
         .plugin(tauri_plugin_decorum::init())
         .plugin(gmplayer_now_playing_controls::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        // Native folder/file pickers for the local library. Driven from Rust
+        // (`app.dialog().file()`), never from JS, so no `dialog:allow-*`
+        // capability is needed.
+        .plugin(tauri_plugin_dialog::init())
+        // A no-op registration off Android; the local library asks it for a
+        // handle and branches on `None`.
+        .plugin(tauri_plugin_local_files::init())
         // Pinia 持久化：settingData / siteData / userData 落盘并在主窗口与从
         // 窗口之间同步。前端已经按 300ms debounce 推状态，这里再按 1s debounce
         // 合并写文件，连续调节设置时不会反复落盘。
@@ -129,6 +136,54 @@ pub fn run() {
             crate::ncm::ncm_request_projected,
             crate::ncm::ncm_protocol_info,
             crate::ncm::ncm_prefetch,
+            // Local music library. All of these are app-owned commands under
+            // `core:default`; the SAF plugin's own commands are reached from
+            // Rust and never appear in a capability file.
+            crate::local::local_source_add_directory,
+            crate::local::local_source_add_files,
+            crate::local::local_source_list,
+            crate::local::local_source_rescan,
+            crate::local::local_source_remove,
+            crate::local::local_scan_cancel,
+            crate::local::local_library_list,
+            crate::local::local_track_get,
+            crate::local::local_tracks_by_song_ids,
+            crate::local::local_groups,
+            crate::local::local_favourite_set,
+            crate::local::local_favourite_list,
+            crate::local::local_playlist_list,
+            crate::local::local_playlist_create,
+            crate::local::local_playlist_update,
+            crate::local::local_playlist_delete,
+            crate::local::local_playlist_add_tracks,
+            crate::local::local_playlist_remove_tracks,
+            crate::local::local_playlist_reorder,
+            crate::local::local_playlist_import_m3u,
+            crate::local::local_playlist_export_m3u,
+            crate::local::local_lyric_for,
+            crate::local::local_track_detail,
+            crate::local::local_track_override_set,
+            crate::local::local_track_reprobe,
+            crate::local::local_lyric_import_text,
+            crate::local::local_lyric_import_file,
+            crate::local::local_lyric_clear,
+            crate::local::local_cover_import,
+            crate::local::local_cover_clear,
+            crate::local::local_library_reset,
+            // Song downloads. The destination and the queue live in Rust so a
+            // batch survives a page reload — see `crate::download`.
+            crate::download::download_settings_get,
+            crate::download::download_config_set,
+            crate::download::download_dir_pick,
+            crate::download::download_subscribe,
+            crate::download::download_list,
+            crate::download::download_set_credentials,
+            crate::download::download_enqueue,
+            crate::download::download_pause,
+            crate::download::download_resume,
+            crate::download::download_retry,
+            crate::download::download_cancel,
+            crate::download::download_clear_finished,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -141,6 +196,14 @@ pub fn run() {
             crate::ncm::warm(&app_handle);
             // Playback source resolution follows the same transport as the UI.
             crate::ncm::install_resolver_hook(&app_handle);
+            // The local music library. `install` also teaches the audio backend
+            // how to open a `content://` document, which every Android local
+            // track needs before it can resolve at all.
+            app.manage(crate::local::LocalLibraryState::new(&app_handle));
+            crate::local::install(&app_handle);
+            // The download queue. Managed here rather than lazily so the settings
+            // page can read the destination before anything has been downloaded.
+            app.manage(crate::download::DownloadState::new(&app_handle));
             // Drive the OS media session straight from the audio backend, so it
             // stays correct through backend-initiated track advances and does
             // not depend on a live WebView. Queued until the player is created.

@@ -533,6 +533,12 @@ async fn fetch_cover_data(url: Option<String>) -> Option<Vec<u8>> {
 }
 
 fn fetch_cover_data_blocking(url: &str) -> Option<Vec<u8>> {
+    // A local track's cover is a path the library scan wrote, not a CDN URL.
+    // `ureq::get` on it fails with a scheme error, so the OS session would show
+    // no artwork at all for every locally-imported track.
+    if !url.starts_with("http://") && !url.starts_with("https://") {
+        return read_local_cover_blocking(url);
+    }
     let response = ureq::get(url).timeout(Duration::from_secs(5)).call().ok()?;
     let mut reader = response.into_reader().take(MAX_COVER_BYTES + 1);
     let mut bytes = Vec::new();
@@ -544,4 +550,34 @@ fn fetch_cover_data_blocking(url: &str) -> Option<Vec<u8>> {
         return None;
     }
     Some(bytes)
+}
+
+/// Read a cover off disk, accepting both a bare path and a `file://` URL.
+///
+/// Desktop only handles those two: a `content://` document is Android's, and
+/// this crate is not built there.
+fn read_local_cover_blocking(url: &str) -> Option<Vec<u8>> {
+    let path = match url.strip_prefix("file://") {
+        // `file:///C:/x` on Windows and `file:///home/x` elsewhere — the leading
+        // slash belongs to the POSIX path but not to the drive-letter one.
+        Some(rest) => {
+            let trimmed = rest.trim_start_matches('/');
+            if trimmed.chars().nth(1) == Some(':') {
+                trimmed.to_string()
+            } else {
+                format!("/{trimmed}")
+            }
+        }
+        None => url.to_string(),
+    };
+
+    let metadata = std::fs::metadata(&path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    if metadata.len() > MAX_COVER_BYTES {
+        warn!("now playing cover skipped because it exceeds {MAX_COVER_BYTES} bytes");
+        return None;
+    }
+    std::fs::read(&path).ok()
 }

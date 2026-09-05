@@ -16,20 +16,13 @@
           <div class="data">
             <div class="pic" data-mobile-player-artwork @click.stop="handleMiniArtworkClick">
               <img
-                :src="
-                  music.getPlaySongData
-                    ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
-                      '?param=50y50'
-                    : '/images/pic/default.png'
-                "
+                :src="coverUrl(music.getPlaySongData?.album?.picUrl, 50)"
+                decoding="async"
                 alt="pic"
               />
             </div>
             <div class="name">
-              <div
-                class="song text-hidden"
-                @click.stop="router.push(`/song?id=${music.getPlaySongData.id}`)"
-              >
+              <div class="song text-hidden" @click.stop="openSongDetail">
                 {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
               </div>
               <!-- 显示歌手或歌词 -->
@@ -284,7 +277,13 @@ import {
 } from "@vicons/material";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { storeToRefs } from "pinia";
-import { musicStore, settingStore, siteStore, listenTogetherStore } from "@/store";
+import {
+  musicStore,
+  settingStore,
+  siteStore,
+  listenTogetherStore,
+  localLibraryStore,
+} from "@/store";
 import {
   createSound,
   setVolume,
@@ -305,7 +304,10 @@ import {
   isAudioBackendRuntimeAvailable,
   announceNativeTrack,
 } from "@/utils/tauri/audio/nativeRustSound";
-import { toTrackDisplay } from "@/utils/AudioContext/NativeManifestPublisher";
+import {
+  toTrackDisplay,
+  publishNativeManifest,
+} from "@/utils/AudioContext/NativeManifestPublisher";
 import { windowManager } from "@/utils/tauri/window/manager";
 import {
   broadcastPlayerLyrics,
@@ -326,6 +328,10 @@ import MiniPlayerProgress from "./MiniPlayerProgress.vue";
 import { shallowRef, watch } from "vue";
 import { parseLyricData as parseLyric } from "@/utils/LyricsProcessor";
 import { lyricFetcher } from "@/utils/lyricFetcher";
+import { localLyricFor } from "@/utils/localLibrary";
+import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
+import { detectWordTimedLyricFormat } from "@/utils/LyricsProcessor/timeUtils";
+import { coverUrl } from "@/utils/coverUrl";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -526,6 +532,9 @@ let failedAutoSkipQueueKey = "";
  */
 let pendingBackendAttach = null;
 
+/** Unsubscribe for the local-library edit signal; see `applyLocalTrackChange`. */
+let unsubscribeLocalChanges = null;
+
 // 获取歌曲播放数据
 const getPlaySongData = async (data, level = setting.songLevel, requestedGeneration = null) => {
   const generation = requestedGeneration ?? ++_songLoadGeneration;
@@ -560,7 +569,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
         songId: id,
         attachIdentity: attach.identity,
       });
-      fetchAndParseLyric(id);
+      loadLyricFor(data, id);
       return;
     }
 
@@ -575,7 +584,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       }
       music.isLoadingSong = false;
       music.loadingStage = "idle";
-      fetchAndParseLyric(id);
+      loadLyricFor(data, id);
       return;
     }
 
@@ -593,10 +602,23 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
         }
         music.isLoadingSong = false;
         music.loadingStage = "idle";
-        fetchAndParseLyric(id);
+        loadLyricFor(data, id);
         return;
       }
       autoMix.cancelCrossfade();
+    }
+
+    // Local file. Split off *before* the preloader and before
+    // `resolveSongUrl`: there is nothing to resolve (the locator is the source),
+    // and a local id is a negative hash — sending it to Netease would be a
+    // request for a track that does not exist.
+    if (data.local?.uri) {
+      const uri = String(data.local.uri);
+      announceNativeTrack({ provider: "local", path: uri }, toTrackDisplay(data));
+      console.log(`[Player] Creating sound instance for local file: ${uri}`);
+      player.value = createSound(uri, true, undefined, { songId: id });
+      loadLocalLyric(data);
+      return;
     }
 
     // Check audio preloader — if the next song was preloaded, use it directly.
@@ -631,7 +653,10 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
     announceNativeTrack({ provider: "netease", id: String(id) }, toTrackDisplay(data));
 
     // Unified URL resolution (NCM + trial detection + UNM fallback + kuwo proxy)
-    const result = await resolveSongUrl({ id, fee, pc, name: data.name }, level);
+    // `local` is carried even though the branch above already returned for a
+    // local file: the narrowed object is the only thing the resolver sees, and a
+    // caller that silently drops the dispatch key is how this went wrong once.
+    const result = await resolveSongUrl({ id, fee, pc, name: data.name, local: data.local }, level);
     if (!isCurrentRequest()) return;
 
     if (result) {
@@ -822,6 +847,18 @@ onMounted(() => {
       if (!joined) void listenTogether.resumePersistedRoom();
     });
   }, 1000);
+
+  // 本地曲目被编辑后，把播放态跟上。挂在这里而不是 store 里：`store/musicData`
+  // 已经 import 了 localLibrary store，反向再引就成环；而本组件只在主窗口挂载，
+  // 所以队列仍然只有一个写者。
+  unsubscribeLocalChanges = onLocalTracksChanged((change) => {
+    void applyLocalTrackChange(change);
+  });
+});
+
+onUnmounted(() => {
+  unsubscribeLocalChanges?.();
+  unsubscribeLocalChanges = null;
 });
 
 // 监听当前音乐数据变化
@@ -901,7 +938,10 @@ watch(
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
     const currentSongId = Number(music.getPlaySongData?.id);
-    if (val && (!Number.isFinite(currentSongId) || currentSongId <= 0)) {
+    // `!== 0`, not `> 0`: a local file's id is a negative hash of its path, so a
+    // positive-only test refused to start playback for every imported track and
+    // immediately set the state back to paused.
+    if (val && (!Number.isFinite(currentSongId) || currentSongId === 0)) {
       music.setPlayState(false);
       return;
     }
@@ -1093,6 +1133,209 @@ const fetchAndParseLyric = async (id) => {
     music.setPlaySongLyric(defaultResult);
     nextTick(() => broadcastPlayerLyrics(true));
   }
+};
+
+/**
+ * The Netease detail page for the track in the mini player.
+ *
+ * Inert for a local file. `/song?id=-N` would fire three requests on arrival
+ * (detail, comments, similar playlists) about an id that exists nowhere and land
+ * on an empty page; there is no local equivalent to route to instead.
+ */
+const openSongDetail = () => {
+  const data = music.getPlaySongData;
+  if (!data || data.local?.uri) return;
+  router.push(`/song?id=${data.id}`);
+};
+
+/**
+ * Lyrics for whichever kind of track this is.
+ *
+ * The three adoption branches above — a boot attach to a backend that kept
+ * playing, a backend-initiated native advance, an AutoMix handoff — are reached
+ * with a local row exactly as often as with a Netease one, and they run *before*
+ * the local dispatch because they must not re-resolve a source at all. Handing a
+ * negative id to `lyricFetcher` there did two wrong things at once: it asked
+ * Netease about a track that does not exist, and it left the sidecar `.lrc`
+ * unread, so the lyric panel stayed empty for precisely the tracks whose lyrics
+ * are sitting next to the file. The branches after the local dispatch keep
+ * calling `fetchAndParseLyric` directly — a local row cannot reach them.
+ */
+const loadLyricFor = (data, id) => {
+  if (data?.local?.uri) {
+    void loadLocalLyric(data);
+    return;
+  }
+  fetchAndParseLyric(id);
+};
+
+/**
+ * Lyrics for a local file: an import, then the embedded tag, then a sibling
+ * `.lrc`/`.ttml` — plus the stored translation and romanisation for whichever won.
+ *
+ * Deliberately separate from `fetchAndParseLyric`, which stays Netease-only —
+ * `lyricFetcher` is keyed on a Netease song id and caches against it, so a
+ * negative local id would either miss forever or collide with a real track.
+ * Parsed through the same `parseLyric`, so a local `.lrc` renders in AMLL exactly
+ * like a fetched one.
+ */
+const loadLocalLyric = async (data) => {
+  const key = data?.local?.uri;
+  const requestedId = Number(data?.id);
+  try {
+    const lyric = key ? await localLyricFor(String(key)) : null;
+    // The user may have skipped on while the file was being read.
+    if (Number(music.getPlaySongData?.id) !== requestedId) return;
+    music.setPlaySongLyric(parseLyric(await localLyricPayload(lyric)));
+  } catch (err) {
+    console.error("[Player] Failed to read local lyrics:", err);
+    if (Number(music.getPlaySongData?.id) !== requestedId) return;
+    music.setPlaySongLyric(parseLyric(null));
+  }
+  nextTick(() => broadcastPlayerLyrics(true));
+};
+
+/**
+ * Shape a local lyric into what `parseLyricData` accepts.
+ *
+ * `code: 200` is not decoration — the parser returns an empty result for
+ * anything else, so a perfectly good `.lrc` would render as "no lyrics".
+ *
+ * Three families, and each needs a *plain* LRC alongside whatever rich form it
+ * has: `parseLyricData` fills the line-level view from `lrc` and the word-level
+ * view from `yrc`/`ttml` independently, so shipping only the rich half leaves the
+ * mini player and the plain lyric list empty. Both rich families are therefore
+ * parsed here and flattened back to LRC lines.
+ *
+ * Rust's `kind` is only a hint (it comes from the file extension). The word-timed
+ * dialect is decided by `detectWordTimedLyricFormat` on the content, which is the
+ * same rule the Netease path uses — one implementation, not two.
+ */
+const localLyricPayload = async (lyric) => {
+  const raw = typeof lyric?.text === "string" ? lyric.text.trim() : "";
+  if (!raw) return null;
+
+  // Translation and romanisation ride along whatever the main lyric turns out to
+  // be: `parseLyricData` aligns them onto the LRC *and* the word-timed view, so
+  // they belong on all three shapes below rather than only on the plain one.
+  const companions = {
+    tlyric: lyric?.tlyric ? { lyric: lyric.tlyric } : null,
+    romalrc: lyric?.romalrc ? { lyric: lyric.romalrc } : null,
+  };
+
+  const looksTtml = lyric?.kind === "ttml" || raw.startsWith("<");
+  if (looksTtml) {
+    try {
+      const { parseTTML } = await import("@applemusic-like-lyrics/lyric");
+      const lines = parseTTML(raw)?.lines ?? [];
+      if (!lines.length) return null;
+      return {
+        code: 200,
+        lrc: { lyric: linesToLrc(lines) },
+        hasTTML: true,
+        ttml: lines,
+        ...companions,
+      };
+    } catch (err) {
+      console.warn("[Player] local TTML could not be parsed, ignoring:", err);
+      return null;
+    }
+  }
+
+  const wordFormat = detectWordTimedLyricFormat(raw);
+  if (lyric?.kind === "word" || wordFormat) {
+    try {
+      const amll = await import("@applemusic-like-lyrics/lyric");
+      const parse =
+        wordFormat === "qrc"
+          ? amll.parseQrc
+          : wordFormat === "eslrc"
+            ? amll.parseEslrc
+            : amll.parseYrc;
+      const lines = parse(raw) ?? [];
+      // A file labelled word-timed whose content is not: fall through to LRC
+      // rather than showing nothing.
+      if (lines.length) {
+        return {
+          code: 200,
+          lrc: { lyric: linesToLrc(lines) },
+          yrc: { lyric: raw },
+          ...companions,
+        };
+      }
+    } catch (err) {
+      console.warn("[Player] local word-timed lyric could not be parsed:", err);
+    }
+  }
+
+  return { code: 200, lrc: { lyric: raw }, ...companions };
+};
+
+/** Flatten parsed word-timed lines back into plain LRC text. */
+const linesToLrc = (lines) =>
+  lines
+    .filter((line) => line.words?.length)
+    .map((line) => {
+      const timeMs = line.words[0].startTime;
+      const minutes = String(Math.floor(timeMs / 60000)).padStart(2, "0");
+      const seconds = ((timeMs % 60000) / 1000).toFixed(2).padStart(5, "0");
+      return `[${minutes}:${seconds}]${line.words.map((word) => word.word).join("")}`;
+    })
+    .join("\n");
+
+/**
+ * A local track's data changed under us — a tag correction, a picked cover, an
+ * imported lyric — and the playing state has to follow.
+ *
+ * Nothing else re-reads it. A queued row is a whole `SongData` snapshot taken when
+ * it was queued, and `refreshRows` runs once, from `App.vue` at startup; the mini
+ * player, the queue panel and every slave window render off that snapshot.
+ *
+ * Split by kind because the two halves have nothing in common: a lyric import does
+ * not touch the index row (the import is stored beside it), and a cover or tag
+ * change does not touch the loaded lyric.
+ */
+const applyLocalTrackChange = async (change) => {
+  // A track that did not exist a moment ago is neither queued nor playing, so
+  // there is nothing on this side to follow. The list views are the ones that care,
+  // and `store/localLibrary` handles them.
+  if (change.kind === "added") return;
+
+  const keys = new Set(change.keys);
+
+  if (change.kind === "lyric") {
+    // Only the playing track's lyric is ever loaded, so it is the only one to redo.
+    // `setPlaySongLyric` then reaches the slave windows through the existing
+    // `watch(() => music.songLyric)`, which broadcasts.
+    const playing = music.getPlaySongData;
+    const uri = playing?.local?.uri;
+    if (typeof uri === "string" && keys.has(uri)) await loadLocalLyric(playing);
+    return;
+  }
+
+  // Tags and covers live on the row. Skip the round trip entirely when the edit
+  // was made on a track that is not queued — the common case for a bulk album
+  // apply, and for editing while listening to something else.
+  const touchesQueue = music.persistData.playlists.some((song) => {
+    const uri = song?.local?.uri;
+    return typeof uri === "string" && keys.has(uri);
+  });
+  if (!touchesQueue) return;
+
+  const refreshed = await localLibraryStore().refreshRows(music.persistData.playlists);
+  // Replaced, not mutated: queue entries are `markRaw`'d (see `utils/rawEntry`), so
+  // writing a field on one reaches no reactivity at all.
+  if (refreshed !== music.persistData.playlists) {
+    music.persistData.playlists = refreshed;
+  }
+  // The store watchers only fire on a *song id* change, and a local id is derived
+  // from the path — an edit cannot change it. So both of these have to be explicit.
+  broadcastPlayerState();
+  // The OS media session resolves its metadata from the manifest, not the store.
+  // Re-announcing the playing track is a no-op by design (`set_announcement`
+  // refuses an identity that is already current, to keep the live projection from
+  // stuttering backwards), so a republish is the only route in.
+  publishNativeManifest({ force: true });
 };
 
 watch(

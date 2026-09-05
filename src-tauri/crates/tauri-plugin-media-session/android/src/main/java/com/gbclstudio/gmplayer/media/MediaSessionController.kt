@@ -762,6 +762,18 @@ internal object MediaSessionController {
     }
 
     private fun fetchBitmap(url: String): Bitmap? {
+        // A local track's cover is not on a CDN. `URL(url).openConnection()`
+        // returns a `sun.net.www.protocol.file.FileURLConnection` for `file://`
+        // — the unconditional cast below would throw `ClassCastException` — and
+        // does not resolve `content://` at all, so both schemes are split off
+        // before the HTTP path is reached.
+        if (url.startsWith("file://") || url.startsWith("/")) {
+            return decodeLocalFile(url)
+        }
+        if (url.startsWith("content://")) {
+            return decodeContentUri(url)
+        }
+
         var connection: HttpURLConnection? = null
         return try {
             connection = URL(url).openConnection() as HttpURLConnection
@@ -782,6 +794,42 @@ internal object MediaSessionController {
         } finally {
             connection?.disconnect()
         }
+    }
+
+    /**
+     * A cover extracted by the library scan, read straight off disk.
+     *
+     * Goes through the same [decodeSampled] as the network path so a 3000px
+     * embedded cover is downsampled rather than decoded whole — the notification
+     * displays it at a few hundred pixels, and a full-size decode of one of those
+     * is tens of megabytes on the main-thread-adjacent artwork thread.
+     */
+    private fun decodeLocalFile(url: String): Bitmap? = try {
+        val path = if (url.startsWith("file://")) android.net.Uri.parse(url).path else url
+        if (path == null) {
+            null
+        } else {
+            java.io.File(path).takeIf { it.isFile }?.readBytes()
+                ?.let { decodeSampled(it, MAX_ARTWORK_SIZE) }
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "artwork: local read failed for $url: ${e.message}")
+        null
+    }
+
+    /** A cover that lives inside a SAF document tree. */
+    private fun decodeContentUri(url: String): Bitmap? = try {
+        val context = contextOrNull()
+        if (context == null) {
+            null
+        } else {
+            context.contentResolver.openInputStream(android.net.Uri.parse(url))
+                ?.use { it.readBytes() }
+                ?.let { decodeSampled(it, MAX_ARTWORK_SIZE) }
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "artwork: content read failed for $url: ${e.message}")
+        null
     }
 
     private fun applyFallbackArtwork(expectedUrl: String?) {

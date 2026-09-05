@@ -58,6 +58,8 @@
 import { computed } from "vue";
 import { AnimatePresence, LayoutGroup, Motion } from "motion-v";
 import { musicStore } from "@/store";
+// Aliased: this file already exposes a `coverUrl` computed of its own.
+import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
 import DesktopCommentPanel from "./DesktopCommentPanel.vue";
 import DesktopLyricsPanel from "./DesktopLyricsPanel.vue";
 import ImmersiveDock from "./ImmersiveDock.vue";
@@ -95,11 +97,7 @@ const commentStageTransition = {
   opacity: { type: "tween", duration: 0.62, ease: [0.16, 1, 0.3, 1], delay: 0.1 },
 } as const;
 
-const coverUrl = computed(() => {
-  const picUrl = music.getPlaySongData?.album?.picUrl;
-  if (!picUrl) return "/images/pic/default.png";
-  return picUrl.replace(/^http:/, "https:") + "?param=1024y1024";
-});
+const coverUrl = computed(() => toCoverUrl(music.getPlaySongData?.album?.picUrl, 1024));
 </script>
 
 <style lang="scss" scoped>

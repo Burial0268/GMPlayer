@@ -288,7 +288,7 @@ pub fn resolve_blocking(
                     "local plan for a non-local identity",
                 ));
             };
-            if !std::path::Path::new(path).exists() {
+            if !crate::source::local_exists(path) {
                 return Err(ResolveError::new(
                     ResolveErrorKind::LocalMissing,
                     "local file no longer exists",

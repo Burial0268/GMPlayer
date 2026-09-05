@@ -110,7 +110,7 @@
 </template>
 
 <script setup lang="ts">
-import { musicStore, userStore, settingStore, siteStore } from "@/store";
+import { musicStore, userStore, settingStore, siteStore, localLibraryStore } from "@/store";
 import { resetPersistedStorage } from "@/store/resetPersistence";
 import { useRouter, useRoute } from "vue-router";
 import { getLoginState, refreshLogin } from "@/api/login";
@@ -469,6 +469,23 @@ const handleCloseRequested = () => {
   }
 };
 
+// 挂载方法至全局
+//
+// 在 setup 里挂，**不能**放进 onMounted：Vue 的挂载顺序是子先于父，所以路由页面的
+// `onMounted` 比 App 自己的先跑。放在 onMounted 里的话，任何在自己 onMounted 里同步
+// 调 `$setSiteTitle` 的页面，一旦是**刷新后的首屏**就会抛 TypeError —— 而异常发生在
+// mounted 钩子里，Vue 只打一条 warn 并中止该子树的挂载，外层 `<transition mode="out-in">`
+// 的进场因此永远不完成，`<main>` 里就只剩两个注释占位符。表现是「刷新后主内容空白、
+// 控制台没有 error」。
+//
+// 大部分页面躲过了这个坑只是因为它们在网络回调里才调（那时 App 早挂好了）；
+// 同步调的有 19 个 —— `/login`、`/setting`、`/history`、`/404`、整个 `/user/*`、
+// `/discover/*` 和本地音乐各页，它们刷新时全都会中招。
+window.$scrollToTop = scrollToTop;
+window.$cleanAll = cleanAll;
+window.$signIn = signIn;
+window.$setSiteTitle = setSiteTitle;
+
 onMounted(() => {
   if (typeof window !== "undefined") {
     inlineQueueMediaQuery = window.matchMedia(INLINE_QUEUE_MEDIA_QUERY);
@@ -482,12 +499,6 @@ onMounted(() => {
     const scroller = contentStage.value?.closest(".n-scrollbar-container");
     if (scroller instanceof HTMLElement) syncGlassProgress(scroller.scrollTop);
   });
-
-  // 挂载方法至全局
-  window.$scrollToTop = scrollToTop;
-  window.$cleanAll = cleanAll;
-  window.$signIn = signIn;
-  window.$setSiteTitle = setSiteTitle;
 
   // 更改页面语言
   const html = document.documentElement;
@@ -561,6 +572,30 @@ onMounted(() => {
 
   // 获取喜欢音乐列表
   music.setLikeList();
+
+  // 本地库的来源 / 歌单 / 收藏。
+  //
+  // 必须在启动时拉一次，而不是等用户打开本地页：恢复出来的播放队列里可能就有本地
+  // 曲目，`getSongIsLike` 读的是这个 store，没 hydrate 的话通知栏与播放条上的
+  // 心形会一律显示未收藏——而那正是「本地收藏丢了」的错觉来源。三个命令都只读
+  // 内存里的索引，代价可以忽略。
+  if (isTauri()) {
+    const local = localLibraryStore();
+    void local
+      .hydrate()
+      .then(async () => {
+        // A queued local row is a snapshot from when it was added, and the queue
+        // outlives a re-scan. Re-reading the rows keeps a re-tagged file's title
+        // right and — the visible half — keeps its cover pointing at a file that
+        // still exists, since covers are content-addressed and the old one is
+        // pruned when nothing references it.
+        const refreshed = await local.refreshRows(music.persistData.playlists);
+        if (refreshed !== music.persistData.playlists) {
+          music.persistData.playlists = refreshed;
+        }
+      })
+      .catch((err) => console.error("hydrate local library failed", err));
+  }
 
   // 键盘监听
   window.addEventListener("keydown", spacePlayOrPause);
@@ -904,6 +939,15 @@ onBeforeUnmount(() => {
   // after the shorthand uses this for both.
   --content-stage-padding-y: 0px;
   --content-stage-padding-top: var(--app-shell-top-gap);
+  // Where a routed page's own `position: sticky` chrome may pin. The Nav floats
+  // *over* the scrollport (position: fixed, z-index 1600) and the scrollport's top
+  // is additionally clipped away by --content-stage-padding-top, so a page pinning
+  // at 0 pins behind the Nav and outside the clip — the element simply disappears
+  // as you scroll. This is the Nav's bottom edge (--app-floating-control-top plus
+  // the 34px .nav height) plus 2px, i.e. the same 48px `.main`'s padding-top uses
+  // to clear it. Pages cannot compute this themselves: --nav-control-height and the
+  // Nav's own tokens are declared inside `.nav`.
+  --content-sticky-top: calc(var(--app-floating-control-top) + 36px);
   --content-scrollbar-right: calc(var(--content-stage-padding-right) + 2px);
   --player-right-inset: var(--content-stage-padding-right);
   --layout-content-bottom: 0px;
@@ -965,6 +1009,11 @@ onBeforeUnmount(() => {
     --content-stage-padding-right: 0px;
     --content-scrollbar-right: 0px;
     --player-right-inset: 0px;
+    // Here the Nav is the top band itself (42px + safe area, top: 0), and
+    // .content-top-shadow blurs everything that scrolls under it. Pin below the
+    // band's lower edge with 4px to spare — sticky chrome pinned any higher gets
+    // washed out by that blur instead of reading as a floating control.
+    --content-sticky-top: calc(46px + var(--app-safe-area-top, 0px));
     // 底部 chrome 的高度统一由 :root 的 --app-bottom-chrome* 提供
     // (global.scss)，其中 tab bar 高度已经含 safe-area-bottom，不要再加一次。
     --layout-content-bottom: var(--app-bottom-chrome);

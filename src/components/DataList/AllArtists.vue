@@ -37,7 +37,10 @@ const props = defineProps({
 
 // 跳转歌手页面
 const jumpArtist = (id) => {
-  console.log("歌手ID", id);
+  // 本地曲目的歌手来自文件标签，没有网易 id（`localLibrary` 填的是 0）。
+  // 不挡住的话点一下会跳到 `/artist/songs?id=0`，那个页面照常发请求、照常空着。
+  const artistId = Number(id);
+  if (!Number.isFinite(artistId) || artistId <= 0) return;
   music.setBigPlayerState(false);
   router.push({
     path: "/artist/songs",

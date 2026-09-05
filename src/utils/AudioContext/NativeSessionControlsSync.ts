@@ -26,7 +26,7 @@
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
 import type { AudioThreadEvent, SessionControls } from "@/utils/tauri/audio/protocol";
-import { musicStore, userStore } from "@/store";
+import { musicStore, userStore, useLocalLibraryStore } from "@/store";
 import { publishNativeManifest } from "./NativeManifestPublisher";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -66,13 +66,21 @@ export const publishSessionControls = (options: { force?: boolean } = {}): void 
   const music = musicStore();
   const user = userStore();
   const songId = Number(music.playingSongId ?? music.getPlaySongData?.id);
-  const hasTrack = Number.isFinite(songId) && songId > 0;
+  // A local file has a *negative* id, so `songId > 0` is not the test for
+  // "there is a track" — it is the test for "there is a Netease track".
+  const localKey = Number.isFinite(songId) ? music.localSongRef(songId) : null;
+  const isLocal = Boolean(localKey);
+  const hasTrack = Number.isFinite(songId) && (isLocal || songId > 0);
   // The backend derives the like state from a `/likelist` it fetches itself, so
   // it is never blind. Ours is the fast path — but only while we actually have a
   // list: on a cold start `likeList` is empty until `setLikeList` lands, and
   // publishing `favourite: false` from an empty list would overwrite a correct
   // `true` with a wrong one. Patch semantics let us simply not claim it.
-  const likelistLoaded = music.persistData.likeList.length > 0;
+  //
+  // That protection is about the *Netease* list and must not extend to a local
+  // track: its set is local and authoritative, so withholding the value there
+  // would mean a local favourite never reaches the notification at all.
+  const likelistLoaded = isLocal || music.persistData.likeList.length > 0;
 
   const controls: {
     playMode: PlayMode;
@@ -82,7 +90,8 @@ export const publishSessionControls = (options: { force?: boolean } = {}): void 
     playMode: (music.persistData.playSongMode || "normal") as PlayMode,
     // Only meaningful for a Netease track we have a likelist for. A logged-out
     // user gets `canFavourite: false` rather than a heart that fails on tap.
-    canFavourite: Boolean(user.userLogin) && hasTrack,
+    // A local file needs no account at all, so it is always favouritable.
+    canFavourite: hasTrack && (isLocal || Boolean(user.userLogin)),
   };
   if (hasTrack && likelistLoaded) {
     controls.favourite = music.getSongIsLike(songId);
@@ -163,8 +172,19 @@ const adoptSessionControls = (controls: SessionControls): void => {
     }
 
     const songId = Number(music.playingSongId ?? music.getPlaySongData?.id);
-    if (Number.isFinite(songId) && songId > 0 && controls.canFavourite) {
-      music.applyLikeState(songId, controls.favourite);
+    if (Number.isFinite(songId) && controls.canFavourite) {
+      // A local track's like state belongs to the local set, not to `likeList`.
+      // Routing it through `applyLikeState` would push a negative id into the
+      // array login replaces wholesale — the value would be silently dropped at
+      // the next sign-in, and would meanwhile make 我喜欢的音乐 report a phantom
+      // extra track.
+      const localKey = music.localSongRef(songId);
+      if (localKey) {
+        // Mirror the backend's value locally; it already performed the write.
+        void useLocalLibraryStore().setFavourite(localKey, Boolean(controls.favourite));
+      } else if (songId > 0) {
+        music.applyLikeState(songId, controls.favourite);
+      }
     }
   } finally {
     adopting = false;

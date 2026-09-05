@@ -164,6 +164,19 @@ export async function prefillNativeQueue(): Promise<void> {
     nextIndices.map(async (index) => {
       const songData = playlists[index];
       if (!songData?.id) return null;
+      // A local file *is* its own source: there is nothing to resolve, and
+      // handing its negative id to `resolveSongUrl` would ask Netease about a
+      // track that does not exist there. The locator goes into the window
+      // verbatim, which is exactly what the backend's `SongData::Local` wants.
+      const localUri = songData.local?.uri;
+      if (typeof localUri === "string" && localUri) {
+        return {
+          index,
+          songId: songData.id as number,
+          url: localUri,
+          display: toTrackDisplay(songData),
+        };
+      }
       try {
         const result = await resolveSongUrl(songData, undefined, { signal });
         if (!result?.url) return null;

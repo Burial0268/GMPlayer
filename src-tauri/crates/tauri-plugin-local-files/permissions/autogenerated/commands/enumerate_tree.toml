@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-enumerate-tree"
+description = "Enables the enumerate_tree command without any pre-configured scope."
+commands.allow = ["enumerate_tree"]
+
+[[permission]]
+identifier = "deny-enumerate-tree"
+description = "Denies the enumerate_tree command without any pre-configured scope."
+commands.deny = ["enumerate_tree"]

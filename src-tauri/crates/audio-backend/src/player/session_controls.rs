@@ -30,13 +30,82 @@
 //! would produce.
 
 use std::collections::HashSet;
+use std::sync::{Arc, OnceLock};
 
 use tracing::{info, warn};
 
-use crate::types::{AudioThreadEvent, SessionControls, SessionControlsPatch};
+use crate::types::{AudioThreadEvent, SessionControls, SessionControlsPatch, TrackIdentity};
 
 use super::source_resolver;
 use super::AudioPlayer;
+
+/// Where a *local* track's like state lives.
+///
+/// Local favourites cannot reuse the Netease path for one concrete reason:
+/// `musicData.ts` replaces `persistData.likeList` wholesale from `/likelist` on
+/// every login, so a local entry mixed into it is erased each time the user signs
+/// in — and the symptom ("my local favourites vanished after logging in") points
+/// at the login code rather than at the storage. So they are a separate set,
+/// owned by the host app's library index, reached through this hook for the same
+/// reason `install_ncm_call_hook` exists: the store needs an `AppHandle`, and this
+/// crate also builds for wasm32.
+pub trait LocalFavouriteStore: Send + Sync {
+    fn is_favourite(&self, key: &str) -> bool;
+
+    /// Flip the stored value. Returns whether anything changed.
+    ///
+    /// Must not block on I/O: this is called from the player's event loop, which
+    /// also drives the audio timeline. Implementations flip in memory and
+    /// persist on a worker.
+    fn set_favourite(&self, key: &str, favourite: bool) -> bool;
+}
+
+static LOCAL_FAVOURITES: OnceLock<Arc<dyn LocalFavouriteStore>> = OnceLock::new();
+
+/// Install the local favourite store. First install wins.
+pub fn install_local_favourite_store(store: Arc<dyn LocalFavouriteStore>) -> bool {
+    LOCAL_FAVOURITES.set(store).is_ok()
+}
+
+pub fn has_local_favourite_store() -> bool {
+    LOCAL_FAVOURITES.get().is_some()
+}
+
+fn local_favourites() -> Option<&'static Arc<dyn LocalFavouriteStore>> {
+    LOCAL_FAVOURITES.get()
+}
+
+/// What the heart should read for `identity`, and whether it should be drawn.
+///
+/// Pulled out of [`AudioPlayer::refresh_favourite_for_current_track`] so the
+/// branch that matters can be pinned by a test: constructing an `AudioPlayer`
+/// needs an output device, and the rule this encodes — *an unknown state is
+/// `false`, never `true`* — is one whose failure direction is destructive. A
+/// wrongly-filled heart means one tap unlikes a track the user does like.
+///
+/// Returns `(can_favourite, favourite)`.
+fn derive_favourite(
+    identity: Option<&TrackIdentity>,
+    netease_capable: bool,
+    likelist: Option<&HashSet<String>>,
+    local: Option<&dyn LocalFavouriteStore>,
+) -> (bool, bool) {
+    match identity {
+        // A local file needs no credential at all: the set is on this machine.
+        // This is the one case where the heart is drawn while signed out.
+        Some(TrackIdentity::Local { path }) => match local {
+            Some(store) => (true, store.is_favourite(path)),
+            // Nothing could store a press, so do not draw a control that would
+            // silently do nothing.
+            None => (false, false),
+        },
+        Some(TrackIdentity::Netease { id }) => (
+            netease_capable,
+            likelist.is_some_and(|list| list.contains(id)),
+        ),
+        None => (false, false),
+    }
+}
 
 /// Outcome of a like/unlike round trip, handed back to the event loop.
 ///
@@ -85,13 +154,24 @@ impl AudioPlayer {
         // (a value published before the list was fetched settles the former and
         // not the latter), and an unchanged patch is exactly that case.
         if let Some(favourite) = patch.favourite {
-            if let Some(id) = self
-                .current_identity
-                .as_ref()
-                .and_then(|identity| identity.netease_id())
-                .map(str::to_string)
-            {
-                self.remember_favourite(&id, favourite);
+            match self.current_identity.clone() {
+                // An in-app like on a local track is the same kind of news, and
+                // the local store is where the backend re-derives it from at the
+                // next load. The frontend's own command has almost certainly
+                // written it already, so this is normally a no-op — but it keeps
+                // the two paths from being able to disagree.
+                Some(TrackIdentity::Local { path }) => {
+                    if let Some(store) = local_favourites() {
+                        store.set_favourite(&path, favourite);
+                    }
+                }
+                Some(identity) => {
+                    if let Some(id) = identity.netease_id() {
+                        let id = id.to_string();
+                        self.remember_favourite(&id, favourite);
+                    }
+                }
+                None => {}
             }
         }
 
@@ -178,15 +258,33 @@ impl AudioPlayer {
     /// all: a Netease track and a credential. Anything missing is logged, so a
     /// dead press says why instead of nothing.
     pub(super) async fn toggle_favourite(&mut self) {
+        let Some(identity) = self.current_identity.clone() else {
+            warn!("favourite pressed with no identity for the loaded track");
+            return;
+        };
+
+        // A local track's like state is a local write: authoritative the moment
+        // it returns, so none of the optimism-and-revert machinery below applies
+        // and neither does the single-flight guard, which exists to stop two
+        // presses racing a *network* round trip.
+        if let TrackIdentity::Local { path } = &identity {
+            let Some(store) = local_favourites() else {
+                warn!("favourite pressed on a local track with no local store installed");
+                return;
+            };
+            let target = !self.session_controls.favourite;
+            if store.set_favourite(path, target) || self.session_controls.favourite != target {
+                self.session_controls.favourite = target;
+                self.publish_session_controls().await;
+            }
+            return;
+        }
+
         if self.favourite_in_flight {
             // A second press before the first landed would race it to the
             // opposite value; the user's intent is already in flight.
             return;
         }
-        let Some(identity) = self.current_identity.clone() else {
-            warn!("favourite pressed with no identity for the loaded track");
-            return;
-        };
         let Some(song_id) = identity.netease_id().map(str::to_string) else {
             // Only Netease tracks have a like list to be in.
             warn!("favourite pressed on a non-netease track: {}", identity.key());
@@ -257,20 +355,16 @@ impl AudioPlayer {
     /// the only UI. A stale `true` is the dangerous direction (one tap would
     /// unlike a track the user does like), so an unknown list means `false`.
     pub(super) fn refresh_favourite_for_current_track(&mut self) {
-        let netease_id = self
-            .current_identity
-            .as_ref()
-            .and_then(|identity| identity.netease_id())
-            .map(str::to_string);
-
-        // `can_favourite` describes the *account*, not the frontend's liveness,
-        // so it comes from the credential we hold and the track we loaded.
-        self.session_controls.can_favourite =
-            self.favourite_capable() && netease_id.is_some();
-        self.session_controls.favourite = match (&self.likelist, &netease_id) {
-            (Some(list), Some(id)) => list.contains(id),
-            _ => false,
-        };
+        let (can_favourite, favourite) = derive_favourite(
+            self.current_identity.as_ref(),
+            // `can_favourite` describes the *account*, not the frontend's
+            // liveness, so it comes from the credential we hold.
+            self.favourite_capable(),
+            self.likelist.as_ref(),
+            local_favourites().map(|store| store.as_ref()),
+        );
+        self.session_controls.can_favourite = can_favourite;
+        self.session_controls.favourite = favourite;
     }
 
     /// Whether a like can be *performed*: `/like` authenticates with the cookie
@@ -364,5 +458,133 @@ impl AudioPlayer {
         } else {
             list.remove(netease_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use parking_lot::Mutex;
+
+    struct FakeLocalStore {
+        liked: Mutex<HashSet<String>>,
+    }
+
+    impl FakeLocalStore {
+        fn with(keys: &[&str]) -> Self {
+            FakeLocalStore {
+                liked: Mutex::new(keys.iter().map(|k| k.to_string()).collect()),
+            }
+        }
+    }
+
+    impl LocalFavouriteStore for FakeLocalStore {
+        fn is_favourite(&self, key: &str) -> bool {
+            self.liked.lock().contains(key)
+        }
+
+        fn set_favourite(&self, key: &str, favourite: bool) -> bool {
+            let mut liked = self.liked.lock();
+            if favourite {
+                liked.insert(key.to_string())
+            } else {
+                liked.remove(key)
+            }
+        }
+    }
+
+    fn local(path: &str) -> TrackIdentity {
+        TrackIdentity::Local {
+            path: path.to_string(),
+        }
+    }
+
+    fn netease(id: &str) -> TrackIdentity {
+        TrackIdentity::Netease { id: id.to_string() }
+    }
+
+    /// The whole point of the local branch: no account, still a working heart.
+    #[test]
+    fn a_local_track_is_favouritable_without_a_credential() {
+        let store = FakeLocalStore::with(&["/music/a.flac"]);
+        assert_eq!(
+            derive_favourite(Some(&local("/music/a.flac")), false, None, Some(&store)),
+            (true, true)
+        );
+        assert_eq!(
+            derive_favourite(Some(&local("/music/b.flac")), false, None, Some(&store)),
+            (true, false)
+        );
+    }
+
+    /// With no store installed nothing could record a press, so the control must
+    /// not be drawn — a visible button that does nothing is worse than none.
+    #[test]
+    fn a_local_track_without_a_store_draws_no_heart() {
+        assert_eq!(
+            derive_favourite(Some(&local("/music/a.flac")), true, None, None),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn a_netease_track_needs_a_credential() {
+        let list: HashSet<String> = ["123".to_string()].into_iter().collect();
+        assert_eq!(
+            derive_favourite(Some(&netease("123")), true, Some(&list), None),
+            (true, true)
+        );
+        // Signed out: no heart at all rather than an empty one that fails on tap.
+        // The list is `None` because signing out drops it (`refresh_likelist`),
+        // which is what keeps one account's likes off another's tracks.
+        assert_eq!(
+            derive_favourite(Some(&netease("123")), false, None, None),
+            (false, false)
+        );
+    }
+
+    /// An unfetched like list must read `false`, never `true`: a wrongly-filled
+    /// heart means one tap unlikes a track the user does like.
+    #[test]
+    fn an_unknown_netease_like_state_reads_false() {
+        assert_eq!(
+            derive_favourite(Some(&netease("123")), true, None, None),
+            (true, false)
+        );
+        let empty: HashSet<String> = HashSet::new();
+        assert_eq!(
+            derive_favourite(Some(&netease("123")), true, Some(&empty), None),
+            (true, false)
+        );
+    }
+
+    /// Netease ids stay strings the whole way. Routing one through `f64` would
+    /// corrupt anything past 2^53 — i.e. exactly the newest tracks — and the
+    /// symptom would be "the newest songs are never liked".
+    #[test]
+    fn large_netease_ids_are_matched_exactly() {
+        let big = "9007199254740993"; // 2^53 + 1
+        let list: HashSet<String> = [big.to_string()].into_iter().collect();
+        assert_eq!(
+            derive_favourite(Some(&netease(big)), true, Some(&list), None),
+            (true, true)
+        );
+        assert_eq!(
+            derive_favourite(Some(&netease("9007199254740992")), true, Some(&list), None),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn no_track_means_no_heart() {
+        assert_eq!(derive_favourite(None, true, None, None), (false, false));
+    }
+
+    #[test]
+    fn a_local_store_reports_whether_it_changed() {
+        let store = FakeLocalStore::with(&[]);
+        assert!(store.set_favourite("k", true));
+        assert!(!store.set_favourite("k", true));
+        assert!(store.set_favourite("k", false));
     }
 }

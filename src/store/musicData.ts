@@ -35,6 +35,7 @@ import useMusicLyricStore from "./musicLyric";
 import useMusicPersistedDataStore from "./musicPersistedData";
 import useMusicPlaybackDataStore from "./musicPlaybackData";
 import useMusicPlaybackResumeStore from "./musicPlaybackResume";
+import useLocalLibraryStore from "./localLibrary";
 import {
   createDefaultPlaySongTime,
   type PersistData,
@@ -390,8 +391,52 @@ const useMusicDataStore = defineStore("musicData", {
       }
     },
 
-    getSongIsLike(id: number): boolean {
-      return this.likeSet.has(id);
+    getSongIsLike(target: number | SongData): boolean {
+      // A local file's like state is its own set, keyed on the file's locator.
+      // It cannot live in `likeList`: login replaces that array wholesale from
+      // `/likelist`, so a local entry would be erased at every sign-in — and the
+      // symptom ("my local favourites disappeared after logging in") points at
+      // the login code rather than at storage.
+      const local = this.localKeyOf(target);
+      if (local) return useLocalLibraryStore().isFavourite(local);
+      return this.likeSet.has(this.songIdOf(target));
+    },
+
+    /**
+     * The locator for a track, when it is a local file.
+     *
+     * Prefers a whole row, because a *library* row is not in the queue and an id
+     * alone cannot be resolved to a path — hearts in the local song list would
+     * all read "not liked" and a press would take the Netease path and demand a
+     * login. Callers that only have an id (the player chrome, which is always
+     * showing the current track) still work through the queue lookup.
+     */
+    localKeyOf(target: number | SongData | null | undefined): string | null {
+      if (target && typeof target === "object") return target.local?.uri ?? null;
+      return this.localSongRef(Number(target));
+    },
+
+    songIdOf(target: number | SongData): number {
+      return Number(target && typeof target === "object" ? target.id : target);
+    },
+
+    /**
+     * The locator for `id`, when it names a local file.
+     *
+     * Looks in the queue and the currently playing track, which is where every
+     * id-only caller gets its ids from. A miss just means "treat it as a Netease
+     * id", which is the correct default.
+     */
+    localSongRef(id: number): string | null {
+      if (this.playingSongId === id) {
+        const uri = (this.getPlaySongData as SongData | undefined)?.local?.uri;
+        if (uri) return uri;
+      }
+      // Only local rows can have a non-positive id, so the scan is skipped
+      // entirely for the overwhelmingly common Netease case.
+      if (id > 0) return null;
+      const match = this.persistData.playlists.find((song) => Number(song?.id) === id);
+      return match?.local?.uri ?? null;
     },
 
     /**
@@ -435,7 +480,27 @@ const useMusicDataStore = defineStore("musicData", {
       return this.persistData.playlists.find((song) => song.id === id);
     },
 
-    async changeLikeList(id: number, like: boolean = true) {
+    async changeLikeList(target: number | SongData, like: boolean = true) {
+      const id = this.songIdOf(target);
+      // Local files first, and without a login check: a file on disk is not the
+      // account's to authorize. Nothing here touches `persistData.likeList` or
+      // sends a request — the set lives in Rust next to the library index, which
+      // is why it survives logout and an account switch.
+      const localKey = this.localKeyOf(target);
+      if (localKey) {
+        const local = useLocalLibraryStore();
+        const changed = await local.setFavourite(localKey, like);
+        if (changed) {
+          $message.info(getLanguageData(like ? "loveSong" : "loveSongRemove"));
+        } else if (like) {
+          $message.info(getLanguageData("loveSongRepeat"));
+        }
+        // The OS session draws a heart for the playing track and derives it from
+        // the same set, so it has to hear about the change.
+        publishSessionControls();
+        return;
+      }
+
       const user = userStore();
       const list = this.persistData.likeList;
       const exists = this.likeSet.has(id);
@@ -656,10 +721,12 @@ const useMusicDataStore = defineStore("musicData", {
       const AHEAD = 2;
       const ids: Array<number | string> = [];
       for (let i = 1; i <= AHEAD; i++) {
-        const id = playlist[(currentIndex + i) % playlist.length]?.id;
-        if (id !== undefined) ids.push(id);
+        const song = playlist[(currentIndex + i) % playlist.length];
+        // 本地曲目没有网易 id，提示它等于让协议层去查一首不存在的歌。
+        if (song?.local?.uri) continue;
+        if (song?.id !== undefined) ids.push(song.id);
       }
-      hintTracks(ids);
+      if (ids.length) hintTracks(ids);
     },
 
     getPlaySongPlaybackCurrentTime(): number {

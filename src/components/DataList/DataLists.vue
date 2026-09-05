@@ -40,7 +40,7 @@
               v-if="row.item.album?.picUrl"
               lazy
               class="pic"
-              :src="row.item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'"
+              :src="coverUrl(row.item.album.picUrl, 60)"
               fallback-src="/images/pic/default.png"
             />
             <div class="num" v-else-if="row.item?.num">
@@ -48,7 +48,7 @@
             </div>
             <div class="name">
               <div class="title">
-                <n-text class="text-hidden" depth="2" @click.stop="jumpLink(row.item?.id, 1)">
+                <n-text class="text-hidden" depth="2" @click.stop="jumpSong(row.item)">
                   {{ row.item?.name }}
                 </n-text>
                 <n-tag
@@ -103,18 +103,14 @@
                 class="like"
                 size="20"
                 @click.stop="
-                  music.getSongIsLike(row.item?.id)
-                    ? music.changeLikeList(row.item?.id, false)
-                    : music.changeLikeList(row.item?.id, true)
+                  music.getSongIsLike(row.item)
+                    ? music.changeLikeList(row.item, false)
+                    : music.changeLikeList(row.item, true)
                 "
               >
-                <Like :theme="music.getSongIsLike(row.item?.id) ? 'filled' : 'outline'" />
+                <Like :theme="music.getSongIsLike(row.item) ? 'filled' : 'outline'" />
               </n-icon>
-              <n-icon
-                class="download"
-                size="20"
-                @click.stop="downloadSongRef.openDownloadModal(row.item)"
-              >
+              <n-icon class="download" size="20" @click.stop="openDownloadModal(row.item)">
                 <DownloadFour theme="filled" />
               </n-icon>
               <n-icon class="more" size="20" :component="More" @click.stop="openDrawer(row.item)" />
@@ -146,7 +142,7 @@
               v-if="row.item.album?.picUrl"
               lazy
               class="pic"
-              :src="row.item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'"
+              :src="coverUrl(row.item.album.picUrl, 60)"
               fallback-src="/images/pic/default.png"
             />
             <div class="num" v-else-if="row.item?.num">
@@ -154,7 +150,7 @@
             </div>
             <div class="name">
               <div class="title">
-                <n-text class="text-hidden" depth="2" @click.stop="jumpLink(row.item?.id, 1)">
+                <n-text class="text-hidden" depth="2" @click.stop="jumpSong(row.item)">
                   {{ row.item?.name }}
                 </n-text>
                 <n-tag
@@ -209,18 +205,14 @@
                 class="like"
                 size="20"
                 @click.stop="
-                  music.getSongIsLike(row.item?.id)
-                    ? music.changeLikeList(row.item?.id, false)
-                    : music.changeLikeList(row.item?.id, true)
+                  music.getSongIsLike(row.item)
+                    ? music.changeLikeList(row.item, false)
+                    : music.changeLikeList(row.item, true)
                 "
               >
-                <Like :theme="music.getSongIsLike(row.item?.id) ? 'filled' : 'outline'" />
+                <Like :theme="music.getSongIsLike(row.item) ? 'filled' : 'outline'" />
               </n-icon>
-              <n-icon
-                class="download"
-                size="20"
-                @click.stop="downloadSongRef.openDownloadModal(row.item)"
-              >
+              <n-icon class="download" size="20" @click.stop="openDownloadModal(row.item)">
                 <DownloadFour theme="filled" />
               </n-icon>
               <n-icon class="more" size="20" :component="More" @click.stop="openDrawer(row.item)" />
@@ -303,9 +295,10 @@
             </div>
             <div
               class="item action-item"
+              v-if="!drawerIsLocal"
               @click="
                 () => {
-                  addPlayListRef.openAddToPlaylist(drawerData.id);
+                  openAddToPlaylist(drawerData.id);
                   drawerShow = false;
                 }
               "
@@ -317,9 +310,10 @@
             </div>
             <div
               class="item action-item"
+              v-if="!drawerIsLocal"
               @click="
                 () => {
-                  downloadSongRef.openDownloadModal(drawerData);
+                  openDownloadModal(drawerData);
                   drawerShow = false;
                 }
               "
@@ -329,7 +323,27 @@
               </n-icon>
               <n-text>{{ $t("menu.download") }}</n-text>
             </div>
-            <div class="item action-item" @click="router.push(`/comment?id=${drawerData.id}`)">
+            <!-- 本地曲目的「详情」是这一页：基本信息 / 元数据 / 歌词导入。
+                 移动端点行是播放，所以这里是它唯一的入口。 -->
+            <div
+              class="item action-item"
+              @click="
+                () => {
+                  jumpSong(drawerData);
+                  drawerShow = false;
+                }
+              "
+            >
+              <n-icon size="20">
+                <FileMusic theme="filled" />
+              </n-icon>
+              <n-text>{{ $t("menu.songDetail") }}</n-text>
+            </div>
+            <div
+              class="item action-item"
+              v-if="!drawerIsLocal"
+              @click="router.push(`/comment?id=${drawerData.id}`)"
+            >
               <n-icon size="20">
                 <Comments theme="filled" />
               </n-icon>
@@ -347,6 +361,7 @@
             </div>
             <div
               class="item action-item"
+              v-if="!drawerIsLocal"
               @click="
                 () => {
                   copySongData(drawerData.id);
@@ -369,7 +384,7 @@
                 <AllArtists class="text-hidden" :artistsData="drawerData.artist" />
               </n-text>
             </div>
-            <div class="item info-item" @click="router.push(`/album?id=${drawerData.album.id}`)">
+            <div class="item info-item" @click="jumpLink(drawerData.album?.id, 10)">
               <n-icon size="20">
                 <RecordDisc theme="filled" />
               </n-icon>
@@ -405,7 +420,7 @@
               class="item cloud-item"
               @click="
                 () => {
-                  cloudMatchRef.openCloudMatch(drawerData);
+                  openCloudMatch(drawerData);
                   drawerShow = false;
                 }
               "
@@ -433,12 +448,12 @@
           </div>
         </n-drawer-content>
       </n-drawer>
-      <!-- 歌曲信息纠正 -->
-      <CloudMatch ref="cloudMatchRef" />
-      <!-- 收藏到歌单 -->
-      <AddPlaylist ref="addPlayListRef" />
-      <!-- 歌曲下载 -->
-      <DownloadSong ref="downloadSongRef" />
+      <!-- 歌曲信息纠正 / 收藏到歌单 / 歌曲下载。
+           三个都是点开之后才载入的（见 script 里的 `openLazyModal`）：在此之前
+           `*Component` 是 null，这里连元素都不存在。 -->
+      <component :is="CloudMatchComponent" v-if="CloudMatchComponent" ref="cloudMatchRef" />
+      <component :is="AddPlaylistComponent" v-if="AddPlaylistComponent" ref="addPlayListRef" />
+      <component :is="DownloadSongComponent" v-if="DownloadSongComponent" ref="downloadSongRef" />
     </div>
     <n-empty v-else-if="loading === false" class="empty" :description="emptyText || undefined" />
     <n-spin class="loading" size="small" v-else />
@@ -446,6 +461,10 @@
 </template>
 
 <script setup>
+// `h` 显式引入而不靠 auto-import：unimport 只要在文件的**任意作用域**里看到一个同名
+// 声明，就认定该名字已存在、整个模块都不再注入它。这里的 `h` 只在右键菜单的
+// `renderIcon` 里用到，缺了它编译期无声无息，只有右键那一刻才 ReferenceError。
+import { h } from "vue";
 import {
   PlayOne,
   AddMusic,
@@ -462,16 +481,15 @@ import {
   More,
   Search,
 } from "@icon-park/vue-next";
-import { musicStore, settingStore, userStore } from "@/store";
+import { localLibraryStore, musicStore, settingStore, userStore } from "@/store";
+import { localPlaylistAddTracks } from "@/utils/localLibrary";
+import { coverUrl } from "@/utils/coverUrl";
 import { useRouter } from "vue-router";
 import { setCloudDel } from "@/api/user";
 import { NIcon, NVirtualList } from "naive-ui";
 import { soundStop } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
-import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
-import CloudMatch from "@/components/DataModal/CloudMatch.vue";
-import DownloadSong from "@/components/DataModal/DownloadSong.vue";
 import SmallSongData from "./SmallSongData.vue";
 
 const { t } = useI18n();
@@ -479,9 +497,60 @@ const router = useRouter();
 const music = musicStore();
 const setting = settingStore();
 const user = userStore();
+const localLibrary = localLibraryStore();
+
+// ── 三个动作弹窗，按需加载 ──────────────────────────────────
+//
+// 这三个原本是静态 import。它们**只在用户点某个菜单项之后才可能出现**，但静态引用
+// 把它们连同各自那串 naive-ui 组件（`n-form` / `n-form-item` / `n-input-number` /
+// `n-popover` / `n-radio-group` / `n-alert`）钉进 DataLists 所在的 chunk——而
+// DataLists 是十几个视图共用的，于是**任何**列表页第一次进入都要先下载并求值这些
+// 代码，还要为每个列表实例各挂三个永远不显示的组件。这是「一进歌单页就卡一下」里
+// 属于打包与挂载的那一半。
+//
+// 不用 `defineAsyncComponent`：这三个都靠模板 ref 调命令式方法打开
+// （`openDownloadModal(row)`），而 `defineAsyncComponent` 解析完成的时刻是拿不到的，
+// ref 也就无从等待。显式 `import()` + `nextTick` 有确定时机，BigPlayer 打开歌词设置
+// 用的也正是这个写法。
 const addPlayListRef = ref(null);
 const cloudMatchRef = ref(null);
 const downloadSongRef = ref(null);
+const AddPlaylistComponent = shallowRef(null);
+const CloudMatchComponent = shallowRef(null);
+const DownloadSongComponent = shallowRef(null);
+
+/** 载入（若尚未载入）→ 等挂载 → 调它自己的打开方法。 */
+const openLazyModal = async (holder, load, instanceRef, invoke) => {
+  if (!holder.value) {
+    holder.value = (await load()).default;
+    await nextTick();
+  }
+  invoke(instanceRef.value);
+};
+
+const openAddToPlaylist = (id) =>
+  openLazyModal(
+    AddPlaylistComponent,
+    () => import("@/components/DataModal/AddPlaylist.vue"),
+    addPlayListRef,
+    (modal) => modal?.openAddToPlaylist(id),
+  );
+
+const openDownloadModal = (song) =>
+  openLazyModal(
+    DownloadSongComponent,
+    () => import("@/components/DataModal/DownloadSong.vue"),
+    downloadSongRef,
+    (modal) => modal?.openDownloadModal(song),
+  );
+
+const openCloudMatch = (song) =>
+  openLazyModal(
+    CloudMatchComponent,
+    () => import("@/components/DataModal/CloudMatch.vue"),
+    cloudMatchRef,
+    (modal) => modal?.openCloudMatch(song),
+  );
 
 const props = defineProps({
   // 列表数据
@@ -562,6 +631,18 @@ const props = defineProps({
     type: Number,
     default: 0,
   },
+  /**
+   * What the *list* allows, from `utils/playlistSource`.
+   *
+   * Drives which context-menu entries exist. Individual rows are still checked
+   * on their own (`data.local`) — a mixed queue holds both kinds — but the list
+   * has the final say on anything about membership, since only it knows whether
+   * "remove" means anything here.
+   */
+  capabilities: {
+    type: Object,
+    default: null,
+  },
 });
 
 /**
@@ -572,7 +653,7 @@ const props = defineProps({
  * 滚动里会连续触发很多次，而这里刻意不做节流，因为「是否还有下一块」只有调用方
  * 知道。
  */
-const emit = defineEmits(["reach-end"]);
+const emit = defineEmits(["reach-end", "remove-track"]);
 
 const onVirtualScroll = (e) => {
   const el = e?.target;
@@ -605,17 +686,51 @@ const usePageWindow = computed(
 );
 
 const plainRootRef = ref(null);
-const rangeStart = ref(0);
-const rangeEnd = ref(0);
+
 /**
- * 是否真的挂上了页面滚动容器。
+ * 探到滚动容器之前先渲染多少行。
  *
- * 没挂上就**退化为整列表渲染**，而不是留一个空列表。窗口区间的初值是 `[0,0)`，
- * 若因为祖先里没有 `.n-scrollbar-container`（换了布局、被挪进弹窗等）而始终算不
- * 出区间，页面就会一行都不显示——这种静默失败比多渲染几行糟得多。它同时也遮掉了
- * 挂载后第一个 tick 的空窗期。
+ * 一屏 + 两倍 overscan，按视口高度和标称行高估。宁可略多也不能少：这一批就是首帧
+ * 用户看到的内容，短了会露白，而多几行的代价是线性的、很小的。
  */
-const scrollRootReady = ref(false);
+const firstScreenRows = () => {
+  const size = props.virtualItemSize || 54;
+  const viewport = typeof window === "undefined" ? 900 : window.innerHeight;
+  return Math.ceil(viewport / size) + props.overscan * 2;
+};
+
+const rangeStart = ref(0);
+/**
+ * 初值是一屏，不是 0。
+ *
+ * `[0, 0)` 会让「还没挂上滚动容器」的那一帧切出空数组，于是只能退化成整列表渲染
+ * ——而那正是下面 `scrollRootState` 要消掉的那次浪费。给它一屏，那一帧就已经是对的
+ * 东西，`recomputeWindow` 接手后只是把它调准。
+ */
+const rangeEnd = ref(firstScreenRows());
+/**
+ * 页面滚动容器的探测状态。
+ *
+ * 三态而不是布尔，因为「还没找过」和「找过、确实没有」要走**完全不同**的退路，而
+ * 旧的 `scrollRootReady = false` 把两者合成了一个——于是每次打开歌单页都要把整段
+ * 种子前缀渲染一遍再扔掉：
+ *
+ * 1. `onMounted` 时 `listData` 还是空的，`usePageWindow`（要求长度过阈值）为假，
+ *    所以 `attachScrollRoot` 根本没被排上，状态停在「没找过」。
+ * 2. 种子落地 → listData 的 watch 是 pre-flush，它只 `nextTick(attachScrollRoot)`。
+ * 3. **组件先重渲染**：此时 ready 仍是 false，`plainRows` 走整列表分支，879 行
+ *    `n-card` 连着 avatar/tag/icon/AllArtists 全部挂载。
+ * 4. 下一个 tick 才挂上容器，窗口收到约 30 行，**其余 850 行当场卸载**。
+ *
+ * keep-alive 返回时同样中一次：`detachScrollRoot` 把标志清掉，而它是 `plainRows`
+ * 的依赖，所以恢复的那一帧也是整列表。
+ *
+ * `"missing"` 保留原来的兜底语义（祖先里真的没有 `.n-scrollbar-container`，例如换
+ * 了布局或被挪进弹窗）：那时候整列表渲染确实比一行都不显示好得多。
+ *
+ * @type {import("vue").Ref<"pending" | "ready" | "missing">}
+ */
+const scrollRootState = ref("pending");
 
 /**
  * 一共会有多少行——包括还没 hydrate 的。
@@ -648,9 +763,9 @@ const measureRow = () => {
   const root = plainRootRef.value;
   if (!root) return;
   const card = root.querySelector(".songs");
-  const h = card?.getBoundingClientRect().height;
+  const cardHeight = card?.getBoundingClientRect().height;
   // 量到就定下来。四舍五入到 0.5px，免得亚像素噪声把它变成一个会抖的值。
-  if (h) measuredItemSize.value = Math.round(h * 2) / 2;
+  if (cardHeight) measuredItemSize.value = Math.round(cardHeight * 2) / 2;
 };
 
 const recomputeWindow = () => {
@@ -713,12 +828,21 @@ const onViewportResize = () => {
 const attachScrollRoot = () => {
   if (!usePageWindow.value || scrollRootEl) return;
   const root = plainRootRef.value;
-  const found = root?.closest(".n-scrollbar-container");
-  if (!(found instanceof HTMLElement)) return;
+  // 列表根节点还没渲染出来，什么都断言不了——留在 pending，下一次 listData 变化
+  // 或 activated 会再来一次。把这里当成 "missing" 就等于自愿放弃窗口化。
+  if (!root) return;
+  const found = root.closest(".n-scrollbar-container");
+  if (!(found instanceof HTMLElement)) {
+    // 只有**在文档里**问出来的「没有」才算没有。keep-alive 收起来的那份子树是脱离
+    // 文档的，里面 `closest` 一定什么都找不到 —— 把那种情况 latch 成 "missing"，这个
+    // 实例就此整列表渲染，窗口再也回不来。留在 pending，等它重新挂上再问一次。
+    if (root.isConnected) scrollRootState.value = "missing";
+    return;
+  }
   scrollRootEl = found;
   scrollRootEl.addEventListener("scroll", onPageScroll, { passive: true });
   window.addEventListener("resize", onViewportResize, { passive: true });
-  scrollRootReady.value = true;
+  scrollRootState.value = "ready";
   measureRow();
   recomputeWindow();
 };
@@ -731,11 +855,18 @@ const detachScrollRoot = () => {
   scrollRootEl?.removeEventListener("scroll", onPageScroll);
   window.removeEventListener("resize", onViewportResize);
   scrollRootEl = null;
-  scrollRootReady.value = false;
+  // 回到「没找过」，不是「没有」：下次 activated 还要再探一次。区间刻意**不重置**，
+  // 于是 keep-alive 恢复的那一帧渲染的还是离开时的那一窗，而不是整个列表。
+  scrollRootState.value = "pending";
 };
 
-/** 窗口化真正生效的条件：开了开关、量够大、且确实挂上了滚动容器。 */
-const windowActive = computed(() => usePageWindow.value && scrollRootReady.value);
+/**
+ * 窗口化是否生效：开了开关、量够大，且不是「确实没有滚动容器」。
+ *
+ * 刻意包含 `pending`——那一帧按一屏渲染，上下占位块也照常撑开总高，所以总高从第一
+ * 帧起就是最终值。只有 `missing` 才落回整列表。
+ */
+const windowActive = computed(() => usePageWindow.value && scrollRootState.value !== "missing");
 
 const topSpacerPx = computed(() =>
   windowActive.value ? Math.max(0, rangeStart.value * rowSize.value) : 0,
@@ -767,6 +898,13 @@ watch(
     // 于是一次滚动手势只装载一块，列表看起来永远补不齐。
     // 这里清掉闩锁，让紧接着的重算能继续要下一块，直到滚不动或装满为止。
     reachEndFired = false;
+    // 从「一行都没有」到「有行了」= 一份新数据（进页面、换歌单、清空重载）。窗口
+    // 回到顶部：不重置的话，探到滚动容器之前的那一帧会按**上一份**数据滚到的区间
+    // 去切，占位块也跟着错开几百行的高度。
+    if (!prev?.length && next?.length) {
+      rangeStart.value = 0;
+      rangeEnd.value = firstScreenRows();
+    }
     nextTick(() => {
       attachScrollRoot();
       // 从「一行都没有」到「有行了」是唯一需要补测的时机——之前根本没东西可量。
@@ -774,6 +912,34 @@ watch(
       recomputeWindow();
     });
   },
+);
+
+/**
+ * 列表根节点自己出现的那一刻，再探一次滚动容器。
+ *
+ * `.datalists` 不一定和数据同一帧出现：组件根是 `<Transition mode="out-in">`，列表
+ * 从「空」变到「有行」时先要播完空状态（spinner / `n-empty`）的离场，那段时间渲染出
+ * 来的是一个注释占位符，`.datalists` 根本不在 DOM 里。而上面三个探测点全都落在那段
+ * 时间之内 —— `listData` 的 watch 排的是 `nextTick`，离场却有 200 ms —— 于是
+ * `plainRootRef` 还是 null，`attachScrollRoot` 原地返回，**而且没有任何东西会再探一
+ * 次**：`onMounted` 早跑过了，`onActivated` 要等下一次 keep-alive 恢复，而 `listData`
+ * 的下一次变化本身就是靠 `reach-end` 驱动的，`reach-end` 又要先有滚动监听。
+ *
+ * 丢掉这一次探测的后果是列表永久停在首屏那一窗（约 30 行）：占位块照 `totalRows`
+ * 把总高撑满，底下全是空白，怎么滚都不再补块。三条路都会踩到 —— 本地各页第一次进入
+ * （DataLists 是带着空数组挂载的）、本地集合页在两张专辑之间切换、以及歌单页被清空
+ * 重拉。挂在根节点出现的时刻是唯一不早不晚的时机。
+ */
+watch(
+  plainRootRef,
+  (root) => {
+    if (!root) return;
+    attachScrollRoot();
+    // 已经挂着监听时上一句会原地返回，而此刻的窗口还是列表被清空前那一份（例如过滤
+    // 到无结果又清掉关键词），所以补一次重算：否则要等用户再滚一下才对得上。
+    recomputeWindow();
+  },
+  { flush: "post" },
 );
 
 onMounted(() => {
@@ -850,6 +1016,13 @@ const rightMenuProps = () => ({
 // 抽屉数据
 const drawerShow = ref(false);
 const drawerData = ref(null);
+/**
+ * 抽屉里那半打动作全是网易语义（加入网易歌单、下载、评论、复制链接、MV）。
+ *
+ * 移动端只有这个抽屉，桌面端的右键菜单早就按 `isLocal` 分好了；这里不分的话，本地
+ * 曲目会被摆出一排点下去只会打空请求的按钮。
+ */
+const drawerIsLocal = computed(() => Boolean(drawerData.value?.local?.uri));
 
 // 图标渲染
 const renderIcon = (icon, filled = true) => {
@@ -926,6 +1099,14 @@ const openRightMenu = (e, data) => {
   nextTick().then(() => {
     if (positionToken !== contextMenuPositionToken) return;
     const isCloudRoute = router.currentRoute.value.name === "user-cloud";
+    // An imported file has no Netease identity at all: its `id` is a negative
+    // hash of its path. Every entry below that would send that id to an API
+    // (comment, MV, download, "add to a playlist") must be hidden rather than
+    // left to fail — a menu item that opens an empty page is worse than one that
+    // is not there.
+    const isLocal = Boolean(data?.local?.uri);
+    const caps = props.capabilities;
+    const allows = (key) => (caps ? Boolean(caps[key]) : !isLocal);
     const playbackChildren = [
       {
         key: "play",
@@ -946,28 +1127,72 @@ const openRightMenu = (e, data) => {
         key: "add",
         label: t("menu.add"),
         icon: renderIcon(ListAdd),
-        show: Boolean(user.userLogin),
-        props: { onClick: () => addPlayListRef.value.openAddToPlaylist(data.id) },
+        show: Boolean(user.userLogin) && !isLocal && allows("addToNetease"),
+        props: { onClick: () => openAddToPlaylist(data.id) },
       },
       {
         key: "download",
         label: t("menu.download"),
         icon: renderIcon(DownloadFour),
-        props: { onClick: () => downloadSongRef.value.openDownloadModal(data) },
+        show: !isLocal && allows("download"),
+        props: { onClick: () => openDownloadModal(data) },
+      },
+      {
+        key: "addLocal",
+        label: t("local.addToLocalPlaylist"),
+        icon: renderIcon(ListAdd),
+        // A local track cannot go into a Netease playlist (its id exists only in
+        // this process), so this is the only "add" it has. Rendered as a submenu
+        // of the user's local playlists rather than a modal: there is nothing to
+        // fetch, so a picker would be a dialog over data already in memory.
+        show: isLocal && Boolean(localLibrary.playlists.length),
+        children: localLibrary.playlists.map((playlist) => ({
+          key: `addLocal-${playlist.id}`,
+          label: playlist.name,
+          props: { onClick: () => addToLocalPlaylist(playlist.id, data) },
+        })),
+      },
+      {
+        key: "removeLocal",
+        label: t("local.removeFromPlaylist"),
+        icon: renderIcon(DeleteFour),
+        // Only a *user* local playlist has removable membership. An automatic
+        // collection is derived from the files on disk, where "remove" could
+        // only mean "delete the file" — not something a list row should do.
+        show: isLocal && allows("remove") && allows("reorder"),
+        props: { onClick: () => emit("remove-track", data) },
+      },
+      {
+        key: "reveal",
+        label: t("menu.revealInFolder"),
+        icon: renderIcon(FileMusic, false),
+        // A `content://` document has no path to reveal, and Android has no
+        // file manager intent that is guaranteed to be there.
+        show: isLocal && !String(data.local.uri).startsWith("content://"),
+        props: { onClick: () => revealLocalFile(data) },
       },
     ];
     const discoverChildren = [
       {
+        key: "songDetail",
+        label: t("menu.songDetail"),
+        icon: renderIcon(FileMusic, false),
+        // Both kinds have a detail page; `jumpSong` picks which. Shown for local
+        // rows above all — it is where their metadata and lyric import live.
+        props: { onClick: () => jumpSong(data) },
+      },
+      {
         key: "comment",
         label: t("menu.comment"),
         icon: renderIcon(Comments, false),
+        show: !isLocal && allows("comment"),
         props: { onClick: () => router.push(`/comment?id=${data.id}`) },
       },
       {
         key: "mv",
         label: t("menu.mv"),
         icon: renderIcon(Video, false),
-        show: Boolean(data.mv && data.mv !== 0),
+        show: !isLocal && Boolean(data.mv && data.mv !== 0),
         props: { onClick: () => router.push(`/video?id=${data.mv}`) },
       },
       {
@@ -988,7 +1213,7 @@ const openRightMenu = (e, data) => {
         key: "match",
         label: t("menu.match"),
         icon: renderIcon(FileMusic),
-        props: { onClick: () => cloudMatchRef.value.openCloudMatch(data) },
+        props: { onClick: () => openCloudMatch(data) },
       },
       {
         key: "delete",
@@ -1002,6 +1227,7 @@ const openRightMenu = (e, data) => {
         key: "copyId",
         label: t("menu.copy", { name: t("general.name.song"), other: "ID" }),
         icon: renderIcon(FileMusic, false),
+        show: !isLocal,
         props: { onClick: () => copySongData(data.id, false) },
       },
       {
@@ -1011,7 +1237,17 @@ const openRightMenu = (e, data) => {
           other: t("general.name.link"),
         }),
         icon: renderIcon(LinkTwo),
+        // A local track's "link" would be a music.163.com URL for a song id
+        // that does not exist there.
+        show: !isLocal,
         props: { onClick: () => copySongData(data.id) },
+      },
+      {
+        key: "copyPath",
+        label: t("menu.copyPath"),
+        icon: renderIcon(LinkTwo),
+        show: isLocal,
+        props: { onClick: () => copyPlainText(data.local.uri) },
       },
     ];
 
@@ -1073,15 +1309,57 @@ const closeRightMenu = () => {
 
 // 复制歌曲链接或ID
 const copySongData = (id, url = true) => {
+  copyPlainText(url ? `https://music.163.com/#/song?id=${id}` : id);
+};
+
+// 复制任意文本（本地曲目复制的是路径，不是网易链接）
+const copyPlainText = (text) => {
   if (navigator.clipboard) {
     try {
-      navigator.clipboard.writeText(url ? `https://music.163.com/#/song?id=${id}` : id);
+      navigator.clipboard.writeText(String(text));
       $message.success(t("general.message.copySuccess"));
     } catch (err) {
       console.error(t("general.message.copyFailure"), err);
       $message.error(t("general.message.copyFailure"));
     }
   } else {
+    $message.error(t("general.message.notSupported"));
+  }
+};
+
+/**
+ * 把本地曲目加入某个本地歌单。
+ *
+ * 直接写 Rust（歌单的真源在那边），成功后刷新 store 里的缓存副本。不走
+ * `playlistMutations` 的 patch-then-reconcile：那套是为网易的读写不一致准备的，
+ * 本地写入是同步且权威的，套用只会引入本不存在的问题。
+ */
+const addToLocalPlaylist = async (playlistId, data) => {
+  const key = data?.local?.uri;
+  if (!key) return;
+  try {
+    const added = await localPlaylistAddTracks(playlistId, [key]);
+    await localLibrary.refreshPlaylists();
+    $message.success(t("local.added", { count: added }));
+  } catch (err) {
+    $message.error(String(err));
+  }
+};
+
+/**
+ * 在文件管理器中显示本地曲目。
+ *
+ * 走 opener 插件的 `revealItemInDir`，桌面独有；Android 的 SAF 文档没有可以交给
+ * 文件管理器的路径，所以那条菜单项本身就不显示。
+ */
+const revealLocalFile = async (data) => {
+  const path = data?.local?.uri;
+  if (!path) return;
+  try {
+    const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+    await revealItemInDir(path);
+  } catch (err) {
+    console.error("reveal local file failed", err);
     $message.error(t("general.message.notSupported"));
   }
 };
@@ -1143,9 +1421,27 @@ const checkCanClick = (listData, item) => {
   }
 };
 
+/**
+ * 点歌名：网易曲目去网易详情页，本地文件去本地详情页。
+ *
+ * 分派在这里而不是在 `jumpLink` 里，因为本地那条路要的是**定位符**而不是 id ——
+ * `local.uri` 才是本地曲目的身份，负数 id 只是它派生出来的一个显示用编号。
+ */
+const jumpSong = (song) => {
+  const localUri = song?.local?.uri;
+  if (localUri) {
+    router.push({ path: "/local/song", query: { key: String(localUri) } });
+    return;
+  }
+  jumpLink(song?.id, 1);
+};
+
 // 跳转链接
 const jumpLink = (id, type) => {
-  console.log(id, type);
+  // 本地曲目没有网易 id：歌曲 id 是路径哈希出来的负数，专辑 id 是 0。
+  // 两个目标页面都会照常按 id 发请求，然后停在一个空页面上。
+  const targetId = Number(id);
+  if (!Number.isFinite(targetId) || targetId <= 0) return;
   switch (type) {
     case 1:
       router.push(`/song?id=${id}`);
@@ -1454,13 +1750,13 @@ const jumpLink = (id, type) => {
     var(--content-panel-bg, #fff) 82%,
     var(--main-color) 18%
   );
+  --data-list-menu-blur: blur(26px) saturate(180%);
   padding: 6px;
   overflow: visible;
   border: 1px solid var(--data-list-menu-border);
   border-radius: var(--radius-panel);
-  background-color: var(--data-list-menu-bg);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
-  backdrop-filter: blur(26px) saturate(180%);
+  // 底色与毛玻璃都由 ::before 垫层提供，盒子自己必须保持无 filter —— 原因见下。
+  background-color: transparent;
   box-shadow:
     0 18px 46px rgb(0 0 0 / 14%),
     inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
@@ -1469,6 +1765,45 @@ const jumpLink = (id, type) => {
   max-width: min(248px, calc(100vw - 20px));
   max-height: min(420px, calc(100vh - 20px));
   max-height: min(420px, calc(100dvh - 20px));
+}
+
+// 二级菜单是**一级菜单那个 div 的后代**，不是它的兄弟：naive-ui 的 DropdownOption 把
+// 子菜单的 VFollower `to` 指向 `popoverBody`，也就是上一级 .n-dropdown-menu 本身
+// （`scrollable` 为假时干脆不 teleport，落在 option 里，同样是后代）。
+//
+// 而带 backdrop-filter 的元素会成为 backdrop root：后代的 backdrop-filter 只能采样这一
+// 组内部，组外的页面内容它看不到。于是二级菜单的模糊采到一片空白，只剩平涂底色 ——
+// 「二级没有对下层的模糊」就是这个。App.vue 里以 opacity 的形式记过同一个坑。
+//
+// 所以一级的毛玻璃挪到 ::before 垫层上：盒子本身不带 filter 就不是 backdrop root，
+// 二级才采得到页面。垫层 z-index:-1，压在边框、内阴影和选项之下。
+// 伪元素必须写在 :global() **里面**：`:global(x)::before` 的尾部会被 SFC 的 scoped
+// 变换吃掉，声明直接落到元素本身上（实测二级菜单会整个 display:none）。
+:global(.data-list-context-dropdown.n-dropdown-menu::before) {
+  content: "";
+  position: absolute;
+  // 撑到 border box。边框是半透明的，垫层只盖 padding box 会沿着四边留一圈没模糊的缝。
+  inset: -1px;
+  z-index: -1;
+  border-radius: calc(var(--radius-panel) + 1px);
+  background-color: var(--data-list-menu-bg);
+  -webkit-backdrop-filter: var(--data-list-menu-blur);
+  backdrop-filter: var(--data-list-menu-blur);
+  pointer-events: none;
+}
+
+// 二级反过来，挂在元素自己身上而不是垫层上。祖先已经不再是 backdrop root，它直接就能
+// 采到页面；而 hover 展开动画（naive-ui 的 fade-in-scale-up）animate 的正是这个元素的
+// opacity —— opacity 只隔离**后代**的 backdrop-filter，不隔离元素自身的，所以挂元素上
+// 动画全程都是真模糊，挂垫层上则要等动画结束那一刻才「啪」地出现。
+:global(.data-list-context-dropdown .data-list-context-dropdown.n-dropdown-menu) {
+  background-color: var(--data-list-menu-bg);
+  -webkit-backdrop-filter: var(--data-list-menu-blur);
+  backdrop-filter: var(--data-list-menu-blur);
+}
+
+:global(.data-list-context-dropdown .data-list-context-dropdown.n-dropdown-menu::before) {
+  display: none;
 }
 
 :global(.data-list-context-dropdown.n-dropdown-menu--scrollable),
