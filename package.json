@@ -5,6 +5,7 @@
   "home": "https://gbclstudio.cn",
   "github": "https://github.com/Burial0268/GMPlayer",
   "scripts": {
+    "tauri": "node scripts/tauri.mjs",
     "build:wasm:analysis": "node scripts/build-wasm.mjs src-tauri/crates/audio-analysis",
     "build:wasm:audio-backend": "node scripts/build-wasm.mjs src-tauri/crates/audio-backend",
     "build:wasm": "pnpm build:wasm:analysis && pnpm build:wasm:audio-backend",
