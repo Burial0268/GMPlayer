@@ -531,10 +531,21 @@ impl AudioPlayer {
               }
 
               _ = output_health_check.tick() => {
+                // Taken unconditionally: the flag is a one-shot edge, and leaving
+                // it set while a named device is selected would fire a stale
+                // refresh the moment the user switches back to "system default".
+                let default_output_changed = output::take_default_output_changed();
                 let output_failed = self.output.has_failed();
                 let output_stalled = self.output_render_stalled();
                 if output_failed || output_stalled {
                   self.request_output_refresh(true, output_stalled);
+                } else if default_output_changed && self.output_selector.is_default() {
+                  // The stream is bound to a concrete endpoint (see
+                  // `output::platform::default_output_device`), so the OS moving
+                  // the default does not disturb it — this is the only prompt
+                  // notice, and the 1-3s device poll is the backstop.
+                  self.reset_output_poll_stride();
+                  self.request_output_refresh(false, false);
                 }
               }
 

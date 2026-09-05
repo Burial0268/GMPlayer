@@ -25,7 +25,41 @@ pub(super) use macos::default_output_id;
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub(super) use other::default_output_id;
 #[cfg(target_os = "windows")]
-pub(super) use windows::default_output_id;
+pub(super) use windows::{
+    apartment_note, default_output_device, default_output_id, ensure_audio_apartment,
+    take_default_output_changed,
+};
+
+/// COM apartments are a Windows-only concern — see
+/// `windows::ensure_audio_apartment` for what depends on it there. Every other
+/// host talks to its audio API from whatever thread calls it.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn ensure_audio_apartment() {}
+
+#[cfg(not(target_os = "windows"))]
+pub(super) fn apartment_note() -> String {
+    String::new()
+}
+
+/// Let CPAL resolve the default device everywhere except Windows. No other host
+/// reaches it through an activation API that can fail the way WASAPI's does, and
+/// the one that reroutes a live stream when the server default moves
+/// (PulseAudio) is better off keeping the alias it resolves server-side — see
+/// `resolved_default_output_id` below.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn default_output_device(host: &cpal::Host) -> Option<cpal::Device> {
+    use cpal::traits::HostTrait;
+
+    host.default_output_device()
+}
+
+/// Only Windows pushes default-device changes to this crate (see
+/// `windows::take_default_output_changed`); everywhere else the periodic device
+/// probe is the signal, and `poll_output_device_tick` already owns it.
+#[cfg(not(target_os = "windows"))]
+pub(super) fn take_default_output_changed() -> bool {
+    false
+}
 
 /// Accept a CPAL device id as the identity of the *system default* output only
 /// when it names the device the default actually resolves to.

@@ -393,6 +393,9 @@ pub fn open_output(
     let stream_thread = thread::Builder::new()
         .name("audio-output".into())
         .spawn(move || {
+            // Before CPAL touches COM on this thread: the stream, and the device
+            // activation that precedes it, must run in the apartment we chose.
+            platform::ensure_audio_apartment();
             let result = open_output_stream(
                 stream_selector,
                 target,
@@ -466,9 +469,66 @@ fn join_output_thread_async(handle: thread::JoinHandle<()>) {
         });
 }
 
+/// Runs one device probe / stream open on a thread whose COM apartment this
+/// crate owns.
+///
+/// On Windows the apartment a WASAPI call lands in is decided by whoever
+/// initialised COM on that thread first (see
+/// `platform::ensure_audio_apartment`), which is reason enough not to let device
+/// work ride on Tokio's blocking pool: those threads are handed to any other
+/// blocking task, they come and go on an idle timeout, and pinning them to the
+/// MTA would change the apartment under whatever runs there next. One thread,
+/// created here, initialised once and parked for the life of the process, keeps
+/// that policy ours — and keeps a live MTA in the process, which is where
+/// Windows completes `ActivateAudioInterfaceAsync`. Only one refresh is ever in
+/// flight (`output_refresh_pending`), so a single worker costs no concurrency.
+#[cfg(target_os = "windows")]
+pub(crate) fn spawn_device_task(task: impl FnOnce() + Send + 'static) {
+    type DeviceTask = Box<dyn FnOnce() + Send + 'static>;
+    static DEVICE_TASKS: std::sync::OnceLock<Option<mpsc::Sender<DeviceTask>>> =
+        std::sync::OnceLock::new();
+
+    let sender = DEVICE_TASKS.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<DeviceTask>();
+        thread::Builder::new()
+            .name("audio-device".into())
+            .spawn(move || {
+                platform::ensure_audio_apartment();
+                while let Ok(task) = rx.recv() {
+                    // CPAL panics on COM failures it did not expect; that must not
+                    // retire the only thread device work can run on.
+                    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || task()));
+                }
+            })
+            .map_err(|e| warn!("音频设备线程创建失败，回退到阻塞线程池：{e}"))
+            .ok()
+            .map(|_| tx)
+    });
+
+    match sender {
+        Some(sender) => {
+            if let Err(mpsc::SendError(task)) = sender.send(Box::new(task)) {
+                warn!("音频设备线程已退出，回退到阻塞线程池");
+                tokio::task::spawn_blocking(task);
+            }
+        }
+        None => {
+            tokio::task::spawn_blocking(task);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn spawn_device_task(task: impl FnOnce() + Send + 'static) {
+    tokio::task::spawn_blocking(task);
+}
+
 pub fn selected_output_device_key(
     selector: &OutputDeviceSelector,
 ) -> Result<OutputDeviceKey, String> {
+    // Every probe funnels through here, `spawn_device_task` or not, so this is
+    // the choke point that keeps the apartment policy true for all of them.
+    platform::ensure_audio_apartment();
     with_output_probe_host(|host| {
         let device = resolve_output_device(host, selector)?;
         let (device_key, _) = output_device_key_and_config(host, &device, selector.is_default());
@@ -481,6 +541,17 @@ pub fn refreshed_output_device_key(
 ) -> Result<OutputDeviceKey, String> {
     refresh_output_probe_host();
     selected_output_device_key(selector)
+}
+
+/// True at most once per observed move of the system default output.
+///
+/// Where the platform can say so (Windows, see
+/// `platform::take_default_output_changed`) this is the prompt signal that the
+/// default moved out from under a stream bound to a concrete device — nothing
+/// invalidates such a stream, so without it the periodic probe would be the only
+/// notice. Everywhere else it is always `false` and the probe is the whole story.
+pub fn take_default_output_changed() -> bool {
+    platform::take_default_output_changed()
 }
 
 #[cfg(any(
@@ -550,8 +621,7 @@ fn resolve_output_device(
     selector: &OutputDeviceSelector,
 ) -> Result<cpal::Device, String> {
     match selector {
-        OutputDeviceSelector::Default => host
-            .default_output_device()
+        OutputDeviceSelector::Default => platform::default_output_device(host)
             .ok_or_else(|| "no default output device".to_string()),
         OutputDeviceSelector::Named(name) => find_output_device_by_name(host, name),
     }
@@ -593,7 +663,10 @@ fn output_device_key_and_config(
     let default_config = match device.default_output_config() {
         Ok(config) => Some(config),
         Err(e) => {
-            warn!("default_output_config 失败 (device={device_name}): {e:?}");
+            warn!(
+                "default_output_config 失败 (device={device_name}{}): {e:?}",
+                platform::apartment_note()
+            );
             None
         }
     };

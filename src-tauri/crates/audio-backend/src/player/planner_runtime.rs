@@ -12,6 +12,7 @@
 
 use tracing::{info, warn};
 
+use crate::error::AudioError;
 use crate::types::{
     AudioThreadEvent, NativeManifestEntry, NativePlannerPlaybackState, NativePlannerStatus,
     NativePlaybackManifest, NativeResolverConfig, SongData,
@@ -26,6 +27,20 @@ use super::{AudioPlayer, PlaybackIntent};
 /// briefly unavailable". Only permanent failures blacklist a position; a
 /// transient one must stay retryable or a passing network blip would silently
 /// remove tracks from the rotation.
+///
+/// `OutputUnavailable` is neither: the audio output could not be opened, so the
+/// source was never reached. It has to be told apart from a dead track, because
+/// the advance loop walks on after a track failure — and with no output every
+/// candidate fails at the same step, which would blacklist the manifest one
+/// track per attempt over a device the user merely switched.
+enum PlannedStart {
+    /// The track is playing.
+    Started,
+    /// This source will not play. The position is blacklisted; keep walking.
+    TrackFailed,
+    /// There is no audio output. Nothing about the planner changed.
+    OutputUnavailable,
+}
 
 /// Which way a planner-driven transition walks the traversal order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -358,14 +373,21 @@ impl AudioPlayer {
                 }
             };
 
-            if self.start_planned_track(&next, source.uri, direction).await {
-                return true;
-            }
-            // The track resolved but would not start (decoder error, dead CDN
-            // link). `start_planned_track` has already recorded the failure;
-            // keep walking so a frozen frontend still gets a playing track.
-            if self.planner.is_exhausted() {
-                return false;
+            match self.start_planned_track(&next, source.uri, direction).await {
+                PlannedStart::Started => return true,
+                // The output is gone, not the track. Every remaining candidate
+                // would fail at the same step, so walking on would blacklist the
+                // manifest one track per attempt for a fault the sources have
+                // nothing to do with.
+                PlannedStart::OutputUnavailable => return false,
+                // The track resolved but would not start (decoder error, dead CDN
+                // link). `start_planned_track` has already recorded the failure;
+                // keep walking so a frozen frontend still gets a playing track.
+                PlannedStart::TrackFailed => {
+                    if self.planner.is_exhausted() {
+                        return false;
+                    }
+                }
             }
         }
 
@@ -390,7 +412,7 @@ impl AudioPlayer {
         track: &PlannedTrack,
         uri: String,
         direction: PlannerDirection,
-    ) -> bool {
+    ) -> PlannedStart {
         // Carry the manifest's own metadata into the load. This is the
         // WebView-is-dead path — nothing else is going to tell us what this
         // track is called, and without it the media session would fall back to
@@ -439,10 +461,18 @@ impl AudioPlayer {
                 // Immediately begin preparing the following track so the next
                 // hand-off has a warm source.
                 self.prefetch_next_source();
-                true
+                PlannedStart::Started
             }
             Err(err) => {
                 warn!("planner advance failed to start playback: {err:?}");
+                if let Some(AudioError::Output(_)) = err.downcast_ref::<AudioError>() {
+                    // The device was switched or lost; the source itself was
+                    // never reached. `start_playing_song` has already reported
+                    // the load failure and cleared the buffering flag, so leave
+                    // the planner exactly as it is — this track must stay
+                    // playable once there is an output again.
+                    return PlannedStart::OutputUnavailable;
+                }
                 let resolve_err = ResolveError {
                     kind: ResolveErrorKind::Unavailable,
                     message: source_resolver::redact(&err.to_string()),
@@ -456,7 +486,7 @@ impl AudioPlayer {
                     self.emit_planner_exhausted(&resolve_err).await;
                 }
                 self.emit_planner_status().await;
-                false
+                PlannedStart::TrackFailed
             }
         }
     }

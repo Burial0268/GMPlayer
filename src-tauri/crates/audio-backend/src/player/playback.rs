@@ -321,7 +321,26 @@ impl AudioPlayer {
             }
         };
 
-        let _output_reopened = self.ensure_output_for_source(&audio_info)?;
+        // An output that will not open is the one failure here that says nothing
+        // about the track, and it used to be the one that reported nothing at
+        // all: a bare `?` left the frontend's load promise unresolved, so a
+        // device switch that broke the probe showed as a track stuck loading
+        // forever. It has to look like every other load failure from the outside.
+        let _output_reopened = match self.ensure_output_for_source(&audio_info) {
+            Ok(reopened) => reopened,
+            Err(e) => {
+                warn!("打开音频输出失败: {e:?}");
+                let _ = self
+                    .emitter()
+                    .emit(AudioThreadEvent::LoadError {
+                        music_id: music_id.clone(),
+                        load_request_id,
+                        error: e.to_string(),
+                    })
+                    .await;
+                return Err(e);
+            }
+        };
         self.output.writer().set_volume(self.volume as f32);
         // Keep the device callback silent until the decoder/mixer has filled
         // the output queue; otherwise Android can underrun before the first PCM block arrives.

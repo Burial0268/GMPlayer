@@ -79,13 +79,31 @@ cpal = { version = "0.18", features = ["pulseaudio", "realtime"] }
 [target.'cfg(target_os = "android")'.dependencies]
 cpal = "0.18"
 
+# COM/WASAPI for `output/platform/windows.rs`: the output-device identity, the
+# apartment policy, and the default-device watch. Deliberately the same major
+# CPAL 0.18 builds, so both halves of the WASAPI code in this process speak one
+# set of generated bindings and this declaration unifies into a copy that is
+# already compiled. `PROPERTYKEY` moved into `Win32_Foundation`, so no extra
+# feature is required.
 [target.'cfg(all(not(target_arch = "wasm32"), target_os = "windows"))'.dependencies.windows]
-version = "0.54"
+version = "0.62"
 features = [
   "Win32_Foundation",
   "Win32_Media_Audio",
   "Win32_System_Com",
 ]
+
+# Not redundant with `windows` above, and not optional. `windows::core::implement`
+# — which the `IMMNotificationClient` on `DefaultOutputNotifier` needs — expands
+# to code that names `::windows_core` by absolute path, so the *using* crate must
+# have it as a direct dependency; `windows` re-exporting it as `windows::core`
+# does not satisfy a leading `::`. Without this the build fails with `cannot find
+# windows_core in the crate root`, which names the macro nowhere. CPAL 0.18
+# declares it in its own right for exactly the same reason, and pinning the same
+# `0.62` is what keeps both crates' `IUnknownImpl` the same sealed trait rather
+# than two incompatible copies of it.
+[target.'cfg(all(not(target_arch = "wasm32"), target_os = "windows"))'.dependencies.windows-core]
+version = "0.62"
 
 [target.'cfg(all(not(target_arch = "wasm32"), target_os = "macos"))'.dependencies]
 coreaudio-rs = { version = "0.11", default-features = false, features = [

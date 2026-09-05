@@ -283,7 +283,7 @@ impl AudioPlayer {
         let rebuild_chain = rebuild_chain && self.current_song.is_some();
         let target = output_refresh_target(self.output.config());
         let tx = self.output_refresh_tx.clone();
-        tokio::task::spawn_blocking(move || {
+        output::spawn_device_task(move || {
             let opened_event =
                 |output: LowLatencyOutput| match output::refreshed_output_device_key(&selector) {
                     Ok(selected_device) if selected_device == output.device().clone() => {
