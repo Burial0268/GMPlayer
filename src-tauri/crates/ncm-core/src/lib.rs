@@ -170,9 +170,14 @@ impl NcmCore {
         // Bringing the directory inside its bounds walks it, so it happens off
         // the startup path. Nothing waits on it: an over-budget cache is only
         // over budget, not wrong.
+        //
+        // `spawn_blocking`, not `spawn`: the walk is `read_dir` plus a `metadata`
+        // and a header read per entry — hundreds of synchronous filesystem calls
+        // — and it runs at the moment the first screen is fanning a dozen
+        // requests out, so an async worker is the one thing it must not sit on.
         {
             let cache = cache.clone();
-            tokio::spawn(async move { cache.prune_disk() });
+            tokio::task::spawn_blocking(move || cache.prune_disk());
         }
 
         let http = Arc::new(http::HttpClient::new());
@@ -332,9 +337,46 @@ impl NcmCore {
     /// The order matters: the cache is free, batching is the biggest win when it
     /// applies, and coalescing catches what is left.
     pub async fn call(&self, endpoint: &str, query_json: &str) -> Result<String, NcmError> {
+        self.call_in_full(endpoint, query_json, false).await
+    }
+
+    /// [`Self::call`], but never answered from a response already held.
+    ///
+    /// For the one thing a cache cannot serve: *"has the account accepted the
+    /// write I just made?"*. [`crate::cache::ResponseCache::invalidate_for`] drops
+    /// what a write disturbs, so an ordinary `call` after a write is usually right
+    /// — but "usually" is the wrong standard for a reconcile, and there are two
+    /// ways it is not right. A write that never passed through this isolate
+    /// invalidates nothing: the `remote` transport, the resolver's own `ureq` path,
+    /// another device, the web. And nothing invalidates an edit made elsewhere at
+    /// all, while `playlist_detail` keeps being served from a 24-hour stale window.
+    /// Both read to the user as a playlist that will not update.
+    ///
+    /// Only the *read* is skipped. The answer is stored as usual, `batch` and
+    /// `inflight` still apply — sharing a request that is already on its way is
+    /// not the same as being handed an old answer — and nothing here bypasses the
+    /// throttle. So this costs exactly one round trip, and only where a caller has
+    /// a reason to know that what it holds may be behind.
+    ///
+    /// Use it for a post-write reconcile and for re-reading a list a user has been
+    /// away from; never on a hot path, and never for metadata, which does not
+    /// change. `src/views/PlayList/PlayListView.vue` is the caller this exists for.
+    pub async fn call_fresh(&self, endpoint: &str, query_json: &str) -> Result<String, NcmError> {
+        self.call_in_full(endpoint, query_json, true).await
+    }
+
+    async fn call_in_full(
+        &self,
+        endpoint: &str,
+        query_json: &str,
+        fresh: bool,
+    ) -> Result<String, NcmError> {
         let key = self.cache.key(endpoint, query_json);
         if let Some(key) = &key {
-            match self.cache.get(key) {
+            // A fresh read takes no claim on the entry, so there is nothing to
+            // release: `get` is what hands out the stale-refresh claim, and it is
+            // exactly what is skipped here.
+            match if fresh { None } else { self.cache.get(key) } {
                 Some(cache::Hit::Fresh(body)) => return Ok(body.to_string()),
                 Some(cache::Hit::Stale(body)) => {
                     // Answer now, refresh behind. The refresh is deliberately

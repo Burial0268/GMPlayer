@@ -225,17 +225,36 @@ fn policy_for(endpoint: &str) -> Option<Policy> {
 /// caching those lists at all — which is what this crate used to do — and a
 /// heart that springs back or a playlist that reappears after deletion.
 ///
-/// Returned as the endpoint *prefixes* to drop. Coarse on purpose: dropping
-/// every `likelist` entry on a `like` costs one refetch and cannot be wrong,
-/// where matching the specific id would have to model each endpoint's parameters
-/// and would silently miss.
+/// Returned as the endpoint *names* to drop, every entry for each of them. Coarse
+/// on purpose: dropping every `likelist` entry on a `like` costs one refetch and
+/// cannot be wrong, where matching the specific id would have to model each
+/// endpoint's parameters and would silently miss. A name is matched whole, in both
+/// tiers, so `user_detail` is never caught by something naming `user_playlist`.
+///
+/// The rule for adding one: name every list the write *disturbs*, not just the
+/// obvious one. What a write changes about the account is often wider than the
+/// endpoint it went to — a `like` moves 我喜欢的音乐's rows and its count as well
+/// as the id list, and `playlist_subscribe` changes which playlists exist rather
+/// than anything inside one.
 fn invalidated_by(endpoint: &str) -> &'static [&'static str] {
     match endpoint {
         "like" => &["likelist", "playlist_track_all", "playlist_detail"],
         "playlist_tracks" | "playlist_create" | "playlist_delete" | "playlist_update"
-        | "playlist_name_update" | "playlist_tracks_update" | "playlist_cover_update" => {
-            &["user_playlist", "playlist_detail", "playlist_track_all"]
-        }
+        | "playlist_name_update" | "playlist_tracks_update" | "playlist_cover_update" => &[
+            "user_playlist",
+            "playlist_detail",
+            "playlist_track_all",
+            "user_subcount",
+        ],
+        // Collecting or un-collecting someone else's playlist changes which
+        // playlists the account *has*, so it is `user_playlist` that goes stale —
+        // and this was missing, which made the write look like it had not
+        // happened. `PlayListView.toChangeLike` calls `setUserPlayLists` the
+        // moment `/playlist/subscribe` succeeds, and that refetch was answered
+        // from a two-minute-old `user_playlist`: the sidebar did not gain the
+        // playlist and the dropdown kept offering to collect one the account had
+        // just collected. `user_subcount` feeds the same list's page size.
+        "playlist_subscribe" => &["user_playlist", "user_subcount"],
         "album_sub" => &["album_sublist"],
         "artist_sub" => &["artist_sublist"],
         // Trashing an FM track takes it out of 我喜欢的音乐 when it was in
@@ -278,7 +297,32 @@ pub(crate) struct ResponseCache {
     bytes: Mutex<usize>,
     /// `None` when there is nowhere to persist to — an isolate built without a
     /// state directory, which is how the offline tests run.
-    disk: Option<DiskCache>,
+    ///
+    /// `Arc` so a write can be handed to a blocking thread — see [`offload`].
+    disk: Option<Arc<DiskCache>>,
+}
+
+/// Run a filesystem chore nobody is waiting for on a thread that may block.
+///
+/// [`ResponseCache::put`] is reached from `NcmCore::call`, i.e. from an async
+/// worker whose actual job is driving other requests' network waits — and the
+/// chore is `fs::write` + `fs::rename` of up to [`MAX_BYTES`]. On Windows that
+/// pair goes through the AV filter driver on a *newly created* file, so it is not
+/// the microseconds the arithmetic suggests; it is the classic place a few
+/// hundred milliseconds appears from nowhere.
+///
+/// Nothing observes the result. The entry went into memory synchronously, so no
+/// reader in this process can see the difference, and a write that never lands
+/// costs one refetch after the next launch.
+///
+/// Inline when there is no runtime, which is how the unit tests below reach it.
+fn offload(chore: impl FnOnce() + Send + 'static) {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn_blocking(chore);
+        }
+        Err(_) => chore(),
+    }
 }
 
 impl ResponseCache {
@@ -287,7 +331,7 @@ impl ResponseCache {
         Self {
             entries: Mutex::new(HashMap::new()),
             bytes: Mutex::new(0),
-            disk: state_dir.and_then(DiskCache::open),
+            disk: state_dir.and_then(DiskCache::open).map(Arc::new),
         }
     }
 
@@ -311,47 +355,52 @@ impl ResponseCache {
 
     /// Drop whatever `endpoint` invalidates, if it invalidates anything.
     ///
-    /// Called after a *successful* write. Prefix-matched against the key, which
-    /// starts with the endpoint name — coarse, and deliberately so: one extra
-    /// refetch cannot be wrong, where a narrower match would have to model each
-    /// endpoint's parameters and would silently miss.
+    /// Called after a *successful* write. Matched on the whole endpoint segment of
+    /// the key — coarse in that it drops every entry for that endpoint regardless
+    /// of parameters, which cannot be wrong (one extra refetch), where a narrower
+    /// match would have to model each endpoint's parameters and would silently
+    /// miss. Both tiers are dropped, and the disk tier by endpoint rather than by
+    /// key; see the comment below for why that distinction is the whole fix.
     pub(crate) fn invalidate_for(&self, endpoint: &str) {
-        let prefixes = invalidated_by(endpoint);
-        if prefixes.is_empty() {
+        let disturbed = invalidated_by(endpoint);
+        if disturbed.is_empty() {
             return;
         }
 
         let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
         let mut bytes = self.bytes.lock().unwrap_or_else(|e| e.into_inner());
-        let mut dropped = Vec::new();
+        let mut dropped = 0usize;
         entries.retain(|key, entry| {
-            let stale = prefixes
+            // The whole endpoint segment: a key is `{endpoint}\0{query}`, so the
+            // NUL check is what keeps this from matching a longer name that merely
+            // starts the same way.
+            let stale = disturbed
                 .iter()
                 .any(|p| key.starts_with(p) && key[p.len()..].starts_with('\u{0}'));
             if stale {
                 *bytes -= entry.body.len();
-                dropped.push(key.clone());
+                dropped += 1;
             }
             !stale
         });
         drop(entries);
         drop(bytes);
 
-        // The disk tier is keyed by digest, so it cannot be scanned by prefix —
-        // only the files whose keys we just saw can be removed. An entry that is
-        // on disk but was not in memory therefore survives, bounded by its TTL.
-        // Acceptable: everything `invalidated_by` covers has a short TTL and is
-        // not persisted in the first place.
-        if let Some(disk) = &self.disk {
-            for key in &dropped {
-                disk.remove(key);
-            }
-        }
-        if !dropped.is_empty() {
+        // The disk tier is dropped by *endpoint*, not by the keys that happened
+        // to be in memory. Those are not the same set, and assuming they were is
+        // what let a write leave a stale answer on disk: an entry is evicted from
+        // memory soonest when it is largest, and the largest thing a playlist page
+        // creates is the `playlist_detail` a write has to invalidate. So a like
+        // dropped nothing, and the reconcile behind it was answered — from disk,
+        // for the rest of a 24-hour stale window — with the pre-write list.
+        let disk_dropped = match &self.disk {
+            Some(disk) => disk.remove_endpoints(disturbed),
+            None => 0,
+        };
+        if dropped > 0 || disk_dropped > 0 {
             log::debug!(
                 target: "ncm-core",
-                "{endpoint} invalidated {} cached entries",
-                dropped.len()
+                "{endpoint} invalidated {dropped} cached entries and {disk_dropped} files"
             );
         }
     }
@@ -391,6 +440,12 @@ impl ResponseCache {
 
         // Not in memory. This is the cold-start path: the process just started
         // and the answer is on disk from last time.
+        //
+        // Read inline, unlike the write in `put`: this *is* the answer the caller
+        // is blocked on, so there is nothing to overlap it with, and it happens
+        // once per key per process. Moving it to a blocking thread would mean
+        // making `get` async, which every layer in front of the cache would have
+        // to thread through for no measurable win.
         let stored = self.disk.as_ref()?.load(&key.key)?;
         let fresh = stored.expires > SystemTime::now();
         self.insert(
@@ -424,23 +479,23 @@ impl ResponseCache {
         };
 
         let now = Instant::now();
+        // One allocation, shared with the disk write below rather than copied
+        // into it — this is up to `MAX_BYTES`.
+        let body: Arc<str> = Arc::from(&*storable);
         self.insert(
             key.key.clone(),
-            Arc::from(&*storable),
+            body.clone(),
             now + key.policy.ttl,
             now + key.policy.ttl + key.policy.stale,
             false,
         );
 
         if key.policy.persist {
-            if let Some(disk) = &self.disk {
+            if let Some(disk) = self.disk.clone() {
                 let wall = SystemTime::now();
-                disk.store(
-                    &key.key,
-                    &storable,
-                    wall + key.policy.ttl,
-                    wall + key.policy.ttl + key.policy.stale,
-                );
+                let disk_key = key.key.clone();
+                let (ttl, stale) = (key.policy.ttl, key.policy.stale);
+                offload(move || disk.store(&disk_key, &body, wall + ttl, wall + ttl + stale));
             }
         }
     }
@@ -1006,6 +1061,38 @@ mod tests {
         assert!(cache.get(&detail).is_some(), "user_detail was dropped by mistake");
     }
 
+    /// The endpoint that reaches this tier through a *file*, which is the case the
+    /// naming scheme exists for. `user_playlist` is not persisted, so a purely
+    /// in-memory test cannot tell the two matchers apart.
+    #[test]
+    fn invalidation_by_endpoint_is_exact_on_disk_too() {
+        let dir = std::env::temp_dir().join("ncm-core-cache-exact-endpoint-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        {
+            let cache = ResponseCache::new(Some(&dir));
+            // `album` and `album_detail` are both persisted list/metadata classes,
+            // and one is a prefix of the other. Only `album_sublist` is invalidated
+            // by `album_sub`, so neither may go.
+            cache.put(cache.key("album", r#"{"id":1}"#).unwrap(), &envelope("1"));
+            cache.put(cache.key("album_detail", r#"{"id":1}"#).unwrap(), &envelope("2"));
+        }
+        {
+            let cache = ResponseCache::new(Some(&dir));
+            cache.invalidate_for("album_sub");
+            assert!(
+                cache.get(&cache.key("album", r#"{"id":1}"#).unwrap()).is_some(),
+                "album was dropped by an unrelated write"
+            );
+            assert!(
+                cache.get(&cache.key("album_detail", r#"{"id":1}"#).unwrap()).is_some(),
+                "album_detail was dropped by an unrelated write"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn the_byte_bound_holds() {
         let cache = cache();
@@ -1061,6 +1148,87 @@ mod tests {
             }
             // ...and it was promoted, so the next reader does not touch the disk.
             assert_eq!(cache.entries.lock().unwrap().len(), 1);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The disk write is handed to a blocking thread when there is a runtime to
+    /// hand it to (see [`offload`]), which is how it runs in the app and *not*
+    /// how the test above runs it. So assert the deferred path lands too — a
+    /// silently dropped write reads as "the cold start is slow again", with
+    /// nothing failing.
+    #[test]
+    fn a_write_from_inside_a_runtime_still_reaches_the_disk() {
+        let dir = std::env::temp_dir().join("ncm-core-cache-offload-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let body = envelope(r#"{"code":200,"songs":[{"id":7}]}"#);
+        {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .expect("runtime");
+            let cache = ResponseCache::new(Some(&dir));
+            runtime.block_on(async {
+                cache.put(cache.key("song_detail", r#"{"ids":"7"}"#).unwrap(), &body);
+            });
+            // Dropping the runtime waits for its blocking pool, which is the
+            // only synchronisation point this side has — and wanting one is
+            // exactly why nothing in the app reads the file back.
+            drop(runtime);
+        }
+        {
+            let cache = ResponseCache::new(Some(&dir));
+            let key = cache.key("song_detail", r#"{"ids":"7"}"#).unwrap();
+            match cache.get(&key) {
+                Some(Hit::Fresh(held)) => assert_eq!(&*held, body.as_str()),
+                other => panic!("the offloaded write never landed: {:?}", body_of(other)),
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The half of invalidation that was missing, and the one that actually
+    /// showed: a write has to drop the disk copy of an entry this process never
+    /// held in memory.
+    ///
+    /// That is the normal case rather than an edge one. `playlist_detail` is the
+    /// largest response the app makes and sits in the shortest-stale class, so
+    /// hydrating a playlist evicts it from memory to make room for the
+    /// `song_detail` chunks that hydrating produced — and then the like that
+    /// follows found nothing to drop. The reconcile behind it was answered from
+    /// disk with the pre-write list, which reads as a playlist that will not
+    /// update.
+    #[test]
+    fn a_write_invalidates_the_disk_copy_it_never_held() {
+        let dir = std::env::temp_dir().join("ncm-core-cache-invalidate-disk-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let query = r#"{"id":3778678}"#;
+        {
+            // "Last launch", or simply an entry memory has since evicted.
+            let cache = ResponseCache::new(Some(&dir));
+            cache.put(cache.key("playlist_detail", query).unwrap(), &envelope("1"));
+            cache.put(cache.key("song_detail", r#"{"ids":"1"}"#).unwrap(), &envelope("2"));
+        }
+        {
+            let cache = ResponseCache::new(Some(&dir));
+            assert!(cache.entries.lock().unwrap().is_empty(), "nothing in memory");
+
+            cache.invalidate_for("like");
+
+            assert!(
+                cache.get(&cache.key("playlist_detail", query).unwrap()).is_none(),
+                "the pre-write playlist survived on disk"
+            );
+            // A like does not change a song's metadata, so that file stays — the
+            // whole point of the disk tier is not throwing away what is still
+            // true.
+            assert!(
+                cache.get(&cache.key("song_detail", r#"{"ids":"1"}"#).unwrap()).is_some(),
+                "an unrelated endpoint was dropped from disk"
+            );
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

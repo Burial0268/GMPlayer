@@ -20,6 +20,29 @@
 //! against a cache bounded to [`MAX_ENTRIES`] files that is not a risk worth
 //! spending bytes on.
 //!
+//! ## The endpoint is in the filename, and that is what makes invalidation work
+//!
+//! `{endpoint}~{digest}`. The endpoint name is not a secret — the query is what
+//! carries the cookie, and that stays inside the digest — and having it in the
+//! name is the only way [`crate::cache::ResponseCache::invalidate_for`] can drop
+//! this tier at all: a digest cannot be scanned by prefix, so a write used to
+//! remove only the files whose keys happened to still be *in memory*.
+//!
+//! That gap was not theoretical, and `playlist_detail` fell straight into it. It
+//! is in the list policy class, so it has the soonest stale bound of anything a
+//! playlist page creates (24 h against `song_detail`'s 7 d) and the memory tier
+//! sheds it first; it is also the largest single response the app makes, while
+//! hydrating one big playlist writes eleven `song_detail` chunks of ~2 MB — so the
+//! byte budget is reached, and the entry evicted to make room is exactly the one a
+//! write has to invalidate. A like or an add after that dropped nothing on disk,
+//! and the frontend's post-write reconcile was answered with the pre-write list
+//! for the rest of the entry's stale window. See
+//! `src/views/PlayList/PlayListView.vue`'s `reconcileQuietly`.
+//!
+//! Matching is on the whole segment before the separator, so it is exact rather
+//! than a prefix — `user_playlist` is not caught by anything invalidating
+//! `user_detail`.
+//!
 //! ## What is written
 //!
 //! Only what [`crate::cache`] already decided is cacheable, minus the
@@ -58,6 +81,12 @@ const MAX_ENTRY_BYTES: usize = 4 * 1024 * 1024;
 
 const MAGIC: &str = "NCMC1";
 
+/// Separates the endpoint name from the digest in a filename.
+///
+/// Not a character any endpoint name contains (they are `[a-z0-9_]`), and legal
+/// on every filesystem we target.
+const NAME_SEP: char = '~';
+
 pub(crate) struct DiskCache {
     dir: PathBuf,
 }
@@ -85,10 +114,18 @@ impl DiskCache {
         Some(Self { dir })
     }
 
-    /// Where `key` lives. The key itself is not recoverable from this.
+    /// Where `key` lives. The query — and with it the cookie — is not
+    /// recoverable from this; the endpoint name deliberately is.
+    ///
+    /// `{endpoint}~{digest}`. See the module docs: the digest alone cannot be
+    /// scanned, so without the endpoint in the name a write could not invalidate
+    /// this tier except by luck.
     fn path_for(&self, key: &str) -> PathBuf {
         let digest = Sha256::digest(key.as_bytes());
-        let mut name = String::with_capacity(32);
+        let endpoint = file_safe(endpoint_of(key));
+        let mut name = String::with_capacity(endpoint.len() + 33);
+        name.push_str(&endpoint);
+        name.push(NAME_SEP);
         for byte in &digest[..16] {
             name.push_str(&format!("{byte:02x}"));
         }
@@ -148,9 +185,48 @@ impl DiskCache {
         }
     }
 
-    /// Drop one entry, for [`crate::cache::ResponseCache::invalidate_for`].
-    pub(crate) fn remove(&self, key: &str) {
-        let _ = fs::remove_file(self.path_for(key));
+    /// Drop every entry belonging to any of `endpoints`, for
+    /// [`crate::cache::ResponseCache::invalidate_for`].
+    ///
+    /// By endpoint rather than by key, and that is the whole point. Removing by
+    /// key is all a digest-named file allows, so `invalidate_for` could only ever
+    /// reach the files whose keys were still in the memory tier — and the entries
+    /// most worth invalidating are exactly the ones memory evicts first, because
+    /// they are the largest. `playlist_detail` at a couple of megabytes is the case
+    /// that showed: a like or an add dropped nothing on disk, and the reconcile
+    /// that followed was answered with the pre-write list.
+    ///
+    /// Costs one directory listing and a string compare per file — no reads, no
+    /// header parses — against a directory bounded to [`MAX_ENTRIES`]. It runs on
+    /// a write, so a few hundred iterations are not worth avoiding.
+    ///
+    /// Returns how many files went, for the caller's log.
+    pub(crate) fn remove_endpoints(&self, endpoints: &[&str]) -> usize {
+        if endpoints.is_empty() {
+            return 0;
+        }
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return 0;
+        };
+        let wanted: Vec<String> = endpoints.iter().map(|e| file_safe(e)).collect();
+        let mut dropped = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            // Whole segment, not a prefix: `user_playlist` must not be caught by
+            // an invalidation naming `user_detail`, and the memory tier's own
+            // matching is equally exact.
+            let Some((endpoint, _)) = name.split_once(NAME_SEP) else {
+                continue;
+            };
+            if !wanted.iter().any(|w| w == endpoint) {
+                continue;
+            }
+            if fs::remove_file(entry.path()).is_ok() {
+                dropped += 1;
+            }
+        }
+        dropped
     }
 
     /// Drop what is no longer worth keeping: entries past even their stale
@@ -175,6 +251,19 @@ impl DiskCache {
             }
             // Leftover from an interrupted write.
             if path.extension().is_some_and(|e| e == "tmp") {
+                let _ = fs::remove_file(&path);
+                continue;
+            }
+            // Not in `{endpoint}~{digest}` form: either a file from the earlier
+            // digest-only scheme, which nothing can look up any more, or
+            // something that is not ours at all. Both would otherwise sit here
+            // counting against the budget until their stale bound passed — up to
+            // a week for the metadata classes.
+            if !entry
+                .file_name()
+                .to_str()
+                .is_some_and(|n| n.contains(NAME_SEP))
+            {
                 let _ = fs::remove_file(&path);
                 continue;
             }
@@ -220,6 +309,41 @@ fn unix(t: SystemTime) -> u64 {
     t.duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// The endpoint half of a cache key.
+///
+/// Keys are `{endpoint}\0{canonical_query}` (see `cache::ResponseCache::key`), and
+/// only the query side carries the cookie — so this is the part that may be
+/// written in the clear.
+fn endpoint_of(key: &str) -> &str {
+    key.split('\u{0}').next().unwrap_or(key)
+}
+
+/// An endpoint name reduced to something that is certainly a single filename
+/// component.
+///
+/// Defence in depth rather than a live concern: `path_for` is only ever reached
+/// through a `CacheKey`, and `cache::policy_for` is an allowlist of ~40 literal
+/// names, all `[a-z0-9_]`. But this builds a path out of a string the frontend
+/// chose, so it should not be *this* function that has to be read carefully to
+/// rule out a `../`. Anything outside the expected alphabet becomes `_`, and the
+/// result is bounded so a long name cannot push the digest past a filesystem's
+/// component limit.
+fn file_safe(endpoint: &str) -> String {
+    const MAX: usize = 48;
+    let mut out = String::with_capacity(endpoint.len().min(MAX));
+    for ch in endpoint.chars().take(MAX) {
+        out.push(match ch {
+            'a'..='z' | '0'..='9' | '_' => ch,
+            'A'..='Z' => ch.to_ascii_lowercase(),
+            _ => '_',
+        });
+    }
+    if out.is_empty() {
+        out.push('_');
+    }
+    out
 }
 
 fn from_unix(secs: u64) -> SystemTime {
@@ -325,18 +449,26 @@ mod tests {
 
     /// The property that lets this exist at all: nothing recoverable as a
     /// credential is written, but two cookies still land apart.
+    ///
+    /// The endpoint name *is* in the filename, deliberately — see the module docs
+    /// — so what this pins is that the boundary falls in the right place: the
+    /// query side of the key, which is the side carrying the cookie, stays inside
+    /// the digest.
     #[test]
-    fn the_key_is_not_recoverable_from_disk() {
+    fn the_query_is_not_recoverable_from_disk() {
         let scratch = Scratch::new("nokey");
         let disk = DiskCache::open(&scratch.0).unwrap();
         let key = "user_detail\u{0}cookie\u{1}\"MUSIC_U=deadbeefsecret\"\u{2}";
         disk.store(&key, &envelope("1"), ahead(60), ahead(600));
 
         let path = disk.path_for(&key);
-        // The filename is a digest, not the key.
         let name = path.file_name().unwrap().to_str().unwrap();
-        assert_eq!(name.len(), 32);
-        assert!(name.chars().all(|c| c.is_ascii_hexdigit()));
+        // `{endpoint}~{digest}`, and nothing past the separator is anything but
+        // the digest.
+        let (endpoint, digest) = name.split_once(NAME_SEP).expect("named by endpoint");
+        assert_eq!(endpoint, "user_detail");
+        assert_eq!(digest.len(), 32);
+        assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
         assert!(!name.contains("MUSIC_U"));
 
         // ...and the contents carry the body only.
@@ -430,5 +562,73 @@ mod tests {
         let stored = disk.load("k").unwrap();
         assert_eq!(&*stored.body, envelope(r#"{"v":2}"#).as_str());
         assert!(!disk.dir.join("k.tmp").exists());
+    }
+
+    /// What the memory tier cannot do for us. A write invalidates by endpoint,
+    /// and the entries that most need dropping are the ones memory evicted
+    /// first — so this has to work without ever having seen the key.
+    #[test]
+    fn an_endpoints_files_go_without_their_keys() {
+        let scratch = Scratch::new("byendpoint");
+        let disk = DiskCache::open(&scratch.0).unwrap();
+
+        // Two accounts' worth of the same endpoint, plus two neighbours that must
+        // survive: one unrelated, one whose name merely starts the same way.
+        let a = "playlist_detail\u{0}id\u{1}1\u{2}cookie\u{1}\"MUSIC_U=aaa\"\u{2}";
+        let b = "playlist_detail\u{0}id\u{1}2\u{2}cookie\u{1}\"MUSIC_U=bbb\"\u{2}";
+        let song = "song_detail\u{0}ids\u{1}\"1\"\u{2}";
+        let user = "user_playlist\u{0}uid\u{1}1\u{2}";
+        for key in [a, b, song, user] {
+            disk.store(key, &envelope("1"), ahead(60), ahead(600));
+        }
+
+        assert_eq!(
+            disk.remove_endpoints(&["playlist_detail", "user_playlist"]),
+            3
+        );
+        assert!(disk.load(a).is_none(), "a like left the playlist on disk");
+        assert!(disk.load(b).is_none(), "another account's copy survived");
+        assert!(disk.load(user).is_none());
+        assert!(
+            disk.load(song).is_some(),
+            "an unrelated endpoint was dropped"
+        );
+    }
+
+    /// Prefix-matching here would drop things a write did not touch — the memory
+    /// tier's own matching is exact for the same reason.
+    #[test]
+    fn invalidation_matches_the_whole_endpoint_name() {
+        let scratch = Scratch::new("wholename");
+        let disk = DiskCache::open(&scratch.0).unwrap();
+        let detail = "user_detail\u{0}uid\u{1}1\u{2}";
+        disk.store(detail, &envelope("1"), ahead(60), ahead(600));
+
+        // `user_playlist` is what a playlist write invalidates; `user_detail`
+        // shares its first five characters and must not be caught by it.
+        assert_eq!(disk.remove_endpoints(&["user_playlist"]), 0);
+        assert!(
+            disk.load(detail).is_some(),
+            "user_detail was dropped by mistake"
+        );
+    }
+
+    /// Files from the digest-only naming are unreachable — nothing can look one
+    /// up, and nothing can invalidate one — so pruning has to collect them rather
+    /// than let them hold up to a week of the budget.
+    #[test]
+    fn pruning_drops_files_from_the_old_naming() {
+        let scratch = Scratch::new("legacy");
+        let disk = DiskCache::open(&scratch.0).unwrap();
+        let legacy = disk.dir.join("0123456789abcdef0123456789abcdef");
+        let mut out = format!("{MAGIC} {} {}\n", unix(ahead(60)), unix(ahead(600)));
+        out.push_str(&envelope("1"));
+        fs::write(&legacy, out).unwrap();
+        disk.store("k", &envelope("2"), ahead(60), ahead(600));
+
+        disk.prune();
+
+        assert!(!legacy.exists(), "an unreachable file was kept");
+        assert!(disk.path_for("k").exists(), "a live entry was dropped");
     }
 }
