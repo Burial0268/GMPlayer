@@ -405,6 +405,49 @@ async fn login_qr_key_issues_a_unikey() {
     assert!(unikey.len() > 8, "implausible unikey: {unikey}");
 }
 
+/// `scrobble_v1` against the real upload endpoint.
+///
+/// The offline half of this lives in the crate's own tests
+/// (`the_ncbl_upload_behind_scrobble_v1_builds_and_is_sent`), which stubs the
+/// host op and asserts on the bytes. What only this can answer is whether
+/// Netease *accepts* them — in particular that the NCBL body may be gzip, since
+/// the shim has no `zstdCompressSync` and `util/ncbl.js` therefore takes its own
+/// fallback, and the header carries no compression flag for the server to read.
+///
+/// Needs a cookie in `NCM_TEST_COOKIE` containing `MUSIC_U`. Unlike every other
+/// test here it **writes**: with a valid token, a run that succeeds puts a real
+/// play record on that account.
+#[tokio::test]
+#[ignore = "hits music.163.com and reports a play on the account in NCM_TEST_COOKIE"]
+async fn ncbl_scrobble_v1_reports_a_listen() {
+    let Ok(cookie) = std::env::var("NCM_TEST_COOKIE") else {
+        println!("skipped: set NCM_TEST_COOKIE to a cookie string containing MUSIC_U");
+        return;
+    };
+
+    let core = core().await;
+    let query = serde_json::json!({
+        "id": "347230",
+        "time": 30,
+        "total": 268,
+        "name": "反方向的钟",
+        "artist": "周杰伦",
+        "cookie": cookie,
+    })
+    .to_string();
+    let out = parse(&core.call("scrobble_v1", &query).await.unwrap());
+    println!("scrobble_v1 → {}", out["body"]);
+
+    // Asserted ahead of the code so a regression in the shim surface reports as
+    // itself rather than as "the upload was refused".
+    let msg = out["body"]["msg"].as_str().unwrap_or_default();
+    assert!(
+        !msg.contains("not a function"),
+        "the NCBL envelope hit a shim method that does not exist: {msg}"
+    );
+    assert_eq!(out["body"]["code"], 200, "scrobble_v1 failed: {}", out["body"]);
+}
+
 /// Concurrency is the reason the HTTP op is async rather than blocking.
 ///
 /// A page load fans out a dozen endpoint calls. With a blocking client one

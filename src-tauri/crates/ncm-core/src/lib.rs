@@ -882,6 +882,178 @@ mod tests {
         );
     }
 
+    /// `util/ncbl.js` — the NCBL log envelope behind `scrobble_v1` — is the only
+    /// thing in the package that reads or writes little-endian integers, and it
+    /// reaches them on the first two lines of `encryptNCBL`. The shim carried
+    /// only the big-endian pair, so every `scrobble_v1` call answered
+    /// `502 {"msg":"请求异常: not a function"}`: QuickJS's message for invoking a
+    /// non-callable, which names neither `readUInt32LE` nor the file it is in,
+    /// and which the endpoint's own `catch` then reported as a transport
+    /// failure.
+    ///
+    /// Byte order is pinned against literal hex rather than round-tripped
+    /// through the pair. A read and a write that are consistently wrong
+    /// round-trip perfectly and still build a ChaCha20 keystream Netease
+    /// rejects — with a `code: 200` on the upload, since the server only reports
+    /// which files it accepted.
+    #[tokio::test]
+    async fn buffer_shim_carries_the_little_endian_accessors_ncbl_needs() {
+        let core = NcmCore::offline().await.expect("isolate");
+
+        // Low byte first, and the return is the next offset, as Node's are.
+        assert_eq!(
+            eval(
+                &core,
+                r#"(()=>{const b=Buffer.alloc(8);const a=b.writeUInt32LE(0x01020304,0);const c=b.writeUInt16LE(0x0506,4);return `${b.toString("hex")} ${a} ${c}`})()"#
+            )
+            .await,
+            "0403020106050000 4 6"
+        );
+
+        // Reads are unsigned. `chachaBlock` feeds them straight into a
+        // `Uint32Array`, so a signed `0xffffffff` would survive as -1 there and
+        // only diverge once it was added to another word.
+        assert_eq!(
+            eval(
+                &core,
+                r#"(()=>{const h=Buffer.from("ffffffff0102","hex");return `${h.readUInt32LE(0)} ${h.readUInt16LE(4)}`})()"#
+            )
+            .await,
+            "4294967295 513"
+        );
+
+        // The nonce is `uuid.subarray(0, 12)` and a frame is
+        // `compressed.subarray(off, off + maxFrame)` — both views. The accessors
+        // must index through the view; a `DataView` over `this.buffer` would
+        // read from the wrong place for any non-zero `byteOffset`.
+        assert_eq!(
+            eval(
+                &core,
+                r#"(()=>{const b=Buffer.from("00000000aabbccdd","hex").subarray(4);return String(b.readUInt32LE(0))})()"#
+            )
+            .await,
+            "3721182122"
+        );
+    }
+
+    /// The whole NCBL path behind `scrobble_v1`, with the upload intercepted
+    /// before it reaches a socket.
+    ///
+    /// Worth the machinery because nothing else in the bundle resembles it.
+    /// `scrobble_v1` skips the weapi/eapi/xeapi envelope entirely and builds its
+    /// own in `util/ncbl.js`: hand-rolled ChaCha20 over the Buffer shim's
+    /// little-endian accessors, a 256-bit RSA key wrap over BigInt, gzip, a
+    /// binary multipart body, and `axios` called *bare*. Every one of those is
+    /// reachable only from here.
+    ///
+    /// Stubbing `__ncm_host.httpRequest` is what makes it offline and
+    /// deterministic: the shims look their host ops up by property at call time,
+    /// on the very object the bundle closed over, so replacing one intercepts the
+    /// real code path without touching the bundle. The stub answers like the
+    /// server does — echoing back the filename it was sent — so both uploads run
+    /// and the module reports its success rather than stopping at PLV.
+    ///
+    /// This is the test that would have caught either half of the `502 请求异常:
+    /// not a function` bug, and it asserts against the bytes on the way out
+    /// rather than against a mock's own expectations.
+    #[tokio::test]
+    async fn the_ncbl_upload_behind_scrobble_v1_builds_and_is_sent() {
+        let core = NcmCore::offline().await.expect("isolate");
+
+        assert_eq!(
+            eval(
+                &core,
+                r#"(()=>{
+                  const h = globalThis.__ncm_host;
+                  globalThis.__sent = [];
+                  h.httpRequest = (cfg) => {
+                    // The part headers are ASCII and the NCBL payload follows
+                    // them, so one latin1 decode of the head reaches both.
+                    const head = Buffer.from(cfg.body.subarray(0, 400)).toString("latin1");
+                    const magicAt = head.indexOf("NCBL");
+                    globalThis.__sent.push({
+                      method: cfg.method,
+                      url: cfg.url,
+                      contentType: cfg.headers["Content-Type"],
+                      magicAt,
+                      // Read out of the real header, so a byte order that is
+                      // consistently wrong still fails here.
+                      version: magicAt < 0 ? -1 : cfg.body.readUInt32LE(magicAt + 4),
+                      headerLen: magicAt < 0 ? -1 : cfg.body.readUInt16LE(magicAt + 8),
+                      bytes: cfg.body.length,
+                    });
+                    const name = /filename="([^"]+)"/.exec(head);
+                    const body = JSON.stringify({
+                      code: 200,
+                      data: { successfiles: [name ? name[1] : ""] },
+                    });
+                    return Promise.resolve({ status: 200, headers: {}, body: Buffer.from(body) });
+                  };
+                  return "ok";
+                })()"#
+            )
+            .await,
+            "ok"
+        );
+
+        let out: serde_json::Value = serde_json::from_str(
+            &core
+                .call(
+                    "scrobble_v1",
+                    r#"{"id":"347230","time":30,"total":268,"cookie":"MUSIC_U=not-a-real-token; os=pc"}"#,
+                )
+                .await
+                .expect("call failed"),
+        )
+        .expect("not JSON");
+
+        // Asserted first and by name: a shim gap surfaces as this exact message,
+        // and reporting it as itself is the difference between a five-minute fix
+        // and re-deriving which layer broke.
+        let msg = out["body"]["msg"].as_str().unwrap_or_default();
+        assert!(
+            !msg.contains("not a function"),
+            "the NCBL path reached something the shims do not provide: {msg}"
+        );
+        assert_eq!(out["body"]["code"], 200, "scrobble_v1 failed: {}", out["body"]);
+
+        let sent: serde_json::Value =
+            serde_json::from_str(&eval(&core, r#"JSON.stringify(globalThis.__sent)"#).await)
+                .expect("not JSON");
+        let sent = sent.as_array().expect("no uploads recorded");
+
+        // PLV then PLD, two independent uploads. One would mean the module
+        // stopped early and reported a success it did not have.
+        assert_eq!(sent.len(), 2, "expected PLV and PLD, got {sent:?}");
+        for one in sent {
+            assert_eq!(one["method"], "POST");
+            assert_eq!(
+                one["url"],
+                "https://clientlog3.music.163.com/api/clientlog/encrypt/upload?multiupload=true"
+            );
+            // `axios` fills in a Content-Type when the caller omits one; here the
+            // caller sets it, boundary included, and the body is built around
+            // that exact boundary.
+            let ct = one["contentType"].as_str().unwrap_or_default();
+            assert!(
+                ct.starts_with("multipart/form-data; boundary="),
+                "unexpected content type: {ct}"
+            );
+            // NCBL magic, then version 3 and the header length — both read back
+            // little-endian out of the header the shim wrote.
+            assert!(one["magicAt"].as_i64().unwrap_or(-1) > 0, "no NCBL magic in the body");
+            assert_eq!(one["version"], 3);
+            // 70 fixed bytes plus the 4-byte meta block header and its
+            // ciphertext, which is the metadata JSON's own length.
+            assert!(
+                one["headerLen"].as_u64().unwrap_or(0) > 74,
+                "implausible header length: {}",
+                one["headerLen"]
+            );
+            assert!(one["bytes"].as_u64().unwrap_or(0) > 400, "implausibly small upload");
+        }
+    }
+
     /// Spot-check the host crypto ops against known vectors, through the same
     /// `node:crypto` surface the protocol layer uses.
     #[tokio::test]

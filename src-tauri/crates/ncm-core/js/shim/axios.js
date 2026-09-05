@@ -17,8 +17,29 @@
 //     bytes as if they were a parsed response — silently wrong, not an error.
 //
 //   * `res.headers['set-cookie']` must be an array; the caller `.map()`s it.
+//
+// `util/ncbl.js` is the other caller, and it is the reason `validateStatus` is
+// honoured below rather than hardcoded.
+//
+// ## This file is CommonJS, deliberately
+//
+// Every other shim here is ESM, and this one cannot be. The upstream package is
+// CJS, so it reaches this through `require('axios')` — and esbuild answers a
+// `require` of an *ESM* module with a namespace object, which is not callable.
+// Nine of the ten call sites write `const { default: axios } = require('axios')`
+// and never notice; `util/ncbl.js` writes `const axios = require('axios')` and
+// calls it, which is what `scrobble_v1` is built on. That call was the second
+// half of its `502 请求异常: not a function` — QuickJS's message for invoking a
+// non-callable, thrown here on `axios(...)` rather than anywhere near the crypto
+// the message makes you suspect.
+//
+// Exporting the function as `module.exports` satisfies both spellings at once:
+// `require('axios')` is the function, and `.default` on it is the same function.
+// Do not convert this file back to `export default` for consistency with its
+// neighbours — `util/request.js` would keep working and `scrobble_v1` would
+// silently break again.
 
-import { Buffer } from "./buffer.js";
+const { Buffer } = require("./buffer.js");
 
 const host = globalThis.__ncm_host;
 
@@ -52,6 +73,22 @@ const applyDefaultContentType = (headers, data) => {
   if (data == null) return;
   if (Object.keys(headers).some((k) => k.toLowerCase() === "content-type")) return;
   headers["Content-Type"] = typeof data === "string" ? FORM_TYPE : "application/json";
+};
+
+// Which statuses resolve instead of rejecting.
+//
+// The default is axios's, and `util/request.js` relies on the rejection to
+// produce its 502 answer. But `util/ncbl.js`'s NCBL log upload — the transport
+// behind `scrobble_v1` — passes `() => true` on purpose, because it reads the
+// refusal's *body* to report which of PLV/PLD the server declined. Ignoring the
+// option collapsed every one of those into the endpoint's generic
+// `请求异常: Request failed with status code …`, which names nothing about which
+// upload failed or why. `null` means "accept everything" in axios; a function
+// means ask it.
+const accepts = (validateStatus, status) => {
+  if (validateStatus === null) return true;
+  if (typeof validateStatus === "function") return Boolean(validateStatus(status));
+  return status >= 200 && status < 300;
 };
 
 function request(config) {
@@ -107,7 +144,7 @@ function request(config) {
 
         // axios rejects on non-2xx by default, and `util/request.js` relies on
         // that to produce its 502 answer.
-        if (raw.status < 200 || raw.status >= 300) {
+        if (!accepts(cfg.validateStatus, raw.status)) {
           throw new AxiosError(`Request failed with status code ${raw.status}`, response);
         }
         return response;
@@ -137,5 +174,6 @@ const axios = Object.assign(request, {
 
 axios.default = axios;
 
-export default axios;
-export { axios, AxiosError };
+module.exports = axios;
+module.exports.axios = axios;
+module.exports.AxiosError = AxiosError;

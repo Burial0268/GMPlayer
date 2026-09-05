@@ -1,9 +1,11 @@
 // Minimal Node `Buffer` over `Uint8Array`.
 //
-// Scope is deliberately the subset `util/crypto.js`, `util/request.js` and the
-// endpoint modules actually use — encodings base64/hex/utf8/latin1(binary),
-// plus alloc/concat/compare. It is NOT a general Buffer polyfill; adding
-// surface here should be driven by a real call site, not by completeness.
+// Scope is deliberately the subset `util/crypto.js`, `util/request.js`,
+// `util/ncbl.js` and the endpoint modules actually use — encodings
+// base64/hex/utf8/latin1(binary), alloc/concat/compare, and the fixed-width
+// integer accessors the NCBL log envelope reads and writes. It is NOT a general
+// Buffer polyfill; adding surface here should be driven by a real call site, not
+// by completeness.
 //
 // UTF-8 goes through Rust host ops rather than a hand-rolled encoder: the
 // protocol signs UTF-8 bytes of JSON payloads that routinely contain CJK, and
@@ -178,6 +180,29 @@ class Buffer extends Uint8Array {
     this[o + 1] = (v >>> 16) & 0xff;
     this[o + 2] = (v >>> 8) & 0xff;
     this[o + 3] = v & 0xff;
+    return o + 4;
+  }
+
+  // Little-endian, for `util/ncbl.js` — the ChaCha20 state, the NCBL header and
+  // every frame header behind `scrobble_v1`. Written by hand rather than through
+  // a `DataView`: the nonce and each frame are `subarray` views, and a DataView
+  // over `this.buffer` would ignore their `byteOffset` and read the wrong bytes.
+  readUInt16LE(o = 0) {
+    return this[o] | (this[o + 1] << 8);
+  }
+  writeUInt16LE(v, o = 0) {
+    this[o] = v & 0xff;
+    this[o + 1] = (v >>> 8) & 0xff;
+    return o + 2;
+  }
+  readUInt32LE(o = 0) {
+    return (this[o] | (this[o + 1] << 8) | (this[o + 2] << 16) | (this[o + 3] << 24)) >>> 0;
+  }
+  writeUInt32LE(v, o = 0) {
+    this[o] = v & 0xff;
+    this[o + 1] = (v >>> 8) & 0xff;
+    this[o + 2] = (v >>> 16) & 0xff;
+    this[o + 3] = (v >>> 24) & 0xff;
     return o + 4;
   }
 }
