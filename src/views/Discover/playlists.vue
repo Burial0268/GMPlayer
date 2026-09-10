@@ -113,7 +113,8 @@
 
 <script setup lang="ts">
 import { ChevronRightRound, LocalFireDepartmentRound } from "@vicons/material";
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore } from "@/store";
 import { getHighqualityPlaylist, getTopPlaylist } from "@/api/playlist";
 import { formatNumber } from "@/utils/timeTools";
@@ -122,31 +123,22 @@ import CoverLists from "@/components/DataList/CoverLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
 
 const { t } = useI18n();
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 const music = musicStore();
 
 // 分类数据
 const catModalShow = ref(false);
-const catName = ref(
-  router.currentRoute.value.query.cat ? router.currentRoute.value.query.cat : "全部歌单",
-);
+const catName = ref(route.query.cat ? route.query.cat : "全部歌单");
 
 // 歌单数据
 const playlistsData = ref([]);
 const totalCount = ref(0);
 const pagelimit = ref(30);
-const pageNumber = ref(
-  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
-);
+const pageNumber = ref(route.query.page ? Number(route.query.page) : 1);
 
 // 精品歌单数据
-const hqPLayListOpen = ref(
-  router.currentRoute.value.query.hq
-    ? router.currentRoute.value.query.hq === "true"
-      ? true
-      : false
-    : false,
-);
+const hqPLayListOpen = ref(route.query.hq ? (route.query.hq === "true" ? true : false) : false);
 const hasMore = ref(true);
 const loading = ref(false);
 
@@ -164,7 +156,7 @@ const getHaveHqPlaylists = (array: any[], name: string) => {
 // 精品歌单状态变化
 const hqPLayListChange = (val: any) => {
   playlistsData.value = [];
-  router.push({
+  navigation.replacePage({
     path: "/discover/playlists",
     query: {
       cat: catName.value,
@@ -191,8 +183,6 @@ const getPlaylistData = (cat = "全部歌单", limit = 30, offset = 0) => {
     } else {
       $message.error(t("general.message.acquisitionFailed"));
     }
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
   });
 };
 
@@ -229,7 +219,7 @@ const getHqPlaylistData = (cat = "全部歌单", limit = 30) => {
 // 更换标签名
 const changeTagName = (name: any) => {
   playlistsData.value = [];
-  router.push({
+  navigation.replacePage({
     path: "/discover/playlists",
     query: {
       cat: name,
@@ -247,7 +237,7 @@ const pageSizeChange = (val: number) => {
 
 // 当前页数数据变化
 const pageNumberChange = (val: number) => {
-  router.push({
+  navigation.replacePage({
     path: "/discover/playlists",
     query: {
       cat: catName.value,
@@ -258,8 +248,9 @@ const pageNumberChange = (val: number) => {
 
 // 监听路由参数变化
 watch(
-  () => router.currentRoute.value,
-  (val) => {
+  () => route.fullPath,
+  () => {
+    const val = route;
     if (val.name === "dsc-playlists") {
       catName.value = val.query.cat ? val.query.cat : "全部歌单";
       hqPLayListOpen.value = val.query.hq ? (val.query.hq === "true" ? true : false) : false;

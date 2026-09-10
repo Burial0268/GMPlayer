@@ -1,4 +1,11 @@
 const messages: Record<string, unknown> = {
+  navigation: {
+    label: "Navigation",
+    forward: "Forward",
+    search: "Search",
+    player: "Player",
+    cancel: "Cancel",
+  },
   // Navigation
   nav: {
     home: "Home",

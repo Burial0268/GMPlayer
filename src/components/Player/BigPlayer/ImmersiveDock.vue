@@ -151,7 +151,8 @@ import { emit as emitTauriEvent } from "@tauri-apps/api/event";
 import { NIcon } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
+import type { LocationQueryRaw } from "vue-router";
 import { musicStore, settingStore, userStore } from "@/store";
 // Aliased: this file already exposes a `coverUrl` computed of its own.
 import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
@@ -171,7 +172,7 @@ const emit = defineEmits<{
   openComments: [];
 }>();
 
-const router = useRouter();
+const navigation = useLayerNavigation();
 const music = musicStore();
 const user = userStore();
 const setting = settingStore();
@@ -260,9 +261,8 @@ const handleMoreSelect = (key: string) => {
   else if (key === "taskbarLyrics") windowManager.openTaskbarLyrics();
 };
 
-const routerJump = (url: string, query: Record<string, unknown>) => {
-  music.setBigPlayerState(false);
-  router.push({ path: url, query });
+const routerJump = (url: string, query: LocationQueryRaw) => {
+  navigation.openPage({ path: url, query });
 };
 </script>
 

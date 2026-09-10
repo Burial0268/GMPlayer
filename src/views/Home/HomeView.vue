@@ -1,5 +1,5 @@
 <template>
-  <div class="home">
+  <div ref="homeRoot" class="home">
     <header class="home-header home-section">
       <div>
         <span class="date">{{ dateText }}</span>
@@ -97,28 +97,51 @@
           :class="[item.type, getCardLayout(index, item.type)]"
           role="link"
           tabindex="0"
-          @click="openStreamItem(item)"
-          @keydown.enter="openStreamItem(item)"
-          @keydown.space.prevent="openStreamItem(item)"
+          :data-navigation-identity="`${item.type}:${item.id}`"
+          :data-navigation-decoration="item.type === 'artist' ? 'surface' : undefined"
+          @click="openStreamItem(item, $event)"
+          @keydown.enter="openStreamItem(item, $event)"
+          @keydown.space.prevent="openStreamItem(item, $event)"
         >
-          <div class="feed-artwork">
+          <div class="feed-artwork" data-navigation-cover>
             <img
               :src="item.cover"
               :alt="item.name"
+              :data-navigation-shared-image="item.type === 'artist' ? '' : undefined"
               loading="lazy"
               decoding="async"
               @error="useFallbackCover"
             />
-            <span class="type-label">{{ getTypeLabel(item.type) }}</span>
-            <span v-if="item.type !== 'artist'" class="open-cue" aria-hidden="true">↗</span>
-            <div v-if="item.type !== 'artist'" class="media-overlay">
-              <h3>{{ item.name }}</h3>
-              <span v-if="item.meta">{{ item.meta }}</span>
+            <span class="type-label" data-navigation-decoration="cover-top-left">{{
+              getTypeLabel(item.type)
+            }}</span>
+            <span
+              v-if="item.type !== 'artist'"
+              class="open-cue"
+              data-navigation-decoration="cover-top-right"
+              aria-hidden="true"
+              >↗</span
+            >
+            <span
+              v-if="item.type !== 'artist'"
+              class="artwork-edge"
+              data-navigation-decoration="cover"
+              aria-hidden="true"
+            />
+            <div
+              v-if="item.type !== 'artist'"
+              class="media-overlay"
+              data-navigation-decoration="cover-bottom"
+            >
+              <h3 data-navigation-title>{{ item.name }}</h3>
+              <span v-if="item.meta" data-navigation-decoration="cover-bottom-left">{{
+                item.meta
+              }}</span>
             </div>
           </div>
           <div v-if="item.type === 'artist'" class="feed-copy">
-            <h3>{{ item.name }}</h3>
-            <span v-if="item.meta">{{ item.meta }}</span>
+            <h3 data-navigation-title>{{ item.name }}</h3>
+            <span v-if="item.meta" data-navigation-decoration="title-bottom">{{ item.meta }}</span>
           </div>
         </article>
       </div>
@@ -127,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onDeactivated, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import gsap from "gsap";
@@ -143,6 +166,8 @@ import { musicStore, settingStore } from "@/store";
 import type { SongData } from "@/store/musicTypes";
 import { asRawEntry } from "@/utils/rawEntry";
 import { formatNumber, getSongTime } from "@/utils/timeTools";
+import { useLayerNavigation } from "@/utils/navigation";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
 
 type StreamItemType = "playlist" | "album" | "artist";
 
@@ -159,6 +184,9 @@ const FALLBACK_COVER = "/images/pic/pic.jpg";
 const setting = settingStore();
 const music = musicStore();
 const router = useRouter();
+const navigation = useLayerNavigation();
+const homeRoot = ref<HTMLElement>();
+let introduction: gsap.Context | undefined;
 const { t, locale } = useI18n();
 const playlistsData = ref<StreamItem[]>([]);
 const albumsData = ref<StreamItem[]>([]);
@@ -179,13 +207,14 @@ let masonryFrame = 0;
 const flushMasonrySpans = () => {
   masonryFrame = 0;
   if (!masonryPending.size) return;
-  const elements = [...masonryPending];
+  const elements = [...masonryPending].filter((element) => element.isConnected);
   masonryPending.clear();
   masonryHeights.length = 0;
   for (let i = 0; i < elements.length; i++) {
     masonryHeights.push(elements[i].getBoundingClientRect().height);
   }
   for (let i = 0; i < elements.length; i++) {
+    if (masonryHeights[i] <= 0) continue;
     const span = Math.ceil(
       (masonryHeights[i] + MASONRY_ROW_GAP) / (MASONRY_ROW_HEIGHT + MASONRY_ROW_GAP),
     );
@@ -196,6 +225,7 @@ const flushMasonrySpans = () => {
 };
 
 const scheduleMasonrySpan = (element: HTMLElement) => {
+  if (!element.isConnected) return;
   masonryPending.add(element);
   if (!masonryFrame) masonryFrame = requestAnimationFrame(flushMasonrySpans);
 };
@@ -342,10 +372,18 @@ const getCardLayout = (index: number, type: StreamItemType) => {
   return "is-standard";
 };
 
-const openStreamItem = (item: StreamItem) => {
-  if (item.type === "playlist") router.push(`/playlist?id=${item.id}&page=1`);
-  else if (item.type === "album") router.push(`/album?id=${item.id}`);
-  else router.push(`/artist?id=${item.id}`);
+const openStreamItem = (item: StreamItem, origin: Event) => {
+  void navigation.openPage(
+    {
+      path: `/${item.type}`,
+      query: { id: item.id, ...(item.type === "playlist" ? { page: 1 } : {}) },
+    },
+    {
+      origin,
+      kind: "card",
+      identity: `${item.type}:${item.id}`,
+    },
+  );
 };
 
 onMounted(() => {
@@ -355,19 +393,27 @@ onMounted(() => {
     }
   });
   if (typeof $setSiteTitle !== "undefined") $setSiteTitle(import.meta.env.VITE_SITE_TITLE);
-  if (typeof $scrollToTop !== "undefined") $scrollToTop();
   void getStreamData();
 
-  gsap.from(".home-section", {
-    opacity: 0,
-    y: 24,
-    duration: 0.48,
-    stagger: 0.1,
-    ease: "power2.out",
-  });
+  if (window.innerWidth > 768 && !prefersReducedMotion()) {
+    introduction = gsap.context(
+      () =>
+        gsap.from(".home-section", {
+          opacity: 0,
+          y: 24,
+          duration: 0.48,
+          stagger: 0.1,
+          ease: "power2.out",
+        }),
+      homeRoot.value,
+    );
+  }
 });
 
+onDeactivated(() => introduction?.revert());
+
 onBeforeUnmount(() => {
+  introduction?.revert();
   if (masonryFrame) cancelAnimationFrame(masonryFrame);
   masonryFrame = 0;
   masonryPending.clear();
@@ -574,7 +620,7 @@ onBeforeUnmount(() => {
       overflow: hidden;
       font-size: 14px;
       font-weight: 650;
-      line-height: 1.4;
+      line-height: normal;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
       line-clamp: 2;
@@ -618,7 +664,13 @@ onBeforeUnmount(() => {
       width: 68px;
       height: 68px;
       aspect-ratio: 1;
-      border-radius: var(--radius-pill);
+      overflow: visible;
+      border-radius: 0;
+      background: none;
+      img {
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+      }
     }
 
     .feed-copy {
@@ -641,8 +693,7 @@ onBeforeUnmount(() => {
       filter: none;
       box-sizing: border-box;
 
-      &::before {
-        content: "";
+      .artwork-edge {
         position: absolute;
         inset: 0;
         z-index: 3;
@@ -667,12 +718,19 @@ onBeforeUnmount(() => {
     }
   }
 
-  &:hover,
   &:focus-visible {
-    img {
+    outline: 2px solid var(--main-color);
+    outline-offset: 3px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover img {
       transform: scale(1.025);
     }
+  }
 
+  &:hover,
+  &:focus-visible {
     .open-cue {
       opacity: 1;
       transform: translateY(0);
@@ -707,7 +765,7 @@ onBeforeUnmount(() => {
     overflow: hidden;
     font-size: clamp(14px, 1.25vw, 18px);
     font-weight: 700;
-    line-height: 1.28;
+    line-height: normal;
     letter-spacing: -0.02em;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;

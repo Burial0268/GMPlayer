@@ -2,8 +2,6 @@
   "name": "GMPlayer",
   "version": "2.0",
   "author": "GBCLStudio",
-  "home": "https://gbclstudio.cn",
-  "github": "https://github.com/Burial0268/GMPlayer",
   "scripts": {
     "tauri": "node scripts/tauri.mjs",
     "build:wasm:analysis": "node scripts/build-wasm.mjs src-tauri/crates/audio-analysis",
@@ -16,6 +14,7 @@
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
+    "test:navigation": "node scripts/test-navigation.mjs",
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",
     "fmt": "oxfmt src/",
@@ -110,5 +109,7 @@
       "@applemusic-like-lyrics/lyric",
       "wasm-pack"
     ]
-  }
+  },
+  "github": "https://github.com/Burial0268/GMPlayer",
+  "home": "https://gbclstudio.cn"
 }

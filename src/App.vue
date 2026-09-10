@@ -74,19 +74,7 @@
                   "
                   style="transition: all var(--duration-300) var(--ease-out); z-index: 999"
                 />
-                <router-view v-slot="{ Component, route }">
-                  <transition name="fade-scale" mode="out-in">
-                    <keep-alive :max="10">
-                      <component
-                        :is="Component"
-                        :key="
-                          (route.matched[0]?.path ?? route.path) +
-                          (route.query.id ? `_${route.query.id}` : '')
-                        "
-                      />
-                    </keep-alive>
-                  </transition>
-                </router-view>
+                <AppLayerHost />
               </main>
               <aside class="queue-column" :aria-hidden="!showInlineQueue">
                 <QueuePanel v-if="isInlineQueueLayout" />
@@ -133,6 +121,7 @@ import TitleBar from "@/components/TitleBar/index.vue";
 import Sidebar from "@/components/Sidebar/index.vue";
 import MobileTabBar from "@/components/Sidebar/MobileTabBar.vue";
 import QueuePanel from "@/components/QueuePanel/index.vue";
+import AppLayerHost from "@/components/Navigation/AppLayerHost.vue";
 import { appInfo } from "@/utils/appInfo";
 import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { ref, watch, computed, h } from "vue";
@@ -808,7 +797,7 @@ onBeforeUnmount(() => {
 
     .main {
       min-height: 100%;
-      padding-top: calc(52px + var(--app-safe-area-top, 0px));
+      padding-top: calc(var(--app-mobile-nav-height) + 10px);
 
       &.settings-main {
         height: auto;
@@ -1009,11 +998,7 @@ onBeforeUnmount(() => {
     --content-stage-padding-right: 0px;
     --content-scrollbar-right: 0px;
     --player-right-inset: 0px;
-    // Here the Nav is the top band itself (42px + safe area, top: 0), and
-    // .content-top-shadow blurs everything that scrolls under it. Pin below the
-    // band's lower edge with 4px to spare — sticky chrome pinned any higher gets
-    // washed out by that blur instead of reading as a floating control.
-    --content-sticky-top: calc(46px + var(--app-safe-area-top, 0px));
+    --content-sticky-top: calc(var(--app-mobile-nav-height) + 4px);
     // 底部 chrome 的高度统一由 :root 的 --app-bottom-chrome* 提供
     // (global.scss)，其中 tab bar 高度已经含 safe-area-bottom，不要再加一次。
     --layout-content-bottom: var(--app-bottom-chrome);
@@ -1247,7 +1232,7 @@ onBeforeUnmount(() => {
   // every step's solid threshold, so it gets the full effect; the taper happens
   // in the ~34px below it.
   .nav-blur-step {
-    --nav-blur-edge: calc(42px + var(--app-safe-area-top, 0px));
+    --nav-blur-edge: var(--app-mobile-nav-height);
 
     &:nth-child(1) {
       @include nav-blur-step(
@@ -1314,8 +1299,8 @@ onBeforeUnmount(() => {
     background: linear-gradient(
       to bottom,
       var(--nav-blur-tint-top) 0,
-      var(--nav-blur-tint-mid) calc(var(--app-safe-area-top, 0px) + 40px),
-      transparent calc(var(--app-safe-area-top, 0px) + 64px)
+      var(--nav-blur-tint-mid) calc(var(--app-mobile-nav-height) - 2px),
+      transparent calc(var(--app-mobile-nav-height) + 22px)
     );
     // Rides the same progress as the blur, but SQUARED. The tint is the most
     // visible layer, so a linear ramp makes it the thing you notice arriving and
@@ -1332,9 +1317,7 @@ onBeforeUnmount(() => {
     top: 0;
     right: 0;
     left: 0;
-    // Must clear the longest ramp (--nav-blur-edge + 34px = 76px + safe-area) or
-    // the outermost blur step gets clipped mid-fade, reinstating a hard edge.
-    height: calc(84px + var(--app-safe-area-top, 0px));
+    height: calc(var(--app-mobile-nav-height) + 42px);
     border-radius: 0;
   }
 }

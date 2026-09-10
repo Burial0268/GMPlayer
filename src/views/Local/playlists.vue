@@ -23,7 +23,11 @@
 
     <n-empty v-if="!local.playlists.length" :description="$t('local.noPlaylists')" size="large" />
     <n-list v-else class="playlist-list" hoverable clickable>
-      <n-list-item v-for="playlist in local.playlists" :key="playlist.id" @click="open(playlist)">
+      <n-list-item
+        v-for="playlist in local.playlists"
+        :key="playlist.id"
+        @click="open(playlist, $event)"
+      >
         <template #prefix>
           <div class="badge">
             <n-icon :size="22" :component="MusicList" />
@@ -97,7 +101,7 @@
 
 <script setup lang="ts">
 import { DeleteFour, FolderOpen, Like, MusicList, Plus } from "@icon-park/vue-next";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { useLocalLibraryStore } from "@/store";
 import {
@@ -110,7 +114,7 @@ import { refToQuery } from "@/utils/playlistSource";
 import { isMobile } from "@/utils/tauri/platform/mobile";
 
 const { t } = useI18n();
-const router = useRouter();
+const navigation = useLayerNavigation();
 const local = useLocalLibraryStore();
 
 const createShow = ref(false);
@@ -123,15 +127,21 @@ const newName = ref("");
  */
 const isMobilePlatform = ref(false);
 
-const open = (playlist: LocalPlaylist) => {
-  router.push({
-    path: "/local/playlist",
-    query: refToQuery({ kind: "local-playlist", id: playlist.id }),
-  });
+const open = (playlist: LocalPlaylist, origin: Event) => {
+  navigation.openPage(
+    {
+      path: "/local/playlist",
+      query: refToQuery({ kind: "local-playlist", id: playlist.id }),
+    },
+    { origin },
+  );
 };
 
-const openFavourites = () => {
-  router.push({ path: "/local/playlist", query: refToQuery({ kind: "local-favourites" }) });
+const openFavourites = (origin: Event) => {
+  navigation.openPage(
+    { path: "/local/playlist", query: refToQuery({ kind: "local-favourites" }) },
+    { origin },
+  );
 };
 
 const create = async () => {

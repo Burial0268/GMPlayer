@@ -1,20 +1,36 @@
 <template>
   <div class="artist-overview">
     <section class="overview-grid">
-      <div class="latest-section" v-if="latestRelease">
-        <button class="section-title" type="button" @click="goAlbums">
+      <div class="latest-section" v-if="latestRelease || releaseLoading || releaseError">
+        <button v-content-intro class="section-title" type="button" @click="goAlbums">
           <span>{{ $t("general.name.latestRelease") }}</span>
         </button>
-        <div class="latest-release" @click="goAlbum(latestRelease.id)">
+        <PageLoadState
+          v-if="releaseLoading || releaseError"
+          :loading="releaseLoading"
+          :error="releaseError"
+          @retry="loadRelease"
+        />
+        <div
+          v-else-if="latestRelease"
+          v-content-intro
+          class="latest-release"
+          role="link"
+          tabindex="0"
+          :data-navigation-identity="`album:${latestRelease.id}`"
+          @click="goAlbum(latestRelease.id, $event)"
+          @keydown.enter="goAlbum(latestRelease.id, $event)"
+        >
           <img
             class="latest-cover"
+            data-navigation-cover
             :src="getCoverUrl(latestRelease.cover, 360)"
             alt="album"
             loading="lazy"
           />
           <div class="latest-meta">
             <div class="latest-date">{{ latestRelease.time }}</div>
-            <div class="latest-name">{{ latestRelease.name }}</div>
+            <div class="latest-name" data-navigation-title>{{ latestRelease.name }}</div>
             <div class="latest-type">{{ latestRelease.type || $t("general.name.album") }}</div>
           </div>
         </div>
@@ -22,14 +38,21 @@
 
       <div class="ranking-section">
         <button
+          v-content-intro
           class="section-title"
           type="button"
-          @click="router.push(`/all-songs?id=${artistId}&page=1`)"
+          @click="navigation.openPage(`/all-songs?id=${artistId}&page=1`, { origin: $event })"
         >
           <span>{{ $t("general.name.songRanking") }}</span>
           <n-icon :component="ChevronRightRound" />
         </button>
-        <div class="song-rank-grid" v-if="rankSongs.length">
+        <PageLoadState
+          v-if="songsLoading || songsError"
+          :loading="songsLoading"
+          :error="songsError"
+          @retry="loadSongs"
+        />
+        <div v-content-intro class="song-rank-grid" v-else-if="rankSongs.length">
           <button
             v-for="(song, index) in rankSongs"
             :key="song.id"
@@ -54,14 +77,14 @@
       </div>
     </section>
 
-    <n-space justify="center" v-if="artistData[0]">
+    <n-space v-content-intro justify="center" v-if="artistData[0]">
       <n-button
         class="more"
         size="large"
         strong
         secondary
         round
-        @click="router.push(`/all-songs?id=${artistId}&page=1`)"
+        @click="navigation.openPage(`/all-songs?id=${artistId}&page=1`, { origin: $event })"
       >
         {{ $t("general.name.allSong") }}
       </n-button>
@@ -72,12 +95,15 @@
 <script setup lang="ts">
 import { getArtistSongs } from "@/api/artist";
 import { getArtistAlbums } from "@/api/album";
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
 import { transformSongData } from "@/utils/ncm/transformSongData";
 import { getLongTime } from "@/utils/timeTools";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
 import { ChevronRightRound, PlayArrowRound } from "@vicons/material";
+import { useLayerNavigation } from "@/utils/navigation";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
+import { useContentIntro } from "@/composables/useContentIntro";
 
 interface AlbumOverview {
   id: number;
@@ -87,40 +113,58 @@ interface AlbumOverview {
   type?: string;
 }
 
-const router = useRouter();
+const navigation = useLayerNavigation();
+const { vContentIntro } = useContentIntro();
 const { playAllSong } = usePlayAllSong();
 
 // 歌手数据
-const artistId = ref(router.currentRoute.value.query.id);
+const artistId = useRoute().query.id;
 const artistData = ref<any[]>([]);
 const latestReleaseData = ref<AlbumOverview | null>(null);
+const songsLoading = ref(true);
+const songsError = ref(false);
+const releaseLoading = ref(true);
+const releaseError = ref(false);
 
 const rankSongs = computed(() => artistData.value.slice(0, 12));
 const latestRelease = computed(() => latestReleaseData.value);
 
 // 获取歌手热门歌曲
-const getArtistSongsData = async (id: string | number | string[]) => {
-  const res = await getArtistSongs(Number(id));
-  artistData.value = res.hotSongs?.length ? transformSongData(res.hotSongs) : [];
+const loadSongs = async () => {
+  songsLoading.value = true;
+  songsError.value = false;
+  try {
+    const res = await getArtistSongs(Number(artistId), { hiddenBar: true });
+    artistData.value = res.hotSongs?.length ? transformSongData(res.hotSongs) : [];
+  } catch (error) {
+    songsError.value = true;
+    console.warn("[artist] overview songs failed to load", error);
+  } finally {
+    songsLoading.value = false;
+  }
 };
 
-const getArtistAlbumsData = async (id: string | number | string[]) => {
-  const res = await getArtistAlbums(Number(id), 30, 0);
-  const rawAlbums = res.hotAlbums ?? [];
-  const latest = rawAlbums[0];
-  latestReleaseData.value = latest
-    ? {
-        id: latest.id,
-        cover: latest.picUrl,
-        name: latest.name,
-        time: getLongTime(latest.publishTime),
-        type: latest.type,
-      }
-    : null;
-};
-
-const refreshArtistOverview = async (id: string | number | string[]) => {
-  await Promise.all([getArtistSongsData(id), getArtistAlbumsData(id)]);
+const loadRelease = async () => {
+  releaseLoading.value = true;
+  releaseError.value = false;
+  try {
+    const res = await getArtistAlbums(Number(artistId), 30, 0, { hiddenBar: true });
+    const latest = res.hotAlbums?.[0];
+    latestReleaseData.value = latest
+      ? {
+          id: latest.id,
+          cover: latest.picUrl,
+          name: latest.name,
+          time: getLongTime(latest.publishTime),
+          type: latest.type,
+        }
+      : null;
+  } catch (error) {
+    releaseError.value = true;
+    console.warn("[artist] latest release failed to load", error);
+  } finally {
+    releaseLoading.value = false;
+  }
 };
 
 const playFrom = (index: number) => {
@@ -128,37 +172,30 @@ const playFrom = (index: number) => {
   playAllSong(nextQueue);
 };
 
-const goAlbum = (id: number) => {
-  router.push({
-    path: "/album",
-    query: { id },
-  });
+const goAlbum = (id: number, origin: Event) => {
+  navigation.openPage(
+    {
+      path: "/album",
+      query: { id },
+    },
+    { origin, kind: "card", identity: `album:${id}` },
+  );
 };
 
 const goAlbums = () => {
-  router.push({
+  navigation.replacePage({
     path: "/artist/albums",
     query: {
-      id: artistId.value,
+      id: artistId,
       page: 1,
     },
   });
 };
 
 onMounted(() => {
-  refreshArtistOverview(artistId.value);
+  void loadSongs();
+  void loadRelease();
 });
-
-// 监听路由参数变化
-watch(
-  () => router.currentRoute.value,
-  (val) => {
-    artistId.value = val.query.id;
-    if (val.name === "ar-songs") {
-      refreshArtistOverview(artistId.value);
-    }
-  },
-);
 </script>
 
 <style lang="scss" scoped>

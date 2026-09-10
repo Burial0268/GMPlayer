@@ -19,30 +19,39 @@ export const artist = {
   /**
    * 获取歌手详情
    */
-  getDetail: (id: number) =>
+  getDetail: (id: number, options: { hiddenBar?: boolean } = {}) =>
     request<any>({
       method: "GET",
       url: "/artist/detail",
+      hiddenBar: options.hiddenBar,
       params: { id },
     }),
 
   /**
    * 获取歌手部分信息和热门歌曲
    */
-  getSongs: (id: number) =>
+  getSongs: (id: number, options: { hiddenBar?: boolean } = {}) =>
     request<any>({
       method: "GET",
       url: "/artists",
+      hiddenBar: options.hiddenBar,
       params: { id, timestamp: Date.now() },
     }),
 
   /**
    * 获取歌手全部歌曲
    */
-  getAllSongs: (id: number, limit = 30, offset = 0, order: ArtistSongsSortOrder = "hot") =>
+  getAllSongs: (
+    id: number,
+    limit = 30,
+    offset = 0,
+    order: ArtistSongsSortOrder = "hot",
+    options: { hiddenBar?: boolean } = {},
+  ) =>
     request<any>({
       method: "GET",
       url: "/artist/songs",
+      hiddenBar: options.hiddenBar,
       params: { id, limit, offset, order, timestamp: Date.now() },
     }),
 
@@ -59,10 +68,11 @@ export const artist = {
   /**
    * 获取歌手视频
    */
-  getVideos: (id: number, limit = 30, offset = 0) =>
+  getVideos: (id: number, limit = 30, offset = 0, options: { hiddenBar?: boolean } = {}) =>
     request<any>({
       method: "GET",
       url: "/artist/mv",
+      hiddenBar: options.hiddenBar,
       params: { id, limit, offset },
     }),
 

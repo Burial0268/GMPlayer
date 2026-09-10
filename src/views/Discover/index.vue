@@ -19,10 +19,12 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useTabTransition } from "@/composables/useTabTransition";
 
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 const { transitionName, updateDirection, syncIndex } = useTabTransition([
   "playlists",
   "toplists",
@@ -30,22 +32,22 @@ const { transitionName, updateDirection, syncIndex } = useTabTransition([
 ]);
 
 // Tab 默认选中
-const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+const tabValue = ref(route.path.split("/")[2]);
 syncIndex(tabValue.value);
 
 // Tab 选项卡变化
 const tabChange = (value: string) => {
   updateDirection(value);
-  router.push({
+  navigation.replacePage({
     path: `/discover/${value}`,
   });
 };
 
 // 监听路由参数变化
 watch(
-  () => router.currentRoute.value,
-  (val) => {
-    tabValue.value = val.path.split("/")[2];
+  () => route.path,
+  (path) => {
+    tabValue.value = path.split("/")[2];
     syncIndex(tabValue.value);
   },
 );

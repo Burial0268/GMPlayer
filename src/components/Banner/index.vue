@@ -9,7 +9,7 @@
     <Transition>
       <n-carousel
         v-if="bannerData[0]"
-        autoplay
+        :autoplay="active"
         draggable
         keyboard
         class="banner"
@@ -28,7 +28,10 @@
           <img
             :src="item.imageUrl.replace(/^http:/, 'https:') + '?imageView&quality=89'"
             alt="banner"
-            @click="bannerJump(item.targetType, item.targetId, item.url)"
+            role="link"
+            tabindex="0"
+            @click="bannerJump(item.targetType, item.targetId, item.url, $event)"
+            @keydown.enter="bannerJump(item.targetType, item.targetId, item.url, $event)"
           />
         </n-carousel-item>
         <template #arrow="{ prev, next }">
@@ -76,15 +79,23 @@
 </template>
 
 <script setup>
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { getBanner } from "@/api/home";
 import { useI18n } from "vue-i18n";
 import { Left, Right } from "@icon-park/vue-next";
 import { openExternalUrl } from "@/utils/openLink";
 
 const { t } = useI18n();
-const router = useRouter();
+const navigation = useLayerNavigation();
 const bannerRoot = ref(null);
+const active = ref(true);
+onActivated(() => {
+  active.value = true;
+  getBannerHeight();
+});
+onDeactivated(() => {
+  active.value = false;
+});
 let bannerResizeObserver = null;
 
 // 轮播图高度
@@ -116,23 +127,23 @@ const getBannerData = () => {
 };
 
 // 轮播图点击事件
-const bannerJump = (type, id, url) => {
+const bannerJump = (type, id, url, origin) => {
   switch (type) {
     case 1:
       // 歌曲页
-      router.push(`/song?id=${id}`);
+      navigation.openPage(`/song?id=${id}`, { origin });
       break;
     case 10:
       // 专辑页
-      router.push(`/album?id=${id}`);
+      navigation.openPage(`/album?id=${id}`, { origin });
       break;
     case 1000:
       // 歌单页
-      router.push(`/playlist?id=${id}&page=1`);
+      navigation.openPage(`/playlist?id=${id}&page=1`, { origin });
       break;
     case 1004:
       // MV页
-      router.push(`/video?id=${id}`);
+      navigation.openPage(`/video?id=${id}`, { origin });
       break;
     case 3000:
       // 站外链接
@@ -154,7 +165,9 @@ const bannerJump = (type, id, url) => {
 
 // 获取宽度计算轮播图高度
 const getBannerHeight = () => {
-  const width = bannerRoot.value?.clientWidth || window.innerWidth;
+  if (!bannerRoot.value?.isConnected) return;
+  const width = bannerRoot.value.clientWidth;
+  if (width <= 0) return;
   if (width > 680) {
     bannerType.value = "card";
     bannerHeight.value = Math.min(300, Math.max(170, width / 4.8));

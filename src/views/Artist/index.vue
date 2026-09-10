@@ -1,33 +1,25 @@
 <template>
   <div class="artist" v-if="artistId && artistData">
     <div class="left">
-      <div class="cover">
-        <n-image
-          show-toolbar-tooltip
+      <RouteArtwork class="cover" data-navigation-cover="page">
+        <RouteCover
           class="coverImg"
           :src="getCoverUrl(safeArtistCover, 1024)"
-          :previewed-img-props="{ style: { borderRadius: 'var(--radius-md)' } }"
           :preview-src="getCoverUrl(safeArtistCover)"
-          fallback-src="/images/pic/default.png"
         />
-        <n-image
-          preview-disabled
-          class="shadow"
-          :src="getCoverUrl(safeArtistCover, 512)"
-          fallback-src="/images/pic/default.png"
-        />
-      </div>
+        <RouteShadow class="shadow" :src="getCoverUrl(safeArtistCover, 512)" />
+      </RouteArtwork>
 
       <div class="meta">
         <div class="title">
-          <span class="detail-kind">{{ $t("general.name.artists") }}</span>
-          <n-text class="name">{{ artistData.name }}</n-text>
-          <n-text v-if="artistData.occupation" class="creator">
+          <span v-content-intro class="detail-kind">{{ $t("general.name.artists") }}</span>
+          <n-text class="name" data-navigation-title="page">{{ artistData.name }}</n-text>
+          <n-text v-if="artistData.occupation" v-content-intro class="creator">
             {{ artistData.occupation }}
           </n-text>
         </div>
 
-        <div class="detail-stats">
+        <div v-content-intro class="detail-stats">
           <button class="num" type="button" @click="tabChange('songs')">
             <n-icon :depth="3" :component="MusicNoteFilled" />
             <n-text>{{ $t("general.name.songSize", { size: artistData.musicSize }) }}</n-text>
@@ -42,7 +34,7 @@
           </button>
         </div>
 
-        <div class="intr" v-if="artistData.desc">
+        <div v-content-intro class="intr" v-if="artistData.desc">
           <span class="name">{{ $t("general.name.artistDesc") }}</span>
           <span class="desc text-hidden">{{ artistData.desc }}</span>
           <n-button class="all-desc" strong secondary @click="artistDescShow = true">
@@ -50,7 +42,7 @@
           </n-button>
         </div>
 
-        <n-space class="control">
+        <n-space v-content-intro class="control">
           <n-button
             strong
             secondary
@@ -94,7 +86,13 @@
       </div>
     </div>
 
-    <n-tabs class="main-tab" type="line" @update:value="tabChange" v-model:value="tabValue">
+    <n-tabs
+      v-content-intro
+      class="main-tab"
+      type="line"
+      @update:value="tabChange"
+      v-model:value="tabValue"
+    >
       <n-tab name="songs"> {{ $t("general.name.hotSong") }} </n-tab>
       <n-tab name="albums"> {{ $t("general.name.album") }} </n-tab>
       <n-tab name="videos"> MV </n-tab>
@@ -103,7 +101,7 @@
     <main class="content">
       <router-view v-slot="{ Component }" :mvSize="artistData ? artistData.mvSize : null">
         <Transition :name="transitionName" mode="out-in">
-          <keep-alive>
+          <keep-alive :max="3">
             <component :is="Component" />
           </keep-alive>
         </Transition>
@@ -130,10 +128,12 @@
       {{ $t("general.name.goBack") }}
     </n-button>
   </div>
+  <PageLoadState v-else-if="loadFailed" error @retry="getArtistDetailData(artistId)" />
+  <DetailPageSkeleton v-else kind="artist" />
 </template>
 
 <script setup lang="ts">
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { userStore } from "@/store";
 import { getArtistDetail, getArtistSongs, likeArtist } from "@/api/artist";
 import {
@@ -151,9 +151,19 @@ import { usePlayAllSong } from "@/composables/usePlayAllSong";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
 import { transformSongData } from "@/utils/ncm/transformSongData";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
+import DetailPageSkeleton from "@/components/Navigation/DetailPageSkeleton.vue";
+import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
+import RouteCover from "@/components/Navigation/RouteCover.vue";
+import RouteShadow from "@/components/Navigation/RouteShadow.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
+import { useLayerNavigation } from "@/utils/navigation";
+import { useContentIntro } from "@/composables/useContentIntro";
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
+const { vContentIntro } = useContentIntro();
 const user = userStore();
 const { playAllSong } = usePlayAllSong();
 const { applyContentPanelAccent } = useContentPanelAccent();
@@ -174,7 +184,8 @@ interface ArtistDetailData {
   mvSize: number;
 }
 
-const artistId = ref(router.currentRoute.value.query.id);
+const artistId = ref(route.query.id);
+const loadFailed = ref(false);
 const artistData = ref<ArtistDetailData | null>(null);
 const artistHotSongs = ref<any[]>([]);
 const artistSongsLoading = ref(false);
@@ -187,12 +198,13 @@ const safeArtistCover = computed(() =>
     : "/images/pic/default.png",
 );
 
-const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+const tabValue = ref(route.path.split("/")[2]);
 syncIndex(tabValue.value);
 
 const getArtistDetailData = (id: string | number | string[]) => {
   if (!id) return;
-  getArtistDetail(Number(id))
+  loadFailed.value = false;
+  getArtistDetail(Number(id), { hiddenBar: true })
     .then((res) => {
       artistData.value = {
         id: res.data.artist.id,
@@ -206,13 +218,16 @@ const getArtistDetailData = (id: string | number | string[]) => {
       };
       artistHotSongs.value = [];
       applyContentPanelAccent(getCoverUrl(res.data.artist.cover, 256));
-      $setSiteTitle(res.data.artist.name + " - " + t("general.name.artists"));
-      if (typeof $scrollToTop !== "undefined") $scrollToTop();
+      if (
+        router.currentRoute.value.path.startsWith("/artist/") &&
+        String(router.currentRoute.value.query.id) === String(id)
+      ) {
+        $setSiteTitle(res.data.artist.name + " - " + t("general.name.artists"));
+      }
     })
     .catch((err) => {
-      router.go(-1);
-      console.error(t("general.message.acquisitionFailed"), err);
-      $message.error(t("general.message.acquisitionFailed"));
+      loadFailed.value = true;
+      console.warn("[artist] detail failed to load", err);
     });
 };
 
@@ -239,7 +254,7 @@ const playArtistSongs = async () => {
 
 const tabChange = (value: any) => {
   updateDirection(value);
-  router.push({
+  navigation.replacePage({
     path: `/artist/${value}`,
     query: {
       id: artistId.value,
@@ -289,15 +304,10 @@ onMounted(() => {
 });
 
 watch(
-  () => router.currentRoute.value,
-  (val) => {
-    artistId.value = val.query.id;
-    tabValue.value = val.path.split("/")[2];
+  () => route.path,
+  (path) => {
+    tabValue.value = path.split("/")[2];
     syncIndex(tabValue.value);
-    artistLikeBtn.value = isLikeOrDislike(artistId.value);
-    if (val.path.split("/")[1] === "artist") {
-      getArtistDetailData(artistId.value);
-    }
   },
 );
 </script>
@@ -326,9 +336,6 @@ watch(
       justify-content: flex-start;
       width: 100%;
       aspect-ratio: 1 / 1;
-      border-radius: var(--radius-md);
-      transition: transform var(--duration-300) var(--ease-out);
-      filter: drop-shadow(0 16px 28px rgba(var(--content-panel-accent-rgb, 0, 0, 0), 0.22));
 
       &:active {
         transform: scale(0.95);
@@ -337,8 +344,6 @@ watch(
       .coverImg {
         width: 100%;
         height: 100%;
-        border-radius: var(--radius-md);
-        overflow: hidden;
         z-index: 1;
 
         :deep(img) {
@@ -358,6 +363,12 @@ watch(
         z-index: 0;
         background-size: cover;
         aspect-ratio: 1 / 1;
+
+        :deep(img) {
+          width: 100%;
+          height: 100%;
+          border-radius: var(--radius-md);
+        }
       }
     }
 
@@ -393,7 +404,7 @@ watch(
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 800;
-          line-height: 1.06;
+          line-height: normal;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;
           -webkit-line-clamp: 2;
@@ -538,7 +549,7 @@ watch(
 
           .name {
             font-size: clamp(25px, 8vw, 36px);
-            line-height: 1.12;
+            line-height: normal;
           }
 
           .creator {

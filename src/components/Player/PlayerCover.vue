@@ -182,7 +182,7 @@ import IconPause from "./icons/IconPause.vue";
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { setSeek } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
@@ -196,7 +196,7 @@ import { windowManager } from "@/utils/tauri/window/manager";
 import { Motion } from "motion-v";
 import { getDesktopPlayerSharedLayoutIds } from "./desktopSharedLayout";
 
-const router = useRouter();
+const navigation = useLayerNavigation();
 defineEmits(["openComments"]);
 const music = musicStore();
 const user = userStore();
@@ -358,8 +358,7 @@ const handleProgressSeek = (val) => {
 
 // 页面跳转
 const routerJump = (url, query) => {
-  music.setBigPlayerState(false);
-  router.push({
+  navigation.openPage({
     path: url,
     query,
   });

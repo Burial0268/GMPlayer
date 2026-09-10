@@ -30,6 +30,7 @@ coverage
 *.sln
 *.sw?
 .claude/*
+.cache
 .vercel
 ref/*
 # 第三方参考代码，与 ref/ 同类：只在本地对照阅读，不入库。

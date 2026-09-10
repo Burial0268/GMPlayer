@@ -2,7 +2,8 @@
   <div
     v-if="mounted"
     ref="layerRef"
-    :class="['playlist-sheet-layer', { dark: isDark, closing: !music.showPlayList }]"
+    :class="['playlist-sheet-layer', { dark: isDark, closing: !music.showPlayList, suspended }]"
+    :inert="!navigation.overlays.value.some((layer) => layer.presentation === 'queue-floating')"
   >
     <Motion class="playlist-sheet-scrim" :style="scrimStyle" @click="requestClose" />
     <Motion
@@ -14,7 +15,7 @@
       @touchstart.passive="handleTouchStart"
       @touchmove="handleTouchMove"
       @touchend.passive="handleTouchEnd"
-      @touchcancel.passive="handleTouchEnd"
+      @touchcancel.passive="handleTouchCancel"
     >
       <button
         class="sheet-grip"
@@ -45,17 +46,23 @@
  * 直接没了，而不是退成别的颜色。留在原地（DOM 上就是 `.n-layout` 的子节点，和
  * BigPlayer、迷你条同一层）变量自然继承，主题切换也跟着走。
  *
- * 唯一状态源仍是 `music.showPlayList`：手势判定为关闭时只写 store，由下面的 watch
- * 驱动同一段收起动画，而不是自己偷偷卸载。迷你条的按钮、SearchInp、BigPlayer 都在
- * 读写这个字段，多一个写者就会出现「按钮亮着但抽屉没了」。
+ * 层导航决定显隐，`music.showPlayList` 只是兼容投影；手势完成后请求退出队列层，
+ * watch 负责视觉收尾。Escape 与系统返回统一由 useLayerPresentation 处理。
  */
 import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore, settingStore } from "@/store";
 import QueuePanel from "@/components/QueuePanel/index.vue";
+import { useLayerNavigation } from "@/utils/navigation";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { useMotionInterruption } from "@/composables/useMotionInterruption";
 
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
 const music = musicStore();
+const navigation = useLayerNavigation();
+const suspended = ref(false);
+const hasFloatingQueue = () =>
+  navigation.state.value.layers.some((layer) => layer.presentation === "queue-floating");
 const setting = settingStore();
 
 const layerRef = ref<HTMLElement | null>(null);
@@ -68,6 +75,7 @@ const isDark = computed(() => setting.getSiteTheme === "dark");
 const progress = useMotionValue(0);
 const sheetHeightValue = useMotionValue(0);
 let settleAnimation: ReturnType<typeof animate> | null = null;
+let settleGeneration = 0;
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 // 还没量到高度时用视口高度兜底：面板一定比视口短，所以初始位移仍在屏外，
@@ -95,6 +103,7 @@ const DISMISS_PROGRESS = 0.65;
 const DISMISS_VELOCITY = 0.6;
 
 const stopSettle = () => {
+  settleGeneration++;
   settleAnimation?.stop();
   settleAnimation = null;
 };
@@ -106,12 +115,25 @@ const measureSheet = () => {
 
 const openSheet = () => {
   stopSettle();
+  const generation = settleGeneration;
+  if (suspended.value) {
+    suspended.value = false;
+    progress.set(1);
+    nextTick(measureSheet);
+    return;
+  }
   if (!mounted.value) {
     progress.set(0);
     mounted.value = true;
   }
   nextTick(() => {
+    if (generation !== settleGeneration || !music.showPlayList) return;
     measureSheet();
+    if (prefersReducedMotion()) {
+      progress.set(1);
+      queuePanelRef.value?.scrollToCurrent();
+      return;
+    }
     settleAnimation = animate(progress, 1, {
       ...settleTransition,
       // 面板是每次展开重新挂载的，第一帧虚拟列表往往还没量到视口高度，scrollTo 会被
@@ -125,7 +147,19 @@ const openSheet = () => {
 
 const closeSheet = () => {
   if (!mounted.value) return;
+  touchState = null;
+  suppressGripClick = false;
   stopSettle();
+  if (hasFloatingQueue()) {
+    suspended.value = true;
+    progress.set(1);
+    return;
+  }
+  if (prefersReducedMotion()) {
+    progress.set(0);
+    mounted.value = false;
+    return;
+  }
   // 卸载只发生在这段收起动画自然跑完之后；中途被重新展开打断时 stopSettle 已经把
   // settleAnimation 换成了新的一段，身份不符就什么都不做（stop 不会触发 onComplete，
   // 这里的比对是为了防住「关 → 开 → 关」里第一段的回调迟到）。
@@ -142,7 +176,7 @@ const closeSheet = () => {
 
 const requestClose = () => {
   // store 已经是 false 说明收起动画正在跑，直接续上，不然这一下点击就没有状态可翻。
-  if (music.showPlayList) music.showPlayList = false;
+  if (music.showPlayList) navigation.closeQueue();
   else closeSheet();
 };
 
@@ -221,7 +255,18 @@ const handleTouchEnd = () => {
     requestClose();
     return;
   }
-  settleAnimation = animate(progress, 1, settleTransition);
+  if (prefersReducedMotion()) progress.set(1);
+  else settleAnimation = animate(progress, 1, settleTransition);
+};
+
+const handleTouchCancel = () => {
+  const dragging = touchState?.dragging;
+  touchState = null;
+  suppressGripClick = false;
+  if (!dragging) return;
+  stopSettle();
+  if (prefersReducedMotion()) progress.set(1);
+  else settleAnimation = animate(progress, 1, settleTransition);
 };
 
 const handleGripClick = () => {
@@ -234,11 +279,16 @@ const handleGripClick = () => {
   requestClose();
 };
 
-const handleKeydown = (event: KeyboardEvent) => {
-  // ≤768px 也可能是被拖窄的桌面窗口，那里没有下拉手势可用。
-  if (event.key !== "Escape" || !music.showPlayList) return;
-  requestClose();
-};
+useMotionInterruption(() => {
+  touchState = null;
+  suppressGripClick = false;
+  stopSettle();
+  if (!mounted.value) return;
+  measureSheet();
+  suspended.value = !music.showPlayList && hasFloatingQueue();
+  progress.set(music.showPlayList || suspended.value ? 1 : 0);
+  mounted.value = music.showPlayList || suspended.value;
+});
 
 watch(
   () => music.showPlayList,
@@ -248,24 +298,22 @@ watch(
 onMounted(() => {
   // 从平板宽度缩到手机宽度时抽屉可能已经是打开状态，这一挂载就要接手。
   if (music.showPlayList) openSheet();
-  window.addEventListener("keydown", handleKeydown);
-  // 76vh 会随旋转 / 分屏改变，行程必须重量，否则收起后底边仍会露出一条。
-  window.addEventListener("resize", measureSheet);
 });
 
 onBeforeUnmount(() => {
   stopSettle();
-  window.removeEventListener("keydown", handleKeydown);
-  window.removeEventListener("resize", measureSheet);
 });
 </script>
 
 <style lang="scss" scoped>
 .playlist-sheet-layer {
+  &.suspended {
+    visibility: hidden;
+    pointer-events: none;
+  }
   position: fixed;
   inset: 0;
-  // 与旧的右侧抽屉同层。搜索浮层（--z-search-overlay: 2200）与它互斥（SearchInp
-  // 打开时会关掉 showPlayList），移动端 BigPlayer 是 2100，打开时同样会关掉它。
+  // 与搜索浮层同层；详情交接时由导航宿主临时抬高内容层。
   z-index: 2200;
 
   // 收起动画期间吞掉输入：此时 store 已经是 false，若还能抓住退场中的面板，

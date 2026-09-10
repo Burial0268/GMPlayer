@@ -1,7 +1,9 @@
 <template>
   <div class="videos">
-    <VideoLists :listData="artistData" />
+    <PageLoadState v-if="error" error @retry="retry" />
+    <VideoLists v-else :listData="artistData" :loading="loading" />
     <Pagination
+      v-if="artistData.length"
       :totalCount="totalCount"
       :pageNumber="pageNumber"
       @pageSizeChange="pageSizeChange"
@@ -12,12 +14,12 @@
 
 <script setup lang="ts">
 import { getArtistVideos } from "@/api/artist";
-import { useRouter } from "vue-router";
 import { formatNumber, getSongTime } from "@/utils/timeTools";
 import VideoLists from "@/components/DataList/VideoLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
 
-const router = useRouter();
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
+import { useRoutePagination } from "@/composables/useRoutePagination";
 const props = defineProps({
   // 视频总数
   mvSize: {
@@ -26,86 +28,32 @@ const props = defineProps({
   },
 });
 
-// 歌手数据
-const artistId = ref(router.currentRoute.value.query.id);
-const artistData = ref([]);
-const pagelimit = ref(30);
-const pageNumber = ref(
-  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
-);
-const totalCount = ref(0);
-
-// 获取歌手视频
-const getArtistVideosData = (id: string | number | string[], limit = 30, offset = 0) => {
-  getArtistVideos(Number(id), limit, offset).then((res) => {
-    console.log(res);
-    // 数据总数
-    totalCount.value = props.mvSize;
-    // 列表数据
-    artistData.value = [];
-    if (res.mvs) {
-      res.mvs.forEach(
-        (v: {
-          id: number;
-          imgurl16v9: string;
-          name: string;
-          artist: any;
-          playCount: string | number;
-          duration: number;
-        }) => {
-          artistData.value.push({
-            id: v.id,
-            cover: v.imgurl16v9,
-            name: v.name,
-            artist: [v.artist],
-            playCount: formatNumber(v.playCount),
-            duration: getSongTime(v.duration),
-          });
-        },
-      );
-    } else {
-      $message.error("搜索内容为空");
-    }
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
-  });
-};
-
-// 当前页数数据变化
-const pageNumberChange = (val: number) => {
-  router.push({
-    path: "/artist/videos",
-    query: {
-      id: artistId.value,
-      page: val,
-    },
-  });
-};
-
-// 每页个数数据变化
-const pageSizeChange = (val: number) => {
-  console.log(val);
-  pagelimit.value = val;
-  getArtistVideosData(artistId.value, val, (pageNumber.value - 1) * pagelimit.value);
-};
-
-onMounted(() => {
-  getArtistVideosData(artistId.value, pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
-});
-
-// 监听路由参数变化
-watch(
-  () => router.currentRoute.value,
-  (val) => {
-    if (val.name === "ar-videos") {
-      artistId.value = val.query.id;
-      pageNumber.value = Number(val.query.page ? val.query.page : 1);
-      getArtistVideosData(
-        artistId.value,
-        pagelimit.value,
-        (pageNumber.value - 1) * pagelimit.value,
-      );
-    }
+const {
+  items: artistData,
+  loading,
+  error,
+  retry,
+  totalCount,
+  pageNumber,
+  pageSizeChange,
+  pageNumberChange,
+} = useRoutePagination({
+  routeName: "ar-videos",
+  load: async ({ route, page, limit, hiddenBar }) => {
+    const res = await getArtistVideos(Number(route.query.id), limit, (page - 1) * limit, {
+      hiddenBar,
+    });
+    return {
+      total: props.mvSize,
+      items: (res.mvs ?? []).map((item: any) => ({
+        id: item.id,
+        cover: item.imgurl16v9,
+        name: item.name,
+        artist: [item.artist],
+        playCount: formatNumber(item.playCount),
+        duration: getSongTime(item.duration),
+      })),
+    };
   },
-);
+});
 </script>

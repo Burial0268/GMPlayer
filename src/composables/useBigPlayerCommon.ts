@@ -1,11 +1,11 @@
 import { ref, computed, nextTick, type Ref } from "vue";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore, settingStore } from "@/store";
 import { setSeek } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 
 export function useBigPlayerCommon(isMobile: Ref<boolean>) {
-  const router = useRouter();
+  const navigation = useLayerNavigation();
   const music = musicStore();
   const setting = settingStore();
 
@@ -74,7 +74,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
 
   // --- Actions ---
   const closeBigPlayer = () => {
-    music.setBigPlayerState(false);
+    navigation.closeTop("player");
   };
 
   const handleProgressSeek = (val: number) => {
@@ -88,8 +88,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
     // for one anyway — the view fetches on mount. The button is hidden for local
     // tracks; this is the guard for the paths that reach the handler directly.
     if (music.getPlaySongData?.local?.uri) return;
-    music.setBigPlayerState(false);
-    router.push({
+    navigation.openPage({
       path: "/comment",
       query: {
         id: music.getPlaySongData ? music.getPlaySongData.id : null,

@@ -9,10 +9,11 @@ export const album = {
   /**
    * 获取专辑内容
    */
-  get: (id: number) =>
+  get: (id: number, options: { hiddenBar?: boolean } = {}) =>
     request<any>({
       method: "GET",
       url: "/album",
+      hiddenBar: options.hiddenBar,
       params: { id, timestamp: Date.now() },
     }),
 
@@ -41,10 +42,11 @@ export const album = {
    * NCM 返回字段名为 hotAlbums，但接口默认排序更接近发布时间倒序；
    * 页面层按展示语义决定是否过滤 Single。
    */
-  getArtistAlbums: (id: number, limit = 30, offset = 0) =>
+  getArtistAlbums: (id: number, limit = 30, offset = 0, options: { hiddenBar?: boolean } = {}) =>
     request<any>({
       method: "GET",
       url: "/artist/album",
+      hiddenBar: options.hiddenBar,
       params: { id, limit, offset, timestamp: Date.now() },
     }),
 

@@ -9,7 +9,7 @@
         @touchstart.passive="handleMiniTouchStart"
         @touchmove.passive="handleMiniTouchMove"
         @touchend.passive="handleMiniTouchEnd"
-        @touchcancel="resetMiniTouch"
+        @touchcancel="handleMiniTouchCancel"
       >
         <MiniPlayerProgress />
         <div class="all">
@@ -296,6 +296,7 @@ import {
   SoundManager,
 } from "@/utils/AudioContext";
 import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { debounce } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
@@ -317,6 +318,7 @@ import {
   setupMainPlayerCommunication,
 } from "@/utils/tauri/player/communication";
 import { useNativeMediaControls } from "@/composables/useNativeMediaControls";
+import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
 import PlayListDrawer from "@/components/DataModal/PlayListDrawer.vue";
 import ListenTogetherModal from "@/components/DataModal/ListenTogetherModal.vue";
@@ -335,6 +337,7 @@ import { coverUrl } from "@/utils/coverUrl";
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const setting = settingStore();
 const music = musicStore();
 const site = siteStore();
@@ -371,7 +374,8 @@ const armPlaylistToggle = () => {
 const togglePlaylist = () => {
   const nextShowState = playlistToggleIntent ?? !music.showPlayList;
   clearPlaylistToggleIntent();
-  music.showPlayList = nextShowState;
+  if (nextShowState) navigation.openQueue();
+  else navigation.closeQueue();
 };
 
 const getMobilePlayerTransitionDistance = () =>
@@ -426,7 +430,7 @@ const openBigPlayerFromMini = () => {
   const frames = getMiniSharedFrames();
   const result = bigPlayerRef.value?.openMobileFromMini?.(frames);
   if (result && typeof result.then === "function") return;
-  music.setBigPlayerState(true);
+  navigation.openPlayer(document.querySelector("[data-mobile-player-bg]"));
 };
 
 const openMiniPlayer = () => {
@@ -458,6 +462,13 @@ const releaseMiniClickSuppression = () => {
     suppressMiniClick = false;
   }, 240);
 };
+
+useMotionInterruption(() => {
+  if (!miniTouchState) return;
+  // Releasing an interrupted drag must not open a new player layer.
+  suppressMiniClick = true;
+  resetMiniTouch();
+});
 
 const handleMiniTouchStart = (event) => {
   if (music.showBigPlayer || !music.getPlaylists[0] || !music.showPlayBar) return;
@@ -506,9 +517,15 @@ const handleMiniTouchEnd = () => {
   if (start?.dragging) {
     const forceOpen = start.velocityY < MINI_OPEN_FLING_VELOCITY;
     bigPlayerRef.value?.finishMobileInteractiveOpen(forceOpen ? true : undefined);
-    releaseMiniClickSuppression();
   }
+  if (suppressMiniClick) releaseMiniClickSuppression();
   resetMiniTouch();
+};
+
+const handleMiniTouchCancel = () => {
+  if (miniTouchState?.dragging) bigPlayerRef.value?.finishMobileInteractiveOpen(false);
+  resetMiniTouch();
+  releaseMiniClickSuppression();
 };
 
 // 一起听歌模态框

@@ -14,8 +14,11 @@
         </div>
       </div>
       <div class="song-panel">
+        <PageLoadState v-if="error" error @retry="retry" />
         <DataLists
+          v-else
           :listData="artistData"
+          :loading="loading"
           virtual
           virtual-height="min(68vh, 760px)"
           :virtual-item-size="54"
@@ -32,7 +35,7 @@
     </template>
     <div class="empty-state" v-else>
       <h1 class="detail-name">{{ $t("general.name.noKeywords") }}</h1>
-      <n-button strong secondary class="back-btn" @click="router.go(-1)">
+      <n-button strong secondary class="back-btn" @click="navigation.closeTop()">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -41,102 +44,39 @@
 
 <script setup lang="ts">
 import { getArtistDetail, getArtistAllSongs } from "@/api/artist";
-import { useRouter } from "vue-router";
-import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import { transformSongData } from "@/utils/ncm/transformSongData";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
 import { MusicList } from "@icon-park/vue-next";
-import { ArtistSongsSortOrder } from "@/api";
+import { useRoutePagination } from "@/composables/useRoutePagination";
+import { useLayerNavigation } from "@/utils/navigation";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 
-const { t } = useI18n();
-const router = useRouter();
-
-// 歌手信息
-const artistId = ref(router.currentRoute.value.query.id);
-const artistData = ref([]);
-const artistName = ref(null);
-const totalCount = ref(0);
-const pagelimit = ref(30);
-const pageNumber = ref(
-  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
-);
-
-// 获取歌手名称
-const getArtistDetailData = (id: number) => {
-  getArtistDetail(id).then((res) => {
-    artistName.value = res.data.artist.name;
-  });
-};
-
-// 获取歌手信息
-const getArtistAllSongsData = (
-  id: string | number | string[],
-  limit = 30,
-  offset = 0,
-  order: ArtistSongsSortOrder = "hot",
-) => {
-  if (!id) return false;
-  getArtistAllSongs(Number(id), limit, offset, order)
-    .then((res) => {
-      // 获取歌手名称
-      getArtistDetailData(Number(id));
-      // 全部歌曲数据
-      if (res.songs[0]) {
-        // 数据总数
-        totalCount.value = res.total;
-        // 列表数据
-        artistData.value = transformSongData(res.songs, {
-          offset: (pageNumber.value - 1) * pagelimit.value,
-        });
-      } else {
-        $message.error(t("general.message.acquisitionFailed"));
-      }
-      // 请求后回顶
-      if (typeof $scrollToTop !== "undefined") $scrollToTop();
-    })
-    .catch((err) => {
-      router.go(-1);
-      console.error(t("general.message.acquisitionFailed"), err);
-      $message.error(t("general.message.acquisitionFailed"));
-    });
-};
-
-// 监听路由参数变化
-watch(
-  () => router.currentRoute.value,
-  (val) => {
-    if (val.name === "all-songs") {
-      artistId.value = val.query.id;
-      pageNumber.value = Number(val.query.page ? val.query.page : 1);
-      getArtistAllSongsData(
-        artistId.value,
-        pagelimit.value,
-        pageNumber.value ? (pageNumber.value - 1) * pagelimit.value : 0,
-      );
-    }
+const navigation = useLayerNavigation();
+const artistId = useRoute().query.id;
+const artistName = ref("");
+const {
+  items: artistData,
+  loading,
+  error,
+  retry,
+  totalCount,
+  pageNumber,
+  pageSizeChange,
+  pageNumberChange,
+} = useRoutePagination({
+  routeName: "all-songs",
+  load: async ({ page, limit, hiddenBar }) => {
+    if (!artistId) return { items: [], total: 0 };
+    const offset = (page - 1) * limit;
+    const [songs, detail] = await Promise.all([
+      getArtistAllSongs(Number(artistId), limit, offset, "hot", { hiddenBar }),
+      artistName.value ? undefined : getArtistDetail(Number(artistId), { hiddenBar: true }),
+    ]);
+    if (detail) artistName.value = detail.data.artist.name;
+    return { items: transformSongData(songs.songs ?? [], { offset }), total: songs.total };
   },
-);
-
-// 每页个数数据变化
-const pageSizeChange = (val: number) => {
-  pagelimit.value = val;
-  getArtistAllSongsData(artistId.value, val, (pageNumber.value - 1) * pagelimit.value);
-};
-
-// 当前页数数据变化
-const pageNumberChange = (val: number) => {
-  router.push({
-    path: "/all-songs",
-    query: {
-      id: artistId.value,
-      page: val,
-    },
-  });
-};
-
-onMounted(() => {
-  getArtistAllSongsData(artistId.value, pagelimit.value, (pageNumber.value - 1) * pagelimit.value);
 });
 </script>
 

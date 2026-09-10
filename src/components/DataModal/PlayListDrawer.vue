@@ -11,7 +11,6 @@
     placement="right"
     to="body"
     @update:show="handleDrawerShowUpdate"
-    @after-leave="handleDrawerAfterLeave"
   >
     <n-drawer-content
       class="playlist-drawer-content"
@@ -39,11 +38,13 @@
  * - ≥1041px 由 App.vue 的内联队列列接管，这里什么都不渲染。
  */
 import { musicStore } from "@/store";
+import { useLayerNavigation } from "@/utils/navigation";
 import { PLAYLIST_DRAWER_MEDIA_QUERY, PLAYLIST_SHEET_MEDIA_QUERY } from "@/utils/playlistLayout";
 import QueuePanel from "@/components/QueuePanel/index.vue";
 import PlayListSheet from "@/components/DataModal/PlayListSheet.vue";
 
 const music = musicStore();
+const navigation = useLayerNavigation();
 
 // 播放列表显隐
 const useDrawerLayout = ref(false);
@@ -53,15 +54,9 @@ let sheetMediaQuery = null;
 const playListShow = ref(false);
 const queuePanelRef = ref(null);
 
-const handleDrawerAfterLeave = () => {
-  if (useDrawerLayout.value && !playListShow.value && music.showPlayList) {
-    music.showPlayList = false;
-  }
-};
-
 const handleDrawerShowUpdate = (show) => {
   if (!show) {
-    playListShow.value = false;
+    navigation.closeQueue();
     return;
   }
   if (useDrawerLayout.value && music.showPlayList) {

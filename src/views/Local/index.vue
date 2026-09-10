@@ -14,7 +14,13 @@
         <n-text class="title">{{ $t("local.loginTitle") }}</n-text>
         <n-text class="tip" :depth="3">{{ $t("local.loginTip") }}</n-text>
       </div>
-      <n-button strong secondary round type="primary" @click="router.push('/login')">
+      <n-button
+        strong
+        secondary
+        round
+        type="primary"
+        @click="navigation.openPage('/login', { origin: $event })"
+      >
         {{ $t("nav.avatar.login") }}
       </n-button>
     </div>
@@ -76,7 +82,8 @@
 
 <script setup lang="ts">
 import { DownloadFour, FolderMusic, FolderOpen } from "@icon-park/vue-next";
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { userStore, useDownloadStore, useLocalLibraryStore } from "@/store";
 import { useTabTransition } from "@/composables/useTabTransition";
@@ -84,7 +91,8 @@ import ImportLocalMusic from "@/components/DataModal/ImportLocalMusic.vue";
 import DownloadManager from "@/components/DataModal/DownloadManager.vue";
 
 const { t } = useI18n();
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 const user = userStore();
 const local = useLocalLibraryStore();
 const download = useDownloadStore();
@@ -94,20 +102,20 @@ const downloadRef = ref<InstanceType<typeof DownloadManager> | null>(null);
 const TABS = ["songs", "albums", "artists", "folders", "playlists"];
 const { transitionName, updateDirection, syncIndex } = useTabTransition(TABS);
 
-const tabValue = ref(router.currentRoute.value.path.split("/")[2] || "songs");
+const tabValue = ref(route.path.split("/")[2] || "songs");
 syncIndex(tabValue.value);
 
 const tabChange = (value: string) => {
   updateDirection(value);
-  router.push({ path: `/local/${value}` });
+  navigation.replacePage({ path: `/local/${value}` });
 };
 
 watch(
-  () => router.currentRoute.value,
-  (val) => {
+  () => route.path,
+  (path) => {
     // Only react to the tab routes; the detail view lives at `/local/playlist`
     // and would otherwise select a tab that does not exist.
-    const segment = val.path.split("/")[2];
+    const segment = path.split("/")[2];
     if (!TABS.includes(segment)) return;
     tabValue.value = segment;
     syncIndex(segment);

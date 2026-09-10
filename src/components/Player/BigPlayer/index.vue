@@ -2,8 +2,14 @@
   <Teleport to="body">
     <div
       ref="bigPlayerRef"
+      data-navigation-layer="player"
+      role="dialog"
+      :aria-modal="music.showBigPlayer || undefined"
+      :aria-label="$t('navigation.player')"
+      :inert="!navigation.overlays.value.some((layer) => layer.kind === 'player')"
       :class="[
         'bplayer',
+        { 'navigation-suspended': playerSuspended, 'navigation-resuming': resumingPlayer },
         `bplayer-${setting.backgroundImageShow}`,
         isMobile ? 'mobile-player' : 'desktop-player',
         isMobile && mobileOverlayVisible ? 'mobile-visible' : '',
@@ -79,6 +85,7 @@
               @closeDragStart="beginMobileInteractiveClose"
               @closeDragMove="updateMobileInteractiveClose"
               @closeDragEnd="finishMobileInteractiveClose"
+              @closeDragCancel="cancelMobileInteractiveClose"
               @switchLayer="switchMobileLayer(mobileLayer === 1 ? 2 : 1)"
               @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
               @lrcAllLeave="lrcAllLeave"
@@ -169,6 +176,8 @@ import { usePwaThemeColor } from "@/composables/usePwaThemeColor";
 import { useBigPlayerCommon } from "@/composables/useBigPlayerCommon";
 import { useMobileCoverFrame } from "@/composables/useMobileCoverFrame";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { useMotionInterruption } from "@/composables/useMotionInterruption";
+import { useLayerNavigation } from "@/utils/navigation";
 
 // 导入子组件
 import BigPlayerBackground from "./BigPlayerBackground.vue";
@@ -178,6 +187,16 @@ import DesktopPlayerLayout from "./DesktopPlayerLayout.vue";
 import DesktopToggleControls from "./DesktopToggleControls.vue";
 
 const music = musicStore();
+const navigation = useLayerNavigation();
+const playerSuspended = computed(
+  () => navigation.hasLayer("player") && !navigation.playerVisible.value,
+);
+const resumingPlayer = computed(
+  () =>
+    navigation.isTransitioning.value &&
+    navigation.transition.value.direction === "pop" &&
+    navigation.transition.value.from.some((layer) => layer.kind === "player"),
+);
 const site = siteStore();
 const setting = settingStore();
 
@@ -220,8 +239,8 @@ const mobileCoverRootRef = computed(() =>
 
 // 移动端层级 & 封面帧
 const mobileLayer = ref(1);
-const mobileQueueOpen = ref(false);
-const desktopQueueOpen = ref(false);
+const mobileQueueOpen = computed(() => isMobile.value && navigation.playerQueueVisible.value);
+const desktopQueueOpen = computed(() => !isMobile.value && navigation.playerQueueVisible.value);
 const desktopCommentsOpen = ref(false);
 const mobileExiting = ref(false);
 const mobileTransitionActive = ref(false);
@@ -307,6 +326,8 @@ const artworkHeight = useMotionValue(0);
 const artworkRadius = useMotionValue(12);
 const artworkOpacity = useMotionValue(1);
 let progressAnimation: ReturnType<typeof animate> | null = null;
+let interactiveGeneration = 0;
+let resolveInteractive: ((open: boolean) => void) | undefined;
 let artworkFrameAnimations: ReturnType<typeof animate>[] = [];
 let interactiveFrames: {
   miniArtwork: SharedFrame;
@@ -479,6 +500,10 @@ const readCurrentArtworkFrame = (): SharedFrame => ({
 
 const animateArtworkFrameTo = (frame: SharedFrame) => {
   stopArtworkFrameAnimations();
+  if (prefersReducedMotion()) {
+    applyArtworkFrame(frame);
+    return;
+  }
   mobileAlbumLayerReady.value = true;
   artworkFrameAnimations = [
     animate(artworkLeft, frame.left, albumLayoutTransition),
@@ -806,16 +831,27 @@ const dampInteractiveDragProgress = (progress: number) => {
 
 const animateProgressTo = (target: number, onComplete?: () => void) => {
   progressAnimation?.stop();
-  progressAnimation = animate(playerProgress, clamp(target), {
+  progressAnimation = null;
+  if (prefersReducedMotion()) {
+    playerProgress.set(clamp(target));
+    onComplete?.();
+    return;
+  }
+  const animation = animate(playerProgress, clamp(target), {
     ...drawerProgressTransition,
     onComplete: () => {
+      if (progressAnimation !== animation) return;
       progressAnimation = null;
       onComplete?.();
     },
   });
+  progressAnimation = animation;
 };
 
 const resetClosedMobileState = () => {
+  interactiveGeneration++;
+  resolveInteractive?.(false);
+  resolveInteractive = undefined;
   stopArtworkFrameAnimations();
   mobileLayer.value = 1;
   mobileInteractive.value = false;
@@ -837,7 +873,6 @@ const resetClosedMobileState = () => {
   backgroundTop.set(0);
   backgroundRadius.set(0);
   artworkOpacity.set(0);
-  resetMobileQueueState();
   clearMiniUiVars();
 };
 
@@ -904,7 +939,7 @@ const completeClosedMobileTransition = (updateStore: boolean) => {
   restoreMiniSharedAlbum();
   if (updateStore) {
     mobileSkipNextStoreCloseAnimation = true;
-    music.setBigPlayerState(false);
+    navigation.closeTop("player");
   }
   cleanupClosedMobileTransition();
 };
@@ -941,35 +976,24 @@ const scheduleMobileExitFallback = () => {
   mobileExitFallbackTimer = window.setTimeout(finishMobileExit, 700);
 };
 
-const openMobileQueue = () => {
-  mobileQueueOpen.value = true;
-  music.showPlayList = false;
-};
-
-const closeMobileQueue = () => {
-  mobileQueueOpen.value = false;
-};
-
-const resetMobileQueueState = () => {
-  mobileQueueOpen.value = false;
-  music.showPlayList = false;
-};
+const openMobileQueue = () => navigation.openQueue();
+const closeMobileQueue = () => navigation.closeQueue();
 
 const resetDesktopOverlayState = () => {
-  desktopQueueOpen.value = false;
   desktopCommentsOpen.value = false;
 };
 
 const openDesktopComments = () => {
   if (!music.getPlaySongData?.id) return;
-  desktopQueueOpen.value = false;
+  if (navigation.current.value?.kind === "queue") navigation.closeQueue();
   desktopCommentsOpen.value = true;
   if (hasLyrics.value) desktopLyricsVisible.value = true;
 };
 
 const toggleDesktopQueue = () => {
   const nextState = !desktopQueueOpen.value;
-  desktopQueueOpen.value = nextState;
+  if (nextState) navigation.openQueue();
+  else navigation.closeQueue();
   if (nextState) desktopCommentsOpen.value = false;
 };
 
@@ -998,7 +1022,10 @@ const beginMobileInteractive = async (
   frames: MiniSharedFrames | undefined,
   initialProgress: number,
 ) => {
-  if (!isMobile.value) return;
+  if (!isMobile.value) return false;
+  const generation = ++interactiveGeneration;
+  resolveInteractive?.(music.showBigPlayer);
+  resolveInteractive = undefined;
   progressAnimation?.stop();
   progressAnimation = null;
   stopArtworkFrameAnimations();
@@ -1016,6 +1043,7 @@ const beginMobileInteractive = async (
   mobileExiting.value = false;
   clearMobileExitFallback();
   await nextTick();
+  if (generation !== interactiveGeneration) return false;
   if (pendingInteractiveProgress <= 0.001) {
     detachMiniSharedAlbum();
     seedInteractiveFromMini(frames);
@@ -1027,8 +1055,10 @@ const beginMobileInteractive = async (
   applyProgressState(pendingInteractiveProgress);
 
   await nextTick();
+  if (generation !== interactiveGeneration) return false;
   await new Promise<void>((resolve) => {
     requestAnimationFrame(() => {
+      if (generation !== interactiveGeneration) return resolve();
       if (
         captureInteractiveFrames(frames) &&
         pendingInteractiveProgress >= 0.999 &&
@@ -1041,6 +1071,7 @@ const beginMobileInteractive = async (
       resolve();
     });
   });
+  return generation === interactiveGeneration;
 };
 
 const beginMobileInteractiveOpen = (frames?: MiniSharedFrames) => {
@@ -1067,18 +1098,25 @@ const beginStoreCloseHandoff = () => {
   if (!music.showBigPlayer) return;
   mobileExiting.value = true;
   mobileSkipNextStoreCloseAnimation = true;
-  music.setBigPlayerState(false);
+  navigation.closeTop("player");
 };
 
 const finishMobileInteractive = (forceOpen?: boolean) =>
   new Promise<boolean>((resolve) => {
+    resolveInteractive?.(music.showBigPlayer);
+    resolveInteractive = resolve;
     // 甩动优先：释放速度足够时直接顺着惯性判向，不足半程也能一次关闭/打开
     const velocity = playerProgress.getVelocity();
     const shouldOpen =
       forceOpen ?? (Math.abs(velocity) > 0.6 ? velocity > 0 : pendingInteractiveProgress >= 0.5);
     mobileTransitionDirection.value = shouldOpen ? "opening" : "closing";
-    if (shouldOpen) detachMiniSharedAlbum();
-    else {
+    if (shouldOpen) {
+      detachMiniSharedAlbum();
+      if (!music.showBigPlayer)
+        void navigation.openPlayer(
+          document.querySelector<HTMLElement>("[data-mobile-player-bg]") ?? undefined,
+        );
+    } else {
       restoreMiniSharedAlbum();
       beginStoreCloseHandoff();
     }
@@ -1086,9 +1124,6 @@ const finishMobileInteractive = (forceOpen?: boolean) =>
       if (!shouldOpen) {
         completeClosedMobileTransition(music.showBigPlayer);
       } else {
-        if (!music.showBigPlayer) {
-          music.setBigPlayerState(true);
-        }
         mobileInteractive.value = false;
         mobileTransitionActive.value = false;
         mobileTransitionDirection.value = null;
@@ -1096,6 +1131,7 @@ const finishMobileInteractive = (forceOpen?: boolean) =>
         syncArtworkToCurrentLayer();
         applyProgressState(1);
       }
+      if (resolveInteractive === resolve) resolveInteractive = undefined;
       resolve(shouldOpen);
     });
   });
@@ -1108,13 +1144,16 @@ const finishMobileInteractiveClose = () => {
   return finishMobileInteractive();
 };
 
+const cancelMobileInteractiveClose = () => finishMobileInteractive(true);
+
 const openMobileFromMini = async (frames?: MiniSharedFrames) => {
   if (!isMobile.value) {
-    music.setBigPlayerState(true);
+    void navigation.openPlayer(
+      document.querySelector<HTMLElement>("[data-mobile-player-bg]") ?? undefined,
+    );
     return true;
   }
-  resetMobileQueueState();
-  await beginMobileInteractiveOpen(frames);
+  if (!(await beginMobileInteractiveOpen(frames))) return false;
   return finishMobileInteractive(true);
 };
 
@@ -1124,8 +1163,8 @@ const closeMobileWithProgress = async () => {
     return;
   }
   if (mobileInteractive.value) return;
+  const generation = ++interactiveGeneration;
 
-  resetMobileQueueState();
   prepareMiniAlbumCloseHandoff();
   progressAnimation?.stop();
   progressAnimation = null;
@@ -1143,6 +1182,7 @@ const closeMobileWithProgress = async () => {
 
   await nextTick();
   requestAnimationFrame(() => {
+    if (generation !== interactiveGeneration) return;
     if (captureInteractiveFrames() && interactiveFrames) {
       interactiveFrames.fullArtwork = readCurrentArtworkFrame();
     }
@@ -1161,6 +1201,39 @@ const handleMobileClose = () => {
   }
   closeMobileWithProgress();
 };
+
+useMotionInterruption(() => {
+  interactiveGeneration++;
+  progressAnimation?.stop();
+  progressAnimation = null;
+  stopArtworkFrameAnimations();
+  clearMobileExitFallback();
+  resolveInteractive?.(music.showBigPlayer);
+  resolveInteractive = undefined;
+  mobileSkipNextStoreCloseAnimation = false;
+  if (!isMobile.value || !music.showBigPlayer) {
+    restoreMiniSharedAlbum();
+    resetClosedMobileState();
+  } else {
+    pendingInteractiveProgress = 1;
+    mobileInteractive.value = false;
+    mobileTransitionActive.value = false;
+    mobileTransitionDirection.value = null;
+    mobileExiting.value = false;
+    interactiveFrames = null;
+    playerProgress.set(1);
+    applyProgressState(1);
+    detachMiniSharedAlbum();
+    scheduleArtworkLayerSync();
+  }
+  [desktopLayoutRef.value?.leftContentRef, desktopLayoutRef.value?.rightContentRef].forEach(
+    (element) => {
+      if (!element) return;
+      gsap.killTweensOf(element);
+      gsap.set(element, { clearProps: "opacity,transform,transition" });
+    },
+  );
+});
 
 const initMobileElements = () => {
   if (!isMobile.value) return;
@@ -1258,6 +1331,9 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  interactiveGeneration++;
+  resolveInteractive?.(music.showBigPlayer);
+  resolveInteractive = undefined;
   progressAnimation?.stop();
   stopArtworkFrameAnimations();
   progressUnsubscribe?.();
@@ -1272,11 +1348,17 @@ watch(
     changePwaColor();
     if (val) {
       if (isMobile.value) {
-        resetMobileQueueState();
         mobileExiting.value = false;
         clearMobileExitFallback();
         initMobileElements();
-        if (!mobileInteractive.value && playerProgress.get() < 0.999) {
+        if (resumingPlayer.value) {
+          playerProgress.set(1);
+          applyProgressState(1);
+          detachMiniSharedAlbum();
+          scheduleArtworkLayerSync();
+        } else if (mobileInteractive.value) {
+          return;
+        } else if (playerProgress.get() < 0.999) {
           void openMobileFromMini();
         } else {
           scheduleArtworkLayerSync();
@@ -1289,18 +1371,30 @@ watch(
       clearMiniUiVars();
       requestAnimationFrame(() => {
         lyricsScroll(music.getPlaySongLyricIndex);
-        animatePlayerIn();
+        if (!resumingPlayer.value) animatePlayerIn();
       });
+    } else if (navigation.hasLayer("player")) {
+      interactiveGeneration++;
+      resolveInteractive?.(false);
+      resolveInteractive = undefined;
+      progressAnimation?.stop();
+      progressAnimation = null;
+      mobileInteractive.value = false;
+      mobileTransitionActive.value = false;
+      mobileExiting.value = false;
+      clearMobileExitFallback();
+      restoreMiniSharedAlbum();
+      clearMiniUiVars();
     } else if (isMobile.value) {
       if (mobileSkipNextStoreCloseAnimation) {
         mobileSkipNextStoreCloseAnimation = false;
-        resetMobileQueueState();
         clearMobileExitFallback();
         return;
       }
-      resetMobileQueueState();
+      interactiveGeneration++;
       mobileExiting.value = true;
-      if (!mobileInteractive.value) animateProgressTo(0, finishMobileExit);
+      mobileInteractive.value = false;
+      animateProgressTo(0, finishMobileExit);
       scheduleMobileExitFallback();
     } else {
       resetDesktopOverlayState();
@@ -1314,7 +1408,6 @@ watch(
     if (!val) {
       progressAnimation?.stop();
       progressAnimation = null;
-      resetMobileQueueState();
       resetDesktopOverlayState();
       mobileExiting.value = false;
       mobileTransitionActive.value = false;
@@ -1361,6 +1454,14 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+.bplayer.navigation-suspended {
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+.bplayer.navigation-resuming {
+  transition: none !important;
+}
+
 .bplayer {
   position: fixed;
   top: 0;

@@ -1,53 +1,57 @@
 import type { RouteRecordRaw } from "vue-router";
+import { mobileRoute } from "./mobileRoute";
 
 const routes: RouteRecordRaw[] = [
   {
     path: "/",
     name: "home",
     meta: {
+      navigationRoot: "home",
+      navigationLabel: "sidebar.tab.home",
       title: "首页",
     },
-    component: () => import("@/views/Home/HomeView.vue"),
+    component: mobileRoute(() => import("@/views/Home/HomeView.vue")),
   },
   // 搜索页
   {
     path: "/search",
     name: "search",
     meta: {
+      navigationLabel: "navigation.search",
       title: "搜索",
     },
-    component: () => import("@/views/Search/index.vue"),
+    component: mobileRoute(() => import("@/views/Search/index.vue")),
     redirect: "/search/songs",
     children: [
       {
         path: "songs",
         name: "s-songs",
-        component: () => import("@/views/Search/songs.vue"),
+        component: mobileRoute(() => import("@/views/Search/songs.vue"), true),
       },
       {
         path: "artists",
         name: "s-artists",
-        component: () => import("@/views/Search/artists.vue"),
+        component: mobileRoute(() => import("@/views/Search/artists.vue"), true),
       },
       {
         path: "albums",
         name: "s-albums",
-        component: () => import("@/views/Search/albums.vue"),
+        component: mobileRoute(() => import("@/views/Search/albums.vue"), true),
       },
       {
         path: "videos",
         name: "s-videos",
-        component: () => import("@/views/Search/videos.vue"),
+        component: mobileRoute(() => import("@/views/Search/videos.vue"), true),
       },
       {
         path: "playlists",
         name: "s-playlists",
-        component: () => import("@/views/Search/playlists.vue"),
+        component: mobileRoute(() => import("@/views/Search/playlists.vue"), true),
       },
       {
         path: "users",
         name: "s-users",
-        component: () => import("@/views/Search/users.vue"),
+        component: mobileRoute(() => import("@/views/Search/users.vue"), true),
       },
     ],
   },
@@ -56,25 +60,27 @@ const routes: RouteRecordRaw[] = [
     path: "/discover",
     name: "discover",
     meta: {
+      navigationRoot: "discover",
+      navigationLabel: "sidebar.tab.discover",
       title: "发现",
     },
-    component: () => import("@/views/Discover/index.vue"),
+    component: mobileRoute(() => import("@/views/Discover/index.vue")),
     redirect: "/discover/playlists",
     children: [
       {
         path: "playlists",
         name: "dsc-playlists",
-        component: () => import("@/views/Discover/playlists.vue"),
+        component: mobileRoute(() => import("@/views/Discover/playlists.vue"), true),
       },
       {
         path: "toplists",
         name: "dsc-toplists",
-        component: () => import("@/views/Discover/toplists.vue"),
+        component: mobileRoute(() => import("@/views/Discover/toplists.vue"), true),
       },
       {
         path: "artists",
         name: "dsc-artists",
-        component: () => import("@/views/Discover/artists.vue"),
+        component: mobileRoute(() => import("@/views/Discover/artists.vue"), true),
       },
     ],
   },
@@ -83,36 +89,38 @@ const routes: RouteRecordRaw[] = [
     path: "/user",
     name: "user",
     meta: {
+      navigationRoot: "library",
+      navigationLabel: "sidebar.tab.library",
       title: "我的",
       needLogin: true,
     },
-    component: () => import("@/views/User/index.vue"),
+    component: mobileRoute(() => import("@/views/User/index.vue")),
     redirect: "/user/playlists",
     children: [
       {
         path: "playlists",
         name: "user-playlists",
-        component: () => import("@/views/User/playlists.vue"),
+        component: mobileRoute(() => import("@/views/User/playlists.vue"), true),
       },
       {
         path: "like",
         name: "user-like",
-        component: () => import("@/views/User/like.vue"),
+        component: mobileRoute(() => import("@/views/User/like.vue"), true),
       },
       {
         path: "album",
         name: "user-album",
-        component: () => import("@/views/User/album.vue"),
+        component: mobileRoute(() => import("@/views/User/album.vue"), true),
       },
       {
         path: "artists",
         name: "user-artists",
-        component: () => import("@/views/User/artists.vue"),
+        component: mobileRoute(() => import("@/views/User/artists.vue"), true),
       },
       {
         path: "cloud",
         name: "user-cloud",
-        component: () => import("@/views/User/cloud.vue"),
+        component: mobileRoute(() => import("@/views/User/cloud.vue"), true),
       },
     ],
   },
@@ -124,35 +132,37 @@ const routes: RouteRecordRaw[] = [
     path: "/local",
     name: "local",
     meta: {
+      navigationRoot: "library",
+      navigationLabel: "sidebar.tab.library",
       title: "本地音乐",
     },
-    component: () => import("@/views/Local/index.vue"),
+    component: mobileRoute(() => import("@/views/Local/index.vue")),
     redirect: "/local/songs",
     children: [
       {
         path: "songs",
         name: "local-songs",
-        component: () => import("@/views/Local/songs.vue"),
+        component: mobileRoute(() => import("@/views/Local/songs.vue"), true),
       },
       {
         path: "albums",
         name: "local-albums",
-        component: () => import("@/views/Local/albums.vue"),
+        component: mobileRoute(() => import("@/views/Local/albums.vue"), true),
       },
       {
         path: "artists",
         name: "local-artists",
-        component: () => import("@/views/Local/artists.vue"),
+        component: mobileRoute(() => import("@/views/Local/artists.vue"), true),
       },
       {
         path: "folders",
         name: "local-folders",
-        component: () => import("@/views/Local/folders.vue"),
+        component: mobileRoute(() => import("@/views/Local/folders.vue"), true),
       },
       {
         path: "playlists",
         name: "local-playlists",
-        component: () => import("@/views/Local/playlists.vue"),
+        component: mobileRoute(() => import("@/views/Local/playlists.vue"), true),
       },
     ],
   },
@@ -163,9 +173,11 @@ const routes: RouteRecordRaw[] = [
     path: "/local/playlist",
     name: "local-playlist-detail",
     meta: {
+      navigationFallback: "library",
+      navigationLabel: "sidebar.tab.library",
       title: "本地音乐",
     },
-    component: () => import("@/views/Local/LocalPlaylistView.vue"),
+    component: mobileRoute(() => import("@/views/Local/LocalPlaylistView.vue")),
   },
   // 本地曲目详情：基本信息 / 元数据覆盖 / 歌词导入。
   //
@@ -176,9 +188,11 @@ const routes: RouteRecordRaw[] = [
     path: "/local/song",
     name: "local-song-detail",
     meta: {
+      navigationFallback: "library",
+      navigationLabel: "general.name.song",
       title: "本地音乐",
     },
-    component: () => import("@/views/Local/LocalSongView.vue"),
+    component: mobileRoute(() => import("@/views/Local/LocalSongView.vue")),
   },
   // 用户主页（公开，可查看任意用户）
   {
@@ -187,16 +201,17 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "用户主页",
     },
-    component: () => import("@/views/Profile/index.vue"),
+    component: mobileRoute(() => import("@/views/Profile/index.vue")),
   },
   // 评论页
   {
     path: "/comment",
     name: "comment",
     meta: {
+      navigationLabel: "general.name.comment",
       title: "歌曲评论",
     },
-    component: () => import("@/views/Comment/CommentView.vue"),
+    component: mobileRoute(() => import("@/views/Comment/CommentView.vue")),
   },
   // 设置页
   {
@@ -207,10 +222,12 @@ const routes: RouteRecordRaw[] = [
     path: "/setting/:section",
     name: "setting",
     meta: {
+      navigationRoot: "settings",
+      navigationLabel: "sidebar.tab.settings",
       title: "全局设置",
       hideLoadingBar: true,
     },
-    component: () => import("@/views/Setting/index.vue"),
+    component: mobileRoute(() => import("@/views/Setting/index.vue")),
   },
   // 登录页
   {
@@ -219,7 +236,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "登录",
     },
-    component: () => import("@/views/Login/LoginView.vue"),
+    component: mobileRoute(() => import("@/views/Login/LoginView.vue")),
   },
   // 视频页
   {
@@ -228,25 +245,28 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "视频",
     },
-    component: () => import("@/views/Video/VideoView.vue"),
+    component: mobileRoute(() => import("@/views/Video/VideoView.vue")),
   },
   // 歌单页
   {
     path: "/playlist",
     name: "playlist",
     meta: {
+      navigationDetail: "playlist",
+      navigationLabel: "general.name.playlist",
       title: "歌单",
     },
-    component: () => import("@/views/PlayList/PlayListView.vue"),
+    component: mobileRoute(() => import("@/views/PlayList/PlayListView.vue")),
   },
   // 歌曲页
   {
     path: "/song",
     name: "song",
     meta: {
+      navigationLabel: "general.name.song",
       title: "歌曲",
     },
-    component: () => import("@/views/Song/SongView.vue"),
+    component: mobileRoute(() => import("@/views/Song/SongView.vue")),
   },
   // 每日推荐
   {
@@ -256,41 +276,45 @@ const routes: RouteRecordRaw[] = [
       title: "每日推荐",
       needLogin: true,
     },
-    component: () => import("@/views/DailySongs/DailySongsView.vue"),
+    component: mobileRoute(() => import("@/views/DailySongs/DailySongsView.vue")),
   },
   // 专辑页
   {
     path: "/album",
     name: "album",
     meta: {
+      navigationDetail: "album",
+      navigationLabel: "general.name.album",
       title: "专辑",
     },
-    component: () => import("@/views/Album/AlbumView.vue"),
+    component: mobileRoute(() => import("@/views/Album/AlbumView.vue")),
   },
   // 歌手页
   {
     path: "/artist",
     name: "artist",
     meta: {
+      navigationDetail: "artist",
+      navigationLabel: "general.name.artists",
       title: "歌手",
     },
-    component: () => import("@/views/Artist/index.vue"),
+    component: mobileRoute(() => import("@/views/Artist/index.vue")),
     redirect: "/artist/songs",
     children: [
       {
         path: "songs",
         name: "ar-songs",
-        component: () => import("@/views/Artist/songs.vue"),
+        component: mobileRoute(() => import("@/views/Artist/songs.vue"), true),
       },
       {
         path: "albums",
         name: "ar-albums",
-        component: () => import("@/views/Artist/albums.vue"),
+        component: mobileRoute(() => import("@/views/Artist/albums.vue"), true),
       },
       {
         path: "videos",
         name: "ar-videos",
-        component: () => import("@/views/Artist/videos.vue"),
+        component: mobileRoute(() => import("@/views/Artist/videos.vue"), true),
       },
     ],
   },
@@ -301,7 +325,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "全部歌曲",
     },
-    component: () => import("@/views/Artist/all-songs.vue"),
+    component: mobileRoute(() => import("@/views/Artist/all-songs.vue")),
   },
   // 历史记录
   {
@@ -310,7 +334,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "history",
     },
-    component: () => import("@/views/History/HistoryView.vue"),
+    component: mobileRoute(() => import("@/views/History/HistoryView.vue")),
   },
   // 全部新碟
   {
@@ -319,7 +343,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "全部新碟",
     },
-    component: () => import("@/views/NewAlbum/NewAlbumView.vue"),
+    component: mobileRoute(() => import("@/views/NewAlbum/NewAlbumView.vue")),
   },
   // 状态页
   // 404
@@ -329,7 +353,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "404",
     },
-    component: () => import("@/views/State/404.vue"),
+    component: mobileRoute(() => import("@/views/State/404.vue")),
   },
   // 403
   {
@@ -338,7 +362,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "403",
     },
-    component: () => import("@/views/State/403.vue"),
+    component: mobileRoute(() => import("@/views/State/403.vue")),
   },
   // 500
   {
@@ -347,7 +371,7 @@ const routes: RouteRecordRaw[] = [
     meta: {
       title: "500",
     },
-    component: () => import("@/views/State/500.vue"),
+    component: mobileRoute(() => import("@/views/State/500.vue")),
   },
   {
     path: "/:pathMatch(.*)",

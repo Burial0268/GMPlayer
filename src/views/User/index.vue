@@ -26,7 +26,7 @@
         strong
         secondary
         round
-        @click="router.push('/local')"
+        @click="navigation.openPage('/local', { origin: $event })"
       >
         <template #icon>
           <n-icon :component="FolderMusic" />
@@ -61,14 +61,16 @@
 
 <script setup lang="ts">
 import { userStore } from "@/store";
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { FolderMusic, Logout } from "@icon-park/vue-next";
 import { useTabTransition } from "@/composables/useTabTransition";
 import { isTauri as isTauriRuntime } from "@/utils/tauri/core/runtime";
 
 const { t } = useI18n();
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 const user = userStore();
 
 // 退出登录
@@ -82,7 +84,7 @@ const handleLogout = () => {
     onPositiveClick: () => {
       user.userLogOut();
       $message.success(t("nav.avatar.success"));
-      router.push("/");
+      navigation.switchRoot("home", "/");
     },
   });
 };
@@ -95,22 +97,22 @@ const { transitionName, updateDirection, syncIndex } = useTabTransition([
 ]);
 
 // Tab 默认选中
-const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+const tabValue = ref(route.path.split("/")[2]);
 syncIndex(tabValue.value);
 
 // Tab 选项卡变化
 const tabChange = (value) => {
   updateDirection(value);
-  router.push({
+  navigation.replacePage({
     path: `/user/${value}`,
   });
 };
 
 // 监听路由参数变化
 watch(
-  () => router.currentRoute.value,
-  (val) => {
-    tabValue.value = val.path.split("/")[2];
+  () => route.path,
+  (path) => {
+    tabValue.value = path.split("/")[2];
     syncIndex(tabValue.value);
   },
 );

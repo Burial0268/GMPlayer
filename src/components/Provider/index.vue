@@ -88,6 +88,7 @@ const prefersReducedMotion = () =>
   window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches ?? false;
 
 const runThemeTransition = (apply, targetTheme = setting.getSiteTheme) => {
+  window.dispatchEvent(new Event("gmplayer-cancel-layer-motion"));
   if (!themeReady || prefersReducedMotion()) {
     apply();
     themeReady = true;

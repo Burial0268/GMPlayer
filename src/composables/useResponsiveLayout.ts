@@ -1,7 +1,7 @@
 import { ref, onMounted, onBeforeUnmount } from "vue";
 
 export function useResponsiveLayout(breakpoint = 768) {
-  const isMobile = ref(false);
+  const isMobile = ref(window.innerWidth <= breakpoint);
 
   const update = () => {
     isMobile.value = window.innerWidth <= breakpoint;

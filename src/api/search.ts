@@ -30,10 +30,17 @@ export const search = {
   /**
    * 搜索结果
    */
-  search: (keywords: string, limit = 30, offset = 0, type: SearchType = 1) =>
+  search: (
+    keywords: string,
+    limit = 30,
+    offset = 0,
+    type: SearchType = 1,
+    options: { hiddenBar?: boolean } = {},
+  ) =>
     request<any>({
       method: "GET",
       url: "/cloudsearch",
+      hiddenBar: options.hiddenBar,
       params: { keywords, limit, offset, type },
     }),
 };

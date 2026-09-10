@@ -48,14 +48,16 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { getArtistList } from "@/api/artist";
 import ArtistLists from "@/components/DataList/ArtistLists.vue";
 import { ArtistArea, ArtistType } from "@/api";
 
 const { t } = useI18n();
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 
 // 歌手标签数据
 const artistInitials = [
@@ -66,11 +68,7 @@ const artistInitials = [
   })),
   { key: "0", value: "#" },
 ];
-const artistInitialChoose = ref(
-  router.currentRoute.value.query.initial
-    ? router.currentRoute.value.query.initial
-    : artistInitials[0].key,
-);
+const artistInitialChoose = ref(route.query.initial ? route.query.initial : artistInitials[0].key);
 
 // 歌手分类数据
 const artistTypeNames = [
@@ -95,9 +93,7 @@ const artistTypeNames = [
 ];
 const artistType = [-1, -1, 1, 2, 3, -1, 1, 2, 3, -1, 1, 2, 3, -1, 1, 2, 3, -1];
 const artistArea = [-1, 7, 7, 7, 7, 96, 96, 96, 96, 8, 8, 8, 8, 16, 16, 16, 16, 0];
-const artistTypeNamesChoose = ref(
-  router.currentRoute.value.query.type ? Number(router.currentRoute.value.query.type) : 0,
-);
+const artistTypeNamesChoose = ref(route.query.type ? Number(route.query.type) : 0);
 
 // 歌手数据
 const artistsData = ref([]);
@@ -136,7 +132,7 @@ const getArtistListData = (
 // 歌手标签变化
 const artistInitialChange = (key) => {
   artistsData.value = [];
-  router.push({
+  navigation.replacePage({
     path: "/discover/artists",
     query: {
       type: artistTypeNamesChoose.value,
@@ -149,7 +145,7 @@ const artistInitialChange = (key) => {
 // 歌手分类变化
 const artistTypeChange = (index) => {
   artistsData.value = [];
-  router.push({
+  navigation.replacePage({
     path: "/discover/artists",
     query: {
       type: index,
@@ -174,8 +170,9 @@ const loadingMore = () => {
 
 // 监听路由参数变化
 watch(
-  () => router.currentRoute.value,
-  (val) => {
+  () => route.fullPath,
+  () => {
+    const val = route;
     artistTypeNamesChoose.value = Number(val.query.type ? val.query.type : 0);
     artistInitialChoose.value = val.query.initial ? val.query.initial : artistInitials[0].key;
     artistsOffset.value = 0;

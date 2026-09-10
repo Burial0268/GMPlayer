@@ -3,8 +3,15 @@
     <n-empty v-if="!groups.length" :description="empty" size="large" />
     <n-grid v-else :x-gap="20" :y-gap="20" cols="2 s:3 m:4 l:5" responsive="screen">
       <n-gi v-for="group in groups" :key="group.id">
-        <div class="group-card" @click="open(group)">
-          <div class="cover">
+        <div
+          class="group-card"
+          role="link"
+          tabindex="0"
+          :data-navigation-identity="`${kind}:${group.id}`"
+          @click="open(group, $event)"
+          @keydown.enter="open(group, $event)"
+        >
+          <div class="cover" data-navigation-cover>
             <!-- `lazy` + `decoding="async"` are load-bearing here, not polish:
                  this grid is not virtualized, so a library with a few thousand
                  albums would otherwise decode every cover the moment the tab
@@ -20,7 +27,9 @@
             />
             <n-icon v-else :size="34" :component="fallbackIcon" />
           </div>
-          <n-text class="name">{{ group.name || $t("local.unknown") }}</n-text>
+          <n-text class="name" data-navigation-title>{{
+            group.name || $t("local.unknown")
+          }}</n-text>
           <n-text class="meta" :depth="3">
             {{ subtitleFor(group) }}
           </n-text>
@@ -32,7 +41,7 @@
 
 <script setup lang="ts">
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import type { Component } from "vue";
 import type { LocalGroup } from "@/utils/localLibrary";
@@ -55,7 +64,7 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
-const router = useRouter();
+const navigation = useLayerNavigation();
 
 const assetUrl = (path: string): string => convertFileSrc(path);
 
@@ -83,8 +92,15 @@ const refFor = (group: LocalGroup): PlaylistRef => {
   }
 };
 
-const open = (group: LocalGroup) => {
-  router.push({ path: "/local/playlist", query: refToQuery(refFor(group)) });
+const open = (group: LocalGroup, origin: Event) => {
+  navigation.openPage(
+    { path: "/local/playlist", query: refToQuery(refFor(group)) },
+    {
+      origin,
+      kind: "card",
+      identity: `${props.kind}:${group.id}`,
+    },
+  );
 };
 </script>
 

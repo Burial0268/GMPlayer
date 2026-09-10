@@ -1,6 +1,6 @@
 <template>
   <div class="song" v-if="musicDetail">
-    <div class="left">
+    <div v-content-intro class="left">
       <div class="cover">
         <n-image
           show-toolbar-tooltip
@@ -109,13 +109,13 @@
       </div>
     </div>
     <div class="right">
-      <section class="comments detail-section" v-if="commentData[0]">
+      <section v-content-intro class="comments detail-section" v-if="commentData[0]">
         <n-h6 class="section-title" prefix="bar">{{ $t("general.name.hotComments") }}</n-h6>
         <div class="content">
           <Comment v-for="item in commentData" :key="item.commentId || item" :commentData="item" />
         </div>
       </section>
-      <section class="simiPlayList detail-section" v-if="simiPlayList[0]">
+      <section v-content-intro class="simiPlayList detail-section" v-if="simiPlayList[0]">
         <n-h6 class="section-title" prefix="bar">{{ $t("other.containing") }}</n-h6>
         <CoverLists :listData="simiPlayList" />
       </section>
@@ -178,6 +178,7 @@ import { PlayOne, Comments, ListAdd, Youtube, People, RecordDisc, Time } from "@
 import { formatNumber } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
+import { useContentIntro } from "@/composables/useContentIntro";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
@@ -191,6 +192,7 @@ const router = useRouter();
 const music = musicStore();
 const addPlayListRef = ref<any>(null);
 const { applyContentPanelAccent } = useContentPanelAccent();
+const { vContentIntro } = useContentIntro();
 
 // 歌曲数据
 const musicId = ref<RouteQueryId>(router.currentRoute.value.query.id);
@@ -441,7 +443,7 @@ watch(
           max-width: 780px;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 800;
-          line-height: 1.06;
+          line-height: normal;
           -webkit-line-clamp: 2;
           line-clamp: 2;
         }
@@ -659,7 +661,7 @@ watch(
 
           .name {
             font-size: clamp(25px, 8vw, 36px);
-            line-height: 1.12;
+            line-height: normal;
           }
 
           .creator {

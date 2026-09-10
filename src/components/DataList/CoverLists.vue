@@ -14,11 +14,15 @@
         <n-gi
           class="item"
           v-for="item in listData"
-          :key="item"
-          @click="toLink(item.id)"
+          :key="item.id"
+          role="link"
+          tabindex="0"
+          :data-navigation-identity="`${listType}:${item.id}`"
+          @click="toLink(item.id, $event)"
+          @keydown.enter="toLink(item.id, $event)"
           @contextmenu="openRightMenu($event, item)"
         >
-          <div class="cover">
+          <div class="cover" data-navigation-cover>
             <n-image
               lazy
               class="coverImg"
@@ -57,7 +61,7 @@
             </div>
           </div>
           <div class="title">
-            <span class="name text-hidden">{{ item.name }}</span>
+            <span class="name text-hidden" data-navigation-title>{{ item.name }}</span>
             <span v-if="listType == 'playlist' && item.artist" class="by">
               By {{ item.artist.nickname }}
             </span>
@@ -116,6 +120,7 @@ import { useRouter } from "vue-router";
 import AllArtists from "./AllArtists.vue";
 import PlaylistUpdate from "@/components/DataModal/PlaylistUpdate.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
+import { useLayerNavigation } from "@/utils/navigation";
 
 // 悬停时的模糊光晕只是装饰层，用裸 <img> 而不是第二个 n-image：
 // 同一 URL 走浏览器缓存，省下的是每格多一份 n-image 组件实例与 DOM。
@@ -125,6 +130,7 @@ const hideBrokenShadow = (e) => {
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const music = musicStore();
 const user = userStore();
 const setting = settingStore();
@@ -288,22 +294,29 @@ const onClickoutside = () => {
 };
 
 // 链接跳转
-const toLink = (id) => {
+const toLink = (id, origin) => {
+  const source = { origin, kind: "cover", identity: `${props.listType}:${id}` };
   if (props.listType === "playlist" || props.listType === "topList") {
-    router.push({
-      path: "/playlist",
-      query: {
-        id,
-        page: 1,
+    navigation.openPage(
+      {
+        path: "/playlist",
+        query: {
+          id,
+          page: 1,
+        },
       },
-    });
+      source,
+    );
   } else if (props.listType === "album") {
-    router.push({
-      path: "/album",
-      query: {
-        id,
+    navigation.openPage(
+      {
+        path: "/album",
+        query: {
+          id,
+        },
       },
-    });
+      source,
+    );
   }
 };
 

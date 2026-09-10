@@ -1,5 +1,10 @@
 <template>
-  <aside :class="['desktop-queue-panel', { show }]" :aria-hidden="!show">
+  <aside
+    :class="['desktop-queue-panel', { show }]"
+    :aria-hidden="!show"
+    :inert="!show"
+    data-navigation-layer="queue-player"
+  >
     <div class="queue-header">
       <div class="queue-title">
         <n-icon size="24" :component="QueueMusicRound" />

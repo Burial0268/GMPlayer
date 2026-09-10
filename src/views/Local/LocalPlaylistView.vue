@@ -1,29 +1,29 @@
 <template>
   <div :class="['local-playlist', { 'is-dark': setting.getSiteTheme === 'dark' }]">
     <div class="left">
-      <div class="cover">
+      <RouteArtwork v-slot="{ imageProps }" class="cover" data-navigation-cover="page">
         <n-image
           show-toolbar-tooltip
           class="coverImg"
+          :img-props="imageProps"
           :src="coverUrl"
           :previewed-img-props="{ style: { borderRadius: 'var(--radius-md)' } }"
           :preview-src="coverUrl"
           fallback-src="/images/pic/default.png"
         />
-        <n-image
-          class="shadow"
-          preview-disabled
-          :src="coverUrl"
-          fallback-src="/images/pic/default.png"
-        />
-      </div>
+        <RouteShadow class="shadow" :src="coverUrl" />
+      </RouteArtwork>
       <div class="meta">
         <div class="title">
-          <span class="detail-kind">{{ typeLabel }}</span>
-          <n-text class="name text-hidden">{{ meta.name || $t("local.unknown") }}</n-text>
-          <n-text class="creator">{{ meta.description || $t("sidebar.localMusic") }}</n-text>
+          <span v-content-intro class="detail-kind">{{ typeLabel }}</span>
+          <n-text class="name text-hidden" data-navigation-title="page">{{
+            meta.name || $t("local.unknown")
+          }}</n-text>
+          <n-text v-content-intro class="creator">{{
+            meta.description || $t("sidebar.localMusic")
+          }}</n-text>
         </div>
-        <div class="detail-stats">
+        <div v-content-intro class="detail-stats">
           <div class="num">
             <n-icon :depth="3" :component="MusicList" />
             <n-text>{{ $t("local.trackCount", { count: meta.trackCount }) }}</n-text>
@@ -33,7 +33,7 @@
             <n-text>{{ totalDuration }}</n-text>
           </div>
         </div>
-        <n-space class="control">
+        <n-space v-content-intro class="control">
           <n-button
             strong
             secondary
@@ -56,7 +56,7 @@
         </n-space>
       </div>
     </div>
-    <div class="right">
+    <div v-content-intro class="right">
       <div class="meta">
         <n-text class="name">{{ meta.name || $t("local.unknown") }}</n-text>
         <n-text class="creator">
@@ -106,6 +106,9 @@ import { musicStore, settingStore, useLocalLibraryStore } from "@/store";
 import { fuzzyFilterSongs } from "@/utils/fuzzySearch";
 import { DEFAULT_COVER } from "@/utils/coverUrl";
 import DataLists from "@/components/DataList/DataLists.vue";
+import RouteShadow from "@/components/Navigation/RouteShadow.vue";
+import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
+import { useContentIntro } from "@/composables/useContentIntro";
 import { localPlaylistExportM3u, localPlaylistRemoveTracks } from "@/utils/localLibrary";
 import { capabilitiesFor, queryForRef, refFromQuery } from "@/utils/playlistSource";
 import { isMobile } from "@/utils/tauri/platform/mobile";
@@ -129,6 +132,7 @@ const route = useRoute();
 const music = musicStore();
 const setting = settingStore();
 const local = useLocalLibraryStore();
+const { vContentIntro } = useContentIntro();
 
 const songs = ref<SongData[]>([]);
 const loading = ref(false);
@@ -229,26 +233,6 @@ const load = async (append = false) => {
           ? songs.value.reduce((sum, song) => sum + Number(song.dt ?? 0), 0)
           : 0,
     };
-    // A fresh collection starts at the top of the scrollport. `append` must not,
-    // or paging in the next 200 rows would yank the user back up.
-    //
-    // This is the missing half of `.list-toolbar`'s `position: sticky`, and why
-    // the filter pill appeared to sit *on* the rows rather than above them. A
-    // sticky element still occupies its natural slot in flow — between the header
-    // block and the list — and only pins once that slot scrolls past
-    // `--content-sticky-top`. The scrollport is `n-layout-content`'s, shared by
-    // every route (see `App.vue`), the router declares no `scrollBehavior`, and
-    // this page's own `.right` is not a scroll container. So arriving from a page
-    // the user had scrolled — or switching between two local collections, which
-    // reuses this very instance because the keep-alive key only varies on
-    // `query.id` and only `local-playlist` has one — leaves the scrollport
-    // hundreds of pixels down while the fresh, short list renders from zero. The
-    // toolbar is then pinned at the top of the viewport with rows drawn beneath
-    // it, which is exactly the reported overlap, at rest and at every width.
-    //
-    // `PlayListView.loadPlaylist` and `AlbumView` both do this; this page was the
-    // one detail view that did not.
-    if (!append && typeof $scrollToTop !== "undefined") $scrollToTop();
   } finally {
     if (token === requestToken) loading.value = false;
   }
@@ -308,18 +292,7 @@ watch(isSearching, async (searching) => {
   }
 });
 
-/**
- * A new keyword goes back to the top of the list.
- *
- * Watched separately from `isSearching`, which only flips on the *first*
- * character and on clearing: typing a second word re-ranks the whole result set,
- * so staying at whatever offset the previous keyword was scrolled to shows rows
- * from the middle of a list the user has not seen the start of.
- *
- * The scrollport is shared across routes and nothing else resets it — the router
- * has no `scrollBehavior` and `.right` is not its own scroll container — so this
- * page has to ask for it, exactly as `PlayListView` and `AlbumView` do.
- */
+// Each keyword reorders the results without changing the route.
 watch(normalizedKeyword, (keyword, prev) => {
   if (keyword !== prev && typeof $scrollToTop !== "undefined") $scrollToTop();
 });
@@ -388,20 +361,25 @@ watch(
 // activation. Guarding on the route and returning would lose the change outright:
 // `onMounted` does not run again for a cached instance.
 let loadedRevision = local.revision;
+let active = true;
 
 watch(
   () => local.revision,
   () => {
-    if (route.path !== "/local/playlist") return;
+    if (!active) return;
     loadedRevision = local.revision;
     void load();
   },
 );
 
 onActivated(() => {
+  active = true;
   if (local.revision === loadedRevision) return;
   loadedRevision = local.revision;
   void load();
+});
+onDeactivated(() => {
+  active = false;
 });
 
 onMounted(async () => {
@@ -409,7 +387,7 @@ onMounted(async () => {
   await local.hydrate();
   await load();
   loadedRevision = local.revision;
-  $setSiteTitle(`${meta.value.name} - ${t("sidebar.localMusic")}`);
+  if (active) $setSiteTitle(`${meta.value.name} - ${t("sidebar.localMusic")}`);
 });
 </script>
 
@@ -474,8 +452,6 @@ onMounted(async () => {
       width: 100%;
       aspect-ratio: 1 / 1;
       border-radius: var(--radius-md);
-      transition: transform var(--duration-300) var(--ease-out);
-      filter: drop-shadow(0 16px 28px rgba(var(--content-panel-accent-rgb, 0, 0, 0), 0.22));
 
       &:active {
         transform: scale(0.95);

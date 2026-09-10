@@ -14,15 +14,21 @@
         <n-gi
           class="item"
           v-for="item in listData"
-          :key="item"
-          @click="router.push(`/artist/songs?id=${item.id}&page=1`)"
+          :key="item.id"
+          role="link"
+          tabindex="0"
+          :data-navigation-identity="`artist:${item.id}`"
+          @click="openArtist(item, $event)"
+          @keydown.enter="openArtist(item, $event)"
           @contextmenu="openRightMenu($event, item)"
         >
-          <div class="cover">
+          <div class="cover" data-navigation-cover>
             <n-avatar
               lazy
-              round
+              :intersection-observer-options="avatarIntersectionOptions"
               class="coverImg"
+              object-fit="cover"
+              :img-props="{ 'data-navigation-shared-image': '' }"
               :src="item.cover.replace(/^http:/, 'https:') + '?param=200y200'"
               fallback-src="/images/pic/default.png"
             >
@@ -31,9 +37,13 @@
                   <n-spin size="small" />
                 </div>
               </template>
+              <template #fallback>
+                <img data-navigation-shared-image src="/images/pic/default.png" alt="" />
+              </template>
             </n-avatar>
             <n-avatar
               lazy
+              :intersection-observer-options="avatarIntersectionOptions"
               round
               class="shadow"
               :src="item.cover.replace(/^http:/, 'https:') + '?param=200y200'"
@@ -41,7 +51,7 @@
             />
             <n-icon size="40" :component="PeopleSearchOne" />
           </div>
-          <n-text class="name text-hidden">{{ item.name }}</n-text>
+          <n-text class="name text-hidden" data-navigation-title>{{ item.name }}</n-text>
           <n-text class="size" :depth="3" v-if="item.size">
             {{
               $t("general.name.songSize", {
@@ -89,14 +99,22 @@
 import { NIcon } from "naive-ui";
 import { PeopleSearchOne, LinkTwo, Like, Unlike } from "@icon-park/vue-next";
 import { likeArtist } from "@/api/artist";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { userStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
 const user = userStore();
 const setting = settingStore();
-const router = useRouter();
+const navigation = useLayerNavigation();
+// NAvatar's observer path enables its error fallback when lazy loading is used.
+const avatarIntersectionOptions = {};
+const openArtist = (item, origin) =>
+  navigation.openPage(`/artist/songs?id=${item.id}&page=1`, {
+    origin,
+    kind: "cover",
+    identity: `artist:${item.id}`,
+  });
 const props = defineProps({
   // 列表数据
   listData: {
@@ -255,16 +273,22 @@ onMounted(() => {
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 16px 0 #00000020;
-      border-radius: 50%;
-      transition: all var(--duration-300) var(--ease-out);
       .coverImg {
-        filter: brightness(1);
-        transform: scale(1);
         width: 100%;
         height: 100%;
-        transition: all var(--duration-300) var(--ease-out);
+        overflow: visible;
+        border-radius: 0;
+        background: transparent;
         z-index: 1;
+        :deep(img) {
+          object-fit: cover;
+          border-radius: 50%;
+          box-shadow: 0 4px 16px 0 #00000020;
+          transition:
+            transform var(--duration-300) var(--ease-out),
+            filter var(--duration-300) var(--ease-out),
+            box-shadow var(--duration-300) var(--ease-out);
+        }
         .cover-loading {
           position: relative;
           display: flex;
@@ -273,6 +297,7 @@ onMounted(() => {
           width: 100%;
           height: 0;
           padding-bottom: 100%;
+          border-radius: 50%;
           background-color: #0001;
           .n-spin-body {
             position: absolute;
@@ -302,16 +327,18 @@ onMounted(() => {
         transform: scale(0.8);
         position: absolute;
         color: #fff;
-        transition: all var(--duration-300) var(--ease-out);
+        transition:
+          opacity var(--duration-300) var(--ease-out),
+          transform var(--duration-300) var(--ease-out);
         z-index: 1;
       }
       &:hover {
-        box-shadow: 0 4px 16px 0 #00000040;
         .n-icon {
           opacity: 1;
           transform: scale(1);
         }
-        .coverImg {
+        :deep(.coverImg img) {
+          box-shadow: 0 4px 16px 0 #00000040;
           filter: brightness(0.8);
           transform: scale(1.05);
         }
@@ -320,7 +347,7 @@ onMounted(() => {
         }
       }
       &:active {
-        .n-avatar {
+        :deep(.coverImg img) {
           transform: scale(1);
         }
       }
@@ -328,7 +355,7 @@ onMounted(() => {
     .name {
       margin-top: 14px;
       font-size: 16px;
-      transition: all var(--duration-300) var(--ease-out);
+      transition: color var(--duration-300) var(--ease-out);
       cursor: pointer;
       &:hover {
         color: var(--main-color);

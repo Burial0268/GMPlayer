@@ -2,13 +2,19 @@ import { createRouter, createWebHistory } from "vue-router";
 import type { RouteLocationRaw } from "vue-router";
 import routes from "./routes";
 import { getLoginState } from "@/api/login";
-import { userStore, musicStore } from "@/store";
+import { userStore } from "@/store";
+import { installLayerNavigation } from "@/utils/navigation";
+import type { RootEntry } from "@/utils/navigation/layers";
 
 declare module "vue-router" {
   interface RouteMeta {
     title?: string;
     needLogin?: boolean;
     hideLoadingBar?: boolean;
+    navigationRoot?: RootEntry;
+    navigationFallback?: RootEntry;
+    navigationLabel?: string;
+    navigationDetail?: "album" | "playlist" | "artist";
   }
 }
 
@@ -17,16 +23,17 @@ const router = createRouter({
   routes,
 });
 
+installLayerNavigation(router);
+
 let routeLoadingBarActive = false;
 
 // 路由守卫
-router.beforeEach(async (to): Promise<RouteLocationRaw | void> => {
+router.beforeEach(async (to, from): Promise<RouteLocationRaw | void> => {
+  if (to.fullPath === from.fullPath) return;
   const user = userStore();
-  const music = musicStore();
-  const showLoadingBar = !to.meta.hideLoadingBar;
-
-  // 关闭播放器
-  music.setBigPlayerState(false);
+  const showLoadingBar =
+    !to.meta.hideLoadingBar &&
+    (to.meta.needLogin || !window.matchMedia("(max-width: 768px)").matches);
 
   // 开始进度条
   routeLoadingBarActive = showLoadingBar;

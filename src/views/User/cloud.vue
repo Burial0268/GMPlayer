@@ -88,7 +88,8 @@
 
 <script setup lang="ts">
 import { getCloud, upCloudSong } from "@/api/user";
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { settingStore } from "@/store";
 import { asRawEntry } from "@/utils/rawEntry";
 import { getSongTime } from "@/utils/timeTools";
@@ -99,16 +100,15 @@ import Pagination from "@/components/Pagination/index.vue";
 import type { ProgressStatus } from "naive-ui";
 
 const { t } = useI18n();
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 const setting = settingStore();
 
 // 云盘数据
 const cloudSpace = ref([]);
 const cloudData = ref([]);
 const pagelimit = ref(30);
-const pageNumber = ref(
-  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
-);
+const pageNumber = ref(route.query.page ? Number(route.query.page) : 1);
 const totalCount = ref(0);
 
 // 上传歌曲数据
@@ -119,6 +119,7 @@ const upSongCompleted = ref(0);
 
 // 获取云盘数据
 const getCloudData = (limit = 30, offset = 0, scroll = true) => {
+  if (scroll && typeof $scrollToTop !== "undefined") $scrollToTop();
   getCloud(limit, offset).then((res) => {
     console.log(res);
     totalCount.value = res.count;
@@ -147,8 +148,6 @@ const getCloudData = (limit = 30, offset = 0, scroll = true) => {
     } else {
       $message.error(t("general.message.acquisitionFailed"));
     }
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
   });
 };
 
@@ -216,7 +215,7 @@ const pageSizeChange = (val) => {
 
 // 当前页数数据变化
 const pageNumberChange = (val) => {
-  router.push({
+  navigation.replacePage({
     path: "/user/cloud",
     query: {
       page: val,
@@ -232,8 +231,9 @@ provide("cloudDataLoad", cloudDataLoad);
 
 // 监听路由参数变化
 watch(
-  () => router.currentRoute.value,
-  (val) => {
+  () => route.fullPath,
+  () => {
+    const val = route;
     if (val.name === "user-cloud") {
       pageNumber.value = Number(val.query.page ? val.query.page : 1);
       getCloudData(pagelimit.value, (pageNumber.value - 1) * pagelimit.value);

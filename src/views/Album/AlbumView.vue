@@ -1,26 +1,50 @@
 <template>
   <div :class="['album', { 'is-dark': setting.getSiteTheme === 'dark' }]" v-if="albumDetail">
     <div class="left">
-      <div class="cover">
+      <RouteArtwork
+        v-slot="{ imageProps }"
+        class="cover"
+        data-navigation-cover="page"
+        :style="{
+          '--disc-duration': `${layerMotion.decoration}s`,
+          '--disc-ease': `cubic-bezier(${layerMotion.ease})`,
+        }"
+      >
         <n-image
           show-toolbar-tooltip
           class="coverImg"
+          :img-props="imageProps"
+          object-fit="cover"
           :src="getCoverUrl(albumDetail.picUrl, 1024)"
           :previewed-img-props="{ style: { borderRadius: 'var(--radius-md)' } }"
           :preview-src="getCoverUrl(albumDetail.picUrl)"
           fallback-src="/images/pic/default.png"
+          @load="artworkLoaded($event, 'cover')"
         />
-        <img src="/images/pic/album.png" class="album-disc" alt="album" />
-      </div>
+        <img
+          src="/images/pic/album.png"
+          class="album-disc"
+          :class="{ revealed: discRevealed }"
+          width="64"
+          height="316"
+          alt=""
+          aria-hidden="true"
+          @load="artworkLoaded($event, 'disc')"
+        />
+      </RouteArtwork>
       <div class="meta">
         <div class="title">
-          <span class="detail-kind">{{ $t("general.name.album") }}</span>
-          <n-text class="name">{{ albumDetail.name }}</n-text>
-          <n-text class="creator" @click="router.push(`/artist/songs?id=${albumDetail.artist.id}`)">
+          <span v-content-intro class="detail-kind">{{ $t("general.name.album") }}</span>
+          <n-text class="name" data-navigation-title="page">{{ albumDetail.name }}</n-text>
+          <n-text
+            v-content-intro
+            class="creator"
+            @click="router.push(`/artist/songs?id=${albumDetail.artist.id}`)"
+          >
             {{ albumDetail.artist.name }}
           </n-text>
         </div>
-        <div class="detail-stats">
+        <div v-content-intro class="detail-stats">
           <div class="num">
             <n-icon :depth="3" :component="Time" />
             <n-text v-html="getLongTime(albumDetail.publishTime)" />
@@ -34,7 +58,7 @@
             <n-text>{{ $t("general.name.songSize", { size: albumData.length }) }}</n-text>
           </div>
         </div>
-        <div class="intr">
+        <div v-content-intro class="intr">
           <span class="name">{{
             $t("general.name.desc", { name: $t("general.name.album") })
           }}</span>
@@ -52,12 +76,12 @@
             {{ $t("general.name.allDesc") }}
           </n-button>
         </div>
-        <n-space class="tag" v-if="albumDetail.tags">
+        <n-space v-content-intro class="tag" v-if="albumDetail.tags">
           <n-tag class="tags" round :bordered="false" v-for="item in albumDetail.tags" :key="item">
             {{ item }}
           </n-tag>
         </n-space>
-        <n-space class="control">
+        <n-space v-content-intro class="control">
           <n-button strong secondary round type="primary" @click="playAllSong">
             <template #icon>
               <n-icon :component="MusicList" />
@@ -79,7 +103,7 @@
         </n-space>
       </div>
     </div>
-    <div class="right">
+    <div v-content-intro class="right">
       <div class="meta">
         <n-text class="name">{{ albumDetail.name }}</n-text>
         <n-text class="creator" @click="router.push(`/artist/songs?id=${albumDetail.artist.id}`)">
@@ -141,43 +165,14 @@
       {{ $t("general.name.goBack") }}
     </n-button>
   </div>
-  <div class="loading" v-else>
-    <div class="left">
-      <div class="cover">
-        <n-skeleton class="pic" />
-        <n-skeleton class="album-disc" />
-      </div>
-      <div class="meta loading-meta">
-        <n-skeleton text width="64px" />
-        <n-skeleton class="loading-title" text width="min(560px, 100%)" />
-        <n-skeleton text width="160px" />
-        <div class="loading-stats">
-          <n-skeleton text width="116px" />
-          <n-skeleton text width="136px" />
-          <n-skeleton text width="82px" />
-        </div>
-        <n-skeleton text :repeat="2" width="min(640px, 100%)" />
-        <div class="loading-actions">
-          <n-skeleton :sharp="false" width="112px" height="34px" />
-          <n-skeleton :sharp="false" width="34px" height="34px" />
-        </div>
-      </div>
-    </div>
-    <div class="right loading-list">
-      <div v-for="item in 8" :key="item" class="loading-row">
-        <n-skeleton circle width="38px" height="38px" />
-        <div class="loading-row-main">
-          <n-skeleton text width="min(360px, 70%)" />
-          <n-skeleton text width="min(220px, 44%)" />
-        </div>
-        <n-skeleton text width="84px" />
-        <n-skeleton text width="46px" />
-      </div>
-    </div>
-  </div>
+  <PageLoadState v-else-if="loadFailed" error @retry="getAlbumData(albumId)" />
+  <DetailPageSkeleton v-else kind="album" />
 </template>
 
 <script setup lang="ts">
+import DetailPageSkeleton from "@/components/Navigation/DetailPageSkeleton.vue";
+import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
+import { useContentIntro } from "@/composables/useContentIntro";
 import { NIcon, NText } from "naive-ui";
 import { getAlbum, likeAlbum } from "@/api/album";
 import { useRouter } from "vue-router";
@@ -205,6 +200,9 @@ import { userStore, musicStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
+import { useLayerNavigation } from "@/utils/navigation";
+import { layerMotion } from "@/utils/navigation/motion";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -214,12 +212,62 @@ const setting = settingStore();
 const { playAllSong: playAll } = usePlayAllSong();
 const { enqueue: downloadSongs } = useDownloadSongs();
 const { applyContentPanelAccent } = useContentPanelAccent();
+const navigation = useLayerNavigation();
+const { vContentIntro } = useContentIntro();
+
+const artworkReady = reactive({ cover: false, disc: false });
+const discRevealed = ref(false);
+const active = ref(true);
+let revealFrame = 0;
+
+const cancelDiscReveal = () => {
+  cancelAnimationFrame(revealFrame);
+  revealFrame = 0;
+};
+
+const artworkLoaded = async (event: Event, kind: "cover" | "disc") => {
+  const image = event.target as HTMLImageElement;
+  const src = image.currentSrc;
+  try {
+    await image.decode();
+    if (image.currentSrc === src) artworkReady[kind] = true;
+  } catch {
+    // Keep the decoration behind the cover until both images can be painted.
+  }
+};
+
+watch(
+  [() => artworkReady.cover && artworkReady.disc, navigation.isTransitioning, active],
+  ([ready, transitioning, visible]) => {
+    cancelDiscReveal();
+    if (!ready || transitioning || !visible || discRevealed.value) return;
+    // Paint the tucked position after the shared cover has handed back to the page.
+    revealFrame = requestAnimationFrame(() => {
+      revealFrame = requestAnimationFrame(() => {
+        revealFrame = 0;
+        discRevealed.value = true;
+      });
+    });
+  },
+  { flush: "post" },
+);
+
+onActivated(() => {
+  active.value = true;
+  if (navigation.transition.value.direction !== "pop") discRevealed.value = false;
+});
+onDeactivated(() => {
+  active.value = false;
+  cancelDiscReveal();
+});
+onBeforeUnmount(cancelDiscReveal);
 
 // 专辑数据
 const albumId = ref(router.currentRoute.value.query.id);
 const albumDetail = ref(null);
 const albumData = ref([]);
 const albumDescShow = ref(false);
+const loadFailed = ref(false);
 
 // ── 列表内搜索 ──────────────────────────────────────────────
 //
@@ -304,25 +352,36 @@ const setDropdownOptions = () => {
 
 // 获取歌单信息
 const getAlbumData = (id) => {
-  getAlbum(id).then((res) => {
-    // 专辑信息
-    albumDetail.value = res.album;
-    const albumCover = res.album.picUrl;
-    applyContentPanelAccent(getCoverUrl(albumCover, 256));
-    window.$setSiteTitle(res.album.name + " - " + t("general.name.album"));
-    // 专辑歌曲
-    if (res.songs) {
-      albumData.value = transformSongData(res.songs, {
-        sourceId: id,
-        albumTransform: (v) => {
-          v.al.picUrl = albumCover;
-          return v.al;
-        },
-      });
-    } else {
-      window.$message.error(t("general.message.acquisitionFailed"));
-    }
-  });
+  loadFailed.value = false;
+  getAlbum(id, { hiddenBar: true })
+    .then((res) => {
+      // 专辑信息
+      albumDetail.value = res.album;
+      const albumCover = res.album.picUrl;
+      applyContentPanelAccent(getCoverUrl(albumCover, 256));
+      if (
+        router.currentRoute.value.name === "album" &&
+        String(router.currentRoute.value.query.id) === String(id)
+      ) {
+        window.$setSiteTitle(res.album.name + " - " + t("general.name.album"));
+      }
+      // 专辑歌曲
+      if (res.songs) {
+        albumData.value = transformSongData(res.songs, {
+          sourceId: id,
+          albumTransform: (v) => {
+            v.al.picUrl = albumCover;
+            return v.al;
+          },
+        });
+      } else {
+        window.$message.error(t("general.message.acquisitionFailed"));
+      }
+    })
+    .catch((error) => {
+      loadFailed.value = true;
+      console.warn("[album] detail failed to load", error);
+    });
 };
 
 // 播放专辑所有歌曲
@@ -362,20 +421,11 @@ onMounted(() => {
     }
   }
 });
-
-// 监听路由参数变化
-watch(
-  () => router.currentRoute.value,
-  (val) => {
-    albumId.value = val.query.id;
-    if (val.name === "album") {
-      getAlbumData(albumId.value);
-    }
-  },
-);
 </script>
 
 <style lang="scss" scoped>
+@use "@/style/detail-artwork" as artwork;
+
 .album,
 .loading {
   // 悬浮搜索控件的玻璃参数。结构抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
@@ -435,8 +485,6 @@ watch(
       width: 100%;
       aspect-ratio: 1 / 1;
       border-radius: var(--radius-md);
-      transition: transform var(--duration-300) var(--ease-out);
-      filter: drop-shadow(0 16px 28px rgba(var(--content-panel-accent-rgb, 0, 0, 0), 0.22));
 
       &:active {
         transform: scale(0.95);
@@ -457,11 +505,19 @@ watch(
       }
 
       .album-disc {
+        width: calc(94% * 64 / 316);
         height: 94%;
         position: absolute;
         top: 3%;
         right: -16%;
         opacity: 0.82;
+        pointer-events: none;
+        transform: translate3d(-100%, 0, 0);
+        transition: transform var(--disc-duration) var(--disc-ease);
+
+        &.revealed {
+          transform: translate3d(0, 0, 0);
+        }
       }
     }
 
@@ -497,7 +553,7 @@ watch(
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 800;
-          line-height: 1.06;
+          line-height: normal;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;
           -webkit-line-clamp: 2;
@@ -815,7 +871,7 @@ watch(
 
           .name {
             font-size: clamp(25px, 8vw, 36px);
-            line-height: 1.12;
+            line-height: normal;
           }
 
           .creator {
@@ -1026,5 +1082,9 @@ watch(
       }
     }
   }
+}
+
+.album .left {
+  @include artwork.album(".cover");
 }
 </style>

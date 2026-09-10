@@ -1,185 +1,242 @@
 <template>
-  <div ref="searchRootRef" :class="['searchInp', { active: site.searchInputActive }]">
-    <n-input
-      :class="site.searchInputActive ? 'input focus' : 'input'"
-      :input-props="{ autoComplete: false }"
-      :placeholder="$t('nav.search.placeholder')"
-      ref="searchInpRef"
-      round
-      clearable
-      v-model:value="inputValue"
-      @focus="openSearchPanel"
-      @keydown="inputkeydown($event)"
-      @pointerdown.stop="openSearchPanel"
-      @touchstart.stop="openSearchPanel"
-      @click.stop="openSearchPanel"
+  <div ref="searchAnchorRef" class="search-anchor">
+    <div
+      v-if="isMobile"
+      class="searchInp search-trigger"
+      role="button"
+      tabindex="0"
+      :aria-label="$t('navigation.search')"
+      @click="openSearchPanel"
+      @keydown.enter="openSearchPanel"
+      @keydown.space.prevent="openSearchPanel"
     >
-      <template #prefix>
-        <n-icon
-          size="16"
-          :class="site.searchInputActive ? 'active' : ''"
-          :component="Search"
-          @pointerdown.stop
-          @touchstart.stop
-          @click.stop="toggleSearchPanel"
-        />
-      </template>
-    </n-input>
-    <CollapseTransition easing="ease-in-out">
-      <n-card
-        class="list"
-        v-show="site.searchInputActive && !inputValue"
-        content-style="padding: 0"
-        @pointerdown.stop
-        @touchstart.stop
-        @click.stop
+      <n-input
+        class="input"
+        round
+        readonly
+        :input-props="{ tabindex: -1 }"
+        :placeholder="$t('nav.search.placeholder')"
+        aria-hidden="true"
       >
-        <n-scrollbar>
-          <div class="suggest-tip" v-if="!music.getSearchHistory[0] && !searchData.hot[0]">
-            <n-icon size="16" :component="Find" />
-            <span>{{ $t("nav.search.searchTip") }}</span>
-          </div>
-          <div class="history-list" v-if="music.getSearchHistory[0] && setting.searchHistory">
-            <div class="list-title">
-              <n-icon size="16" :component="History" />
-              <n-text>{{ $t("nav.search.history") }}</n-text>
-            </div>
-            <n-space>
-              <n-tag
-                v-for="item in music.getSearchHistory"
-                :key="item"
-                :bordered="false"
-                round
-                v-html="item"
-                @click="toSearch(item, 0)"
-              />
-            </n-space>
-            <div class="del" @click="delHistory">
-              <n-icon size="16" :depth="3">
-                <DeleteFour theme="filled" />
-              </n-icon>
-              <n-text :depth="3">{{ $t("nav.search.delHistory") }}</n-text>
-            </div>
-          </div>
-          <div class="hot-list" v-if="searchData.hot[0]">
-            <div class="list-title">
-              <n-icon size="16">
-                <Fire theme="filled" />
-              </n-icon>
-              <n-text>{{ $t("nav.search.hotList") }}</n-text>
-            </div>
-            <div
-              class="hot-item"
-              v-for="(item, index) in searchData.hot"
-              :key="item"
-              @click="toSearch(item.searchWord, 0)"
-            >
-              <div :class="index < 3 ? 'num hot' : 'num'">{{ index + 1 }}</div>
-              <div class="title">
-                <span class="name">
-                  {{ item.searchWord }}
-                  <!-- <img :src="item.iconUrl" alt="icon" /> -->
-                  <n-tag v-if="item.iconUrl" class="tag" round :bordered="false" size="small">
-                    {{ item.iconType == 1 ? "HOT" : "UP" }}
-                  </n-tag>
-                </span>
-                <n-text class="tip" depth="3" v-html="item.content" />
-              </div>
-            </div>
-          </div>
-        </n-scrollbar>
-      </n-card>
-    </CollapseTransition>
-    <CollapseTransition easing="ease-in-out">
-      <n-card
-        class="list"
-        v-show="site.searchInputActive && inputValue && searchData.suggest"
-        content-style="padding: 0"
-        @pointerdown.stop
-        @touchstart.stop
-        @click.stop
+        <template #prefix><n-icon size="16" :component="Search" /></template>
+      </n-input>
+    </div>
+    <Teleport to="body" :disabled="!isMobile">
+      <div
+        ref="searchRootRef"
+        v-show="!isMobile || rendered"
+        :class="['searchInp', { active, 'mobile-search-layer': isMobile }]"
+        :data-navigation-layer="active ? 'search' : undefined"
+        :role="active ? 'dialog' : undefined"
+        :aria-modal="active || undefined"
+        :aria-label="$t('navigation.search')"
+        :inert="isMobile && !active"
       >
-        <n-scrollbar>
-          <div class="suggest-tip" v-if="Object.keys(searchData.suggest).length === 0">
-            <n-icon size="16" :component="Find" />
-            <span>{{ $t("nav.search.noSuggestions") }}</span>
-          </div>
-          <div class="suggest-all" v-else>
-            <div class="loading" v-show="!searchData.suggest.order">
-              <n-icon size="16" :component="Find" />
-              <span>{{ $t("nav.search.searchTip") }}</span>
-            </div>
-            <div class="suggest-item" v-if="searchData.suggest.songs">
-              <div class="type">
-                <n-icon size="18">
-                  <MusicOne theme="filled" />
-                </n-icon>
-                <span class="name">{{ $t("nav.search.songs") }}</span>
-              </div>
-              <span
-                class="names"
-                v-for="songs in searchData.suggest.songs"
-                :key="songs"
-                @click="toSearch(songs.id, 1)"
-              >
-                {{ songs.name }} - {{ songs.artists[0].name }}</span
-              >
-            </div>
-            <div class="suggest-item" v-if="searchData.suggest.artists">
-              <div class="type">
-                <n-icon size="18">
-                  <Voice theme="filled" />
-                </n-icon>
-                <span class="name">{{ $t("nav.search.artists") }}</span>
-              </div>
-              <span
-                class="names"
-                v-for="artists in searchData.suggest.artists"
-                :key="artists"
-                @click="toSearch(artists.id, 100)"
-                v-html="artists.name"
+        <div class="search-toolbar">
+          <n-input
+            :class="active ? 'input focus' : 'input'"
+            :input-props="{
+              autocomplete: 'off',
+              enterkeyhint: 'search',
+              'aria-label': $t('navigation.search'),
+            }"
+            :placeholder="$t('nav.search.placeholder')"
+            ref="searchInpRef"
+            round
+            clearable
+            v-model:value="inputValue"
+            @focus="openSearchPanel"
+            @keydown="inputkeydown($event)"
+            @pointerdown.stop="openSearchPanel"
+            @touchstart.stop="openSearchPanel"
+            @click.stop="openSearchPanel"
+          >
+            <template #prefix>
+              <n-icon
+                size="16"
+                :class="active ? 'active' : ''"
+                :component="Search"
+                @pointerdown.stop
+                @touchstart.stop
+                @click.stop="toggleSearchPanel"
               />
-            </div>
-            <div class="suggest-item" v-if="searchData.suggest.albums">
-              <div class="type">
-                <n-icon size="18">
-                  <RecordDisc theme="filled" />
-                </n-icon>
-                <span class="name">{{ $t("nav.search.albums") }}</span>
+            </template>
+          </n-input>
+          <button v-if="active" type="button" class="search-cancel" @click="closeSearchPanelState">
+            {{ $t("navigation.cancel") }}
+          </button>
+        </div>
+        <div class="search-results-slot">
+          <n-card
+            class="list"
+            v-show="active && !inputValue"
+            content-style="padding: 0"
+            @pointerdown.stop
+            @touchstart.stop
+            @click.stop
+          >
+            <n-scrollbar>
+              <div class="suggest-tip" v-if="!music.getSearchHistory[0] && !searchData.hot[0]">
+                <n-icon size="16" :component="Find" />
+                <span>{{ $t("nav.search.searchTip") }}</span>
               </div>
-              <span
-                class="names"
-                v-for="albums in searchData.suggest.albums"
-                :key="albums"
-                @click="toSearch(albums.id, 10)"
-              >
-                {{ albums.name }} - {{ albums.artist.name }}
-              </span>
-            </div>
-            <div class="suggest-item" v-if="searchData.suggest.playlists">
-              <div class="type">
-                <n-icon size="18">
-                  <Record theme="filled" />
-                </n-icon>
-                <span class="name">{{ $t("nav.search.playlists") }}</span>
+              <div class="history-list" v-if="music.getSearchHistory[0] && setting.searchHistory">
+                <div class="list-title">
+                  <n-icon size="16" :component="History" />
+                  <n-text>{{ $t("nav.search.history") }}</n-text>
+                </div>
+                <n-space>
+                  <n-tag
+                    v-for="item in music.getSearchHistory"
+                    :key="item"
+                    :bordered="false"
+                    round
+                    v-html="item"
+                    @click="toSearch(item, 0)"
+                  />
+                </n-space>
+                <div class="del" @click="delHistory">
+                  <n-icon size="16" :depth="3">
+                    <DeleteFour theme="filled" />
+                  </n-icon>
+                  <n-text :depth="3">{{ $t("nav.search.delHistory") }}</n-text>
+                </div>
               </div>
-              <span
-                class="names"
-                v-for="playlists in searchData.suggest.playlists"
-                :key="playlists"
-                @click="toSearch(playlists.id, 1000)"
-              >
-                {{ playlists.name }}
-              </span>
-            </div>
-          </div>
-        </n-scrollbar>
-      </n-card>
-    </CollapseTransition>
+              <div class="hot-list" v-if="searchData.hot[0]">
+                <div class="list-title">
+                  <n-icon size="16">
+                    <Fire theme="filled" />
+                  </n-icon>
+                  <n-text>{{ $t("nav.search.hotList") }}</n-text>
+                </div>
+                <div
+                  class="hot-item"
+                  v-for="(item, index) in searchData.hot"
+                  :key="item"
+                  @click="toSearch(item.searchWord, 0)"
+                >
+                  <div :class="index < 3 ? 'num hot' : 'num'">{{ index + 1 }}</div>
+                  <div class="title">
+                    <span class="name">
+                      {{ item.searchWord }}
+                      <!-- <img :src="item.iconUrl" alt="icon" /> -->
+                      <n-tag v-if="item.iconUrl" class="tag" round :bordered="false" size="small">
+                        {{ item.iconType == 1 ? "HOT" : "UP" }}
+                      </n-tag>
+                    </span>
+                    <n-text class="tip" depth="3" v-html="item.content" />
+                  </div>
+                </div>
+              </div>
+            </n-scrollbar>
+          </n-card>
+        </div>
+        <div class="search-results-slot">
+          <n-card
+            class="list"
+            v-show="active && inputValue && searchData.suggest"
+            content-style="padding: 0"
+            @pointerdown.stop
+            @touchstart.stop
+            @click.stop
+          >
+            <n-scrollbar>
+              <div class="suggest-tip" v-if="Object.keys(searchData.suggest).length === 0">
+                <n-icon size="16" :component="Find" />
+                <span>{{ $t("nav.search.noSuggestions") }}</span>
+              </div>
+              <div class="suggest-all" v-else>
+                <div class="loading" v-show="!searchData.suggest.order">
+                  <n-icon size="16" :component="Find" />
+                  <span>{{ $t("nav.search.searchTip") }}</span>
+                </div>
+                <div class="suggest-item" v-if="searchData.suggest.songs">
+                  <div class="type">
+                    <n-icon size="18">
+                      <MusicOne theme="filled" />
+                    </n-icon>
+                    <span class="name">{{ $t("nav.search.songs") }}</span>
+                  </div>
+                  <span
+                    class="names"
+                    v-for="songs in searchData.suggest.songs"
+                    :key="songs"
+                    role="link"
+                    tabindex="0"
+                    @keydown.enter="toSearch(songs.id, 1, $event)"
+                    @click="toSearch(songs.id, 1, $event)"
+                  >
+                    {{ songs.name }} - {{ songs.artists[0].name }}</span
+                  >
+                </div>
+                <div class="suggest-item" v-if="searchData.suggest.artists">
+                  <div class="type">
+                    <n-icon size="18">
+                      <Voice theme="filled" />
+                    </n-icon>
+                    <span class="name">{{ $t("nav.search.artists") }}</span>
+                  </div>
+                  <span
+                    class="names"
+                    v-for="artists in searchData.suggest.artists"
+                    :key="artists"
+                    role="link"
+                    tabindex="0"
+                    @keydown.enter="toSearch(artists.id, 100, $event)"
+                    @click="toSearch(artists.id, 100, $event)"
+                    v-html="artists.name"
+                  />
+                </div>
+                <div class="suggest-item" v-if="searchData.suggest.albums">
+                  <div class="type">
+                    <n-icon size="18">
+                      <RecordDisc theme="filled" />
+                    </n-icon>
+                    <span class="name">{{ $t("nav.search.albums") }}</span>
+                  </div>
+                  <span
+                    class="names"
+                    v-for="albums in searchData.suggest.albums"
+                    :key="albums"
+                    role="link"
+                    tabindex="0"
+                    @keydown.enter="toSearch(albums.id, 10, $event)"
+                    @click="toSearch(albums.id, 10, $event)"
+                  >
+                    {{ albums.name }} - {{ albums.artist.name }}
+                  </span>
+                </div>
+                <div class="suggest-item" v-if="searchData.suggest.playlists">
+                  <div class="type">
+                    <n-icon size="18">
+                      <Record theme="filled" />
+                    </n-icon>
+                    <span class="name">{{ $t("nav.search.playlists") }}</span>
+                  </div>
+                  <span
+                    class="names"
+                    v-for="playlists in searchData.suggest.playlists"
+                    :key="playlists"
+                    role="link"
+                    tabindex="0"
+                    @keydown.enter="toSearch(playlists.id, 1000, $event)"
+                    @click="toSearch(playlists.id, 1000, $event)"
+                  >
+                    {{ playlists.name }}
+                  </span>
+                </div>
+              </div>
+            </n-scrollbar>
+          </n-card>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup>
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { animateMini } from "motion-v";
 import { getSearchHot, getSearchSuggest } from "@/api/search";
 import {
   Search,
@@ -193,155 +250,105 @@ import {
   DeleteFour,
 } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
-import { musicStore, settingStore, siteStore } from "@/store";
-import CollapseTransition from "@ivanv/vue-collapse-transition/src/CollapseTransition.vue";
-import debounce from "@/utils/debounce";
-import { isInlineQueueLayout } from "@/utils/playlistLayout";
+import { musicStore, settingStore } from "@/store";
+import { useLayerNavigation } from "@/utils/navigation";
+import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
+import { layerMotion, motionDuration } from "@/utils/navigation/motion";
+import { isRestoringSourceFocus } from "@/utils/navigation/sources";
+import { useMotionInterruption } from "@/composables/useMotionInterruption";
 
+const props = defineProps({ location: { type: String, default: "sidebar" } });
 const { t } = useI18n();
-const router = useRouter();
+const navigation = useLayerNavigation();
 const music = musicStore();
 const setting = settingStore();
-const site = siteStore();
-
-// 输入框内容
-const inputValue = ref(null);
+const { isMobile } = useResponsiveLayout();
+const ownsSearch = computed(() => props.location === (isMobile.value ? "nav" : "sidebar"));
+const active = computed(() => ownsSearch.value && navigation.searchVisible.value);
+const presented = computed(
+  () =>
+    ownsSearch.value && navigation.presentedOverlays.value.some((layer) => layer.kind === "search"),
+);
+const draft = ref("");
+const inputValue = computed({
+  get: () => navigation.searchLayer.value?.search?.query ?? draft.value,
+  set: (value) => {
+    draft.value = value ?? "";
+    navigation.updateSearchQuery(draft.value);
+  },
+});
 const searchInpRef = ref(null);
 const searchRootRef = ref(null);
+const searchAnchorRef = ref(null);
+const rendered = ref(false);
 const searchHotLoading = ref(false);
+const searchData = reactive({ hot: [], suggest: {} });
+let suggestTimer;
+let suggestGeneration = 0;
+let animation;
+let animationGeneration = 0;
+let suspended = false;
 
+const getSearchHotData = async () => {
+  if (searchHotLoading.value || searchData.hot.length) return;
+  searchHotLoading.value = true;
+  try {
+    searchData.hot = (await getSearchHot()).data ?? [];
+  } catch (error) {
+    console.warn("[search] hot searches failed", error);
+  } finally {
+    searchHotLoading.value = false;
+  }
+};
+const getSearchSuggestData = async (query, generation) => {
+  try {
+    const response = await getSearchSuggest(query);
+    if (generation === suggestGeneration && inputValue.value.trim() === query)
+      searchData.suggest = response.result ?? {};
+  } catch (error) {
+    if (generation === suggestGeneration) searchData.suggest = {};
+    console.warn("[search] suggestions failed", error);
+  }
+};
+const openSearchPanel = (event) => {
+  if (active.value || (event?.type === "focus" && isRestoringSourceFocus())) return;
+  void navigation.openSearch(
+    isMobile.value
+      ? searchAnchorRef.value?.querySelector(".search-trigger")
+      : (event?.currentTarget ?? searchRootRef.value),
+  );
+};
 const closeSearchPanelState = () => {
   searchInpRef.value?.blur();
-  site.searchInputActive = false;
+  navigation.closeTop("search");
 };
-
-// 输入框激活事件
-const openSearchPanel = () => {
-  site.searchInputActive = true;
-  if (!isInlineQueueLayout()) {
-    music.showPlayList = false;
-  }
-  getSearchHotData();
-  nextTick(() => {
-    searchInpRef.value?.focus();
-  });
-};
-
-const toggleSearchPanel = () => {
-  if (site.searchInputActive) {
-    closeSearchPanelState();
+const toggleSearchPanel = (event) =>
+  active.value ? closeSearchPanelState() : openSearchPanel(event);
+const toSearch = (value, type, event) => {
+  searchInpRef.value?.blur();
+  if (type === 0) {
+    const query = String(value ?? "").trim();
+    if (!query) return;
+    inputValue.value = query;
+    music.setSearchHistory(query);
+    void navigation.replacePage({ path: "/search/songs", query: { keywords: query, page: 1 } });
     return;
   }
-  openSearchPanel();
+  const path = { 1: "/song", 10: "/album", 100: "/artist", 1000: "/playlist" }[type];
+  if (path)
+    void navigation.openPage(
+      { path, query: { id: value, ...(type === 1000 ? { page: 1 } : {}) } },
+      { origin: event },
+    );
 };
-
-// 搜索相关数据
-const searchData = reactive({
-  hot: [], // 热搜
-  suggest: {}, // 搜索建议
-});
-
-// 获取搜索相关数据
-const getSearchHotData = () => {
-  if (searchHotLoading.value || searchData.hot[0]) return;
-  searchHotLoading.value = true;
-  getSearchHot()
-    .then((res) => {
-      searchData.hot = res.data;
-    })
-    .finally(() => {
-      searchHotLoading.value = false;
-    });
+const inputkeydown = (event) => {
+  if (event.key === "Enter" && !event.isComposing) toSearch(inputValue.value, 0);
 };
-const getSearchSuggestData = (keywords) => {
-  searchData.suggest = [];
-  getSearchSuggest(keywords).then((res) => {
-    console.log(res);
-    searchData.suggest = res.result;
-  });
-};
-
-// 点击搜索结果
-const toSearch = (val, type) => {
-  switch (type) {
-    case 0:
-      // 直接搜索
-      inputValue.value = val;
-      // 写入搜索历史
-      music.setSearchHistory(inputValue.value.trim());
-      router.push({
-        path: "/search/songs",
-        query: {
-          keywords: val,
-          page: 1,
-        },
-      });
-      closeSearchPanelState();
-      break;
-    case 1:
-      // 歌曲页
-      router.push(`/song?id=${val}`);
-      closeSearchPanelState();
-      break;
-    case 10:
-      // 专辑页
-      router.push(`/album?id=${val}`);
-      closeSearchPanelState();
-      break;
-    case 100:
-      // 歌手页
-      router.push(`/artist?id=${val}`);
-      closeSearchPanelState();
-      break;
-    case 1000:
-      // 歌单页
-      router.push({
-        path: "/playlist",
-        query: { id: val, page: 1 },
-      });
-      closeSearchPanelState();
-      break;
-    default:
-      break;
-  }
-};
-
-// 回车搜索
-const inputkeydown = (e) => {
-  if (e.key === "Enter" && inputValue.value !== null) {
-    console.log("执行搜索" + inputValue.value.trim());
-    closeSearchPanelState();
-    // 写入搜索历史
-    music.setSearchHistory(inputValue.value.trim());
-    router.push({
-      path: "/search/songs",
-      query: {
-        keywords: inputValue.value.trim(),
-      },
-    });
-  }
-};
-
-const eventComposedPathContainsSearch = (event) => {
-  const path = typeof event?.composedPath === "function" ? event.composedPath() : [];
-  if (path.includes(searchRootRef.value)) return true;
-  return path.some((node) => node instanceof Element && node.classList.contains("searchInp"));
-};
-
 const closeSearchPanel = (event) => {
-  if (!site.searchInputActive) return;
-  if (eventComposedPathContainsSearch(event)) return;
-
-  const target = event?.target;
-  if (target instanceof Node && searchRootRef.value?.contains(target)) return;
-  if (target instanceof Element && target.closest(".searchInp")) return;
-
+  if (!active.value || isMobile.value || searchRootRef.value?.contains(event.target)) return;
   closeSearchPanelState();
 };
-
-// 删除搜索历史
-const delHistory = () => {
+const delHistory = () =>
   $dialog.warning({
     class: "s-dialog",
     title: t("general.dialog.delete"),
@@ -353,47 +360,78 @@ const delHistory = () => {
       $message.success(t("general.message.deleteSuccess"));
     },
   });
+
+const finishMotion = () => {
+  animationGeneration++;
+  animation?.cancel();
+  animation = undefined;
+  searchRootRef.value?.style.removeProperty("clip-path");
+  rendered.value = presented.value;
 };
-
+watch(
+  presented,
+  async (show) => {
+    const generation = ++animationGeneration;
+    animation?.cancel();
+    animation = undefined;
+    const resume = suspended && show;
+    suspended = !show && navigation.hasLayer("search");
+    if (show) rendered.value = true;
+    if (!isMobile.value || resume || suspended) {
+      rendered.value = show;
+      searchRootRef.value?.style.removeProperty("clip-path");
+      return;
+    }
+    await nextTick();
+    if (generation !== animationGeneration || !searchRootRef.value) return;
+    const anchor = searchAnchorRef.value?.getBoundingClientRect();
+    const collapsed = anchor
+      ? `inset(${anchor.top}px calc(100% - ${anchor.right}px) calc(100% - ${anchor.bottom}px) ${anchor.left}px round 22px)`
+      : "inset(0px 0px 100% 0px round 22px)";
+    const full = "inset(0px 0px 0px 0px round 0px)";
+    animation = animateMini(
+      searchRootRef.value,
+      { clipPath: show ? [collapsed, full] : [full, collapsed] },
+      {
+        duration: motionDuration(layerMotion.search),
+        ease: layerMotion.ease,
+      },
+    );
+    await animation;
+    if (generation === animationGeneration) finishMotion();
+  },
+  { immediate: true },
+);
+watch(
+  active,
+  (show) => {
+    if (show) {
+      void getSearchHotData();
+      nextTick(() => searchRootRef.value?.querySelector("input")?.focus({ preventScroll: true }));
+    }
+  },
+  { immediate: true },
+);
+watch([inputValue, active], ([value, show]) => {
+  clearTimeout(suggestTimer);
+  const generation = ++suggestGeneration;
+  const query = value.trim();
+  if (!query) {
+    searchData.suggest = {};
+    return;
+  }
+  if (show) suggestTimer = setTimeout(() => getSearchSuggestData(query, generation), 250);
+});
+useMotionInterruption(finishMotion);
 onMounted(() => {
-  // 获取热搜
-  getSearchHotData();
-  // 搜索框失焦
   document.addEventListener("pointerdown", closeSearchPanel, true);
-  document.addEventListener("mousedown", closeSearchPanel, true);
-  document.addEventListener("touchstart", closeSearchPanel, true);
-  document.addEventListener("click", closeSearchPanel, true);
 });
-
-onUnmounted(() => {
+onBeforeUnmount(() => {
+  finishMotion();
+  clearTimeout(suggestTimer);
+  suggestGeneration++;
   document.removeEventListener("pointerdown", closeSearchPanel, true);
-  document.removeEventListener("mousedown", closeSearchPanel, true);
-  document.removeEventListener("touchstart", closeSearchPanel, true);
-  document.removeEventListener("click", closeSearchPanel, true);
 });
-
-// 监听输入框内容
-watch(
-  () => inputValue.value,
-  (value) => {
-    if (typeof value === "string" && value.trim()) {
-      debounce(() => {
-        console.log(value.trim());
-        getSearchSuggestData(value.trim());
-      }, 500);
-    }
-  },
-);
-
-// 监听播放列表显隐
-watch(
-  () => music.showPlayList,
-  (val) => {
-    if (val) {
-      closeSearchPanelState();
-    }
-  },
-);
 </script>
 
 <style lang="scss" scoped>
@@ -758,6 +796,117 @@ watch(
           }
         }
       }
+    }
+  }
+}
+
+.search-anchor {
+  position: relative;
+  width: inherit;
+  min-width: 0;
+}
+.search-toolbar {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+}
+.search-results-slot {
+  display: contents;
+}
+.search-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 44px;
+  min-height: 44px;
+  border: 0;
+  padding: 0 8px;
+  font: inherit;
+  color: var(--main-color);
+  cursor: pointer;
+  background: transparent;
+  border-radius: var(--radius-pill);
+  pointer-events: auto;
+}
+.search-trigger {
+  width: 100%;
+  cursor: pointer;
+  pointer-events: auto;
+  .input {
+    pointer-events: none;
+  }
+  &:focus-visible {
+    outline: 2px solid var(--main-color);
+    outline-offset: 2px;
+    border-radius: var(--radius-pill);
+  }
+}
+.searchInp:not(.mobile-search-layer) .search-cancel {
+  min-width: 40px;
+  min-height: 32px;
+  font-size: 12px;
+}
+.searchInp.mobile-search-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2200;
+  width: 100%;
+  height: 100dvh;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: calc(var(--app-safe-area-top, 0px) + 8px) 16px
+    max(16px, var(--app-safe-area-bottom, 0px));
+  pointer-events: auto;
+  background: var(--app-shell-bg, #fff);
+  .search-toolbar {
+    flex: 0 0 auto;
+    min-height: 44px;
+    margin-bottom: 12px;
+  }
+  .input,
+  .input.focus {
+    width: 100%;
+    min-width: 0;
+    height: 44px;
+    flex: 1;
+    box-shadow: none;
+  }
+  .input :deep(.n-input__input-el) {
+    height: 44px;
+    font-size: 16px;
+  }
+  .input :deep(.n-input-wrapper) {
+    padding-inline: 12px;
+  }
+  .list {
+    position: relative;
+    inset: auto;
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    :deep(.n-card__content) {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    :deep(.n-scrollbar) {
+      height: 100%;
+      max-height: none;
+    }
+    :deep(.hot-item),
+    :deep(.names) {
+      min-height: 44px;
+      box-sizing: border-box;
     }
   }
 }

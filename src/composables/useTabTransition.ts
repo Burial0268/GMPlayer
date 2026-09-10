@@ -6,14 +6,13 @@ export function useTabTransition(tabNames: string[]) {
 
   function updateDirection(newTabName: string) {
     const newIndex = tabNames.indexOf(newTabName);
-    if (newIndex < 0) return;
+    if (newIndex < 0 || newIndex === currentIndex) return;
     transitionName.value = newIndex > currentIndex ? "slide-left" : "slide-right";
     currentIndex = newIndex;
   }
 
   function syncIndex(tabName: string) {
-    const idx = tabNames.indexOf(tabName);
-    if (idx >= 0) currentIndex = idx;
+    updateDirection(tabName);
   }
 
   return { transitionName, updateDirection, syncIndex };

@@ -1,6 +1,7 @@
 <template>
   <div class="users">
-    <UserLists :listData="searchData" :loading="loading" />
+    <PageLoadState v-if="error" error @retry="retry" />
+    <UserLists v-else :listData="searchData" :loading="loading" />
     <Pagination
       v-if="searchData[0]"
       :pageNumber="pageNumber"
@@ -12,90 +13,31 @@
 </template>
 
 <script setup lang="ts">
-import { getSearchData } from "@/api/search";
-import { useRouter } from "vue-router";
-import { useI18n } from "vue-i18n";
 import UserLists from "@/components/DataList/UserLists.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import Pagination from "@/components/Pagination/index.vue";
-import type { SearchType } from "@/api";
+import { useSearchResults } from "@/composables/useSearchResults";
 
-const { t } = useI18n();
-const router = useRouter();
-
-// 搜索数据
-const searchKeywords = ref(router.currentRoute.value.query.keywords);
-const searchData = ref<any[]>([]);
-const loading = ref(true);
-const pagelimit = ref(30);
-const pageNumber = ref(
-  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
-);
-const totalCount = ref(0);
-
-// 获取搜索数据
-const getSearchDataList = (keywords, limit = 30, offset = 0, type: SearchType = 1002) => {
-  loading.value = true;
-  getSearchData(keywords, limit, offset, type).then((res) => {
-    // 数据总数
-    totalCount.value = res.result?.userprofileCount ?? 0;
-    // 列表数据
-    searchData.value = [];
-    if (res.result?.userprofiles) {
-      res.result.userprofiles.forEach((v) => {
-        searchData.value.push({
-          id: v.userId,
-          name: v.nickname,
-          cover: v.avatarUrl,
-          signature: v.signature,
-        });
-      });
-    } else {
-      $message.info(t("nav.search.noSuggestions"));
-    }
-    loading.value = false;
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
-  });
-};
-
-// 监听路由参数变化
-watch(
-  () => router.currentRoute.value,
-  (val) => {
-    if (val.name === "s-users") {
-      searchKeywords.value = val.query.keywords;
-      pageNumber.value = Number(val.query.page ? val.query.page : 1);
-      getSearchDataList(
-        searchKeywords.value,
-        pagelimit.value,
-        (pageNumber.value - 1) * pagelimit.value,
-      );
-    }
-  },
-);
-
-// 每页个数数据变化
-const pageSizeChange = (val) => {
-  pagelimit.value = val;
-  getSearchDataList(searchKeywords.value, val, (pageNumber.value - 1) * pagelimit.value);
-};
-
-// 当前页数数据变化
-const pageNumberChange = (val) => {
-  router.push({
-    path: "/search/users",
-    query: {
-      keywords: searchKeywords.value,
-      page: val,
-    },
-  });
-};
-
-onMounted(() => {
-  getSearchDataList(
-    searchKeywords.value,
-    pagelimit.value,
-    (pageNumber.value - 1) * pagelimit.value,
-  );
+const {
+  items: searchData,
+  loading,
+  error,
+  retry,
+  totalCount,
+  pageNumber,
+  pageSizeChange,
+  pageNumberChange,
+} = useSearchResults({
+  category: "users",
+  type: 1002,
+  items: "userprofiles",
+  total: "userprofileCount",
+  map: (items) =>
+    items.map((item) => ({
+      id: item.userId,
+      name: item.nickname,
+      cover: item.avatarUrl,
+      signature: item.signature,
+    })),
 });
 </script>

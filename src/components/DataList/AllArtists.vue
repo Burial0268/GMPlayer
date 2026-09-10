@@ -5,7 +5,10 @@
         class="name"
         :depth="isDark ? 3 : 0"
         v-html="item.name"
-        @click.stop="jumpArtist(item.id)"
+        role="link"
+        tabindex="0"
+        @keydown.enter.stop="jumpArtist(item.id, $event)"
+        @click.stop="jumpArtist(item.id, $event)"
       />
       <span
         class="line"
@@ -17,11 +20,8 @@
 </template>
 
 <script setup>
-import { useRouter } from "vue-router";
-import { musicStore } from "@/store";
-
-const music = musicStore();
-const router = useRouter();
+import { useLayerNavigation } from "@/utils/navigation";
+const navigation = useLayerNavigation();
 const props = defineProps({
   // 歌手数据
   artistsData: {
@@ -36,18 +36,20 @@ const props = defineProps({
 });
 
 // 跳转歌手页面
-const jumpArtist = (id) => {
+const jumpArtist = (id, origin) => {
   // 本地曲目的歌手来自文件标签，没有网易 id（`localLibrary` 填的是 0）。
   // 不挡住的话点一下会跳到 `/artist/songs?id=0`，那个页面照常发请求、照常空着。
   const artistId = Number(id);
   if (!Number.isFinite(artistId) || artistId <= 0) return;
-  music.setBigPlayerState(false);
-  router.push({
-    path: "/artist/songs",
-    query: {
-      id,
+  navigation.openPage(
+    {
+      path: "/artist/songs",
+      query: {
+        id,
+      },
     },
-  });
+    { origin },
+  );
 };
 </script>
 
@@ -59,7 +61,7 @@ const jumpArtist = (id) => {
   flex-wrap: wrap;
   .name {
     cursor: pointer;
-    transition: all var(--duration-300) var(--ease-out);
+    transition: color var(--duration-300) var(--ease-out);
     &:hover {
       color: var(--main-color);
     }

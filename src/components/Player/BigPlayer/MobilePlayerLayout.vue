@@ -11,7 +11,7 @@
             @touchstart.passive="handlePlayerTouchStart"
             @touchmove.passive="handlePlayerTouchMove"
             @touchend.passive="handlePlayerTouchEnd"
-            @touchcancel="handlePlayerTouchEnd"
+            @touchcancel="handlePlayerTouchCancel"
           >
             <div class="handle-bar"></div>
           </Motion>
@@ -173,7 +173,7 @@
           @touchstart.passive="handlePlayerTouchStart"
           @touchmove.passive="handlePlayerTouchMove"
           @touchend.passive="handlePlayerTouchEnd"
-          @touchcancel="handlePlayerTouchEnd"
+          @touchcancel="handlePlayerTouchCancel"
         />
       </Motion>
     </div>
@@ -181,6 +181,7 @@
     <!-- 移动端待播清单 — 与主内容同级的分页：共用背景，由 pager 平移切换 -->
     <Motion
       class="mobile-queue-layout"
+      data-navigation-layer="queue-player"
       :style="queuePageMotionStyle"
       @touchstart.passive="handleQueueTouchStart"
       @touchmove="handleQueueTouchMove"
@@ -286,6 +287,8 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import RollingLyrics from "../RollingLyrics.vue";
 import BouncingSlider from "../BouncingSlider.vue";
 import MobileControls from "./MobileControls.vue";
@@ -336,6 +339,7 @@ const emit = defineEmits<{
   closeDragStart: [];
   closeDragMove: [distance: number];
   closeDragEnd: [];
+  closeDragCancel: [];
 }>();
 
 const music = musicStore();
@@ -405,8 +409,12 @@ const pagerSettleTransition = {
 
 const settlePager = (open: boolean) => {
   stopPagerAnimation();
-  pagerAnimation = animate(pagerProgress, open ? 1 : 0, pagerSettleTransition);
-  if (open !== props.queueOpen) emit(open ? "openQueue" : "closeQueue");
+  if (prefersReducedMotion()) pagerProgress.set(open ? 1 : 0);
+  else pagerAnimation = animate(pagerProgress, open ? 1 : 0, pagerSettleTransition);
+  if (open !== props.queueOpen) {
+    if (open) emit("openQueue");
+    else emit("closeQueue");
+  }
 };
 
 const settlePagerFromGesture = () => {
@@ -506,6 +514,15 @@ const handlePlayerTouchEnd = () => {
   resetPlayerTouch();
 };
 
+const handlePlayerTouchCancel = () => {
+  if (playerTouch.value?.dragging) {
+    if (playerTouch.value.mode === "close") emit("closeDragCancel");
+    else settlePager(props.queueOpen);
+  }
+  resetPlayerTouch();
+  suppressCoverClick.value = false;
+};
+
 const handleCoverClick = () => {
   if (suppressCoverClick.value) {
     suppressCoverClick.value = false;
@@ -565,7 +582,8 @@ const handleQueueTouchEnd = () => {
 };
 
 const handleQueueTouchCancel = () => {
-  handleQueueTouchEnd();
+  if (queueTouch.value?.dragging) settlePager(props.queueOpen);
+  resetQueueTouch();
 };
 
 const formatArtists = (artists: Artist[] = []) =>
@@ -579,7 +597,7 @@ const getQueueCover = (item: QueueSong) => coverUrl(item.album?.picUrl, 96);
 const scrollCurrentQueueSong = () => {
   queueListRef.value?.scrollTo({
     index: music.persistData.playSongIndex,
-    behavior: "smooth",
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
   });
 };
 
@@ -604,14 +622,19 @@ watch(
   },
 );
 
-onMounted(() => {
+useMotionInterruption(() => {
+  stopPagerAnimation();
+  resetPlayerTouch();
+  resetQueueTouch();
+  suppressCoverClick.value = false;
   measurePagerHeight();
-  window.addEventListener("resize", measurePagerHeight);
+  pagerProgress.set(props.queueOpen ? 1 : 0);
 });
+
+onMounted(measurePagerHeight);
 
 onBeforeUnmount(() => {
   stopPagerAnimation();
-  window.removeEventListener("resize", measurePagerHeight);
 });
 
 defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef });

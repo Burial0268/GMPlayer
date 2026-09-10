@@ -16,10 +16,12 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import java.util.Locale
 
 class MainActivity : TauriActivity() {
@@ -39,6 +41,7 @@ class MainActivity : TauriActivity() {
 
     private var webView: WebView? = null
     private var lastInsetsCss: String? = null
+    private var backRequestPending = false
 
     // 申请通知权限（Android 13+ 必需）
     private val requestPermissionLauncher = registerForActivityResult(
@@ -58,6 +61,17 @@ class MainActivity : TauriActivity() {
 
         val rootView = findViewById<View>(R.id.main) ?: findViewById<View>(android.R.id.content)
 
+        // TauriActivity disables Wry's URL-based back handler. The visible app layer owns back.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (ViewCompat.getRootWindowInsets(rootView)?.isVisible(WindowInsetsCompat.Type.ime()) == true) {
+                    WindowInsetsControllerCompat(window, rootView).hide(WindowInsetsCompat.Type.ime())
+                    return
+                }
+                requestLayerBack()
+            }
+        })
+
         // Edge-to-edge 安全区处理。
         //
         // 这里必须把 inset 主动推给 WebView：Android WebView 的 env(safe-area-inset-*)
@@ -75,11 +89,28 @@ class MainActivity : TauriActivity() {
 
     override fun onWebViewCreate(webView: WebView) {
         this.webView = webView
+        backRequestPending = false
         installRenderProcessGuard(webView)
         // 拉取通道。推送依赖 document 已经存在，而首次 inset 回调可能早于文档解析完成，
         // 那一次推送会静默丢失。暴露一个同步 getter，让前端启动时能主动兜底读一次。
         webView.addJavascriptInterface(SafeAreaBridge(), "AndroidSafeArea")
         lastInsetsCss?.let { pushSafeAreaCss(it) }
+    }
+
+    private fun requestLayerBack() {
+        if (backRequestPending) return
+        val view = webView
+        if (view == null) {
+            moveTaskToBack(true)
+            return
+        }
+        backRequestPending = true
+        view.evaluateJavascript(
+            "typeof window.__gmplayerBack === 'function' ? window.__gmplayerBack() : false"
+        ) { consumed ->
+            backRequestPending = false
+            if (consumed == "false") moveTaskToBack(true)
+        }
     }
 
     /**

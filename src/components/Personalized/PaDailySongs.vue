@@ -8,7 +8,7 @@
       @keydown.enter.self="openDailySongs"
       @keydown.space.self.prevent="openDailySongs"
     >
-      <div class="artwork-wrap">
+      <div class="artwork-wrap" data-navigation-cover>
         <img
           class="artwork"
           :src="coverUrl"
@@ -30,7 +30,7 @@
       <div class="content">
         <div class="copy">
           <span class="eyebrow">{{ $t("home.modules.dailySongs.subtitle") }}</span>
-          <h3>{{ $t("home.modules.dailySongs.title") }}</h3>
+          <h3 data-navigation-title>{{ $t("home.modules.dailySongs.title") }}</h3>
         </div>
 
         <button
@@ -49,7 +49,7 @@
 
 <script setup>
 import { getDailySongs } from "@/api/home";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore, userStore } from "@/store";
 import { getDailySongsDate } from "@/utils/timeTools";
 import { PlayArrowRound } from "@vicons/material";
@@ -59,7 +59,7 @@ const FALLBACK_COVER = "/images/pic/pic.jpg";
 
 const music = musicStore();
 const user = userStore();
-const router = useRouter();
+const navigation = useLayerNavigation();
 const { locale, t } = useI18n();
 const playStartIndex = ref(0);
 
@@ -77,7 +77,7 @@ const coverUrl = computed(() =>
   normalizeCover(music.getDailySongs[playStartIndex.value]?.album?.picUrl),
 );
 
-const openDailySongs = () => router.push("/dailySongs");
+const openDailySongs = (origin) => navigation.openPage("/dailySongs", { origin });
 
 const resetPlayStartIndex = () => {
   playStartIndex.value = music.getDailySongs.length

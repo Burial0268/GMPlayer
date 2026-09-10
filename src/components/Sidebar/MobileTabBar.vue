@@ -1,14 +1,16 @@
 <template>
   <div :class="['mobile-tab-bar', { dark: setting.getSiteTheme === 'dark' }]">
-    <div
+    <button
       v-for="tab in tabs"
       :key="tab.key"
       :class="['tab-item', { active: isActive(tab) }]"
-      @click="router.push(tab.to)"
+      type="button"
+      :aria-current="isActive(tab) ? 'page' : undefined"
+      @click="navigation.switchRoot(tab.key, tab.to)"
     >
       <n-icon :size="22" :component="tab.icon" />
       <span class="tab-label">{{ tab.label }}</span>
-    </div>
+    </button>
   </div>
 </template>
 
@@ -16,13 +18,12 @@
 import { NIcon } from "naive-ui";
 import { HomeTwo, FindOne, Me, SettingTwo } from "@icon-park/vue-next";
 import { settingStore, userStore } from "@/store";
-import { useRouter, useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri/core/runtime";
 
 const { t } = useI18n();
-const router = useRouter();
-const route = useRoute();
+const navigation = useLayerNavigation();
 const setting = settingStore();
 const user = userStore();
 
@@ -59,9 +60,7 @@ const tabs = computed(() => [
 ]);
 
 const isActive = (tab) => {
-  if (tab.key === "home") return route.path === "/";
-  const prefixes = tab.matches ?? [tab.to];
-  return prefixes.some((prefix) => route.path.startsWith(prefix));
+  return navigation.current.value?.root === tab.key;
 };
 </script>
 
@@ -97,6 +96,10 @@ const isActive = (tab) => {
 }
 
 .tab-item {
+  border: 0;
+  padding: 0;
+  font: inherit;
+  background: transparent;
   display: flex;
   flex-direction: column;
   align-items: center;

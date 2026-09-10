@@ -13,13 +13,18 @@ const PANEL_ACCENT_VARS = [
   "--content-panel-border-accent-strength",
 ];
 
+let currentOwner: symbol | undefined;
+
 export const useContentPanelAccent = () => {
+  const owner = Symbol("content-panel");
+  currentOwner = owner;
+  let active = true;
   let requestId = 0;
   let lastCoverUrl: string | undefined;
   const currentPalette = ref<CoverPalette | null>(null);
 
   const setPanelAccent = (palette: CoverPalette) => {
-    if (typeof document === "undefined") return;
+    if (typeof document === "undefined" || !active || currentOwner !== owner) return;
     const root = document.documentElement;
     root.style.setProperty("--content-panel-accent-rgb", palette.panelAccentColor);
     root.style.setProperty("--content-panel-secondary-rgb", palette.secondaryColor);
@@ -34,7 +39,7 @@ export const useContentPanelAccent = () => {
 
   const resetPanelAccent = () => {
     requestId += 1;
-    if (typeof document === "undefined") return;
+    if (typeof document === "undefined" || currentOwner !== owner) return;
     PANEL_ACCENT_VARS.forEach((name) => {
       document.documentElement.style.removeProperty(name);
     });
@@ -63,6 +68,8 @@ export const useContentPanelAccent = () => {
   };
 
   onActivated(() => {
+    active = true;
+    currentOwner = owner;
     if (currentPalette.value) {
       setPanelAccent(currentPalette.value);
     } else if (lastCoverUrl) {
@@ -70,8 +77,13 @@ export const useContentPanelAccent = () => {
     }
   });
 
-  onDeactivated(resetPanelAccent);
-  onBeforeUnmount(resetPanelAccent);
+  const release = () => {
+    active = false;
+    resetPanelAccent();
+    if (currentOwner === owner) currentOwner = undefined;
+  };
+  onDeactivated(release);
+  onBeforeUnmount(release);
 
   return {
     applyContentPanelAccent,

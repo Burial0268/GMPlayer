@@ -1,29 +1,27 @@
 <template>
   <div :class="['playlist', { 'is-dark': setting.getSiteTheme === 'dark' }]" v-if="playListDetail">
     <div class="left">
-      <div class="cover">
+      <RouteArtwork v-slot="{ imageProps }" class="cover" data-navigation-cover="page">
         <n-image
           show-toolbar-tooltip
           class="coverImg"
+          :img-props="imageProps"
           :src="getCoverUrl(playListDetail.coverImgUrl, 1024)"
           :previewed-img-props="{ style: { borderRadius: 'var(--radius-md)' } }"
           :preview-src="getCoverUrl(playListDetail.coverImgUrl, 512)"
           fallback-src="/images/pic/default.png"
         />
-        <n-image
-          preview-disabled
-          class="shadow"
-          :src="getCoverUrl(playListDetail.coverImgUrl, 1024)"
-          fallback-src="/images/pic/default.png"
-        />
-      </div>
+        <RouteShadow class="shadow" :src="getCoverUrl(playListDetail.coverImgUrl, 1024)" />
+      </RouteArtwork>
       <div class="meta">
         <div class="title">
-          <span class="detail-kind">{{ t("general.name.playlist") }}</span>
-          <n-text class="name text-hidden">{{ playListDetail!.name }}</n-text>
-          <n-text class="creator">{{ playListDetail!.creator.nickname }}</n-text>
+          <span v-content-intro class="detail-kind">{{ t("general.name.playlist") }}</span>
+          <n-text class="name text-hidden" data-navigation-title="page">{{
+            playListDetail!.name
+          }}</n-text>
+          <n-text v-content-intro class="creator">{{ playListDetail!.creator.nickname }}</n-text>
         </div>
-        <div class="detail-stats">
+        <div v-content-intro class="detail-stats">
           <div class="num" v-if="playListDetail && playListDetail.createTime">
             <n-icon :depth="3" :component="Newlybuild" />
             <n-text v-html="getLongTime(playListDetail.createTime)" />
@@ -37,7 +35,7 @@
             <n-text>{{ t("general.name.songSize", { size: totalCount }) }}</n-text>
           </div>
         </div>
-        <div class="intr">
+        <div v-content-intro class="intr">
           <span class="name">{{
             t("general.name.desc", { name: t("general.name.playlist") })
           }}</span>
@@ -61,7 +59,7 @@
             {{ t("general.name.allDesc") }}
           </n-button>
         </div>
-        <n-space class="tag" v-if="playListDetail && playListDetail.tags">
+        <n-space v-content-intro class="tag" v-if="playListDetail && playListDetail.tags">
           <n-tag
             class="tags"
             round
@@ -73,7 +71,7 @@
             {{ item }}
           </n-tag>
         </n-space>
-        <n-space class="control">
+        <n-space v-content-intro class="control">
           <n-button strong secondary round type="primary" @click="playAllSong">
             <template #icon>
               <n-icon :component="MusicList" />
@@ -95,7 +93,7 @@
         </n-space>
       </div>
     </div>
-    <div class="right">
+    <div v-content-intro class="right">
       <div class="meta">
         <n-text class="name">{{ playListDetail!.name }}</n-text>
         <n-text class="creator">
@@ -163,57 +161,29 @@
       </n-modal>
     </div>
   </div>
-  <div class="title" v-else-if="!playListId || !loadingState">
-    <span class="key">{{
-      loadingState ? t("general.name.noKeywords") : t("general.message.acquisitionFailed")
-    }}</span>
+  <div class="title" v-else-if="!playListId">
+    <span class="key">{{ t("general.name.noKeywords") }}</span>
     <br />
-    <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
+    <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
       {{ t("general.name.goBack") }}
     </n-button>
   </div>
-  <div class="loading" v-else>
-    <div class="left">
-      <div class="cover">
-        <n-skeleton class="pic" />
-        <n-skeleton class="shadow" />
-      </div>
-      <div class="meta loading-meta">
-        <n-skeleton text width="64px" />
-        <n-skeleton class="loading-title" text width="min(560px, 100%)" />
-        <n-skeleton text width="160px" />
-        <div class="loading-stats">
-          <n-skeleton text width="116px" />
-          <n-skeleton text width="136px" />
-          <n-skeleton text width="82px" />
-        </div>
-        <n-skeleton text :repeat="2" width="min(640px, 100%)" />
-        <div class="loading-actions">
-          <n-skeleton :sharp="false" width="112px" height="34px" />
-          <n-skeleton :sharp="false" width="34px" height="34px" />
-        </div>
-      </div>
-    </div>
-    <div class="right loading-list">
-      <div v-for="item in 8" :key="item" class="loading-row">
-        <n-skeleton circle width="38px" height="38px" />
-        <div class="loading-row-main">
-          <n-skeleton text width="min(360px, 70%)" />
-          <n-skeleton text width="min(220px, 44%)" />
-        </div>
-        <n-skeleton text width="min(180px, 16vw)" />
-        <n-skeleton text width="46px" />
-      </div>
-    </div>
-  </div>
+  <PageLoadState v-else-if="!loadingState" error @retry="retryPlaylist" />
+  <DetailPageSkeleton v-else kind="playlist" />
 </template>
 
 <script setup lang="ts">
+import DetailPageSkeleton from "@/components/Navigation/DetailPageSkeleton.vue";
+import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
+import RouteShadow from "@/components/Navigation/RouteShadow.vue";
+import { useContentIntro } from "@/composables/useContentIntro";
+import { useLayerNavigation } from "@/utils/navigation";
 import type { DropdownMixedOption } from "naive-ui/es/dropdown/src/interface";
 import { NIcon, NText } from "naive-ui";
 import { delPlayList, likePlaylist } from "@/api/playlist";
 import { fetchPlaylistDetail, fetchSongDetail } from "@/utils/ncm/projectedRequest";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import { userStore, musicStore, settingStore } from "@/store";
 import { getLongTime } from "@/utils/timeTools";
 import { transformSongData } from "@/utils/ncm/transformSongData";
@@ -244,6 +214,9 @@ import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
+const { vContentIntro } = useContentIntro();
+const route = useRoute();
 const user = userStore();
 const music = musicStore();
 const setting = settingStore();
@@ -253,7 +226,7 @@ const { applyContentPanelAccent } = useContentPanelAccent();
 
 // 歌单数据
 const playListId = ref<string | number | string[] | undefined>(
-  router.currentRoute.value.query.id as string | number | string[] | undefined,
+  route.query.id as string | number | string[] | undefined,
 );
 
 interface PlaylistCreator {
@@ -453,6 +426,7 @@ const setDropdownOptions = () => {
 const loadPlaylist = (id: string | number | string[], minRows = 0) => {
   const sourceId = normalizePlaylistId(id);
   const token = ++loadToken;
+  loadingState.value = true;
   // 这是「明确要一份权威数据」的路径（进页面、换歌单），本地那些还没对完账的
   // 增删到此为止：留着只会被套用到另一份列表上。
   resetPendingDelta();
@@ -468,24 +442,26 @@ const loadPlaylist = (id: string | number | string[], minRows = 0) => {
       if (token !== loadToken) return;
       const pl = res?.playlist;
       if (!pl) {
-        $message.error(t("general.message.acquisitionFailed"));
+        loadingState.value = false;
+        if (isActive) $message.error(t("general.message.acquisitionFailed"));
         return;
       }
       totalCount.value = pl.trackCount;
       playListDetail.value = pl;
       manifestIds.value = extractManifestIds(pl);
       applyContentPanelAccent(getCoverUrl(pl.coverImgUrl, 256));
-      $setSiteTitle(pl.name + " - " + t("general.name.playlist"));
+      if (isActive) $setSiteTitle(pl.name + " - " + t("general.name.playlist"));
       seedFromDetail(pl, sourceId);
       void hydrateUntil(Math.max(minRows, HYDRATE_CHUNK));
-      if (typeof $scrollToTop !== "undefined") $scrollToTop();
     })
     .catch((err) => {
       if (token !== loadToken) return;
-      $setSiteTitle(t("general.name.playlist"));
       loadingState.value = false;
       console.error(t("general.message.acquisitionFailed"), err);
-      $message.error(t("general.message.acquisitionFailed"));
+      if (isActive) {
+        $setSiteTitle(t("general.name.playlist"));
+        $message.error(t("general.message.acquisitionFailed"));
+      }
     });
 };
 
@@ -1108,9 +1084,13 @@ onMounted(() => {
  */
 const LEGACY_PAGE_SIZE = 30;
 const initialRowsFromQuery = (): number => {
-  const raw = router.currentRoute.value.query.page;
+  const raw = route.query.page;
   const page = Number(Array.isArray(raw) ? raw[0] : raw);
   return Number.isFinite(page) && page > 1 ? page * LEGACY_PAGE_SIZE : 0;
+};
+
+const retryPlaylist = () => {
+  if (playListId.value) loadPlaylist(playListId.value, initialRowsFromQuery());
 };
 
 /**
@@ -1134,8 +1114,9 @@ const initialRowsFromQuery = (): number => {
  * 另一个歌单的内容，用户退回 A 时看到的是 B。
  */
 watch(
-  () => router.currentRoute.value,
-  (val) => {
+  () => route.fullPath,
+  () => {
+    const val = route;
     if (val.name !== "playlist" || !isActive) return;
     const nextId = val.query.id as string | string[] | undefined;
     if (!nextId || String(nextId) === String(playListId.value)) return;
@@ -1214,8 +1195,6 @@ watch(
       width: 100%;
       aspect-ratio: 1 / 1;
       border-radius: var(--radius-md);
-      transition: transform var(--duration-300) var(--ease-out);
-      filter: drop-shadow(0 16px 28px rgba(var(--content-panel-accent-rgb, 0, 0, 0), 0.22));
 
       &:active {
         transform: scale(0.95);
@@ -1279,7 +1258,7 @@ watch(
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 800;
-          line-height: 1.06;
+          line-height: normal;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;
           -webkit-line-clamp: 2;
@@ -1607,7 +1586,7 @@ watch(
 
           .name {
             font-size: clamp(25px, 8vw, 36px);
-            line-height: 1.12;
+            line-height: normal;
           }
 
           .creator {
