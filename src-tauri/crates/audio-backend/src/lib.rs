@@ -9,7 +9,8 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod analysis;
-#[cfg(not(target_arch = "wasm32"))]
+// Built for wasm32 too: the Web path runs the same section analysis. Only its
+// file/decoder entry points are native-only.
 pub mod automix;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod commands;

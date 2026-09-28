@@ -9,7 +9,11 @@
  *
  * In Web/WASM backend mode, the worker can also decode audio bytes through
  * the Rust/Symphonia WASM backend before running the same analysis pipeline.
+ * Song sections come from the Rust analysis itself, through the same WASM
+ * package, so both backends name a song's parts identically.
  */
+
+import type { SectionAnalysis } from "./TrackAnalyzer";
 
 // ─── Protocol types ────────────────────────────────────────────────
 
@@ -21,6 +25,7 @@ interface PcmAnalysisRequest {
   sampleRate: number;
   duration: number;
   analyzeBPM: boolean;
+  analyzeSections: boolean;
 }
 
 interface DecodeAndAnalyzeRequest {
@@ -29,6 +34,7 @@ interface DecodeAndAnalyzeRequest {
   bytes: Uint8Array;
   extension: string;
   analyzeBPM: boolean;
+  analyzeSections: boolean;
 }
 
 type AnalysisRequest = PcmAnalysisRequest | DecodeAndAnalyzeRequest;
@@ -49,8 +55,15 @@ interface WasmAudioBackendCtor {
   new (): WasmAudioBackendBinding;
 }
 
+interface WasmSongStructureAnalyzer {
+  push(samples: Float32Array): void;
+  /** Consumes the analyzer. */
+  finishJson(duration: number, contentEnd: number, bpm: number, bpmConfidence: number): string;
+}
+
 interface WasmAudioBackendModule {
   WasmAudioBackend: WasmAudioBackendCtor;
+  SongStructureAnalyzer: new (sampleRate: number) => WasmSongStructureAnalyzer;
 }
 
 interface VolumeAnalysis {
@@ -138,6 +151,7 @@ interface AnalysisResponse {
   outro: OutroAnalysis | null;
   intro: IntroAnalysis | null;
   phrases: PhraseAnalysis | null;
+  sections: SectionAnalysis | null;
   duration: number;
 }
 
@@ -157,14 +171,21 @@ const BPM_ANALYSIS_RATE = 11025; // downsample target
 const MIN_BPM = 60;
 const MAX_BPM = 200;
 
+let wasmModulePromise: Promise<WasmAudioBackendModule> | null = null;
 let wasmBackendPromise: Promise<WasmAudioBackendBinding> | null = null;
+
+function getWasmModule(): Promise<WasmAudioBackendModule> {
+  if (!wasmModulePromise) {
+    wasmModulePromise = import("@player-helper/gmplayer-audio-backend").then(
+      (mod) => mod as unknown as WasmAudioBackendModule,
+    );
+  }
+  return wasmModulePromise;
+}
 
 async function getWasmBackend(): Promise<WasmAudioBackendBinding> {
   if (!wasmBackendPromise) {
-    wasmBackendPromise = import("@player-helper/gmplayer-audio-backend").then((mod) => {
-      const wasmMod = mod as unknown as WasmAudioBackendModule;
-      return new wasmMod.WasmAudioBackend();
-    });
+    wasmBackendPromise = getWasmModule().then((mod) => new mod.WasmAudioBackend());
   }
   return wasmBackendPromise;
 }
@@ -2063,31 +2084,80 @@ function runAnalysis(
     outro,
     intro,
     phrases,
+    sections: null,
     duration,
   };
 }
 
+/** Samples per push into WASM: bounds how much of a track sits in linear memory at once. */
+const SECTION_CHUNK_SAMPLES = 1 << 16;
+
+async function analyzeSongSections(
+  monoData: Float32Array,
+  sampleRate: number,
+  duration: number,
+  energy: EnergyAnalysis,
+  bpm: BPMResult | null,
+): Promise<SectionAnalysis | null> {
+  const { SongStructureAnalyzer } = await getWasmModule();
+  const contentEnd = Math.max(0, duration - energy.trailingSilence);
+  const content = monoData.subarray(0, Math.floor(contentEnd * sampleRate));
+  const analyzer = new SongStructureAnalyzer(sampleRate);
+  for (let i = 0; i < content.length; i += SECTION_CHUNK_SAMPLES) {
+    analyzer.push(content.subarray(i, i + SECTION_CHUNK_SAMPLES));
+  }
+  return JSON.parse(
+    analyzer.finishJson(duration, contentEnd, bpm?.bpm ?? 0, bpm?.confidence ?? 0),
+  ) as SectionAnalysis | null;
+}
+
+async function withSections(
+  response: AnalysisResponse,
+  analyzeSections: boolean,
+  monoData: Float32Array,
+  sampleRate: number,
+): Promise<AnalysisResponse> {
+  if (!analyzeSections) return response;
+  try {
+    response.sections = await analyzeSongSections(
+      monoData,
+      sampleRate,
+      response.duration,
+      response.energy,
+      response.bpm,
+    );
+  } catch (err) {
+    // Sections only refine transitions; the rest of the analysis stands.
+    console.warn("AutoMix analysis worker: section analysis failed", err);
+  }
+  return response;
+}
+
 async function handleAnalysisRequest(request: AnalysisRequest): Promise<AnalysisResponse> {
   if (request.type === "analyze") {
-    return runAnalysis(
+    const response = runAnalysis(
       request.id,
       request.monoData,
       request.sampleRate,
       request.duration,
       request.analyzeBPM,
     );
+    return withSections(response, request.analyzeSections, request.monoData, request.sampleRate);
   }
 
   const backend = await getWasmBackend();
   const decoded = backend.decodeAudioBytes(request.bytes, request.extension);
   try {
-    return runAnalysis(
+    const samples = decoded.takeSamples?.() ?? decoded.samples();
+    const sampleRate = decoded.sampleRate();
+    const response = runAnalysis(
       request.id,
-      decoded.takeSamples?.() ?? decoded.samples(),
-      decoded.sampleRate(),
+      samples,
+      sampleRate,
       decoded.duration(),
       request.analyzeBPM,
     );
+    return await withSections(response, request.analyzeSections, samples, sampleRate);
   } finally {
     decoded.free?.();
   }

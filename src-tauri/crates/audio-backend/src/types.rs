@@ -34,6 +34,10 @@ pub struct AutoMixConfig {
     pub transition_style: CrossfadeCurve,
     pub transition_effects: bool,
     pub vocal_guard: bool,
+    /// Hand over after the last chorus and shape the blend by the energy of
+    /// the passages that meet. Off plans exactly as before sections existed.
+    #[serde(default = "default_true")]
+    pub emotional_transition: bool,
 }
 
 impl Default for AutoMixConfig {
@@ -48,6 +52,7 @@ impl Default for AutoMixConfig {
             transition_style: CrossfadeCurve::EqualPower,
             transition_effects: true,
             vocal_guard: true,
+            emotional_transition: true,
         }
     }
 }

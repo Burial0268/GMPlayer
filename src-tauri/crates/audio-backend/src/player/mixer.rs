@@ -130,6 +130,10 @@ pub struct CrossfadeParams {
     pub incoming_gain: f32,
     pub outgoing_gain: f32,
     pub overlap_headroom_db: f32,
+    /// Exponent on the incoming curve: above 1 holds the incoming back.
+    pub in_shape: f32,
+    /// Exponent on the outgoing curve: above 1 clears the outgoing sooner.
+    pub out_shape: f32,
 }
 
 impl Default for CrossfadeParams {
@@ -139,6 +143,8 @@ impl Default for CrossfadeParams {
             incoming_gain: 1.0,
             outgoing_gain: 1.0,
             overlap_headroom_db: -0.8,
+            in_shape: 1.0,
+            out_shape: 1.0,
         }
     }
 }
@@ -1186,7 +1192,7 @@ fn starved_retry_backoff(retry_count: &mut u32) {
 
 fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
     let t = progress.clamp(0.0, 1.0);
-    let (out_vol, in_vol) = crossfade_values(t, params.curve);
+    let (out_vol, in_vol) = crossfade_values(t, &params);
     let outgoing_target = params.outgoing_gain.clamp(0.0, 2.0);
     let incoming_target = params.incoming_gain.clamp(0.0, 2.0);
 
@@ -1208,9 +1214,12 @@ fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32
     (out_gain, in_gain)
 }
 
-fn crossfade_values(progress: f32, curve: CrossfadeCurve) -> (f32, f32) {
+/// Same shaping as the Web `getCrossfadeValues`: shapes are exponents on each
+/// side, and the constant-power curves are renormalised afterwards so an
+/// asymmetric shape moves *when* each side is heard without a level dip.
+fn crossfade_values(progress: f32, params: &CrossfadeParams) -> (f32, f32) {
     let t = progress.clamp(0.0, 1.0);
-    match curve {
+    let (mut out_vol, mut in_vol) = match params.curve {
         CrossfadeCurve::Linear => (1.0 - t, t),
         CrossfadeCurve::EqualPower => {
             let angle = t * std::f32::consts::FRAC_PI_2;
@@ -1221,7 +1230,29 @@ fn crossfade_values(progress: f32, curve: CrossfadeCurve) -> (f32, f32) {
             let angle = s * std::f32::consts::FRAC_PI_2;
             (angle.cos(), angle.sin())
         }
+    };
+
+    // Unshaped fades are the common case; keep them free of powf and exact.
+    if params.in_shape == 1.0 && params.out_shape == 1.0 {
+        return (out_vol, in_vol);
     }
+    // f32 `cos(FRAC_PI_2)` is a hair below zero, and a negative base with a
+    // fractional exponent is NaN.
+    if params.out_shape != 1.0 {
+        out_vol = out_vol.max(0.0).powf(params.out_shape);
+    }
+    if params.in_shape != 1.0 {
+        in_vol = in_vol.max(0.0).powf(params.in_shape);
+    }
+    if params.curve != CrossfadeCurve::Linear {
+        let power = out_vol * out_vol + in_vol * in_vol;
+        if power > 1e-8 {
+            let scale = power.sqrt().recip();
+            out_vol *= scale;
+            in_vol *= scale;
+        }
+    }
+    (out_vol, in_vol)
 }
 
 #[cfg(test)]
@@ -1318,6 +1349,7 @@ mod tests {
             incoming_gain: 1.15,
             outgoing_gain: 0.85,
             overlap_headroom_db: -0.8,
+            ..Default::default()
         });
 
         for params in params {
@@ -1347,5 +1379,67 @@ mod tests {
                 assert!((exact.1 - interpolated.1).abs() < 0.001);
             }
         }
+    }
+
+    #[test]
+    fn unit_shapes_leave_every_curve_untouched() {
+        for curve in [
+            CrossfadeCurve::Linear,
+            CrossfadeCurve::EqualPower,
+            CrossfadeCurve::SCurve,
+        ] {
+            let params = CrossfadeParams {
+                curve,
+                ..Default::default()
+            };
+            for step in 0..=20 {
+                let t = step as f32 / 20.0;
+                let (out_vol, in_vol) = crossfade_values(t, &params);
+                let (expected_out, expected_in) = match curve {
+                    CrossfadeCurve::Linear => (1.0 - t, t),
+                    CrossfadeCurve::EqualPower => {
+                        let angle = t * std::f32::consts::FRAC_PI_2;
+                        (angle.cos(), angle.sin())
+                    }
+                    CrossfadeCurve::SCurve => {
+                        let s = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+                        let angle = s * std::f32::consts::FRAC_PI_2;
+                        (angle.cos(), angle.sin())
+                    }
+                };
+                assert_eq!(out_vol.to_bits(), expected_out.to_bits());
+                assert_eq!(in_vol.to_bits(), expected_in.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn shaped_constant_power_curves_keep_their_power_and_endpoints() {
+        let held_back = CrossfadeParams {
+            curve: CrossfadeCurve::EqualPower,
+            in_shape: 1.2,
+            ..Default::default()
+        };
+        let plain = CrossfadeParams::default();
+
+        for step in 0..=20 {
+            let t = step as f32 / 20.0;
+            let (out_vol, in_vol) = crossfade_values(t, &held_back);
+            assert!((out_vol * out_vol + in_vol * in_vol - 1.0).abs() < 1e-4);
+        }
+        assert_eq!(crossfade_values(0.0, &held_back), (1.0, 0.0));
+        let (end_out, end_in) = crossfade_values(1.0, &held_back);
+        assert!(end_out.abs() < 1e-6 && (end_in - 1.0).abs() < 1e-6);
+        let cleared = CrossfadeParams {
+            out_shape: 1.15,
+            ..held_back
+        };
+        let (end_out, _) = crossfade_values(1.0, &cleared);
+        assert!(
+            !end_out.is_nan(),
+            "a shaped outgoing side must not go NaN at the end"
+        );
+        // Held back: quieter than the unshaped incoming half way through.
+        assert!(crossfade_values(0.5, &held_back).1 < crossfade_values(0.5, &plain).1);
     }
 }

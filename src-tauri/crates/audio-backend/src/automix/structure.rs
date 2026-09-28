@@ -1,5 +1,6 @@
-//! Song-structure analysis for AutoMix: intro/outro multiband detection and
-//! section (verse/chorus/bridge/...) segmentation.
+//! Song-structure analysis for AutoMix: intro/outro multiband detection, mix
+//! point candidates, and the legacy fixed-grid sections that feed them. The
+//! detected song sections live in `sections`.
 
 use super::analysis::{design_biquad_bandpass, design_k_weight_shelf, iir_process};
 use super::{
@@ -343,7 +344,11 @@ struct LabeledSectionCandidate {
     mix_suitability: f32,
 }
 
-pub(super) fn analyze_song_sections(
+/// The fixed-grid labelling that predates `sections::analyze_song_sections`:
+/// 16-beat (or 8 s) blocks named by energy alone. Kept only as the input to
+/// `build_mix_point_analysis`, so AutoMix with emotional transitions switched
+/// off plans exactly as it did. Retire both together.
+pub(super) fn analyze_legacy_grid_sections(
     energy: &EnergyAnalysis,
     bpm: Option<&BPMResult>,
     intro: Option<&IntroAnalysis>,
@@ -671,7 +676,7 @@ fn classify_section_candidate(
             0.5
         };
         return (
-            SongSectionKind::Start,
+            SongSectionKind::Intro,
             (cue_confidence + bpm_bonus).min(1.0),
         );
     }
@@ -792,7 +797,7 @@ fn merge_labeled_sections(labeled: Vec<LabeledSectionCandidate>) -> Vec<SongSect
     sections
 }
 
-fn section_vocal_risk(
+pub(super) fn section_vocal_risk(
     vocal_activity: Option<&VocalActivityAnalysis>,
     start: f32,
     end: f32,
@@ -826,7 +831,7 @@ fn vocal_risk_at(vocal_activity: Option<&VocalActivityAnalysis>, time: f32) -> f
     vocal.risk[idx.min(vocal.risk.len() - 1)].clamp(0.0, 1.0)
 }
 
-fn section_mix_suitability(
+pub(super) fn section_mix_suitability(
     section_type: SongSectionKind,
     energy: f32,
     confidence: f32,
@@ -838,7 +843,7 @@ fn section_mix_suitability(
         SongSectionKind::Breakdown => 0.72,
         SongSectionKind::Bridge => 0.55,
         SongSectionKind::Verse => 0.26,
-        SongSectionKind::Start => 0.14,
+        SongSectionKind::Intro => 0.14,
         SongSectionKind::Chorus => 0.08,
     };
 
@@ -931,7 +936,7 @@ pub(super) fn build_mix_point_analysis(
                 }
                 SongSectionKind::Verse => section.start + section_duration * 0.85,
                 SongSectionKind::Chorus => section.start + section_duration * 0.95,
-                SongSectionKind::Start => continue,
+                SongSectionKind::Intro => continue,
             };
             push_mix_candidate(
                 &mut candidates,
@@ -1150,11 +1155,11 @@ fn classify_outro_simple(
 
 #[cfg(test)]
 mod tests {
-    use super::analyze_song_sections;
+    use super::analyze_legacy_grid_sections;
     use crate::automix::{BPMResult, EnergyAnalysis, IntroAnalysis, SongSectionKind};
 
     #[test]
-    fn song_sections_detect_basic_pop_structure() {
+    fn legacy_grid_sections_detect_basic_pop_structure() {
         let mut energy_per_second = Vec::new();
         energy_per_second.extend(std::iter::repeat(0.20).take(8));
         energy_per_second.extend(std::iter::repeat(0.45).take(16));
@@ -1185,15 +1190,16 @@ mod tests {
             multiband_energy: None,
         };
 
-        let analysis = analyze_song_sections(&energy, Some(&bpm), Some(&intro), None, None, 80.0)
-            .expect("expected section analysis");
+        let analysis =
+            analyze_legacy_grid_sections(&energy, Some(&bpm), Some(&intro), None, None, 80.0)
+                .expect("expected section analysis");
         let section_types = analysis
             .sections
             .iter()
             .map(|section| section.section_type)
             .collect::<Vec<_>>();
 
-        assert_eq!(section_types.first(), Some(&SongSectionKind::Start));
+        assert_eq!(section_types.first(), Some(&SongSectionKind::Intro));
         assert!(section_types.contains(&SongSectionKind::Verse));
         assert!(section_types.contains(&SongSectionKind::Chorus));
         assert_eq!(section_types.last(), Some(&SongSectionKind::Outro));
@@ -1201,7 +1207,7 @@ mod tests {
     }
 
     #[test]
-    fn song_sections_skip_too_short_tracks() {
+    fn legacy_grid_sections_skip_too_short_tracks() {
         let energy = EnergyAnalysis {
             energy_per_second: vec![0.4, 0.5, 0.4],
             outro_start_offset: 3.0,
@@ -1211,6 +1217,6 @@ mod tests {
             is_fade_out: false,
         };
 
-        assert!(analyze_song_sections(&energy, None, None, None, None, 3.0).is_none());
+        assert!(analyze_legacy_grid_sections(&energy, None, None, None, None, 3.0).is_none());
     }
 }

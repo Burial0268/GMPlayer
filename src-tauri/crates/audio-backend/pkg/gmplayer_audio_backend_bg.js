@@ -149,6 +149,69 @@ export class LFOptionsJs {
 if (Symbol.dispose) LFOptionsJs.prototype[Symbol.dispose] = LFOptionsJs.prototype.free;
 
 /**
+ * AutoMix song sections for the Web path — the same analysis the native
+ * backend runs. Fed in chunks so a whole track is never copied into linear
+ * memory, which only ever grows.
+ */
+export class SongStructureAnalyzer {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SongStructureAnalyzerFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_songstructureanalyzer_free(ptr, 0);
+    }
+    /**
+     * Consumes the analyzer. `content_end` excludes trailing silence; a
+     * `bpm` of 0 means unknown. Returns `SectionAnalysis` JSON, or `null`
+     * when the track has no structure worth planning around.
+     * @param {number} duration
+     * @param {number} content_end
+     * @param {number} bpm
+     * @param {number} bpm_confidence
+     * @returns {string}
+     */
+    finishJson(duration, content_end, bpm, bpm_confidence) {
+        let deferred1_0;
+        let deferred1_1;
+        try {
+            const ptr = this.__destroy_into_raw();
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            wasm.songstructureanalyzer_finishJson(retptr, ptr, duration, content_end, bpm, bpm_confidence);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            deferred1_0 = r0;
+            deferred1_1 = r1;
+            return getStringFromWasm0(r0, r1);
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+            wasm.__wbindgen_export(deferred1_0, deferred1_1, 1);
+        }
+    }
+    /**
+     * @param {number} sample_rate
+     */
+    constructor(sample_rate) {
+        const ret = wasm.songstructureanalyzer_new(sample_rate);
+        this.__wbg_ptr = ret;
+        SongStructureAnalyzerFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * @param {Float32Array} samples
+     */
+    push(samples) {
+        const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.songstructureanalyzer_push(this.__wbg_ptr, ptr0, len0);
+    }
+}
+if (Symbol.dispose) SongStructureAnalyzer.prototype[Symbol.dispose] = SongStructureAnalyzer.prototype.free;
+
+/**
  * WASM-side state holder for the browser IPC runtime.
  *
  * It deliberately does not touch sockets, threads, files, CPAL, or Tauri.
@@ -658,6 +721,9 @@ const DecodedAudioJsFinalization = (typeof FinalizationRegistry === 'undefined')
 const LFOptionsJsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_lfoptionsjs_free(ptr, 1));
+const SongStructureAnalyzerFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_songstructureanalyzer_free(ptr, 1));
 const WasmAudioBackendFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmaudiobackend_free(ptr, 1));

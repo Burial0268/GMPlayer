@@ -347,6 +347,8 @@ impl AudioPlayer {
                 // outgoing track up to 1.0.
                 outgoing_gain: self.active_norm_gain,
                 overlap_headroom_db: plan.overlap_headroom_db as f32,
+                in_shape: plan.in_shape as f32,
+                out_shape: plan.out_shape as f32,
             })
             .unwrap_or_else(|| CrossfadeParams {
                 outgoing_gain: self.active_norm_gain,

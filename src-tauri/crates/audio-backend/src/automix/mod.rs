@@ -6,14 +6,25 @@
 ///
 /// Invoked via `analyze_audio_native` tauri::command — receives raw mono PCM,
 /// returns full TrackAnalysis.
+///
+/// The module also builds for wasm32, where only the PCM analysis is used
+/// (song sections, through `wasm::SongStructureAnalyzer`); decoding and file
+/// access stay native-only.
+#[cfg(not(target_arch = "wasm32"))]
 use rodio::{Decoder, Source};
-use serde::{Deserialize, Serialize};
+#[cfg(not(target_arch = "wasm32"))]
+use serde::Deserialize;
+use serde::Serialize;
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::{Cursor, Read, Seek, SeekFrom};
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Mutex};
 
 // ─── Input ───────────────────────────────────────────────────────────
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomixAnalyzeRequest {
@@ -23,6 +34,7 @@ pub struct AutomixAnalyzeRequest {
     pub analyze_bpm: Option<bool>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AutomixAnalyzeSourceRequest {
@@ -83,7 +95,7 @@ pub struct PhraseAnalysis {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SongSectionKind {
-    Start,
+    Intro,
     Verse,
     Chorus,
     Bridge,
@@ -224,12 +236,15 @@ const MAX_SONG_SECTIONS: usize = 48;
 const VOCAL_WINDOW_SECONDS: f32 = OUTRO_WINDOW_MS / 1000.0;
 
 mod analysis;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) mod emotion;
+pub(crate) mod sections;
 mod structure;
 mod vocal;
 
 use analysis::{analyze_energy, analyze_volume, compute_fingerprint, run_bpm_detection};
 use structure::{
-    analyze_intro, analyze_outro_multiband, analyze_song_sections, build_mix_point_analysis,
+    analyze_intro, analyze_legacy_grid_sections, analyze_outro_multiband, build_mix_point_analysis,
 };
 use vocal::analyze_vocal_activity;
 
@@ -242,9 +257,9 @@ use vocal::analyze_vocal_activity;
 /// allocation that pressures a 32-bit address space. Tracks longer than the
 /// cap simply fall back to doubling growth beyond it, which is never worse
 /// than the old un-hinted behavior.
-#[cfg(target_pointer_width = "64")]
+#[cfg(all(not(target_arch = "wasm32"), target_pointer_width = "64"))]
 const MONO_PREALLOC_MAX_SAMPLES: usize = 64 << 20;
-#[cfg(not(target_pointer_width = "64"))]
+#[cfg(all(not(target_arch = "wasm32"), not(target_pointer_width = "64")))]
 const MONO_PREALLOC_MAX_SAMPLES: usize = 16 << 20;
 
 /// Mono-sample capacity estimate from the container duration hint, with a
@@ -255,6 +270,7 @@ const MONO_PREALLOC_MAX_SAMPLES: usize = 16 << 20;
 /// containers can report astronomical durations (symphonia maps the MP4 v0
 /// unknown-duration sentinel to u64::MAX seconds), and the saturating float
 /// cast plus margin addition must not overflow-panic on such hints.
+#[cfg(not(target_arch = "wasm32"))]
 fn mono_capacity_hint(duration_hint: Option<f32>, sample_rate: u32) -> usize {
     let Some(duration) = duration_hint.filter(|d| d.is_finite() && *d > 0.0) else {
         return 0;
@@ -270,6 +286,7 @@ fn mono_capacity_hint(duration_hint: Option<f32>, sample_rate: u32) -> usize {
         .min(MONO_PREALLOC_MAX_SAMPLES)
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_audio_to_mono(audio_data: Vec<u8>) -> Result<(Vec<f32>, u32, f32), String> {
     decode_source_to_mono(Cursor::new(audio_data))
 }
@@ -284,11 +301,13 @@ fn decode_audio_to_mono(audio_data: Vec<u8>) -> Result<(Vec<f32>, u32, f32), Str
 /// latching restores exactly that property for the streamed path.
 /// `ErrorKind::Interrupted` is not latched to match `read_to_end`, which
 /// transparently retries it.
+#[cfg(not(target_arch = "wasm32"))]
 struct IoErrorLatchReader<R> {
     inner: R,
     latch: Arc<Mutex<Option<String>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<R> IoErrorLatchReader<R> {
     fn record(&self, err: &std::io::Error) {
         if err.kind() == std::io::ErrorKind::Interrupted {
@@ -302,6 +321,7 @@ impl<R> IoErrorLatchReader<R> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<R: Read> Read for IoErrorLatchReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self.inner.read(buf) {
@@ -314,6 +334,7 @@ impl<R: Read> Read for IoErrorLatchReader<R> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl<R: Seek> Seek for IoErrorLatchReader<R> {
     fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
         match self.inner.seek(pos) {
@@ -326,6 +347,7 @@ impl<R: Seek> Seek for IoErrorLatchReader<R> {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn decode_source_to_mono<R>(input: R) -> Result<(Vec<f32>, u32, f32), String>
 where
     R: std::io::Read + std::io::Seek + Send + Sync + 'static,
@@ -449,7 +471,22 @@ pub fn analyze_mono_samples(
         })
     });
     let vocal_activity = analyze_vocal_activity(samples, sample_rate, duration);
-    let sections = analyze_song_sections(
+    let content_end = (duration - energy.trailing_silence).clamp(0.0, duration);
+    let sections = sections::analyze_song_sections(
+        samples,
+        sample_rate,
+        &sections::SectionHints {
+            duration,
+            content_end,
+            tempo: bpm
+                .as_ref()
+                .and_then(|b| sections::confident_tempo(b.bpm, b.confidence)),
+            vocal_activity: vocal_activity.as_ref(),
+        },
+    );
+    // Mix candidates keep the old grid so that AutoMix without emotional
+    // transitions plans exactly as it did before sections were detected.
+    let legacy_sections = analyze_legacy_grid_sections(
         &energy,
         bpm.as_ref(),
         intro.as_ref(),
@@ -462,7 +499,7 @@ pub fn analyze_mono_samples(
         bpm.as_ref(),
         outro.as_ref(),
         phrases.as_ref(),
-        sections.as_ref(),
+        legacy_sections.as_ref(),
         vocal_activity.as_ref(),
         duration,
     );
@@ -482,6 +519,7 @@ pub fn analyze_mono_samples(
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn analyze_audio_bytes(req: AutomixAnalyzeRequest) -> Result<TrackAnalysis, String> {
     let analyze_bpm = req.analyze_bpm.unwrap_or(true);
     let (samples, sample_rate, duration) = decode_audio_to_mono(req.audio_data)?;
@@ -493,6 +531,7 @@ pub fn analyze_audio_bytes(req: AutomixAnalyzeRequest) -> Result<TrackAnalysis, 
     ))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn analyze_audio_file(
     path: impl AsRef<Path>,
     analyze_bpm: bool,
@@ -529,11 +568,12 @@ pub fn analyze_audio_file(
     ))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub fn analyze_audio_source(req: AutomixAnalyzeSourceRequest) -> Result<TrackAnalysis, String> {
     analyze_audio_file(req.source, req.analyze_bpm.unwrap_or(true))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
     use std::io::Write;
@@ -695,5 +735,36 @@ mod tests {
             err.starts_with("read audio source:"),
             "unexpected error: {err}"
         );
+    }
+
+    /// Prints the sections found in a real track, for checking the heuristic
+    /// by ear: `AUTOMIX_SECTIONS_FILE=<path> cargo test -p
+    /// gmplayer-audio-backend print_sections_of_a_real_track -- --ignored --nocapture`
+    #[test]
+    #[ignore = "needs AUTOMIX_SECTIONS_FILE pointing at a real track"]
+    fn print_sections_of_a_real_track() {
+        let path = std::env::var("AUTOMIX_SECTIONS_FILE").expect("set AUTOMIX_SECTIONS_FILE");
+        let analysis = analyze_audio_file(&path, true).expect("analyze");
+        let Some(sections) = analysis.sections else {
+            println!("no sections ({:.1}s)", analysis.duration);
+            return;
+        };
+        println!(
+            "{} sections, confidence {:.2}, bpm {:?}",
+            sections.sections.len(),
+            sections.confidence,
+            analysis.bpm.map(|b| (b.bpm, b.confidence))
+        );
+        for s in sections.sections {
+            println!(
+                "{:>6.1}-{:>6.1}s  {:<9} energy {:.2}  vocal {:.2}  confidence {:.2}",
+                s.start,
+                s.end,
+                format!("{:?}", s.section_type),
+                s.energy,
+                s.vocal_risk,
+                s.confidence
+            );
+        }
     }
 }

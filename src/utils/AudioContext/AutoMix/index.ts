@@ -41,6 +41,8 @@ export { TransitionStateMachine } from "./TransitionStateMachine";
 export { VocalActivityGuard } from "./VocalActivityGuard";
 export { CompatibilityScorer } from "./CompatibilityScorer";
 export { TransitionEffects } from "./TransitionEffects";
+export { planEmotionalArc, sectionMixOutCue } from "./EmotionalArc";
+export type { ArcProfile, EmotionalArc } from "./EmotionalArc";
 
 // TrackAnalyzer and friends
 export { analyzeTrack, spectralSimilarity, terminateAnalysisWorker } from "./TrackAnalyzer";
@@ -55,6 +57,9 @@ export type {
   IntroAnalysis,
   Phrase,
   PhraseAnalysis,
+  SongSectionKind,
+  SongSection,
+  SectionAnalysis,
 } from "./TrackAnalyzer";
 
 // BPM

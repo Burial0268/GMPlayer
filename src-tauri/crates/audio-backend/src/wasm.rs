@@ -17,6 +17,9 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use wasm_bindgen::prelude::*;
 
+use crate::automix::sections::{
+    confident_tempo, segment_song, SectionHints, StructureFeatureExtractor,
+};
 use crate::types::{
     AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, DisplayAudioInfo,
     PlaybackState, SongData,
@@ -122,6 +125,52 @@ impl DecodedAudioJs {
     #[wasm_bindgen(js_name = "duration")]
     pub fn duration(&self) -> f64 {
         self.duration
+    }
+}
+
+/// AutoMix song sections for the Web path — the same analysis the native
+/// backend runs. Fed in chunks so a whole track is never copied into linear
+/// memory, which only ever grows.
+#[wasm_bindgen]
+pub struct SongStructureAnalyzer {
+    extractor: StructureFeatureExtractor,
+}
+
+#[wasm_bindgen]
+impl SongStructureAnalyzer {
+    #[wasm_bindgen(constructor)]
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            extractor: StructureFeatureExtractor::new(sample_rate),
+        }
+    }
+
+    pub fn push(&mut self, samples: &[f32]) {
+        self.extractor.push(samples);
+    }
+
+    /// Consumes the analyzer. `content_end` excludes trailing silence; a
+    /// `bpm` of 0 means unknown. Returns `SectionAnalysis` JSON, or `null`
+    /// when the track has no structure worth planning around.
+    #[wasm_bindgen(js_name = "finishJson")]
+    pub fn finish_json(
+        self,
+        duration: f32,
+        content_end: f32,
+        bpm: f32,
+        bpm_confidence: f32,
+    ) -> String {
+        let features = self.extractor.finish();
+        let sections = segment_song(
+            &features,
+            &SectionHints {
+                duration,
+                content_end,
+                tempo: confident_tempo(bpm, bpm_confidence),
+                vocal_activity: None,
+            },
+        );
+        serde_json::to_string(&sections).unwrap_or_else(|_| "null".to_string())
     }
 }
 

@@ -13,7 +13,9 @@
  *                 the queue itself is shuffled (`musicData.shufflePlaylistOrder`),
  *                 so "next" is the next index in both modes.
  * - single mode / single-song list: [cur@i]  windowed=false (native wrap = repeat)
- * - personal FM / listen-together: no prefill (transitions need live JS)
+ * - personal FM: prefilled like normal — it now keeps a pre-fetched buffer in the
+ *                playlist, walked forward (mode forced to normal), windowed=true
+ * - listen-together: no prefill (transitions need a live room round-trip)
  */
 
 import { isTauri } from "@/utils/tauri/core/runtime";
@@ -111,7 +113,11 @@ export async function prefillNativeQueue(): Promise<void> {
   const music = useMusicDataStore();
   const listenTogether = useListenTogetherStore();
   cancelNativeQueuePrefill();
-  if (music.persistData.personalFmMode) return;
+  // Personal FM is no longer excluded: it now keeps a pre-fetched buffer in the
+  // playlist (see musicData refillFmBuffer), so pre-resolving its next URL gives
+  // the same gapless hand-off as a normal queue. Its next track is decided
+  // locally now, not by a live per-skip request. Listen-together still is not
+  // pre-fillable — its next track needs a live room round-trip.
   if (listenTogether.isInRoom) return;
 
   const playlists = music.persistData.playlists;
@@ -121,7 +127,10 @@ export async function prefillNativeQueue(): Promise<void> {
   const currentIndex = music.persistData.playSongIndex;
   const currentSong = playlists[currentIndex];
   if (!currentSong?.id) return;
-  const mode = music.persistData.playSongMode;
+  // FM walks its buffer forward regardless of the user's single/random play-mode,
+  // so treat it as `normal` here (a `single` play-mode must not collapse the FM
+  // window to just the current track).
+  const mode = music.persistData.personalFmMode ? "normal" : music.persistData.playSongMode;
 
   const generation = prefillGeneration;
   abortController = new AbortController();
@@ -191,7 +200,7 @@ export async function prefillNativeQueue(): Promise<void> {
 
   if (signal.aborted || generation !== prefillGeneration) return;
   if (sound.isDestroyed() || window.$player !== sound) return;
-  if (music.persistData.personalFmMode || listenTogether.isInRoom) return;
+  if (listenTogether.isInRoom) return;
   // Bail if the store moved on while URLs were resolving — the new track's
   // own play handler re-runs the prefill against fresh state.
   const livePlaylists = music.persistData.playlists;

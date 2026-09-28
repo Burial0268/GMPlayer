@@ -14,6 +14,9 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 audio-analysis = { path = "../audio-analysis" }
+# Shared by native playback and the AutoMix section analysis, which the WASM
+# build also runs. `audio-analysis` already compiles it for wasm32.
+rustfft = "6"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 symphonia = { version = "0.5", default-features = false, features = [
@@ -37,7 +40,6 @@ rodio = { version = "0.22", default-features = false, features = ["symphonia-all
 # on the host — see the two `cpal` tables below. `resolver = "2"` at the
 # workspace root is what keeps those feature sets from being unified across
 # targets.
-rustfft = "6"
 parking_lot = "0.12"
 rtrb = "0.3.4"
 log = "0.4"

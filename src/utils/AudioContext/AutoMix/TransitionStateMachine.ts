@@ -19,8 +19,14 @@ import { VocalActivityGuard } from "./VocalActivityGuard";
 import { CompatibilityScorer } from "./CompatibilityScorer";
 import { TransitionEffects } from "./TransitionEffects";
 import { getOutroTypeCrossfadeProfile } from "./types";
-import { analyzeTrack, type OutroType } from "./TrackAnalyzer";
+import { analyzeTrack, type OutroType, type TrackAnalysis } from "./TrackAnalyzer";
 import { findNearestBeat } from "./BPMDetector";
+import {
+  planEmotionalArc,
+  sectionMixOutCue,
+  type ArcProfile,
+  type EmotionalArc,
+} from "./EmotionalArc";
 import { AudioContextManager } from "../AudioContextManager";
 import { BufferedSound } from "../BufferedSound";
 import { SoundManager } from "../SoundManager";
@@ -101,6 +107,16 @@ export class TransitionStateMachine {
   // Phrase-aware mix-out point (outgoing track)
   private _phraseMixOutTime: number | null = null;
 
+  // Section boundary the current plan hands over at (emotional transitions)
+  private _emotionalCue: number | null = null;
+
+  // Per-frame idle check memo: section cue of the playing song's cached analysis
+  private _idleCueMemo: {
+    songId: number;
+    analysis: TrackAnalysis | null;
+    cue: number | null;
+  } | null = null;
+
   // Incoming sound during crossfade
   private _incomingSound: ISound | null = null;
   private _incomingSourceUrl: string | null = null;
@@ -116,6 +132,7 @@ export class TransitionStateMachine {
   private _settingsTransitionEffects: boolean = true;
   private _settingsVocalGuard: boolean = true;
   private _settingsPhraseAlign: boolean = true;
+  private _settingsEmotionalTransition: boolean = true;
 
   // Async guard: prevent duplicate analysis
   private _analyzingInFlight: boolean = false;
@@ -338,6 +355,7 @@ export class TransitionStateMachine {
     this._settingsTransitionEffects = this._settingStoreRef.autoMixTransitionEffects ?? true;
     this._settingsVocalGuard = this._settingStoreRef.autoMixVocalGuard ?? true;
     this._settingsPhraseAlign = this._settingStoreRef.autoMixPhraseAlign ?? true;
+    this._settingsEmotionalTransition = this._settingStoreRef.autoMixEmotionalTransition ?? true;
   }
 
   private _shouldBeActive(): boolean {
@@ -414,11 +432,45 @@ export class TransitionStateMachine {
     }
 
     const effectiveDuration = this._getEffectiveCrossfadeDuration(duration);
-    const triggerTime = duration - effectiveDuration - PREPARE_AHEAD;
+    let triggerTime = duration - effectiveDuration - PREPARE_AHEAD;
+    // A section cue can hand over well before the usual window.
+    const cue = this._idleSectionCue(duration);
+    if (cue !== null) {
+      triggerTime = Math.min(triggerTime, cue - PREPARE_AHEAD);
+    }
 
     if (currentTime >= triggerTime && currentTime < duration - 1) {
       this._startAnalysis();
     }
+  }
+
+  /**
+   * Section cue of the playing song, estimated from its cached analysis. Runs
+   * per frame, so it is memoised per song and analysis.
+   */
+  private _idleSectionCue(duration: number): number | null {
+    if (!this._settingsEmotionalTransition) return null;
+    const music = this._musicStoreRef;
+    const songId = music?.persistData?.playlists?.[music.persistData.playSongIndex]?.id;
+    if (songId === undefined || songId === null) return null;
+
+    const analysis = this._analysisCache.get(songId)?.analysis ?? null;
+    const memo = this._idleCueMemo;
+    if (memo && memo.songId === songId && memo.analysis === analysis) return memo.cue;
+
+    let cue: number | null = null;
+    if (analysis) {
+      const effectiveEnd = duration - analysis.energy.trailingSilence;
+      // As early as `_computeCrossfadeParams` could put its baseline, so the
+      // estimate never rules out a cue the real plan would take.
+      const baseline = Math.min(
+        effectiveEnd - this._getEffectiveCrossfadeDuration(effectiveEnd),
+        analysis.outro?.suggestedCrossfadeStart ?? Infinity,
+      );
+      cue = sectionMixOutCue(analysis.sections, baseline, effectiveEnd, MIN_CROSSFADE_DURATION);
+    }
+    this._idleCueMemo = { songId, analysis, cue };
+    return cue;
   }
 
   private _getEffectiveCrossfadeDuration(songDuration: number): number {
@@ -551,6 +603,7 @@ export class TransitionStateMachine {
         transitionStyle: this._settingsCurve,
         transitionEffects: this._settingsTransitionEffects,
         vocalGuard: this._settingsVocalGuard,
+        emotionalTransition: this._settingsEmotionalTransition,
       },
     });
     await audioSendMsg({
@@ -802,6 +855,7 @@ export class TransitionStateMachine {
         try {
           const analysis = await analyzeTrack(analysisUrl, {
             analyzeBPM: this._settingsBpmMatch,
+            analyzeSections: this._settingsEmotionalTransition,
           });
           if (generation !== this._analysisGeneration) return;
           this._currentAnalysis = { songId: currentSong.id, analysis };
@@ -952,6 +1006,24 @@ export class TransitionStateMachine {
       }
     }
 
+    // Emotional transitions: hand over where the last chorus ends.
+    this._emotionalCue = null;
+    if (this._settingsEmotionalTransition) {
+      const cue = sectionMixOutCue(
+        this._currentAnalysis?.analysis.sections,
+        this._crossfadeStartTime,
+        effectiveEnd,
+        MIN_CROSSFADE_DURATION,
+      );
+      if (cue !== null) {
+        this._emotionalCue = cue;
+        this._crossfadeStartTime = cue;
+        // The outro type describes the song's final seconds, which a fade this
+        // early no longer blends.
+        this._crossfadeDuration = this._getEffectiveCrossfadeDuration(effectiveEnd);
+      }
+    }
+
     // Beat-align (skip for certain outro types where timing is less critical)
     const skipBeatAlign =
       this._outroType === "fadeOut" ||
@@ -960,11 +1032,16 @@ export class TransitionStateMachine {
       this._outroType === "loopFade";
     if (this._settingsBeatAlign && !skipBeatAlign && this._currentAnalysis?.analysis.bpm) {
       const bpmResult = this._currentAnalysis.analysis.bpm;
-      this._crossfadeStartTime = findNearestBeat(
+      const aligned = findNearestBeat(
         bpmResult.beatGrid,
         this._crossfadeStartTime,
         bpmResult.analysisOffset,
       );
+      // The grid only spans the 30s BPM window mid-song; a start outside it
+      // would otherwise be dragged back into that window. Same bound as native.
+      if (Math.abs(aligned - this._crossfadeStartTime) <= Math.min(0.6, 30 / bpmResult.bpm)) {
+        this._crossfadeStartTime = aligned;
+      }
     }
 
     if (this._crossfadeStartTime > effectiveEnd - MIN_CROSSFADE_DURATION) {
@@ -983,7 +1060,8 @@ export class TransitionStateMachine {
           (outro ? `, confidence=${outro.outroConfidence.toFixed(2)}` : "") +
           (this._phraseMixOutTime !== null
             ? `, phraseMix=${this._phraseMixOutTime.toFixed(1)}s`
-            : ""),
+            : "") +
+          (this._emotionalCue !== null ? `, sectionCue=${this._emotionalCue.toFixed(1)}s` : ""),
       );
     }
   }
@@ -1174,13 +1252,18 @@ export class TransitionStateMachine {
 
     let crossfadeDuration = this._crossfadeDuration;
 
+    // At a section cue the song has not reached its own ending yet, so neither
+    // "the outgoing fades by itself" nor the outro-type profile applies.
+    const cueUsed = this._emotionalCue !== null;
     let effectiveCurve: CrossfadeCurve = this._settingsCurve;
-    let effectiveFadeInOnly = this._outroType === "fadeOut" || this._outroType === "loopFade";
+    let effectiveFadeInOnly =
+      !cueUsed && (this._outroType === "fadeOut" || this._outroType === "loopFade");
     let effectiveInShape = 1;
     let effectiveOutShape = 1;
 
     const outroConfidence = this._currentAnalysis?.analysis.outro?.outroConfidence ?? 0;
-    if (this._settingsSmartCurve && this._outroType && outroConfidence >= 0.75) {
+    const outroConfident = !cueUsed && outroConfidence >= 0.75;
+    if (this._settingsSmartCurve && this._outroType && outroConfident) {
       const profile = getOutroTypeCrossfadeProfile(this._outroType);
       effectiveCurve = profile.curve;
       effectiveFadeInOnly = profile.fadeInOnly;
@@ -1222,6 +1305,24 @@ export class TransitionStateMachine {
       crossfadeDuration = Math.min(crossfadeDuration * 1.15, this._settingsCrossfadeDuration);
     }
 
+    // Emotional arc: shaped by the energy of the passages that will overlap.
+    const outgoingNow = outgoingSound.seek() as number;
+    let arc: EmotionalArc = "neutral";
+    let arcProfile: ArcProfile | null = null;
+    if (this._settingsEmotionalTransition && this._currentAnalysis && this._nextAnalysis) {
+      const planned = planEmotionalArc(
+        this._currentAnalysis.analysis,
+        this._nextAnalysis.analysis,
+        outgoingNow,
+        crossfadeDuration,
+      );
+      if (planned) {
+        arc = planned.arc;
+        arcProfile = planned.profile;
+        crossfadeDuration *= arcProfile.durationScale;
+      }
+    }
+
     // Clamp final duration
     crossfadeDuration = Math.max(
       MIN_CROSSFADE_DURATION,
@@ -1229,7 +1330,6 @@ export class TransitionStateMachine {
     );
 
     // Safety clamp: account for async delay
-    const outgoingNow = outgoingSound.seek() as number;
     const remainingContent = Math.max(0, effectiveEnd - outgoingNow);
     if (crossfadeDuration > remainingContent) {
       if (IS_DEV) {
@@ -1242,11 +1342,14 @@ export class TransitionStateMachine {
     }
 
     const incomingGainAdjustment = this._computeIncomingGainAdjustment(energyContrast);
-    const overlapHeadroomDb = this._computeOverlapHeadroomDb(
+    let overlapHeadroomDb = this._computeOverlapHeadroomDb(
       energyContrast,
       compatScore.loudness,
       effectiveFadeInOnly,
     );
+    if (arcProfile && arcProfile.overlapHeadroomDb !== null) {
+      overlapHeadroomDb = Math.min(overlapHeadroomDb, arcProfile.overlapHeadroomDb);
+    }
 
     // Filter sweep replaces spectral EQ (both serve frequency-domain smoothing;
     // filter sweep is far more aggressive for truly incompatible tracks)
@@ -1256,12 +1359,12 @@ export class TransitionStateMachine {
     }
 
     // Apply curve/shape overrides from strategy
-    if (strategy.recommendedCurve && outroConfidence < 0.75) {
+    if (strategy.recommendedCurve && !outroConfident) {
       // No strong outro detection → use recommended curve
       effectiveCurve = strategy.recommendedCurve;
     }
     if (strategy.shapeOverride) {
-      if (outroConfidence >= 0.75) {
+      if (outroConfident) {
         // Blend: average of outro profile and strategy override
         effectiveInShape = (effectiveInShape + strategy.shapeOverride.inShape) / 2;
         effectiveOutShape = (effectiveOutShape + strategy.shapeOverride.outShape) / 2;
@@ -1274,6 +1377,20 @@ export class TransitionStateMachine {
       effectiveOutShape = Math.max(0.7, Math.min(1.3, effectiveOutShape));
     }
 
+    // The arc knows both passages; it outranks the compatibility guesses.
+    if (arcProfile && arc !== "neutral") {
+      if (arcProfile.curve) effectiveCurve = arcProfile.curve;
+      effectiveInShape = arcProfile.inShape;
+      effectiveOutShape = arcProfile.outShape;
+      if (arcProfile.calm) {
+        strategy.useNoiseRiser = false;
+        strategy.useBeatGate = false;
+        strategy.useEchoThrow = false;
+        strategy.useReverseSwell = false;
+        strategy.useEffects = strategy.useReverbTail || strategy.useFilterSweep;
+      }
+    }
+
     if (IS_DEV) {
       console.log(
         `TransitionStateMachine: Finalized params — duration=${crossfadeDuration.toFixed(1)}s, ` +
@@ -1282,7 +1399,8 @@ export class TransitionStateMachine {
           `gainAdj=${incomingGainAdjustment.toFixed(3)}, ` +
           `headroom=${overlapHeadroomDb.toFixed(1)}dB, ` +
           `compat=${compatScore.overall.toFixed(2)}, ` +
-          `spectral=${spectralCrossfade !== false}`,
+          `spectral=${spectralCrossfade !== false}, ` +
+          `arc=${arc}`,
       );
     }
 
@@ -1316,7 +1434,7 @@ export class TransitionStateMachine {
       this._preBufferManager.startPreBuffer(
         this._musicStoreRef,
         this._analysisCache,
-        { volumeNorm: this._settingsVolumeNorm, bpmMatch: this._settingsBpmMatch },
+        this._preBufferSettings(),
         () => this._state,
         (entry) => this._addToCache(entry),
       );
@@ -1529,7 +1647,7 @@ export class TransitionStateMachine {
         return;
       }
 
-      if (this._settingsVolumeNorm) {
+      if (this._settingsVolumeNorm || this._settingsEmotionalTransition) {
         const nextSongId = nextSong.id;
         const cachedNext = this._analysisCache.get(nextSongId);
         if (cachedNext) {
@@ -1538,7 +1656,10 @@ export class TransitionStateMachine {
           try {
             const blobUrl = incomingSound.getBlobUrl();
             if (blobUrl) {
-              const analysis = await analyzeTrack(blobUrl, { analyzeBPM: this._settingsBpmMatch });
+              const analysis = await analyzeTrack(blobUrl, {
+                analyzeBPM: this._settingsBpmMatch,
+                analyzeSections: this._settingsEmotionalTransition,
+              });
               this._nextAnalysis = { songId: nextSongId, analysis };
               this._addToCache(this._nextAnalysis);
             }
@@ -1897,6 +2018,7 @@ export class TransitionStateMachine {
     this._incomingSourceUrl = null;
     this._lastStrategy = null;
     this._phraseMixOutTime = null;
+    this._emotionalCue = null;
     this._evictCache();
 
     if (this._finishingTimerId !== null) {
@@ -1998,6 +2120,7 @@ export class TransitionStateMachine {
     this._isPaused = false;
     this._activeGainAdjustment = 1;
     this._phraseMixOutTime = null;
+    this._emotionalCue = null;
     this._state = "idle";
     this._updateStoreState();
 
@@ -2147,10 +2270,18 @@ export class TransitionStateMachine {
     this._preBufferManager.startPreBuffer(
       this._musicStoreRef,
       this._analysisCache,
-      { volumeNorm: this._settingsVolumeNorm, bpmMatch: this._settingsBpmMatch },
+      this._preBufferSettings(),
       () => this._state,
       (entry) => this._addToCache(entry),
     );
+  }
+
+  private _preBufferSettings(): { volumeNorm: boolean; bpmMatch: boolean; sections: boolean } {
+    return {
+      volumeNorm: this._settingsVolumeNorm,
+      bpmMatch: this._settingsBpmMatch,
+      sections: this._settingsEmotionalTransition,
+    };
   }
 
   private _preAnalyzeTrack(sound: ISound, songId: number): void {
@@ -2178,6 +2309,7 @@ export class TransitionStateMachine {
 
       const analysis = await analyzeTrack(analysisUrl, {
         analyzeBPM: this._settingsBpmMatch,
+        analyzeSections: this._settingsEmotionalTransition,
       });
       this._addToCache({ songId, analysis });
 

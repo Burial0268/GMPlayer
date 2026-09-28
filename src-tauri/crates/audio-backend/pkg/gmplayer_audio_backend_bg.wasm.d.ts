@@ -2,12 +2,16 @@
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_decodedaudiojs_free: (a: number, b: number) => void;
+export const __wbg_songstructureanalyzer_free: (a: number, b: number) => void;
 export const __wbg_wasmaudiobackend_free: (a: number, b: number) => void;
 export const decodedaudiojs_channels: (a: number) => number;
 export const decodedaudiojs_duration: (a: number) => number;
 export const decodedaudiojs_sampleRate: (a: number) => number;
 export const decodedaudiojs_samples: (a: number, b: number) => void;
 export const decodedaudiojs_takeSamples: (a: number, b: number) => void;
+export const songstructureanalyzer_finishJson: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
+export const songstructureanalyzer_new: (a: number) => number;
+export const songstructureanalyzer_push: (a: number, b: number, c: number) => void;
 export const wasmaudiobackend_applyLoadError: (a: number, b: number, c: number, d: number) => void;
 export const wasmaudiobackend_applyLoadedTrack: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const wasmaudiobackend_applyPlayError: (a: number, b: number, c: number, d: number) => void;

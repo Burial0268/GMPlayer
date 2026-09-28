@@ -214,10 +214,13 @@ let plannerEnabled: boolean | null = null;
  *
  * Manifest and planner are two different powers and must not be conflated:
  * the manifest is "tracks I may be *told* to play", the planner is "may I
- * choose the next one myself". Personal FM and listen-together have their
- * next track decided by a server, so they keep the manifest (the backend
- * still needs identity → resolvable source, e.g. to honour a remote GOTO)
- * but lose the planner.
+ * choose the next one myself". Listen-together has its next track decided by a
+ * server, so it keeps the manifest (the backend still needs identity →
+ * resolvable source, e.g. to honour a remote GOTO) but loses the planner.
+ *
+ * Personal FM keeps *both*: it pre-fetches a buffer into the playlist, so the
+ * planner advancing through that buffer is exactly the desired behaviour (and
+ * the only way the next track can play while the Android JS worker is frozen).
  */
 const applyPlannerGate = (sound: NativeRustSound, enabled: boolean): void => {
   if (plannerEnabled === enabled) return;
@@ -309,12 +312,24 @@ const flushNativeManifest = (): void => {
     return;
   }
 
-  // Personal FM and listen-together have their next track chosen by a server.
-  // Keep publishing the manifest — the backend still needs to resolve tracks it
-  // is told to play — but take away its right to advance on its own. This runs
-  // before the dedup check below because the gate can change while the playlist
-  // (and therefore the signature) stays identical.
-  const serverDrivenOrder = music.persistData.personalFmMode || listenTogether.isInRoom;
+  // Listen-together has its next track chosen by a server: keep publishing the
+  // manifest (the backend still resolves tracks it is told to play) but take away
+  // its right to advance on its own.
+  //
+  // Personal FM used to be in the same bucket; it no longer is. FM now pre-fetches
+  // a buffer of upcoming tracks into the playlist (see musicData `FM_BUFFER_*` /
+  // refillFmBuffer), so the backend CAN advance through that buffer on its own —
+  // which is the whole point: on Android the JS worker is frozen in the background
+  // and cannot hand it the next track, and native audio-deck/mix threads would
+  // otherwise freeze waiting for a URL that never comes. FM ships `repeatList:
+  // false` and `mode: normal` below so the planner walks the buffer forward and
+  // stops at the tail (rather than wrapping into already-played / just-trashed
+  // tracks); JS tops the buffer up whenever it revives.
+  //
+  // This runs before the dedup check below because the gate can change while the
+  // playlist (and therefore the signature) stays identical.
+  const isPersonalFm = music.persistData.personalFmMode;
+  const serverDrivenOrder = listenTogether.isInRoom;
   applyPlannerGate(sound, !serverDrivenOrder);
 
   const entries: NativeManifestEntry[] = [];
@@ -322,7 +337,12 @@ const flushNativeManifest = (): void => {
   const cursorSongId = music.playingSongId ?? music.getPlaySongData?.id;
 
   // Probe before building: bail on the no-op path without allocating entries.
-  const signature = playlistSignature(playlists, music.persistData.playSongMode, cursorSongId);
+  // Fold FM into the signature's mode slot: FM forces `mode: normal` +
+  // `repeatList: false` below regardless of the user's play-mode, so a plain
+  // (non-forced) publish must still re-ship when FM toggles even though
+  // `playSongMode` is unchanged.
+  const signatureMode = isPersonalFm ? "fm" : music.persistData.playSongMode;
+  const signature = playlistSignature(playlists, signatureMode, cursorSongId);
   if (!force && signature === lastFingerprint) return;
 
   for (let index = 0; index < playlists.length; index++) {
@@ -372,9 +392,14 @@ const flushNativeManifest = (): void => {
     order: [],
     cursorIdentity,
     cursorIndex,
-    // `single` repeats one track; list repeat is the normal/random default.
-    mode: mode === "single" ? "single" : mode === "random" ? "random" : "normal",
-    repeatList: true,
+    // Personal FM is a forward buffer: always walk it as `normal` (ignore the
+    // user's single/random play-mode, which does not apply to a radio stream)
+    // and never wrap — `repeatList: false` makes the planner stop at the buffer
+    // tail rather than replaying already-heard / just-trashed tracks. JS extends
+    // the buffer as it is consumed. Otherwise: `single` repeats one track; list
+    // repeat is the normal/random default.
+    mode: isPersonalFm ? "normal" : mode === "single" ? "single" : mode === "random" ? "random" : "normal",
+    repeatList: !isPersonalFm,
     randomSeed,
   };
 

@@ -43,6 +43,7 @@ export interface AutoMixConfig {
   transitionStyle: "linear" | "equalPower" | "sCurve";
   transitionEffects: boolean;
   vocalGuard: boolean;
+  emotionalTransition: boolean;
 }
 
 export interface EqualizerBand {

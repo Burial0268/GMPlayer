@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::automix as automix_analysis;
+use crate::automix::emotion::{self, EmotionalArc};
 use crate::decoder;
 use crate::types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AutoMixConfig, AutoMixNativeState, AutoMixStatus,
@@ -21,6 +22,11 @@ pub struct CrossfadePlan {
     pub incoming_gain_adjustment: f64,
     pub overlap_headroom_db: f64,
     pub curve: CrossfadeCurve,
+    pub in_shape: f64,
+    pub out_shape: f64,
+    pub arc: EmotionalArc,
+    /// Section boundary the fade was moved to, when emotional transitions chose one.
+    pub section_cue: Option<f64>,
 }
 
 pub(super) struct PreparedTrack {
@@ -404,7 +410,7 @@ fn prepare_track_blocking(
     // Analyze with the same BPM policy as a "current" track so this result can be
     // reused straight from the cache when the next track later becomes current,
     // avoiding a second full decode of the same file.
-    let next_analysis = if config.volume_norm || config.smart_curve {
+    let next_analysis = if config.volume_norm || config.smart_curve || config.emotional_transition {
         analyze_cached("next", &local_path, analyze_current_bpm)
     } else {
         None
@@ -417,6 +423,14 @@ fn prepare_track_blocking(
             next_analysis.as_ref(),
         )
     });
+    if config.emotional_transition {
+        if let Some(plan) = plan.as_ref() {
+            info!(
+                "AutoMix emotional plan: arc={:?}, section_cue={:?}, curve={:?}, shapes=({:.2}, {:.2})",
+                plan.arc, plan.section_cue, plan.curve, plan.in_shape, plan.out_shape
+            );
+        }
+    }
     let duration = if audio_info.duration_secs > 0.0 {
         audio_info.duration_secs
     } else {
@@ -450,6 +464,10 @@ fn build_time_based_plan(config: &AutoMixConfig, current_duration: f64) -> Cross
         incoming_gain_adjustment: 1.0,
         overlap_headroom_db: DEFAULT_OVERLAP_HEADROOM_DB,
         curve: config.transition_style,
+        in_shape: 1.0,
+        out_shape: 1.0,
+        arc: EmotionalArc::Neutral,
+        section_cue: None,
     }
 }
 
@@ -584,13 +602,84 @@ fn build_analysis_backed_plan(
     };
 
     plan.start_time = start;
+    if config.emotional_transition {
+        apply_section_cue(&mut plan, config, current, baseline_start, effective_end);
+    }
     if config.beat_align && !skip_native_beat_align(current) {
         if let Some(bpm) = current.bpm.as_ref() {
             plan.start_time = align_to_nearest_beat(plan.start_time, bpm);
         }
     }
+    if config.emotional_transition {
+        if let Some(next) = next_analysis {
+            apply_emotional_arc(&mut plan, config, current, next, effective_end);
+        }
+    }
 
     clamp_plan_to_content(plan, effective_end)
+}
+
+/// Longest fade the user's setting allows for content ending at `effective_end`.
+fn configured_duration(config: &AutoMixConfig, effective_end: f64) -> f64 {
+    let max_duration = (effective_end / 4.0).max(MIN_CROSSFADE_DURATION);
+    config
+        .crossfade_duration
+        .clamp(MIN_CROSSFADE_DURATION, max_duration)
+}
+
+/// Move the fade to where the song hands over emotionally: the end of its
+/// last chorus. The outro classifier describes the song's final seconds,
+/// which a fade starting this early no longer blends, so its duration and
+/// curve choices are dropped with it.
+fn apply_section_cue(
+    plan: &mut CrossfadePlan,
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    baseline_start: f64,
+    effective_end: f64,
+) {
+    let Some(cue) = current.sections.as_ref().and_then(|sections| {
+        emotion::section_mix_out_cue(
+            sections,
+            baseline_start as f32,
+            effective_end as f32,
+            MIN_CROSSFADE_DURATION as f32,
+        )
+    }) else {
+        return;
+    };
+    let cue = f64::from(cue);
+    plan.start_time = cue;
+    plan.section_cue = Some(cue);
+    plan.duration = configured_duration(config, effective_end);
+    plan.curve = config.transition_style;
+}
+
+fn apply_emotional_arc(
+    plan: &mut CrossfadePlan,
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+    effective_end: f64,
+) {
+    let Some((arc, profile)) =
+        emotion::plan_arc(current, next, plan.start_time as f32, plan.duration as f32)
+    else {
+        return;
+    };
+    plan.arc = arc;
+    plan.duration = (plan.duration * f64::from(profile.duration_scale)).clamp(
+        MIN_CROSSFADE_DURATION,
+        configured_duration(config, effective_end),
+    );
+    if let Some(curve) = profile.curve {
+        plan.curve = curve;
+    }
+    plan.in_shape = f64::from(profile.in_shape);
+    plan.out_shape = f64::from(profile.out_shape);
+    if let Some(headroom) = profile.overlap_headroom_db {
+        plan.overlap_headroom_db = plan.overlap_headroom_db.min(f64::from(headroom));
+    }
 }
 
 fn choose_analysis_duration(
@@ -598,10 +687,7 @@ fn choose_analysis_duration(
     current: &automix_analysis::TrackAnalysis,
     effective_end: f64,
 ) -> f64 {
-    let max_duration = (effective_end / 4.0).max(MIN_CROSSFADE_DURATION);
-    let configured = config
-        .crossfade_duration
-        .clamp(MIN_CROSSFADE_DURATION, max_duration);
+    let configured = configured_duration(config, effective_end);
 
     if !config.smart_curve {
         return configured;
@@ -837,4 +923,131 @@ fn extract_tag(info: &AudioInfo, keys: &[&str]) -> Option<String> {
 
 fn extract_title_from_metadata(info: &AudioInfo) -> Option<String> {
     extract_tag(info, &["title", "TIT2"])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::automix::{
+        EnergyAnalysis, SectionAnalysis, SongSection, SongSectionKind, SpectralFingerprint,
+        TrackAnalysis, VolumeAnalysis,
+    };
+
+    fn section(kind: SongSectionKind, start: f32, end: f32, energy: f32) -> SongSection {
+        SongSection {
+            section_type: kind,
+            start,
+            end,
+            index: 0,
+            confidence: 0.7,
+            energy,
+            vocal_risk: 0.3,
+            mix_suitability: 0.5,
+        }
+    }
+
+    fn track(sections: Vec<SongSection>) -> TrackAnalysis {
+        TrackAnalysis {
+            volume: VolumeAnalysis {
+                peak: 1.0,
+                rms: 0.2,
+                estimated_lufs: -14.0,
+                gain_adjustment: 1.0,
+            },
+            energy: EnergyAnalysis {
+                energy_per_second: vec![0.6; 200],
+                outro_start_offset: 8.0,
+                intro_end_offset: 2.0,
+                average_energy: 0.6,
+                trailing_silence: 0.0,
+                is_fade_out: false,
+            },
+            bpm: None,
+            fingerprint: SpectralFingerprint { bands: Vec::new() },
+            outro: None,
+            intro: None,
+            phrases: None,
+            sections: (!sections.is_empty()).then(|| SectionAnalysis {
+                sections,
+                confidence: 0.7,
+                method: "noveltyRepetition".into(),
+            }),
+            vocal_activity: None,
+            mix_candidates: None,
+            duration: 200.0,
+        }
+    }
+
+    fn outgoing() -> TrackAnalysis {
+        track(vec![
+            section(SongSectionKind::Intro, 0.0, 10.0, 0.3),
+            section(SongSectionKind::Verse, 10.0, 100.0, 0.55),
+            section(SongSectionKind::Chorus, 100.0, 180.0, 0.9),
+            section(SongSectionKind::Outro, 180.0, 200.0, 0.35),
+        ])
+    }
+
+    /// Opens straight on its chorus.
+    fn cold_open() -> TrackAnalysis {
+        track(vec![
+            section(SongSectionKind::Chorus, 0.0, 30.0, 0.9),
+            section(SongSectionKind::Verse, 30.0, 200.0, 0.55),
+        ])
+    }
+
+    fn config(emotional_transition: bool) -> AutoMixConfig {
+        AutoMixConfig {
+            enabled: true,
+            emotional_transition,
+            ..AutoMixConfig::default()
+        }
+    }
+
+    #[test]
+    fn without_emotional_transitions_sections_change_nothing() {
+        let next = cold_open();
+        let with_sections =
+            build_analysis_backed_plan(&config(false), 200.0, Some(&outgoing()), Some(&next));
+        let without_sections =
+            build_analysis_backed_plan(&config(false), 200.0, Some(&track(vec![])), Some(&next));
+
+        assert_eq!(with_sections.start_time, without_sections.start_time);
+        assert_eq!(with_sections.duration, without_sections.duration);
+        assert_eq!(with_sections.curve, without_sections.curve);
+        assert_eq!(
+            with_sections.overlap_headroom_db,
+            without_sections.overlap_headroom_db
+        );
+        assert_eq!(with_sections.section_cue, None);
+        assert_eq!(with_sections.arc, EmotionalArc::Neutral);
+        assert_eq!(
+            (with_sections.in_shape, with_sections.out_shape),
+            (1.0, 1.0)
+        );
+    }
+
+    #[test]
+    fn emotional_transitions_hand_over_after_the_last_chorus() {
+        let plan =
+            build_analysis_backed_plan(&config(true), 200.0, Some(&outgoing()), Some(&cold_open()));
+
+        assert_eq!(plan.section_cue, Some(180.0));
+        assert_eq!(plan.start_time, 180.0);
+        // A quiet outro handing over to a song that opens on its chorus.
+        assert_eq!(plan.arc, EmotionalArc::Lift);
+        assert_eq!(plan.curve, CrossfadeCurve::EqualPower);
+        assert!((plan.duration - 8.0 * 0.8).abs() < 1e-6);
+        assert!((plan.in_shape - 1.2).abs() < 1e-6);
+        assert!(plan.overlap_headroom_db <= -1.6);
+    }
+
+    #[test]
+    fn the_arc_never_stretches_past_the_configured_duration() {
+        // Quiet outro into a quiet intro drifts, which wants a longer blend.
+        let plan =
+            build_analysis_backed_plan(&config(true), 200.0, Some(&outgoing()), Some(&outgoing()));
+
+        assert_eq!(plan.arc, EmotionalArc::Drift);
+        assert!(plan.duration <= AutoMixConfig::default().crossfade_duration);
+    }
 }
