@@ -937,6 +937,10 @@ onBeforeUnmount(() => {
   // to clear it. Pages cannot compute this themselves: --nav-control-height and the
   // Nav's own tokens are declared inside `.nav`.
   --content-sticky-top: calc(var(--app-floating-control-top) + 36px);
+  // The same for `position: sticky; bottom`: how much of the scrollport's bottom is
+  // hidden. On desktop the scroller already stops above the play bar, so only the
+  // clip inset remains; on mobile it runs under the glass bottom chrome (see below).
+  --content-sticky-bottom: var(--content-stage-padding-y);
   --content-scrollbar-right: calc(var(--content-stage-padding-right) + 2px);
   --player-right-inset: var(--content-stage-padding-right);
   --layout-content-bottom: 0px;
@@ -999,6 +1003,7 @@ onBeforeUnmount(() => {
     --content-scrollbar-right: 0px;
     --player-right-inset: 0px;
     --content-sticky-top: calc(var(--app-mobile-nav-height) + 4px);
+    --content-sticky-bottom: var(--layout-content-bottom);
     // 底部 chrome 的高度统一由 :root 的 --app-bottom-chrome* 提供
     // (global.scss)，其中 tab bar 高度已经含 safe-area-bottom，不要再加一次。
     --layout-content-bottom: var(--app-bottom-chrome);
@@ -1342,26 +1347,15 @@ onBeforeUnmount(() => {
   height: var(--app-bottom-chrome);
   z-index: 1;
   pointer-events: none;
-  --bottom-glass-tint: rgba(250, 250, 252, 0.72);
-  background-color: var(--bottom-glass-tint);
-  // The grade matters more than the radius. iOS's material is
-  // gaussianBlur -> colorSaturate -> colorBrightness -> luminanceCurveMap, and the last
-  // two are what stop a bright backdrop from punching through: they COMPRESS the
-  // backdrop's dynamic range toward the material's own tone. Hence contrast below 100%
-  // — the instinctive "more contrast = punchier glass" widens the range instead and the
-  // album art behind the bar starts competing with the track title in front of it.
-  // Saturation is held near neutral for the same reason; pushing it (the usual
-  // saturate(180%) glass recipe) amplifies exactly the cover colors we need to sit back.
-  // 40px rather than 20px so the backdrop collapses into flat color instead of staying a
-  // recognizable smeared image — shape is as distracting as color here.
-  //
+  background-color: var(--material-regular-bg);
+  // Share the navigation material so text contrast follows the appearance tokens.
   // Prefixed FIRST, standard LAST — not cosmetic. The CSS minifier treats the two as
   // duplicate declarations of one property and keeps only the last, so writing the
   // standard one first ships a -webkit--only rule and the blur disappears entirely in
   // any engine without the alias. Every other backdrop-filter in this project is ordered
   // the same way for that reason.
-  -webkit-backdrop-filter: blur(40px) saturate(112%) brightness(1.08) contrast(0.9);
-  backdrop-filter: blur(40px) saturate(112%) brightness(1.08) contrast(0.9);
+  -webkit-backdrop-filter: var(--material-filter);
+  backdrop-filter: var(--material-filter);
   // Dissolves with the mini bar's own surface when BigPlayer takes over, so the glass
   // does not outlive the bar it belongs to. Safe on this element: its own opacity
   // composites the already-filtered backdrop. It would NOT be safe on an ancestor —
@@ -1390,7 +1384,7 @@ onBeforeUnmount(() => {
   // The outer shadow is deliberately tight — enough to lift the bar, not enough to
   // register as a band of its own.
   box-shadow:
-    inset 0 1px 0 rgb(255 255 255 / 55%),
+    inset 0 1px 0 var(--material-highlight),
     0 -1px 3px rgb(0 0 0 / 4%);
 
   &.has-player {
@@ -1398,11 +1392,8 @@ onBeforeUnmount(() => {
   }
 
   &.dark {
-    --bottom-glass-tint: rgba(16, 16, 20, 0.66);
-    -webkit-backdrop-filter: blur(40px) saturate(108%) brightness(0.68) contrast(0.86);
-    backdrop-filter: blur(40px) saturate(108%) brightness(0.68) contrast(0.86);
     box-shadow:
-      inset 0 1px 0 rgb(255 255 255 / 8%),
+      inset 0 1px 0 var(--material-highlight),
       0 -1px 3px rgb(0 0 0 / 18%);
   }
 }

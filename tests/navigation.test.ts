@@ -360,40 +360,74 @@ test("root switches preserve the last category and stay parallel", async () => {
 test("cancelled and redirected navigations never commit ghost layers", async () => {
   const { navigation: nav, router } = await fixture();
   const home = nav.current.value!.id;
+  let cancellations = 0;
+  nav.onNavigationCancelled(() => cancellations++);
   router.beforeEach((to) =>
     to.query.id === "cancel" ? false : to.query.id === "redirect" ? "/login" : undefined,
   );
   await nav.openPage("/album?id=cancel");
   assert.equal(nav.current.value!.id, home);
+  assert.equal(cancellations, 1);
   await nav.openPage("/album?id=redirect");
   assert.equal(nav.current.value!.route, "/login");
   assert.equal(nav.state.value.layers.length, 2);
   assert.equal(nav.current.value!.source, undefined);
+  assert.equal(cancellations, 1);
 });
 
-test("a superseded guard cannot overwrite the final navigation", async () => {
+for (const outcome of ["resolve", "abort", "throw"]) {
+  test(`a superseded guard cannot overwrite or interrupt the final navigation (${outcome})`, async () => {
+    const { navigation: nav, router } = await fixture();
+    let cancellations = 0;
+    nav.onNavigationCancelled(() => {
+      cancellations++;
+      nav.finishTransition(nav.transition.value.id);
+    });
+    let release!: () => void;
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered!: () => void;
+    const enteredGuard = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    router.beforeEach(async (to) => {
+      if (to.query.id === "slow") {
+        entered();
+        await waiting;
+        if (outcome === "abort") return false;
+        if (outcome === "throw") throw new Error("Failed navigation guard");
+      }
+    });
+    const slow = nav.openPage("/album?id=slow").catch((error) => error);
+    await enteredGuard;
+    await nav.openPage("/album?id=fast");
+    release();
+    await slow;
+    assert.equal(nav.current.value!.route, "/album?id=fast");
+    assert.equal(nav.state.value.layers.length, 2);
+    assert.equal(cancellations, 0);
+    assert.equal(nav.isTransitioning.value, true);
+  });
+}
+
+test("an active navigation error rolls back its presentation once", async () => {
   const { navigation: nav, router } = await fixture();
-  let release!: () => void;
-  const waiting = new Promise<void>((resolve) => {
-    release = resolve;
+  const home = nav.current.value!.id;
+  let cancellations = 0;
+  nav.onNavigationCancelled(() => cancellations++);
+  const stopGuard = router.beforeEach(() => {
+    throw new Error("Failed navigation guard");
   });
-  let entered!: () => void;
-  const enteredGuard = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
-  router.beforeEach(async (to) => {
-    if (to.query.id === "slow") {
-      entered();
-      await waiting;
-    }
-  });
-  const slow = nav.openPage("/album?id=slow");
-  await enteredGuard;
-  await nav.openPage("/album?id=fast");
-  release();
-  await slow;
-  assert.equal(nav.current.value!.route, "/album?id=fast");
-  assert.equal(nav.state.value.layers.length, 2);
+  await assert.rejects(async () => {
+    await nav.openPlayer();
+  }, /Failed navigation guard/);
+  assert.equal(cancellations, 1);
+  assert.equal(nav.current.value!.id, home);
+  stopGuard();
+  await nav.openPlayer();
+  assert.equal(nav.current.value!.kind, "player");
+  assert.equal(cancellations, 1);
 });
 
 test("browser back and forward restore temporary layers", async () => {

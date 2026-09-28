@@ -130,7 +130,7 @@ onMounted(() => {
       margin: 0;
       max-width: 900px;
       font-size: clamp(30px, 4.6vw, 50px);
-      font-weight: 800;
+      font-weight: 700;
       line-height: 1.08;
       letter-spacing: -0.02em;
       color: var(--n-text-color);
@@ -161,7 +161,7 @@ onMounted(() => {
     .empty-title {
       margin: 0;
       font-size: clamp(22px, 3vw, 30px);
-      font-weight: 800;
+      font-weight: 700;
       line-height: 1.1;
       letter-spacing: -0.02em;
     }
@@ -183,9 +183,11 @@ onMounted(() => {
     margin-top: 22px;
   }
 
+  // `clip` 而不是 `hidden`：`hidden` 让它成为滚动容器，子页里的 sticky（DataLists 的定位
+  // 药丸）就钉在这个永不滚动的盒子上。完整理由见 `views/Local/index.vue` 的同名规则。
   .content {
     position: relative;
-    overflow: hidden;
+    overflow: clip;
     margin-top: 24px;
   }
 }

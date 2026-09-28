@@ -45,21 +45,28 @@ import {
 import { nextTick } from "vue";
 import { settingStore } from "@/store";
 import { useDspSettings } from "@/composables/useDspSettings";
+import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { isMobileDevice, isTauri, windowManager } from "@/utils/tauri";
 import themeColorData from "./themeColor.json";
+import { createInterfaceTheme } from "./interfaceTheme";
 
 const setting = settingStore();
 useDspSettings();
 
-// 检测是否为移动端（宽度小于768px或存在触摸设备特征）
-const isMobile = ref(false);
-const checkMobile = () => {
-  isMobile.value = window.innerWidth < 768 || "ontouchstart" in window;
-};
-checkMobile();
-window.addEventListener("resize", checkMobile);
+const { isMobile } = useResponsiveLayout();
+const contrastQuery = window.matchMedia("(prefers-contrast: more)");
+const increasedContrast = ref(contrastQuery.matches);
+const updateContrast = (event) => (increasedContrast.value = event.matches);
+const accentColors = ref(themeColorData.red);
+const interfaceTheme = computed(() =>
+  createInterfaceTheme(accentColors.value, {
+    dark: setting.getSiteTheme === "dark",
+    mobile: isMobile.value,
+    increasedContrast: increasedContrast.value,
+  }),
+);
 const osThemeRef = useOsTheme();
-const themeOverrides = ref(null);
+const themeOverrides = computed(() => interfaceTheme.value.overrides);
 
 // 明暗切换
 const theme = ref(null);
@@ -250,21 +257,12 @@ const changeThemeColor = (val) => {
   if (val !== "custom") {
     color = themeColorData[val];
     console.log("当前主题色：" + val, color);
-    themeOverrides.value = {
-      common: color,
-    };
     setting.themeData = color;
   } else {
     color = setting.themeData;
     console.log("当前主题色为自定义：" + val, color);
-    themeOverrides.value = {
-      common: color,
-    };
   }
-  setCssVariable("--main-color", color.primaryColor);
-  setCssVariable("--main-second-color", color.primaryColor + "1f");
-  setCssVariable("--main-boxshadow-color", color.primaryColor + "26");
-  setCssVariable("--main-boxshadow-hover-color", color.primaryColor + "05");
+  accentColors.value = color;
 };
 
 // 修改全局颜色
@@ -272,6 +270,14 @@ const setCssVariable = (name, value) => {
   document.documentElement.style.setProperty(name, value);
   // document.body.style.setProperty(name, value);
 };
+
+watch(
+  interfaceTheme,
+  ({ variables }) => {
+    for (const [name, value] of Object.entries(variables)) setCssVariable(name, value);
+  },
+  { immediate: true },
+);
 
 // 挂载 naive 组件的方法
 const setupNaiveTools = () => {
@@ -342,6 +348,7 @@ watch(
 );
 
 onMounted(async () => {
+  contrastQuery.addEventListener("change", updateContrast);
   try {
     applyThemeMode(setting.themeMode ?? (setting.themeAuto ? "system" : setting.theme));
     applyTheme();
@@ -355,6 +362,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  contrastQuery.removeEventListener("change", updateContrast);
   if (window.$setSiteThemeWithTransition === setSiteThemeWithTransition) {
     delete window.$setSiteThemeWithTransition;
   }

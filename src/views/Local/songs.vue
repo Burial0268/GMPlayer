@@ -57,6 +57,7 @@
         :loading="loading"
         :capabilities="capabilities"
         :empty-text="$t('local.noMatches')"
+        :locate="locateAdapter"
         show-header
         page-window
         :virtual-item-size="54"
@@ -71,12 +72,13 @@
 <script setup lang="ts">
 import { Filter, SortAmountDown, SortAmountUp } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
-import { useLocalLibraryStore } from "@/store";
+import { musicStore, useLocalLibraryStore } from "@/store";
 import DataLists from "@/components/DataList/DataLists.vue";
 import { LOCAL_AUTO_CAPABILITIES } from "@/utils/playlistSource";
 import type { SongData } from "@/store/musicTypes";
 
 const { t } = useI18n();
+const music = musicStore();
 const local = useLocalLibraryStore();
 
 /**
@@ -160,6 +162,69 @@ const importDirectory = async () => {
 const importFiles = async () => {
   await local.importFiles();
   await reload();
+};
+
+// ── 定位到正在播放 ──────────────────────────────────────────
+//
+// 分页页面（`page-window`）只把已加载的前缀交给 `DataLists`，所以内置那颗定位药丸的
+// 默认查找（在 `listData` 里按 id 找）够不着还没翻到的行——正在播放的曲目一旦在前缀
+// 之外，药丸就既不出现也定位不了。这里维护一个「在完整列表中的下标」的 ref 补上这一段：
+// 供 `DataLists` 的 `locate.resolveIndex` 同步读取，另在后台按 uri 翻页直到找到它。
+//
+// 「全部歌曲」列出库里每一首，所以只要**是本地曲目且当前没有筛选**（筛选可能把它排除
+// 在结果之外），后台翻页就一定能找到——代价有界，找到即停。
+const locateIndex = ref(-1);
+
+const playingMatches = (song: SongData, playing: SongData): boolean =>
+  (!!playing.local?.uri && song.local?.uri === playing.local.uri) ||
+  (playing.id !== undefined && playing.id !== null && String(song.id) === String(playing.id));
+
+const rescanLocate = () => {
+  const playing = music.getPlaySongData;
+  locateIndex.value = playing ? songs.value.findIndex((song) => playingMatches(song, playing)) : -1;
+};
+
+let locateToken = 0;
+const resolveLocate = async () => {
+  // The trigger below already bumped the token, cancelling any in-flight loop; capture it.
+  const mine = locateToken;
+  rescanLocate();
+  const playing = music.getPlaySongData;
+  if (locateIndex.value >= 0 || !playing?.local?.uri || keyword.value.trim()) return;
+  while (mine === locateToken && locateIndex.value < 0 && songs.value.length < total.value) {
+    const before = songs.value.length;
+    await loadMore();
+    if (mine !== locateToken) return;
+    rescanLocate();
+    // A page that added nothing means the list is as complete as it gets.
+    if (songs.value.length <= before) break;
+  }
+};
+
+// Re-run when the playing song changes *or* when the first page lands (total 0 → N).
+// The immediate run fires before onMounted's reload, so without watching `total` a song
+// sitting beyond the first page would never kick off the background paging.
+watch(
+  [() => music.getPlaySongData?.id, total],
+  () => {
+    locateToken++;
+    void resolveLocate();
+  },
+  { immediate: true },
+);
+// Keep the in-prefix index live across reloads: a sort change replaces `songs` without
+// changing `total`, so this array watch — not the trigger above — is what catches it.
+watch(songs, rescanLocate);
+
+const locateAdapter = {
+  resolveIndex: (): number => locateIndex.value,
+  ensureLoaded: async (index: number): Promise<void> => {
+    while (songs.value.length <= index && songs.value.length < total.value) {
+      const before = songs.value.length;
+      await loadMore();
+      if (songs.value.length <= before) break;
+    }
+  },
 };
 
 // Debounced so a filter keystroke does not become an IPC round trip. Deliberately

@@ -105,7 +105,7 @@ const {
       margin: 0;
       max-width: 780px;
       font-size: clamp(28px, 4vw, 44px);
-      font-weight: 800;
+      font-weight: 700;
       line-height: 1.08;
       letter-spacing: -0.02em;
     }
@@ -227,7 +227,7 @@ const {
     .detail-name {
       margin: 0;
       font-size: clamp(24px, 3.4vw, 36px);
-      font-weight: 800;
+      font-weight: 700;
       line-height: 1.1;
       letter-spacing: -0.02em;
     }

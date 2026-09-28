@@ -29,13 +29,14 @@
         ref="virtualListRef"
         class="queue-scroll"
         :items="queueRows"
-        :item-size="49"
+        :item-size="58"
         :item-resizable="true"
         key-field="key"
         :show-scrollbar="false"
       >
         <template #default="{ item: row }">
           <div
+            :id="`queue-row-${row.index}`"
             :class="[
               'queue-row',
               {
@@ -77,19 +78,33 @@
       </n-virtual-list>
       <div v-else class="queue-empty">{{ $t("other.playlistEmpty") }}</div>
     </section>
+
+    <!-- 底部整宽定位按钮：滚动区之外，常驻面板底边。 -->
+    <button
+      v-if="music.getPlaylists.length"
+      class="queue-locate"
+      type="button"
+      @click="scrollToCurrent"
+    >
+      <n-icon :size="16" :component="Aiming" />
+      <span>{{ $t("player.queue.locate") }}</span>
+    </button>
   </aside>
 </template>
 
 <script setup>
 import { NIcon, NVirtualList } from "naive-ui";
-import { DeleteFour } from "@icon-park/vue-next";
+import { DeleteFour, Aiming } from "@icon-park/vue-next";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { locateVirtualRow } from "@/utils/locateRow";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 
 const music = musicStore();
 
 const virtualListRef = ref(null);
+let locateHandle = null;
 
 const currentSong = computed(() => music.getPlaySongData);
 const queueRows = computed(() =>
@@ -104,13 +119,20 @@ const changeIndex = (index) => {
   music.selectPlaySongByIndex(index);
 };
 
-// 滚动到当前播放曲目（供抽屉等容器在打开时调用）
+// 把正在播放的那行顶到列表上沿，下面接着就是「接下来播放」。抽屉打开时调用，也供底部
+// 按钮点击。近处滑过去，远处（含刚打开）一跳到位，见 `utils/locateRow`。
 const scrollToCurrent = () => {
   const index = music.persistData.playSongIndex;
-  if (index >= 0 && index < music.getPlaylists.length) {
-    virtualListRef.value?.scrollTo({ index });
-  }
+  if (index < 0 || index >= music.getPlaylists.length) return;
+  locateHandle?.cancel();
+  locateHandle = locateVirtualRow(virtualListRef.value, index, {
+    rowSelector: `#queue-row-${index}`,
+    align: "start",
+    instant: prefersReducedMotion(),
+  });
 };
+
+onBeforeUnmount(() => locateHandle?.cancel());
 
 defineExpose({ scrollToCurrent });
 </script>
@@ -342,6 +364,43 @@ defineExpose({ scrollToCurrent });
   padding: 14px;
   font-size: 12px;
   color: var(--n-text-color-3);
+}
+
+// 底部整宽定位按钮。在树内，直接用作用域内的 naive/全局 token。底边留量沿用
+// `--queue-pad-bottom`，让它在底部抽屉里避开 home indicator。
+.queue-locate {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 4px 8px max(8px, var(--queue-pad-bottom, 8px));
+  padding: 11px 16px;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--main-color);
+  background-color: color-mix(in srgb, var(--main-color) 12%, transparent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    transform 0.16s ease;
+
+  .n-icon {
+    color: var(--main-color);
+  }
+
+  &:hover,
+  &:focus-visible {
+    background-color: color-mix(in srgb, var(--main-color) 18%, transparent);
+    outline: none;
+  }
+
+  &:active {
+    transform: scale(0.98);
+  }
 }
 
 .queue-bars {

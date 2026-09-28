@@ -111,11 +111,17 @@ onMounted(() => {
 .pagination {
   margin-top: 40px;
   justify-content: center;
+  // n-pagination 是一行不换行的 flex。页数一多（歌手「全部歌曲」动辄几十页），
+  // 这行按钮就比窄视口宽，整条溢出画布、把布局顶歪。允许换行 + 夹住宽度兜底。
+  flex-wrap: wrap;
+  max-width: 100%;
 }
 
 // 移动端
 @media (max-width: 768px) {
   .pagination {
+    // 居中换行时行内按钮间距收紧，尽量一行放下、少换行
+    gap: 4px 0;
     :deep(.n-pagination-prefix) {
       display: none;
     }

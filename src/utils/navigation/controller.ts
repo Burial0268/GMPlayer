@@ -39,6 +39,7 @@ export function createLayerNavigation(router: Router) {
   const cancelListeners = new Set<() => void>();
   const roots = new Map<RootEntry, AppLayer>();
   let backPending = false;
+  let pendingNavigation: RouteLocationNormalized | undefined;
   let pop: { state?: LayerHistory; direction: "back" | "forward" | "" } | undefined;
   const transactions = new WeakMap<
     RouteLocationNormalized,
@@ -76,6 +77,7 @@ export function createLayerNavigation(router: Router) {
   });
 
   const stopBefore = router.beforeEach((to) => {
+    pendingNavigation = to;
     transactions.set(to, { from: state.value, pop });
     beforeListeners.forEach((listener) => listener());
   });
@@ -103,11 +105,15 @@ export function createLayerNavigation(router: Router) {
   const stopAfter = router.afterEach((to, from, failure) => {
     const transaction = transactions.get(to);
     if (failure) {
+      // A late failure belongs to its own request, not the surface now being presented.
+      if (pendingNavigation !== to) return;
+      pendingNavigation = undefined;
       if (transaction?.pop === pop) pop = undefined;
       backPending = false;
       cancelListeners.forEach((listener) => listener());
       return;
     }
+    pendingNavigation = undefined;
     if (to.meta.standalone) return;
     const previous = transaction?.from ?? state.value;
     const requested = readLayerHistory(router.options.history.state) ?? transaction?.pop?.state;
@@ -147,7 +153,9 @@ export function createLayerNavigation(router: Router) {
     backPending = false;
   });
 
-  const stopError = router.onError(() => {
+  const stopError = router.onError((_error, to) => {
+    if (pendingNavigation !== to) return;
+    pendingNavigation = undefined;
     pop = undefined;
     backPending = false;
     cancelListeners.forEach((listener) => listener());

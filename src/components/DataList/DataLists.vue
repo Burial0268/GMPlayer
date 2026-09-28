@@ -1,6 +1,6 @@
 <template>
   <Transition mode="out-in">
-    <div class="datalists" id="datalists" v-if="listData[0]">
+    <div class="datalists" id="datalists" ref="datalistsRootRef" v-if="listData[0]">
       <!--
         列头。默认关闭——14 个视图共用这个组件，只有详情页那种长列表需要它。
         列宽全部走 `--song-*` 变量，和行内部用的是同一组值，两边不会各自漂移。
@@ -17,6 +17,7 @@
       </div>
       <n-virtual-list
         v-if="useVirtualList"
+        ref="virtualListRef"
         class="song-virtual-list"
         :items="virtualListItems"
         :item-size="virtualItemSize"
@@ -454,6 +455,31 @@
       <component :is="CloudMatchComponent" v-if="CloudMatchComponent" ref="cloudMatchRef" />
       <component :is="AddPlaylistComponent" v-if="AddPlaylistComponent" ref="addPlayListRef" />
       <component :is="DownloadSongComponent" v-if="DownloadSongComponent" ref="downloadSongRef" />
+      <!--
+        定位到正在播放。零高度的 sticky 船坞钉在滚动视口的可见底边之上，药丸从船坞线向上
+        长出来：水平方向天然对齐列表，跟着页面一起转场、一起被 keep-alive 收起。
+      -->
+      <div class="locate-dock">
+        <AnimatePresence :initial="false">
+          <Motion
+            v-if="showLocatePill"
+            key="locate-pill"
+            as="button"
+            type="button"
+            class="locate-pill"
+            :initial="pillHidden"
+            :animate="pillShown"
+            :exit="pillHidden"
+            :transition="pillTransition()"
+            :aria-busy="locating"
+            @click="locatePlaying"
+          >
+            <n-spin v-if="locating" :size="14" />
+            <n-icon v-else :size="16" :component="Aiming" />
+            <span>{{ $t("player.queue.locate") }}</span>
+          </Motion>
+        </AnimatePresence>
+      </div>
     </div>
     <n-empty v-else-if="loading === false" class="empty" :description="emptyText || undefined" />
     <n-spin class="loading" size="small" v-else />
@@ -480,6 +506,7 @@ import {
   Like,
   More,
   Search,
+  Aiming,
 } from "@icon-park/vue-next";
 import { localLibraryStore, musicStore, settingStore, userStore } from "@/store";
 import { localPlaylistAddTracks } from "@/utils/localLibrary";
@@ -491,6 +518,10 @@ import { soundStop } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
 import SmallSongData from "./SmallSongData.vue";
+import { Motion, AnimatePresence } from "motion-v";
+import { miuixSpring, withReducedMotion } from "@/utils/motion/springs";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { locateRow, locateVirtualRow } from "@/utils/locateRow";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -557,6 +588,29 @@ const props = defineProps({
   listData: {
     type: Array,
     default: [],
+  },
+  /**
+   * 播放时真正入队的列表，默认等于 listData。
+   *
+   * 列表内搜索时 listData 是过滤后的候选集，直接拿它入队会把播放队列缩成搜索
+   * 结果。传入完整列表，让「播放某一条」把整张列表入队、再定位到点中的这首。
+   */
+  queueData: {
+    type: Array,
+    default: null,
+  },
+  /**
+   * 「定位到正在播放」适配器，给只把已加载前缀交给 listData 的长流页面用——正在播放的
+   * 曲目可能还在前缀之外，组件自己在 listData 里找不到。不传则在 listData 里按 id 找。
+   *
+   * - `resolveIndex(): number`：它在 listData 里的下标；确定在列表里但还没加载到时，
+   *   返回任意 ≥ listData.length 的值；不在列表里为 -1。组件把它包进 computed，所以它
+   *   读的状态要是响应式的，药丸显隐才跟得上。
+   * - `ensureLoaded(): Promise<void>`：把那一行加载进 listData（或加载到尽头）。
+   */
+  locate: {
+    type: Object,
+    default: null,
   },
   // 专辑隐藏
   hideAlbum: {
@@ -762,10 +816,19 @@ let reachEndFired = false;
 const measureRow = () => {
   const root = plainRootRef.value;
   if (!root) return;
-  const card = root.querySelector(".songs");
-  const cardHeight = card?.getBoundingClientRect().height;
+  const cards = root.querySelectorAll(".songs");
+  if (!cards.length) return;
+  // 要的是行距（顶边到顶边，含 `.songs` 的外边距），而且取已渲染各行的平均：带别名的行
+  // 多一行字，只量头两行的话，头一行恰好带别名就会把整张表的估算行高带偏。
+  const first = cards[0];
+  const pitch =
+    cards.length > 1
+      ? (cards[cards.length - 1].getBoundingClientRect().top - first.getBoundingClientRect().top) /
+        (cards.length - 1)
+      : first.getBoundingClientRect().height +
+        (parseFloat(getComputedStyle(first).marginBottom) || 0);
   // 量到就定下来。四舍五入到 0.5px，免得亚像素噪声把它变成一个会抖的值。
-  if (cardHeight) measuredItemSize.value = Math.round(cardHeight * 2) / 2;
+  if (pitch > 0) measuredItemSize.value = Math.round(pitch * 2) / 2;
 };
 
 const recomputeWindow = () => {
@@ -983,6 +1046,204 @@ const getSongClass = (item, index) => [
     "song-row-single": props.listData.length === 1,
   },
 ];
+
+// ── 定位到正在播放 ──────────────────────────────────────────
+//
+// 正在播放的那行不在可视带里时，列表底部浮出一颗药丸，点一下把它滚到可视带正中。
+// 滚动本身交给 `utils/locateRow`：三种渲染模式都会在滚动途中挪行，目标得逐帧重量。
+const virtualListRef = ref(null);
+const datalistsRootRef = ref(null);
+const showLocatePill = ref(false);
+const locating = ref(false);
+let locateListening = false;
+let locateRaf = 0;
+let locateHandle = null;
+
+const pillHidden = { opacity: 0, y: 12 };
+const pillShown = { opacity: 1, y: 0 };
+const pillTransition = () => withReducedMotion(miuixSpring.standard);
+
+const playingIndex = computed(() => {
+  if (props.locate) return props.locate.resolveIndex();
+  const id = music.getPlaySongData?.id;
+  if (!hasSongId(id)) return -1;
+  return props.listData.findIndex((item) => hasSongId(item?.id) && String(item.id) === String(id));
+});
+
+const rowElement = (index) => datalistsRootRef.value?.querySelector(`#song${index}`) ?? null;
+
+const pageScroller = () =>
+  scrollRootEl ?? datalistsRootRef.value?.closest(".n-scrollbar-container") ?? null;
+
+// 自定义属性读回来是没求值的 `calc(...)`（未注册的属性只做变量替换），parseFloat 只得到
+// NaN。交给探针元素的 height 求值，按原串缓存：底层变量一变，原串也跟着变。
+const cssLengthCache = new Map();
+const cssPx = (name) => {
+  const root = datalistsRootRef.value;
+  const raw = root ? getComputedStyle(root).getPropertyValue(name).trim() : "";
+  if (!raw) return 0;
+  if (!cssLengthCache.has(raw)) {
+    const probe = document.createElement("div");
+    probe.style.cssText = `position:absolute;visibility:hidden;height:${raw}`;
+    root.appendChild(probe);
+    cssLengthCache.set(raw, probe.getBoundingClientRect().height || 0);
+    probe.remove();
+  }
+  return cssLengthCache.get(raw);
+};
+
+/**
+ * 页面滚动视口上下被盖住的高度：上沿是 Nav（`--content-sticky-top`），再加列表前面钉着
+ * 的工具栏——认 computed style 而不认类名，任何 sticky 的前序兄弟都算；下沿是 shell 的
+ * `--content-sticky-bottom`。落点不让开工具栏，移动端那条整宽搜索框会把目标行整个盖住。
+ */
+const pageInsets = () => {
+  let top = cssPx("--content-sticky-top");
+  for (let el = datalistsRootRef.value?.previousElementSibling; el; el = el.previousElementSibling) {
+    const style = getComputedStyle(el);
+    if (style.position !== "sticky") continue;
+    top = Math.max(top, (parseFloat(style.top) || 0) + el.getBoundingClientRect().height);
+  }
+  return { top, bottom: cssPx("--content-sticky-bottom") };
+};
+
+/** 行的中线在可视带里才算看得见；虚拟模式下还要落在它自己的滚动框里。 */
+const isRowInView = (index) => {
+  const row = rowElement(index);
+  const scroller = pageScroller();
+  if (!row || !scroller) return false;
+  const box = scroller.getBoundingClientRect();
+  const inset = pageInsets();
+  let top = box.top + inset.top;
+  let bottom = box.bottom - inset.bottom;
+  const inner = useVirtualList.value ? virtualListRef.value?.getScrollContainer?.() : null;
+  if (inner) {
+    const own = inner.getBoundingClientRect();
+    top = Math.max(top, own.top);
+    bottom = Math.min(bottom, own.bottom);
+  }
+  const rect = row.getBoundingClientRect();
+  const middle = rect.top + rect.height / 2;
+  return middle > top && middle < bottom;
+};
+
+const updateLocatePill = () => {
+  const index = playingIndex.value;
+  showLocatePill.value =
+    locateListening && index >= 0 && (locating.value || !isRowInView(index));
+};
+
+const scheduleLocateUpdate = () => {
+  if (locateRaf) return;
+  locateRaf = requestAnimationFrame(() => {
+    locateRaf = 0;
+    updateLocatePill();
+  });
+};
+
+/** 居中时让 vueuc 一跳就把目标行放到中间附近：按真实行距算出上半截放得下几行。 */
+const virtualCenterLead = (inner) => {
+  const card = inner.querySelector(".songs");
+  if (!card) return 0;
+  const pitch =
+    card.getBoundingClientRect().height + (parseFloat(getComputedStyle(card).marginBottom) || 0);
+  return pitch > 0 ? Math.max(0, Math.floor((inner.clientHeight - pitch) / 2 / pitch)) : 0;
+};
+
+/** 页面窗口里目标行还没渲染：按估算行高跳到它附近，剩下的由 locateRow 量着行校正。 */
+const jumpWindowTo = (index, scroller) => {
+  const root = plainRootRef.value;
+  if (!root) return;
+  const inset = pageInsets();
+  const listTop =
+    root.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+  const bandMiddle = (inset.top + scroller.clientHeight - inset.bottom) / 2;
+  scroller.scrollTop = listTop + (index + 0.5) * rowSize.value - bandMiddle;
+};
+
+// 程序化滚动后当场重切窗口（不等下一帧的 scroll 事件），量到的才是重切之后的位置。
+const syncWindow = () => {
+  recomputeWindow();
+  return nextTick();
+};
+
+const locatePlaying = async () => {
+  if (locating.value) return;
+  locating.value = true;
+  locateHandle?.cancel();
+  try {
+    await props.locate?.ensureLoaded();
+    await nextTick();
+    // 加载期间页面可能已经被切走（keep-alive 收起）。
+    if (!locateListening) return;
+    const index = playingIndex.value;
+    const scroller = pageScroller();
+    if (index < 0 || index >= props.listData.length || !scroller) return;
+    const instant = prefersReducedMotion();
+    if (useVirtualList.value) {
+      const inner = virtualListRef.value?.getScrollContainer?.();
+      if (!inner) return;
+      locateHandle = locateVirtualRow(virtualListRef.value, index, {
+        rowSelector: `#song${index}`,
+        align: "center",
+        lead: virtualCenterLead(inner),
+        instant,
+      });
+      if (!(await locateHandle?.done)) return;
+      // 内层对准了，外层页面可能还把列表框滚在视野外：最小滚动把那一行露出来。
+      locateHandle = locateRow({
+        scroller,
+        findRow: () => rowElement(index),
+        align: "nearest",
+        insets: pageInsets,
+        margin: 8,
+        instant,
+      });
+    } else {
+      if (windowActive.value) attachScrollRoot();
+      locateHandle = locateRow({
+        scroller,
+        findRow: () => rowElement(index),
+        align: "center",
+        insets: pageInsets,
+        materialize: windowActive.value ? () => jumpWindowTo(index, scroller) : undefined,
+        sync: windowActive.value ? syncWindow : undefined,
+        instant,
+      });
+    }
+    await locateHandle.done;
+  } finally {
+    locating.value = false;
+    scheduleLocateUpdate();
+  }
+};
+
+// capture 阶段的 window 监听收得到任何元素的 scroll（scroll 不冒泡，但捕获照走）：页面
+// 滚动容器和虚拟列表自己的 `.v-vl` 都在里面。
+const startLocateTracking = () => {
+  if (locateListening) return;
+  locateListening = true;
+  window.addEventListener("scroll", scheduleLocateUpdate, { capture: true, passive: true });
+  window.addEventListener("resize", scheduleLocateUpdate, { passive: true });
+  scheduleLocateUpdate();
+};
+
+const stopLocateTracking = () => {
+  locateListening = false;
+  window.removeEventListener("scroll", scheduleLocateUpdate, { capture: true });
+  window.removeEventListener("resize", scheduleLocateUpdate);
+  if (locateRaf) cancelAnimationFrame(locateRaf);
+  locateRaf = 0;
+  locateHandle?.cancel();
+  showLocatePill.value = false;
+};
+
+watch([playingIndex, () => props.listData], scheduleLocateUpdate);
+
+onMounted(startLocateTracking);
+onActivated(startLocateTracking);
+onDeactivated(stopLocateTracking);
+onUnmounted(stopLocateTracking);
 
 // 右键菜单数据
 const rightMenuX = ref(0);
@@ -1404,7 +1665,10 @@ const playSong = (data, song) => {
     music.setPersonalFmMode(false);
   }
   music.setPlayState(true);
-  if (router.currentRoute.value.name !== "history") music.setPlaylists(data);
+  // data 可能是列表内搜索过滤后的候选集；有完整队列就用它入队，再由
+  // addSongToPlaylists 定位到点中的这首，避免把播放队列缩成搜索结果。
+  const queue = props.queueData?.length ? props.queueData : data;
+  if (router.currentRoute.value.name !== "history") music.setPlaylists(queue);
   // 检查是否为云盘歌曲
   if (router.currentRoute.value.name === "user-cloud") {
     music.setPlayListMode("cloud");
@@ -1637,7 +1901,10 @@ const jumpLink = (id, type) => {
         .n-text {
           -webkit-line-clamp: 2;
           line-clamp: 2;
-          font-weight: bold;
+          // 500 not 700/600: the tone contrast (primary title vs secondary
+          // artist/album) already carries the hierarchy, so the title only needs a
+          // hair of extra weight. 700 → one solid block, 600 still a touch heavy.
+          font-weight: 500;
           transition: color var(--duration-150) var(--ease-out);
           &:hover {
             color: var(--main-color);
@@ -1660,6 +1927,17 @@ const jumpLink = (id, type) => {
         display: flex;
         font-size: 13px;
         flex-direction: column;
+        // Drop the artist line to the secondary tone. Title is primary + 600;
+        // the tone contrast (not just weight) is what separates the two lines so
+        // a row stops reading as one solid block.
+        color: var(--text-secondary);
+        // AllArtists renders each name as <n-text :depth="isDark?3:0"> — in LIGHT
+        // mode depth 0 is primary tone, so the artist name matched the title and
+        // the row read flat. Force the secondary tone regardless of appearance;
+        // hover → main-color still wins (higher specificity in AllArtists).
+        :deep(.artists .name) {
+          color: var(--text-secondary);
+        }
         .artists {
           margin-top: 2px;
           -webkit-line-clamp: 2;
@@ -1681,6 +1959,9 @@ const jumpLink = (id, type) => {
       min-width: 0;
       padding-right: 20px;
       .n-text {
+        // Album is secondary metadata — same primary tone as the title made the
+        // whole row read flat. Drop it a tone so the eye lands on the title first.
+        color: var(--text-secondary);
         transition: color var(--duration-150) var(--ease-out);
         &:hover {
           color: var(--main-color);
@@ -1736,6 +2017,54 @@ const jumpLink = (id, type) => {
 }
 .empty {
   margin: 40px 0;
+}
+
+// 零高度的 sticky 船坞，钉在滚动视口可见底边之上 40px，与右下角回到顶部按钮同一水平线。
+// 药丸从船坞线向上长出来；整条不接收指针，只有药丸自己可点。
+.locate-dock {
+  position: sticky;
+  bottom: calc(var(--content-sticky-bottom, 0px) + 40px);
+  z-index: 4;
+  height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  pointer-events: none;
+}
+
+// transform 归 motion-v（y 滑入），这里只过渡颜色，免得和弹簧抢同一个属性。
+.locate-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--material-border);
+  border-radius: var(--radius-pill);
+  background-color: var(--material-regular-bg);
+  // 前缀在前、标准在后（全项目同此约定，见 App.vue 的 bottom-glass）。
+  -webkit-backdrop-filter: var(--material-filter);
+  backdrop-filter: var(--material-filter);
+  box-shadow:
+    var(--shadow-3),
+    inset 0 1px 0 var(--material-highlight);
+  color: var(--main-color);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background-color var(--duration-150) var(--ease-out);
+
+  .n-icon {
+    color: var(--main-color);
+  }
+
+  &:hover {
+    background-color: color-mix(in srgb, var(--main-color) 10%, var(--material-regular-bg));
+  }
 }
 
 :global(.data-list-context-dropdown),

@@ -213,7 +213,7 @@ onMounted(() => {
     background: transparent;
     color: var(--n-text-color);
     font-size: 19px;
-    font-weight: 800;
+    font-weight: 700;
     cursor: pointer;
 
     .n-icon {

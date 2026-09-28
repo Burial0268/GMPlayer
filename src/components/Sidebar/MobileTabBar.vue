@@ -96,8 +96,9 @@ const isActive = (tab) => {
 }
 
 .tab-item {
+  // Element is a <button> (a11y), so it needs the reset a bare <div> didn't.
   border: 0;
-  padding: 0;
+  padding: 0 2px;
   font: inherit;
   background: transparent;
   display: flex;
@@ -106,6 +107,7 @@ const isActive = (tab) => {
   justify-content: center;
   gap: 2px;
   flex: 1;
+  min-width: 0;
   height: 100%;
   cursor: pointer;
   // Inactive labels are 10px, so they need the 4.5:1 floor against the glass rather than
@@ -128,7 +130,13 @@ const isActive = (tab) => {
 }
 
 .tab-label {
+  max-width: 100%;
   font-size: 10px;
   line-height: 1;
+  // 4 equal columns: keep each label on one line and clip cleanly instead of
+  // wrapping to a second line that the 56px bar height then cuts in half.
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

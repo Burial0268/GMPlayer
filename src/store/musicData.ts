@@ -15,6 +15,7 @@ import {
   getAudioPreloader,
   SoundManager,
   cancelNativeQueuePrefill,
+  prefillNativeQueue,
   publishNativeManifest,
   clearNativeManifest,
   publishSessionControls,
@@ -61,6 +62,49 @@ const shuffleInPlace = <T>(list: T[]): T[] => {
   return list;
 };
 
+/**
+ * 私人 FM 预取缓冲。
+ *
+ * 背景：Android 后台时 JS worker 会被 Binder 冻结/杀死，"下一首现拉"必然失败，
+ * native audio-deck / audio-mix 因等不到下一首 URL 而连带被 binder freeze，播放卡死。
+ *
+ * 对策：把 FM 从「每首现拉」改成「预取一批 + 交给 native planner 自行推进」。FM 模式
+ * 下 `playlists` 当成前向缓冲用（当前曲在游标处，游标之后是预取的 runway），manifest
+ * 把这批曲目的身份交给后端。这样即便 JS 冻结，后端也能自己解析并播下一首；planner 对
+ * `repeatList: false` 走到缓冲尾就停（不会回卷到刚被 trash 的旧曲），随后 JS 复活时续满。
+ *
+ * TARGET：游标之后想保有的曲目数；LOW_WATER：runway 少于它就补；
+ * MAX_FETCHES：一次续缓冲最多打几次 /personal_fm（网易每次返回若干首、且可能整批重复，
+ * 用它兜底避免空转死循环）。
+ */
+const FM_BUFFER_TARGET = 8;
+const FM_BUFFER_LOW_WATER = 4;
+const FM_MAX_REFILL_FETCHES = 3;
+
+/** 已 trash 的 FM 曲目 id（会话级）。续缓冲时据此过滤，别把刚踩掉的歌又拉回来。 */
+const fmDislikedIds = new Set<number>();
+
+/**
+ * 把 /personal_fm 的一条原始数据转成队列里的 SongData；无 id 视为无效。
+ *
+ * 字段映射与旧 `setPersonalFmData` 内联版本保持一致，只是抽出来给缓冲批量复用。
+ */
+const toFmSong = (data: any): SongData | null => {
+  if (!data?.id) return null;
+  const song: SongData = asRawEntry({
+    id: data.id,
+    name: data.name,
+    artist: data.artists,
+    album: data.album,
+    alia: data.alias,
+    time: getSongTime(data.duration),
+    fee: data.fee,
+    pc: data.pc ? data.pc : null,
+    mv: data.mvid,
+  });
+  return song;
+};
+
 interface AutoMixStateData {
   phase: "idle" | "analyzing" | "waiting" | "crossfading" | "finishing";
   outroType: string | null;
@@ -94,6 +138,9 @@ interface MusicDataState {
   playSongTime: PlaySongTime;
   persistData: PersistData;
   playingSongId: number | null;
+  // 私人 FM 续缓冲的并发闸：多处（切歌、播放开始、native 推进后 adopt）都会触发
+  // refillFmBuffer，但同一时刻只允许跑一份，避免叠着打 /personal_fm。非持久化。
+  fmRefilling: boolean;
 }
 
 const useMusicDataStore = defineStore("musicData", {
@@ -154,6 +201,7 @@ const useMusicDataStore = defineStore("musicData", {
       // 因此它是「是否切歌」的判定基准，而不是 playlists[playSongIndex]。
       playingSongId:
         persistedStore.persistData.playlists[persistedStore.persistData.playSongIndex]?.id ?? null,
+      fmRefilling: false,
     };
   },
   getters: {
@@ -317,17 +365,20 @@ const useMusicDataStore = defineStore("musicData", {
 
     setPersonalFmMode(value: boolean) {
       this.persistData.personalFmMode = value;
-      // 个人 FM 的下一首由服务端决定，后端 planner 无法预知：
-      // 进入时必须撤销 manifest，退出时重新发布，否则后台会按旧列表推进。
       if (value) {
-        clearNativeManifest();
-      }
-      if (value) {
+        // 进入 FM：不再撤销 manifest。既然现在预取了一批曲目（见 FM_BUFFER_* 与
+        // refillFmBuffer），就把这批交给后端 planner 自行推进——这正是 Android 后台
+        // JS 被 Binder 冻结时下一首仍能播出、native 线程不再卡死的关键。
         if (typeof $player !== "undefined") soundStop($player);
-        if ((this.persistData.personalFmData as SongData)?.id) {
-          this.persistData.playlists = [];
-          this.persistData.playlists.push(this.persistData.personalFmData as SongData);
+        const head = this.persistData.personalFmData as SongData;
+        if (head?.id) {
+          // 已有展示头：把它作为缓冲的第一首，游标归零，随后后台续满。
+          this.persistData.playlists = [head];
+          this.persistData.playSongIndex = 0;
           this.commitPlaySongIndex(0);
+          this.setPlayState(true);
+          publishNativeManifest({ force: true });
+          void this.refillFmBuffer();
         } else {
           this.setPersonalFmData();
         }
@@ -336,64 +387,188 @@ const useMusicDataStore = defineStore("musicData", {
       }
     },
 
+    /**
+     * 播种 / 预览私人 FM。
+     *
+     * 两种语义：
+     * - 非 FM 模式（首页卡片预览）：只拉一首更新展示头，不动播放队列。
+     * - FM 模式（正以 FM 播放）：整批并进缓冲，把缓冲头设为当前并播放，随后续满。
+     */
     setPersonalFmData() {
-      try {
-        const songName = (this.getPersonalFmData as SongData)?.name;
-        getPersonalFm().then((res: any) => {
-          if (res.data[0]) {
-            const data = res.data[2] || res.data[0];
-            const fmData: SongData = asRawEntry({
-              id: data.id,
-              name: data.name,
-              artist: data.artists,
-              album: data.album,
-              alia: data.alias,
-              time: getSongTime(data.duration),
-              fee: data.fee,
-              pc: data.pc ? data.pc : null,
-              mv: data.mvid,
-            });
-            if (songName && songName === fmData.name) {
-              this.setFmDislike(fmData.id);
-            } else {
-              this.persistData.personalFmData = fmData;
-              if (this.persistData.personalFmMode) {
-                if (typeof $player !== "undefined") soundStop($player);
-                this.persistData.playlists = [];
-                this.persistData.playlists.push(fmData);
-                this.commitPlaySongIndex(0);
-                this.setPlayState(true);
-              }
-            }
-          } else {
+      getPersonalFm()
+        .then((res: any) => {
+          const list = Array.isArray(res?.data) ? res.data : [];
+          if (!list.length) {
             $message.error(getLanguageData("personalFmError"));
+            return;
           }
+          if (!this.persistData.personalFmMode) {
+            // 预览态：沿用旧行为——展示 data[2]（网易此位常是"真正推荐"）或 data[0]，
+            // 且不与上一次展示的同名重复。
+            const preview = toFmSong(list[2] ?? list[0]);
+            if (!preview) return;
+            const prevName = (this.persistData.personalFmData as SongData)?.name;
+            this.persistData.personalFmData =
+              prevName && prevName === preview.name ? (toFmSong(list[0]) ?? preview) : preview;
+            return;
+          }
+          // 播放态：整批并进缓冲后从头播放。
+          this.ingestFmTracks(list);
+          const head = this.persistData.playlists[0];
+          if (!head?.id) {
+            $message.error(getLanguageData("personalFmError"));
+            return;
+          }
+          this.persistData.personalFmData = head;
+          this.persistData.playSongIndex = 0;
+          if (typeof $player !== "undefined") soundStop($player);
+          this.commitPlaySongIndex(0);
+          this.setPlayState(true);
+          publishNativeManifest({ force: true });
+          if (this.remainingFmRunway() < FM_BUFFER_TARGET) void this.refillFmBuffer();
+        })
+        .catch((err: any) => {
+          console.error(getLanguageData("personalFmError"), err);
+          $message.error(getLanguageData("personalFmError"));
         });
-      } catch (err) {
-        console.error(getLanguageData("personalFmError"), err);
-        $message.error(getLanguageData("personalFmError"));
+    },
+
+    /** FM 缓冲中游标之后仍有多少首（runway 深度）。 */
+    remainingFmRunway(): number {
+      return this.persistData.playlists.length - 1 - this.persistData.playSongIndex;
+    },
+
+    /**
+     * 把一批 /personal_fm 原始数据并进 FM 缓冲末尾。
+     *
+     * 去重：跳过缓冲里已有的 id、以及已被 trash 的 id（fmDislikedIds）。返回实际新增数。
+     */
+    ingestFmTracks(list: any[]): number {
+      const buffer = this.persistData.playlists;
+      const seen = new Set<number>();
+      for (const song of buffer) {
+        const id = Number(song?.id);
+        if (Number.isFinite(id)) seen.add(id);
       }
+      const additions: SongData[] = [];
+      for (const raw of list) {
+        const song = toFmSong(raw);
+        if (!song) continue;
+        const id = Number(song.id);
+        if (seen.has(id) || fmDislikedIds.has(id)) continue;
+        seen.add(id);
+        additions.push(song);
+      }
+      if (additions.length) buffer.push(...additions);
+      return additions.length;
+    },
+
+    /**
+     * 把 FM 缓冲续满到 FM_BUFFER_TARGET。
+     *
+     * 带并发闸（fmRefilling）。每成功并进一批就重发 manifest，让后端尽快拿到更长的可播
+     * 缓冲；最后再预解析紧邻的下一首 URL（gapless）。网易可能整批返回重复曲，用
+     * FM_MAX_REFILL_FETCHES 兜底避免空转。
+     */
+    async refillFmBuffer(): Promise<void> {
+      if (!this.persistData.personalFmMode) return;
+      if (this.fmRefilling) return;
+      this.fmRefilling = true;
+      try {
+        let fetches = 0;
+        while (
+          this.persistData.personalFmMode &&
+          this.remainingFmRunway() < FM_BUFFER_TARGET &&
+          fetches < FM_MAX_REFILL_FETCHES
+        ) {
+          fetches++;
+          let res: any;
+          try {
+            res = await getPersonalFm();
+          } catch (err) {
+            console.error(getLanguageData("personalFmError"), err);
+            break;
+          }
+          const list = Array.isArray(res?.data) ? res.data : [];
+          if (!list.length) break;
+          const added = this.ingestFmTracks(list);
+          if (added > 0) publishNativeManifest({ force: true });
+          // 一首都没并进来（整批重复）就别再空转。
+          if (added === 0) break;
+        }
+      } finally {
+        this.fmRefilling = false;
+      }
+      void prefillNativeQueue();
+    },
+
+    /**
+     * 手动切到 FM 的下一首（用户按「下一首」或踩掉当前曲）。
+     *
+     * FM 只往前走。丢掉已听历史、把新的当前固定在缓冲 0 位：既让 Player 的 sync
+     * watcher 换歌，又把缓冲尺寸压住。缓冲见底才会现拉（正常预取下不会走到）。
+     */
+    advanceFmToNext(): boolean {
+      const buffer = this.persistData.playlists;
+      const cursor = this.persistData.playSongIndex;
+      const playable = (song: SongData | undefined): boolean =>
+        !!song?.id && !fmDislikedIds.has(Number(song.id));
+      // 游标之后第一首没被踩过的歌。
+      let nextIdx = -1;
+      for (let i = cursor + 1; i < buffer.length; i++) {
+        if (playable(buffer[i])) {
+          nextIdx = i;
+          break;
+        }
+      }
+      if (nextIdx < 0) {
+        // 缓冲见底（或剩下的全被踩过）：拉一批再前进。
+        if (typeof $player !== "undefined") soundStop($player);
+        void this.refillFmBuffer().then(() => {
+          if (this.persistData.personalFmMode) this.advanceFmToNext();
+        });
+        return true;
+      }
+      if (typeof $player !== "undefined") soundStop($player);
+      const next = buffer[nextIdx];
+      // 先整表换成 [next, ...后续未被踩的 runway]，再把游标归零：与旧 FM 的
+      // `playlists=[]; push; commit(0)` 同形，中间态由 getPlaySongData 的 generation
+      // 守卫兜住。
+      this.persistData.playlists = [next, ...buffer.slice(nextIdx + 1).filter(playable)];
+      this.persistData.playSongIndex = 0;
+      this.persistData.personalFmData = next;
+      this.commitPlaySongIndex(0);
+      this.resetSongLyricState();
+      this.isLoadingSong = true;
+      nextTick().then(() => {
+        if (this.persistData.playlists.length > 0) this.setPlayState(true);
+      });
+      publishNativeManifest({ force: true });
+      if (this.remainingFmRunway() < FM_BUFFER_LOW_WATER) void this.refillFmBuffer();
+      return true;
     },
 
     setFmDislike(id: number) {
       const user = userStore();
-      if (user.userLogin) {
-        setFmTrash(id).then((res: any) => {
-          if (res.code === 200) {
-            this.persistData.personalFmMode = true;
-            this.setPlaySongIndex("next");
-            // Trashing an FM track also takes it out of 我喜欢的音乐 when it was
-            // in there. Reconcile rather than patch: the exact effect is
-            // Netease's to decide, and a guessed count would stay wrong until
-            // the next navigation.
-            notifyPlaylistNeedsReconcile(likedPlaylistId());
-          } else {
-            $message.error(getLanguageData("fmTrashError"));
-          }
-        });
-      } else {
+      if (!user.userLogin) {
         $message.error(getLanguageData("needLogin"));
+        return;
       }
+      setFmTrash(id).then((res: any) => {
+        if (res.code !== 200) {
+          $message.error(getLanguageData("fmTrashError"));
+          return;
+        }
+        // 记下被踩的 id：advanceFmToNext 会跳过它、续缓冲也会过滤它，避免刚踩掉又拉回来。
+        fmDislikedIds.add(Number(id));
+        this.persistData.personalFmMode = true;
+        this.advanceFmToNext();
+        // Trashing an FM track also takes it out of 我喜欢的音乐 when it was
+        // in there. Reconcile rather than patch: the exact effect is
+        // Netease's to decide, and a guessed count would stay wrong until
+        // the next navigation.
+        notifyPlaylistNeedsReconcile(likedPlaylistId());
+      });
     },
 
     setLikeList() {
@@ -739,8 +914,9 @@ const useMusicDataStore = defineStore("musicData", {
     hintUpcomingSongs(currentIndex: number) {
       const playlist = this.persistData.playlists;
       if (playlist.length < 2) return;
-      // 私人 FM 的下一首要请求才知道；单曲循环的「下一首」就是这一首。
-      if (this.persistData.playSongMode === "single" || this.persistData.personalFmMode) return;
+      // 单曲循环的「下一首」就是这一首。私人 FM 现在预取了缓冲，后面几首是真实的
+      // 网易 id，照常提示歌词/详情，切过去就是 0 请求。
+      if (this.persistData.playSongMode === "single") return;
 
       const AHEAD = 2;
       const ids: Array<number | string> = [];
@@ -940,9 +1116,10 @@ const useMusicDataStore = defineStore("musicData", {
         autoMix.cancelCrossfade();
       }
       if (this.persistData.personalFmMode) {
-        if (typeof $player !== "undefined") soundStop($player);
-        this.setPersonalFmData();
-        return true;
+        // FM 只往前走：从预取缓冲取下一首（无需现拉网络，这正是后台不卡死的前提）。
+        // "prev" 在 FM 里没有意义，保持当前不动。
+        if (type === "prev") return true;
+        return this.advanceFmToNext();
       } else {
         const listLength = this.persistData.playlists.length;
         if (listLength === 0) {

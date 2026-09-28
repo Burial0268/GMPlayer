@@ -82,9 +82,11 @@
       </div>
       <DataLists
         :listData="displayData"
+        :queue-data="songs"
         :loading="loading"
         :capabilities="capabilities"
         :empty-text="isSearching ? $t('general.name.noSearchResult') : $t('local.noMatches')"
+        :locate="locateAdapter"
         show-header
         page-window
         :virtual-item-size="54"
@@ -339,6 +341,99 @@ const exportPlaylist = async () => {
   }
 };
 
+// ── 定位到正在播放 ──────────────────────────────────────────
+//
+// 与 `views/Local/songs.vue` 同一套：分页页面只把已加载前缀交给 `DataLists`，正在
+// 播放的曲目一旦落在前缀之外，内置定位药丸的默认 id 查找就够不着。这里维护「完整
+// 列表中的下标」的 ref 补齐——供 `locate.resolveIndex` 同步读取，另在后台按 uri 翻页
+// 找它。
+//
+// 后台翻页前先做一次**廉价的归属判断**：不然在这一页放着的时候播另一张专辑，会把当前
+// 这张从头翻到尾白找一趟。自动集合能从曲目自带的标签判断归属；用户歌单判断不了归属，
+// 就只在已加载前缀里找（不后台翻页）。
+const locateIndex = ref(-1);
+
+const playingMatches = (song: SongData, playing: SongData): boolean =>
+  (!!playing.local?.uri && song.local?.uri === playing.local.uri) ||
+  (playing.id !== undefined && playing.id !== null && String(song.id) === String(playing.id));
+
+const playingIsMember = (playing: SongData): boolean => {
+  const value = playlistRef.value;
+  switch (value.kind) {
+    case "local-favourites":
+      return local.isFavourite(playing.local?.uri);
+    case "local-album":
+      return playing.album?.name === value.album;
+    case "local-artist":
+      return (playing.artist ?? []).some((artist) => artist?.name === value.artist);
+    case "local-folder":
+      return playing.local?.sourceId === value.sourceId;
+    default:
+      // local-playlist / local-all：无法从标签廉价判断归属，只在已加载前缀里找。
+      return false;
+  }
+};
+
+const rescanLocate = () => {
+  const playing = music.getPlaySongData;
+  // Index into what `DataLists` actually renders (`displayData`) so the row id and
+  // the page-window offset line up — in search mode that is the filtered subset.
+  locateIndex.value = playing
+    ? displayData.value.findIndex((song) => playingMatches(song, playing))
+    : -1;
+};
+
+let locateToken = 0;
+const resolveLocate = async () => {
+  // The trigger below already bumped the token, cancelling any in-flight loop; capture it.
+  const mine = locateToken;
+  rescanLocate();
+  const playing = music.getPlaySongData;
+  // Search already pulls every page in (see the `isSearching` watcher), so there
+  // is nothing left to page toward; skip the background walk there.
+  if (
+    locateIndex.value >= 0 ||
+    isSearching.value ||
+    !playing?.local?.uri ||
+    !playingIsMember(playing)
+  ) {
+    return;
+  }
+  while (mine === locateToken && locateIndex.value < 0 && songs.value.length < meta.value.trackCount) {
+    const before = songs.value.length;
+    await load(true);
+    if (mine !== locateToken) return;
+    rescanLocate();
+    if (songs.value.length <= before) break;
+  }
+};
+
+// Re-run when the playing song changes *or* when the collection size first lands
+// (trackCount 0 → N). The immediate run fires before the first page loads, so without
+// watching trackCount a song beyond the first page would never trigger paging.
+watch(
+  [() => music.getPlaySongData?.id, () => meta.value.trackCount],
+  () => {
+    locateToken++;
+    void resolveLocate();
+  },
+  { immediate: true },
+);
+// `displayData` rather than `songs`: it also changes when the filter keyword does,
+// which shifts the playing row's rendered index without the loaded set growing.
+watch(displayData, rescanLocate);
+
+const locateAdapter = {
+  resolveIndex: (): number => locateIndex.value,
+  ensureLoaded: async (index: number): Promise<void> => {
+    while (songs.value.length <= index && songs.value.length < meta.value.trackCount) {
+      const before = songs.value.length;
+      await load(true);
+      if (songs.value.length <= before) break;
+    }
+  },
+};
+
 watch(
   () => route.fullPath,
   () => {
@@ -514,7 +609,7 @@ onMounted(async () => {
           max-width: min(780px, 100%);
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
-          font-weight: 800;
+          font-weight: 700;
           line-height: 1.06;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;

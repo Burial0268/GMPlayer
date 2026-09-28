@@ -53,6 +53,7 @@ import { animate, Motion, useMotionValue, useTransform, type MotionValue } from 
 import { musicStore, settingStore } from "@/store";
 import QueuePanel from "@/components/QueuePanel/index.vue";
 import { useLayerNavigation } from "@/utils/navigation";
+import { layerMotion } from "@/utils/navigation/motion";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
 
@@ -86,17 +87,6 @@ const sheetY = useTransform(() => (1 - clamp01(progress.get())) * sheetTravel())
 const scrimOpacity = useTransform(() => clamp01(progress.get()));
 const sheetStyle = computed<MotionStyleRecord>(() => ({ y: sheetY }));
 const scrimStyle = computed<MotionStyleRecord>(() => ({ opacity: scrimOpacity }));
-
-// 近临界阻尼（ζ≈0.98）：行程有大半屏，欠阻尼的回弹会让面板顶边过冲、露出遮罩后的
-// 页面。与 MobilePlayerLayout 的队列分页同一组参数。
-const settleTransition = {
-  type: "spring",
-  stiffness: 420,
-  damping: 38,
-  mass: 0.9,
-  restDelta: 0.001,
-  restSpeed: 0.02,
-} as const;
 
 const DRAG_THRESHOLD_PX = 8;
 const DISMISS_PROGRESS = 0.65;
@@ -135,7 +125,7 @@ const openSheet = () => {
       return;
     }
     settleAnimation = animate(progress, 1, {
-      ...settleTransition,
+      ...layerMotion.settle,
       // 面板是每次展开重新挂载的，第一帧虚拟列表往往还没量到视口高度，scrollTo 会被
       // 夹到 0。展开落定后再补一次；命中同一位置时没有副作用（scrollTo 不带
       // behavior，不会有可见跳动）。
@@ -164,7 +154,7 @@ const closeSheet = () => {
   // settleAnimation 换成了新的一段，身份不符就什么都不做（stop 不会触发 onComplete，
   // 这里的比对是为了防住「关 → 开 → 关」里第一段的回调迟到）。
   const animation = animate(progress, 0, {
-    ...settleTransition,
+    ...layerMotion.settle,
     onComplete: () => {
       if (settleAnimation !== animation) return;
       settleAnimation = null;
@@ -186,6 +176,7 @@ type SheetTouch = {
   dragging: boolean;
   fromGrip: boolean;
   scrollTop: number;
+  progress: number;
 };
 
 let touchState: SheetTouch | null = null;
@@ -210,6 +201,7 @@ const handleTouchStart = (event: TouchEvent) => {
     dragging: false,
     fromGrip: event.target instanceof Element && Boolean(event.target.closest(".sheet-grip")),
     scrollTop: scrollTopAt(event.target),
+    progress: 0,
   };
 };
 
@@ -231,12 +223,15 @@ const handleTouchMove = (event: TouchEvent) => {
     }
     start.dragging = true;
     suppressGripClick = start.fromGrip;
+    // A moving sheet is grabbed where it is, with velocity now owned by the finger.
+    start.progress = clamp01(progress.get());
     stopSettle();
+    progress.jump(start.progress);
   }
 
   // 拖拽期间接管手势，阻止列表同时滚动（touchmove 不能加 .passive，否则拦不住）
   if (event.cancelable) event.preventDefault();
-  progress.set(1 - clamp01(deltaY / sheetTravel()));
+  progress.set(clamp01(start.progress - deltaY / sheetTravel()));
 };
 
 const handleTouchEnd = () => {
@@ -256,7 +251,7 @@ const handleTouchEnd = () => {
     return;
   }
   if (prefersReducedMotion()) progress.set(1);
-  else settleAnimation = animate(progress, 1, settleTransition);
+  else settleAnimation = animate(progress, 1, layerMotion.settle);
 };
 
 const handleTouchCancel = () => {
@@ -266,7 +261,7 @@ const handleTouchCancel = () => {
   if (!dragging) return;
   stopSettle();
   if (prefersReducedMotion()) progress.set(1);
-  else settleAnimation = animate(progress, 1, settleTransition);
+  else settleAnimation = animate(progress, 1, layerMotion.settle);
 };
 
 const handleGripClick = () => {
@@ -290,6 +285,11 @@ useMotionInterruption(() => {
   mounted.value = music.showPlayList || suspended.value;
 });
 
+const removeBeforeNavigation = navigation.onBeforeNavigation(handleTouchCancel);
+const removeCancelledNavigation = navigation.onNavigationCancelled(() => {
+  if (music.showPlayList) openSheet();
+});
+
 watch(
   () => music.showPlayList,
   (show) => (show ? openSheet() : closeSheet()),
@@ -301,6 +301,8 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  removeBeforeNavigation();
+  removeCancelledNavigation();
   stopSettle();
 });
 </script>

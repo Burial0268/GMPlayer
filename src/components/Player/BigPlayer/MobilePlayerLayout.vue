@@ -268,6 +268,17 @@
           <div class="queue-empty" v-else>
             {{ $t("other.playlistEmpty") }}
           </div>
+
+          <!-- 与桌面大播放器同一个底部整宽定位按钮，网格第三行。 -->
+          <button
+            v-if="music.getPlaylists.length"
+            class="queue-locate"
+            type="button"
+            @click="scrollCurrentQueueSong"
+          >
+            <n-icon size="18" :component="MyLocationRound" />
+            <span>{{ $t("player.queue.locate") }}</span>
+          </button>
         </div>
       </div>
     </Motion>
@@ -278,6 +289,7 @@
 import {
   DeleteRound,
   MoreVertRound,
+  MyLocationRound,
   QueueMusicRound,
   StarBorderRound,
   StarRound,
@@ -288,6 +300,9 @@ import { animate, Motion, useMotionValue, useTransform, type MotionValue } from 
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { locateVirtualRow, type LocateHandle, type VirtualListInst } from "@/utils/locateRow";
+import { useLayerNavigation } from "@/utils/navigation";
+import { layerMotion } from "@/utils/navigation/motion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import RollingLyrics from "../RollingLyrics.vue";
 import BouncingSlider from "../BouncingSlider.vue";
@@ -343,15 +358,15 @@ const emit = defineEmits<{
 }>();
 
 const music = musicStore();
+const navigation = useLayerNavigation();
 
 // Expose phony refs and name refs for parent (cover frame composable + name overflow)
 const phonyBigCoverRef = ref<HTMLElement | null>(null);
 const phonySmallCoverRef = ref<HTMLElement | null>(null);
 const nameWrapperRef = ref<HTMLElement | null>(null);
 const nameTextRef = ref<HTMLElement | null>(null);
-const queueListRef = ref<{
-  scrollTo: (options: { index: number; behavior?: ScrollBehavior }) => void;
-} | null>(null);
+const queueListRef = ref<VirtualListInst | null>(null);
+let locateHandle: LocateHandle | null = null;
 const queueScrollTop = ref(0);
 const suppressCoverClick = ref(false);
 const playerTouch = ref<{
@@ -359,8 +374,15 @@ const playerTouch = ref<{
   y: number;
   dragging: boolean;
   mode: "queue" | "close" | null;
+  progress: number;
 } | null>(null);
-const queueTouch = ref<{ x: number; y: number; dragging: boolean; scrollTop: number } | null>(null);
+const queueTouch = ref<{
+  x: number;
+  y: number;
+  dragging: boolean;
+  scrollTop: number;
+  progress: number;
+} | null>(null);
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
 const contentUiMotionStyle = computed<MotionStyleRecord>(() => ({
@@ -396,21 +418,17 @@ const stopPagerAnimation = () => {
   pagerAnimation = null;
 };
 
-// 整屏平移的 settle 用近临界阻尼（ζ≈0.98）：sharedLayoutTransition 的 ζ≈0.55
-// 在约一屏的行程上会过冲 ~12%，条带两端露出背景。
-const pagerSettleTransition = {
-  type: "spring",
-  stiffness: 420,
-  damping: 38,
-  mass: 0.9,
-  restDelta: 0.001,
-  restSpeed: 0.02,
-} as const;
+const grabPager = () => {
+  const progress = clamp01(pagerProgress.get());
+  stopPagerAnimation();
+  pagerProgress.jump(progress);
+  return progress;
+};
 
 const settlePager = (open: boolean) => {
   stopPagerAnimation();
   if (prefersReducedMotion()) pagerProgress.set(open ? 1 : 0);
-  else pagerAnimation = animate(pagerProgress, open ? 1 : 0, pagerSettleTransition);
+  else pagerAnimation = animate(pagerProgress, open ? 1 : 0, layerMotion.settle);
   if (open !== props.queueOpen) {
     if (open) emit("openQueue");
     else emit("closeQueue");
@@ -465,6 +483,7 @@ const handlePlayerTouchStart = (event: TouchEvent) => {
     y: touch.clientY,
     dragging: false,
     mode: null,
+    progress: 0,
   };
 };
 
@@ -486,7 +505,7 @@ const handlePlayerTouchMove = (event: TouchEvent) => {
     if (start.mode === "close") {
       emit("closeDragStart");
     } else {
-      stopPagerAnimation();
+      start.progress = grabPager();
       suppressCoverClick.value = true;
     }
   }
@@ -497,7 +516,7 @@ const handlePlayerTouchMove = (event: TouchEvent) => {
   }
 
   // queue 模式：跟手平移 pager
-  pagerProgress.set(clamp01(-deltaY / pagerHeight()));
+  pagerProgress.set(clamp01(start.progress - deltaY / pagerHeight()));
 };
 
 const handlePlayerTouchEnd = () => {
@@ -544,6 +563,7 @@ const handleQueueTouchStart = (event: TouchEvent) => {
     y: touch.clientY,
     dragging: false,
     scrollTop: queueScrollTop.value,
+    progress: 0,
   };
 };
 
@@ -568,12 +588,12 @@ const handleQueueTouchMove = (event: TouchEvent) => {
       return;
     }
     start.dragging = true;
-    stopPagerAnimation();
+    start.progress = grabPager();
   }
 
   // 拖拽期间接管手势，阻止列表同时滚动（touchmove 未加 .passive 才能 preventDefault）
   if (event.cancelable) event.preventDefault();
-  pagerProgress.set(1 - clamp01(deltaY / pagerHeight()));
+  pagerProgress.set(clamp01(start.progress - deltaY / pagerHeight()));
 };
 
 const handleQueueTouchEnd = () => {
@@ -595,9 +615,13 @@ const formatArtists = (artists: Artist[] = []) =>
 const getQueueCover = (item: QueueSong) => coverUrl(item.album?.picUrl, 96);
 
 const scrollCurrentQueueSong = () => {
-  queueListRef.value?.scrollTo({
-    index: music.persistData.playSongIndex,
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
+  const index = music.persistData.playSongIndex;
+  if (index < 0 || index >= music.getPlaylists.length) return;
+  locateHandle?.cancel();
+  locateHandle = locateVirtualRow(queueListRef.value, index, {
+    rowSelector: `#mobile-queue-${index}`,
+    align: "start",
+    instant: prefersReducedMotion(),
   });
 };
 
@@ -631,10 +655,21 @@ useMotionInterruption(() => {
   pagerProgress.set(props.queueOpen ? 1 : 0);
 });
 
+const removeBeforeNavigation = navigation.onBeforeNavigation(() => {
+  handlePlayerTouchCancel();
+  handleQueueTouchCancel();
+});
+const removeCancelledNavigation = navigation.onNavigationCancelled(() => {
+  settlePager(props.queueOpen);
+});
+
 onMounted(measurePagerHeight);
 
 onBeforeUnmount(() => {
+  removeBeforeNavigation();
+  removeCancelledNavigation();
   stopPagerAnimation();
+  locateHandle?.cancel();
 });
 
 defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef });
@@ -1109,7 +1144,7 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   height: 100%;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   padding: 14px 16px calc(var(--app-safe-area-bottom, 0px) + 16px);
 }
 
@@ -1324,6 +1359,37 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   text-align: center;
   opacity: 0.56;
   font-size: 0.95rem;
+}
+
+// 与 DesktopQueuePanel 的底部定位按钮同一套：叠在封面背景上，配色随 --main-cover-color。
+.queue-locate {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: var(--control-touch-size, 44px);
+  padding: 0 16px;
+  border: 1px solid color-mix(in srgb, var(--main-cover-color) 20%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--main-cover-color);
+  background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
+  font: inherit;
+  font-size: 0.88rem;
+  font-weight: 640;
+  cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    transform 0.16s ease;
+
+  .n-icon {
+    color: var(--main-cover-color);
+  }
+
+  &:active {
+    background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
+    transform: scale(0.985);
+  }
 }
 
 @media (max-width: 380px) {

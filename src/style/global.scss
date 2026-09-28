@@ -1,8 +1,14 @@
 * {
   -webkit-user-select: none;
   -webkit-user-drag: none;
-  -webkit-user-drag: none;
   user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 /* ═══════════════════════════════════════════════
@@ -37,25 +43,56 @@
   }
 }
 
-/* ═══════════════════════════════════════════════
-   Transition Tokens — modern, snappy, shadcn/ui style
-   ═══════════════════════════════════════════════ */
+/* Shared interface tokens. Appearance colors are supplied by Provider/interfaceTheme.ts. */
 :root {
+  --font-family-ui:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-family-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  --font-size-caption: 0.75rem;
+  --font-size-footnote: 0.8125rem;
+  --font-size-body: 0.9375rem;
+  --font-size-callout: 1rem;
+  --font-size-title-small: 1.25rem;
+  --font-size-title: 1.5rem;
+  --font-size-large-title: 2rem;
+  --line-height-body: 1.5;
+  --line-height-heading: 1.2;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --control-height: 32px;
+  --control-touch-size: 44px;
+
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ease-linear: linear;
+  /* Miuix 减速/加速缓动（y = 1-(1-x)² / y = x²）的 CSS cubic-bezier 近似，
+     供组件在需要 Miuix Folme 手感时使用；JS 弹簧见 utils/motion/springs.ts。 */
+  --ease-decelerate: cubic-bezier(0, 0, 0.2, 1);
+  --ease-accelerate: cubic-bezier(0.4, 0, 1, 1);
 
+  --duration-100: 100ms;
   --duration-150: 150ms;
   --duration-200: 200ms;
   --duration-300: 300ms;
   --duration-400: 400ms;
   --duration-500: 500ms;
 
+  /* 圆角向 Miuix 靠拢：Miuix 的 Button/Card/Surface/TextField/Dialog 统一用 16px。
+     这里保留分级 scale 供小元件用，但把主要面板/控件拉平到 Miuix 的手感：
+     面板 20→16、控件 10→12（介于 Apple 的 10 与 Miuix 的 16 之间）。 */
   --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 8px;
-  --radius-lg: 10px;
-  --radius-panel: 12px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-panel: 16px;
+  --radius-control: 12px;
   --radius-pill: 999px;
 
   /* Elevation — 统一阴影层级，配合 --ease-out 做 hover 抬升 */
@@ -64,7 +101,18 @@
   --shadow-3: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.08);
   --shadow-hover: 0 12px 30px rgba(0, 0, 0, 0.14), 0 3px 8px rgba(0, 0, 0, 0.09);
 
-  /* Semantic surface tokens — shadcn/ui 式语义变量（浅色默认值，深色见 html[data-theme="dark"]） */
+  /* Fallbacks also serve standalone windows before a Provider mounts. */
+  --text-primary: #1d1d1f;
+  --text-secondary: #57575f;
+  --text-tertiary: #5f5f67;
+  --surface-content: #fff;
+  --surface-elevated: #fff;
+  --surface-selected: color-mix(in srgb, var(--main-color, #f55e55) 12%, var(--surface-elevated));
+  --material-regular-bg: rgba(255, 255, 255, 0.86);
+  --material-solid-bg: #fff;
+  --material-border: rgba(0, 0, 0, 0.1);
+  --material-highlight: rgba(255, 255, 255, 0.8);
+  --material-filter: blur(16px) saturate(150%);
   --border-color: rgba(0, 0, 0, 0.08);
   --border-strong: rgba(0, 0, 0, 0.14);
   --hover-overlay: rgba(0, 0, 0, 0.05);
@@ -128,6 +176,7 @@
   --transition-spring: 500ms var(--ease-out);
 
   font-synthesis: none;
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
@@ -138,6 +187,8 @@
    所以这几个量必须挂在 :root 上它才读得到。 */
 @media (max-width: 768px) {
   :root {
+    --font-size-body: 1.0625rem;
+    --control-height: var(--control-touch-size);
     --app-tab-bar-height: calc(56px + var(--app-safe-area-bottom, 0px));
     --app-bottom-chrome: var(--app-tab-bar-height);
     --app-bottom-chrome-with-player: calc(var(--app-player-bar-height) + var(--app-tab-bar-height));
@@ -146,6 +197,15 @@
 
 /* 深色模式语义 token — 边框/蒙层换白色基调，阴影加深保证层级仍可读 */
 html[data-theme="dark"] {
+  --text-primary: #f5f5f7;
+  --text-secondary: #c7c7cc;
+  --text-tertiary: #ababb2;
+  --surface-content: #18181c;
+  --surface-elevated: #26262b;
+  --material-regular-bg: rgba(38, 38, 43, 0.88);
+  --material-solid-bg: #26262b;
+  --material-border: rgba(255, 255, 255, 0.14);
+  --material-highlight: rgba(255, 255, 255, 0.12);
   --border-color: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.16);
   --hover-overlay: rgba(255, 255, 255, 0.07);
@@ -156,12 +216,93 @@ html[data-theme="dark"] {
   --shadow-hover: 0 12px 30px rgba(0, 0, 0, 0.46), 0 3px 8px rgba(0, 0, 0, 0.32);
 }
 
-// HarmonyOS Sans
 html,
 body,
 #app {
-  font-family: "HarmonyOS_Regular", sans-serif !important;
+  font-family: var(--font-family-ui);
   -webkit-font-smoothing: antialiased;
+}
+
+body {
+  font-size: var(--font-size-body);
+  line-height: var(--line-height-body);
+  color: var(--text-primary);
+}
+
+// Custom cards and links need the same visible keyboard focus as native controls.
+:where(button, a, [role="button"], [role="link"], [tabindex]:not([tabindex^="-"])):focus-visible {
+  outline: 2px solid var(--main-color, Highlight) !important;
+  outline-offset: 3px;
+}
+
+@media (pointer: coarse) {
+  .n-button:not(.n-button--text-type),
+  .home-section-head .head-more,
+  .feed-links button {
+    min-width: var(--control-touch-size);
+    min-height: var(--control-touch-size);
+  }
+}
+
+// Text-bearing controls become opaque when transparency cannot provide separation.
+@mixin opaque-interface-materials {
+  *,
+  *::before,
+  *::after {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  :root {
+    --material-regular-bg: var(--material-solid-bg) !important;
+    --material-filter: none;
+    --message-bg: var(--surface-elevated) !important;
+    --acrylic-bg: var(--surface-elevated) !important;
+  }
+
+  .bottom-glass,
+  .content-top-shadow {
+    background: var(--app-shell-bg) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .content-top-shadow :is(.nav-blur-step, .nav-blur-tint) {
+    display: none !important;
+  }
+
+  .content-top-shadow {
+    height: var(--app-mobile-nav-height) !important;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .searchInp .list,
+  .search-trigger .input,
+  .mobile-nav .right .action-icon,
+  .n-message {
+    background: var(--surface-elevated) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+
+  .n-modal-mask {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  @include opaque-interface-materials;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  @include opaque-interface-materials;
+}
+
+@media (forced-colors: active) {
+  :where(button, a, [role="button"], [role="link"], [tabindex]:not([tabindex^="-"])):focus-visible {
+    outline-color: Highlight !important;
+  }
 }
 
 // Dialog
@@ -232,7 +373,7 @@ body,
   border-radius: var(--radius-panel) !important;
 }
 
-// Tab — 以 Naive n-tabs 为底，融入 shadcn 质感
+// Shared section navigation and segmented controls.
 .main-tab {
   .n-tabs-tab {
     color: var(--n-text-color-3);
@@ -249,7 +390,7 @@ body,
     }
   }
 
-  // 下划线 Tabs：Apple Music / shadcn 质感的区块导航
+  // Underlines identify section navigation without another filled surface.
   &.n-tabs--line-type {
     .n-tabs-tab {
       font-size: 15px;
@@ -264,7 +405,7 @@ body,
     }
   }
 
-  // 分段控制器：Apple Music / shadcn 胶囊质感
+  // A selected segment shares the control radius used by other input controls.
   &.n-tabs--segment-type {
     .n-tabs-rail {
       padding: 4px;
@@ -298,9 +439,9 @@ body,
   .head-title {
     margin: 0;
     min-width: 0;
-    font-size: 22px;
-    font-weight: 700;
-    line-height: 1.2;
+    font-size: var(--font-size-title);
+    font-weight: 600;
+    line-height: var(--line-height-heading);
     letter-spacing: -0.02em;
     color: var(--n-text-color);
   }
@@ -311,7 +452,7 @@ body,
     flex: 0 0 auto;
     padding: 6px 12px;
     border-radius: var(--radius-pill);
-    font-size: 13px;
+    font-size: var(--font-size-footnote);
     font-weight: 500;
     line-height: 1;
     color: var(--n-text-color-3);
@@ -358,12 +499,12 @@ body,
   .n-message {
     border-radius: var(--radius-panel);
     padding: 10px 14px;
-    font-size: 13px;
-    background: var(--message-bg, rgba(255, 255, 255, 0.72)) !important;
+    font-size: var(--font-size-footnote);
+    background: var(--material-regular-bg) !important;
     border: 1px solid var(--message-border, var(--border-color));
     box-shadow: var(--shadow-2);
-    -webkit-backdrop-filter: blur(12px) saturate(180%);
-    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: var(--material-filter);
+    backdrop-filter: var(--material-filter);
     transition:
       transform var(--duration-400) var(--ease-out),
       opacity var(--duration-400) var(--ease-out),
@@ -372,7 +513,7 @@ body,
       margin-right: 8px;
     }
     .n-message__content {
-      font-size: 13px;
+      font-size: inherit;
     }
     .n-message__close {
       margin-left: 6px;

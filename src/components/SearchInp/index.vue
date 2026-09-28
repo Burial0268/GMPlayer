@@ -34,7 +34,7 @@
       >
         <div class="search-toolbar">
           <n-input
-            :class="active ? 'input focus' : 'input'"
+            :class="expanded ? 'input focus' : 'input'"
             :input-props="{
               autocomplete: 'off',
               enterkeyhint: 'search',
@@ -54,7 +54,7 @@
             <template #prefix>
               <n-icon
                 size="16"
-                :class="active ? 'active' : ''"
+                :class="expanded ? 'active' : ''"
                 :component="Search"
                 @pointerdown.stop
                 @touchstart.stop
@@ -62,14 +62,23 @@
               />
             </template>
           </n-input>
-          <button v-if="active" type="button" class="search-cancel" @click="closeSearchPanelState">
-            {{ $t("navigation.cancel") }}
-          </button>
+          <div
+            :class="['search-cancel-slot', { show: expanded }]"
+            :inert="!active"
+            :aria-hidden="!active"
+          >
+            <div class="search-cancel-clip">
+              <button type="button" class="search-cancel" @click="closeSearchPanelState">
+                {{ $t("navigation.cancel") }}
+              </button>
+            </div>
+          </div>
         </div>
-        <div class="search-results-slot">
+        <Transition name="search-dropdown" :css="!isMobile">
           <n-card
             class="list"
-            v-show="active && !inputValue"
+            v-show="expanded && !inputValue"
+            :inert="!active"
             content-style="padding: 0"
             @pointerdown.stop
             @touchstart.stop
@@ -118,8 +127,7 @@
                   <div :class="index < 3 ? 'num hot' : 'num'">{{ index + 1 }}</div>
                   <div class="title">
                     <span class="name">
-                      {{ item.searchWord }}
-                      <!-- <img :src="item.iconUrl" alt="icon" /> -->
+                      <span class="label">{{ item.searchWord }}</span>
                       <n-tag v-if="item.iconUrl" class="tag" round :bordered="false" size="small">
                         {{ item.iconType == 1 ? "HOT" : "UP" }}
                       </n-tag>
@@ -130,11 +138,12 @@
               </div>
             </n-scrollbar>
           </n-card>
-        </div>
-        <div class="search-results-slot">
+        </Transition>
+        <Transition name="search-dropdown" :css="!isMobile">
           <n-card
             class="list"
-            v-show="active && inputValue && searchData.suggest"
+            v-show="expanded && inputValue && searchData.suggest"
+            :inert="!active"
             content-style="padding: 0"
             @pointerdown.stop
             @touchstart.stop
@@ -228,7 +237,7 @@
               </div>
             </n-scrollbar>
           </n-card>
-        </div>
+        </Transition>
       </div>
     </Teleport>
   </div>
@@ -281,6 +290,8 @@ const searchInpRef = ref(null);
 const searchRootRef = ref(null);
 const searchAnchorRef = ref(null);
 const rendered = ref(false);
+// Keep the mobile surface intact until its exit animation finishes.
+const expanded = computed(() => (isMobile.value ? rendered.value : active.value));
 const searchHotLoading = ref(false);
 const searchData = reactive({ hot: [], suggest: {} });
 let suggestTimer;
@@ -372,8 +383,11 @@ watch(
   presented,
   async (show) => {
     const generation = ++animationGeneration;
+    const interruptedClip =
+      animation && searchRootRef.value ? getComputedStyle(searchRootRef.value).clipPath : undefined;
     animation?.cancel();
     animation = undefined;
+    if (interruptedClip) searchRootRef.value.style.clipPath = interruptedClip;
     const resume = suspended && show;
     suspended = !show && navigation.hasLayer("search");
     if (show) rendered.value = true;
@@ -391,10 +405,10 @@ watch(
     const full = "inset(0px 0px 0px 0px round 0px)";
     animation = animateMini(
       searchRootRef.value,
-      { clipPath: show ? [collapsed, full] : [full, collapsed] },
+      { clipPath: [interruptedClip ?? (show ? collapsed : full), show ? full : collapsed] },
       {
-        duration: motionDuration(layerMotion.search),
-        ease: layerMotion.ease,
+        duration: motionDuration(show ? layerMotion.search.enter : layerMotion.search.exit),
+        ease: layerMotion.search.ease,
       },
     );
     await animation;
@@ -412,17 +426,24 @@ watch(
   },
   { immediate: true },
 );
-watch([inputValue, active], ([value, show]) => {
-  clearTimeout(suggestTimer);
-  const generation = ++suggestGeneration;
-  const query = value.trim();
-  if (!query) {
-    searchData.suggest = {};
-    return;
-  }
-  if (show) suggestTimer = setTimeout(() => getSearchSuggestData(query, generation), 250);
-});
-useMotionInterruption(finishMotion);
+watch(
+  [inputValue, active],
+  ([value, show]) => {
+    // Navigation can restore a query without writing through the input's setter.
+    if (show) draft.value = value;
+    clearTimeout(suggestTimer);
+    const generation = ++suggestGeneration;
+    const query = value.trim();
+    if (!query) {
+      searchData.suggest = {};
+      return;
+    }
+    if (show) suggestTimer = setTimeout(() => getSearchSuggestData(query, generation), 250);
+  },
+  { immediate: true },
+);
+// The soft keyboard changes height without invalidating the search anchor.
+useMotionInterruption(finishMotion, { viewport: "width" });
 onMounted(() => {
   document.addEventListener("pointerdown", closeSearchPanel, true);
 });
@@ -442,10 +463,10 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-start;
   pointer-events: none;
-  --search-surface-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.58);
-  --search-surface-bg-focus: rgba(var(--app-shell-rgb, 242, 242, 244), 0.72);
-  --search-dropdown-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.78);
-  --search-surface-border: var(--acrylic-border, rgba(0, 0, 0, 0.08));
+  --search-surface-bg: var(--material-regular-bg);
+  --search-surface-bg-focus: var(--surface-content);
+  --search-dropdown-bg: var(--material-regular-bg);
+  --search-surface-border: var(--material-border);
   --search-chip-bg: color-mix(in srgb, var(--content-panel-bg, #fff) 90%, var(--main-color) 10%);
   --search-chip-bg-hover: color-mix(
     in srgb,
@@ -454,8 +475,8 @@ onBeforeUnmount(() => {
   );
   --search-chip-border: color-mix(in srgb, var(--main-color) 24%, transparent);
   --search-chip-text: var(--n-text-color-2, inherit);
-  --search-backdrop-filter: blur(18px) saturate(180%);
-  --search-dropdown-backdrop-filter: blur(26px) saturate(180%);
+  --search-backdrop-filter: var(--material-filter);
+  --search-dropdown-backdrop-filter: var(--material-filter);
 
   @media (max-width: 450px) {
     width: auto;
@@ -466,6 +487,12 @@ onBeforeUnmount(() => {
   }
 
   .input {
+    // Authoritative size for BOTH the typed text and the placeholder: Naive gives
+    // the input `font-size: var(--n-font-size)` and every child (input-el,
+    // placeholder) `font-size: inherit`. The global fontSizeMedium bump (14→15px)
+    // flowed straight into this, so the 7-glyph "搜索音乐/视频" placeholder outgrew
+    // its box and clipped "频". Pin it here rather than chasing `.n-input__placeholder`.
+    --n-font-size: 13px;
     --n-color: transparent;
     --n-color-focus: transparent;
     --n-color-hover: transparent;
@@ -502,7 +529,7 @@ onBeforeUnmount(() => {
       background-color: var(--search-surface-bg-focus);
 
       :deep(input) {
-        color: var(--main-color);
+        color: var(--text-primary);
       }
 
       @media (max-width: 450px) {
@@ -522,7 +549,13 @@ onBeforeUnmount(() => {
 
     :deep(.n-input-wrapper) {
       background-color: transparent !important;
-      padding-inline: 10px;
+      // The placeholder is an absolute overflow:hidden layer that fills this
+      // wrapper's content box, so its right clip edge sits at the padding edge.
+      // 10px each side left the 7-glyph "搜索音乐/视频" a hair too wide and shaved
+      // "频". The prefix icon already insets the left, so trim the right to give
+      // the text box the extra couple px it needs.
+      padding-left: 10px;
+      padding-right: 6px;
 
       @media (max-width: 450px) {
         padding-inline: 0;
@@ -533,7 +566,6 @@ onBeforeUnmount(() => {
     :deep(.n-input__input-el) {
       background-color: transparent !important;
       height: 32px;
-      font-size: 13px;
     }
 
     :deep(.n-input__input),
@@ -597,6 +629,31 @@ onBeforeUnmount(() => {
     box-shadow:
       0 18px 46px rgb(0 0 0 / 14%),
       inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
+
+    @media (min-width: 769px) {
+      &.search-dropdown-enter-active,
+      &.search-dropdown-leave-active {
+        transition:
+          clip-path var(--duration-300) var(--ease-out),
+          opacity var(--duration-200) var(--ease-out);
+      }
+
+      &.search-dropdown-enter-from,
+      &.search-dropdown-leave-to {
+        clip-path: inset(0 0 100% 0);
+        opacity: 0;
+      }
+
+      &.search-dropdown-enter-to,
+      &.search-dropdown-leave-from {
+        clip-path: inset(0);
+        opacity: 1;
+      }
+
+      &.search-dropdown-leave-active {
+        pointer-events: none;
+      }
+    }
 
     @media (max-width: 450px) {
       position: fixed;
@@ -708,27 +765,33 @@ onBeforeUnmount(() => {
                 text-align: center;
                 line-height: 26px;
                 font-size: 14px;
-                font-weight: bold;
+                font-weight: 500;
                 margin-right: 6px;
                 &.hot {
                   color: var(--main-color);
                 }
               }
+              // flex:1 + min-width:0 lets the label truncate instead of pushing
+              // the row past the fixed 280px panel and getting hard-clipped.
               .title {
                 display: flex;
                 flex-direction: column;
+                flex: 1;
+                min-width: 0;
                 .name {
                   font-size: 14px;
                   display: flex;
                   flex-direction: row;
                   align-items: center;
-                  img {
-                    height: 16px;
-                    width: auto;
-                    margin-left: 6px;
-                    margin-bottom: 2px;
+                  min-width: 0;
+                  .label {
+                    min-width: 0;
+                    overflow: hidden;
+                    white-space: nowrap;
+                    text-overflow: ellipsis;
                   }
                   .tag {
+                    flex: 0 0 auto;
                     transform: scale(0.9);
                     margin-left: 6px;
                     height: 18px;
@@ -739,6 +802,9 @@ onBeforeUnmount(() => {
                 }
                 .tip {
                   font-size: 12px;
+                  overflow: hidden;
+                  white-space: nowrap;
+                  text-overflow: ellipsis;
                 }
               }
             }
@@ -788,6 +854,11 @@ onBeforeUnmount(() => {
                 cursor: pointer;
                 transition: all var(--duration-300) var(--ease-out);
                 border-radius: var(--radius-md);
+                // "name - artist" runs long; clip to one line with an ellipsis
+                // rather than wrapping to two and overflowing the row height.
+                overflow: hidden;
+                white-space: nowrap;
+                text-overflow: ellipsis;
                 &:hover {
                   background-color: var(--n-border-color);
                 }
@@ -809,10 +880,28 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   width: 100%;
-  gap: 8px;
 }
-.search-results-slot {
-  display: contents;
+.search-cancel-slot {
+  display: grid;
+  grid-template-columns: 0fr;
+  flex: 0 0 auto;
+  opacity: 0;
+
+  // Animate the space taken from the input, including the localized button width.
+  @media (min-width: 769px) {
+    transition:
+      grid-template-columns var(--duration-300) var(--ease-out),
+      opacity var(--duration-200) var(--ease-out);
+  }
+
+  &.show {
+    grid-template-columns: 1fr;
+    opacity: 1;
+  }
+}
+.search-cancel-clip {
+  min-width: 0;
+  overflow: hidden;
 }
 .search-cancel {
   display: inline-flex;
@@ -823,7 +912,9 @@ onBeforeUnmount(() => {
   min-height: 44px;
   border: 0;
   padding: 0 8px;
+  margin-left: 8px;
   font: inherit;
+  white-space: nowrap;
   color: var(--main-color);
   cursor: pointer;
   background: transparent;
@@ -831,6 +922,9 @@ onBeforeUnmount(() => {
   pointer-events: auto;
 }
 .search-trigger {
+  --search-surface-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.58);
+  --search-surface-border: var(--acrylic-border, rgba(0, 0, 0, 0.08));
+  --search-backdrop-filter: blur(18px) saturate(180%);
   width: 100%;
   cursor: pointer;
   pointer-events: auto;
@@ -875,9 +969,13 @@ onBeforeUnmount(() => {
     flex: 1;
     box-shadow: none;
   }
+  // Full-screen layer has room for the real body size; drive text + placeholder
+  // together so they match (see the --n-font-size note above).
+  .input {
+    --n-font-size: var(--font-size-body);
+  }
   .input :deep(.n-input__input-el) {
     height: 44px;
-    font-size: 16px;
   }
   .input :deep(.n-input-wrapper) {
     padding-inline: 12px;

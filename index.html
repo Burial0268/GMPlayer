@@ -1,73 +1,74 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="%VITE_SITE_LOGO%" />
+    <link rel="apple-touch-icon" href="%VITE_SITE_APPLE_LOGO%" />
+    <link rel="bookmark" href="%VITE_SITE_APPLE_LOGO%" />
+    <link rel="apple-touch-icon-precomposed" sizes="200x200" href="%VITE_SITE_APPLE_LOGO%" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>%VITE_SITE_TITLE%</title>
+    <meta name="apple-mobile-web-app-title" content="%VITE_SITE_TITLE%" />
+    <meta name="author" content="%VITE_SITE_ANTHOR%" />
+    <meta name="keywords" content="%VITE_SITE_KEYWORDS%" />
+    <meta name="description" content="%VITE_SITE_DES%" />
+    <meta name="theme-color" content="#ffffff" />
+    <!-- IE Out -->
+    <script>
+      // 只吞掉原生菜单。挂在 document 冒泡阶段且不调 stopPropagation，所以元素上的
+      // @contextmenu(DataLists / CoverLists / ArtistLists 的右键菜单)一定先执行，不受影响。
+      // 文本输入区放行：那里的原生复制/粘贴菜单在桌面端仍然是需要的。
+      document.addEventListener("contextmenu", function (event) {
+        var target = event.target;
+        var tag = target && target.tagName;
+        if (target && (target.isContentEditable || tag === "INPUT" || tag === "TEXTAREA")) return;
+        event.preventDefault();
+      });
+      if (
+        /*@cc_on!@*/
+        false ||
+        (!!window.MSInputMethodContext && !!document.documentMode)
+      )
+        window.location.href =
+          "https://support.dmeng.net/upgrade-your-browser.html?referrer=" +
+          encodeURIComponent(window.location.href);
+    </script>
+    <style>
+      noscript {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: calc(100vh - 16px);
+        font-family:
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
 
-<head>
-  <meta charset="UTF-8" />
-  <link rel="icon" href="%VITE_SITE_LOGO%" />
-  <link rel="apple-touch-icon" href="%VITE_SITE_APPLE_LOGO%" />
-  <link rel="bookmark" href="%VITE_SITE_APPLE_LOGO%" />
-  <link rel="apple-touch-icon-precomposed" sizes="200x200" href="%VITE_SITE_APPLE_LOGO%" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>%VITE_SITE_TITLE%</title>
-  <meta name="apple-mobile-web-app-title" content="%VITE_SITE_TITLE%" />
-  <meta name="author" content="%VITE_SITE_ANTHOR%" />
-  <meta name="keywords" content="%VITE_SITE_KEYWORDS%" />
-  <meta name="description" content="%VITE_SITE_DES%" />
-  <meta name="theme-color" content="#ffffff" />
-  <!-- HarmonyOS Sans -->
-  <link rel="stylesheet" href="https://s1.hdslb.com/bfs/static/jinkela/long/font/regular.css" />
-  <!-- IE Out -->
-  <script>
-    // 只吞掉原生菜单。挂在 document 冒泡阶段且不调 stopPropagation，所以元素上的
-    // @contextmenu(DataLists / CoverLists / ArtistLists 的右键菜单)一定先执行，不受影响。
-    // 文本输入区放行：那里的原生复制/粘贴菜单在桌面端仍然是需要的。
-    document.addEventListener('contextmenu', function (event) {
-      var target = event.target;
-      var tag = target && target.tagName;
-      if (target && (target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA')) return;
-      event.preventDefault();
-    });
-    if (
-      /*@cc_on!@*/
-      false ||
-      (!!window.MSInputMethodContext && !!document.documentMode)
-    )
-      window.location.href =
-      "https://support.dmeng.net/upgrade-your-browser.html?referrer=" +
-      encodeURIComponent(window.location.href);
-  </script>
-  <style>
-    noscript {
-      width: 100%;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: calc(100vh - 16px);
-      font-family: "HarmonyOS_Regular", sans-serif;
-    }
+      noscript .title {
+        font-size: 30px;
+        font-weight: bold;
+        margin-top: 50px;
+      }
 
-    noscript .title {
-      font-size: 30px;
-      font-weight: bold;
-      margin-top: 50px;
-    }
+      noscript .tip {
+        opacity: 0.6;
+        margin: 0;
+      }
+    </style>
+  </head>
 
-    noscript .tip {
-      opacity: 0.6;
-      margin: 0;
-    }
-  </style>
-</head>
-
-<body>
-  <div id="app"></div>
-  <noscript>
-    <img src="%VITE_SITE_LOGO%" alt="logo" />
-    <p class="title">%VITE_SITE_TITLE%</p>
-    <p class="tip">请开启 JavaScript | Please enable JavaScript to use this site</p>
-  </noscript>
-  <script type="module" src="/src/main.ts"></script>
-</body>
-
+  <body>
+    <div id="app"></div>
+    <noscript>
+      <img src="%VITE_SITE_LOGO%" alt="logo" />
+      <p class="title">%VITE_SITE_TITLE%</p>
+      <p class="tip">请开启 JavaScript | Please enable JavaScript to use this site</p>
+    </noscript>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>

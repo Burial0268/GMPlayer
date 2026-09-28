@@ -492,6 +492,13 @@ export function useSettingsSections() {
           show: () => setting.autoMixEnabled,
         },
         {
+          key: "autoMixEmotionalTransition",
+          label: "setting.autoMixEmotionalTransition",
+          tip: "setting.autoMixEmotionalTransitionTip",
+          control: "switch",
+          show: () => setting.autoMixEnabled,
+        },
+        {
           key: "autoMixVolumeNorm",
           label: "setting.autoMixVolumeNorm",
           tip: "setting.autoMixVolumeNormTip",

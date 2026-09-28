@@ -113,18 +113,12 @@ const resolvedMarks = computed(() => {
 .set-item {
   width: 100%;
   border-radius: var(--radius-md);
-  border-color: color-mix(in srgb, var(--n-border-color) 60%, transparent);
-  background-color: color-mix(in srgb, var(--n-card-color, var(--n-color)) 92%, transparent);
+  border-color: var(--border-color);
+  background-color: var(--surface-content);
   transition:
     border-color var(--duration-200) var(--ease-out),
     background-color var(--duration-200) var(--ease-out),
     box-shadow var(--duration-200) var(--ease-out);
-
-  &:hover {
-    border-color: color-mix(in srgb, var(--main-color) 34%, var(--n-border-color));
-    background-color: color-mix(in srgb, var(--n-card-color, var(--n-color)) 100%, transparent);
-    box-shadow: var(--shadow-1);
-  }
 
   :deep(.n-card__content) {
     display: flex;
@@ -133,7 +127,7 @@ const resolvedMarks = computed(() => {
     justify-content: space-between;
     gap: 12px;
     min-height: 40px;
-    padding: 12px 14px;
+    padding: var(--space-3) var(--space-4);
     box-sizing: border-box;
   }
 
@@ -144,8 +138,8 @@ const resolvedMarks = computed(() => {
     flex-direction: column;
     gap: 3px;
     padding-right: 8px;
-    font-size: 13.5px;
-    line-height: 1.35;
+    font-size: var(--font-size-body);
+    line-height: var(--line-height-body);
 
     .dev {
       display: flex;
@@ -156,9 +150,9 @@ const resolvedMarks = computed(() => {
     }
 
     .tip {
-      font-size: 12px;
-      line-height: 1.45;
-      opacity: 0.68;
+      font-size: var(--font-size-footnote);
+      line-height: var(--line-height-body);
+      color: var(--text-secondary);
     }
   }
 

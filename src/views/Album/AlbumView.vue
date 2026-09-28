@@ -137,6 +137,7 @@
       </div>
       <DataLists
         :listData="displayData"
+        :queue-data="albumData"
         hideAlbum
         page-window
         :virtual-item-size="54"
@@ -552,7 +553,7 @@ onMounted(() => {
           max-width: min(780px, 100%);
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
-          font-weight: 800;
+          font-weight: 700;
           line-height: normal;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;

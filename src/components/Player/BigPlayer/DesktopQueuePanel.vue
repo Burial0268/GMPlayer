@@ -76,15 +76,28 @@
     <div class="queue-empty" v-else>
       {{ $t("other.playlistEmpty") }}
     </div>
+
+    <!-- 底部整宽定位按钮：网格第三行，常驻面板底边。 -->
+    <button
+      v-if="music.getPlaylists.length"
+      class="queue-locate"
+      type="button"
+      @click="scrollCurrentQueueSong"
+    >
+      <n-icon size="18" :component="MyLocationRound" />
+      <span>{{ $t("player.queue.locate") }}</span>
+    </button>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { NVirtualList } from "naive-ui";
-import { DeleteRound, QueueMusicRound } from "@vicons/material";
+import { DeleteRound, QueueMusicRound, MyLocationRound } from "@vicons/material";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { locateVirtualRow, type LocateHandle, type VirtualListInst } from "@/utils/locateRow";
 
 declare const $player: any;
 
@@ -102,10 +115,9 @@ const props = defineProps<{
 }>();
 
 const music = musicStore();
-const queueListRef = ref<{
-  scrollTo: (options: { index: number; behavior?: ScrollBehavior }) => void;
-} | null>(null);
+const queueListRef = ref<VirtualListInst | null>(null);
 const scrollTimer = ref<number | null>(null);
+let locateHandle: LocateHandle | null = null;
 const queueRows = computed(() =>
   music.getPlaylists.map((item: QueueSong, index: number) => ({
     item,
@@ -123,9 +135,13 @@ const formatArtists = (artists: Artist[] = []) =>
 const getQueueCover = (item: QueueSong) => coverUrl(item.album?.picUrl, 96);
 
 const scrollCurrentQueueSong = () => {
-  queueListRef.value?.scrollTo({
-    index: music.persistData.playSongIndex,
-    behavior: "smooth",
+  const index = music.persistData.playSongIndex;
+  if (index < 0 || index >= music.getPlaylists.length) return;
+  locateHandle?.cancel();
+  locateHandle = locateVirtualRow(queueListRef.value, index, {
+    rowSelector: `#desktop-queue-${index}`,
+    align: "start",
+    instant: prefersReducedMotion(),
   });
 };
 
@@ -135,17 +151,21 @@ const changeQueueIndex = (index: number) => {
 
 watch(
   () => [props.show, music.persistData.playSongIndex] as const,
-  ([show]) => {
+  ([show], [wasShown]) => {
     if (scrollTimer.value) window.clearTimeout(scrollTimer.value);
-    if (!show) return;
-    nextTick(() => {
-      scrollTimer.value = window.setTimeout(scrollCurrentQueueSong, 360);
-    });
+    if (!show) {
+      locateHandle?.cancel();
+      return;
+    }
+    // 刚打开就对准：面板一直挂着，滑入过程中看到的已经是当前行。打开期间切歌则稍后跟过去。
+    if (!wasShown) nextTick(scrollCurrentQueueSong);
+    else scrollTimer.value = window.setTimeout(scrollCurrentQueueSong, 360);
   },
 );
 
 onBeforeUnmount(() => {
   if (scrollTimer.value) window.clearTimeout(scrollTimer.value);
+  locateHandle?.cancel();
 });
 </script>
 
@@ -159,7 +179,7 @@ onBeforeUnmount(() => {
   z-index: 6;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   padding: 18px 14px 14px;
   border-radius: var(--radius-md);
   color: var(--main-cover-color);
@@ -404,6 +424,43 @@ onBeforeUnmount(() => {
   justify-content: center;
   text-align: center;
   opacity: 0.56;
+}
+
+// 底部整宽定位按钮（网格第三行）。面板叠在专辑封面上，配色随 --main-cover-color。
+.queue-locate {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border: 1px solid color-mix(in srgb, var(--main-cover-color) 20%, transparent);
+  border-radius: var(--radius-md);
+  color: var(--main-cover-color);
+  background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 640;
+  cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    transform 0.16s ease;
+
+  .n-icon {
+    color: var(--main-cover-color);
+  }
+
+  &:hover,
+  &:focus-visible {
+    background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
+    border-color: color-mix(in srgb, var(--main-cover-color) 32%, transparent);
+    outline: none;
+  }
+
+  &:active {
+    transform: scale(0.985);
+  }
 }
 
 @keyframes queue-line-move {

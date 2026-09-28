@@ -207,7 +207,7 @@ onMounted(getDailySongsData);
 
 .date-day {
   font-size: 22px;
-  font-weight: 800;
+  font-weight: 700;
   line-height: 1;
   letter-spacing: -0.05em;
 }

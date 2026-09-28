@@ -430,14 +430,14 @@ watch(
     }
 
     .head-title {
-      font-size: 17px;
-      font-weight: 650;
-      line-height: 1.25;
+      font-size: var(--font-size-title-small);
+      font-weight: 600;
+      line-height: var(--line-height-heading);
     }
 
     .head-count {
-      font-size: 12px;
-      opacity: 0.6;
+      font-size: var(--font-size-footnote);
+      color: var(--text-secondary);
     }
   }
 

@@ -416,6 +416,7 @@ const messages: Record<string, unknown> = {
       playingNext: "Playing Next",
       clear: "Clear",
       collapse: "Hide queue",
+      locate: "Jump to current",
     },
     loading: {
       resolving: "Fetching audio",
@@ -738,6 +739,9 @@ const messages: Record<string, unknown> = {
     autoMixSmartCurve: "Smart Curve Override",
     autoMixSmartCurveTip:
       "Automatically select the best crossfade curve based on detected song ending type",
+    autoMixEmotionalTransition: "Emotional Transitions",
+    autoMixEmotionalTransitionTip:
+      "Detect intro, verse, chorus and other sections, hand over after the last chorus, and pace the blend by how the energy rises or falls where the two songs meet",
     autoMixVocalGuard: "Vocal Guard",
     autoMixVocalGuardTip:
       "Delay transition when vocal activity is detected to avoid cutting into singing",

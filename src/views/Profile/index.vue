@@ -285,7 +285,7 @@ watch(
 
         .name {
           font-size: clamp(28px, 4.4vw, 48px);
-          font-weight: 800;
+          font-weight: 700;
           line-height: 1.08;
           overflow-wrap: anywhere;
         }
@@ -323,7 +323,7 @@ watch(
           flex-direction: column;
           strong {
             font-size: 18px;
-            font-weight: 800;
+            font-weight: 700;
             font-variant-numeric: tabular-nums;
           }
           span {

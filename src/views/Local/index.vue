@@ -248,8 +248,9 @@ onMounted(async () => {
   // 一个）上解析，`--content-sticky-top` 才对得上它的本意：钉在 Nav 下沿。顺带也没有
   // 了「聚焦输入框把这个容器内部滚一段、整页内容跟着偏移」这种隐蔽故障。
   //
-  // 同样的坑对 `/artist`、`/user`、`/discover`、`/search`、`/profile` 的标签页壳子都成立
-  // ——它们眼下没有 sticky 构件，所以没有症状，但要往里放浮动控件时先改这里。
+  // `/artist`、`/user`、`/search` 的标签页壳子放进 DataLists 的定位药丸时已同样改成 `clip`；
+  // `/discover`、`/profile` 还是 `hidden`——它们眼下没有 sticky 构件，所以没有症状，但要往
+  // 里放浮动控件时先改那里。
   .content {
     position: relative;
     overflow: clip;

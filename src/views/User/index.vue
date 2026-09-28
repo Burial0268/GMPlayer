@@ -173,9 +173,11 @@ watch(
       }
     }
   }
+  // `clip` 而不是 `hidden`：`hidden` 让它成为滚动容器，子页里的 sticky（DataLists 的定位
+  // 药丸）就钉在这个永不滚动的盒子上。完整理由见 `views/Local/index.vue` 的同名规则。
   .content {
     position: relative;
-    overflow: hidden;
+    overflow: clip;
     margin-top: 20px;
   }
 }

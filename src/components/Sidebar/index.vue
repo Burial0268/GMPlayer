@@ -640,16 +640,18 @@ const goToPlaylist = (id: number) => {
   overscroll-behavior: contain;
   contain: layout paint;
 
-  --sidebar-text: #333;
-  --sidebar-text-secondary: #999;
+  --sidebar-text: var(--text-primary);
+  --sidebar-text-secondary: var(--text-tertiary);
   --sidebar-hover-bg: rgba(0, 0, 0, 0.045);
-  --sidebar-active-bg: color-mix(in srgb, var(--main-color) 12%, transparent);
+  --sidebar-active-bg: var(--surface-selected);
   --sidebar-accent: var(--main-color);
   --sidebar-divider: rgba(0, 0, 0, 0.04);
   --sidebar-item-slot: 40px;
   --sidebar-control-size: 32px;
 
-  &.search-active {
+  // Keep the dropdown outside containment until its leave transition finishes.
+  &.search-active,
+  &:has(.search-dropdown-leave-active) {
     z-index: var(--z-search-overlay, 1900);
     overflow: visible;
     contain: none;
@@ -673,8 +675,6 @@ const goToPlaylist = (id: number) => {
   }
 
   &.dark {
-    --sidebar-text: rgba(255, 255, 255, 0.9);
-    --sidebar-text-secondary: rgba(255, 255, 255, 0.4);
     --sidebar-hover-bg: rgba(255, 255, 255, 0.06);
     --sidebar-divider: rgba(255, 255, 255, 0.04);
   }
@@ -735,9 +735,14 @@ const goToPlaylist = (id: number) => {
     box-shadow: none;
   }
 
+  // Drive text + placeholder from one var (see SearchInp's note): the sidebar
+  // search is denser than the nav one, so it runs a step smaller.
+  :deep(.input) {
+    --n-font-size: 12px;
+  }
+
   :deep(.input .n-input__input-el) {
     height: 28px;
-    font-size: 12px;
   }
 
   :deep(.list) {

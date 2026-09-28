@@ -442,7 +442,7 @@ watch(
         .name {
           max-width: 780px;
           font-size: clamp(32px, 5vw, 56px);
-          font-weight: 800;
+          font-weight: 700;
           line-height: normal;
           -webkit-line-clamp: 2;
           line-clamp: 2;
@@ -570,7 +570,7 @@ watch(
     .section-title {
       margin: 0 0 12px;
       font-size: 16px;
-      font-weight: 800;
+      font-weight: 700;
     }
   }
 

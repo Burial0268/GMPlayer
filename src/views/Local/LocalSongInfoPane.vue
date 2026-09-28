@@ -152,7 +152,7 @@ const formatTime = (seconds: number | null): string =>
   .group-title {
     margin: 0 0 10px;
     font-size: 14px;
-    font-weight: 800;
+    font-weight: 700;
     color: var(--n-text-color-2);
   }
 

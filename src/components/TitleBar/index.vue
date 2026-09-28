@@ -1,16 +1,23 @@
 <template>
-  <div
-    v-if="showTitleBar"
-    class="titlebar"
-    :class="titlebarClasses"
-    :data-tauri-drag-region="draggable ? '' : undefined"
-  >
-    <div v-if="title" class="titlebar-title" data-tauri-drag-region>
-      <n-icon v-if="icon" class="titlebar-icon" :component="icon" />
-      <span class="titlebar-text" data-tauri-drag-region>{{ title }}</span>
+  <!-- 悬浮变体 teleport 到 body：窗口控制的 z-index:9999 必须与同样挂在 body 上的
+       BigPlayer(z-index:2000) 在同一个 stacking context 里比较，才能真正压在其上。
+       留在 #app 内时，只要祖先(如带 contain/isolation 的容器)形成 stacking context，
+       9999 就会被封顶，BigPlayer 反而盖住窗口控制，导致大播放器打开时无法关闭窗口。
+       window 变体(从设置从窗等处内联使用)保持原地渲染。 -->
+  <Teleport to="body" :disabled="variant !== 'floating'">
+    <div
+      v-if="showTitleBar"
+      class="titlebar"
+      :class="titlebarClasses"
+      :data-tauri-drag-region="draggable ? '' : undefined"
+    >
+      <div v-if="title" class="titlebar-title" data-tauri-drag-region>
+        <n-icon v-if="icon" class="titlebar-icon" :component="icon" />
+        <span class="titlebar-text" data-tauri-drag-region>{{ title }}</span>
+      </div>
+      <WindowControls :label="label" :minimizable="minimizable" :maximizable="maximizable" />
     </div>
-    <WindowControls :label="label" :minimizable="minimizable" :maximizable="maximizable" />
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -127,9 +134,13 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(18px) saturate(160%);
   backdrop-filter: blur(18px) saturate(160%);
 
-  // BigPlayer mode: white controls on dark cover, hidden until hover
+  // BigPlayer mode: white controls over the immersive cover. Keep them faintly
+  // visible (not opacity:0) and rise to full on hover — on desktop these are the
+  // ONLY window min/close controls, so a fully-invisible hover-only target is
+  // undiscoverable and leaves the user unable to close the app while the player
+  // is open. The frosted pill + backdrop-blur keeps them legible over the cover.
   &.bigplayer-mode {
-    opacity: 0;
+    opacity: 0.6;
     color: rgba(255, 255, 255, 0.85);
 
     &:hover {

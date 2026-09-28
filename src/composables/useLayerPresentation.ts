@@ -37,9 +37,16 @@ export function useLayerPresentation() {
         element.getClientRects().length && getComputedStyle(element).visibility !== "hidden",
     );
   };
-  const modalSurface = () => {
-    if (navigation.current.value?.presentation === "queue-floating" && !isMobile.value) return;
-    return activeSurface();
+  const modalSurface = (surface = activeSurface()) => {
+    const presentation = navigation.current.value?.presentation;
+    if (!isMobile.value) {
+      if (presentation === "queue-floating") return;
+      // The desktop queue shares the player's controls and modal boundary.
+      if (presentation === "queue-player") {
+        return surface?.closest<HTMLElement>("[data-navigation-layer='player']") ?? undefined;
+      }
+    }
+    return surface;
   };
 
   const clearInert = () => {
@@ -59,10 +66,14 @@ export function useLayerPresentation() {
 
   watch(
     () => [navigation.current.value?.id, navigation.current.value?.presentation, isMobile.value],
-    async () => {
+    async ([, , mobile], previous) => {
       const generation = ++focusGeneration;
       clearInert();
       await nextTick();
+      if (previous && mobile !== previous[2]) {
+        // Other resize listeners replace the player layout after this watcher runs.
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      }
       if (generation !== focusGeneration) return;
       const surface = activeSurface();
       if (!surface) {
@@ -74,15 +85,22 @@ export function useLayerPresentation() {
         }
         return;
       }
-      if (modalSurface()) {
-        let branch: HTMLElement = surface;
+      const modal = modalSurface(surface);
+      if (modal) {
+        let branch: HTMLElement = modal;
         while (branch.parentElement) {
           for (const sibling of branch.parentElement.children) {
             if (
               !(sibling instanceof HTMLElement) ||
               sibling === branch ||
               sibling.matches(
-                "script, style, link, .v-binder-follower-container, .n-modal-container, .n-message-container, .n-notification-container",
+                // `.titlebar--floating` is the desktop window-control cluster (min/max/close),
+                // teleported to <body> so it can out-stack the body-level BigPlayer. As a direct
+                // sibling of the player surface it would otherwise be caught by this focus-trap and
+                // set `inert` — leaving the controls visible but unclickable, so the user cannot
+                // close the app while the player is open. OS window chrome is never trapped by an
+                // in-page modal; keep it live alongside the other global chrome below.
+                "script, style, link, .titlebar--floating, .v-binder-follower-container, .n-modal-container, .n-message-container, .n-notification-container",
               )
             )
               continue;

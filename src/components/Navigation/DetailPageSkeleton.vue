@@ -99,7 +99,7 @@ const preview = inject(pageSourceKey, undefined);
   -webkit-line-clamp: 2;
   line-clamp: 2;
   font-size: clamp(32px, 5vw, 56px);
-  font-weight: 800;
+  font-weight: 700;
   line-height: normal;
 }
 .detail-name-placeholder {

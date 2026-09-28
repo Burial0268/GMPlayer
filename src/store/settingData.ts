@@ -99,6 +99,7 @@ interface SettingDataState {
   autoMixSmartCurve: boolean;
   autoMixTransitionEffects: boolean;
   autoMixVocalGuard: boolean;
+  autoMixEmotionalTransition: boolean;
   // DSP settings. Defaults must resolve to a native bypass path.
   dspEnabled: boolean;
   dspEqEnabled: boolean;
@@ -287,6 +288,7 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixSmartCurve: true,
       autoMixTransitionEffects: true,
       autoMixVocalGuard: true,
+      autoMixEmotionalTransition: true,
       // DSP defaults: native mixer stays bypassed until explicitly enabled.
       dspEnabled: false,
       dspEqEnabled: true,

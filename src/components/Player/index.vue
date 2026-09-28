@@ -601,6 +601,14 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       }
       music.isLoadingSong = false;
       music.loadingStage = "idle";
+      // A background native advance through the FM buffer consumed part of the
+      // runway while JS was frozen. Now that we're alive, sync the home card's
+      // display head to what's actually playing and top the buffer back up (which
+      // also republishes the manifest) so the planner keeps having somewhere to go.
+      if (music.persistData.personalFmMode) {
+        music.persistData.personalFmData = data;
+        void music.refillFmBuffer();
+      }
       loadLyricFor(data, id);
       return;
     }

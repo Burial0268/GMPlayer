@@ -178,6 +178,7 @@ import { useMobileCoverFrame } from "@/composables/useMobileCoverFrame";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import { useLayerNavigation } from "@/utils/navigation";
+import { layerMotion } from "@/utils/navigation/motion";
 
 // 导入子组件
 import BigPlayerBackground from "./BigPlayerBackground.vue";
@@ -265,16 +266,6 @@ const sharedLayoutTransition = {
   restDelta: 0.001,
   restSpeed: 0.02,
 } as const;
-// 拖拽收尾用近临界弹簧：spring 从 MotionValue 继承释放速度，顺着手的惯性收尾；
-// tween 会丢速度，松手瞬间出现"顿一下再动"的断档感。
-const drawerProgressTransition = {
-  type: "spring",
-  stiffness: 420,
-  damping: 38,
-  mass: 0.9,
-  restDelta: 0.001,
-  restSpeed: 0.02,
-} as const;
 const backgroundLayoutTransition = {
   type: "tween",
   duration: 0.24,
@@ -336,6 +327,7 @@ let interactiveFrames: {
   fullBg: SharedFrame;
 } | null = null;
 let pendingInteractiveProgress = 0;
+let closeDragOrigin = 1;
 let progressUnsubscribe: (() => void) | null = null;
 const mobileContentReady = ref(false);
 const mobileContentVisible = ref(false);
@@ -838,7 +830,7 @@ const animateProgressTo = (target: number, onComplete?: () => void) => {
     return;
   }
   const animation = animate(playerProgress, clamp(target), {
-    ...drawerProgressTransition,
+    ...layerMotion.settle,
     onComplete: () => {
       if (progressAnimation !== animation) return;
       progressAnimation = null;
@@ -1021,8 +1013,10 @@ const prepareMiniAlbumCloseHandoff = () => {
 const beginMobileInteractive = async (
   frames: MiniSharedFrames | undefined,
   initialProgress: number,
+  direction: "opening" | "closing",
 ) => {
   if (!isMobile.value) return false;
+  const retainFrames = mobileInteractive.value && Boolean(interactiveFrames);
   const generation = ++interactiveGeneration;
   resolveInteractive?.(music.showBigPlayer);
   resolveInteractive = undefined;
@@ -1030,7 +1024,7 @@ const beginMobileInteractive = async (
   progressAnimation = null;
   stopArtworkFrameAnimations();
   pendingInteractiveProgress = clamp(initialProgress);
-  mobileTransitionDirection.value = pendingInteractiveProgress >= 0.999 ? "closing" : "opening";
+  mobileTransitionDirection.value = direction;
   if (pendingInteractiveProgress <= 0.001) {
     mobileLayer.value = 1;
     mobileContentReady.value = false;
@@ -1042,17 +1036,17 @@ const beginMobileInteractive = async (
   mobileTransitionActive.value = true;
   mobileExiting.value = false;
   clearMobileExitFallback();
+  playerProgress.jump(pendingInteractiveProgress);
   await nextTick();
   if (generation !== interactiveGeneration) return false;
-  if (pendingInteractiveProgress <= 0.001) {
+  if (!retainFrames && initialProgress <= 0.001) {
     detachMiniSharedAlbum();
     seedInteractiveFromMini(frames);
-  } else if (pendingInteractiveProgress >= 0.999) {
+  } else if (!retainFrames && initialProgress >= 0.999) {
     prepareMiniAlbumCloseHandoff();
     seedInteractiveFromFull();
   }
-  playerProgress.set(pendingInteractiveProgress);
-  applyProgressState(pendingInteractiveProgress);
+  applyProgressState(playerProgress.get());
 
   await nextTick();
   if (generation !== interactiveGeneration) return false;
@@ -1060,14 +1054,15 @@ const beginMobileInteractive = async (
     requestAnimationFrame(() => {
       if (generation !== interactiveGeneration) return resolve();
       if (
+        !retainFrames &&
         captureInteractiveFrames(frames) &&
-        pendingInteractiveProgress >= 0.999 &&
+        initialProgress >= 0.999 &&
         interactiveFrames
       ) {
         interactiveFrames.fullArtwork = readCurrentArtworkFrame();
       }
-      playerProgress.set(pendingInteractiveProgress);
-      applyProgressState(pendingInteractiveProgress);
+      // Touch moves can arrive during preparation; keep their latest visual progress.
+      applyProgressState(playerProgress.get());
       resolve();
     });
   });
@@ -1075,12 +1070,15 @@ const beginMobileInteractive = async (
 };
 
 const beginMobileInteractiveOpen = (frames?: MiniSharedFrames) => {
-  return beginMobileInteractive(frames, 0);
+  return beginMobileInteractive(frames, 0, "opening");
 };
 
 const beginMobileInteractiveClose = () => {
   if (mobileQueueOpen.value) return;
-  beginMobileInteractive(undefined, 1);
+  const progress = clamp(playerProgress.get());
+  // Invert drag resistance so grabbing a partially open player does not change its position.
+  closeDragOrigin = 1 - Math.pow(1 - progress, 1 / MOBILE_DRAG_DAMPING_POWER);
+  return beginMobileInteractive(undefined, progress, "closing");
 };
 
 const updateMobileInteractiveProgress = (progress: number) => {
@@ -1091,7 +1089,7 @@ const updateMobileInteractiveProgress = (progress: number) => {
 };
 
 const updateMobileInteractiveClose = (distance: number) => {
-  updateMobileInteractiveProgress(1 - clamp(distance / getTransitionDistance()));
+  updateMobileInteractiveProgress(closeDragOrigin - distance / getTransitionDistance());
 };
 
 const beginStoreCloseHandoff = () => {
@@ -1111,6 +1109,8 @@ const finishMobileInteractive = (forceOpen?: boolean) =>
       forceOpen ?? (Math.abs(velocity) > 0.6 ? velocity > 0 : pendingInteractiveProgress >= 0.5);
     mobileTransitionDirection.value = shouldOpen ? "opening" : "closing";
     if (shouldOpen) {
+      mobileExiting.value = false;
+      clearMobileExitFallback();
       detachMiniSharedAlbum();
       if (!music.showBigPlayer)
         void navigation.openPlayer(
@@ -1162,37 +1162,15 @@ const closeMobileWithProgress = async () => {
     closeBigPlayer();
     return;
   }
-  if (mobileInteractive.value) return;
-  const generation = ++interactiveGeneration;
-
-  prepareMiniAlbumCloseHandoff();
-  progressAnimation?.stop();
-  progressAnimation = null;
-  stopArtworkFrameAnimations();
-  pendingInteractiveProgress = 1;
-  mobileTransitionDirection.value = "closing";
-  seedInteractiveFromFull();
-  mobileInteractive.value = true;
-  mobileTransitionActive.value = true;
-  mobileExiting.value = true;
-  beginStoreCloseHandoff();
-  clearMobileExitFallback();
-  playerProgress.set(1);
-  applyProgressState(1);
-
-  await nextTick();
-  requestAnimationFrame(() => {
-    if (generation !== interactiveGeneration) return;
-    if (captureInteractiveFrames() && interactiveFrames) {
-      interactiveFrames.fullArtwork = readCurrentArtworkFrame();
-    }
-    playerProgress.set(1);
-    applyProgressState(1);
-    animateProgressTo(0, () => {
-      completeClosedMobileTransition(music.showBigPlayer);
-    });
-  });
+  if (await beginMobileInteractiveClose()) await finishMobileInteractive(false);
 };
+
+const removeCancelledNavigation = navigation.onNavigationCancelled(() => {
+  if (!isMobile.value || !mobileTransitionActive.value) return;
+  interactiveGeneration++;
+  mobileSkipNextStoreCloseAnimation = false;
+  void finishMobileInteractive(music.showBigPlayer);
+});
 
 const handleMobileClose = () => {
   if (mobileQueueOpen.value) {
@@ -1331,6 +1309,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  removeCancelledNavigation();
   interactiveGeneration++;
   resolveInteractive?.(music.showBigPlayer);
   resolveInteractive = undefined;

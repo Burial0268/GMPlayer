@@ -138,12 +138,14 @@
       </div>
       <DataLists
         :listData="displayData"
+        :queue-data="playListData"
         page-window
         :total-rows="displayTotalRows"
         :virtual-item-size="54"
         :virtual-threshold="40"
         show-header
         :loading="isHydrating"
+        :locate="locateAdapter"
         :empty-text="isSearching ? t('general.name.noSearchResult') : ''"
         @reach-end="hydrateMore"
       />
@@ -453,6 +455,14 @@ const loadPlaylist = (id: string | number | string[], minRows = 0) => {
       if (isActive) $setSiteTitle(pl.name + " - " + t("general.name.playlist"));
       seedFromDetail(pl, sourceId);
       void hydrateUntil(Math.max(minRows, HYDRATE_CHUNK));
+      // 缓存优先出图之后，无条件补一次 fresh 对账 —— 这就是「打开歌单即向云端问一次并
+      // 增量更新」的落点。上面那次 `fetchPlaylistDetail` 走缓存（5min TTL / 24h stale），
+      // 所以在别处（网页、手机、另一台设备）加进来的歌，若缓存还新，首屏拿到的就是旧
+      // 的 manifest 与旧的 trackCount（正是 72 而非 80 的成因）。这里再问一次 fresh：
+      // `reconcileQuietly` 跳过缓存读、以服务端 manifest 为准走 `adoptManifest`，只更新
+      // 成员/顺序/总数，已 hydrate 的前缀与滚动位置原地保留，不清空、不回顶、不白屏。
+      // pending 增删此刻为空（入口已 resetPendingDelta），所以它直接进增量并入。
+      void reconcileQuietly();
     })
     .catch((err) => {
       if (token !== loadToken) return;
@@ -665,6 +675,48 @@ const displayTotalRows = computed(() => {
   // 长度撑高会在末尾留一段空白，`reach-end` 也会一直空转。
   return hydrationDone.value ? playListData.value.length : manifestIds.value.length;
 });
+
+// ── 定位适配器 ──────────────────────────────────────────────
+//
+// 长流歌单里，正在播放的曲目可能还在已 hydrate 前缀之外，DataLists 自带的
+// `listData.findIndex` 就找不到它。这里改用 manifest 求真实下标（== hydrate 完成后
+// 的行号，因为 playListData 与 manifest 同序），点击时先补齐前缀再交回 DataLists 滚动。
+// 搜索态下列表被过滤，只在 displayData 里找，且不做补齐（未匹配的行本就不该出现）。
+// 正在播放的曲目在**渲染列表**里的真实下标。`playListData` 已用 `.filter(Boolean)`
+// 滤掉下架/不可用曲目（见 `fetchChunk`），所以它比 `manifestIds` 密——两者的下标不等。
+const renderedIndexOf = (id: number): number =>
+  (isSearching.value ? displayData.value : playListData.value).findIndex(
+    (s: any) => Number(s?.id) === id,
+  );
+
+const locateAdapter = {
+  resolveIndex: (): number => {
+    const id = music.getPlaySongData?.id;
+    if (id === null || id === undefined) return -1;
+    const rid = Number(id);
+    // 首选渲染列表里的真实行号：直接用 `manifestIds.indexOf` 会因为前面被丢弃的曲目而
+    // 系统性偏大，定位于是整体偏下、还会查错 `#song{i}`。已 hydrate 到就返回真实行号。
+    const rendered = renderedIndexOf(rid);
+    if (rendered >= 0) return rendered;
+    // 还没 hydrate 到、且非搜索态：返回 manifest 下标当「需要补齐到这附近」的提示，
+    // DataLists 会先 `ensureLoaded` 再回来拿真实行号（那时就走上面的分支）。
+    return isSearching.value ? -1 : manifestIds.value.indexOf(rid);
+  },
+  ensureLoaded: async (): Promise<void> => {
+    if (isSearching.value) return;
+    const id = music.getPlaySongData?.id;
+    if (id === null || id === undefined) return;
+    const rid = Number(id);
+    // 补齐直到这首歌**真正落进** `playListData`，而不是「加载了 index 行」——index 是
+    // manifest 下标，被丢弃的曲目会让「加载到 index 行」永远不成立，拿它当条件在有下架
+    // 曲的歌单上就是死循环（`hydrateUntil` 内部也正是为此改用游标判终止）。
+    while (renderedIndexOf(rid) < 0 && !hydrationDone.value) {
+      const before = playListData.value.length;
+      await hydrateUntil(playListData.value.length + 1);
+      if (playListData.value.length <= before) break;
+    }
+  },
+};
 
 /**
  * 整表补齐的启动延迟。
@@ -1257,7 +1309,7 @@ watch(
           max-width: min(780px, 100%);
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
-          font-weight: 800;
+          font-weight: 700;
           line-height: normal;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;

@@ -411,6 +411,7 @@ const messages: Record<string, unknown> = {
       playingNext: "接下来播放",
       clear: "清空",
       collapse: "收起播放列表",
+      locate: "定位到正在播放",
     },
     loading: {
       resolving: "获取音频资源中",
@@ -712,6 +713,9 @@ const messages: Record<string, unknown> = {
     autoMixSCurve: "S 曲线",
     autoMixSmartCurve: "智能曲线覆盖",
     autoMixSmartCurveTip: "根据检测到的歌曲结尾类型自动选择最佳过渡曲线",
+    autoMixEmotionalTransition: "情绪过渡",
+    autoMixEmotionalTransitionTip:
+      "识别前奏、主歌、副歌等段落，在最后一段副歌结束处切歌，并按两首歌衔接处的情绪起伏决定过渡的快慢与曲线",
     autoMixVocalGuard: "人声保护",
     autoMixVocalGuardTip: "检测到人声活动时延迟过渡，避免在演唱中切歌",
     autoMixAnalyzing: "分析中...",

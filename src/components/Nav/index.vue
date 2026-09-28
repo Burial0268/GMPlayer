@@ -98,7 +98,7 @@ const toggleTheme = (event: MouseEvent) => {
 <style lang="scss" scoped>
 nav {
   --nav-control-height: 32px;
-  --nav-icon-button-size: 26px;
+  --nav-icon-button-size: 28px;
 
   width: 100%;
   height: 34px;
@@ -129,14 +129,14 @@ nav {
       height: var(--nav-control-height);
       box-sizing: border-box;
       padding: 2px;
-      border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.06));
+      border: 1px solid var(--material-border);
       border-radius: var(--radius-pill);
-      background-color: var(--floating-control-bg, rgba(255, 255, 255, 0.48));
+      background-color: var(--material-regular-bg);
       box-shadow:
-        0 8px 22px rgb(0 0 0 / 10%),
-        inset 0 1px 0 rgb(255 255 255 / 24%);
-      -webkit-backdrop-filter: blur(18px) saturate(160%);
-      backdrop-filter: blur(18px) saturate(160%);
+        var(--shadow-1),
+        inset 0 1px 0 var(--material-highlight);
+      -webkit-backdrop-filter: var(--material-filter);
+      backdrop-filter: var(--material-filter);
 
       .n-icon {
         width: var(--nav-icon-button-size);
@@ -186,21 +186,21 @@ nav {
       pointer-events: auto;
       cursor: pointer;
       padding: 0;
-      border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.06));
+      border: 1px solid var(--material-border);
       border-radius: var(--radius-pill);
-      background-color: var(--floating-control-bg, rgba(255, 255, 255, 0.48));
+      background-color: var(--material-regular-bg);
       box-shadow:
-        0 8px 22px rgb(0 0 0 / 8%),
-        inset 0 1px 0 rgb(255 255 255 / 20%);
-      -webkit-backdrop-filter: blur(18px) saturate(160%);
-      backdrop-filter: blur(18px) saturate(160%);
+        var(--shadow-1),
+        inset 0 1px 0 var(--material-highlight);
+      -webkit-backdrop-filter: var(--material-filter);
+      backdrop-filter: var(--material-filter);
       transition:
         background-color var(--duration-200) var(--ease-out),
         transform var(--duration-200) var(--ease-out),
         color var(--duration-200) var(--ease-out);
 
       &:hover {
-        background-color: var(--hover-overlay);
+        background-color: color-mix(in srgb, var(--material-regular-bg) 94%, var(--text-primary));
       }
 
       &:active {
@@ -211,8 +211,11 @@ nav {
     .nav-search {
       pointer-events: auto;
       min-width: 0;
-      flex: 0 1 clamp(128px, 36vw, 220px);
-      width: clamp(128px, 36vw, 220px);
+      // Grow to fill whatever the row leaves (theme icon + optional back label take
+      // their share first). The floor is sized to hold the full "搜索音乐/视频"
+      // placeholder — the old 128px floor left ~10px slack and clipped the last glyph.
+      flex: 1 1 clamp(164px, 42vw, 230px);
+      width: clamp(164px, 42vw, 230px);
 
       @media (min-width: 769px) {
         display: none;
@@ -231,27 +234,15 @@ nav {
 
     height: 30px;
     min-height: 30px;
-    --floating-control-bg: rgba(255, 255, 255, 0.42);
-  }
-
-  &.dark {
-    --floating-control-bg: rgba(24, 24, 24, 0.5);
-
-    .controls .n-icon:hover,
-    .right .action-icon:hover {
-      background-color: rgba(255, 255, 255, 0.12);
-    }
   }
 
   @media (max-width: 768px) {
-    height: calc(42px + var(--app-safe-area-top, 0px));
-    min-height: calc(42px + var(--app-safe-area-top, 0px));
+    height: var(--app-mobile-nav-height);
+    min-height: var(--app-mobile-nav-height);
     padding-top: var(--app-safe-area-top, 0px);
     box-sizing: border-box;
-    // The mobile header band behind these controls is itself blurred and tinted
-    // (see .content-top-shadow in App.vue). Lift the pill fill and border so the
-    // buttons still read as a layer above that band, and tighten the shadow —
-    // a wide soft drop shadow over blur just muddies into a gray halo.
+
+    // Keep the mobile navigation controls' established appearance.
     --floating-control-bg: rgba(255, 255, 255, 0.62);
     --acrylic-border: rgba(0, 0, 0, 0.07);
     --nav-pill-specular: rgba(255, 255, 255, 0.7);
@@ -261,26 +252,27 @@ nav {
       --floating-control-bg: rgba(32, 32, 38, 0.6);
       --acrylic-border: rgba(255, 255, 255, 0.11);
       --nav-pill-specular: rgba(255, 255, 255, 0.16);
-      // Single pass here (no sibling stack), so these are the final values, not
-      // roots. Contrast under 100% for the same reason as the band's dark grade:
-      // compress the backdrop's range rather than widening it.
       --nav-pill-grade: saturate(170%) brightness(82%) contrast(88%);
+
+      .right .action-icon:hover {
+        background-color: rgba(255, 255, 255, 0.12);
+      }
     }
 
-    // These pills ARE inset glass, so unlike the band they get a specular leading
-    // edge and their own grade. The tight contact shadow replaces the wide soft one
-    // from desktop: over a blurred backdrop a large-radius shadow has nothing crisp
-    // to read against and just smears into a gray halo.
-    // Selectors mirror the base rules' depth (`.left .controls`, `.right
-    // .action-icon`) so these win on source order rather than losing on specificity.
     .left .controls,
     .right .action-icon {
+      border-color: var(--acrylic-border);
+      background-color: var(--floating-control-bg);
       box-shadow:
         0 1px 1px rgb(0 0 0 / 5%),
         0 3px 8px rgb(0 0 0 / 7%),
         inset 0 1px 0 var(--nav-pill-specular);
       -webkit-backdrop-filter: blur(12px) var(--nav-pill-grade);
       backdrop-filter: blur(12px) var(--nav-pill-grade);
+    }
+
+    .right .action-icon:hover {
+      background-color: var(--hover-overlay);
     }
 
     .left {

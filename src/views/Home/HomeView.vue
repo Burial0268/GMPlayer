@@ -427,25 +427,25 @@ onBeforeUnmount(() => {
   container: home / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 42px;
-  padding: 4px 0 42px;
+  gap: var(--space-8);
+  padding: var(--space-1) 0 var(--space-8);
 }
 
 .home-header {
   .date {
     color: var(--n-text-color-3);
-    font-size: 12px;
-    font-weight: 650;
-    letter-spacing: 0.08em;
+    font-size: var(--font-size-footnote);
+    font-weight: 500;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
   }
 
   h1 {
     margin: 8px 0 0;
-    font-size: clamp(34px, 5vw, 54px);
-    font-weight: 820;
-    line-height: 1;
-    letter-spacing: -0.045em;
+    font-size: var(--font-size-large-title);
+    font-weight: 700;
+    line-height: var(--line-height-heading);
+    letter-spacing: -0.025em;
   }
 }
 
@@ -463,18 +463,18 @@ onBeforeUnmount(() => {
 
   h2 {
     margin: 4px 0 0;
-    font-size: clamp(24px, 3vw, 32px);
-    font-weight: 760;
-    line-height: 1.1;
-    letter-spacing: -0.035em;
+    font-size: var(--font-size-title);
+    font-weight: 600;
+    line-height: var(--line-height-heading);
+    letter-spacing: -0.02em;
   }
 }
 
 .section-kicker {
   color: var(--n-text-color-3);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.13em;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -592,7 +592,7 @@ onBeforeUnmount(() => {
     left: 10px;
     padding: 5px 8px;
     border-radius: var(--radius-pill);
-    font-size: 10px;
+    font-size: var(--font-size-caption);
     font-weight: 700;
   }
 
@@ -811,7 +811,7 @@ onBeforeUnmount(() => {
 
   span {
     color: var(--n-text-color-3);
-    font-size: 9px;
+    font-size: var(--font-size-caption);
     font-weight: 750;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -875,7 +875,7 @@ onBeforeUnmount(() => {
 
 .hot-track__index {
   color: var(--n-text-color-3);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -998,7 +998,7 @@ onBeforeUnmount(() => {
 
   .home-header h1 {
     margin-top: 6px;
-    font-size: clamp(30px, 10vw, 36px);
+    font-size: var(--font-size-large-title);
   }
 
   .section-heading {

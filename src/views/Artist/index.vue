@@ -403,7 +403,7 @@ watch(
           max-width: min(780px, 100%);
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
-          font-weight: 800;
+          font-weight: 700;
           line-height: normal;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;
@@ -520,9 +520,11 @@ watch(
     margin-top: 0;
   }
 
+  // `clip` 而不是 `hidden`：`hidden` 让它成为滚动容器，子页里的 sticky（DataLists 的定位
+  // 药丸）就钉在这个永不滚动的盒子上。完整理由见 `views/Local/index.vue` 的同名规则。
   .content {
     position: relative;
-    overflow: hidden;
+    overflow: clip;
   }
 
   @media (max-width: 768px) {
