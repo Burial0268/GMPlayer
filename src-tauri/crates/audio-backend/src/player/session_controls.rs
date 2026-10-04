@@ -188,6 +188,9 @@ impl AudioPlayer {
     /// Advance the play mode one step. The OS button sends an intent rather than
     /// a value because it cannot know the current mode — only the backend can.
     pub(super) async fn cycle_play_mode(&mut self) {
+        if self.personal_fm.is_some() {
+            return;
+        }
         let next = self.session_controls.play_mode.cycled();
         self.session_controls.play_mode = next;
         self.adopt_play_mode(next);
@@ -202,6 +205,9 @@ impl AudioPlayer {
     /// would only take effect after the page woke up, which on Android can be
     /// several tracks later.
     fn adopt_play_mode(&mut self, mode: crate::types::NativePlaybackMode) {
+        if self.personal_fm.is_some() {
+            return;
+        }
         let playing = self
             .current_identity
             .as_ref()
@@ -287,7 +293,10 @@ impl AudioPlayer {
         }
         let Some(song_id) = identity.netease_id().map(str::to_string) else {
             // Only Netease tracks have a like list to be in.
-            warn!("favourite pressed on a non-netease track: {}", identity.key());
+            warn!(
+                "favourite pressed on a non-netease track: {}",
+                identity.key()
+            );
             return;
         };
         if !self.favourite_capable() {
@@ -451,7 +460,7 @@ impl AudioPlayer {
     /// press on such an account re-derives `false` at the next load and toggles
     /// in the same direction forever. A completed fetch replaces the list
     /// wholesale, and signing out drops it, so nothing accumulates.
-    fn remember_favourite(&mut self, netease_id: &str, favourite: bool) {
+    pub(super) fn remember_favourite(&mut self, netease_id: &str, favourite: bool) {
         let list = self.likelist.get_or_insert_with(HashSet::new);
         if favourite {
             list.insert(netease_id.to_string());

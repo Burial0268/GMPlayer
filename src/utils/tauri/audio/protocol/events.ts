@@ -6,7 +6,7 @@
  * every envelope carries a `seq` for dedup across a transport switch.
  */
 import type { SongData } from "./messages";
-import type { NativePlannerStatus, TrackIdentity } from "./manifest";
+import type { NativeFmSnapshot, NativePlannerStatus, TrackIdentity } from "./manifest";
 
 export interface AudioThreadEventMessage<T> {
   callbackId: string;
@@ -65,6 +65,11 @@ export interface AutoMixNativeStatus {
 }
 
 export type AudioThreadEvent =
+  | { type: "personalFmChanged"; data: { session: NativeFmSnapshot | null } }
+  | {
+      type: "personalFmTrashResult";
+      data: { sessionId: number; id: string; error: string | null };
+    }
   | {
       type: "playPosition";
       data: {

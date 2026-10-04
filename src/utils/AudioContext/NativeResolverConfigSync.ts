@@ -20,7 +20,7 @@
 
 import { isTauri } from "@/utils/tauri/core/runtime";
 import type { NativeResolverConfig } from "@/utils/tauri/audio/protocol";
-import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
+import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
 import useSettingDataStore from "@/store/settingData";
 import { userStore } from "@/store";
 import { getNcmTransport } from "@/utils/request";
@@ -61,8 +61,6 @@ const resolveUserId = (user: ReturnType<typeof userStore>): string | null => {
  */
 export const syncNativeResolverConfig = (options: { force?: boolean } = {}): void => {
   if (!isTauri()) return;
-  const sound = window.$player;
-  if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
 
   const setting = useSettingDataStore();
   const user = userStore();
@@ -93,7 +91,7 @@ export const syncNativeResolverConfig = (options: { force?: boolean } = {}): voi
   if (!options.force && serialized === lastSerialized) return;
   lastSerialized = serialized;
 
-  sound.setNativeResolverConfig(config);
+  getAudioBackendTransport().sendOrQueue({ type: "setNativeResolverConfig", config });
   if (IS_DEV) {
     // Never log the cookie itself — only whether one is present.
     console.log(

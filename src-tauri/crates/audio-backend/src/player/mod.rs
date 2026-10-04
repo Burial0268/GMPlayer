@@ -44,6 +44,8 @@ mod metadata_fetch;
 mod mixer;
 mod now_playing;
 mod output_runtime;
+mod personal_fm;
+mod personal_fm_runtime;
 mod planner;
 mod planner_runtime;
 mod platform;
@@ -56,7 +58,9 @@ pub mod source_resolver;
 mod status;
 
 #[allow(unused_imports)]
-pub use api::{EventBuffer, Player, PlayerEventSubscriber, PlayerHandle, PlayerShared, SubscriberId};
+pub use api::{
+    EventBuffer, Player, PlayerEventSubscriber, PlayerHandle, PlayerShared, SubscriberId,
+};
 
 use api::{join_thread_async, SeekRequest};
 use automix::AutoMixManager;
@@ -188,6 +192,12 @@ struct AudioPlayer {
     planner: Planner,
     source_cache: SourceCache,
     resolver_config: NativeResolverConfig,
+    personal_fm: Option<personal_fm::PersonalFm>,
+    fm_session_id: u64,
+    fm_tx: mpsc::UnboundedSender<personal_fm_runtime::FmResult>,
+    fm_rx: mpsc::UnboundedReceiver<personal_fm_runtime::FmResult>,
+    fm_fetch_task: Option<tokio::task::JoinHandle<()>>,
+    fm_trash_task: Option<tokio::task::JoinHandle<()>>,
     /// Stable identity of the loaded track. Survives URL re-resolution, unlike
     /// `current_song`'s `local:<url>` id.
     current_identity: Option<TrackIdentity>,
@@ -349,6 +359,7 @@ impl AudioPlayer {
         let (automix_prepare_tx, automix_prepare_rx) = mpsc::unbounded_channel();
         let (output_refresh_tx, output_refresh_rx) = mpsc::unbounded_channel();
         let (prefetch_tx, prefetch_rx) = mpsc::unbounded_channel();
+        let (fm_tx, fm_rx) = mpsc::unbounded_channel();
         let (metadata_tx, metadata_rx) = mpsc::unbounded_channel();
         let (favourite_tx, favourite_rx) = mpsc::unbounded_channel();
         let (likelist_tx, likelist_rx) = mpsc::unbounded_channel();
@@ -419,6 +430,12 @@ impl AudioPlayer {
             planner: Planner::new(),
             source_cache: SourceCache::new(),
             resolver_config: NativeResolverConfig::default(),
+            personal_fm: None,
+            fm_session_id: 0,
+            fm_tx,
+            fm_rx,
+            fm_fetch_task: None,
+            fm_trash_task: None,
             current_identity: None,
             pending_identity: None,
             listen_together_room: None,
@@ -453,9 +470,8 @@ impl AudioPlayer {
         // Listen-together keepalive. Ticks unconditionally — the handler is a
         // no-op when no room is armed, and at 30 s it is negligible next to the
         // 100 ms output-health tick already running.
-        let mut listen_together_beat = tokio::time::interval(Duration::from_secs(
-            listen_together::HEARTBEAT_PERIOD_SECS,
-        ));
+        let mut listen_together_beat =
+            tokio::time::interval(Duration::from_secs(listen_together::HEARTBEAT_PERIOD_SECS));
         listen_together_beat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         loop {
@@ -508,6 +524,10 @@ impl AudioPlayer {
                 }
               }
 
+              result = self.fm_rx.recv() => {
+                if let Some(result) = result { self.handle_fm_result(result).await; }
+              }
+
               result = self.metadata_rx.recv() => {
                 if let Some(result) = result {
                   self.handle_metadata_result(result).await;
@@ -528,6 +548,8 @@ impl AudioPlayer {
 
               _ = output_device_check.tick() => {
                 self.poll_output_device_tick();
+                self.tick_personal_fm().await;
+                self.tasks.retain(|task| !task.is_finished());
               }
 
               _ = output_health_check.tick() => {
@@ -608,6 +630,12 @@ impl AudioPlayer {
 
 impl Drop for AudioPlayer {
     fn drop(&mut self) {
+        if let Some(task) = &self.fm_fetch_task {
+            task.abort();
+        }
+        if let Some(task) = &self.fm_trash_task {
+            task.abort();
+        }
         for task in &self.tasks {
             task.abort();
         }

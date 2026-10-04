@@ -1666,7 +1666,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
 
   SoundManager.setCurrentSongId(songId, sound);
   music.playingSongId = Number.isFinite(songId) && songId !== 0 ? songId : null;
-  music.setPlayState(true);
+  music.setPlayState(music.nativeFmSession?.desiredPlaying ?? true);
   music.isLoadingSong = false;
 
   const duration = sound.duration();

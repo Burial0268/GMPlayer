@@ -33,7 +33,7 @@ use super::{AudioPlayer, PlaybackIntent};
 /// the advance loop walks on after a track failure — and with no output every
 /// candidate fails at the same step, which would blacklist the manifest one
 /// track per attempt over a device the user merely switched.
-enum PlannedStart {
+pub(super) enum PlannedStart {
     /// The track is playing.
     Started,
     /// This source will not play. The position is blacklisted; keep walking.
@@ -53,6 +53,9 @@ impl AudioPlayer {
     // ── Manifest lifecycle ───────────────────────────────────────
 
     pub(super) async fn apply_native_manifest(&mut self, manifest: NativePlaybackManifest) {
+        if self.personal_fm.is_some() {
+            return;
+        }
         let revision = manifest.revision;
         if !self.manifest.set(manifest) {
             info!(
@@ -88,7 +91,8 @@ impl AudioPlayer {
         // `invalidate_planner_anchor` for this very handshake — and that is the
         // one case where the frontend's declaration wins.
         let playing_key = self.current_planner_key();
-        self.planner.reset_for_new_manifest(&self.manifest, playing_key.as_deref());
+        self.planner
+            .reset_for_new_manifest(&self.manifest, playing_key.as_deref());
 
         if self.current_identity.is_none() {
             if let Some(track) = self.planner.cursor(&self.manifest) {
@@ -116,6 +120,9 @@ impl AudioPlayer {
     }
 
     pub(super) async fn clear_native_manifest(&mut self, revision: u64) {
+        if self.personal_fm.is_some() {
+            return;
+        }
         if !self.manifest.clear(revision) {
             return;
         }
@@ -128,7 +135,22 @@ impl AudioPlayer {
         let usable = config.is_usable();
         let credentials_changed = self.resolver_config.cookie != config.cookie
             || self.resolver_config.user_id != config.user_id;
+        let account_changed = self.resolver_config.user_id != config.user_id;
+        let transport_changed = self.resolver_config.use_local_ncm != config.use_local_ncm
+            || self.resolver_config.ncm_base_url != config.ncm_base_url;
+        if credentials_changed || transport_changed {
+            if let Some(fm) = &mut self.personal_fm {
+                if account_changed {
+                    fm.account_changed(std::time::Instant::now());
+                } else {
+                    fm.credentials_changed(std::time::Instant::now());
+                }
+            }
+        }
         self.resolver_config = config;
+        if credentials_changed || transport_changed {
+            self.rebuild_fm_manifest();
+        }
         // Credentials changed — anything prepared under the old ones may be
         // wrong quality or outright unplayable.
         self.source_cache.invalidate();
@@ -147,6 +169,9 @@ impl AudioPlayer {
     }
 
     pub(super) async fn set_native_planner_enabled(&mut self, enabled: bool) {
+        if self.personal_fm.is_some() {
+            return;
+        }
         if self.planner.is_enabled() == enabled {
             return;
         }
@@ -181,7 +206,12 @@ impl AudioPlayer {
         if !self.planner_can_advance() || !self.resolver_config.is_usable() {
             return;
         }
-        let Some(next) = self.planner.peek_next(&mut self.manifest) else {
+        let next = if self.personal_fm.is_some() {
+            self.fm_next_track()
+        } else {
+            self.planner.peek_next(&mut self.manifest)
+        };
+        let Some(next) = next else {
             return;
         };
         if self.source_cache.has_fresh_for(next.position) || self.source_cache.is_in_flight() {
@@ -233,6 +263,18 @@ impl AudioPlayer {
 
         if !self.source_cache.accept(result) {
             // Superseded by a newer generation — nothing to record.
+            return;
+        }
+
+        if self.personal_fm.is_some() {
+            if let Some(err) = failure {
+                if let Some(entry) = self.manifest.entry_at(position) {
+                    self.fm_prefetch_failed(entry.identity.clone(), err).await;
+                }
+            } else {
+                self.fm_source_ready().await;
+            }
+            self.emit_planner_status().await;
             return;
         }
 
@@ -407,7 +449,7 @@ impl AudioPlayer {
 
     /// Load `track` from `uri` through the existing bounded-queue machinery,
     /// then re-anchor planner state and prepare the following track.
-    async fn start_planned_track(
+    pub(super) async fn start_planned_track(
         &mut self,
         track: &PlannedTrack,
         uri: String,
@@ -417,15 +459,15 @@ impl AudioPlayer {
         // WebView-is-dead path — nothing else is going to tell us what this
         // track is called, and without it the media session would fall back to
         // the temp file the URI gets downloaded into.
-        let display = self
-            .manifest
-            .entry_at(track.position)
-            .map(|entry| crate::types::TrackDisplay {
-                title: entry.title.clone(),
-                artist: entry.artist.clone(),
-                album: entry.album.clone(),
-                artwork_url: entry.artwork_url.clone(),
-            });
+        let display =
+            self.manifest
+                .entry_at(track.position)
+                .map(|entry| crate::types::TrackDisplay {
+                    title: entry.title.clone(),
+                    artist: entry.artist.clone(),
+                    album: entry.album.clone(),
+                    artwork_url: entry.artwork_url.clone(),
+                });
         let song = SongData::Local {
             file_path: uri,
             orig_order: track.playlist_index,
@@ -447,13 +489,18 @@ impl AudioPlayer {
 
         match self.start_playing_song(true, None, None).await {
             Ok(()) => {
-                self.planner.mark_started(track.position);
+                let position = if self.personal_fm.is_some() {
+                    0
+                } else {
+                    track.position
+                };
+                self.planner.mark_started(position);
                 let _ = self
                     .emitter()
                     .emit(AudioThreadEvent::NativePlannerAdvanced {
                         manifest_revision: self.manifest.revision(),
                         identity: track.identity.clone(),
-                        playlist_index: track.playlist_index,
+                        playlist_index: self.current_play_index,
                         music_id,
                     })
                     .await;

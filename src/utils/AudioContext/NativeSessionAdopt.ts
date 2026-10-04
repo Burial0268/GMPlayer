@@ -34,6 +34,7 @@ import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 // Import the store directly to avoid a cycle through the barrel export.
 import useMusicDataStore from "@/store/musicData";
 import { reconcileNativeManifestRevision } from "./NativeManifestPublisher";
+import { adoptNativePersonalFm } from "./NativePersonalFm";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -99,6 +100,7 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   // a reload resets the in-memory counter, and publishing a revision the
   // backend already holds would be rejected for the rest of the session.
   reconcileNativeManifestRevision(snapshot.manifestRevision);
+  if (snapshot.personalFm) adoptNativePersonalFm(snapshot.personalFm);
 
   if (!snapshot.hasTrack || !snapshot.identity) return null;
   if (!snapshot.musicId.startsWith(MUSIC_ID_PREFIX)) return null;
@@ -114,10 +116,11 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   // imported track down the "resolve a fresh URL and restart" path on every
   // reload — which for a local file means restarting from the persisted position
   // while the backend is still playing it.
+  const identity = snapshot.identity;
   const index =
-    snapshot.identity.provider === "netease"
-      ? playlists.findIndex((song) => String(song?.id) === snapshot.identity!.id)
-      : playlists.findIndex((song) => song?.local?.uri === snapshot.identity!.path);
+    identity.provider === "netease"
+      ? playlists.findIndex((song) => String(song?.id) === identity.id)
+      : playlists.findIndex((song) => song?.local?.uri === identity.path);
   if (index < 0) {
     // The backend is on a track this frontend no longer lists (playlist edited
     // in another window, storage rolled back). Let the normal startup path
@@ -152,7 +155,7 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
 
   if (IS_DEV) {
     console.log(
-      `[NativeSessionAdopt] adopting netease:${identityId} @ index ${index}, ` +
+      `[NativeSessionAdopt] adopting ${trackIdentityKey(identity)} @ index ${index}, ` +
         `${position.toFixed(1)}s / ${duration.toFixed(1)}s, playing=${snapshot.isPlaying}`,
     );
   }

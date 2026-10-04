@@ -60,6 +60,11 @@ impl AudioPlayer {
             })
             .await;
 
+        if self.personal_fm.is_some() {
+            self.advance_personal_fm().await;
+            return;
+        }
+
         // The manifest planner owns advancement whenever it has a list: it can
         // reach any track in the playlist and re-resolve expired URLs, neither
         // of which the bounded queue can do once the JS runtime is frozen.
@@ -436,6 +441,8 @@ impl AudioPlayer {
         let is_now_playing = self.playback_intent == PlaybackIntent::Playing;
         self.publish_position_anchor(is_now_playing, anchor_pos)
             .await;
+
+        self.personal_fm_started().await;
 
         // Decoder is up and the timeline is anchored: whatever the media
         // session was showing as "buffering" is now real playback.

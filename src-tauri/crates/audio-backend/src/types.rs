@@ -338,6 +338,20 @@ pub enum AudioThreadMessage {
         current_index: usize,
         position: f64,
     },
+    /// Start a native-owned radio session. Repeated starts do not reset a live session.
+    #[serde(rename_all = "camelCase")]
+    StartPersonalFm {
+        #[serde(default)]
+        seed: Option<serde_json::Value>,
+    },
+    /// Without an id, stop the session at this point in the ordered command pipe.
+    #[serde(rename_all = "camelCase")]
+    StopPersonalFm {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<u64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    TrashPersonalFm { session_id: u64, id: String },
     /// Replace the native playback manifest wholesale. `revision` must be
     /// strictly newer than the stored one or the message is ignored.
     #[serde(rename_all = "camelCase")]
@@ -407,6 +421,14 @@ pub enum AudioThreadMessage {
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type", content = "data")]
 pub enum AudioThreadEvent {
+    #[serde(rename_all = "camelCase")]
+    PersonalFmChanged { session: Option<NativeFmSnapshot> },
+    #[serde(rename_all = "camelCase")]
+    PersonalFmTrashResult {
+        session_id: u64,
+        id: String,
+        error: Option<String>,
+    },
     #[serde(rename_all = "camelCase")]
     PlayPosition {
         position: f64,
@@ -832,6 +854,27 @@ pub struct NativePlannerStatus {
     pub enabled: bool,
 }
 
+/// Radio rows contain only display/resolver metadata, never a resolved source or credentials.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeFmTrack {
+    pub identity: TrackIdentity,
+    pub song: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeFmSnapshot {
+    pub session_id: u64,
+    pub revision: u64,
+    pub tracks: Vec<NativeFmTrack>,
+    pub current_identity: Option<TrackIdentity>,
+    pub desired_playing: bool,
+    pub refilling: bool,
+    pub waiting: bool,
+    pub error: Option<String>,
+}
+
 /// Authoritative snapshot of the live playback session, readable synchronously
 /// (no round-trip through the player message loop) via the `audio_get_session`
 /// command.
@@ -845,6 +888,9 @@ pub struct NativePlannerStatus {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeSessionSnapshot {
+    /// Present even between tracks: a reloaded page must not replace an active radio session.
+    #[serde(default)]
+    pub personal_fm: Option<NativeFmSnapshot>,
     /// `false` when nothing is loaded — the frontend then owns startup as before.
     pub has_track: bool,
     /// Transport id (`local:<url>`). Only useful for re-seeding a controller's
@@ -1152,8 +1198,40 @@ mod tests {
     /// loading anything; the field names must match
     /// `NativeSessionSnapshot` in `src/utils/tauri/audio/protocol/manifest.ts`.
     #[test]
+    fn personal_fm_commands_and_waiting_snapshot_use_the_bridge_protocol() {
+        for json in [
+            serde_json::json!({"type": "startPersonalFm", "seed": {"id": "7"}}),
+            serde_json::json!({"type": "stopPersonalFm", "sessionId": 4}),
+            serde_json::json!({"type": "stopPersonalFm"}),
+            serde_json::json!({"type": "trashPersonalFm", "sessionId": 4, "id": "7"}),
+        ] {
+            let command: AudioThreadMessage = serde_json::from_value(json.clone()).unwrap();
+            assert_eq!(serde_json::to_value(command).unwrap(), json);
+        }
+        let snapshot = NativeSessionSnapshot {
+            personal_fm: Some(NativeFmSnapshot {
+                session_id: 4,
+                revision: 2,
+                tracks: Vec::new(),
+                current_identity: None,
+                desired_playing: true,
+                refilling: false,
+                waiting: true,
+                error: None,
+            }),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(json["hasTrack"], false);
+        assert_eq!(json["personalFm"]["sessionId"], 4);
+        assert_eq!(json["personalFm"]["desiredPlaying"], true);
+        assert_eq!(json["personalFm"]["waiting"], true);
+    }
+
+    #[test]
     fn session_snapshot_uses_camel_case_wire_names() {
         let snapshot = NativeSessionSnapshot {
+            personal_fm: None,
             has_track: true,
             music_id: "local:https://cdn/a.mp3".into(),
             identity: Some(TrackIdentity::Netease { id: "7".into() }),
@@ -1275,7 +1353,10 @@ mod tests {
             playlist_index: 9,
             ..base.clone()
         };
-        assert!(base.same_metadata(&seeked), "a seek must not rebuild metadata");
+        assert!(
+            base.same_metadata(&seeked),
+            "a seek must not rebuild metadata"
+        );
 
         // Buffering rides on the load events, not on a metadata rebuild —
         // otherwise every track start would re-download the cover twice.
@@ -1292,7 +1373,10 @@ mod tests {
             identity: Some(TrackIdentity::Netease { id: "2".into() }),
             ..base.clone()
         };
-        assert!(!base.same_metadata(&next_track), "a track change must rebuild");
+        assert!(
+            !base.same_metadata(&next_track),
+            "a track change must rebuild"
+        );
 
         let retitled = NowPlayingInfo {
             title: "t2".into(),
@@ -1398,8 +1482,14 @@ mod tests {
             has_pc: false,
         };
         let json = serde_json::to_string(&entry).expect("serialize");
-        assert!(json.contains("\"artworkUrl\""), "camelCase artworkUrl: {json}");
-        assert!(json.contains("\"durationMs\""), "camelCase durationMs: {json}");
+        assert!(
+            json.contains("\"artworkUrl\""),
+            "camelCase artworkUrl: {json}"
+        );
+        assert!(
+            json.contains("\"durationMs\""),
+            "camelCase durationMs: {json}"
+        );
 
         let back: NativeManifestEntry = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.album.as_deref(), Some("al"));

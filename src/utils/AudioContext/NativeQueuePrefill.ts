@@ -113,12 +113,8 @@ export async function prefillNativeQueue(): Promise<void> {
   const music = useMusicDataStore();
   const listenTogether = useListenTogetherStore();
   cancelNativeQueuePrefill();
-  // Personal FM is no longer excluded: it now keeps a pre-fetched buffer in the
-  // playlist (see musicData refillFmBuffer), so pre-resolving its next URL gives
-  // the same gapless hand-off as a normal queue. Its next track is decided
-  // locally now, not by a live per-skip request. Listen-together still is not
-  // pre-fillable — its next track needs a live room round-trip.
-  if (listenTogether.isInRoom) return;
+  // Rust owns the FM reservoir and its signed-source prefetch.
+  if (music.persistData.personalFmMode || listenTogether.isInRoom) return;
 
   const playlists = music.persistData.playlists;
   const listLength = playlists.length;
@@ -127,10 +123,7 @@ export async function prefillNativeQueue(): Promise<void> {
   const currentIndex = music.persistData.playSongIndex;
   const currentSong = playlists[currentIndex];
   if (!currentSong?.id) return;
-  // FM walks its buffer forward regardless of the user's single/random play-mode,
-  // so treat it as `normal` here (a `single` play-mode must not collapse the FM
-  // window to just the current track).
-  const mode = music.persistData.personalFmMode ? "normal" : music.persistData.playSongMode;
+  const mode = music.persistData.playSongMode;
 
   const generation = prefillGeneration;
   abortController = new AbortController();
@@ -200,7 +193,7 @@ export async function prefillNativeQueue(): Promise<void> {
 
   if (signal.aborted || generation !== prefillGeneration) return;
   if (sound.isDestroyed() || window.$player !== sound) return;
-  if (listenTogether.isInRoom) return;
+  if (music.persistData.personalFmMode || listenTogether.isInRoom) return;
   // Bail if the store moved on while URLs were resolving — the new track's
   // own play handler re-runs the prefill against fresh state.
   const livePlaylists = music.persistData.playlists;

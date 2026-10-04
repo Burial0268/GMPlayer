@@ -15,7 +15,6 @@ import {
   getAudioPreloader,
   SoundManager,
   cancelNativeQueuePrefill,
-  prefillNativeQueue,
   publishNativeManifest,
   clearNativeManifest,
   publishSessionControls,
@@ -44,6 +43,15 @@ import {
 } from "./musicTypes";
 import { asRawEntries, asRawEntry } from "@/utils/rawEntry";
 import { hintTracks } from "@/utils/ncmPrefetch";
+import { isTauri } from "@/utils/tauri/core/runtime";
+import type { NativeFmSnapshot } from "@/utils/tauri/audio/protocol";
+import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/PersonalFmState";
+import {
+  startNativePersonalFm,
+  stopNativePersonalFm,
+  nextNativePersonalFm,
+  trashNativePersonalFm,
+} from "@/utils/AudioContext/NativePersonalFm";
 
 declare const $message: any;
 declare const $player: any;
@@ -62,47 +70,38 @@ const shuffleInPlace = <T>(list: T[]): T[] => {
   return list;
 };
 
-/**
- * 私人 FM 预取缓冲。
- *
- * 背景：Android 后台时 JS worker 会被 Binder 冻结/杀死，"下一首现拉"必然失败，
- * native audio-deck / audio-mix 因等不到下一首 URL 而连带被 binder freeze，播放卡死。
- *
- * 对策：把 FM 从「每首现拉」改成「预取一批 + 交给 native planner 自行推进」。FM 模式
- * 下 `playlists` 当成前向缓冲用（当前曲在游标处，游标之后是预取的 runway），manifest
- * 把这批曲目的身份交给后端。这样即便 JS 冻结，后端也能自己解析并播下一首；planner 对
- * `repeatList: false` 走到缓冲尾就停（不会回卷到刚被 trash 的旧曲），随后 JS 复活时续满。
- *
- * TARGET：游标之后想保有的曲目数；LOW_WATER：runway 少于它就补；
- * MAX_FETCHES：一次续缓冲最多打几次 /personal_fm（网易每次返回若干首、且可能整批重复，
- * 用它兜底避免空转死循环）。
- */
+/** Browser/WASM FM runway. Tauri uses the native reservoir instead. */
 const FM_BUFFER_TARGET = 8;
 const FM_BUFFER_LOW_WATER = 4;
 const FM_MAX_REFILL_FETCHES = 3;
 
 /** 已 trash 的 FM 曲目 id（会话级）。续缓冲时据此过滤，别把刚踩掉的歌又拉回来。 */
 const fmDislikedIds = new Set<number>();
+let fmGeneration = 0;
+let fmRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let fmRetryAttempt = 0;
+let fmWaiting = false;
+let nativeFmStarting = false;
+const cancelFmRetry = () => {
+  if (fmRetryTimer !== null) clearTimeout(fmRetryTimer);
+  fmRetryTimer = null;
+};
 
-/**
- * 把 /personal_fm 的一条原始数据转成队列里的 SongData；无 id 视为无效。
- *
- * 字段映射与旧 `setPersonalFmData` 内联版本保持一致，只是抽出来给缓冲批量复用。
- */
+/** FM returns artists/alias/mvid rather than ordinary song-detail fields. */
 const toFmSong = (data: any): SongData | null => {
-  if (!data?.id) return null;
-  const song: SongData = asRawEntry({
-    id: data.id,
+  const id = fmSongId(data?.id);
+  if (id === null) return null;
+  return asRawEntry({
+    id,
     name: data.name,
     artist: data.artists,
     album: data.album,
     alia: data.alias,
     time: getSongTime(data.duration),
     fee: data.fee,
-    pc: data.pc ? data.pc : null,
+    pc: data.pc ?? null,
     mv: data.mvid,
   });
-  return song;
 };
 
 interface AutoMixStateData {
@@ -141,6 +140,7 @@ interface MusicDataState {
   // 私人 FM 续缓冲的并发闸：多处（切歌、播放开始、native 推进后 adopt）都会触发
   // refillFmBuffer，但同一时刻只允许跑一份，避免叠着打 /personal_fm。非持久化。
   fmRefilling: boolean;
+  nativeFmSession: NativeFmSnapshot | null;
 }
 
 const useMusicDataStore = defineStore("musicData", {
@@ -202,6 +202,7 @@ const useMusicDataStore = defineStore("musicData", {
       playingSongId:
         persistedStore.persistData.playlists[persistedStore.persistData.playSongIndex]?.id ?? null,
       fmRefilling: false,
+      nativeFmSession: null,
     };
   },
   getters: {
@@ -363,7 +364,80 @@ const useMusicDataStore = defineStore("musicData", {
       });
     },
 
+    adoptNativeFmSession(session: NativeFmSnapshot | null): boolean {
+      if (session && !isNewNativeFmSnapshot(this.nativeFmSession, session)) return false;
+      this.nativeFmSession = session;
+      if (!session) return true;
+      nativeFmStarting = false;
+      this.persistData.personalFmMode = true;
+      const songs = session.tracks
+        .map((track) => toFmSong(track.song))
+        .filter(Boolean) as SongData[];
+      const identity = session.currentIdentity;
+      const index =
+        identity?.provider === "netease"
+          ? songs.findIndex((song) => String(song.id) === identity.id)
+          : -1;
+      // Native FM's watcher never loads; the load/status event attaches after these rows exist.
+      this.persistData.playlists = asRawEntries(songs);
+      this.persistData.playSongIndex = Math.max(0, index);
+      if (index >= 0) this.persistData.personalFmData = songs[index];
+      this.playState = session.desiredPlaying;
+      this.isLoadingSong = session.waiting && session.desiredPlaying;
+      this.loadingStage = this.isLoadingSong ? (session.error ? "stalled" : "buffering") : "idle";
+      return true;
+    },
+
+    applyNativeFmTrashResult(result: { sessionId: number; id: string; error: string | null }) {
+      if (result.sessionId !== this.nativeFmSession?.sessionId) return;
+      if (result.error) {
+        $message.error(getLanguageData("fmTrashError"));
+        return;
+      }
+      const id = Number(result.id);
+      if (Number.isSafeInteger(id)) this.applyLikeState(id, false);
+      notifyPlaylistNeedsReconcile(likedPlaylistId());
+    },
+
     setPersonalFmMode(value: boolean) {
+      fmGeneration++;
+      cancelFmRetry();
+      fmWaiting = false;
+      fmRetryAttempt = 0;
+      this.fmRefilling = false;
+      if (isTauri()) {
+        cancelNativeQueuePrefill();
+        if (value) {
+          if (this.nativeFmSession || nativeFmStarting) return;
+          nativeFmStarting = true;
+          // Retire the old controller before Start, so its late load cannot pause FM.
+          SoundManager.unload();
+          const head = this.persistData.personalFmData as SongData;
+          this.persistData.personalFmMode = true;
+          this.isLoadingSong = true;
+          this.playState = true;
+          startNativePersonalFm(
+            head?.id
+              ? {
+                  id: String(head.id),
+                  name: head.name,
+                  artists: head.artist,
+                  album: head.album,
+                  alias: head.alia,
+                  fee: head.fee,
+                  pc: head.pc,
+                  mvid: head.mv,
+                }
+              : null,
+          );
+        } else {
+          nativeFmStarting = false;
+          stopNativePersonalFm(this.nativeFmSession?.sessionId ?? null);
+          this.nativeFmSession = null;
+          this.persistData.personalFmMode = false;
+        }
+        return;
+      }
       this.persistData.personalFmMode = value;
       if (value) {
         // 进入 FM：不再撤销 manifest。既然现在预取了一批曲目（见 FM_BUFFER_* 与
@@ -395,14 +469,18 @@ const useMusicDataStore = defineStore("musicData", {
      * - FM 模式（正以 FM 播放）：整批并进缓冲，把缓冲头设为当前并播放，随后续满。
      */
     setPersonalFmData() {
+      if (isTauri() && this.persistData.personalFmMode) return;
+      const generation = fmGeneration;
+      const previewOnly = !this.persistData.personalFmMode;
       getPersonalFm()
         .then((res: any) => {
+          if (generation !== fmGeneration) return;
           const list = Array.isArray(res?.data) ? res.data : [];
           if (!list.length) {
             $message.error(getLanguageData("personalFmError"));
             return;
           }
-          if (!this.persistData.personalFmMode) {
+          if (previewOnly) {
             // 预览态：沿用旧行为——展示 data[2]（网易此位常是"真正推荐"）或 data[0]，
             // 且不与上一次展示的同名重复。
             const preview = toFmSong(list[2] ?? list[0]);
@@ -471,8 +549,9 @@ const useMusicDataStore = defineStore("musicData", {
      * FM_MAX_REFILL_FETCHES 兜底避免空转。
      */
     async refillFmBuffer(): Promise<void> {
-      if (!this.persistData.personalFmMode) return;
+      if (isTauri() || !this.persistData.personalFmMode) return;
       if (this.fmRefilling) return;
+      const generation = fmGeneration;
       this.fmRefilling = true;
       try {
         let fetches = 0;
@@ -489,6 +568,7 @@ const useMusicDataStore = defineStore("musicData", {
             console.error(getLanguageData("personalFmError"), err);
             break;
           }
+          if (generation !== fmGeneration || !this.persistData.personalFmMode) return;
           const list = Array.isArray(res?.data) ? res.data : [];
           if (!list.length) break;
           const added = this.ingestFmTracks(list);
@@ -497,9 +577,31 @@ const useMusicDataStore = defineStore("musicData", {
           if (added === 0) break;
         }
       } finally {
-        this.fmRefilling = false;
+        if (generation === fmGeneration) this.fmRefilling = false;
       }
-      void prefillNativeQueue();
+      if (generation !== fmGeneration || !this.persistData.personalFmMode) return;
+      if (fmWaiting && this.playState) {
+        if (this.remainingFmRunway() > 0) {
+          fmWaiting = false;
+          fmRetryAttempt = 0;
+          this.advanceFmToNext();
+        } else {
+          this.scheduleFmRetry();
+        }
+      }
+    },
+
+    scheduleFmRetry() {
+      if (isTauri() || fmRetryTimer !== null || !this.playState) return;
+      const generation = fmGeneration;
+      const delays = [5, 15, 30, 60, 120, 300];
+      const delay = delays[Math.min(fmRetryAttempt++, delays.length - 1)];
+      fmRetryTimer = setTimeout(() => {
+        fmRetryTimer = null;
+        if (generation === fmGeneration && this.persistData.personalFmMode && this.playState) {
+          void this.refillFmBuffer();
+        }
+      }, delay * 1000);
     },
 
     /**
@@ -509,6 +611,10 @@ const useMusicDataStore = defineStore("musicData", {
      * watcher 换歌，又把缓冲尺寸压住。缓冲见底才会现拉（正常预取下不会走到）。
      */
     advanceFmToNext(): boolean {
+      if (isTauri()) {
+        nextNativePersonalFm();
+        return true;
+      }
       const buffer = this.persistData.playlists;
       const cursor = this.persistData.playSongIndex;
       const playable = (song: SongData | undefined): boolean =>
@@ -524,9 +630,10 @@ const useMusicDataStore = defineStore("musicData", {
       if (nextIdx < 0) {
         // 缓冲见底（或剩下的全被踩过）：拉一批再前进。
         if (typeof $player !== "undefined") soundStop($player);
-        void this.refillFmBuffer().then(() => {
-          if (this.persistData.personalFmMode) this.advanceFmToNext();
-        });
+        fmWaiting = true;
+        this.isLoadingSong = true;
+        this.loadingStage = "stalled";
+        if (fmRetryTimer === null) void this.refillFmBuffer();
         return true;
       }
       if (typeof $player !== "undefined") soundStop($player);
@@ -554,13 +661,26 @@ const useMusicDataStore = defineStore("musicData", {
         $message.error(getLanguageData("needLogin"));
         return;
       }
+      if (isTauri() && this.nativeFmSession) {
+        trashNativePersonalFm(this.nativeFmSession.sessionId, String(id));
+        return;
+      }
+      const generation = fmGeneration;
       setFmTrash(id).then((res: any) => {
+        if (generation !== fmGeneration) return;
         if (res.code !== 200) {
           $message.error(getLanguageData("fmTrashError"));
           return;
         }
         // 记下被踩的 id：advanceFmToNext 会跳过它、续缓冲也会过滤它，避免刚踩掉又拉回来。
         fmDislikedIds.add(Number(id));
+        if (isTauri()) {
+          // Disliking the home preview starts fresh FM, never advances the ordinary queue.
+          this.persistData.personalFmData = {};
+          this.setPersonalFmMode(true);
+          notifyPlaylistNeedsReconcile(likedPlaylistId());
+          return;
+        }
         this.persistData.personalFmMode = true;
         this.advanceFmToNext();
         // Trashing an FM track also takes it out of 我喜欢的音乐 when it was
@@ -740,6 +860,8 @@ const useMusicDataStore = defineStore("musicData", {
 
     setPlayState(value: boolean) {
       this.playState = value;
+      if (!value) cancelFmRetry();
+      else if (fmWaiting && !isTauri()) this.scheduleFmRetry();
     },
 
     setBigPlayerState(value: boolean) {
@@ -755,6 +877,8 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     setPlaylists(value: SongData[]) {
+      if (isTauri() && (this.nativeFmSession || this.persistData.personalFmMode))
+        this.setPersonalFmMode(false);
       if (value.length === 0) {
         this.clearPlaylists();
         return;
@@ -1016,6 +1140,7 @@ const useMusicDataStore = defineStore("musicData", {
      * 打乱过之后 preShuffleOrder 就不空了，所以之后每次启动都是空转。
      */
     ensureShuffledInRandomMode() {
+      if (this.persistData.personalFmMode) return;
       if (this.persistData.playSongMode !== "random") return;
       if (this.persistData.preShuffleOrder.length) return;
       if (this.shufflePlaylistOrder()) publishNativeManifest();
@@ -1058,6 +1183,7 @@ const useMusicDataStore = defineStore("musicData", {
      * 必须照样跟着变——随机模式的顺序就装在 playlists 里。
      */
     adoptPlaySongMode(mode: "normal" | "random" | "single"): boolean {
+      if (this.persistData.personalFmMode) return false;
       const previousMode = this.persistData.playSongMode;
       if (mode === previousMode) return false;
       this.persistData.playSongMode = mode;
@@ -1066,6 +1192,7 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     setPlaySongMode(value: "normal" | "random" | "single" | null = null) {
+      if (this.persistData.personalFmMode) return;
       const modeObj = {
         normal: PlayCycle,
         random: ShuffleOne,
@@ -1110,6 +1237,10 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     setPlaySongIndex(type: "next" | "prev") {
+      if (isTauri() && this.persistData.personalFmMode) {
+        if (type === "next") nextNativePersonalFm();
+        return true;
+      }
       // Cancel AutoMix crossfade on manual skip
       const autoMix = getAutoMixEngine();
       if (autoMix.isHandoffActive()) {
@@ -1343,6 +1474,7 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     clearPlaylists() {
+      this.setPersonalFmMode(false);
       const autoMix = getAutoMixEngine();
       if (autoMix.isHandoffActive()) {
         autoMix.cancelCrossfade();

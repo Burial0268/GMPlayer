@@ -62,6 +62,12 @@ const NATIVE_ADVANCE_LOAD_TIMEOUT_MS = 20_000;
  */
 type PlannerRevisionObserver = (backendRevision: number) => void;
 let plannerRevisionObserver: PlannerRevisionObserver | null = null;
+let nativePersonalFmActive = false;
+
+/** Radio exhaustion is handled by Rust, never by the legacy JS end fallback. */
+export const setNativePersonalFmActive = (active: boolean): void => {
+  nativePersonalFmActive = active;
+};
 
 export const setPlannerRevisionObserver = (observer: PlannerRevisionObserver | null): void => {
   plannerRevisionObserver = observer;
@@ -789,6 +795,12 @@ export class NativeRustSound implements ISound {
       }
 
       case "audioPlayFinished": {
+        if (isTauri() && nativePersonalFmActive && this._isActiveController()) {
+          this._nativeAdvancePending = true;
+          this._adoptNextBackendMusicId = true;
+          this._clearNativeAdvanceFallback();
+          break;
+        }
         this._pendingPlayCommand = false;
         if (evt.data.musicId === this._expectedMusicId) {
           if (
@@ -1317,6 +1329,7 @@ export class NativeRustSound implements ISound {
 
   private _armNativeAdvanceFallback(timeoutMs: number): void {
     this._clearNativeAdvanceFallback();
+    if (isTauri() && nativePersonalFmActive) return;
     this._nativeAdvanceFallbackTimer = setTimeout(() => {
       this._nativeAdvanceFallbackTimer = null;
       this._abandonNativeAdvanceAdoption();

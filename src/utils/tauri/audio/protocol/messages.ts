@@ -116,6 +116,9 @@ export type AudioThreadMessage =
   | { type: "automixCancel" }
   | { type: "automixForceStart"; generation?: number | null }
   | { type: "automixCompleteNative"; generation: number; currentIndex: number; position: number }
+  | { type: "startPersonalFm"; seed?: Record<string, any> | null }
+  | { type: "stopPersonalFm"; sessionId?: number }
+  | { type: "trashPersonalFm"; sessionId: number; id: string }
   | { type: "setNativeManifest"; manifest: NativePlaybackManifest }
   | { type: "clearNativeManifest"; revision: number }
   | { type: "setNativeResolverConfig"; config: NativeResolverConfig }

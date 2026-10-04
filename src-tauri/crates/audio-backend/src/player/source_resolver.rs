@@ -414,9 +414,8 @@ fn resolve_ncm_body_local(
         )
     })?;
 
-    let parsed: serde_json::Value = serde_json::from_str(&envelope).map_err(|_| {
-        ResolveError::new(ResolveErrorKind::Transient, "malformed NCM envelope")
-    })?;
+    let parsed: serde_json::Value = serde_json::from_str(&envelope)
+        .map_err(|_| ResolveError::new(ResolveErrorKind::Transient, "malformed NCM envelope"))?;
 
     // The envelope wraps the upstream body. A non-200 upstream code is a real
     // answer, not a transport failure — 401/403 must stay distinguishable so
@@ -434,9 +433,9 @@ fn resolve_ncm_body_local(
         ));
     }
 
-    let body = parsed
-        .get("body")
-        .ok_or_else(|| ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body"))?;
+    let body = parsed.get("body").ok_or_else(|| {
+        ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body")
+    })?;
     Ok(body.to_string())
 }
 
@@ -662,9 +661,9 @@ fn favourite_body_local(
             format!("in-process NCM call returned status {status}"),
         ));
     }
-    let body = parsed
-        .get("body")
-        .ok_or_else(|| ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body"))?;
+    let body = parsed.get("body").ok_or_else(|| {
+        ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body")
+    })?;
     Ok(body.to_string())
 }
 
@@ -692,6 +691,101 @@ fn favourite_body_remote(
     send_and_read(request)
 }
 
+/// Fetch a new recommendation batch; never a cacheable metadata lookup.
+pub(super) fn fetch_personal_fm(
+    config: &NativeResolverConfig,
+) -> Result<Vec<serde_json::Value>, ResolveError> {
+    let body = personal_fm_body("personal_fm", None, config)?;
+    body.get("data")
+        .and_then(|v| v.as_array())
+        .cloned()
+        .ok_or_else(|| {
+            ResolveError::new(ResolveErrorKind::Transient, "FM response has no data array")
+        })
+}
+
+pub(super) fn trash_personal_fm(
+    id: &str,
+    config: &NativeResolverConfig,
+) -> Result<(), ResolveError> {
+    personal_fm_body("fm_trash", Some(id), config).map(|_| ())
+}
+
+fn personal_fm_body(
+    endpoint: &str,
+    id: Option<&str>,
+    config: &NativeResolverConfig,
+) -> Result<serde_json::Value, ResolveError> {
+    let body = match (config.use_local_ncm, NCM_HOOK.get()) {
+        (true, Some(hook)) => {
+            let mut query = serde_json::json!({});
+            if let Some(id) = id {
+                query["id"] = id.into();
+            }
+            if let Some(cookie) = trimmed(config.cookie.as_deref()) {
+                query["cookie"] = cookie.into();
+            }
+            let envelope = hook(endpoint, &query.to_string())
+                .map_err(|err| ResolveError::new(ResolveErrorKind::Transient, redact(&err)))?;
+            let parsed: serde_json::Value = serde_json::from_str(&envelope).map_err(|_| {
+                ResolveError::new(ResolveErrorKind::Transient, "malformed FM envelope")
+            })?;
+            if parsed.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+                let status = parsed["status"].as_u64().unwrap_or(0);
+                return Err(ResolveError::new(
+                    if matches!(status, 301 | 401 | 403) {
+                        ResolveErrorKind::Auth
+                    } else {
+                        ResolveErrorKind::Transient
+                    },
+                    format!("FM request returned status {status}"),
+                ));
+            }
+            parsed.get("body").cloned().ok_or_else(|| {
+                ResolveError::new(ResolveErrorKind::Transient, "FM envelope has no body")
+            })?
+        }
+        _ => {
+            let base = trimmed(config.ncm_base_url.as_deref()).ok_or_else(|| {
+                ResolveError::new(ResolveErrorKind::NotConfigured, "no NCM API configured")
+            })?;
+            let timestamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis()
+                .to_string();
+            let mut request = agent()
+                .get(&join_url(base, endpoint))
+                .query("timestamp", &timestamp)
+                .set("X-Requested-With", "XMLHttpRequest");
+            if let Some(id) = id {
+                request = request.query("id", id);
+            }
+            if let Some(cookie) = trimmed(config.cookie.as_deref()) {
+                request = request.set("Cookie", cookie);
+            }
+            serde_json::from_str(&send_and_read(request)?).map_err(|_| {
+                ResolveError::new(ResolveErrorKind::Transient, "malformed FM response")
+            })?
+        }
+    };
+    validate_fm_body(body)
+}
+
+fn validate_fm_body(body: serde_json::Value) -> Result<serde_json::Value, ResolveError> {
+    match body.get("code").and_then(|v| v.as_u64()) {
+        Some(200) => Ok(body),
+        code => Err(ResolveError::new(
+            if matches!(code, Some(301 | 401 | 403)) {
+                ResolveErrorKind::Auth
+            } else {
+                ResolveErrorKind::Transient
+            },
+            format!("FM request rejected: code={code:?}"),
+        )),
+    }
+}
+
 /// Non-empty, whitespace-trimmed view of an optional config string.
 fn trimmed(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|text| !text.is_empty())
@@ -717,8 +811,8 @@ pub(super) fn fetch_likelist(config: &NativeResolverConfig) -> Result<Vec<String
     }
     .map_err(|err| redact(&err.message))?;
 
-    let parsed: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|_| "malformed likelist JSON".to_string())?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|_| "malformed likelist JSON".to_string())?;
     let ids = parsed
         .get("ids")
         .and_then(|ids| ids.as_array())
@@ -785,16 +879,13 @@ fn likelist_body_local(
             format!("in-process NCM call returned status {status}"),
         ));
     }
-    let body = parsed
-        .get("body")
-        .ok_or_else(|| ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body"))?;
+    let body = parsed.get("body").ok_or_else(|| {
+        ResolveError::new(ResolveErrorKind::Transient, "NCM envelope has no body")
+    })?;
     Ok(body.to_string())
 }
 
-fn likelist_body_remote(
-    uid: &str,
-    config: &NativeResolverConfig,
-) -> Result<String, ResolveError> {
+fn likelist_body_remote(uid: &str, config: &NativeResolverConfig) -> Result<String, ResolveError> {
     let Some(base) = trimmed(config.ncm_base_url.as_deref()) else {
         return Err(ResolveError::new(
             ResolveErrorKind::NotConfigured,
@@ -872,7 +963,10 @@ mod tests {
     #[test]
     fn a_broken_likelist_is_not_a_like() {
         for body in ["", "{", "null", "[]", r#"{"code":301}"#, r#"{"ids":null}"#] {
-            assert!(!likelist_contains(body, "1"), "body {body:?} must not claim a like");
+            assert!(
+                !likelist_contains(body, "1"),
+                "body {body:?} must not claim a like"
+            );
         }
     }
 

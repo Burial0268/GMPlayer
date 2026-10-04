@@ -134,7 +134,9 @@ impl PendingDisplay {
 /// Trim and discard empty strings, so a manifest entry carrying `Some("")`
 /// falls through to the next source instead of blanking the notification.
 fn non_empty(value: Option<&String>) -> Option<&str> {
-    value.map(|text| text.trim()).filter(|text| !text.is_empty())
+    value
+        .map(|text| text.trim())
+        .filter(|text| !text.is_empty())
 }
 
 impl AudioPlayer {
@@ -188,6 +190,34 @@ impl AudioPlayer {
         }
 
         if self.current_song.is_none() {
+            if let Some(fm) = &self.personal_fm {
+                let track = fm
+                    .tracks
+                    .iter()
+                    .find(|track| fm.current.as_ref() == Some(&track.identity))
+                    .or_else(|| fm.tracks.first());
+                let entry = track.map(|track| super::personal_fm::manifest_entry(track, 0));
+                return NowPlayingInfo {
+                    has_track: true,
+                    identity: entry.as_ref().map(|entry| entry.identity.clone()),
+                    title: entry
+                        .as_ref()
+                        .and_then(|entry| entry.title.clone())
+                        .unwrap_or_else(|| "Personal FM".into()),
+                    artist: entry
+                        .as_ref()
+                        .and_then(|entry| entry.artist.clone())
+                        .unwrap_or_default(),
+                    album: entry
+                        .as_ref()
+                        .and_then(|entry| entry.album.clone())
+                        .unwrap_or_default(),
+                    artwork_url: entry.and_then(|entry| entry.artwork_url),
+                    is_loading: fm.desired_playing && !fm.auth_failed,
+                    controls: self.session_controls(),
+                    ..Default::default()
+                };
+            }
             return NowPlayingInfo::default();
         }
 
@@ -288,14 +318,16 @@ mod tests {
         assert_eq!(d.title.as_deref(), Some("海阔天空"));
         assert_eq!(d.artist.as_deref(), Some("Beyond"));
         assert_eq!(d.album.as_deref(), Some("乐与怒"));
-        assert_eq!(d.artwork_url.as_deref(), Some("https://p1.music.126.net/x.jpg"));
+        assert_eq!(
+            d.artwork_url.as_deref(),
+            Some("https://p1.music.126.net/x.jpg")
+        );
     }
 
     #[test]
     fn joins_multiple_artists() {
-        let d = PendingDisplay::from_song(&custom(
-            r#"{"name":"t","ar":[{"name":"A"},{"name":"B"}]}"#,
-        ));
+        let d =
+            PendingDisplay::from_song(&custom(r#"{"name":"t","ar":[{"name":"A"},{"name":"B"}]}"#));
         assert_eq!(d.artist.as_deref(), Some("A / B"));
     }
 

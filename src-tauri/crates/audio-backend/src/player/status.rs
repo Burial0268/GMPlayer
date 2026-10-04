@@ -107,6 +107,10 @@ impl AudioPlayer {
         {
             let mut session = self.session.lock();
             session.has_track = self.current_song.is_some();
+            session.personal_fm = self
+                .personal_fm
+                .as_ref()
+                .map(super::personal_fm::PersonalFm::snapshot);
             session.music_id = music_id.clone();
             session.identity = self.current_identity.clone();
             session.playlist_index = self.current_play_index;

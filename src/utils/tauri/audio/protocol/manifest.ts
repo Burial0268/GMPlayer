@@ -116,8 +116,27 @@ export interface NativePlannerStatus {
  * playing when the app was backgrounded — so it must ask here *before*
  * resolving a URL, or it will replace live playback with a stale track.
  */
+export interface NativeFmTrack {
+  identity: TrackIdentity;
+  /** Whitelisted personal_fm API fields, not frontend SongData or a resolved source. */
+  song: Record<string, any>;
+}
+
+export interface NativeFmSnapshot {
+  sessionId: number;
+  revision: number;
+  tracks: NativeFmTrack[];
+  currentIdentity: TrackIdentity | null;
+  desiredPlaying: boolean;
+  refilling: boolean;
+  waiting: boolean;
+  error: string | null;
+}
+
 export interface NativeSessionSnapshot {
-  /** `false` when nothing is loaded; the frontend then owns startup as before. */
+  /** Present even while the native radio is waiting for recommendations. */
+  personalFm?: NativeFmSnapshot | null;
+  /** `false` when nothing is loaded; an active FM session still owns startup. */
   hasTrack: boolean;
   /** Transport id (`local:<url>`). Only for re-seeding a controller, never for reconciliation. */
   musicId: string;

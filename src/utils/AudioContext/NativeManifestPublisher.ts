@@ -304,6 +304,7 @@ const flushNativeManifest = (): void => {
   if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
 
   const music = useMusicDataStore();
+  if (music.persistData.personalFmMode) return;
   const listenTogether = useListenTogetherStore();
 
   const playlists = music.persistData.playlists;
@@ -312,23 +313,8 @@ const flushNativeManifest = (): void => {
     return;
   }
 
-  // Listen-together has its next track chosen by a server: keep publishing the
-  // manifest (the backend still resolves tracks it is told to play) but take away
-  // its right to advance on its own.
-  //
-  // Personal FM used to be in the same bucket; it no longer is. FM now pre-fetches
-  // a buffer of upcoming tracks into the playlist (see musicData `FM_BUFFER_*` /
-  // refillFmBuffer), so the backend CAN advance through that buffer on its own —
-  // which is the whole point: on Android the JS worker is frozen in the background
-  // and cannot hand it the next track, and native audio-deck/mix threads would
-  // otherwise freeze waiting for a URL that never comes. FM ships `repeatList:
-  // false` and `mode: normal` below so the planner walks the buffer forward and
-  // stops at the tail (rather than wrapping into already-played / just-trashed
-  // tracks); JS tops the buffer up whenever it revives.
-  //
-  // This runs before the dedup check below because the gate can change while the
-  // playlist (and therefore the signature) stays identical.
-  const isPersonalFm = music.persistData.personalFmMode;
+  // Listen-together keeps its manifest but cannot advance without the room.
+  // Native FM returned above: Rust owns both its reservoir and its manifest.
   const serverDrivenOrder = listenTogether.isInRoom;
   applyPlannerGate(sound, !serverDrivenOrder);
 
@@ -337,12 +323,7 @@ const flushNativeManifest = (): void => {
   const cursorSongId = music.playingSongId ?? music.getPlaySongData?.id;
 
   // Probe before building: bail on the no-op path without allocating entries.
-  // Fold FM into the signature's mode slot: FM forces `mode: normal` +
-  // `repeatList: false` below regardless of the user's play-mode, so a plain
-  // (non-forced) publish must still re-ship when FM toggles even though
-  // `playSongMode` is unchanged.
-  const signatureMode = isPersonalFm ? "fm" : music.persistData.playSongMode;
-  const signature = playlistSignature(playlists, signatureMode, cursorSongId);
+  const signature = playlistSignature(playlists, music.persistData.playSongMode, cursorSongId);
   if (!force && signature === lastFingerprint) return;
 
   for (let index = 0; index < playlists.length; index++) {
@@ -392,14 +373,8 @@ const flushNativeManifest = (): void => {
     order: [],
     cursorIdentity,
     cursorIndex,
-    // Personal FM is a forward buffer: always walk it as `normal` (ignore the
-    // user's single/random play-mode, which does not apply to a radio stream)
-    // and never wrap — `repeatList: false` makes the planner stop at the buffer
-    // tail rather than replaying already-heard / just-trashed tracks. JS extends
-    // the buffer as it is consumed. Otherwise: `single` repeats one track; list
-    // repeat is the normal/random default.
-    mode: isPersonalFm ? "normal" : mode === "single" ? "single" : mode === "random" ? "random" : "normal",
-    repeatList: !isPersonalFm,
+    mode: mode === "single" ? "single" : mode === "random" ? "random" : "normal",
+    repeatList: true,
     randomSeed,
   };
 
