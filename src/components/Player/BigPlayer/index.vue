@@ -1618,9 +1618,14 @@ defineExpose({
         opacity: 0;
         pointer-events: none;
       }
+
+      :deep(.mobile-big-controls.lyric-controls-visible) {
+        opacity: 1;
+      }
     }
 
     &.mobile-visible.layer2-active {
+      :deep(.mobile-big-controls.lyric-controls-visible .mobile-controls-motion),
       :deep(.mobile-small-controls),
       :deep(.mobile-lyric),
       :deep(.no-lyrics) {

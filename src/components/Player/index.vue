@@ -334,6 +334,7 @@ import { localLyricFor } from "@/utils/localLibrary";
 import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
 import { detectWordTimedLyricFormat } from "@/utils/LyricsProcessor/timeUtils";
 import { coverUrl } from "@/utils/coverUrl";
+import { setupNativePersonalFm, sendNativeFmPlaying } from "@/utils/AudioContext/NativePersonalFm";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -551,6 +552,28 @@ let pendingBackendAttach = null;
 
 /** Unsubscribe for the local-library edit signal; see `applyLocalTrackChange`. */
 let unsubscribeLocalChanges = null;
+let unsubscribeNativeFm = null;
+let bootAdopting = isTauri();
+
+const attachNativeFmPlayback = (event) => {
+  if (bootAdopting || !music.nativeFmSession || !music.persistData.personalFmMode) return;
+  const data = event.data;
+  const identity = data.identity;
+  if (identity?.provider !== "netease" || !data.musicId?.startsWith("local:")) return;
+  const song = music.getPlaySongData;
+  if (!song || String(song.id) !== identity.id) return;
+  if (window.$player instanceof NativeRustSound && !window.$player.isDestroyed()) {
+    player.value = window.$player;
+    return;
+  }
+  const sourceUrl = data.musicId.slice("local:".length);
+  if (!sourceUrl) return;
+  player.value = createSound(sourceUrl, music.nativeFmSession.desiredPlaying, undefined, {
+    songId: song.id,
+    attachIdentity: identity,
+  });
+  loadLyricFor(song, song.id);
+};
 
 // 获取歌曲播放数据
 const getPlaySongData = async (data, level = setting.songLevel, requestedGeneration = null) => {
@@ -609,6 +632,11 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
         music.persistData.personalFmData = data;
         void music.refillFmBuffer();
       }
+      loadLyricFor(data, id);
+      return;
+    }
+
+    if (isTauri() && music.persistData.personalFmMode) {
       loadLyricFor(data, id);
       return;
     }
@@ -841,7 +869,11 @@ onMounted(() => {
     // what it is playing BEFORE touching the restored (stale) snapshot,
     // otherwise we resolve a URL for the track that was playing when the app
     // was backgrounded and cut off live audio.
-    adoptNativeBackendSession()
+    setupNativePersonalFm(attachNativeFmPlayback)
+      .then((unsubscribe) => {
+        unsubscribeNativeFm = unsubscribe;
+        return adoptNativeBackendSession();
+      })
       .then((adopted) => {
         pendingBackendAttach = adopted;
       })
@@ -854,7 +886,14 @@ onMounted(() => {
         // schedules its own debounced load. Drop that one and drive the load
         // from here so the attach descriptor is consumed exactly once.
         songChange.cancel({ upcomingOnly: true });
-        startRestoredPlayback();
+        bootAdopting = false;
+        if (pendingBackendAttach || !music.nativeFmSession) {
+          if (!pendingBackendAttach && music.persistData.personalFmMode) {
+            music.setPersonalFmMode(true);
+          } else {
+            startRestoredPlayback();
+          }
+        }
         // `getPlaySongData` consumes the descriptor synchronously when the ids
         // match. Anything left over describes a track we are not loading, and
         // must not be applied to some later selection of the same song.
@@ -886,9 +925,22 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  unsubscribeNativeFm?.();
+  unsubscribeNativeFm = null;
   unsubscribeLocalChanges?.();
   unsubscribeLocalChanges = null;
 });
+
+// Switching ownership invalidates a URL request even before the first FM row arrives.
+watch(
+  () => music.persistData.personalFmMode,
+  () => {
+    if (!isTauri()) return;
+    _songLoadGeneration++;
+    songChange.cancel({ upcomingOnly: true });
+  },
+  { flush: "sync" },
+);
 
 // 监听当前音乐数据变化
 watch(
@@ -899,6 +951,11 @@ watch(
     if (val?.id !== oldVal?.id) {
       const generation = ++_songLoadGeneration;
       songChange.cancel({ upcomingOnly: true });
+      if (bootAdopting || (isTauri() && music.persistData.personalFmMode)) {
+        if (!bootAdopting && val?.id) loadLyricFor(val, val.id);
+        broadcastPlayerState();
+        return;
+      }
       if (!val?.id) {
         failedAutoSkipSongIds.clear();
         failedAutoSkipQueueKey = "";
@@ -966,6 +1023,15 @@ watch(
   () => music.getPlayState,
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
+    if (bootAdopting) return;
+    if (isTauri() && music.persistData.personalFmMode) {
+      if (!music.nativeFmSession || music.nativeFmSession.desiredPlaying !== val) {
+        sendNativeFmPlaying(val);
+      }
+      broadcastPlayerState();
+      broadcastPlayerTime(true);
+      return;
+    }
     const currentSongId = Number(music.getPlaySongData?.id);
     // `!== 0`, not `> 0`: a local file's id is a negative hash of its path, so a
     // positive-only test refused to start playback for every imported track and

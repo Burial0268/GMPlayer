@@ -1,5 +1,9 @@
 <template>
-  <div ref="pagesRef" :class="['mobile-pages', { 'queue-open': queueOpen }]">
+  <div
+    ref="pagesRef"
+    :class="['mobile-pages', { 'queue-open': queueOpen }]"
+    :style="{ '--mobile-lyric-controls-height': `${lyricControlsHeight}px` }"
+  >
     <div class="mobile-player-page">
       <Motion class="mobile-player-content" :style="playerPageMotionStyle">
         <div class="mobile-full-ui">
@@ -17,7 +21,12 @@
           </Motion>
 
           <!-- AMLL .lyricLayout — Layer 2: 紧凑封面信息 + 歌词 -->
-          <div :class="['mobile-lyric-layout', { active: activeMobileLayer === 2 }]">
+          <div
+            :class="[
+              'mobile-lyric-layout',
+              { active: activeMobileLayer === 2, 'controls-visible': lyricControlsVisible },
+            ]"
+          >
             <div class="mobile-phony-small-cover mobile-cover-slot" ref="phonySmallCoverRef"></div>
             <div class="mobile-small-controls">
               <Motion class="mobile-small-controls-inner" :style="contentUiMotionStyle">
@@ -64,7 +73,12 @@
                 </div>
               </Motion>
             </div>
-            <div class="mobile-lyric" v-if="hasLyrics">
+            <div
+              v-if="hasLyrics"
+              class="mobile-lyric"
+              @touchmove.capture.passive="revealLyricControls"
+              @wheel.capture.passive="handleLyricWheel"
+            >
               <Motion class="mobile-lyric-inner" :style="contentUiMotionStyle">
                 <RollingLyrics
                   @mouseenter="$emit('lrcMouseEnter')"
@@ -75,7 +89,12 @@
                 <LyricOffsetControl class="mobile-lyric-offset" />
               </Motion>
             </div>
-            <div v-else class="no-lyrics">
+            <div
+              v-else
+              class="no-lyrics"
+              @touchmove.capture.passive="revealLyricControls"
+              @wheel.capture.passive="handleLyricWheel"
+            >
               <Motion class="mobile-ui-empty" :style="contentUiMotionStyle">
                 <span>¯\_(ツ)_/¯</span>
               </Motion>
@@ -83,12 +102,20 @@
           </div>
 
           <!-- AMLL .noLyricLayout — Layer 1: 大封面 + 歌曲信息 + controls -->
-          <div class="mobile-cover-layout">
+          <div :class="['mobile-cover-layout', { 'lyric-layer': activeMobileLayer === 2 }]">
             <div class="mobile-phony-big-cover mobile-cover-slot" ref="phonyBigCoverRef"></div>
-            <div class="mobile-big-controls">
+            <div
+              :class="['mobile-big-controls', { 'lyric-controls-visible': lyricControlsVisible }]"
+              :inert="activeMobileLayer === 2 && !lyricControlsVisible"
+              :aria-hidden="activeMobileLayer === 2 && !lyricControlsVisible"
+            >
               <Motion class="mobile-big-controls-inner" :style="contentUiMotionStyle">
                 <!-- 歌曲信息（展开） -->
-                <div class="mobile-song-info-row">
+                <div
+                  class="mobile-song-info-row"
+                  :inert="activeMobileLayer === 2"
+                  :aria-hidden="activeMobileLayer === 2"
+                >
                   <div class="mobile-song-info">
                     <div class="name-wrapper" ref="nameWrapperRef">
                       <div class="name" ref="nameTextRef" :class="{ 'is-marquee': isNameOverflow }">
@@ -135,23 +162,32 @@
                     <n-icon size="24" :component="MoreVertRound" @click.stop="" />
                   </div>
                 </div>
-                <Motion class="mobile-controls-motion" :style="controlsMotionStyle">
-                  <!-- 进度条 -->
-                  <div class="mobile-progress">
-                    <BouncingSlider
-                      :value="music.getPlaySongTime.currentTime || 0"
-                      :min="0"
-                      :max="music.getPlaySongTime.duration || 1"
-                      :is-playing="music.getPlayState"
-                      @update:value="handleProgressSeek"
-                    />
-                    <div class="time-display">
-                      <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                      <span>-{{ remainingTime }}</span>
+                <Motion as-child :style="controlsMotionStyle">
+                  <div
+                    ref="playbackControlsRef"
+                    class="mobile-controls-motion"
+                    @pointerdown.capture="holdLyricControls"
+                    @click.capture="scheduleLyricControlsHide"
+                    @focusin="clearLyricControlsTimer"
+                    @focusout="scheduleLyricControlsHide"
+                  >
+                    <!-- 进度条 -->
+                    <div class="mobile-progress">
+                      <BouncingSlider
+                        :value="music.getPlaySongTime.currentTime || 0"
+                        :min="0"
+                        :max="music.getPlaySongTime.duration || 1"
+                        :is-playing="music.getPlayState"
+                        @update:value="handleProgressSeek"
+                      />
+                      <div class="time-display">
+                        <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+                        <span>-{{ remainingTime }}</span>
+                      </div>
                     </div>
+                    <!-- 控制按钮 + 音量 -->
+                    <MobileControls @toComment="$emit('toComment')" />
                   </div>
-                  <!-- 控制按钮 + 音量 -->
-                  <MobileControls @toComment="$emit('toComment')" />
                 </Motion>
               </Motion>
             </div>
@@ -385,6 +421,67 @@ const queueTouch = ref<{
 } | null>(null);
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
+const playbackControlsRef = ref<HTMLElement | null>(null);
+const lyricControlsHeight = ref(0);
+const lyricControlsVisible = ref(false);
+const lyricControlsActive = computed(
+  () => activeMobileLayer.value === 2 && music.showBigPlayer && !props.queueOpen,
+);
+const LYRIC_CONTROLS_IDLE_MS = 3000;
+let lyricControlsTimer: ReturnType<typeof setTimeout> | null = null;
+let controlsPointerId: number | null = null;
+let controlsResizeObserver: ResizeObserver | null = null;
+
+const clearLyricControlsTimer = () => {
+  if (lyricControlsTimer !== null) clearTimeout(lyricControlsTimer);
+  lyricControlsTimer = null;
+};
+
+const scheduleLyricControlsHide = () => {
+  clearLyricControlsTimer();
+  if (!lyricControlsActive.value || !lyricControlsVisible.value || controlsPointerId !== null)
+    return;
+  lyricControlsTimer = setTimeout(() => {
+    lyricControlsTimer = null;
+    if (playbackControlsRef.value?.contains(document.activeElement)) return;
+    lyricControlsVisible.value = false;
+  }, LYRIC_CONTROLS_IDLE_MS);
+};
+
+// 只监听手指/滚轮输入；AMLL 的播放跟随滚动不能唤出控件。
+const revealLyricControls = () => {
+  if (!lyricControlsActive.value) return;
+  lyricControlsVisible.value = true;
+  scheduleLyricControlsHide();
+};
+
+const handleLyricWheel = (event: WheelEvent) => {
+  if (event.deltaY !== 0) revealLyricControls();
+};
+
+const holdLyricControls = (event: PointerEvent) => {
+  if (!lyricControlsActive.value || !lyricControlsVisible.value) return;
+  controlsPointerId = event.pointerId;
+  clearLyricControlsTimer();
+};
+
+const releaseLyricControls = (event: PointerEvent) => {
+  if (event.pointerId !== controlsPointerId) return;
+  controlsPointerId = null;
+  scheduleLyricControlsHide();
+};
+
+watch(
+  lyricControlsActive,
+  (active) => {
+    clearLyricControlsTimer();
+    controlsPointerId = null;
+    lyricControlsVisible.value = false;
+    if (active) revealLyricControls();
+  },
+  { immediate: true },
+);
+
 const contentUiMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.fullUiMotionStyle,
@@ -647,6 +744,8 @@ watch(
 );
 
 useMotionInterruption(() => {
+  controlsPointerId = null;
+  scheduleLyricControlsHide();
   stopPagerAnimation();
   resetPlayerTouch();
   resetQueueTouch();
@@ -663,9 +762,22 @@ const removeCancelledNavigation = navigation.onNavigationCancelled(() => {
   settlePager(props.queueOpen);
 });
 
-onMounted(measurePagerHeight);
+onMounted(() => {
+  measurePagerHeight();
+  // 只调整遮罩，不缩放歌词视口，避免显隐控件打断正在进行的歌词滚动。
+  controlsResizeObserver = new ResizeObserver(([entry]) => {
+    lyricControlsHeight.value = entry.contentRect.height;
+  });
+  if (playbackControlsRef.value) controlsResizeObserver.observe(playbackControlsRef.value);
+  window.addEventListener("pointerup", releaseLyricControls, true);
+  window.addEventListener("pointercancel", releaseLyricControls, true);
+});
 
 onBeforeUnmount(() => {
+  clearLyricControlsTimer();
+  controlsResizeObserver?.disconnect();
+  window.removeEventListener("pointerup", releaseLyricControls, true);
+  window.removeEventListener("pointercancel", releaseLyricControls, true);
   removeBeforeNavigation();
   removeCancelledNavigation();
   stopPagerAnimation();
@@ -677,6 +789,7 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 
 <style lang="scss" scoped>
 .mobile-pages {
+  --mobile-controls-bottom-padding: calc(var(--app-safe-area-bottom, 0px) + 4rem);
   grid-row: 1 / -1;
   grid-column: 1 / 2;
   position: relative;
@@ -784,6 +897,12 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   &.active {
     pointer-events: auto;
   }
+
+  &.controls-visible {
+    --mobile-lyric-bottom-inset: calc(
+      var(--mobile-lyric-controls-height) + var(--mobile-controls-bottom-padding)
+    );
+  }
 }
 
 // ── AMLL .noLyricLayout — Layer 1: 大封面 + controls ──
@@ -794,9 +913,19 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   z-index: 1;
   overflow-y: hidden;
   display: grid;
-  grid-template-rows: 1em [cover-view] 1fr [controls-view] 0fr;
+  // 独立留出封面与 metadata 的间距，矮视口缩小封面而不挤掉留白。
+  grid-template-rows: 1em [cover-view] minmax(0, 1fr) 20px [controls-view] auto;
   grid-template-columns: 24px [main-view] 1fr 24px;
   pointer-events: none;
+
+  &.lyric-layer {
+    z-index: 3;
+
+    .mobile-song-info-row {
+      visibility: hidden;
+      pointer-events: none;
+    }
+  }
 }
 
 // ── AMLL .phonySmallCover ──
@@ -941,8 +1070,8 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
     transparent 40px,
     rgba(0, 0, 0, 0.55) 80px,
     #000 116px,
-    #000 calc(100% - 48px),
-    transparent 100%
+    #000 calc(100% - var(--mobile-lyric-bottom-inset, 0px) - 48px),
+    transparent calc(100% - var(--mobile-lyric-bottom-inset, 0px))
   );
   mask: linear-gradient(
     180deg,
@@ -950,8 +1079,8 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
     transparent 40px,
     rgba(0, 0, 0, 0.55) 80px,
     #000 116px,
-    #000 calc(100% - 48px),
-    transparent 100%
+    #000 calc(100% - var(--mobile-lyric-bottom-inset, 0px) - 48px),
+    transparent calc(100% - var(--mobile-lyric-bottom-inset, 0px))
   );
 
   .mobile-lyric-inner {
@@ -1024,7 +1153,7 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
   text-shadow: 0 0 0.3em color-mix(in srgb, currentColor 15%, transparent);
   // --app-safe-area-bottom is env(safe-area-inset-bottom) on Tauri mobile,
   // 0px everywhere else — so this is a no-op on desktop / browser.
-  padding-bottom: calc(var(--app-safe-area-bottom, 0px) + 4rem);
+  padding-bottom: var(--mobile-controls-bottom-padding);
 
   .mobile-big-controls-inner {
     display: block;
