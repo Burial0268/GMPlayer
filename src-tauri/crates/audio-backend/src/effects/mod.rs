@@ -159,9 +159,33 @@ impl EqBandRuntime {
 
     #[inline]
     fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
-        for frame in samples.chunks_exact_mut(channels) {
-            for (sample, state) in frame.iter_mut().zip(&mut self.states) {
-                *sample = state.process(self.coeffs, *sample);
+        debug_assert_eq!(self.states.len(), channels);
+        let coeffs = self.coeffs;
+        match self.states.as_mut_slice() {
+            [mono] => {
+                let mut state = *mono;
+                for sample in samples {
+                    *sample = state.process(coeffs, *sample);
+                }
+                *mono = state;
+            }
+            [left, right] => {
+                // Fixed channel state stays local across the block, not behind a
+                // runtime-length state iterator for every frame of every band.
+                let (mut l, mut r) = (*left, *right);
+                for frame in samples.chunks_exact_mut(2) {
+                    frame[0] = l.process(coeffs, frame[0]);
+                    frame[1] = r.process(coeffs, frame[1]);
+                }
+                *left = l;
+                *right = r;
+            }
+            states => {
+                for frame in samples.chunks_exact_mut(channels) {
+                    for (sample, state) in frame.iter_mut().zip(&mut *states) {
+                        *sample = state.process(coeffs, *sample);
+                    }
+                }
             }
         }
     }
@@ -402,6 +426,111 @@ mod tests {
         assert!(samples.iter().all(|sample| sample.is_finite()));
         assert!(samples[0].abs() <= 0.502);
         assert!(samples[1].abs() <= 0.502);
+    }
+
+    // The pre-specialization loop is kept as an independent numerical reference.
+    fn process_reference(band: &mut EqBandRuntime, samples: &mut [f32], channels: usize) {
+        for frame in samples.chunks_exact_mut(channels) {
+            for (sample, state) in frame.iter_mut().zip(&mut band.states) {
+                *sample = state.process(band.coeffs, *sample);
+            }
+        }
+    }
+
+    fn test_signal(samples: usize) -> Vec<f32> {
+        (0..samples)
+            .map(|i| (i as f32 * 0.173).sin() * 0.4 + (i as f32 * 0.071).cos() * 0.1)
+            .collect()
+    }
+
+    #[test]
+    fn eq_matches_reference_across_channels_filters_and_block_boundaries() {
+        for channels in [1, 2, 6, 8] {
+            for rate in [44_100.0, 48_000.0, 96_000.0] {
+                for coeffs in [
+                    BiquadCoeffs::peaking(rate, 1_000.0, 0.707, 6.0),
+                    BiquadCoeffs::low_shelf(rate, 120.0, 1.2, -9.0),
+                    BiquadCoeffs::high_shelf(rate, 8_000.0, 0.5, 4.0),
+                ] {
+                    let mut actual_band = EqBandRuntime::new(coeffs, channels);
+                    let mut expected_band = EqBandRuntime::new(coeffs, channels);
+                    for frames in [1, 7, 64, 511, 512, 3, 0, 1_024] {
+                        let mut actual = test_signal(frames * channels);
+                        let mut expected = actual.clone();
+                        actual_band.process_interleaved(&mut actual, channels);
+                        process_reference(&mut expected_band, &mut expected, channels);
+                        assert_eq!(actual, expected, "channels={channels}, frames={frames}");
+                        for (actual, expected) in
+                            actual_band.states.iter().zip(&expected_band.states)
+                        {
+                            assert_eq!(actual.z1, expected.z1);
+                            assert_eq!(actual.z2, expected.z2);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn eq_keeps_channels_independent_and_ignores_partial_frames() {
+        let coeffs = BiquadCoeffs::peaking(48_000.0, 1_000.0, 0.707, 6.0);
+        for channels in [1, 2, 6] {
+            let mut band = EqBandRuntime::new(coeffs, channels);
+            let mut samples = vec![0.0; 128 * channels + channels - 1];
+            samples[0] = 1.0;
+            samples[128 * channels..].fill(9.0);
+            band.process_interleaved(&mut samples, channels);
+            for frame in samples[..128 * channels].chunks_exact(channels) {
+                assert!(frame[1..].iter().all(|&s| s == 0.0));
+            }
+            assert!(samples[128 * channels..].iter().all(|&s| s == 9.0));
+        }
+    }
+
+    #[test]
+    fn bypass_preserves_samples_exactly() {
+        let mut chain = DspChain::new(48_000, 2);
+        let mut samples = test_signal(1_024);
+        let expected = samples.clone();
+        chain.process_interleaved(&mut samples);
+        assert_eq!(samples, expected);
+    }
+
+    #[test]
+    #[ignore = "manual release benchmark; run with --ignored --nocapture --test-threads=1"]
+    fn benchmark_eq_processing() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        for channels in [1, 2, 6] {
+            for band_count in [1, 10, 64] {
+                let input = test_signal(512 * channels);
+                let mut samples = input.clone();
+                let coeffs = BiquadCoeffs::peaking(48_000.0, 1_000.0, 0.707, -0.5);
+                let mut bands: Vec<_> = (0..band_count)
+                    .map(|_| EqBandRuntime::new(coeffs, channels))
+                    .collect();
+                for reference in [true, false] {
+                    let start = Instant::now();
+                    for _ in 0..2_000 {
+                        samples.copy_from_slice(black_box(&input));
+                        for band in &mut bands {
+                            if reference {
+                                process_reference(band, &mut samples, black_box(channels));
+                            } else {
+                                band.process_interleaved(&mut samples, black_box(channels));
+                            }
+                        }
+                        black_box(&samples);
+                    }
+                    eprintln!(
+                        "eq channels={channels} bands={band_count} reference={reference}: {:?}",
+                        start.elapsed()
+                    );
+                }
+            }
+        }
     }
 
     fn equalizer_with_band(gain_db: f32) -> EqualizerConfig {

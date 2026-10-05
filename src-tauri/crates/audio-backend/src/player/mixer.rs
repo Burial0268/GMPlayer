@@ -558,6 +558,25 @@ impl DeckRuntime {
         self.queued_samples.store(0, Ordering::Release);
     }
 
+    fn current_samples(&mut self) -> &[f32] {
+        while self.current_index >= self.current_block.len() {
+            let Ok(block) = self.rx.try_recv() else {
+                return &[];
+            };
+            if block.generation != self.accepted_generation
+                || block.flush_epoch != self.accepted_flush_epoch
+            {
+                recycle_deck_buffer(&self.recycle_tx, block.samples);
+                continue;
+            }
+            let spent = std::mem::replace(&mut self.current_block, block.samples);
+            recycle_deck_buffer(&self.recycle_tx, spent);
+            self.current_index = 0;
+        }
+        &self.current_block[self.current_index..]
+    }
+
+    #[cfg(test)]
     fn next_sample(&mut self, consumed: &mut usize) -> Option<f32> {
         if self.current_index >= self.current_block.len() {
             loop {
@@ -611,29 +630,12 @@ impl DeckRuntime {
     ) -> usize {
         let mut written = 0;
         while written < samples {
-            if self.current_index >= self.current_block.len() {
-                match self.rx.try_recv() {
-                    Ok(block) => {
-                        if block.generation != self.accepted_generation
-                            || block.flush_epoch != self.accepted_flush_epoch
-                        {
-                            recycle_deck_buffer(&self.recycle_tx, block.samples);
-                            continue;
-                        }
-                        let spent = std::mem::replace(&mut self.current_block, block.samples);
-                        recycle_deck_buffer(&self.recycle_tx, spent);
-                        self.current_index = 0;
-                        if self.current_block.is_empty() {
-                            continue;
-                        }
-                    }
-                    Err(_) => break,
-                }
+            let src = self.current_samples();
+            if src.is_empty() {
+                break;
             }
-
-            let avail = self.current_block.len() - self.current_index;
-            let run = (samples - written).min(avail);
-            let src = &self.current_block[self.current_index..self.current_index + run];
+            let run = (samples - written).min(src.len());
+            let src = &src[..run];
             // `extend` over a slice iterator is TrustedLen-specialized: one
             // reserve, then straight writes with no per-element capacity check,
             // which keeps this run vectorizable (a push loop re-checks capacity
@@ -847,13 +849,11 @@ impl MixerWorker {
     /// Fast path: with no crossfade in progress the deck gains are constant for
     /// the whole block, so when exactly one deck is contributing we bulk-copy
     /// it (gain + clamp over contiguous runs, which autovectorizes) instead of
-    /// running the per-sample two-deck mixer. On a starved deck this path emits
-    /// a *short* block so the output callback can fade the gap. The per-sample
-    /// path still runs during crossfades (gains move per frame) and in the rare
-    /// case where both decks are simultaneously active without a crossfade;
-    /// there a starved deck still contributes silence mid-block, because the
-    /// other deck's samples and the crossfade's per-frame gain schedule have to
-    /// keep advancing in lockstep.
+    /// running the two-deck mixer. On a starved deck this path emits a *short*
+    /// block so the output callback can fade the gap. Crossfades and the rare
+    /// case with two constant-gain decks mix contiguous runs instead; a starved
+    /// deck contributes silence because the other deck and the fade schedule
+    /// must keep advancing in lockstep.
     fn mix_block(
         &mut self,
         block: &mut Vec<f32>,
@@ -900,8 +900,7 @@ impl MixerWorker {
             // Both active without a crossfade — fall through to the mixer.
         }
 
-        // General path: advance crossfade gains once per frame and mix both
-        // decks sample by sample.
+        // General path: evaluate gains per frame, but consume PCM in runs.
         let mut has_audio = false;
         let mut consumed_primary = 0usize;
         let mut consumed_secondary = 0usize;
@@ -916,37 +915,18 @@ impl MixerWorker {
             let segment_frames = (MIX_BLOCK_FRAMES - mixed_frames).min(CROSSFADE_RAMP_FRAMES);
             let crossfade_ramp = self.crossfade_block_ramp(segment_frames);
 
-            for frame_index in 0..segment_frames {
-                let (primary_gain, secondary_gain) = match crossfade_ramp {
-                    Some(ramp) => {
-                        let (outgoing_gain, incoming_gain) = ramp.gains(frame_index);
-                        match ramp.outgoing {
-                            DeckId::Primary => (outgoing_gain, incoming_gain),
-                            DeckId::Secondary => (incoming_gain, outgoing_gain),
-                        }
-                    }
-                    None => (self.primary.gain, self.secondary.gain),
-                };
-
-                for _ in 0..channels {
-                    let primary = if primary_paused {
-                        None
-                    } else {
-                        self.primary.next_sample(&mut consumed_primary)
-                    };
-                    let secondary = if secondary_paused {
-                        None
-                    } else {
-                        self.secondary.next_sample(&mut consumed_secondary)
-                    };
-                    if primary.is_some() || secondary.is_some() {
-                        has_audio = true;
-                    }
-                    let mixed = primary.unwrap_or(0.0) * primary_gain
-                        + secondary.unwrap_or(0.0) * secondary_gain;
-                    block.push(mixed.clamp(-1.0, 1.0));
-                }
-            }
+            let (primary, secondary) = mix_segment(
+                &mut self.primary,
+                &mut self.secondary,
+                block,
+                channels,
+                segment_frames,
+                (primary_paused, secondary_paused),
+                crossfade_ramp,
+            );
+            has_audio |= primary > 0 || secondary > 0;
+            consumed_primary += primary;
+            consumed_secondary += secondary;
 
             if crossfade_ramp.is_some() {
                 self.commit_crossfade_block(segment_frames);
@@ -1152,6 +1132,111 @@ impl MixerWorker {
     }
 }
 
+// Queue and pause checks belong at contiguous PCM boundaries, not at every
+// sample. A missing deck contributes silence until the next run/64-frame segment.
+fn mix_segment(
+    primary: &mut DeckRuntime,
+    secondary: &mut DeckRuntime,
+    block: &mut Vec<f32>,
+    channels: usize,
+    frames: usize,
+    paused: (bool, bool),
+    ramp: Option<CrossfadeBlockRamp>,
+) -> (usize, usize) {
+    let gains = (primary.gain, secondary.gain);
+    let start = block.len();
+    let samples = frames * channels;
+    block.resize(start + samples, 0.0);
+    let dst = &mut block[start..];
+    let mut written = 0;
+    let mut consumed = (0, 0);
+
+    while written < samples {
+        let p = if paused.0 {
+            &[]
+        } else {
+            primary.current_samples()
+        };
+        let s = if paused.1 {
+            &[]
+        } else {
+            secondary.current_samples()
+        };
+        let available = (!p.is_empty(), !s.is_empty());
+        let mut run = samples - written;
+        if available.0 {
+            run = run.min(p.len());
+        }
+        if available.1 {
+            run = run.min(s.len());
+        }
+        // Decoder blocks and every consumption boundary contain whole frames.
+        debug_assert_eq!(run % channels, 0);
+        let output = &mut dst[written..written + run];
+        let frame_offset = written / channels;
+        match available {
+            (true, true) => {
+                mix_pcm_run::<true, true>(p, s, output, channels, frame_offset, gains, ramp)
+            }
+            (true, false) => {
+                mix_pcm_run::<true, false>(p, s, output, channels, frame_offset, gains, ramp)
+            }
+            (false, true) => {
+                mix_pcm_run::<false, true>(p, s, output, channels, frame_offset, gains, ramp)
+            }
+            (false, false) => break,
+        }
+        if available.0 {
+            primary.current_index += run;
+            consumed.0 += run;
+        }
+        if available.1 {
+            secondary.current_index += run;
+            consumed.1 += run;
+        }
+        written += run;
+    }
+    consumed
+}
+
+#[inline]
+fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
+    primary: &[f32],
+    secondary: &[f32],
+    output: &mut [f32],
+    channels: usize,
+    frame_offset: usize,
+    gains: (f32, f32),
+    ramp: Option<CrossfadeBlockRamp>,
+) {
+    for (frame_index, frame) in output.chunks_exact_mut(channels).enumerate() {
+        let (primary_gain, secondary_gain) = match ramp {
+            Some(ramp) => {
+                let (outgoing, incoming) = ramp.gains(frame_offset + frame_index);
+                match ramp.outgoing {
+                    DeckId::Primary => (outgoing, incoming),
+                    DeckId::Secondary => (incoming, outgoing),
+                }
+            }
+            None => gains,
+        };
+        let start = frame_index * channels;
+        for (channel, sample) in frame.iter_mut().enumerate() {
+            let p = if PRIMARY {
+                primary[start + channel]
+            } else {
+                0.0
+            };
+            let s = if SECONDARY {
+                secondary[start + channel]
+            } else {
+                0.0
+            };
+            *sample = (p * primary_gain + s * secondary_gain).clamp(-1.0, 1.0);
+        }
+    }
+}
+
 fn saturating_sub(counter: &AtomicUsize, amount: usize) -> usize {
     let mut current = counter.load(Ordering::Relaxed);
     loop {
@@ -1254,6 +1339,10 @@ fn crossfade_values(progress: f32, params: &CrossfadeParams) -> (f32, f32) {
     }
     (out_vol, in_vol)
 }
+
+#[cfg(test)]
+#[path = "mixer/perf_tests.rs"]
+mod perf_tests;
 
 #[cfg(test)]
 mod tests {
