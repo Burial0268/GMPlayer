@@ -15,6 +15,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:navigation": "node scripts/test-navigation.mjs",
+    "test:audio-ui": "node scripts/test-audio-ui.mjs",
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",
     "fmt": "oxfmt src/",

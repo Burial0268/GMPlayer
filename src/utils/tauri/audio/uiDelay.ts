@@ -43,3 +43,8 @@ export function applyMobileTauriAudioUiDelay(currentTime: number, duration = 0):
 
   return duration > 0 ? Math.min(displayTime, duration) : displayTime;
 }
+
+/** Convert a raw playback position for lyrics only; never use it as a seek target. */
+export function getLyricPresentationTimeSeconds(playbackTime: number, lyricOffsetMs = 0): number {
+  return applyMobileTauriAudioUiDelay(playbackTime) + lyricOffsetMs / 1000;
+}

@@ -1,6 +1,7 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import { shallowRef, ref } from "vue";
 import getLanguageData from "@/utils/getLanguageData";
+import { getLyricPresentationTimeSeconds } from "@/utils/tauri/audio/uiDelay";
 import {
   preprocessLyrics,
   type ParsedLrcLine,
@@ -146,7 +147,7 @@ export const useMusicLyricStore = defineStore("musicLyric", () => {
     }
   }
 
-  function syncCurrentLyricIndex(displayCurrentTime: number) {
+  function syncCurrentLyricIndex(playbackCurrentTime: number) {
     const settings = useSettingDataStore();
     const lyrics =
       !songLyric.value.hasYrc || !settings.showYrc ? songLyric.value.lrc : songLyric.value.yrc;
@@ -157,7 +158,10 @@ export const useMusicLyricStore = defineStore("musicLyric", () => {
     }
 
     let currentIndex = playSongLyricIndex.value;
-    const offsetTime = displayCurrentTime + (settings.lyricTimeOffset ?? 0) / 1000;
+    const offsetTime = getLyricPresentationTimeSeconds(
+      playbackCurrentTime,
+      settings.lyricTimeOffset ?? 0,
+    );
     if (currentIndex > 0 && lyrics[currentIndex]?.time > offsetTime) currentIndex = -1;
     while (currentIndex < lyrics.length - 1 && lyrics[currentIndex + 1].time <= offsetTime) {
       currentIndex++;

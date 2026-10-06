@@ -718,6 +718,11 @@ impl WasmAudioBackend {
             | AudioThreadMessage::SetNativeResolverConfig { .. }
             | AudioThreadMessage::SetNativePlannerEnabled { .. }
             | AudioThreadMessage::SyncNativePlannerStatus
+            // The native FM reservoir has no web owner; the browser keeps its
+            // bounded JS fallback and must not run a second queue here.
+            | AudioThreadMessage::StartPersonalFm { .. }
+            | AudioThreadMessage::StopPersonalFm { .. }
+            | AudioThreadMessage::TrashPersonalFm { .. }
             // `AnnounceTrack` and the listen-together keepalive exist to drive
             // the OS media session and an out-of-WebView heartbeat. Neither has
             // a web counterpart: `navigator.mediaSession` is fed from the page,

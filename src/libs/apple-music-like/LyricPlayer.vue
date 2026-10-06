@@ -19,6 +19,7 @@ import {
   type LyricLineMouseEvent,
 } from "@applemusic-like-lyrics/core";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
+import { getLyricPresentationTimeSeconds } from "@/utils/tauri/audio/uiDelay";
 import "@applemusic-like-lyrics/core/style.css";
 
 const site = siteStore();
@@ -31,9 +32,7 @@ const amllLyricLines = shallowRef<AMLLLine[]>([]);
 
 const playState = computed(() => music.playState);
 
-const currentTime = computed(() =>
-  Math.round(music.getPlaySongPlaybackCurrentTime() * 1000 + (setting.lyricTimeOffset ?? 0)),
-);
+const currentTime = computed(() => lyricPresentationTimeMs(music.getPlaySongPlaybackCurrentTime()));
 
 const alignAnchor = computed(() => (setting.lyricsBlock === "center" ? "center" : "top"));
 
@@ -80,6 +79,12 @@ function getWindowPlayer(): SyncableSound | undefined {
   return (window as Window & { $player?: SyncableSound }).$player;
 }
 
+function lyricPresentationTimeMs(playbackTime: number): number {
+  return Math.round(
+    getLyricPresentationTimeSeconds(playbackTime, setting.lyricTimeOffset ?? 0) * 1000,
+  );
+}
+
 function readPlaybackPosition(): number {
   const player = getWindowPlayer();
   const seekValue = player?.seek?.();
@@ -110,7 +115,7 @@ function syncCurrentTimeFromPlayback() {
   const player = getDomPlayer();
   if (!player) return;
 
-  const lyricTime = Math.round(currentTime * 1000 + (setting.lyricTimeOffset ?? 0));
+  const lyricTime = lyricPresentationTimeMs(currentTime);
   player.setCurrentTime(lyricTime, true);
   lastSubmittedLyricTime = lyricTime;
   player.resetScroll();
@@ -168,7 +173,7 @@ function updateLyricPlayer(frameTime: number) {
   }
 
   if (playState.value) {
-    const lyricTime = Math.round(readPlaybackPosition() * 1000 + (setting.lyricTimeOffset ?? 0));
+    const lyricTime = lyricPresentationTimeMs(readPlaybackPosition());
     if (lyricTime !== lastSubmittedLyricTime) {
       player.setCurrentTime(lyricTime);
       lastSubmittedLyricTime = lyricTime;
