@@ -899,6 +899,9 @@ pub struct NativeSessionSnapshot {
     /// Stable identity of the playing track, when known.
     pub identity: Option<TrackIdentity>,
     pub playlist_index: usize,
+    /// Exact at every anchor (load, play, pause, seek) and refreshed by the 1 Hz
+    /// position heartbeat while playing, so it stays live with no frontend
+    /// around to request `SyncStatus`.
     pub position: f64,
     pub duration: f64,
     pub is_playing: bool,

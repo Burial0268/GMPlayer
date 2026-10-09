@@ -322,6 +322,7 @@ impl AudioPlayer {
         // same clock anchor. Rust publishes immediate anchors on play/pause/
         // seek and a low-rate heartbeat for reconciliation.
         let position_writer = current_position.clone();
+        let session_writer = Arc::clone(&session);
         let clock_reader = Arc::clone(&clock);
         let emitter_pos = EventEmitter::new(evt_sender.clone());
 
@@ -337,6 +338,13 @@ impl AudioPlayer {
                 };
                 if is_playing {
                     *position_writer.write().await = current_pos;
+                    // The session snapshot is otherwise written only by anchors
+                    // and by `sync_ui`, which runs on the frontend's own
+                    // `SyncStatus` requests. With no WebView alive (Android,
+                    // every track the planner starts in the background) it would
+                    // still report the load anchor — `0.0` — when the page comes
+                    // back and adopts the track from it.
+                    session_writer.lock().position = current_pos;
                     let _ = emitter_pos
                         .emit(AudioThreadEvent::PlayPosition {
                             position: current_pos,

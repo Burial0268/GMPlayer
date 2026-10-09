@@ -20,6 +20,7 @@
 
 import type { ISound, SoundEventCallback, SoundEventType } from "../../AudioContext/types";
 import { isTauri } from "../core/runtime";
+import { audioGetSession } from "./bridge";
 import { AudioTimelineSync } from "./timeline";
 import { sameTrackIdentity } from "./identity";
 import type {
@@ -334,9 +335,12 @@ export class NativeRustSound implements ISound {
     if (canAttachExistingBackend) {
       this._allowInitialBackendAttach = true;
       await this.requestStatusSync(400);
+      if (!this._hasAttachableBackendTrack()) {
+        await this._attachFromSessionSnapshot();
+      }
       this._allowInitialBackendAttach = false;
       if (this._destroyed || this._terminallyCleared) return;
-      if (this._state.musicId && this._state.duration > 0) {
+      if (this._hasAttachableBackendTrack()) {
         // An identity attach must NOT correct the position: the caller derived
         // `initPos` from the same backend snapshot, and the gap between reading
         // it and getting here is real elapsed playback. Seeking back to the
@@ -1227,6 +1231,44 @@ export class NativeRustSound implements ISound {
       return true;
     }
     return musicId === this._expectedMusicId;
+  }
+
+  /** Whether the backend has confirmed it holds this controller's track. */
+  private _hasAttachableBackendTrack(): boolean {
+    return !!this._state.musicId && this._state.duration > 0;
+  }
+
+  /**
+   * Second chance for the initial attach when the status round trip is late.
+   *
+   * `syncStatus` rides the player's message loop, and a backend-driven track
+   * transition holds that loop for the whole source download — seconds on a
+   * mobile network — while a WebView that was just recreated is slow to run
+   * the reply as well. Treating the timeout as "not on this track" sent a
+   * `setPlaylist` that restarted the track the backend was audibly playing,
+   * from whatever position the store happened to hold. `audio_get_session`
+   * reads a mutex and never enters the loop, so it answers regardless.
+   */
+  private async _attachFromSessionSnapshot(): Promise<void> {
+    if (!isTauri()) return;
+    const snapshot = await audioGetSession();
+    if (this._destroyed || this._terminallyCleared) return;
+    // A sync that landed meanwhile carries the fuller answer; keep it.
+    if (this._hasAttachableBackendTrack()) return;
+    if (!snapshot?.hasTrack || !(snapshot.duration > 0)) return;
+    if (!this._acceptInitialAttach(snapshot.musicId, snapshot.identity)) return;
+
+    this._state.musicId = snapshot.musicId;
+    this._state.duration = snapshot.duration;
+    this._state.isPlaying = snapshot.isPlaying;
+    this._state.volume = snapshot.volume;
+    this._state.currentPlayIndex = snapshot.playlistIndex;
+    this._backendIdentity = snapshot.identity ?? null;
+    this._backendTrackReady = true;
+    if (this._playbackState === "stopped") {
+      this._playbackState = snapshot.isPlaying ? "playing" : "paused";
+    }
+    this._beginTrackTimeline(snapshot.position, snapshot.duration);
   }
 
   private _acceptMusicId(musicId: string, allowBackendAdoption = false): boolean {
