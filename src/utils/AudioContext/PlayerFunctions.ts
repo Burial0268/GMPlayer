@@ -42,6 +42,7 @@ import {
   isNativeAudioBackendAvailable,
 } from "../tauri/audio/nativeRustSound";
 import { getAudioBackendTransport } from "../tauri/audio/transport";
+import { armLyricSeekPresentationHold } from "../tauri/audio/uiDelay";
 import type { TrackIdentity } from "../tauri/audio/protocol";
 import {
   buildNeteaseDesktopCookie,
@@ -1442,6 +1443,9 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
     autoMix.cancelCrossfade();
   }
   target.seek(currentTime);
+  // The lyric clock runs behind the playback clock on mobile; pin it at the
+  // target before the store update below recomputes the lyric index from it.
+  armLyricSeekPresentationHold(currentTime);
   // 直接调用 setPlaySongTime 确保 UI 状态立即更新
   music.setPlaySongTime({
     currentTime,

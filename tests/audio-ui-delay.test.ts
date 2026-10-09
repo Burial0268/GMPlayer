@@ -116,3 +116,93 @@ test("the lyric index consumes the same raw-to-presentation conversion", () => {
   const source = readFileSync("src/store/musicLyric.ts", "utf8");
   assert.match(source, /getLyricPresentationTimeSeconds\(\s*playbackCurrentTime,/);
 });
+
+test("a seek pins the lyric clock at its target until the delayed clock arrives", () => {
+  const time = environment(true, true);
+  // The reported flash: the view jumps to the tapped line, then the next frame
+  // reads the clock 450 ms behind it and springs back to the previous line.
+  time.armLyricSeekPresentationHold(60);
+  close(time.getLyricPresentationTimeSeconds(60), 60);
+  close(time.getLyricPresentationTimeSeconds(60.2), 60);
+  close(time.getLyricPresentationTimeSeconds(60.449), 60);
+  // Continuous hand-over: the delayed clock reaches the target and takes over.
+  close(time.getLyricPresentationTimeSeconds(60.45), 60);
+  close(time.getLyricPresentationTimeSeconds(60.5), 60.05);
+  // The hold is spent — a later pass over the same position is not pinned.
+  close(time.getLyricPresentationTimeSeconds(60.1), 59.65);
+});
+
+test("a hold ends when playback is not where the seek put it", () => {
+  const time = environment(true, true);
+  time.armLyricSeekPresentationHold(30);
+  close(time.getLyricPresentationTimeSeconds(30.016), 30);
+  // A track change restarts the clock at 0; the stale target must not pin the
+  // next track when it later plays through 30 s.
+  close(time.getLyricPresentationTimeSeconds(0), 0);
+  close(time.getLyricPresentationTimeSeconds(30.1), 29.65);
+  // Likewise a seek that landed somewhere else.
+  time.armLyricSeekPresentationHold(60);
+  close(time.getLyricPresentationTimeSeconds(10), 9.55);
+  close(time.getLyricPresentationTimeSeconds(60.1), 59.65);
+});
+
+test("a clock paused at the seek target keeps showing the tapped line", () => {
+  const time = environment(true, true);
+  time.armLyricSeekPresentationHold(60);
+  for (let frame = 0; frame < 60; frame++) {
+    close(time.getLyricPresentationTimeSeconds(60), 60);
+  }
+  // Resuming hands over as usual.
+  close(time.getLyricPresentationTimeSeconds(60.45), 60);
+  close(time.getLyricPresentationTimeSeconds(61), 60.55);
+});
+
+test("the user lyric offset still applies around a held seek", () => {
+  const time = environment(true, true);
+  // Lyrics 500 ms early: the offset clock is already past the target.
+  time.armLyricSeekPresentationHold(60);
+  close(time.getLyricPresentationTimeSeconds(60, 500), 60.05);
+  // Lyrics 300 ms late: pinned until the offset clock reaches the target.
+  time.armLyricSeekPresentationHold(60);
+  close(time.getLyricPresentationTimeSeconds(60, -300), 60);
+  close(time.getLyricPresentationTimeSeconds(60.7, -300), 60);
+  close(time.getLyricPresentationTimeSeconds(60.76, -300), 60.01);
+});
+
+test("desktop and web playback only hold a seek when a late offset needs it", () => {
+  const time = environment(false, false);
+  time.armLyricSeekPresentationHold(60);
+  close(time.getLyricPresentationTimeSeconds(60.1), 60.1);
+  time.armLyricSeekPresentationHold(60);
+  close(time.getLyricPresentationTimeSeconds(60, -200), 60);
+  close(time.getLyricPresentationTimeSeconds(60.1, -200), 60);
+  close(time.getLyricPresentationTimeSeconds(60.25, -200), 60.05);
+});
+
+test("a non-finite read neither pins nor ends a hold, and an invalid target is ignored", () => {
+  const time = environment(true, true);
+  time.armLyricSeekPresentationHold(60);
+  assert.equal(time.getLyricPresentationTimeSeconds(NaN), 0);
+  close(time.getLyricPresentationTimeSeconds(60.1), 60);
+
+  const fresh = environment(true, true);
+  fresh.armLyricSeekPresentationHold(NaN);
+  fresh.armLyricSeekPresentationHold(-1);
+  close(fresh.getLyricPresentationTimeSeconds(60), 59.55);
+});
+
+test("the hold is armed by the seek funnel with the position actually seeked to", () => {
+  const playerFunctions = readFileSync("src/utils/AudioContext/PlayerFunctions.ts", "utf8");
+  // Armed after the seek is issued and before the store update that recomputes
+  // the lyric index from the new position.
+  assert.match(
+    playerFunctions,
+    /target\.seek\(currentTime\);\s*(?:\/\/[^\n]*\n\s*)*armLyricSeekPresentationHold\(currentTime\);\s*(?:\/\/[^\n]*\n\s*)*music\.setPlaySongTime\(/,
+  );
+  // The tap itself still hands the raw line time to the seek and to the view;
+  // only the presentation conversion knows about the hold.
+  const lyricPlayer = readFileSync("src/libs/apple-music-like/LyricPlayer.vue", "utf8");
+  assert.match(lyricPlayer, /player\?\.setCurrentTime\(time, true\)/);
+  assert.match(lyricPlayer, /emit\("lrcTextClick", time \/ 1000\)/);
+  assert.doesNotMatch(lyricPlayer, /armLyricSeekPresentationHold/);
+});
