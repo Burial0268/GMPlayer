@@ -61,6 +61,13 @@ Required: PNPM, Node.js, Rust toolchain for Tauri work, and `.env` with `VITE_MU
 
 Android additionally needs an NDK (`NDK_HOME`, or the newest under `$ANDROID_HOME/ndk`), a JDK (`JAVA_HOME`), and — less obviously — a **libclang**, because `ncm-core`'s QuickJS must be bound by bindgen on the fly for `*-linux-android`. `scripts/tauri.mjs` is a `pnpm tauri` shim that supplies the bindgen environment for every Android ABI and forwards everything else to `@tauri-apps/cli` untouched; it mirrors the Android job in `.github/workflows/build-app.yml`, so keep the two in step. Anything already exported wins. Without it the build fails at `rquickjs-sys` with `'stdbool.h' file not found`, an error that names nothing about QuickJS, libclang or the NDK — the sysroot has to come from the NDK and the clang resource dir from whichever LLVM provided the libclang that was actually loaded. Do not export the bindgen variables in a shell instead: Tauri's Gradle `BuildTask` re-invokes `pnpm tauri android android-studio-script` for the real cross-compile, and the Gradle daemon it runs under outlives any one shell.
 
+## Cursor Cloud specific instructions
+
+- `pnpm dev` is Vite with `strictPort` on port **25536**. The committed `.env` already points `VITE_MUSIC_API` and `VITE_UNM_API` at the public GBCL endpoints.
+- Ubuntu 24.04's tray package is `libayatana-appindicator3-dev`. It conflicts with `libappindicator3-dev`, so a Linux dev image follows the Tauri 2 Debian list (`libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `libxdo-dev`, `libssl-dev`) plus `libasound2-dev`, `libdbus-1-dev`, and `patchelf`.
+- The workspace git dependency `taskbar-lyric` requires Cargo edition 2024 (Rust 1.85+). The default image's Rust 1.83 cannot resolve that manifest; use `rustup default stable` before `cargo`. `wasm32-unknown-unknown` is only for `pnpm build:wasm`. Committed `pkg/` artifacts are enough for `pnpm dev` and `pnpm build`.
+- Song rows play on double-click. `listClickMode` defaults to `dblclick`; a single click on the title opens the song page.
+
 
 ## Coding Style
 
