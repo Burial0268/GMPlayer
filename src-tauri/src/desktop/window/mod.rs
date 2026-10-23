@@ -9,3 +9,4 @@ pub mod manager;
 mod minimize_guard;
 pub mod payload;
 pub mod tray;
+pub mod webview_memory;

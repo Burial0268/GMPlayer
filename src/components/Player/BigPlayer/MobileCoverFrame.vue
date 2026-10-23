@@ -28,7 +28,28 @@
 </template>
 
 <script lang="ts">
+/**
+ * Artwork URLs already decoded once, so a revisit can skip the shimmer.
+ *
+ * Bounded on purpose: this is a cosmetic memo shared by every instance for the
+ * lifetime of the page, so an unbounded Set would retain one URL string per
+ * distinct cover for the whole session. Losing an old entry only costs one
+ * extra shimmer.
+ */
+const LOADED_COVER_URL_MAX = 64;
 const loadedCoverUrls = new Set<string>();
+
+function markCoverLoaded(url: string): void {
+  if (!url) return;
+  // delete + re-add moves the key to the end, making iteration order = LRU order
+  loadedCoverUrls.delete(url);
+  loadedCoverUrls.add(url);
+  while (loadedCoverUrls.size > LOADED_COVER_URL_MAX) {
+    const oldest = loadedCoverUrls.values().next().value;
+    if (oldest === undefined) break;
+    loadedCoverUrls.delete(oldest);
+  }
+}
 </script>
 
 <script setup lang="ts">
@@ -80,13 +101,13 @@ watch([() => props.coverUrl, loadAnimationEnabled], ([newUrl]) => {
 });
 
 function onImgLoad(): void {
-  loadedCoverUrls.add(props.coverUrl);
+  markCoverLoaded(props.coverUrl);
   imgLoaded.value = true;
 }
 
 /** Treat a broken image the same as a successful load — hide the shimmer. */
 function onImgError(): void {
-  loadedCoverUrls.add(props.coverUrl);
+  markCoverLoaded(props.coverUrl);
   imgLoaded.value = true;
 }
 </script>
@@ -101,7 +122,11 @@ function onImgError(): void {
   pointer-events: auto;
   z-index: 1;
   box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.35);
-  will-change: transform, width, height, left, top, border-radius;
+  // will-change 只列合成器真正能接管的属性。width/height/left/top/border-radius
+  // 改动一定要走布局或重绘，写进来换不到任何加速，却让这个图层常驻——而它就
+  // 压在动画中的背景画布上面，每帧都要参与合成。stacking context 由 transform
+  // 一项保持不变。
+  will-change: transform;
 
   &.is-interactive {
     position: absolute;

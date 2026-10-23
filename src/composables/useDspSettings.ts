@@ -1,5 +1,6 @@
 import { settingStore } from "@/store";
-import { audioSendMsg, type DspConfig, type EqualizerBand } from "@/utils/tauri/audioBridge";
+import { audioSendMsg } from "@/utils/tauri/audio/bridge";
+import type { DspConfig, EqualizerBand } from "@/utils/tauri/audio/protocol";
 
 const EQ_EPSILON_DB = 0.001;
 const DISABLED_DSP_CONFIG: DspConfig = {

@@ -42,14 +42,36 @@ impl AudioPlayer {
             .map(|s| s.get_id())
             .unwrap_or_default();
         self.current_decoder_handle = None;
+        // The track is over: its timeline retires with it, so the anchor below
+        // (and any heartbeat behind it) is not offered to a subscriber still
+        // holding the finished track's clock.
+        self.begin_timeline();
         self.publish_position_anchor(false, 0.0).await;
         self.current_song = None;
+        self.pending_display = super::now_playing::PendingDisplay::default();
+        // Between tracks: a frontend booting right now must not adopt the track
+        // that just retired. A successful advance restores the snapshot through
+        // `start_playing_song` → `sync_ui`.
+        self.clear_session_track();
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::AudioPlayFinished {
                 music_id: finished_id,
             })
             .await;
+
+        if self.personal_fm.is_some() {
+            self.advance_personal_fm().await;
+            return;
+        }
+
+        // The manifest planner owns advancement whenever it has a list: it can
+        // reach any track in the playlist and re-resolve expired URLs, neither
+        // of which the bounded queue can do once the JS runtime is frozen.
+        // Only fall back to the legacy queue hop when it declines.
+        if self.planner_can_advance() && self.advance_via_planner().await {
+            return;
+        }
 
         if !self.playlist.is_empty() {
             let _ = self.self_msg_tx.send(AudioThreadEventMessage::new(
@@ -118,13 +140,58 @@ impl AudioPlayer {
         }
     }
 
+    /// Load and start `current_song`.
+    ///
+    /// Thin wrapper so the media session's buffering flag cannot survive a
+    /// failed load: the body below is full of `?` early-exits between the
+    /// `LoadingAudio` and `LoadAudio` events, and any one of them would
+    /// otherwise leave the notification spinning forever.
     pub(super) async fn start_playing_song(
         &mut self,
         clear_sink: bool,
         initial_position: Option<f64>,
         load_request_id: Option<u64>,
     ) -> anyhow::Result<()> {
+        let result = self
+            .start_playing_song_inner(clear_sink, initial_position, load_request_id)
+            .await;
+        if result.is_err() {
+            // Republish, don't just flip the flag: the session only learns that
+            // a load ended from an event, and a failed one emits no `LoadAudio`.
+            self.load_in_flight = false;
+            self.publish_now_playing().await;
+        }
+        result
+    }
+
+    async fn start_playing_song_inner(
+        &mut self,
+        clear_sink: bool,
+        initial_position: Option<f64>,
+        load_request_id: Option<u64>,
+    ) -> anyhow::Result<()> {
         self.pending_seek = None;
+        // `current_identity` describes what is loaded *now*. A planner-driven
+        // load supplies one via `pending_identity`; a frontend-driven one is
+        // named by the announcement it always sends first (`AnnounceTrack`),
+        // which is bounded to exactly this load because `settle_announcement`
+        // clears it at the end of one.
+        //
+        // Falling back to the announcement is not cosmetic. Without it every
+        // frontend-driven load left `current_identity: None`, so the backend
+        // could not say *which* track it was playing — which meant no like
+        // state (`can_favourite` collapsed to false and dropped the heart from
+        // the notification entirely), no likelist lookup, and no identity for a
+        // reloading WebView to adopt.
+        self.current_identity = self
+            .pending_identity
+            .take()
+            .or_else(|| self.announced_track.as_ref().map(|(id, _)| id.clone()));
+        // Re-derive the heart for whatever that is — *after* the identity is
+        // set, since it is the key. Carrying the previous track's over would
+        // show a filled heart for a song the user never liked, and one tap would
+        // then unlike one they do.
+        self.refresh_favourite_for_current_track();
         let song_data = self
             .current_song
             .clone()
@@ -137,6 +204,7 @@ impl AudioPlayer {
         let music_id = song_data.get_id();
 
         // Emit LoadingAudio so the frontend can show a spinner / await load.
+        self.load_in_flight = true;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadingAudio {
@@ -258,7 +326,26 @@ impl AudioPlayer {
             }
         };
 
-        let _output_reopened = self.ensure_output_for_source(&audio_info)?;
+        // An output that will not open is the one failure here that says nothing
+        // about the track, and it used to be the one that reported nothing at
+        // all: a bare `?` left the frontend's load promise unresolved, so a
+        // device switch that broke the probe showed as a track stuck loading
+        // forever. It has to look like every other load failure from the outside.
+        let _output_reopened = match self.ensure_output_for_source(&audio_info) {
+            Ok(reopened) => reopened,
+            Err(e) => {
+                warn!("打开音频输出失败: {e:?}");
+                let _ = self
+                    .emitter()
+                    .emit(AudioThreadEvent::LoadError {
+                        music_id: music_id.clone(),
+                        load_request_id,
+                        error: e.to_string(),
+                    })
+                    .await;
+                return Err(e);
+            }
+        };
         self.output.writer().set_volume(self.volume as f32);
         // Keep the device callback silent until the decoder/mixer has filled
         // the output queue; otherwise Android can underrun before the first PCM block arrives.
@@ -346,10 +433,20 @@ impl AudioPlayer {
         *self.current_audio_quality.write().await = quality.clone();
         self.clock.lock().set_duration(audio_info.duration_secs);
 
+        // A new source is about to start: everything the previous timeline
+        // published is now stale, and this is what tells a subscriber so
+        // without it having to infer a track boundary from position magnitude.
+        let timeline_epoch = self.begin_timeline();
+
         let is_now_playing = self.playback_intent == PlaybackIntent::Playing;
         self.publish_position_anchor(is_now_playing, anchor_pos)
             .await;
 
+        self.personal_fm_started().await;
+
+        // Decoder is up and the timeline is anchored: whatever the media
+        // session was showing as "buffering" is now real playback.
+        self.load_in_flight = false;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadAudio {
@@ -358,6 +455,8 @@ impl AudioPlayer {
                 quality,
                 current_play_index: self.current_play_index,
                 load_request_id,
+                identity: self.current_identity.clone(),
+                timeline_epoch,
             })
             .await;
         if is_now_playing {
@@ -369,6 +468,14 @@ impl AudioPlayer {
         }
 
         self.sync_ui().await;
+        // The announcement has served its purpose — whatever loaded is now the
+        // real projection, timeline and all.
+        self.settle_announcement();
+        // After the first publish, not before: `sync_ui` already showed the
+        // caller-supplied metadata, and this only fills a gap (a track the
+        // planner advanced to with no manifest row — i.e. the WebView was gone
+        // when it was queued). No-op when anything already knows the title.
+        self.hydrate_current_metadata();
         Ok(())
     }
 }

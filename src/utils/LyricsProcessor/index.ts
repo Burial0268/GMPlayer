@@ -47,7 +47,7 @@ export { parseLrcLines, parseYrcLines, buildAMLLData, convertToAMLL } from "./pa
 export { alignByIndex, isInterludeLine, buildIndexMatching } from "./alignment";
 
 // Main parser
-export { parseLyricData, formatAsLrc, createEmptyLyricResult, resetSongLyric } from "./lyricParser";
+export { parseLyricData, createEmptyLyricResult, resetSongLyric } from "./lyricParser";
 
 // Processing
 export { processLyrics, preprocessLyrics, getProcessedLyrics } from "./processor";
@@ -59,7 +59,6 @@ export { LyricService } from "./service";
 // These allow old import names to keep working
 
 export { parseLyricData as parseLyric } from "./lyricParser";
-export { formatAsLrc as formatToLrc } from "./lyricParser";
 export { parseLrcLines as parseLrcData } from "./parser/formatParser";
 export { parseYrcLines as parseYrcData } from "./parser/formatParser";
 export { buildAMLLData as parseAMData } from "./parser/formatParser";

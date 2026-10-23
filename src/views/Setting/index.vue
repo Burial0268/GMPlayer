@@ -2,7 +2,7 @@
   <div class="setting">
     <header class="setting-header">
       <div>
-        <div class="title">{{ t("nav.avatar.setting") }}</div>
+        <h1 class="title">{{ t("nav.avatar.setting") }}</h1>
         <div class="subtitle">{{ t("setting.settingsSubtitle") }}</div>
       </div>
     </header>
@@ -78,15 +78,17 @@ onMounted(() => {
   }
 
   .title {
-    font-size: clamp(24px, 3vw, 32px);
-    line-height: 1.1;
+    margin: 0;
+    font-size: var(--font-size-large-title);
+    line-height: var(--line-height-heading);
     font-weight: 700;
   }
 
   .subtitle {
     margin-top: 6px;
-    font-size: 13px;
-    opacity: 0.64;
+    font-size: var(--font-size-footnote);
+    line-height: var(--line-height-body);
+    color: var(--text-secondary);
   }
 
   .content {

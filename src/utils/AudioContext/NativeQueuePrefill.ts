@@ -8,17 +8,21 @@
  * the browser media host) and pure-web playback keeps using AudioPreloader.
  *
  * Window semantics (see docs/native-queue-background-playback-plan.md):
- * - normal mode:  [cur@i, next@(i+1)%L, ...] windowed=true (stop when exhausted)
- * - random mode:  [cur@i, prePicked@k]       windowed=true (depth 1 — duplicate
- *                 origOrder entries would break the backend's identity matching)
+ * - normal / random mode: [cur@i, next@(i+1)%L, ...] windowed=true (stop when
+ *                 exhausted). Random needs no special case and no depth cap:
+ *                 the queue itself is shuffled (`musicData.shufflePlaylistOrder`),
+ *                 so "next" is the next index in both modes.
  * - single mode / single-song list: [cur@i]  windowed=false (native wrap = repeat)
- * - personal FM / listen-together: no prefill (transitions need live JS)
+ * - personal FM: prefilled like normal — it now keeps a pre-fetched buffer in the
+ *                playlist, walked forward (mode forced to normal), windowed=true
+ * - listen-together: no prefill (transitions need a live room round-trip)
  */
 
-import { isTauri } from "@/utils/tauri/audioBridge";
-import type { SongData as QueueSongData } from "@/utils/tauri/audioBridge";
-import { NativeRustSound } from "@/utils/tauri/NativeRustSound";
+import { isTauri } from "@/utils/tauri/core/runtime";
+import type { SongData as QueueSongData } from "@/utils/tauri/audio/protocol";
+import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
 import { resolveSongUrl } from "./resolveSongUrl";
+import { toTrackDisplay } from "./NativeManifestPublisher";
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
@@ -109,8 +113,8 @@ export async function prefillNativeQueue(): Promise<void> {
   const music = useMusicDataStore();
   const listenTogether = useListenTogetherStore();
   cancelNativeQueuePrefill();
-  if (music.persistData.personalFmMode) return;
-  if (listenTogether.isInRoom) return;
+  // Rust owns the FM reservoir and its signed-source prefetch.
+  if (music.persistData.personalFmMode || listenTogether.isInRoom) return;
 
   const playlists = music.persistData.playlists;
   const listLength = playlists.length;
@@ -131,18 +135,21 @@ export async function prefillNativeQueue(): Promise<void> {
     type: "local",
     filePath: sound.getSourceUrl(),
     origOrder: currentIndex,
+    // Sent with the track so the OS media session is correct on the first
+    // frame. The backend downloads this https path to a temp file before
+    // decoding, so without it the only name available at load time is that
+    // temp file's random stem.
+    display: toTrackDisplay(currentSong),
   };
 
-  let nextIndices: number[] = [];
+  const nextIndices: number[] = [];
   let windowed = true;
   if (mode === "single" || listLength === 1) {
     // Native wrap-around on a single-entry queue IS repeat: keep it.
     windowed = false;
-  } else if (mode === "random") {
-    let pick = Math.floor(Math.random() * listLength);
-    if (pick === currentIndex) pick = (pick + 1) % listLength;
-    nextIndices = [pick];
-  } else if (mode === "normal") {
+  } else {
+    // normal and random share this: the random permutation is the queue's own
+    // order, so the window is just the next few indices in both cases.
     const seen = new Set<number>([currentIndex]);
     for (let i = 1; i <= PREFILL_DEPTH; i++) {
       const nextIndex = (currentIndex + i) % listLength;
@@ -150,18 +157,34 @@ export async function prefillNativeQueue(): Promise<void> {
       seen.add(nextIndex);
       nextIndices.push(nextIndex);
     }
-  } else {
-    return;
   }
 
   const resolved = await Promise.all(
     nextIndices.map(async (index) => {
       const songData = playlists[index];
       if (!songData?.id) return null;
+      // A local file *is* its own source: there is nothing to resolve, and
+      // handing its negative id to `resolveSongUrl` would ask Netease about a
+      // track that does not exist there. The locator goes into the window
+      // verbatim, which is exactly what the backend's `SongData::Local` wants.
+      const localUri = songData.local?.uri;
+      if (typeof localUri === "string" && localUri) {
+        return {
+          index,
+          songId: songData.id as number,
+          url: localUri,
+          display: toTrackDisplay(songData),
+        };
+      }
       try {
         const result = await resolveSongUrl(songData, undefined, { signal });
         if (!result?.url) return null;
-        return { index, songId: songData.id as number, url: result.url };
+        return {
+          index,
+          songId: songData.id as number,
+          url: result.url,
+          display: toTrackDisplay(songData),
+        };
       } catch {
         return null;
       }
@@ -195,7 +218,12 @@ export async function prefillNativeQueue(): Promise<void> {
     // Truncate at the first failure: a gap would make the backend jump the
     // playback order (entries advance positionally).
     if (!entry) break;
-    entries.push({ type: "local", filePath: entry.url, origOrder: entry.index });
+    entries.push({
+      type: "local",
+      filePath: entry.url,
+      origOrder: entry.index,
+      display: entry.display,
+    });
     registry.set(`local:${entry.url}`, { songId: entry.songId, index: entry.index });
   }
   persistRegistry();

@@ -38,6 +38,22 @@ export interface EffectManagerOptions {
   lowFreqOptions?: LowFreqVolumeOptions;
 }
 
+/**
+ * AnalyserNode 回落路径的低频调参。
+ *
+ * 字节频谱是 dB 缩放的，`amplitudeToLevel` 又取一次 log，动态范围被压扁：
+ * WASM 路径的默认阈值 0.35 在这上面几乎永远不触发，`calculateGradient` 恒走
+ * `minInInterval * 0.25` 分支 ≈ 0，背景完全不动。
+ *
+ * 关键是这份调参必须跟着**实际走的那条路径**，而不是跟着平台。移动端固然
+ * 总是走 AnalyserNode，但桌面端在 WASM 分析不可用时（模块缺失、或产物是
+ * Tauri 口味、构造抛错）同样会落到这里——那时用 WASM 的阈值就等于把动态
+ * 流速静音。见 `getLowFrequencyVolume` 的回落分支。
+ */
+const ANALYSER_FALLBACK_LOW_FREQ_OPTIONS: LowFreqVolumeOptions = {
+  gradientThreshold: 0.1,
+};
+
 const DEFAULT_OPTIONS: Required<EffectManagerOptions> = {
   fftSize: 2048,
   smoothingTimeConstant: 0.85,
@@ -60,15 +76,22 @@ const MOBILE_OPTIONS: Required<EffectManagerOptions> = {
   freqMin: 76,
   freqMax: 2400,
   lowFreqBinCount: 4,
-  lowFreqOptions: {
-    // Lower threshold for AnalyserNode fallback: byte frequency data is dB-scaled,
-    // so amplitudeToLevel (another log) compresses the dynamic range.
-    // Default 0.35 almost never triggers; 0.1 restores punchy bass detection.
-    gradientThreshold: 0.1,
-  },
+  lowFreqOptions: { ...ANALYSER_FALLBACK_LOW_FREQ_OPTIONS },
 };
 
 const EMPTY_U8 = new Uint8Array(0);
+// 回落分析器在缓冲区还没建好时的入参。用共享常量而不是每次 new，
+// 这个分支是按帧调用的。
+const EMPTY_F32 = new Float32Array(0);
+
+/**
+ * 分析链路不可用时该上报的低频音量。
+ *
+ * 中性值是 1 而不是 0——`resetLowFreqVolume()` 发的是 1，动态流速关闭时
+ * `BigPlayerBackground` 传的也是 1.0。发 0 等于告诉渲染器「零低频能量」，
+ * 背景会直接冻住，比没有这个特性还糟。
+ */
+export const NEUTRAL_LOW_FREQ_VOLUME = 1;
 
 /**
  * AudioEffectManager - Hybrid analysis engine
@@ -113,6 +136,18 @@ export class AudioEffectManager {
     });
 
     this._initNodes();
+
+    // WASM 分析不可用时 getLowFrequencyVolume() 会落到 AnalyserNode 分支
+    // （_initNodes 里 worklet 也不会建）。移动端是预期内的，桌面端则是
+    // WASM 缺失或构造失败——两种情况都得换成 AnalyserNode 的调参，否则
+    // 阈值不匹配会让低频音量恒为 ~0，动态流速看不出任何效果。
+    // 调用方显式指定过 gradientThreshold 时不覆盖。
+    if (
+      !this._analysisProc?.isReady() &&
+      this.options.lowFreqOptions?.gradientThreshold === undefined
+    ) {
+      this._fallbackAnalyzer.setOptions(ANALYSER_FALLBACK_LOW_FREQ_OPTIONS);
+    }
   }
 
   private _initNodes(): void {
@@ -255,7 +290,7 @@ export class AudioEffectManager {
     }
 
     this._ensureFresh(false);
-    return this._analysisProc?.getLowFrequencyVolume() ?? 0;
+    return this._analysisProc?.getLowFrequencyVolume() ?? NEUTRAL_LOW_FREQ_VOLUME;
   }
 
   /**
@@ -264,7 +299,7 @@ export class AudioEffectManager {
    */
   private _getLowFreqFromAnalyser(): number {
     if (!this._frequencyBuffer || this._frequencyBuffer.length === 0) {
-      return this._fallbackAnalyzer.analyze(new Uint8Array(0));
+      return this._fallbackAnalyzer.analyze(EMPTY_F32);
     }
 
     const binCount = Math.min(this.options.lowFreqBinCount, this._frequencyBuffer.length);

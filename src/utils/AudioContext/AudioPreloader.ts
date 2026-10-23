@@ -13,7 +13,7 @@
 import { BufferedSound } from "./BufferedSound";
 import { resolveSongUrl } from "./resolveSongUrl";
 import { getAutoMixEngine } from "./AutoMix";
-import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/NativeRustSound";
+import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/nativeRustSound";
 // Import store directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 
@@ -44,9 +44,11 @@ export class AudioPreloader {
     // silently switch the audio pipeline back to Web Audio on consume.
     if (isAudioBackendRuntimeAvailable()) return;
 
-    // Guard: only normal mode, not FM, list >= 2, not already preloading
+    // Guard: not FM, not single-repeat, list >= 2, not already preloading.
+    // Random mode is preloadable now: the queue itself carries the shuffle, so
+    // the next index is the next song (see `musicData.shufflePlaylistOrder`).
     if (music.persistData.personalFmMode) return;
-    if (music.persistData.playSongMode !== "normal") return;
+    if (music.persistData.playSongMode === "single") return;
     if (music.persistData.playlists.length < 2) return;
     if (this._isPreloading) return;
 

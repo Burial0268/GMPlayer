@@ -27,6 +27,30 @@ export {
   getNativeQueueRegistryEntry,
 } from "./NativeQueuePrefill";
 
+// Native manifest planner (Tauri unbounded background advance)
+export { publishNativeManifest, clearNativeManifest } from "./NativeManifestPublisher";
+export {
+  syncNativeResolverConfig,
+  invalidateNativeResolverConfig,
+} from "./NativeResolverConfigSync";
+
+// Session controls (play mode / favourite) shared with the OS media session
+export {
+  publishSessionControls,
+  invalidateSessionControls,
+  installSessionControlsSubscriber,
+  isAdoptingSessionControls,
+  requestNextPlayMode,
+  requestToggleFavourite,
+} from "./NativeSessionControlsSync";
+
+// Boot-time reconciliation with a backend that outlived the WebView
+export { adoptNativeBackendSession } from "./NativeSessionAdopt";
+export type { AdoptedBackendSession } from "./NativeSessionAdopt";
+
+// Listen-together keepalive hand-off (Tauri only)
+export { setNativeListenTogetherRoom } from "./NativeListenTogetherSync";
+
 // Export types
 export type {
   SoundOptions,

@@ -12,6 +12,7 @@
     "taskbar-lyric:allow-set-click-interception",
     "taskbar-lyric:allow-set-forwarding-enabled",
     "taskbar-lyric:allow-stop-mouse-hook",
-    "core:default"
+    "core:default",
+    "pinia:default"
   ]
 }

@@ -114,7 +114,6 @@ export const createEmptyLyricResult = (): ParsedLyricResult => ({
   ttml: [],
   lrcAMData: [],
   yrcAMData: [],
-  formattedLrc: "",
 });
 
 // 恢复默认
@@ -234,11 +233,18 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
           result.lrc = alignByIndex(result.lrc, convertLrcLines(effectiveLrcRomaSource), "roma");
         }
 
-        result.lrcAMData = buildAMLLData(
-          lrcParsedRaw,
-          effectiveLrcTranSource,
-          effectiveLrcRomaSource,
-        );
+        // TTML tracks never read lrcAMData: processLyrics() returns the canonical
+        // TTML lines before it ever looks at the LRC source. Building it anyway
+        // costs a full word-level object graph per track that nothing renders.
+        // (`result.lrc` above is still needed — the lyric index sync and the
+        // slave-window payload both read it.)
+        if (directTTMLLines.length === 0) {
+          result.lrcAMData = buildAMLLData(
+            lrcParsedRaw,
+            effectiveLrcTranSource,
+            effectiveLrcRomaSource,
+          );
+        }
       } catch {
         result.lrc = [
           { time: 0, content: "LRC解析出错" },
@@ -339,46 +345,8 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
   return result;
 };
 
-/**
- * 将解析后的歌词数据转换为标准LRC格式文本 (优化版)
- * @param parsedLyric 解析后的歌词结果对象
- * @returns 标准LRC格式文本
- */
-export const formatAsLrc = (parsedLyric: ParsedLyricResult): string => {
-  const lrc = parsedLyric?.lrc;
-  if (!lrc || lrc.length === 0) {
-    return "";
-  }
-
-  const parts: string[] = [];
-  parts.length = lrc.length * 3; // Max possible lines (main + tran + roma)
-  let count = 0;
-
-  for (let i = 0; i < lrc.length; i++) {
-    const line = lrc[i];
-    const time = line.time;
-    const minutes = (time / 60) | 0;
-    const seconds = time % 60;
-    const timeStr = `${minutes < 10 ? "0" : ""}${minutes}:${seconds < 10 ? "0" : ""}${seconds.toFixed(2).padStart(5, "0")}`;
-
-    parts[count++] = `[${timeStr}]${line.content}\n`;
-
-    if (parsedLyric.hasLrcTran && line.tran) {
-      parts[count++] = `[${timeStr}]${line.tran}\n`;
-    }
-
-    if (parsedLyric.hasLrcRoma && line.roma) {
-      parts[count++] = `[${timeStr}]${line.roma}\n`;
-    }
-  }
-
-  parts.length = count;
-  return parts.join("");
-};
-
 // Backward compatibility aliases
 export const parseLyric = parseLyricData;
 export const getDefaultLyricResult = createEmptyLyricResult;
-export const formatToLrc = formatAsLrc;
 
 export default parseLyricData;

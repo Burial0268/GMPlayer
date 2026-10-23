@@ -1,61 +1,76 @@
 <template>
-  <div :class="['all', { noLrc: !showLyrics }]">
+  <div :class="['all', { noLrc: !showLyrics, immersive: isImmersive }]">
     <div class="tip" ref="tipRef" v-show="lrcMouseStatus">
       <n-text>{{ $t("other.lrcClicks") }}</n-text>
     </div>
 
-    <div ref="leftContentRef" class="left">
-      <LayoutGroup id="desktop-player-content">
-        <AnimatePresence :initial="false">
-          <Motion
-            v-if="commentsOpen"
-            key="comments"
-            class="left-stage comment-stage"
-            :layout="true"
-            :initial="{ opacity: 0, x: -22, y: 8, scale: 0.99 }"
-            :animate="{ opacity: 1, x: 0, y: 0, scale: 1 }"
-            :exit="{ opacity: 0, x: -14, y: 5, scale: 0.995 }"
-            :transition="commentStageTransition"
-          >
-            <DesktopCommentPanel @close="$emit('closeComments')" />
-          </Motion>
-          <Motion
-            v-else
-            key="artwork"
-            class="left-stage artwork-stage"
-            :layout="true"
-            :initial="{ opacity: 0, x: 22, y: 8, scale: 0.99 }"
-            :animate="{ opacity: 1, x: 0, y: 0, scale: 1 }"
-            :exit="{ opacity: 0, x: 14, y: 5, scale: 0.995 }"
-            :transition="artworkStageTransition"
-          >
-            <PlayerCover
-              v-if="setting.playerStyle === 'cover'"
-              @openComments="$emit('openComments')"
-            />
-            <PlayerRecord
-              v-else-if="setting.playerStyle === 'record'"
-              @openComments="$emit('openComments')"
-            />
-          </Motion>
-        </AnimatePresence>
-      </LayoutGroup>
-      <PlayerCloseHandle />
-    </div>
+    <ImmersivePlayerLayout
+      v-if="isImmersive"
+      :menuShow="menuShow"
+      :showLyrics="showLyrics"
+      :commentsOpen="commentsOpen"
+      :handleProgressSeek="handleProgressSeek"
+      @lrcMouseEnter="$emit('lrcMouseEnter')"
+      @lrcAllLeave="$emit('lrcAllLeave')"
+      @lrcTextClick="$emit('lrcTextClick', $event)"
+      @openComments="$emit('openComments')"
+      @closeComments="$emit('closeComments')"
+    />
 
-    <div
-      ref="rightContentRef"
-      :class="['right', { 'lyrics-hidden': !showLyrics }]"
-      :aria-hidden="!showLyrics"
-    >
-      <DesktopLyricsPanel
-        :menuShow="menuShow"
-        :handleProgressSeek="handleProgressSeek"
-        @lrcMouseEnter="$emit('lrcMouseEnter')"
-        @lrcAllLeave="$emit('lrcAllLeave')"
-        @lrcTextClick="$emit('lrcTextClick', $event)"
-      />
-    </div>
+    <template v-else>
+      <div ref="leftContentRef" class="left">
+        <LayoutGroup id="desktop-player-content">
+          <AnimatePresence :initial="false">
+            <Motion
+              v-if="commentsOpen"
+              key="comments"
+              class="left-stage comment-stage"
+              :layout="true"
+              :initial="{ opacity: 0, x: -22, y: 8, scale: 0.99 }"
+              :animate="{ opacity: 1, x: 0, y: 0, scale: 1 }"
+              :exit="{ opacity: 0, x: -14, y: 5, scale: 0.995 }"
+              :transition="commentStageTransition"
+            >
+              <DesktopCommentPanel @close="$emit('closeComments')" />
+            </Motion>
+            <Motion
+              v-else
+              key="artwork"
+              class="left-stage artwork-stage"
+              :layout="true"
+              :initial="{ opacity: 0, x: 22, y: 8, scale: 0.99 }"
+              :animate="{ opacity: 1, x: 0, y: 0, scale: 1 }"
+              :exit="{ opacity: 0, x: 14, y: 5, scale: 0.995 }"
+              :transition="artworkStageTransition"
+            >
+              <PlayerCover
+                v-if="setting.playerStyle === 'cover'"
+                @openComments="$emit('openComments')"
+              />
+              <PlayerRecord
+                v-else-if="setting.playerStyle === 'record'"
+                @openComments="$emit('openComments')"
+              />
+            </Motion>
+          </AnimatePresence>
+        </LayoutGroup>
+        <PlayerCloseHandle />
+      </div>
+
+      <div
+        ref="rightContentRef"
+        :class="['right', { 'lyrics-hidden': !showLyrics }]"
+        :aria-hidden="!showLyrics"
+      >
+        <DesktopLyricsPanel
+          :menuShow="menuShow"
+          :handleProgressSeek="handleProgressSeek"
+          @lrcMouseEnter="$emit('lrcMouseEnter')"
+          @lrcAllLeave="$emit('lrcAllLeave')"
+          @lrcTextClick="$emit('lrcTextClick', $event)"
+        />
+      </div>
+    </template>
 
     <DesktopQueuePanel :show="queueOpen" />
   </div>
@@ -70,6 +85,7 @@ import PlayerRecord from "../PlayerRecord.vue";
 import DesktopLyricsPanel from "./DesktopLyricsPanel.vue";
 import DesktopQueuePanel from "./DesktopQueuePanel.vue";
 import DesktopCommentPanel from "./DesktopCommentPanel.vue";
+import ImmersivePlayerLayout from "./ImmersivePlayerLayout.vue";
 import PlayerCloseHandle from "../PlayerCloseHandle.vue";
 
 const props = defineProps<{
@@ -98,6 +114,9 @@ const leftContentRef = ref<HTMLElement | null>(null);
 const rightContentRef = ref<HTMLElement | null>(null);
 const lyricsReady = computed(() => props.hasLyrics && !music.getLoadingState);
 const showLyrics = computed(() => lyricsReady.value && props.lyricsVisible);
+// 沉浸模式接管整块桌面布局（全幅封面 + 右侧歌词 + 浮动控制卡），
+// 因此不渲染 .left / .right 两栏，也不需要下面的关闭手柄测量。
+const isImmersive = computed(() => setting.playerStyle === "immersive");
 // This is deliberately slower and more damped than the mobile artwork spring.
 // The desktop hand-off travels farther, so the lower stiffness and heavier mass
 // keep it from snapping into place while still preserving a spring settle.
@@ -169,6 +188,17 @@ const scheduleMeasure = () => {
 let leftResizeObserver: ResizeObserver | null = null;
 let settleTimer: number | null = null;
 
+// .left 在切换播放器样式时会整块卸载重建，观察器必须跟着换目标，
+// 否则从沉浸模式切回封面/唱片后手柄会冻在旧坐标。
+const attachLeftObserver = () => {
+  leftResizeObserver?.disconnect();
+  leftResizeObserver = null;
+  const left = leftContentRef.value;
+  if (!left || typeof ResizeObserver === "undefined") return;
+  leftResizeObserver = new ResizeObserver(() => scheduleMeasure());
+  leftResizeObserver.observe(left);
+};
+
 const clearSettleTimer = () => {
   if (settleTimer !== null) {
     window.clearTimeout(settleTimer);
@@ -178,10 +208,7 @@ const clearSettleTimer = () => {
 
 onMounted(() => {
   scheduleMeasure();
-  if (leftContentRef.value && typeof ResizeObserver !== "undefined") {
-    leftResizeObserver = new ResizeObserver(() => scheduleMeasure());
-    leftResizeObserver.observe(leftContentRef.value);
-  }
+  attachLeftObserver();
 });
 
 onBeforeUnmount(() => {
@@ -206,7 +233,11 @@ watch(
 );
 watch(
   () => setting.playerStyle,
-  () => nextTick(scheduleMeasure),
+  () =>
+    nextTick(() => {
+      attachLeftObserver();
+      scheduleMeasure();
+    }),
 );
 watch(
   () => music.getPlaySongData,
@@ -224,6 +255,11 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
   flex-direction: row;
   align-items: center;
   position: relative;
+
+  // 沉浸模式内部全部绝对定位，两栏 flex 规则不参与布局
+  &.immersive {
+    display: block;
+  }
 
   &.noLrc {
     justify-content: flex-start;
@@ -277,7 +313,8 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
       width 0.34s cubic-bezier(0.25, 1, 0.5, 1),
       transform 0.34s cubic-bezier(0.25, 1, 0.5, 1),
       opacity 0.24s ease;
-    will-change: width, transform, opacity;
+    // width 走布局，合成器接不了；留在 will-change 里只是白占一个常驻图层。
+    will-change: transform, opacity;
   }
 
   .left-stage {

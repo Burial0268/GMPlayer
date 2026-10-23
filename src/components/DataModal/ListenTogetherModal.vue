@@ -36,10 +36,7 @@
                 <div class="song-preview-card">
                   <div class="song-cover-wrap">
                     <img
-                      :src="
-                        musicStore.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
-                        '?param=120y120'
-                      "
+                      :src="coverUrl(musicStore.getPlaySongData.album?.picUrl, 120)"
                       class="song-cover-img"
                       alt="cover"
                     />
@@ -279,10 +276,7 @@
             <div class="now-playing-card">
               <div :class="['np-cover', { 'np-cover--spinning': musicStore.getPlayState }]">
                 <img
-                  :src="
-                    musicStore.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
-                    '?param=100y100'
-                  "
+                  :src="coverUrl(musicStore.getPlaySongData.album?.picUrl, 100)"
                   class="np-cover-img"
                   alt="cover"
                 />
@@ -332,6 +326,7 @@ import {
 } from "@vicons/ionicons5";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
+import { coverUrl } from "@/utils/coverUrl";
 
 // ── i18n / stores ──────────────────────────────────────────────────────────
 const { t } = useI18n();

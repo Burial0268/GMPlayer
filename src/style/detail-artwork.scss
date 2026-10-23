@@ -1,0 +1,27 @@
+// The cover and its exposed record share one footprint, including in the loading skeleton.
+@mixin album($cover) {
+  grid-template-columns: minmax(calc(176px * 1.16), calc(278px * 1.16)) minmax(0, 1fr);
+
+  #{$cover} {
+    width: calc(100% / 1.16);
+    margin-inline-end: calc(100% * 0.16 / 1.16);
+  }
+
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr;
+
+    #{$cover} {
+      --album-cover-size: min(58vw, 260px, calc(100% / 1.16));
+
+      justify-self: center;
+      width: var(--album-cover-size);
+      margin-inline-end: calc(var(--album-cover-size) * 0.16);
+    }
+  }
+
+  @media (max-width: 540px) {
+    #{$cover} {
+      --album-cover-size: min(64vw, 235px, calc(100% / 1.16));
+    }
+  }
+}

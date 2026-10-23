@@ -1,0 +1,6 @@
+/target
+/Cargo.lock
+/android/.gradle
+/android/.tauri
+/android/build
+/android/local.properties

@@ -30,21 +30,34 @@
           responsive="screen"
           cols="2 s:3 m:4 l:5"
         >
-          <n-grid-item
-            v-for="item in themeColorList"
-            :key="item.label"
-            :style="{ '--color': item.primaryColor }"
-            :class="['color-item', { check: item.label === themeType }]"
-            @click="changeThemeColor(item)"
-          >
-            <span>{{ language === "zh-CN" ? item.name : item.label }}</span>
+          <n-grid-item v-for="item in themeColorList" :key="item.label">
+            <button
+              type="button"
+              :style="{
+                '--color': item.primaryColor,
+                '--on-color': textOnColor(item.primaryColor, swatchBackground),
+              }"
+              :class="['color-item', { check: item.label === themeType }]"
+              :aria-pressed="item.label === themeType"
+              @click="changeThemeColor(item)"
+            >
+              <span>{{ language === "zh-CN" ? item.name : item.label }}</span>
+            </button>
           </n-grid-item>
-          <n-grid-item
-            :class="['color-item', { check: themeType === 'custom' }]"
-            :style="{ '--color': themeData.primaryColor }"
-            @click="openThemeCustom"
-          >
-            <span>{{ t("general.name.customTheme") }}</span>
+          <n-grid-item>
+            <button
+              type="button"
+              :class="['color-item', { check: themeType === 'custom' }]"
+              :style="{
+                '--color': themeData.primaryColor,
+                '--on-color': textOnColor(themeData.primaryColor, swatchBackground),
+              }"
+              :aria-pressed="themeType === 'custom'"
+              aria-haspopup="dialog"
+              @click="openThemeCustom"
+            >
+              <span>{{ t("general.name.customTheme") }}</span>
+            </button>
           </n-grid-item>
         </n-grid>
       </template>
@@ -105,6 +118,14 @@
 
       <template #dspSettings>
         <SettingsDsp />
+      </template>
+
+      <template #downloadSettings>
+        <SettingsDownload />
+      </template>
+
+      <template #aboutApp>
+        <SettingsAbout />
       </template>
     </SettingsPanel>
 
@@ -209,14 +230,18 @@
 </template>
 
 <script setup lang="ts">
+import { NCheckbox, NText } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import { settingStore } from "@/store";
-import { suspendMusicPersist } from "@/store/musicPersistedData";
+import { resetPersistedStorage } from "@/store/resetPersistence";
 import themeColorData from "@/components/Provider/themeColor.json";
+import { textOnColor } from "@/components/Provider/interfaceTheme";
 import SettingsPanel from "./SettingsPanel.vue";
 import SettingsAppUpdate from "./SettingsAppUpdate.vue";
 import SettingsDsp from "./SettingsDsp.vue";
+import SettingsDownload from "./SettingsDownload.vue";
+import SettingsAbout from "./SettingsAbout.vue";
 import { SETTINGS_SECTION_ALIASES, useSettingsSections } from "./useSettingsSections";
 
 declare const $cleanAll: any;
@@ -231,6 +256,10 @@ type ThemeColorItem = {
   primaryColorSuppl: string;
   primaryColorPressed: string;
 };
+
+const swatchBackground = computed(() =>
+  settingStore().getSiteTheme === "dark" ? "#18181c" : "#ffffff",
+);
 
 const props = withDefaults(
   defineProps<{
@@ -339,24 +368,47 @@ const changeThemeColor = (data: ThemeColorItem | null, reset = false) => {
 };
 
 const resetApp = () => {
-  const cleanAll = () => {
+  /**
+   * 是否连本地音乐库一起清掉。
+   *
+   * 默认不勾，而且这是本对话框里唯一一个需要用户自己决定的开关：本地库不在
+   * localStorage、也不在 Tauri store 里，重置本来就碰不到它——但「碰巧幸存」不是
+   * 一种可依赖的语义，所以把它摆成一个明确的选择。
+   */
+  const clearLocalLibrary = ref(false);
+
+  const cleanAll = async () => {
     $message?.success(t("other.cleanAll"));
-    suspendMusicPersist();
-    localStorage.clear();
+    await resetPersistedStorage({ clearLocalLibrary: clearLocalLibrary.value });
     window.location.href = "/";
   };
 
   $dialog.warning({
     class: "s-dialog",
     title: t("setting.resetApp"),
-    content: t("setting.resetAppWarning"),
+    // 渲染函数而不是纯文本：勾选项必须和警告文案在同一个对话框里，
+    // 否则用户会在不知道自己选了什么的情况下按下确认。
+    content: () =>
+      h("div", { style: "display: flex; flex-direction: column; gap: 12px;" }, [
+        h(NText, null, { default: () => t("setting.resetAppWarning") }),
+        h(
+          NCheckbox,
+          {
+            checked: clearLocalLibrary.value,
+            "onUpdate:checked": (value: boolean) => (clearLocalLibrary.value = value),
+          },
+          { default: () => t("setting.resetAppClearLocal") },
+        ),
+      ]),
     positiveText: t("setting.resetApp"),
     negativeText: t("general.dialog.cancel"),
     onPositiveClick: () => {
-      if (typeof $cleanAll !== "undefined" && $cleanAll) {
-        $cleanAll();
+      // `$cleanAll` is the main window's own reset and does not know about the
+      // checkbox, so it is only used when this local path is unavailable.
+      if (clearLocalLibrary.value || typeof $cleanAll === "undefined" || !$cleanAll) {
+        void cleanAll();
       } else {
-        cleanAll();
+        void $cleanAll();
       }
     },
   });
@@ -427,11 +479,11 @@ const handleAction = (key: string) => {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    font-size: 15px;
+    font-size: var(--font-size-body);
 
     .tip {
-      font-size: 12px;
-      opacity: 0.68;
+      font-size: var(--font-size-footnote);
+      color: var(--text-secondary);
     }
   }
 }
@@ -444,6 +496,10 @@ const handleAction = (key: string) => {
     position: relative;
     width: 100%;
     min-height: 58px;
+    padding: var(--space-3);
+    border: 0;
+    font: inherit;
+    color: var(--on-color);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -459,7 +515,7 @@ const handleAction = (key: string) => {
       content: "";
       position: absolute;
       inset: 4px;
-      border: 2px solid rgb(255 255 255 / 0.72);
+      border: 2px solid currentColor;
       border-radius: var(--radius-sm);
       opacity: 0;
       transition: opacity var(--duration-150) var(--ease-out);
@@ -475,10 +531,9 @@ const handleAction = (key: string) => {
 
     span {
       position: relative;
-      color: #fff;
+      color: inherit;
       font-size: 13px;
       font-weight: 600;
-      text-shadow: 0 1px 8px rgb(0 0 0 / 0.28);
     }
   }
 }

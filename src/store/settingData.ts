@@ -3,6 +3,7 @@ import { NIcon } from "naive-ui";
 import { WbSunnyFilled, DarkModeFilled } from "@vicons/material";
 import { h } from "vue";
 import getLanguageData from "@/utils/getLanguageData";
+import { createThrottledStorage } from "./throttledStorage";
 
 declare const $message: any;
 
@@ -53,6 +54,18 @@ interface SettingDataState {
   musicFrequency: boolean;
   lrcMousePause: boolean;
   useUnmServer: boolean;
+  /**
+   * NCM 接口走哪条链路。`remote` = 已部署的 NeteaseCloudMusicApi；
+   * `local` = Tauri 内嵌协议层，少一跳网络（实测约 38~48 ms/请求）。
+   *
+   * Tauri 上默认 local。Web 上没有内嵌协议层，`setNcmTransport` 会强制回落到
+   * remote，设置项也不显示——那里没有可切换的对象。
+   *
+   * remote 后端永不移除：收益与地理位置相关（离网易云远的用户，中转反而可能
+   * 更快），且本地直连会把请求出口 IP 从服务器换成用户真机，风控画像随之改变。
+   * 本地链路连续失败时会自动降级回 remote。
+   */
+  ncmTransport: "remote" | "local";
   backgroundImageShow: string;
   blurAmount: number;
   contrastAmount: number;
@@ -86,6 +99,7 @@ interface SettingDataState {
   autoMixSmartCurve: boolean;
   autoMixTransitionEffects: boolean;
   autoMixVocalGuard: boolean;
+  autoMixEmotionalTransition: boolean;
   // DSP settings. Defaults must resolve to a native bypass path.
   dspEnabled: boolean;
   dspEqEnabled: boolean;
@@ -126,6 +140,85 @@ const defaultDspEqBands = (count = 10): DspEqBandSetting[] => {
   }));
 };
 
+const DSP_EQ_BAND_COUNTS = [10, 15, 31];
+
+/**
+ * settingData 的写入门面。导出是给「系统重置」用的：清 localStorage 之前
+ * 必须先 suspend，否则节流窗口里的尾调用会在 clear 之后把旧值写回去。
+ */
+export const settingStorage = createThrottledStorage(400);
+
+/**
+ * 载荷级迁移：把任意来源（localStorage / Tauri store 文件）读出来的**原始载荷**
+ * 修正成当前版本的字段结构。
+ *
+ * 之所以放在载荷级而不是 store 级：这些迁移要判断「键在不在」，而一旦并进
+ * store，缺失的键就被默认值填上了，再也分不清「用户没设过」和「用户把它设成了
+ * 默认值」。两条 hydrate 路径共用这一个函数——localStorage 走
+ * `serializer.deserialize`，Tauri store 走 `tauri.hooks.beforeFrontendSync`。
+ *
+ * 必须幂等：跨窗口同步会对同一份数据反复调用。旧键在迁移后直接删掉，
+ * 既保证幂等，也让它不会一直躺在落盘文件里。
+ */
+export function migrateLegacySettingPayload(payload: any): any {
+  if (!payload || typeof payload !== "object") return payload;
+  // useLyricAtlasAPI → useTTMLRepo
+  if ("useLyricAtlasAPI" in payload) {
+    if (!("useTTMLRepo" in payload)) payload.useTTMLRepo = payload.useLyricAtlasAPI;
+    delete payload.useLyricAtlasAPI;
+  }
+  // themeAuto + theme → themeMode
+  if (!("themeMode" in payload) && ("themeAuto" in payload || "theme" in payload)) {
+    payload.themeMode = payload.themeAuto ? "system" : payload.theme;
+  }
+  return payload;
+}
+
+/**
+ * store 级修复：把已经并进 store 的值夹回合法范围、补齐结构。与来源无关。
+ *
+ * 不能只挂在 persistedstate 的 `afterHydrate` 上——Tauri store 的
+ * `$patch(后端状态)` 发生在那之后，旧版本文件里的 dspEqBands 长度、越界的
+ * 字号偏移会被重新灌进来。所以 `$tauri.start()` 之后必须再跑一次。
+ *
+ * 全程原地改且只在值非法时才写：幂等，且不会凭空触发一次同步推送。
+ */
+export function repairSettingData(store: any): void {
+  if (
+    typeof store.desktopLyricsFontSizeOffset !== "number" ||
+    !Number.isFinite(store.desktopLyricsFontSizeOffset)
+  ) {
+    store.desktopLyricsFontSizeOffset = 0;
+  } else {
+    store.desktopLyricsFontSizeOffset = Math.max(
+      -20,
+      Math.min(40, store.desktopLyricsFontSizeOffset),
+    );
+  }
+
+  if (!DSP_EQ_BAND_COUNTS.includes(store.dspEqBandCount)) {
+    store.dspEqBandCount = Array.isArray(store.dspEqBands)
+      ? (DSP_EQ_BAND_COUNTS.find((count) => count === store.dspEqBands.length) ?? 10)
+      : 10;
+  }
+  if (!Array.isArray(store.dspEqBands) || store.dspEqBands.length !== store.dspEqBandCount) {
+    store.dspEqBands = defaultDspEqBands(store.dspEqBandCount);
+  } else {
+    const defaults = defaultDspEqBands(store.dspEqBandCount);
+    store.dspEqBands.forEach((band: Partial<DspEqBandSetting>, index: number) => {
+      if (typeof band.enabled !== "boolean") band.enabled = true;
+      if (!band.filterType) band.filterType = defaults[index]?.filterType ?? "peaking";
+      if (!Number.isFinite(band.frequency)) band.frequency = defaults[index]?.frequency ?? 1000;
+      if (!Number.isFinite(band.gainDb)) band.gainDb = 0;
+      if (!Number.isFinite(band.q)) band.q = defaults[index]?.q ?? 1.414;
+    });
+  }
+
+  if (typeof store.dspEnabled !== "boolean") store.dspEnabled = false;
+  if (typeof store.dspEqEnabled !== "boolean") store.dspEqEnabled = true;
+  if (typeof store.dspLimiterEnabled !== "boolean") store.dspLimiterEnabled = false;
+}
+
 const useSettingDataStore = defineStore("settingData", {
   state: (): SettingDataState => {
     return {
@@ -161,6 +254,7 @@ const useSettingDataStore = defineStore("settingData", {
       musicFrequency: false,
       lrcMousePause: false,
       useUnmServer: true,
+      ncmTransport: "local",
       backgroundImageShow: "eplor",
       blurAmount: 10,
       contrastAmount: 1.2,
@@ -194,6 +288,7 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixSmartCurve: true,
       autoMixTransitionEffects: true,
       autoMixVocalGuard: true,
+      autoMixEmotionalTransition: true,
       // DSP defaults: native mixer stays bypassed until explicitly enabled.
       dspEnabled: false,
       dspEqEnabled: true,
@@ -236,65 +331,32 @@ const useSettingDataStore = defineStore("settingData", {
   },
   persist: [
     {
-      storage: localStorage,
+      // 合并写入：EQ 增益 / 字号偏移是按 pointermove 频率改的，而 persistedstate
+      // 每次 mutation 都会同步写一遍完整 settingData。见 throttledStorage。
+      storage: settingStorage,
+      // 载荷级迁移挂在 deserialize 上，和 Tauri 分支的 beforeFrontendSync
+      // 走同一个函数，保证两条 hydrate 路径的迁移结果一致。
+      serializer: {
+        serialize: (data: any) => JSON.stringify(data),
+        deserialize: (data: string) => migrateLegacySettingPayload(JSON.parse(data)),
+      },
       afterHydrate(ctx: { store: any }) {
-        // Migrate old useLyricAtlasAPI → useTTMLRepo
-        const store = ctx.store;
-        const raw = localStorage.getItem("settingData");
-        if (raw) {
-          try {
-            const parsed = JSON.parse(raw);
-            if ("useLyricAtlasAPI" in parsed && !("useTTMLRepo" in parsed)) {
-              store.useTTMLRepo = parsed.useLyricAtlasAPI;
-            }
-            if (!("themeMode" in parsed)) {
-              store.themeMode = parsed.themeAuto ? "system" : parsed.theme;
-            }
-            if (
-              typeof store.desktopLyricsFontSizeOffset !== "number" ||
-              !Number.isFinite(store.desktopLyricsFontSizeOffset)
-            ) {
-              store.desktopLyricsFontSizeOffset = 0;
-            } else {
-              store.desktopLyricsFontSizeOffset = Math.max(
-                -20,
-                Math.min(40, store.desktopLyricsFontSizeOffset),
-              );
-            }
-            if (![10, 15, 31].includes(store.dspEqBandCount)) {
-              store.dspEqBandCount = Array.isArray(store.dspEqBands)
-                ? ([10, 15, 31].find((count) => count === store.dspEqBands.length) ?? 10)
-                : 10;
-            }
-            if (
-              !Array.isArray(store.dspEqBands) ||
-              store.dspEqBands.length !== store.dspEqBandCount
-            ) {
-              store.dspEqBands = defaultDspEqBands(store.dspEqBandCount);
-            } else {
-              const defaults = defaultDspEqBands(store.dspEqBandCount);
-              store.dspEqBands = store.dspEqBands.map(
-                (band: Partial<DspEqBandSetting>, index: number) => ({
-                  enabled: typeof band.enabled === "boolean" ? band.enabled : true,
-                  filterType: band.filterType ?? defaults[index]?.filterType ?? "peaking",
-                  frequency: Number.isFinite(band.frequency)
-                    ? band.frequency!
-                    : (defaults[index]?.frequency ?? 1000),
-                  gainDb: Number.isFinite(band.gainDb) ? band.gainDb : 0,
-                  q: Number.isFinite(band.q) ? band.q! : (defaults[index]?.q ?? 1.414),
-                }),
-              );
-            }
-            if (typeof store.dspEnabled !== "boolean") store.dspEnabled = false;
-            if (typeof store.dspEqEnabled !== "boolean") store.dspEqEnabled = true;
-            if (typeof store.dspLimiterEnabled !== "boolean") store.dspLimiterEnabled = false;
-          } catch {
-            /* ignore */
-          }
-        }
+        repairSettingData(ctx.store);
       },
     },
   ],
+  // Tauri 层：设置落到真实文件，并在主窗口 / 设置窗 / 迷你播放器之间实时同步
+  // ——在此之前，从窗口改的设置只有 16 个歌词相关字段能经 playerBridge 回到
+  // 主窗口，主题、DSP 等改动要重启才生效。
+  // 这里不过滤字段：settingData 的每一项本来就是要持久化的。
+  tauri: {
+    save: true,
+    sync: true,
+    hooks: {
+      // Tauri store 文件可能是旧版本写的，并进 store 之前先做同样的载荷级迁移。
+      beforeFrontendSync: (state: any) => migrateLegacySettingPayload(state),
+    },
+  },
 });
 
 if (import.meta.hot) {

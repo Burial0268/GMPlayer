@@ -15,3 +15,7 @@ declare module 'pinia' {
     persist?: import('pinia-plugin-persistedstate').PersistedStateOptions | import('pinia-plugin-persistedstate').PersistedStateOptions[] | boolean
   }
 }
+
+// Pulls in the `tauri` store option + `$tauri` store property augmentations from
+// @tauri-store/pinia. Type-only, so the package never reaches the web bundle.
+import type {} from '@tauri-store/pinia'

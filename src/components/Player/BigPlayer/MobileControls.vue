@@ -64,7 +64,13 @@
         </template>
       </n-button>
     </div>
-    <n-icon class="mode-btn" size="22" :component="MessageRound" @click.stop="$emit('toComment')" />
+    <n-icon
+      class="mode-btn"
+      :class="{ 'is-unavailable': isLocalTrack }"
+      size="22"
+      :component="MessageRound"
+      @click.stop="!isLocalTrack && $emit('toComment')"
+    />
   </div>
   <!-- 音量控制 -->
   <div class="mobile-volume">
@@ -90,6 +96,7 @@ import { ThumbDownRound, MessageRound, VolumeUpRound, VolumeOffRound } from "@vi
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore } from "@/store";
 import { storeToRefs } from "pinia";
+import { computed } from "vue";
 import BouncingSlider from "../BouncingSlider.vue";
 import IconPlay from "../icons/IconPlay.vue";
 import IconPause from "../icons/IconPause.vue";
@@ -102,6 +109,14 @@ defineEmits<{
 
 const music = musicStore();
 const { persistData } = storeToRefs(music);
+
+/**
+ * An imported local file has no Netease comment thread.
+ *
+ * The button is dimmed rather than removed: this row is `space-evenly`, so
+ * dropping one end of it would shift the transport off centre.
+ */
+const isLocalTrack = computed(() => Boolean(music.getPlaySongData?.local?.uri));
 </script>
 
 <style lang="scss" scoped>
@@ -128,6 +143,11 @@ const { persistData } = storeToRefs(music);
 
     &:active {
       transform: scale(0.85);
+    }
+
+    &.is-unavailable {
+      opacity: 0.2;
+      pointer-events: none;
     }
   }
 

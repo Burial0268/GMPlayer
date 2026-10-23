@@ -15,6 +15,24 @@
         <n-text class="key">{{ user.getUserData.nickname }}</n-text>
         <n-text class="tip" v-html="$t('nav.userChildren.results')" />
       </div>
+      <!--
+        Mobile's only route into the local library: the bottom bar's "library" tab
+        goes to `/user` once signed in, so without this there is no way back to
+        `/local` on a phone (the sidebar entry is desktop-only).
+      -->
+      <n-button
+        v-if="isTauriRuntime()"
+        class="local-btn"
+        strong
+        secondary
+        round
+        @click="navigation.openPage('/local', { origin: $event })"
+      >
+        <template #icon>
+          <n-icon :component="FolderMusic" />
+        </template>
+        {{ $t("sidebar.localMusic") }}
+      </n-button>
       <n-button class="logout-btn" strong secondary round type="error" @click="handleLogout">
         <template #icon>
           <n-icon :component="Logout" />
@@ -43,13 +61,16 @@
 
 <script setup lang="ts">
 import { userStore } from "@/store";
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
-import { Logout } from "@icon-park/vue-next";
+import { FolderMusic, Logout } from "@icon-park/vue-next";
 import { useTabTransition } from "@/composables/useTabTransition";
+import { isTauri as isTauriRuntime } from "@/utils/tauri/core/runtime";
 
 const { t } = useI18n();
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 const user = userStore();
 
 // 退出登录
@@ -63,7 +84,7 @@ const handleLogout = () => {
     onPositiveClick: () => {
       user.userLogOut();
       $message.success(t("nav.avatar.success"));
-      router.push("/");
+      navigation.switchRoot("home", "/");
     },
   });
 };
@@ -76,22 +97,22 @@ const { transitionName, updateDirection, syncIndex } = useTabTransition([
 ]);
 
 // Tab 默认选中
-const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+const tabValue = ref(route.path.split("/")[2]);
 syncIndex(tabValue.value);
 
 // Tab 选项卡变化
 const tabChange = (value) => {
   updateDirection(value);
-  router.push({
+  navigation.replacePage({
     path: `/user/${value}`,
   });
 };
 
 // 监听路由参数变化
 watch(
-  () => router.currentRoute.value,
-  (val) => {
-    tabValue.value = val.path.split("/")[2];
+  () => route.path,
+  (path) => {
+    tabValue.value = path.split("/")[2];
     syncIndex(tabValue.value);
   },
 );
@@ -112,10 +133,20 @@ watch(
       margin-right: 16px;
       box-shadow: 0 6px 8px -2px rgb(0 0 0 / 16%);
     }
-    .logout-btn {
+    .local-btn {
       margin-left: auto;
       flex-shrink: 0;
       align-self: center;
+    }
+    .logout-btn {
+      // `margin-left: auto` on whichever of the two comes first, so the pair
+      // stays right-aligned when the local button is absent (web build).
+      margin-left: 10px;
+      flex-shrink: 0;
+      align-self: center;
+      &:first-of-type {
+        margin-left: auto;
+      }
     }
     .text {
       display: flex;
@@ -142,9 +173,11 @@ watch(
       }
     }
   }
+  // `clip` 而不是 `hidden`：`hidden` 让它成为滚动容器，子页里的 sticky（DataLists 的定位
+  // 药丸）就钉在这个永不滚动的盒子上。完整理由见 `views/Local/index.vue` 的同名规则。
   .content {
     position: relative;
-    overflow: hidden;
+    overflow: clip;
     margin-top: 20px;
   }
 }

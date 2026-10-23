@@ -3,15 +3,7 @@
     <section class="queue-now">
       <div class="queue-title">{{ $t("player.queue.nowPlaying") }}</div>
       <div v-if="currentSong" class="now-card">
-        <img
-          class="now-cover"
-          :src="
-            currentSong.album?.picUrl
-              ? currentSong.album.picUrl.replace(/^http:/, 'https:') + '?param=80y80'
-              : '/images/pic/default.png'
-          "
-          alt="cover"
-        />
+        <img class="now-cover" :src="coverUrl(currentSong.album?.picUrl, 80)" alt="cover" />
         <div class="now-meta">
           <div class="now-name text-hidden">{{ currentSong.name }}</div>
           <AllArtists class="now-artists text-hidden" :artistsData="currentSong.artist" />
@@ -37,13 +29,14 @@
         ref="virtualListRef"
         class="queue-scroll"
         :items="queueRows"
-        :item-size="49"
+        :item-size="58"
         :item-resizable="true"
         key-field="key"
         :show-scrollbar="false"
       >
         <template #default="{ item: row }">
           <div
+            :id="`queue-row-${row.index}`"
             :class="[
               'queue-row',
               {
@@ -66,11 +59,7 @@
             </div>
             <img
               class="queue-cover"
-              :src="
-                row.item.album?.picUrl
-                  ? row.item.album.picUrl.replace(/^http:/, 'https:') + '?param=60y60'
-                  : '/images/pic/default.png'
-              "
+              :src="coverUrl(row.item.album?.picUrl, 60)"
               alt="cover"
               loading="lazy"
             />
@@ -89,18 +78,33 @@
       </n-virtual-list>
       <div v-else class="queue-empty">{{ $t("other.playlistEmpty") }}</div>
     </section>
+
+    <!-- 底部整宽定位按钮：滚动区之外，常驻面板底边。 -->
+    <button
+      v-if="music.getPlaylists.length"
+      class="queue-locate"
+      type="button"
+      @click="scrollToCurrent"
+    >
+      <n-icon :size="16" :component="Aiming" />
+      <span>{{ $t("player.queue.locate") }}</span>
+    </button>
   </aside>
 </template>
 
 <script setup>
 import { NIcon, NVirtualList } from "naive-ui";
-import { DeleteFour } from "@icon-park/vue-next";
+import { DeleteFour, Aiming } from "@icon-park/vue-next";
 import { musicStore } from "@/store";
+import { coverUrl } from "@/utils/coverUrl";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { locateVirtualRow } from "@/utils/locateRow";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 
 const music = musicStore();
 
 const virtualListRef = ref(null);
+let locateHandle = null;
 
 const currentSong = computed(() => music.getPlaySongData);
 const queueRows = computed(() =>
@@ -115,13 +119,20 @@ const changeIndex = (index) => {
   music.selectPlaySongByIndex(index);
 };
 
-// 滚动到当前播放曲目（供抽屉等容器在打开时调用）
+// 把正在播放的那行顶到列表上沿，下面接着就是「接下来播放」。抽屉打开时调用，也供底部
+// 按钮点击。近处滑过去，远处（含刚打开）一跳到位，见 `utils/locateRow`。
 const scrollToCurrent = () => {
   const index = music.persistData.playSongIndex;
-  if (index >= 0 && index < music.getPlaylists.length) {
-    virtualListRef.value?.scrollTo({ index });
-  }
+  if (index < 0 || index >= music.getPlaylists.length) return;
+  locateHandle?.cancel();
+  locateHandle = locateVirtualRow(virtualListRef.value, index, {
+    rowSelector: `#queue-row-${index}`,
+    align: "start",
+    instant: prefersReducedMotion(),
+  });
 };
+
+onBeforeUnmount(() => locateHandle?.cancel());
 
 defineExpose({ scrollToCurrent });
 </script>
@@ -133,7 +144,9 @@ defineExpose({ scrollToCurrent });
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background-color: var(--app-shell-bg, var(--layout-bg, #fff));
+  // 容器可以自己提供底色。底部抽屉把它设成 transparent，因为玻璃在抽屉那一层，
+  // 这里再刷一层实色就把模糊盖掉了。
+  background-color: var(--queue-surface-bg, var(--app-shell-bg, var(--layout-bg, #fff)));
 }
 
 .queue-now {
@@ -241,7 +254,8 @@ defineExpose({ scrollToCurrent });
 .queue-scroll {
   min-height: 0;
   flex: 1;
-  padding: 0 8px 12px;
+  // 底边留量由容器给：底部抽屉贴着屏幕底边，要在这里让出 home indicator 的高度。
+  padding: 0 8px var(--queue-pad-bottom, 12px);
   overflow-x: clip;
   overscroll-behavior: contain;
   contain: layout paint style;
@@ -350,6 +364,43 @@ defineExpose({ scrollToCurrent });
   padding: 14px;
   font-size: 12px;
   color: var(--n-text-color-3);
+}
+
+// 底部整宽定位按钮。在树内，直接用作用域内的 naive/全局 token。底边留量沿用
+// `--queue-pad-bottom`，让它在底部抽屉里避开 home indicator。
+.queue-locate {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin: 4px 8px max(8px, var(--queue-pad-bottom, 8px));
+  padding: 11px 16px;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--main-color);
+  background-color: color-mix(in srgb, var(--main-color) 12%, transparent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background-color 0.16s ease,
+    transform 0.16s ease;
+
+  .n-icon {
+    color: var(--main-color);
+  }
+
+  &:hover,
+  &:focus-visible {
+    background-color: color-mix(in srgb, var(--main-color) 18%, transparent);
+    outline: none;
+  }
+
+  &:active {
+    transform: scale(0.98);
+  }
 }
 
 .queue-bars {

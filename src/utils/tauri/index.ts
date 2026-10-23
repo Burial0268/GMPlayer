@@ -1,35 +1,80 @@
-import { invoke } from "@tauri-apps/api/core";
-import { isMobileDevice } from "./mobile";
-import { isTauri } from "./windowManager";
+/**
+ * Public surface of the Tauri integration layer.
+ *
+ * Import from here for anything general-purpose. Deep imports into the
+ * subfolders are fine (and expected) for the heavier, more specialized
+ * modules — `audio/nativeRustSound`, `audio/transport`, `player/communication`
+ * — which only a few call sites need and which shouldn't be pulled into every
+ * bundle that wants `isTauri()`.
+ *
+ * Layout:
+ *   core/      runtime detection, invoke/listen, the `window.__TAURI__` global
+ *   window/    window manager + window config types
+ *   audio/     native audio backend: protocol, bridge, transports, timeline
+ *   player/    cross-window player state sync
+ *   media/     OS media controls (Android notification, desktop now-playing)
+ *   platform/  device/platform capability helpers
+ *   store/     Tauri-backed Pinia persistence (layered on top of localStorage)
+ */
 
-export { windowManager, isTauri, isWindowsTauri } from "./windowManager";
-export { isMobile, isMobileDevice } from "./mobile";
-export type { WindowConfig, WindowLabel, WindowState } from "./types";
-export { usePlayerBridge } from "./playerBridge";
+// ── core ────────────────────────────────────────────────────────────
+export { isTauri, isWindowsTauri, getTauri, invoke, listen, emit, emitTo } from "./core/runtime";
+export { getDesktopEnvironment, type DesktopEnvironment } from "./core/env";
+
+// ── window ──────────────────────────────────────────────────────────
+export { windowManager } from "./window/manager";
+export type { WindowConfig, WindowLabel, WindowState } from "./window/types";
+
+// ── platform ────────────────────────────────────────────────────────
+export { isMobile, isMobileDevice } from "./platform/mobile";
+
+// ── store ───────────────────────────────────────────────────────────
+export {
+  installTauriPinia,
+  isTauriPiniaInstalled,
+  startTauriPiniaStores,
+  destroyTauriPiniaStores,
+  type TauriPersistedStore,
+} from "./store/piniaPersistence";
+
+// Screen orientation control (Android)
+export {
+  setScreenOrientation,
+  lockLandscape,
+  lockPortrait,
+  restoreDefaultOrientation,
+  unlockOrientation,
+  type ScreenOrientation,
+} from "./platform/screenOrientation";
+
+// ── player ──────────────────────────────────────────────────────────
+export { usePlayerBridge } from "./player/bridge";
 export {
   PLAYER_COMMUNICATION_EVENTS,
   PLAYER_CONTENT_WINDOW_LABELS,
   PLAYER_STATE_WINDOW_LABELS,
-} from "./playerCommunicationTypes";
+} from "./player/types";
 export type {
   PlayerFullStatePayload,
   PlayerStatePayload,
   PlayerTimePayload,
   PlayerLyricPayload,
   PlayerSettingsPayload,
-} from "./playerCommunicationTypes";
+} from "./player/types";
 
-// Android media notification plugin bridge
+// ── media ───────────────────────────────────────────────────────────
+// Android media notification plugin bridge (push only — the control
+// direction is owned by Rust, see `media/notification.ts`)
 export {
   initializeMediaNotification,
   updateMediaNotification,
   updateMediaProgress,
+  updateMediaPlaybackState,
   hideMediaNotification,
-  listenMediaAction,
   type MediaNotificationRequest,
   type UpdateProgressRequest,
-  type MediaActionPayload,
-} from "./mediaNotification";
+  type UpdatePlaybackStateRequest,
+} from "./media/notification";
 
 // Desktop now playing controls bridge
 export {
@@ -39,77 +84,7 @@ export {
   updateNowPlayingPlayMode,
   setNowPlayingEnabled,
   clearNowPlayingControls,
-  listenNowPlayingAction,
   type NowPlayingStateRequest,
   type NowPlayingTimelineRequest,
   type NowPlayingPlayModeRequest,
-  type NowPlayingActionPayload,
-} from "./nowPlayingControls";
-
-// Screen orientation control (Android)
-export {
-  setScreenOrientation,
-  lockLandscape,
-  lockPortrait,
-  unlockOrientation,
-} from "./screenOrientation";
-
-export interface DesktopEnvironment {
-  os: string;
-  family: string;
-  desktop: string | null;
-  sessionType: string | null;
-  isMobile: boolean;
-  isMacos: boolean;
-  isLinux: boolean;
-  isHyprland: boolean;
-  usesNativeTrafficLights: boolean;
-}
-
-let desktopEnvironmentPromise: Promise<DesktopEnvironment> | null = null;
-
-function browserDesktopEnvironment(): DesktopEnvironment {
-  if (typeof window === "undefined" || !window.navigator) {
-    return {
-      os: "unknown",
-      family: "unknown",
-      desktop: null,
-      sessionType: null,
-      isMobile: false,
-      isMacos: false,
-      isLinux: false,
-      isHyprland: false,
-      usesNativeTrafficLights: false,
-    };
-  }
-
-  const platform = window.navigator.platform ?? "";
-  const userAgent = window.navigator.userAgent ?? "";
-  const isMobile = isMobileDevice();
-  const isMacos = /Mac/i.test(platform) && !isMobile;
-  const isLinux = /Linux|X11/i.test(platform) || /Linux/i.test(userAgent);
-  const isWindows = /Win/i.test(platform) || /Windows/i.test(userAgent);
-
-  return {
-    os: isMacos ? "macos" : isWindows ? "windows" : isLinux ? "linux" : "unknown",
-    family: isWindows ? "windows" : isMacos || isLinux ? "unix" : "unknown",
-    desktop: null,
-    sessionType: null,
-    isMobile,
-    isMacos,
-    isLinux,
-    isHyprland: false,
-    usesNativeTrafficLights: isMacos && !isMobile,
-  };
-}
-
-export async function getDesktopEnvironment(): Promise<DesktopEnvironment> {
-  if (!isTauri()) return browserDesktopEnvironment();
-
-  desktopEnvironmentPromise ??= invoke<DesktopEnvironment>("desktop_environment").catch((error) => {
-    console.error("Failed to detect desktop environment:", error);
-    return browserDesktopEnvironment();
-  });
-
-  return desktopEnvironmentPromise;
-}
+} from "./media/nowPlaying";

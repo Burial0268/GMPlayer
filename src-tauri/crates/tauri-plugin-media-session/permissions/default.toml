@@ -1,0 +1,8 @@
+[default]
+description = "Default permissions for the plugin"
+permissions = [
+  "allow-initialize",
+  "allow-update-state",
+  "allow-update-timeline",
+  "allow-clear",
+]

@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import ControlThumb from "./ControlThumb.vue";
-import { musicStore } from "@/store";
+import { useLayerNavigation } from "@/utils/navigation";
 
 withDefaults(
   defineProps<{
@@ -17,8 +17,8 @@ withDefaults(
   },
 );
 
-const music = musicStore();
-const closeBigPlayer = () => music.setBigPlayerState(false);
+const navigation = useLayerNavigation();
+const closeBigPlayer = () => navigation.closeTop();
 </script>
 
 <style lang="scss" scoped>

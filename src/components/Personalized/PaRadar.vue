@@ -26,11 +26,11 @@
 
 <script setup>
 import { RadarThree, Right } from "@icon-park/vue-next";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 
-const router = useRouter();
+const navigation = useLayerNavigation();
 const radarId = 3136952023;
-const openRadar = () => router.push(`/playlist?id=${radarId}&page=1`);
+const openRadar = (origin) => navigation.openPage(`/playlist?id=${radarId}&page=1`, { origin });
 </script>
 
 <style lang="scss" scoped>

@@ -347,6 +347,8 @@ impl AudioPlayer {
                 // outgoing track up to 1.0.
                 outgoing_gain: self.active_norm_gain,
                 overlap_headroom_db: plan.overlap_headroom_db as f32,
+                in_shape: plan.in_shape as f32,
+                out_shape: plan.out_shape as f32,
             })
             .unwrap_or_else(|| CrossfadeParams {
                 outgoing_gain: self.active_norm_gain,
@@ -410,6 +412,10 @@ impl AudioPlayer {
             self.playlist = self.playback_queue.playlist_cloned();
             self.sync_current_from_queue();
         }
+        // AutoMix advanced the track without going through the planner. Move
+        // the planner cursor with it, otherwise the next natural advance would
+        // plan from the track that just finished and replay the incoming one.
+        self.advance_planner_cursor_to_playlist_index(current_index);
         let incoming_duration = self.secondary_duration;
         self.secondary_duration = 0.0;
         self.native_crossfade_active = false;
@@ -424,7 +430,18 @@ impl AudioPlayer {
         self.active_norm_gain = self.secondary_norm_gain;
         self.secondary_norm_gain = 1.0;
 
-        let mut display_info = self.secondary_display_info.take().unwrap_or_default();
+        // Never publish a *default* `DisplayAudioInfo`. `secondary_display_info`
+        // is `None` whenever the incoming deck was torn down between arming the
+        // crossfade and completing it (a manual skip runs `start_playing_song`
+        // with `clear_sink`, which clears it), and a default carries
+        // `duration: 0` plus an empty name — which `sync_ui` then broadcasts as
+        // the *current* track. The frontend reads that duration in preference to
+        // its own, so the UI went to 0:00 while the position kept running.
+        // Keeping what is already published is always closer to the truth.
+        let mut display_info = match self.secondary_display_info.take() {
+            Some(info) => info,
+            None => self.current_audio_info.read().await.clone(),
+        };
         display_info.duration = if display_info.duration > 0.0 {
             display_info.duration
         } else {
@@ -439,6 +456,9 @@ impl AudioPlayer {
 
         let is_playing = self.playback_intent == PlaybackIntent::Playing;
         self.clock.lock().set_duration(incoming_duration);
+        // The incoming deck is a different source with its own timeline, even
+        // though no `LoadAudio` announced it — the crossfade started it.
+        self.begin_timeline();
         self.publish_position_anchor(is_playing, position).await;
 
         let music_id = self

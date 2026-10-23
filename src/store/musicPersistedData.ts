@@ -2,6 +2,7 @@ import { acceptHMRUpdate, defineStore } from "pinia";
 import { reactive, toRaw, watch } from "vue";
 import { throttle } from "throttle-debounce";
 import { createDefaultPersistData, type PersistData } from "./musicTypes";
+import { asRawEntry } from "@/utils/rawEntry";
 
 const STORAGE_KEY = "musicData";
 // 首个改动立即落盘，之后最多每 400ms 一次（含尾调用）。
@@ -38,6 +39,23 @@ const mergeStored = (target: Record<string, any>, source: Record<string, any>): 
   }
 };
 
+/**
+ * 落盘的歌曲条目重新读回来时是全新的普通对象，必须在并入 reactive 之前
+ * 标记为 raw：一旦它们进了 persistData，之后任何一次读取都会就地生成 Proxy
+ * 并登记依赖，恢复千首队列时正是这一步最贵。见 utils/rawEntry。
+ *
+ * 只处理这两个数组：mergeStored 对数组是整块赋值，标记因此能保留下来；
+ * personalFmData 走的是逐字段合并分支（落进默认对象），在这里标记没有意义，
+ * 它会在下一次 setPersonalFmData 时被整体替换成已标记的对象。
+ */
+const markStoredSongsRaw = (stored: Record<string, any>): void => {
+  for (const key of ["playlists", "playHistory"]) {
+    const list = stored[key];
+    if (!Array.isArray(list)) continue;
+    for (let i = 0; i < list.length; i++) asRawEntry(list[i]);
+  }
+};
+
 const hydrate = (persistData: PersistData): void => {
   if (typeof window === "undefined") return;
   try {
@@ -45,6 +63,7 @@ const hydrate = (persistData: PersistData): void => {
     if (!raw) return;
     const parsed = JSON.parse(raw);
     if (isPlainObject(parsed) && isPlainObject(parsed.persistData)) {
+      markStoredSongsRaw(parsed.persistData);
       mergeStored(persistData, parsed.persistData);
     }
   } catch (error) {

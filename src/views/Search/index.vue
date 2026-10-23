@@ -13,7 +13,7 @@
       </div>
       <h2 class="empty-title">{{ $t("general.name.noKeywords") }}</h2>
       <p class="empty-desc">{{ $t("nav.search.searchTip") }}</p>
-      <n-button strong secondary round class="empty-btn" @click="router.go(-1)">
+      <n-button strong secondary round class="empty-btn" @click="navigation.closeTop()">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -36,10 +36,10 @@
 
     <!-- 结果内容 -->
     <main class="content" v-if="searchKeywords">
-      <router-view v-slot="{ Component }">
+      <router-view v-slot="{ Component, route: childRoute }">
         <Transition :name="transitionName" mode="out-in">
-          <keep-alive>
-            <component :is="Component" />
+          <keep-alive :max="6">
+            <component :is="Component" :key="childRoute.name" />
           </keep-alive>
         </Transition>
       </router-view>
@@ -48,13 +48,15 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from "vue-router";
+import { useRoute } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { Search } from "@icon-park/vue-next";
 import { useTabTransition } from "@/composables/useTabTransition";
 
 const { t } = useI18n();
-const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
 const { transitionName, updateDirection, syncIndex } = useTabTransition([
   "songs",
   "artists",
@@ -65,17 +67,18 @@ const { transitionName, updateDirection, syncIndex } = useTabTransition([
 ]);
 
 // 搜索关键词
-const searchKeywords = ref(router.currentRoute.value.query.keywords);
+const searchKeywords = ref(route.query.keywords);
 const keywordText = computed(() => String(searchKeywords.value ?? ""));
 
 // Tab 默认选中
-const tabValue = ref(router.currentRoute.value.path.split("/")[2]);
+const tabValue = ref(route.path.split("/")[2]);
 syncIndex(tabValue.value);
 
 // 监听路由参数变化
 watch(
-  () => router.currentRoute.value,
-  (val) => {
+  () => route.fullPath,
+  () => {
+    const val = route;
     if (!val.path.startsWith("/search")) return;
     $setSiteTitle(val.query.keywords + " " + t("nav.search.results"));
     searchKeywords.value = val.query.keywords;
@@ -87,7 +90,7 @@ watch(
 // Tab 选项卡变化
 const tabChange = (value: string) => {
   updateDirection(value);
-  router.push({
+  navigation.replacePage({
     path: `/search/${value}`,
     query: {
       keywords: searchKeywords.value,
@@ -127,7 +130,7 @@ onMounted(() => {
       margin: 0;
       max-width: 900px;
       font-size: clamp(30px, 4.6vw, 50px);
-      font-weight: 800;
+      font-weight: 700;
       line-height: 1.08;
       letter-spacing: -0.02em;
       color: var(--n-text-color);
@@ -158,7 +161,7 @@ onMounted(() => {
     .empty-title {
       margin: 0;
       font-size: clamp(22px, 3vw, 30px);
-      font-weight: 800;
+      font-weight: 700;
       line-height: 1.1;
       letter-spacing: -0.02em;
     }
@@ -180,9 +183,11 @@ onMounted(() => {
     margin-top: 22px;
   }
 
+  // `clip` 而不是 `hidden`：`hidden` 让它成为滚动容器，子页里的 sticky（DataLists 的定位
+  // 药丸）就钉在这个永不滚动的盒子上。完整理由见 `views/Local/index.vue` 的同名规则。
   .content {
     position: relative;
-    overflow: hidden;
+    overflow: clip;
     margin-top: 24px;
   }
 }

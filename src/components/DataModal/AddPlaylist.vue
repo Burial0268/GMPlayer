@@ -62,6 +62,7 @@
 
 <script setup>
 import { addSongToPlayList } from "@/api/playlist";
+import { notifyTrackInPlaylist } from "@/utils/playlistMutations";
 import { userStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import CreatePlaylist from "./CreatePlaylist.vue";
@@ -77,11 +78,14 @@ const addToPlaylistId = ref(null);
 // 收藏到歌单
 const addToPlayList = (pid, tracks) => {
   addSongToPlayList(pid, tracks).then((res) => {
-    console.log(res);
     if (res.status === 200) {
       $message.success(t("general.message.addSuccess"));
       closeAddToPlaylist();
-      user.setUserPlayLists();
+      // 取代原先的 user.setUserPlayLists()：曲目数就地 +1，立刻生效，也省掉一次
+      // 请求。而且网易对 /playlist/tracks 是写后读不一致的，紧接着重拉歌单列表
+      // 很可能拿回旧的 trackCount —— 数字先跳上去再跳回来，比不更新更糟。
+      // 开着的歌单页由 playlistMutations 自己安静地对账。
+      notifyTrackInPlaylist(pid, tracks, true);
     } else {
       $message.error(t("general.message.addFailure"));
     }

@@ -336,8 +336,8 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, shallowRef, nextTick, onMounted, onUnmounted } from "vue";
-import { usePlayerBridge } from "@/utils/tauri/playerBridge";
-import { windowManager } from "@/utils/tauri/windowManager";
+import { usePlayerBridge } from "@/utils/tauri/player/bridge";
+import { windowManager } from "@/utils/tauri/window/manager";
 import { useMiniCoverFrame } from "./useMiniCoverFrame";
 import MiniCoverFrame from "./MiniCoverFrame.vue";
 import BouncingSlider from "@/components/Player/BouncingSlider.vue";

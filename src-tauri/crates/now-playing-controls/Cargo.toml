@@ -9,7 +9,14 @@ rust-version = "1.80"
 tokio = { version = "1", features = ["full"] }
 
 # Log
-tracing = "0.1"
+#
+# `log` feature on purpose: the host app installs a `log` logger
+# (`tauri-plugin-log`) and never a `tracing` subscriber, and without this feature
+# `tracing` drops every event on the floor. That is how the whole SMTC/MPRIS
+# layer came to be invisible in `GMPlayer.log` — including
+# `初始化媒体控件失败` and every `更新系统媒体…失败`, i.e. exactly the lines
+# needed to tell a broken session from a working one.
+tracing = { version = "0.1", features = ["log"] }
 
 # Error & Serialize
 anyhow = "1.0"

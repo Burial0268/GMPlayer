@@ -15,9 +15,13 @@
               alignItems: 'center',
             }"
             hoverable
-            @click="router.push(`/playlist?id=${item.id}&page=1`)"
+            role="link"
+            tabindex="0"
+            :data-navigation-identity="`playlist:${item.id}`"
+            @click="openPlaylist(item.id, $event)"
+            @keydown.enter="openPlaylist(item.id, $event)"
           >
-            <div class="cover">
+            <div class="cover" data-navigation-cover>
               <n-avatar
                 class="coverImg"
                 :src="item.coverImgUrl.replace(/^http:/, 'https:') + '?param=300y300'"
@@ -26,7 +30,7 @@
               <n-text class="update" v-html="item.updateFrequency" />
             </div>
             <div class="data">
-              <n-text class="title" v-html="item.name" />
+              <n-text class="title" data-navigation-title v-html="item.name" />
               <div class="desc">
                 <div class="song text-hidden" v-for="(song, index) in item.tracks" :key="song">
                   <n-text>{{ Number(index) + 1 }}. {{ song.first }} - </n-text>
@@ -45,13 +49,19 @@
 
 <script setup lang="ts">
 import { getToplist } from "@/api/album";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { formatNumber } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 
 const { t } = useI18n();
-const router = useRouter();
+const navigation = useLayerNavigation();
+const openPlaylist = (id: number, origin: Event) =>
+  navigation.openPage(`/playlist?id=${id}&page=1`, {
+    origin,
+    kind: "card",
+    identity: `playlist:${id}`,
+  });
 
 // 排行榜数据
 const toplistData = reactive({

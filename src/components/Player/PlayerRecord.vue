@@ -20,11 +20,7 @@
         >
           <img
             class="album"
-            :src="
-              music.getPlaySongData
-                ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') + '?param=500y500'
-                : '/images/pic/default.png'
-            "
+            :src="coverUrl(music.getPlaySongData?.album?.picUrl, 500)"
             alt="cover"
           />
         </Motion>
@@ -176,17 +172,19 @@ import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
 import IconPause from "./icons/IconPause.vue";
 import { musicStore, settingStore, userStore } from "@/store";
+import { coverUrl } from "@/utils/coverUrl";
 import { storeToRefs } from "pinia";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { setSeek } from "@/utils/AudioContext";
 import BouncingSlider from "./BouncingSlider.vue";
 import { NIcon } from "naive-ui";
 import { useI18n } from "vue-i18n";
-import { isWindowsTauri, windowManager } from "@/utils/tauri/windowManager";
+import { isWindowsTauri } from "@/utils/tauri/core/runtime";
+import { windowManager } from "@/utils/tauri/window/manager";
 import { Motion } from "motion-v";
 import { getDesktopPlayerSharedLayoutIds } from "./desktopSharedLayout";
 
-const router = useRouter();
+const navigation = useLayerNavigation();
 defineEmits(["openComments"]);
 const music = musicStore();
 const user = userStore();
@@ -302,8 +300,7 @@ const handleProgressSeek = (val) => {
 
 // 页面跳转
 const routerJump = (url, query) => {
-  music.setBigPlayerState(false);
-  router.push({ path: url, query });
+  navigation.openPage({ path: url, query });
 };
 </script>
 

@@ -86,7 +86,7 @@ defineEmits(["navigate"]);
 .sidebar-playlist-name {
   min-width: 0;
   padding-right: 10px;
-  font-size: 12.5px;
+  font-size: var(--font-size-footnote);
   line-height: 18px;
   color: var(--sidebar-text, var(--n-text-color));
   white-space: nowrap;

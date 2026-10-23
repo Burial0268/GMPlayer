@@ -48,7 +48,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onBeforeUnmount } from "vue";
-import { isTauri } from "@/utils/tauri/windowManager";
+import { isTauri } from "@/utils/tauri/core/runtime";
 import { getDesktopEnvironment, isMobile } from "@/utils/tauri";
 
 /**

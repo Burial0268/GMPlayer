@@ -67,6 +67,7 @@ export function analyzePcmViaWorker(
   sampleRate: number,
   duration: number,
   analyzeBPM: boolean,
+  analyzeSections: boolean,
 ): Promise<TrackAnalysis> {
   const w = getWorker();
   if (!w) return Promise.reject(new Error("Analysis Worker is unavailable"));
@@ -94,6 +95,9 @@ export function analyzePcmViaWorker(
             outroType: result.outro?.outroType ?? "n/a",
             outroConfidence: result.outro?.outroConfidence?.toFixed(2) ?? "n/a",
             suggestedCrossfadeStart: result.outro?.suggestedCrossfadeStart?.toFixed(1) ?? "n/a",
+            sections: !analyzeSections
+              ? "skipped"
+              : (result.sections?.sections.map((s) => s.sectionType).join(" ") ?? "none"),
           });
         }
         resolve(result);
@@ -104,9 +108,10 @@ export function analyzePcmViaWorker(
       },
     });
 
-    w.postMessage({ type: "analyze", id, monoData, sampleRate, duration, analyzeBPM }, [
-      monoData.buffer,
-    ]);
+    w.postMessage(
+      { type: "analyze", id, monoData, sampleRate, duration, analyzeBPM, analyzeSections },
+      [monoData.buffer],
+    );
   });
 }
 
@@ -114,6 +119,7 @@ export function analyzeBytesViaWorker(
   bytes: Uint8Array,
   extension: string,
   analyzeBPM: boolean,
+  analyzeSections: boolean,
 ): Promise<TrackAnalysis> {
   const w = getWorker();
   if (!w) return Promise.reject(new Error("Analysis Worker is unavailable"));
@@ -142,9 +148,17 @@ export function analyzeBytesViaWorker(
         ? bytes.buffer
         : bytes.slice().buffer;
     const transferBytes = new Uint8Array(transferable);
-    w.postMessage({ type: "decodeAndAnalyze", id, bytes: transferBytes, extension, analyzeBPM }, [
-      transferable,
-    ]);
+    w.postMessage(
+      {
+        type: "decodeAndAnalyze",
+        id,
+        bytes: transferBytes,
+        extension,
+        analyzeBPM,
+        analyzeSections,
+      },
+      [transferable],
+    );
   });
 }
 

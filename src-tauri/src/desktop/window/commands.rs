@@ -176,6 +176,35 @@ pub async fn quit_app(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Flush everything that is only persisted on exit.
+///
+/// Both `tauri-plugin-window-state` and `tauri-plugin-pinia` write on
+/// `RunEvent::Exit` and nothing else, which is fine for every way the user can
+/// close the app — `quit_app` goes through `AppHandle::exit`, and the tray/close
+/// path saves explicitly — but *not* for an OTA update. The updater spawns the
+/// NSIS/MSI installer and calls `std::process::exit(0)` directly; its
+/// `on_before_exit` hook runs `AppHandle::cleanup_before_exit`, which only clears
+/// resource tables and hides windows and never dispatches `RunEvent::Exit`. So
+/// the run loop is skipped entirely and both plugins lose whatever they were
+/// holding — window geometry, and up to one debounce window of Pinia state.
+///
+/// `save_all_now` rather than `save_all`: the point is to beat a process that is
+/// about to be replaced, so honouring the 1 s debounce would defeat it.
+#[command]
+pub async fn flush_persisted_state(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_pinia::ManagerExt;
+    log::info!("update prepared successfully, now try save the persisted state");
+
+    let _ = app.save_window_state(WINDOW_STATE_FLAGS);
+    if let Err(e) = app.pinia().save_all_now() {
+        // Best effort by design: a store that cannot be written is not a reason
+        // to block the update, and the caller has nothing useful to do with it.
+        log::warn!("failed to flush pinia stores before exit: {e}");
+    }
+    log::info!("successfully save all persisted state! now back to perform update");
+    Ok(())
+}
+
 /// Get the current screen cursor position (physical pixels).
 #[command]
 pub fn get_cursor_position() -> Result<(i32, i32), String> {

@@ -1,0 +1,31 @@
+[package]
+name = "tauri-plugin-media-session"
+version = "0.2.4"
+description = "Tauri plugin for mobile media session integration with lockscreen controls and album art (Android & iOS)."
+authors = ["Maxime <solrmax>"]
+edition = "2021"
+rust-version = "1.77.2"
+links = "tauri-plugin-media-session"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/solrmax/tauri-plugin-media-session"
+readme = "README.md"
+keywords = ["tauri", "plugin", "media-session", "android", "ios"]
+categories = ["multimedia", "os::android-apis", "os::macos-apis"]
+
+[dependencies]
+tauri = { version = "2", default-features = false, features = [] }
+serde = { version = "1", features = ["derive"] }
+# Present in the published 0.2.4 manifest but missing from the `Cargo.toml.orig`
+# this file was restored from — the upstream author evidently added it without
+# updating the checked-in manifest. Used only by the Android action-event
+# handler (`serde_json::from_str::<MediaActionEvent>`), so its absence is
+# invisible to a desktop build and fails only when cross-compiling.
+serde_json = "1"
+# A media button that does nothing is invisible without this: an action name
+# Kotlin sends but `MediaAction` cannot deserialize is otherwise dropped in
+# silence, with the press indistinguishable from a wiring failure anywhere else
+# in the chain.
+log = "0.4"
+
+[build-dependencies]
+tauri-plugin = { version = "2.0.2", features = ["build"] }

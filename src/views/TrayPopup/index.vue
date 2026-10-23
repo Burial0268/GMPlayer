@@ -377,9 +377,20 @@ onMounted(async () => {
   const tauri = getTauri();
   if (!tauri) return;
 
+  let gotState = false;
+
   unlisteners.push(
     await tauri.event.listen<PlayerStatePayload>("player-state-update", (event) => {
+      gotState = true;
       updateState(event.payload || {});
+    }),
+  );
+  // Full-state push, sent by the master in response to our handshake below.
+  unlisteners.push(
+    await tauri.event.listen<{ state?: PlayerStatePayload }>("player-full-state", (event) => {
+      if (!event.payload?.state) return;
+      gotState = true;
+      updateState(event.payload.state);
     }),
   );
   unlisteners.push(
@@ -388,6 +399,33 @@ onMounted(async () => {
       scheduleTrayPopupLayoutUpdate();
     }),
   );
+
+  // Ask the master for state instead of waiting to be pushed.
+  //
+  // This window is the only one in `SUSPEND_WHEN_HIDDEN`: `TrySuspend` exists
+  // so the OS can reclaim the suspended renderer, and when it does, resuming
+  // reloads the page. Every existing sync path is a one-shot push fired at
+  // *show* time — `tray-popup-opened` → master → `player-state-update`, and
+  // the `managed-window-visibility` heal — so a page still reloading has no
+  // listeners registered yet and misses all of them, leaving stale UI. (The
+  // visibility heal never reached us anyway: it bails on
+  // `isContentWindowLabel`, and `tray-popup` is in `PLAYER_STATE_WINDOW_LABELS`
+  // but not `PLAYER_CONTENT_WINDOW_LABELS`.)
+  //
+  // Pulling on mount is reload-proof: whenever this page becomes ready — first
+  // open or after a reclaim — it asks. Safe to reuse the slave handshake: the
+  // master's `markContentWindowOpen` filters on `isContentWindowLabel`, so this
+  // cannot pollute the 30 Hz content-broadcast set.
+  const requestState = () => {
+    getTauri()?.event.emit("slave-window-opened", { label: "tray-popup" });
+  };
+  requestState();
+  const retryTimers = [150, 600, 1500].map((delay) =>
+    window.setTimeout(() => {
+      if (!gotState) requestState();
+    }, delay),
+  );
+  unlisteners.push(() => retryTimers.forEach((timer) => window.clearTimeout(timer)));
 });
 
 onBeforeUnmount(() => {

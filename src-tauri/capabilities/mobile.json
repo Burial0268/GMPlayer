@@ -18,7 +18,10 @@
       ]
     },
     "log:default",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "media-session:default",
-    "orientation:allow-set-screen-orientation"
+    "orientation:allow-set-screen-orientation",
+    "pinia:default"
   ]
 }

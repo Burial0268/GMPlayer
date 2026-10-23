@@ -17,6 +17,9 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use wasm_bindgen::prelude::*;
 
+use crate::automix::sections::{
+    confident_tempo, segment_song, SectionHints, StructureFeatureExtractor,
+};
 use crate::types::{
     AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, DisplayAudioInfo,
     PlaybackState, SongData,
@@ -122,6 +125,52 @@ impl DecodedAudioJs {
     #[wasm_bindgen(js_name = "duration")]
     pub fn duration(&self) -> f64 {
         self.duration
+    }
+}
+
+/// AutoMix song sections for the Web path — the same analysis the native
+/// backend runs. Fed in chunks so a whole track is never copied into linear
+/// memory, which only ever grows.
+#[wasm_bindgen]
+pub struct SongStructureAnalyzer {
+    extractor: StructureFeatureExtractor,
+}
+
+#[wasm_bindgen]
+impl SongStructureAnalyzer {
+    #[wasm_bindgen(constructor)]
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            extractor: StructureFeatureExtractor::new(sample_rate),
+        }
+    }
+
+    pub fn push(&mut self, samples: &[f32]) {
+        self.extractor.push(samples);
+    }
+
+    /// Consumes the analyzer. `content_end` excludes trailing silence; a
+    /// `bpm` of 0 means unknown. Returns `SectionAnalysis` JSON, or `null`
+    /// when the track has no structure worth planning around.
+    #[wasm_bindgen(js_name = "finishJson")]
+    pub fn finish_json(
+        self,
+        duration: f32,
+        content_end: f32,
+        bpm: f32,
+        bpm_confidence: f32,
+    ) -> String {
+        let features = self.extractor.finish();
+        let sections = segment_song(
+            &features,
+            &SectionHints {
+                duration,
+                content_end,
+                tempo: confident_tempo(bpm, bpm_confidence),
+                vocal_activity: None,
+            },
+        );
+        serde_json::to_string(&sections).unwrap_or_else(|_| "null".to_string())
     }
 }
 
@@ -231,6 +280,10 @@ pub struct WasmAudioBackend {
     analysis_freq_min: f32,
     analysis_freq_max: f32,
     seq: u64,
+    /// Mirrors the native `PlayerClock::epoch`: bumped whenever a new track's
+    /// timeline starts, so the shared frontend controller can apply one rule on
+    /// both transports instead of special-casing the web one.
+    timeline_epoch: u64,
 }
 
 #[wasm_bindgen]
@@ -252,6 +305,7 @@ impl WasmAudioBackend {
             analysis_freq_min: 80.0,
             analysis_freq_max: 2000.0,
             seq: 0,
+            timeline_epoch: 0,
         }
     }
 
@@ -320,6 +374,11 @@ impl WasmAudioBackend {
             quality: self.quality.clone(),
             current_play_index: self.current_play_index,
             load_request_id: None,
+            // The web backend has no identity to report: there is no manifest
+            // and no planner here, and `local:<url>` is already an exact key
+            // because the page that resolved the URL is the page consuming this.
+            identity: None,
+            timeline_epoch: self.timeline_epoch,
         }];
 
         events.push(self.sync_status_event());
@@ -377,6 +436,8 @@ impl WasmAudioBackend {
                     quality: self.quality.clone(),
                     current_play_index: self.current_play_index,
                     load_request_id: None,
+                    identity: None,
+                    timeline_epoch: self.timeline_epoch,
                 },
                 self.sync_status_event(),
             ],
@@ -457,6 +518,7 @@ impl WasmAudioBackend {
         self.reply(
             vec![AudioThreadEvent::PlayPosition {
                 position: self.position,
+                timeline_epoch: self.timeline_epoch,
             }],
             Vec::new(),
         )
@@ -550,6 +612,7 @@ impl WasmAudioBackend {
                 self.reply(
                     vec![AudioThreadEvent::PlayPosition {
                         position: self.position,
+                        timeline_epoch: self.timeline_epoch,
                     }],
                     vec![WebBackendEffect::Seek {
                         position: self.position,
@@ -645,7 +708,34 @@ impl WasmAudioBackend {
             | AudioThreadMessage::AutomixPrepareNext { .. }
             | AudioThreadMessage::AutomixCancel
             | AudioThreadMessage::AutomixForceStart { .. }
-            | AudioThreadMessage::AutomixCompleteNative { .. } => {
+            | AudioThreadMessage::AutomixCompleteNative { .. }
+            // Manifest/planner messages are Tauri-only: on the web the browser
+            // media host owns playback and JS is never frozen, so there is
+            // nothing for a native planner to drive. Accepting-and-ignoring
+            // keeps the protocol wire-compatible in both directions.
+            | AudioThreadMessage::SetNativeManifest { .. }
+            | AudioThreadMessage::ClearNativeManifest { .. }
+            | AudioThreadMessage::SetNativeResolverConfig { .. }
+            | AudioThreadMessage::SetNativePlannerEnabled { .. }
+            | AudioThreadMessage::SyncNativePlannerStatus
+            // The native FM reservoir has no web owner; the browser keeps its
+            // bounded JS fallback and must not run a second queue here.
+            | AudioThreadMessage::StartPersonalFm { .. }
+            | AudioThreadMessage::StopPersonalFm { .. }
+            | AudioThreadMessage::TrashPersonalFm { .. }
+            // `AnnounceTrack` and the listen-together keepalive exist to drive
+            // the OS media session and an out-of-WebView heartbeat. Neither has
+            // a web counterpart: `navigator.mediaSession` is fed from the page,
+            // and the page owns the keepalive timer because it is never frozen.
+            | AudioThreadMessage::AnnounceTrack { .. }
+            | AudioThreadMessage::SetListenTogetherRoom { .. }
+            // Session controls are an OS-session concern. On the web the page
+            // *is* the only surface: it owns the play-mode setting and the like
+            // button directly, so routing them through here would add a hop and
+            // a second copy of the value for no gain.
+            | AudioThreadMessage::SetSessionControls { .. }
+            | AudioThreadMessage::SetNextPlayMode
+            | AudioThreadMessage::ToggleFavourite => {
                 self.reply(Vec::new(), Vec::new())
             }
             AudioThreadMessage::SyncStatus => {
@@ -694,6 +784,9 @@ impl WasmAudioBackend {
         };
 
         self.current_play_index = song_index;
+        // New source, new timeline — the same boundary the native backend marks
+        // in `start_playing_song_inner`.
+        self.timeline_epoch = self.timeline_epoch.wrapping_add(1);
         self.position = finite_nonnegative(initial_position);
         self.load_position = self.position;
         self.duration = 0.0;
@@ -735,6 +828,8 @@ impl WasmAudioBackend {
             current_play_index: self.current_play_index,
             playlist_inited: self.playlist_inited,
             quality: self.quality.clone(),
+            identity: None,
+            timeline_epoch: self.timeline_epoch,
         }
     }
 

@@ -1,0 +1,55 @@
+# 仓库内一律 LF —— 包括在 Windows 上检出时。
+#
+# 这里不用 `text=auto`：那是「让 git 猜哪些是文本」，而猜错的代价是一次
+# 静默的整文件重写（编辑一行 Rust 文件却在 diff 里看到整份文件变更，
+# 且 MSYS 的 grep/file 不会提示）。所以默认全部按文本 + LF 处理，
+# 二进制在下面逐类显式排除。
+* text eol=lf
+
+# 必须是 CRLF 的：Windows 的批处理解释器对 LF 的行为在不同版本上不一致。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# 二进制 —— 不做行尾转换，也不做 diff 合并。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.icns binary
+*.svg text eol=lf
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.mp3 binary
+*.wav binary
+*.flac binary
+*.m4a binary
+*.ogg binary
+*.mp4 binary
+*.webm binary
+*.wasm binary
+*.jar binary
+*.keystore binary
+*.jks binary
+*.so binary
+*.dll binary
+*.dylib binary
+*.exe binary
+*.pdb binary
+*.zip binary
+*.gz binary
+*.7z binary
+
+# 锁文件按文本存，但别在 diff / 合并里当代码看。
+pnpm-lock.yaml text eol=lf -diff
+Cargo.lock text eol=lf -diff
+*.lock text eol=lf -diff
+
+# 生成物：仍然是 LF，只是折叠 diff。
+auto-imports.d.ts text eol=lf linguist-generated
+components.d.ts text eol=lf linguist-generated

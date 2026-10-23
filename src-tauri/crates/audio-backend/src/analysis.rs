@@ -126,7 +126,14 @@ fn analysis_loop(
         // Bound work per iteration so a PCM burst cannot starve controls or
         // FFT cadence. Two blocks/tick still keeps up with 512-frame decode
         // blocks at common sample rates during normal operation.
-        for _ in 0..PCM_BLOCKS_PER_TICK {
+        // Disabled analysis drains the bounded queue before sleeping so its
+        // decoder buffers are returned even when no further control arrives.
+        let pcm_budget = if analysis_enabled {
+            PCM_BLOCKS_PER_TICK
+        } else {
+            PCM_QUEUE_CAPACITY
+        };
+        for _ in 0..pcm_budget {
             let Ok(pcm) = pcm_rx.try_recv() else {
                 break;
             };
@@ -182,7 +189,16 @@ fn analysis_loop(
         } else {
             ANALYSIS_INTERVAL
         };
-        match control_rx.recv_timeout(wait) {
+        let command = if analysis_enabled {
+            control_rx.recv_timeout(wait)
+        } else {
+            // Re-enabling and shutdown both arrive on this channel. No timer
+            // can make disabled analysis useful, so it needs no periodic wake.
+            control_rx
+                .recv()
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+        };
+        match command {
             Ok(cmd) => {
                 let result = handle_cmd(&mut proc, cmd, &mut analysis_enabled, &mut fft_enabled);
                 let reset = matches!(result, HandleCmdResult::Reset);
@@ -303,6 +319,105 @@ mod tests {
             sample_rate: 48_000,
             recycle: None,
         }
+    }
+
+    fn wait_event(
+        events: &mut tokio_mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadEvent>>,
+        matches: impl Fn(&AudioThreadEvent) -> bool,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Ok(message) = events.try_recv() {
+                if message.data.as_ref().is_some_and(&matches) {
+                    return;
+                }
+            }
+            assert!(Instant::now() < deadline, "analysis event did not arrive");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn disabled_analysis_returns_every_queued_buffer_and_exits_on_disconnect() {
+        let (control_tx, control_rx) = mpsc::channel();
+        let (pcm_tx, pcm_rx) = mpsc::sync_channel(PCM_QUEUE_CAPACITY);
+        let (recycle_tx, recycle_rx) = mpsc::channel();
+        let (evt_tx, mut evt_rx) = tokio_mpsc::unbounded_channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        control_tx
+            .send(AnalysisCommand::SetEnabled { enabled: false })
+            .unwrap();
+        for _ in 0..PCM_QUEUE_CAPACITY {
+            pcm_tx
+                .send(AnalysisPcm {
+                    recycle: Some(recycle_tx.clone()),
+                    ..pcm(0.5)
+                })
+                .unwrap();
+        }
+        let worker = std::thread::spawn(move || {
+            analysis_loop(control_rx, pcm_rx, evt_tx);
+            done_tx.send(()).unwrap();
+        });
+        wait_event(
+            &mut evt_rx,
+            |event| matches!(event, AudioThreadEvent::LowFrequencyVolume { volume } if *volume == 0.0),
+        );
+        for _ in 0..PCM_QUEUE_CAPACITY {
+            let buffer = recycle_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert!(buffer.is_empty());
+            assert!(buffer.capacity() >= 16);
+        }
+        assert!(evt_rx.try_recv().is_err());
+        drop(control_tx);
+        drop(pcm_tx);
+        done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn controls_wake_disabled_analysis_and_reenabling_restores_fft() {
+        let (events, mut received) = tokio_mpsc::unbounded_channel();
+        let (sender, worker) = spawn_analysis_thread(events).unwrap();
+        sender
+            .send(AnalysisCommand::SetEnabled { enabled: false })
+            .unwrap();
+        wait_event(&mut received, |event| {
+            matches!(event, AudioThreadEvent::LowFrequencyVolume { .. })
+        });
+        sender
+            .send(AnalysisCommand::SetFreqRange {
+                from: 100.0,
+                to: 10_000.0,
+            })
+            .unwrap();
+        sender
+            .send(AnalysisCommand::SetFftEnabled { enabled: true })
+            .unwrap();
+        sender.send(AnalysisCommand::Clear).unwrap();
+        wait_event(&mut received, |event| {
+            matches!(event, AudioThreadEvent::LowFrequencyVolume { .. })
+        });
+        sender
+            .send(AnalysisCommand::SetEnabled { enabled: true })
+            .unwrap();
+        wait_event(&mut received, |event| {
+            matches!(event, AudioThreadEvent::LowFrequencyVolume { .. })
+        });
+        assert!(sender
+            .try_send_pcm(AnalysisPcm {
+                samples: vec![0.5; FFT_SIZE * 2],
+                channels: 1,
+                sample_rate: 48_000,
+                recycle: None,
+            })
+            .is_ok());
+        wait_event(
+            &mut received,
+            |event| matches!(event, AudioThreadEvent::FFTData { data } if !data.is_empty()),
+        );
+        drop(sender);
+        worker.join().unwrap();
     }
 
     #[test]

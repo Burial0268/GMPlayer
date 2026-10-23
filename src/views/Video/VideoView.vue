@@ -81,7 +81,7 @@ import Pagination from "@/components/Pagination/index.vue";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
 import type { CommentResourceType } from "@/api";
-import { lockLandscape, lockPortrait } from "@/utils/tauri/screenOrientation";
+import { lockLandscape, restoreDefaultOrientation } from "@/utils/tauri/platform/screenOrientation";
 import { isTauri } from "@/utils/tauri";
 
 const { t } = useI18n();
@@ -230,7 +230,7 @@ onMounted(() => {
       lockLandscape();
     });
     player.value.on("exitfullscreen", () => {
-      lockPortrait();
+      restoreDefaultOrientation();
     });
   }
 });
@@ -254,9 +254,9 @@ onBeforeUnmount(() => {
   if (player.value) {
     player.value.destroy();
   }
-  // 恢复屏幕方向为 portrait（如果之前在视频全屏时锁定了 landscape）
+  // 恢复屏幕方向为应用默认（如果之前在视频全屏时锁定了 landscape）
   if (isTauri()) {
-    lockPortrait();
+    restoreDefaultOrientation();
   }
 });
 

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-pick-text-document"
+description = "Enables the pick_text_document command without any pre-configured scope."
+commands.allow = ["pick_text_document"]
+
+[[permission]]
+identifier = "deny-pick-text-document"
+description = "Denies the pick_text_document command without any pre-configured scope."
+commands.deny = ["pick_text_document"]

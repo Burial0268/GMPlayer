@@ -52,6 +52,7 @@
 
 <script setup>
 import { playlistUpdate } from "@/api/playlist";
+import { notifyPlaylistChanged } from "@/utils/playlistMutations";
 import { formRules } from "@/utils/ui/formRules";
 import { musicStore, userStore } from "@/store";
 import { useI18n } from "vue-i18n";
@@ -91,6 +92,9 @@ const toUpdatePlayList = (e) => {
           $message.success(t("general.message.editorSuccess"));
           closeUpdateModal();
           user.setUserPlayLists();
+          // 侧边栏靠上面这次重拉，但正开着的歌单页拿的是自己那份 playlistDetail，
+          // 标题、简介、标签都不会跟着变 —— 改完名字回到页面还是旧的。
+          notifyPlaylistChanged({ kind: "meta", playlistId: Number(playlistUpdateId.value) });
         } else {
           $message.error(t("general.message.editorFailed"));
         }

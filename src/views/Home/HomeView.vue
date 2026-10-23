@@ -1,5 +1,5 @@
 <template>
-  <div class="home">
+  <div ref="homeRoot" class="home">
     <header class="home-header home-section">
       <div>
         <span class="date">{{ dateText }}</span>
@@ -97,28 +97,51 @@
           :class="[item.type, getCardLayout(index, item.type)]"
           role="link"
           tabindex="0"
-          @click="openStreamItem(item)"
-          @keydown.enter="openStreamItem(item)"
-          @keydown.space.prevent="openStreamItem(item)"
+          :data-navigation-identity="`${item.type}:${item.id}`"
+          :data-navigation-decoration="item.type === 'artist' ? 'surface' : undefined"
+          @click="openStreamItem(item, $event)"
+          @keydown.enter="openStreamItem(item, $event)"
+          @keydown.space.prevent="openStreamItem(item, $event)"
         >
-          <div class="feed-artwork">
+          <div class="feed-artwork" data-navigation-cover>
             <img
               :src="item.cover"
               :alt="item.name"
+              :data-navigation-shared-image="item.type === 'artist' ? '' : undefined"
               loading="lazy"
               decoding="async"
               @error="useFallbackCover"
             />
-            <span class="type-label">{{ getTypeLabel(item.type) }}</span>
-            <span v-if="item.type !== 'artist'" class="open-cue" aria-hidden="true">↗</span>
-            <div v-if="item.type !== 'artist'" class="media-overlay">
-              <h3>{{ item.name }}</h3>
-              <span v-if="item.meta">{{ item.meta }}</span>
+            <span class="type-label" data-navigation-decoration="cover-top-left">{{
+              getTypeLabel(item.type)
+            }}</span>
+            <span
+              v-if="item.type !== 'artist'"
+              class="open-cue"
+              data-navigation-decoration="cover-top-right"
+              aria-hidden="true"
+              >↗</span
+            >
+            <span
+              v-if="item.type !== 'artist'"
+              class="artwork-edge"
+              data-navigation-decoration="cover"
+              aria-hidden="true"
+            />
+            <div
+              v-if="item.type !== 'artist'"
+              class="media-overlay"
+              data-navigation-decoration="cover-bottom"
+            >
+              <h3 data-navigation-title>{{ item.name }}</h3>
+              <span v-if="item.meta" data-navigation-decoration="cover-bottom-left">{{
+                item.meta
+              }}</span>
             </div>
           </div>
           <div v-if="item.type === 'artist'" class="feed-copy">
-            <h3>{{ item.name }}</h3>
-            <span v-if="item.meta">{{ item.meta }}</span>
+            <h3 data-navigation-title>{{ item.name }}</h3>
+            <span v-if="item.meta" data-navigation-decoration="title-bottom">{{ item.meta }}</span>
           </div>
         </article>
       </div>
@@ -127,7 +150,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onDeactivated, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
 import gsap from "gsap";
@@ -141,7 +164,10 @@ import PaPersonalFm from "@/components/Personalized/PaPersonalFm.vue";
 import PaRadar from "@/components/Personalized/PaRadar.vue";
 import { musicStore, settingStore } from "@/store";
 import type { SongData } from "@/store/musicTypes";
+import { asRawEntry } from "@/utils/rawEntry";
 import { formatNumber, getSongTime } from "@/utils/timeTools";
+import { useLayerNavigation } from "@/utils/navigation";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
 
 type StreamItemType = "playlist" | "album" | "artist";
 
@@ -158,31 +184,63 @@ const FALLBACK_COVER = "/images/pic/pic.jpg";
 const setting = settingStore();
 const music = musicStore();
 const router = useRouter();
+const navigation = useLayerNavigation();
+const homeRoot = ref<HTMLElement>();
+let introduction: gsap.Context | undefined;
 const { t, locale } = useI18n();
 const playlistsData = ref<StreamItem[]>([]);
 const albumsData = ref<StreamItem[]>([]);
 const artistsData = ref<StreamItem[]>([]);
 const newSongsData = ref<SongData[]>([]);
 const isLoading = ref(true);
-let masonryObserver: ResizeObserver | null = null;
+// 与 .feed-grid 的 grid-auto-rows / row-gap 保持一致
+const MASONRY_ROW_HEIGHT = 8;
+const MASONRY_ROW_GAP = 8;
 
-const updateMasonrySpan = (element: HTMLElement) => {
-  const rowHeight = 8;
-  const rowGap = 8;
-  const span = Math.ceil((element.getBoundingClientRect().height + rowGap) / (rowHeight + rowGap));
-  element.style.gridRowEnd = `span ${span}`;
+let masonryObserver: ResizeObserver | null = null;
+const masonryPending = new Set<HTMLElement>();
+const masonryHeights: number[] = [];
+let masonryFrame = 0;
+
+// 先把所有卡片的高度读完再统一写 gridRowEnd。读写交替会让每次 write 使布局失效，
+// 于是下一次 getBoundingClientRect 触发一次同步重排——本页 33 张卡即 33 次重排。
+const flushMasonrySpans = () => {
+  masonryFrame = 0;
+  if (!masonryPending.size) return;
+  const elements = [...masonryPending].filter((element) => element.isConnected);
+  masonryPending.clear();
+  masonryHeights.length = 0;
+  for (let i = 0; i < elements.length; i++) {
+    masonryHeights.push(elements[i].getBoundingClientRect().height);
+  }
+  for (let i = 0; i < elements.length; i++) {
+    if (masonryHeights[i] <= 0) continue;
+    const span = Math.ceil(
+      (masonryHeights[i] + MASONRY_ROW_GAP) / (MASONRY_ROW_HEIGHT + MASONRY_ROW_GAP),
+    );
+    const gridRowEnd = `span ${span}`;
+    // 值未变时不写，避免改动网格行高又反过来唤醒 ResizeObserver
+    if (elements[i].style.gridRowEnd !== gridRowEnd) elements[i].style.gridRowEnd = gridRowEnd;
+  }
+};
+
+const scheduleMasonrySpan = (element: HTMLElement) => {
+  if (!element.isConnected) return;
+  masonryPending.add(element);
+  if (!masonryFrame) masonryFrame = requestAnimationFrame(flushMasonrySpans);
 };
 
 const vMasonryItem = {
   mounted(element: HTMLElement) {
     masonryObserver?.observe(element);
-    requestAnimationFrame(() => updateMasonrySpan(element));
+    scheduleMasonrySpan(element);
   },
   updated(element: HTMLElement) {
-    requestAnimationFrame(() => updateMasonrySpan(element));
+    scheduleMasonrySpan(element);
   },
   unmounted(element: HTMLElement) {
     masonryObserver?.unobserve(element);
+    masonryPending.delete(element);
   },
 };
 
@@ -269,7 +327,7 @@ const getStreamData = async () => {
     newSongsData.value = (newSongs.value.result ?? []).map((item: any, index: number) => {
       const rawSong = item.song ?? item;
       const album = rawSong.album ?? rawSong.al ?? {};
-      return {
+      return asRawEntry({
         id: item.id ?? rawSong.id,
         name: item.name ?? rawSong.name,
         artist: rawSong.artists ?? rawSong.ar ?? [],
@@ -282,7 +340,7 @@ const getStreamData = async () => {
         fee: rawSong.fee ?? 0,
         mv: rawSong.mvid ?? rawSong.mv ?? null,
         num: index + 1,
-      };
+      });
     });
   }
   isLoading.value = false;
@@ -314,30 +372,51 @@ const getCardLayout = (index: number, type: StreamItemType) => {
   return "is-standard";
 };
 
-const openStreamItem = (item: StreamItem) => {
-  if (item.type === "playlist") router.push(`/playlist?id=${item.id}&page=1`);
-  else if (item.type === "album") router.push(`/album?id=${item.id}`);
-  else router.push(`/artist?id=${item.id}`);
+const openStreamItem = (item: StreamItem, origin: Event) => {
+  void navigation.openPage(
+    {
+      path: `/${item.type}`,
+      query: { id: item.id, ...(item.type === "playlist" ? { page: 1 } : {}) },
+    },
+    {
+      origin,
+      kind: "card",
+      identity: `${item.type}:${item.id}`,
+    },
+  );
 };
 
 onMounted(() => {
   masonryObserver = new ResizeObserver((entries) => {
-    entries.forEach((entry) => updateMasonrySpan(entry.target as HTMLElement));
+    for (let i = 0; i < entries.length; i++) {
+      scheduleMasonrySpan(entries[i].target as HTMLElement);
+    }
   });
   if (typeof $setSiteTitle !== "undefined") $setSiteTitle(import.meta.env.VITE_SITE_TITLE);
-  if (typeof $scrollToTop !== "undefined") $scrollToTop();
   void getStreamData();
 
-  gsap.from(".home-section", {
-    opacity: 0,
-    y: 24,
-    duration: 0.48,
-    stagger: 0.1,
-    ease: "power2.out",
-  });
+  if (window.innerWidth > 768 && !prefersReducedMotion()) {
+    introduction = gsap.context(
+      () =>
+        gsap.from(".home-section", {
+          opacity: 0,
+          y: 24,
+          duration: 0.48,
+          stagger: 0.1,
+          ease: "power2.out",
+        }),
+      homeRoot.value,
+    );
+  }
 });
 
+onDeactivated(() => introduction?.revert());
+
 onBeforeUnmount(() => {
+  introduction?.revert();
+  if (masonryFrame) cancelAnimationFrame(masonryFrame);
+  masonryFrame = 0;
+  masonryPending.clear();
   masonryObserver?.disconnect();
   masonryObserver = null;
 });
@@ -348,25 +427,25 @@ onBeforeUnmount(() => {
   container: home / inline-size;
   display: flex;
   flex-direction: column;
-  gap: 42px;
-  padding: 4px 0 42px;
+  gap: var(--space-8);
+  padding: var(--space-1) 0 var(--space-8);
 }
 
 .home-header {
   .date {
     color: var(--n-text-color-3);
-    font-size: 12px;
-    font-weight: 650;
-    letter-spacing: 0.08em;
+    font-size: var(--font-size-footnote);
+    font-weight: 500;
+    letter-spacing: 0.02em;
     text-transform: uppercase;
   }
 
   h1 {
     margin: 8px 0 0;
-    font-size: clamp(34px, 5vw, 54px);
-    font-weight: 820;
-    line-height: 1;
-    letter-spacing: -0.045em;
+    font-size: var(--font-size-large-title);
+    font-weight: 700;
+    line-height: var(--line-height-heading);
+    letter-spacing: -0.025em;
   }
 }
 
@@ -384,18 +463,18 @@ onBeforeUnmount(() => {
 
   h2 {
     margin: 4px 0 0;
-    font-size: clamp(24px, 3vw, 32px);
-    font-weight: 760;
-    line-height: 1.1;
-    letter-spacing: -0.035em;
+    font-size: var(--font-size-title);
+    font-weight: 600;
+    line-height: var(--line-height-heading);
+    letter-spacing: -0.02em;
   }
 }
 
 .section-kicker {
   color: var(--n-text-color-3);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.13em;
+  font-size: var(--font-size-caption);
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
@@ -513,7 +592,7 @@ onBeforeUnmount(() => {
     left: 10px;
     padding: 5px 8px;
     border-radius: var(--radius-pill);
-    font-size: 10px;
+    font-size: var(--font-size-caption);
     font-weight: 700;
   }
 
@@ -541,7 +620,7 @@ onBeforeUnmount(() => {
       overflow: hidden;
       font-size: 14px;
       font-weight: 650;
-      line-height: 1.4;
+      line-height: normal;
       -webkit-box-orient: vertical;
       -webkit-line-clamp: 2;
       line-clamp: 2;
@@ -585,7 +664,13 @@ onBeforeUnmount(() => {
       width: 68px;
       height: 68px;
       aspect-ratio: 1;
-      border-radius: var(--radius-pill);
+      overflow: visible;
+      border-radius: 0;
+      background: none;
+      img {
+        border-radius: 50%;
+        background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+      }
     }
 
     .feed-copy {
@@ -608,8 +693,7 @@ onBeforeUnmount(() => {
       filter: none;
       box-sizing: border-box;
 
-      &::before {
-        content: "";
+      .artwork-edge {
         position: absolute;
         inset: 0;
         z-index: 3;
@@ -634,12 +718,19 @@ onBeforeUnmount(() => {
     }
   }
 
-  &:hover,
   &:focus-visible {
-    img {
+    outline: 2px solid var(--main-color);
+    outline-offset: 3px;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    &:hover img {
       transform: scale(1.025);
     }
+  }
 
+  &:hover,
+  &:focus-visible {
     .open-cue {
       opacity: 1;
       transform: translateY(0);
@@ -674,7 +765,7 @@ onBeforeUnmount(() => {
     overflow: hidden;
     font-size: clamp(14px, 1.25vw, 18px);
     font-weight: 700;
-    line-height: 1.28;
+    line-height: normal;
     letter-spacing: -0.02em;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -720,7 +811,7 @@ onBeforeUnmount(() => {
 
   span {
     color: var(--n-text-color-3);
-    font-size: 9px;
+    font-size: var(--font-size-caption);
     font-weight: 750;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -784,7 +875,7 @@ onBeforeUnmount(() => {
 
 .hot-track__index {
   color: var(--n-text-color-3);
-  font-size: 10px;
+  font-size: var(--font-size-caption);
   font-variant-numeric: tabular-nums;
 }
 
@@ -907,7 +998,7 @@ onBeforeUnmount(() => {
 
   .home-header h1 {
     margin-top: 6px;
-    font-size: clamp(30px, 10vw, 36px);
+    font-size: var(--font-size-large-title);
   }
 
   .section-heading {

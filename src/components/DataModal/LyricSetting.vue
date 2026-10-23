@@ -19,13 +19,11 @@
 </template>
 
 <script setup lang="ts">
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
-import { musicStore } from "@/store";
 import SettingsWorkspace from "@/components/Settings/SettingsWorkspace.vue";
 
-const router = useRouter();
-const music = musicStore();
+const navigation = useLayerNavigation();
 const { t } = useI18n();
 const lyricSettingModal = ref(false);
 
@@ -35,8 +33,7 @@ const openLyricSetting = () => {
 
 const openFullSettings = () => {
   lyricSettingModal.value = false;
-  music.setBigPlayerState(false);
-  router.push("/setting/lyrics");
+  navigation.openPage("/setting/lyrics");
 };
 
 defineExpose({

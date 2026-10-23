@@ -246,8 +246,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, shallowRef, onMounted, onUnmounted, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { usePlayerBridge } from "@/utils/tauri/playerBridge";
-import { windowManager } from "@/utils/tauri/windowManager";
+import { usePlayerBridge } from "@/utils/tauri/player/bridge";
+import { windowManager } from "@/utils/tauri/window/manager";
 import LyricScroll from "@/components/Lyric/LyricScroll.vue";
 import type { AMLLLine, AMLLWord } from "@/utils/LyricsProcessor";
 

@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{mpsc, Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -7,7 +7,7 @@ use parking_lot::{Mutex, RwLock};
 
 use crate::decoder::PlaybackSink;
 use crate::effects::DspChain;
-use crate::output::{OutputWriter, PushCancel};
+use crate::output::{stream_samples_per_sec, OutputWriter, ProducerWait, PushCancel};
 use crate::types::{CrossfadeCurve, DspConfig};
 
 #[cfg(any(target_os = "android", target_os = "linux"))]
@@ -20,14 +20,27 @@ const DECK_QUEUE_BLOCKS: usize = 8;
 const DECK_RECYCLE_QUEUE_BLOCKS: usize = DECK_QUEUE_BLOCKS + 4;
 const MIX_BLOCK_FRAMES: usize = 512;
 const CROSSFADE_RAMP_FRAMES: usize = 64;
-const PRODUCER_YIELD_RETRIES: u32 = 8;
-const PRODUCER_MIN_PARK_US: u64 = 100;
-// Steady-state playback keeps the rings full, so producers spend their lives
-// in this park-poll loop: the cap IS the wakeup cadence. 4ms ≈ 2-3 polls per
-// freed ~10ms block instead of ~10, cutting idle/full-ring wakeups ~4× under
-// CPU stress. Interrupts (seek/stop/generation bump) are re-checked after
-// every park, so the worst added latency for those paths is one cap.
-const PRODUCER_MAX_PARK_US: u64 = 4_000;
+// Both decks paused means no deadline at all: the worker has nothing to render
+// until a control message arrives, so it blocks on the control channel instead
+// of polling. `DeckWriter::set_paused` pokes that channel, so resuming is
+// immediate and this timeout only bounds the wait for state nobody announced.
+const MIXER_IDLE_WAIT: Duration = Duration::from_millis(100);
+// A failed output is waiting for `ReplaceOutput`, which also arrives on the
+// control channel.
+const MIXER_OUTPUT_FAILED_WAIT: Duration = Duration::from_millis(20);
+// Starved-but-playing is an underrun in progress: poll fast at first so the
+// first refilled block is picked up immediately, then decay, because the same
+// state also covers "stopped with an unpaused deck", which can last forever.
+// `DeckWriter::push_block` unparks the worker when a starved deck refills, so
+// the decay never delays the audible restart.
+const MIXER_STARVED_SPIN_RETRIES: u32 = 2;
+const MIXER_STARVED_MIN_PARK_US: u64 = 250;
+const MIXER_STARVED_MAX_PARK_US: u64 = 32_000;
+// Underrun telemetry window. A track's last block is legitimately short, so a
+// threshold above one keeps normal track ends silent while a real starvation
+// storm still reports.
+const UNDERRUN_REPORT_WINDOW: Duration = Duration::from_secs(5);
+const UNDERRUN_REPORT_THRESHOLD: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeckId {
@@ -73,7 +86,20 @@ enum MixerControl {
         ack: mpsc::Sender<()>,
     },
     SetDsp(DspConfig),
+    /// Carries no state: it exists so a paused worker blocked on this channel
+    /// wakes for changes announced through shared atomics instead.
+    Wake,
     Stop,
+}
+
+/// Handle to the mixer worker thread, published by the worker itself so both
+/// the `DeckMixer` and every cloned `DeckWriter` can interrupt a park.
+type WorkerHandle = Arc<OnceLock<thread::Thread>>;
+
+fn wake_worker(handle: &WorkerHandle) {
+    if let Some(worker) = handle.get() {
+        worker.unpark();
+    }
 }
 
 #[derive(Clone)]
@@ -82,6 +108,8 @@ pub struct DeckWriter {
     data_tx: mpsc::SyncSender<DeckBlock>,
     control_tx: mpsc::Sender<MixerControl>,
     control_epoch: Arc<AtomicU64>,
+    worker: WorkerHandle,
+    samples_per_sec: u32,
     output: Arc<RwLock<OutputWriter>>,
     paused: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
@@ -102,6 +130,10 @@ pub struct CrossfadeParams {
     pub incoming_gain: f32,
     pub outgoing_gain: f32,
     pub overlap_headroom_db: f32,
+    /// Exponent on the incoming curve: above 1 holds the incoming back.
+    pub in_shape: f32,
+    /// Exponent on the outgoing curve: above 1 clears the outgoing sooner.
+    pub out_shape: f32,
 }
 
 impl Default for CrossfadeParams {
@@ -111,6 +143,8 @@ impl Default for CrossfadeParams {
             incoming_gain: 1.0,
             outgoing_gain: 1.0,
             overlap_headroom_db: -0.8,
+            in_shape: 1.0,
+            out_shape: 1.0,
         }
     }
 }
@@ -123,7 +157,7 @@ impl PlaybackSink for DeckWriter {
 
         let generation = self.generation.load(Ordering::Acquire);
         let flush_epoch = self.flush_epoch.load(Ordering::Acquire);
-        let mut retry_count = 0;
+        let mut wait = ProducerWait::new(self.samples_per_sec);
         loop {
             if cancel.is_cancelled()
                 || self.generation.load(Ordering::Acquire) != generation
@@ -138,7 +172,7 @@ impl PlaybackSink for DeckWriter {
                 generation,
                 flush_epoch,
             };
-            self.queued_samples.fetch_add(block_len, Ordering::Release);
+            let queued_before = self.queued_samples.fetch_add(block_len, Ordering::Release);
             match self.data_tx.try_send(deck_block) {
                 Ok(()) => {
                     if cancel.is_cancelled()
@@ -148,12 +182,19 @@ impl PlaybackSink for DeckWriter {
                         saturating_sub(&self.queued_samples, block_len);
                         return false;
                     }
+                    if queued_before == 0 {
+                        // This deck just came back from empty. The worker may
+                        // have decayed into a long starved park; wake it so the
+                        // first block after a start, seek or underrun is mixed
+                        // immediately.
+                        wake_worker(&self.worker);
+                    }
                     return true;
                 }
                 Err(mpsc::TrySendError::Full(returned)) => {
-                    saturating_sub(&self.queued_samples, block_len);
+                    let queued = saturating_sub(&self.queued_samples, block_len);
                     block = returned.samples;
-                    producer_retry_backoff(&mut retry_count);
+                    wait.backoff(block_len, queued);
                 }
                 Err(mpsc::TrySendError::Disconnected(_)) => {
                     saturating_sub(&self.queued_samples, block_len);
@@ -169,6 +210,11 @@ impl PlaybackSink for DeckWriter {
 
     fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Release);
+        // Pause state lives in an atomic the worker only samples per block, so
+        // announce the edge as well: an idle worker is blocked on the control
+        // channel and a busy one may be parked on a full output ring.
+        let _ = self.control_tx.send(MixerControl::Wake);
+        wake_worker(&self.worker);
     }
 
     fn queued_samples(&self) -> usize {
@@ -207,6 +253,7 @@ impl DeckWriter {
             clear_output: true,
             ack: ack_tx,
         });
+        wake_worker(&self.worker);
         let _ = ack_rx.recv_timeout(Duration::from_millis(200));
     }
 }
@@ -215,6 +262,7 @@ pub struct DeckMixer {
     primary: DeckWriter,
     secondary: DeckWriter,
     control_tx: mpsc::Sender<MixerControl>,
+    worker: WorkerHandle,
     output: Arc<RwLock<OutputWriter>>,
     stop_flag: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
@@ -245,12 +293,16 @@ impl DeckMixer {
         let primary_queued = Arc::new(AtomicUsize::new(0));
         let secondary_queued = Arc::new(AtomicUsize::new(0));
         let control_epoch = Arc::new(AtomicU64::new(0));
+        let worker: WorkerHandle = Arc::new(OnceLock::new());
+        let samples_per_sec = stream_samples_per_sec(output_sample_rate, output_channels);
         let output_state = Arc::new(RwLock::new(output.clone()));
         let primary = DeckWriter {
             deck: DeckId::Primary,
             data_tx: primary_tx,
             control_tx: control_tx.clone(),
             control_epoch: Arc::clone(&control_epoch),
+            worker: Arc::clone(&worker),
+            samples_per_sec,
             output: Arc::clone(&output_state),
             paused: Arc::clone(&primary_paused),
             generation: Arc::clone(&primary_generation),
@@ -264,6 +316,8 @@ impl DeckMixer {
             data_tx: secondary_tx,
             control_tx: control_tx.clone(),
             control_epoch: Arc::clone(&control_epoch),
+            worker: Arc::clone(&worker),
+            samples_per_sec,
             output: Arc::clone(&output_state),
             paused: Arc::clone(&secondary_paused),
             generation: Arc::clone(&secondary_generation),
@@ -273,10 +327,21 @@ impl DeckMixer {
         };
 
         let mixer_stop = Arc::clone(&stop_flag);
+        let mixer_worker_handle = Arc::clone(&worker);
         let dsp_config = dsp_config.clone();
         let thread = thread::Builder::new()
             .name("audio-deck-mixer".into())
             .spawn(move || {
+                // The mixer is the last thread between decoded PCM and the
+                // device callback, so it carries the tightest deadline of the
+                // two producers — and it is strictly periodic, emitting exactly
+                // one MIX_BLOCK_FRAMES block per wake.
+                let _priority = crate::rt_priority::promote_current_thread(
+                    crate::rt_priority::AudioThreadKind::Mixer,
+                    MIX_BLOCK_FRAMES,
+                    output_sample_rate,
+                );
+                let _ = mixer_worker_handle.set(thread::current());
                 let mut dsp = DspChain::new(output_sample_rate, output_channels);
                 dsp.set_dsp(&dsp_config);
                 let mut worker = MixerWorker {
@@ -301,6 +366,9 @@ impl DeckMixer {
                     control_rx,
                     control_epoch,
                     stop_flag: mixer_stop,
+                    spare_block: None,
+                    underruns_in_window: 0,
+                    underrun_window_start: None,
                 };
                 worker.run();
             })
@@ -310,6 +378,7 @@ impl DeckMixer {
             primary,
             secondary,
             control_tx,
+            worker,
             output: output_state,
             stop_flag,
             thread,
@@ -329,6 +398,7 @@ impl DeckMixer {
             deck,
             gain: gain.clamp(0.0, 2.0),
         });
+        wake_worker(&self.worker);
     }
 
     pub fn clear_deck(&self, deck: DeckId) {
@@ -348,6 +418,7 @@ impl DeckMixer {
             clear_output: false,
             ack: ack_tx,
         });
+        wake_worker(&self.worker);
         let _ = ack_rx.recv_timeout(Duration::from_millis(200));
     }
 
@@ -368,6 +439,7 @@ impl DeckMixer {
             duration_samples,
             params,
         });
+        wake_worker(&self.worker);
     }
 
     pub fn clear_all(&self) {
@@ -386,6 +458,7 @@ impl DeckMixer {
             secondary_flush_epoch,
             ack: ack_tx,
         });
+        wake_worker(&self.worker);
         let _ = ack_rx.recv_timeout(Duration::from_millis(200));
     }
 
@@ -402,6 +475,7 @@ impl DeckMixer {
         {
             return false;
         }
+        wake_worker(&self.worker);
 
         if ack_rx.recv_timeout(Duration::from_millis(200)).is_err() {
             return false;
@@ -413,6 +487,7 @@ impl DeckMixer {
 
     pub fn set_dsp(&self, config: DspConfig) {
         let _ = self.control_tx.send(MixerControl::SetDsp(config));
+        wake_worker(&self.worker);
     }
 
     pub fn queued_samples(&self) -> usize {
@@ -426,6 +501,7 @@ impl Drop for DeckMixer {
     fn drop(&mut self) {
         self.stop_flag.store(true, Ordering::Release);
         let _ = self.control_tx.send(MixerControl::Stop);
+        wake_worker(&self.worker);
         if let Some(thread) = self.thread.take() {
             join_mixer_thread_async(thread);
         }
@@ -482,6 +558,25 @@ impl DeckRuntime {
         self.queued_samples.store(0, Ordering::Release);
     }
 
+    fn current_samples(&mut self) -> &[f32] {
+        while self.current_index >= self.current_block.len() {
+            let Ok(block) = self.rx.try_recv() else {
+                return &[];
+            };
+            if block.generation != self.accepted_generation
+                || block.flush_epoch != self.accepted_flush_epoch
+            {
+                recycle_deck_buffer(&self.recycle_tx, block.samples);
+                continue;
+            }
+            let spent = std::mem::replace(&mut self.current_block, block.samples);
+            recycle_deck_buffer(&self.recycle_tx, spent);
+            self.current_index = 0;
+        }
+        &self.current_block[self.current_index..]
+    }
+
+    #[cfg(test)]
     fn next_sample(&mut self, consumed: &mut usize) -> Option<f32> {
         if self.current_index >= self.current_block.len() {
             loop {
@@ -535,29 +630,12 @@ impl DeckRuntime {
     ) -> usize {
         let mut written = 0;
         while written < samples {
-            if self.current_index >= self.current_block.len() {
-                match self.rx.try_recv() {
-                    Ok(block) => {
-                        if block.generation != self.accepted_generation
-                            || block.flush_epoch != self.accepted_flush_epoch
-                        {
-                            recycle_deck_buffer(&self.recycle_tx, block.samples);
-                            continue;
-                        }
-                        let spent = std::mem::replace(&mut self.current_block, block.samples);
-                        recycle_deck_buffer(&self.recycle_tx, spent);
-                        self.current_index = 0;
-                        if self.current_block.is_empty() {
-                            continue;
-                        }
-                    }
-                    Err(_) => break,
-                }
+            let src = self.current_samples();
+            if src.is_empty() {
+                break;
             }
-
-            let avail = self.current_block.len() - self.current_index;
-            let run = (samples - written).min(avail);
-            let src = &self.current_block[self.current_index..self.current_index + run];
+            let run = (samples - written).min(src.len());
+            let src = &src[..run];
             // `extend` over a slice iterator is TrustedLen-specialized: one
             // reserve, then straight writes with no per-element capacity check,
             // which keeps this run vectorizable (a push loop re-checks capacity
@@ -620,13 +698,20 @@ struct MixerWorker {
     control_rx: mpsc::Receiver<MixerControl>,
     control_epoch: Arc<AtomicU64>,
     stop_flag: Arc<AtomicBool>,
+    /// Mix buffer kept across an iteration that produced no audio. Dropping it
+    /// would free an allocation the output callback recycled for us and force
+    /// the next iteration to allocate again.
+    spare_block: Option<Vec<f32>>,
+    /// Windowed underrun telemetry; see `note_underrun`.
+    underruns_in_window: u32,
+    underrun_window_start: Option<std::time::Instant>,
 }
 
 impl MixerWorker {
     fn run(&mut self) {
         let channels = self.output_channels.max(1);
         let frame_capacity = MIX_BLOCK_FRAMES * channels;
-        let mut idle_retry_count = 0;
+        let mut starved_retries = 0u32;
 
         while !self.stop_flag.load(Ordering::Acquire) {
             if !self.drain_controls() {
@@ -634,7 +719,9 @@ impl MixerWorker {
             }
 
             if self.output.has_failed() {
-                producer_retry_backoff(&mut idle_retry_count);
+                if !self.wait_for_controls(MIXER_OUTPUT_FAILED_WAIT) {
+                    break;
+                }
                 continue;
             }
 
@@ -643,15 +730,44 @@ impl MixerWorker {
             let primary_paused = self.primary.paused.load(Ordering::Acquire);
             let secondary_paused = self.secondary.paused.load(Ordering::Acquire);
 
+            if primary_paused && secondary_paused {
+                // Nothing can be rendered until something changes, and every
+                // such change is announced on the control channel.
+                starved_retries = 0;
+                if !self.wait_for_controls(MIXER_IDLE_WAIT) {
+                    break;
+                }
+                continue;
+            }
+
+            // Whether anything was *supposed* to be rendered this iteration.
+            // Sampled before `mix_block`, which advances the crossfade schedule
+            // and may retire it. Without this the starved case below is
+            // indistinguishable from an idle deck.
+            let deck_live = self.crossfade.is_some()
+                || (!primary_paused && self.primary.gain != 0.0)
+                || (!secondary_paused && self.secondary.gain != 0.0);
+
             // Reserve exact capacity and fill by pushing — no zero-fill pass,
             // since every slot is written below. The buffer is recycled from
             // the output callback when available, so steady playback does not
             // allocate here (and the callback does not free).
-            let mut block = self.output.take_recycled_buffer(frame_capacity);
+            let mut block = self
+                .spare_block
+                .take()
+                .unwrap_or_else(|| self.output.take_recycled_buffer(frame_capacity));
+            block.clear();
             let has_audio = self.mix_block(&mut block, channels, primary_paused, secondary_paused);
 
             if has_audio {
-                idle_retry_count = 0;
+                starved_retries = 0;
+                // A short block means the deck ran dry part-way through the
+                // render: the output callback fades the gap, which is the
+                // audible dropout. One of these per track is just the final
+                // partial block, so only a sustained rate is worth reporting.
+                if block.len() < frame_capacity {
+                    self.note_underrun();
+                }
                 let control_epoch = self.control_epoch.load(Ordering::Acquire);
                 if !self.dsp.is_bypassed() {
                     self.dsp.process_interleaved(&mut block);
@@ -670,9 +786,61 @@ impl MixerWorker {
                     continue;
                 }
             } else {
-                producer_retry_backoff(&mut idle_retry_count);
+                // A live deck that produced nothing at all is the *worst* kind
+                // of underrun — the deck queue is completely dry, so the output
+                // ring drains and the callback fades to silence. Because the
+                // deck and mix block sizes match, this (not a partial block) is
+                // what a decoder that cannot keep up actually looks like, so it
+                // has to count. An idle deck reaches the same branch and must
+                // not.
+                if deck_live {
+                    self.note_underrun();
+                }
+                self.spare_block = Some(block);
+                starved_retry_backoff(&mut starved_retries);
             }
         }
+    }
+
+    /// Count a deck underrun and report a sustained rate of them.
+    ///
+    /// Both shapes count: a partial block (the deck ran dry part-way through a
+    /// render) and a completely empty one from a deck that should have been
+    /// playing. The second is the common shape — deck blocks and mix blocks are
+    /// both `512 * channels` samples, so a deck that falls behind hands over
+    /// nothing at all rather than a fragment, and counting only partial blocks
+    /// would have made this warning fire for track ends and nothing else.
+    ///
+    /// This is deliberately *not* symphonia's `invalid main_data_begin`
+    /// warning: that one fires whenever a Layer III decoder starts cold
+    /// (including the run-up frames a seek decodes and discards, and the
+    /// separate AutoMix analysis decoder that never reaches the speakers), so
+    /// it says nothing about whether the output stream broke.
+    ///
+    /// The window is tumbling and evaluated on entry, so the count and the span
+    /// reported always describe each other. A genuine stall keeps this method
+    /// being called from the starved branch above, so it crosses a window
+    /// boundary and reports while the stall is still happening; a burst shorter
+    /// than one window is only summarised when the next underrun arrives, which
+    /// is why the elapsed time is logged rather than assumed.
+    fn note_underrun(&mut self) {
+        let now = std::time::Instant::now();
+        let window_start = *self.underrun_window_start.get_or_insert(now);
+        let elapsed = now.duration_since(window_start);
+
+        if elapsed >= UNDERRUN_REPORT_WINDOW {
+            if self.underruns_in_window > UNDERRUN_REPORT_THRESHOLD {
+                tracing::warn!(
+                    "混音器欠载：{:.1}s 内 {} 次，解码跟不上输出（输出回调已淡出，听感为断音）",
+                    elapsed.as_secs_f32(),
+                    self.underruns_in_window
+                );
+            }
+            self.underruns_in_window = 0;
+            self.underrun_window_start = Some(now);
+        }
+
+        self.underruns_in_window = self.underruns_in_window.saturating_add(1);
     }
 
     /// Mix one output block worth of samples into `block`, returning whether
@@ -681,9 +849,11 @@ impl MixerWorker {
     /// Fast path: with no crossfade in progress the deck gains are constant for
     /// the whole block, so when exactly one deck is contributing we bulk-copy
     /// it (gain + clamp over contiguous runs, which autovectorizes) instead of
-    /// running the per-sample two-deck mixer. The per-sample path still runs
-    /// during crossfades (gains move per frame) and in the rare case where both
-    /// decks are simultaneously active without a crossfade.
+    /// running the two-deck mixer. On a starved deck this path emits a *short*
+    /// block so the output callback can fade the gap. Crossfades and the rare
+    /// case with two constant-gain decks mix contiguous runs instead; a starved
+    /// deck contributes silence because the other deck and the fade schedule
+    /// must keep advancing in lockstep.
     fn mix_block(
         &mut self,
         block: &mut Vec<f32>,
@@ -711,10 +881,16 @@ impl MixerWorker {
                     self.secondary.commit_consumed(consumed);
                     written
                 };
-                // Pad the tail with silence on underrun so the block is a whole
-                // number of frames.
-                block.resize(block.len() + (want - written), 0.0);
-                return written > 0;
+                // Hand a short block downstream instead of padding the tail with
+                // silence. Padding hard-cuts to zero and back on every decode
+                // hiccup, and because the block still looks full it also hides
+                // the underrun from the output callback, whose
+                // UNDERRUN_FADE_FRAMES ramp is the thing that keeps that edge
+                // from clicking. A short block is frame-aligned, plays out what
+                // we actually have, and lets `render.rs` own the fade.
+                let frame_aligned = written - (written % channels);
+                block.truncate(frame_aligned);
+                return frame_aligned > 0;
             }
 
             if !primary_active && !secondary_active {
@@ -724,8 +900,7 @@ impl MixerWorker {
             // Both active without a crossfade — fall through to the mixer.
         }
 
-        // General path: advance crossfade gains once per frame and mix both
-        // decks sample by sample.
+        // General path: evaluate gains per frame, but consume PCM in runs.
         let mut has_audio = false;
         let mut consumed_primary = 0usize;
         let mut consumed_secondary = 0usize;
@@ -740,37 +915,18 @@ impl MixerWorker {
             let segment_frames = (MIX_BLOCK_FRAMES - mixed_frames).min(CROSSFADE_RAMP_FRAMES);
             let crossfade_ramp = self.crossfade_block_ramp(segment_frames);
 
-            for frame_index in 0..segment_frames {
-                let (primary_gain, secondary_gain) = match crossfade_ramp {
-                    Some(ramp) => {
-                        let (outgoing_gain, incoming_gain) = ramp.gains(frame_index);
-                        match ramp.outgoing {
-                            DeckId::Primary => (outgoing_gain, incoming_gain),
-                            DeckId::Secondary => (incoming_gain, outgoing_gain),
-                        }
-                    }
-                    None => (self.primary.gain, self.secondary.gain),
-                };
-
-                for _ in 0..channels {
-                    let primary = if primary_paused {
-                        None
-                    } else {
-                        self.primary.next_sample(&mut consumed_primary)
-                    };
-                    let secondary = if secondary_paused {
-                        None
-                    } else {
-                        self.secondary.next_sample(&mut consumed_secondary)
-                    };
-                    if primary.is_some() || secondary.is_some() {
-                        has_audio = true;
-                    }
-                    let mixed = primary.unwrap_or(0.0) * primary_gain
-                        + secondary.unwrap_or(0.0) * secondary_gain;
-                    block.push(mixed.clamp(-1.0, 1.0));
-                }
-            }
+            let (primary, secondary) = mix_segment(
+                &mut self.primary,
+                &mut self.secondary,
+                block,
+                channels,
+                segment_frames,
+                (primary_paused, secondary_paused),
+                crossfade_ramp,
+            );
+            has_audio |= primary > 0 || secondary > 0;
+            consumed_primary += primary;
+            consumed_secondary += secondary;
 
             if crossfade_ramp.is_some() {
                 self.commit_crossfade_block(segment_frames);
@@ -785,90 +941,109 @@ impl MixerWorker {
 
     fn drain_controls(&mut self) -> bool {
         while let Ok(control) = self.control_rx.try_recv() {
-            match control {
-                MixerControl::FlushDeck {
-                    deck,
-                    generation,
-                    flush_epoch,
-                    clear_output,
-                    ack,
-                } => {
-                    self.deck_mut(deck).clear(generation, flush_epoch);
-                    if self
-                        .crossfade
-                        .as_ref()
-                        .is_some_and(|fade| fade.outgoing == deck || fade.incoming == deck)
-                    {
-                        self.crossfade = None;
-                    }
-                    if clear_output {
-                        self.output.flush();
-                    }
-                    let _ = ack.send(());
-                }
-                MixerControl::ClearDeck {
-                    deck,
-                    generation,
-                    flush_epoch,
-                    clear_output,
-                    ack,
-                } => {
-                    self.deck_mut(deck).clear(generation, flush_epoch);
-                    if self
-                        .crossfade
-                        .as_ref()
-                        .is_some_and(|fade| fade.outgoing == deck || fade.incoming == deck)
-                    {
-                        self.crossfade = None;
-                    }
-                    if clear_output {
-                        self.output.clear();
-                    }
-                    let _ = ack.send(());
-                }
-                MixerControl::ClearAll {
-                    primary_generation,
-                    primary_flush_epoch,
-                    secondary_generation,
-                    secondary_flush_epoch,
-                    ack,
-                } => {
-                    self.primary.clear(primary_generation, primary_flush_epoch);
-                    self.secondary
-                        .clear(secondary_generation, secondary_flush_epoch);
+            if !self.apply_control(control) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Block until a control message arrives or `timeout` elapses. Used for the
+    /// states the worker cannot leave on its own (paused, failed output), so
+    /// idling costs one wakeup per timeout instead of a poll cadence.
+    fn wait_for_controls(&mut self, timeout: Duration) -> bool {
+        match self.control_rx.recv_timeout(timeout) {
+            Ok(control) => self.apply_control(control) && self.drain_controls(),
+            Err(mpsc::RecvTimeoutError::Timeout) => true,
+            Err(mpsc::RecvTimeoutError::Disconnected) => false,
+        }
+    }
+
+    fn apply_control(&mut self, control: MixerControl) -> bool {
+        match control {
+            MixerControl::FlushDeck {
+                deck,
+                generation,
+                flush_epoch,
+                clear_output,
+                ack,
+            } => {
+                self.deck_mut(deck).clear(generation, flush_epoch);
+                if self
+                    .crossfade
+                    .as_ref()
+                    .is_some_and(|fade| fade.outgoing == deck || fade.incoming == deck)
+                {
                     self.crossfade = None;
+                }
+                if clear_output {
+                    self.output.flush();
+                }
+                let _ = ack.send(());
+            }
+            MixerControl::ClearDeck {
+                deck,
+                generation,
+                flush_epoch,
+                clear_output,
+                ack,
+            } => {
+                self.deck_mut(deck).clear(generation, flush_epoch);
+                if self
+                    .crossfade
+                    .as_ref()
+                    .is_some_and(|fade| fade.outgoing == deck || fade.incoming == deck)
+                {
+                    self.crossfade = None;
+                }
+                if clear_output {
                     self.output.clear();
-                    let _ = ack.send(());
                 }
-                MixerControl::SetDeckGain { deck, gain } => {
-                    self.deck_mut(deck).gain = gain.clamp(0.0, 2.0);
-                }
-                MixerControl::StartCrossfade {
+                let _ = ack.send(());
+            }
+            MixerControl::ClearAll {
+                primary_generation,
+                primary_flush_epoch,
+                secondary_generation,
+                secondary_flush_epoch,
+                ack,
+            } => {
+                self.primary.clear(primary_generation, primary_flush_epoch);
+                self.secondary
+                    .clear(secondary_generation, secondary_flush_epoch);
+                self.crossfade = None;
+                self.output.clear();
+                let _ = ack.send(());
+            }
+            MixerControl::SetDeckGain { deck, gain } => {
+                self.deck_mut(deck).gain = gain.clamp(0.0, 2.0);
+            }
+            MixerControl::StartCrossfade {
+                outgoing,
+                incoming,
+                duration_samples,
+                params,
+            } => {
+                self.set_deck_gain_direct(outgoing, params.outgoing_gain);
+                self.set_deck_gain_direct(incoming, 0.0);
+                self.crossfade = Some(CrossfadeRuntime {
                     outgoing,
                     incoming,
-                    duration_samples,
+                    duration_samples: duration_samples.max(1),
+                    elapsed_samples: 0,
                     params,
-                } => {
-                    self.set_deck_gain_direct(outgoing, params.outgoing_gain);
-                    self.set_deck_gain_direct(incoming, 0.0);
-                    self.crossfade = Some(CrossfadeRuntime {
-                        outgoing,
-                        incoming,
-                        duration_samples: duration_samples.max(1),
-                        elapsed_samples: 0,
-                        params,
-                    });
-                }
-                MixerControl::ReplaceOutput { output, ack } => {
-                    self.output.retire();
-                    self.output = output;
-                    let _ = ack.send(());
-                }
-                MixerControl::SetDsp(config) => {
-                    self.dsp.set_dsp(&config);
-                }
-                MixerControl::Stop => return false,
+                });
             }
+            MixerControl::ReplaceOutput { output, ack } => {
+                self.output.retire();
+                self.output = output;
+                let _ = ack.send(());
+            }
+            MixerControl::SetDsp(config) => {
+                self.dsp.set_dsp(&config);
+            }
+            MixerControl::Wake => {}
+            MixerControl::Stop => return false,
         }
         true
     }
@@ -957,12 +1132,117 @@ impl MixerWorker {
     }
 }
 
-fn saturating_sub(counter: &AtomicUsize, amount: usize) {
+// Queue and pause checks belong at contiguous PCM boundaries, not at every
+// sample. A missing deck contributes silence until the next run/64-frame segment.
+fn mix_segment(
+    primary: &mut DeckRuntime,
+    secondary: &mut DeckRuntime,
+    block: &mut Vec<f32>,
+    channels: usize,
+    frames: usize,
+    paused: (bool, bool),
+    ramp: Option<CrossfadeBlockRamp>,
+) -> (usize, usize) {
+    let gains = (primary.gain, secondary.gain);
+    let start = block.len();
+    let samples = frames * channels;
+    block.resize(start + samples, 0.0);
+    let dst = &mut block[start..];
+    let mut written = 0;
+    let mut consumed = (0, 0);
+
+    while written < samples {
+        let p = if paused.0 {
+            &[]
+        } else {
+            primary.current_samples()
+        };
+        let s = if paused.1 {
+            &[]
+        } else {
+            secondary.current_samples()
+        };
+        let available = (!p.is_empty(), !s.is_empty());
+        let mut run = samples - written;
+        if available.0 {
+            run = run.min(p.len());
+        }
+        if available.1 {
+            run = run.min(s.len());
+        }
+        // Decoder blocks and every consumption boundary contain whole frames.
+        debug_assert_eq!(run % channels, 0);
+        let output = &mut dst[written..written + run];
+        let frame_offset = written / channels;
+        match available {
+            (true, true) => {
+                mix_pcm_run::<true, true>(p, s, output, channels, frame_offset, gains, ramp)
+            }
+            (true, false) => {
+                mix_pcm_run::<true, false>(p, s, output, channels, frame_offset, gains, ramp)
+            }
+            (false, true) => {
+                mix_pcm_run::<false, true>(p, s, output, channels, frame_offset, gains, ramp)
+            }
+            (false, false) => break,
+        }
+        if available.0 {
+            primary.current_index += run;
+            consumed.0 += run;
+        }
+        if available.1 {
+            secondary.current_index += run;
+            consumed.1 += run;
+        }
+        written += run;
+    }
+    consumed
+}
+
+#[inline]
+fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
+    primary: &[f32],
+    secondary: &[f32],
+    output: &mut [f32],
+    channels: usize,
+    frame_offset: usize,
+    gains: (f32, f32),
+    ramp: Option<CrossfadeBlockRamp>,
+) {
+    for (frame_index, frame) in output.chunks_exact_mut(channels).enumerate() {
+        let (primary_gain, secondary_gain) = match ramp {
+            Some(ramp) => {
+                let (outgoing, incoming) = ramp.gains(frame_offset + frame_index);
+                match ramp.outgoing {
+                    DeckId::Primary => (outgoing, incoming),
+                    DeckId::Secondary => (incoming, outgoing),
+                }
+            }
+            None => gains,
+        };
+        let start = frame_index * channels;
+        for (channel, sample) in frame.iter_mut().enumerate() {
+            let p = if PRIMARY {
+                primary[start + channel]
+            } else {
+                0.0
+            };
+            let s = if SECONDARY {
+                secondary[start + channel]
+            } else {
+                0.0
+            };
+            *sample = (p * primary_gain + s * secondary_gain).clamp(-1.0, 1.0);
+        }
+    }
+}
+
+fn saturating_sub(counter: &AtomicUsize, amount: usize) -> usize {
     let mut current = counter.load(Ordering::Relaxed);
     loop {
         let next = current.saturating_sub(amount);
         match counter.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed) {
-            Ok(_) => return,
+            Ok(_) => return next,
             Err(observed) => current = observed,
         }
     }
@@ -976,22 +1256,28 @@ fn recycle_deck_buffer(recycle_tx: &mpsc::SyncSender<Vec<f32>>, mut block: Vec<f
     let _ = recycle_tx.try_send(block);
 }
 
-fn producer_retry_backoff(retry_count: &mut u32) {
-    if *retry_count < PRODUCER_YIELD_RETRIES {
-        *retry_count += 1;
+/// Wait for a deck that is playing but has no data queued. The first retries
+/// stay tight so a real underrun recovers on the very next block; sustained
+/// starvation (no track loaded, decoder gone) decays to a low idle cadence.
+/// A refilling deck unparks this thread, so the decay costs no start latency.
+fn starved_retry_backoff(retry_count: &mut u32) {
+    let retries = *retry_count;
+    *retry_count = retries.saturating_add(1);
+    if retries < MIXER_STARVED_SPIN_RETRIES {
         thread::yield_now();
         return;
     }
 
-    let shift = (*retry_count - PRODUCER_YIELD_RETRIES).min(6);
-    let park_us = (PRODUCER_MIN_PARK_US << shift).min(PRODUCER_MAX_PARK_US);
-    *retry_count = (*retry_count).saturating_add(1);
+    let shift = (retries - MIXER_STARVED_SPIN_RETRIES).min(8);
+    let park_us = MIXER_STARVED_MIN_PARK_US
+        .saturating_mul(1u64 << shift)
+        .min(MIXER_STARVED_MAX_PARK_US);
     thread::park_timeout(Duration::from_micros(park_us));
 }
 
 fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
     let t = progress.clamp(0.0, 1.0);
-    let (out_vol, in_vol) = crossfade_values(t, params.curve);
+    let (out_vol, in_vol) = crossfade_values(t, &params);
     let outgoing_target = params.outgoing_gain.clamp(0.0, 2.0);
     let incoming_target = params.incoming_gain.clamp(0.0, 2.0);
 
@@ -1013,9 +1299,12 @@ fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32
     (out_gain, in_gain)
 }
 
-fn crossfade_values(progress: f32, curve: CrossfadeCurve) -> (f32, f32) {
+/// Same shaping as the Web `getCrossfadeValues`: shapes are exponents on each
+/// side, and the constant-power curves are renormalised afterwards so an
+/// asymmetric shape moves *when* each side is heard without a level dip.
+fn crossfade_values(progress: f32, params: &CrossfadeParams) -> (f32, f32) {
     let t = progress.clamp(0.0, 1.0);
-    match curve {
+    let (mut out_vol, mut in_vol) = match params.curve {
         CrossfadeCurve::Linear => (1.0 - t, t),
         CrossfadeCurve::EqualPower => {
             let angle = t * std::f32::consts::FRAC_PI_2;
@@ -1026,8 +1315,34 @@ fn crossfade_values(progress: f32, curve: CrossfadeCurve) -> (f32, f32) {
             let angle = s * std::f32::consts::FRAC_PI_2;
             (angle.cos(), angle.sin())
         }
+    };
+
+    // Unshaped fades are the common case; keep them free of powf and exact.
+    if params.in_shape == 1.0 && params.out_shape == 1.0 {
+        return (out_vol, in_vol);
     }
+    // f32 `cos(FRAC_PI_2)` is a hair below zero, and a negative base with a
+    // fractional exponent is NaN.
+    if params.out_shape != 1.0 {
+        out_vol = out_vol.max(0.0).powf(params.out_shape);
+    }
+    if params.in_shape != 1.0 {
+        in_vol = in_vol.max(0.0).powf(params.in_shape);
+    }
+    if params.curve != CrossfadeCurve::Linear {
+        let power = out_vol * out_vol + in_vol * in_vol;
+        if power > 1e-8 {
+            let scale = power.sqrt().recip();
+            out_vol *= scale;
+            in_vol *= scale;
+        }
+    }
+    (out_vol, in_vol)
 }
+
+#[cfg(test)]
+#[path = "mixer/perf_tests.rs"]
+mod perf_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1123,6 +1438,7 @@ mod tests {
             incoming_gain: 1.15,
             outgoing_gain: 0.85,
             overlap_headroom_db: -0.8,
+            ..Default::default()
         });
 
         for params in params {
@@ -1152,5 +1468,67 @@ mod tests {
                 assert!((exact.1 - interpolated.1).abs() < 0.001);
             }
         }
+    }
+
+    #[test]
+    fn unit_shapes_leave_every_curve_untouched() {
+        for curve in [
+            CrossfadeCurve::Linear,
+            CrossfadeCurve::EqualPower,
+            CrossfadeCurve::SCurve,
+        ] {
+            let params = CrossfadeParams {
+                curve,
+                ..Default::default()
+            };
+            for step in 0..=20 {
+                let t = step as f32 / 20.0;
+                let (out_vol, in_vol) = crossfade_values(t, &params);
+                let (expected_out, expected_in) = match curve {
+                    CrossfadeCurve::Linear => (1.0 - t, t),
+                    CrossfadeCurve::EqualPower => {
+                        let angle = t * std::f32::consts::FRAC_PI_2;
+                        (angle.cos(), angle.sin())
+                    }
+                    CrossfadeCurve::SCurve => {
+                        let s = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
+                        let angle = s * std::f32::consts::FRAC_PI_2;
+                        (angle.cos(), angle.sin())
+                    }
+                };
+                assert_eq!(out_vol.to_bits(), expected_out.to_bits());
+                assert_eq!(in_vol.to_bits(), expected_in.to_bits());
+            }
+        }
+    }
+
+    #[test]
+    fn shaped_constant_power_curves_keep_their_power_and_endpoints() {
+        let held_back = CrossfadeParams {
+            curve: CrossfadeCurve::EqualPower,
+            in_shape: 1.2,
+            ..Default::default()
+        };
+        let plain = CrossfadeParams::default();
+
+        for step in 0..=20 {
+            let t = step as f32 / 20.0;
+            let (out_vol, in_vol) = crossfade_values(t, &held_back);
+            assert!((out_vol * out_vol + in_vol * in_vol - 1.0).abs() < 1e-4);
+        }
+        assert_eq!(crossfade_values(0.0, &held_back), (1.0, 0.0));
+        let (end_out, end_in) = crossfade_values(1.0, &held_back);
+        assert!(end_out.abs() < 1e-6 && (end_in - 1.0).abs() < 1e-6);
+        let cleared = CrossfadeParams {
+            out_shape: 1.15,
+            ..held_back
+        };
+        let (end_out, _) = crossfade_values(1.0, &cleared);
+        assert!(
+            !end_out.is_nan(),
+            "a shaped outgoing side must not go NaN at the end"
+        );
+        // Held back: quieter than the unshaped incoming half way through.
+        assert!(crossfade_values(0.5, &held_back).1 < crossfade_values(0.5, &plain).1);
     }
 }

@@ -114,7 +114,6 @@ export interface ParsedLyricResult {
   ttml: any[];
   lrcAMData: AMLLLine[];
   yrcAMData: AMLLLine[];
-  formattedLrc?: string;
 }
 
 // ============== Store Types ==============
@@ -136,7 +135,6 @@ export interface SongLyric {
   lrcAMData: StoredLyricLine[];
   yrcAMData: StoredLyricLine[];
   // Other fields
-  formattedLrc?: string;
   processedLyrics?: StoredLyricLine[];
   settingsHash?: string;
   // Optional translation/romaji sources

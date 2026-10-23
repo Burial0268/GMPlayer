@@ -99,7 +99,7 @@ export interface PhraseAnalysis {
 }
 
 export type SongSectionKind =
-  | "start"
+  | "intro"
   | "verse"
   | "chorus"
   | "bridge"
@@ -113,6 +113,7 @@ export interface SongSection {
   end: number;
   index: number;
   confidence: number;
+  /** Relative to the song's own loud passages (95th percentile = 1). */
   energy: number;
   vocalRisk: number;
   mixSuitability: number;
@@ -121,7 +122,7 @@ export interface SongSection {
 export interface SectionAnalysis {
   sections: SongSection[];
   confidence: number;
-  /** Native Rust currently emits this; Web worker analysis may omit sections. */
+  /** Rust `automix::sections`; the Web worker runs it through WASM when asked to. */
   method: string;
 }
 
@@ -162,6 +163,8 @@ export interface TrackAnalysis {
 
 export interface AnalyzeOptions {
   analyzeBPM?: boolean;
+  /** Song sections for emotional transitions. Loads the WASM backend in the worker. */
+  analyzeSections?: boolean;
 }
 
 interface AnalysisFetchResult {
@@ -463,6 +466,7 @@ export async function analyzeTrack(
   options?: AnalyzeOptions,
 ): Promise<TrackAnalysis> {
   const analyzeBPM = options?.analyzeBPM ?? true;
+  const analyzeSections = options?.analyzeSections ?? false;
 
   if (IS_DEV) {
     console.log("TrackAnalyzer: Starting analysis for", sourceUrl.substring(0, 50));
@@ -477,7 +481,12 @@ export async function analyzeTrack(
     }
     const fetchResult = await fetchAnalysisBytes(sourceUrl);
     const extension = extensionFromSrc(fetchResult.responseUrl) || extensionFromSrc(sourceUrl);
-    return workerClient.analyzeBytesViaWorker(fetchResult.bytes, extension, analyzeBPM);
+    return workerClient.analyzeBytesViaWorker(
+      fetchResult.bytes,
+      extension,
+      analyzeBPM,
+      analyzeSections,
+    );
   }
 
   // Steps 1-2: decode on main thread using the global AudioContext and mix
@@ -488,7 +497,13 @@ export async function analyzeTrack(
 
   // Step 3: dispatch to Worker or fall back
   if (workerClient?.hasAnalysisWorker()) {
-    return workerClient.analyzePcmViaWorker(monoData, sampleRate, duration, analyzeBPM);
+    return workerClient.analyzePcmViaWorker(
+      monoData,
+      sampleRate,
+      duration,
+      analyzeBPM,
+      analyzeSections,
+    );
   } else {
     if (IS_DEV) {
       console.log("TrackAnalyzer: Using main-thread fallback");

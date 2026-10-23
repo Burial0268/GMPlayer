@@ -17,7 +17,7 @@
         <span class="tip updater-status">
           <n-icon
             class="status-icon"
-            :class="{ spin: statusVisual.spin }"
+            :class="{ spin: statusVisual.spin, 'motion-essential': statusVisual.spin }"
             :component="statusVisual.icon"
             :style="{ color: statusVisual.color }"
           />
@@ -270,13 +270,18 @@ const handleInstallUpdate = () => {
     content: t("setting.installUpdateConfirm", { version: updaterState.update.version }),
     positiveText: t("setting.installUpdate"),
     negativeText: t("general.dialog.cancel"),
-    onPositiveClick: async () => {
-      const installed = await installAvailableUpdate();
-      if (installed) {
-        $message?.success(t("setting.updateInstalled"));
-      } else {
-        $message?.error(updaterState.error || t("setting.updateFailed"));
-      }
+    // 不要在这里 await：naive-ui 只有在 onPositiveClick 返回的 Promise resolve
+    // 之后才会关闭对话框，而整个下载 + `install()` 都在这个 Promise 里 —— 且
+    // `install()` 会交给安装程序并以 `std::process::exit(0)` 结束，永远不会
+    // resolve。于是对话框会一直盖在它本该让出的进度界面上。
+    onPositiveClick: () => {
+      void installAvailableUpdate().then((installed) => {
+        if (installed) {
+          $message?.success(t("setting.updateInstalled"));
+        } else {
+          $message?.error(updaterState.error || t("setting.updateFailed"));
+        }
+      });
     },
   });
 };
@@ -335,6 +340,7 @@ const handleInstallUpdate = () => {
       font-size: 15px;
     }
 
+    // .motion-essential：reduced-motion 下仍要转，它是「正在检查/下载」的唯一提示
     .spin {
       animation: updater-spin 1s linear infinite;
     }

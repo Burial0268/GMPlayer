@@ -1,6 +1,7 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import { shallowRef, ref } from "vue";
 import getLanguageData from "@/utils/getLanguageData";
+import { getLyricPresentationTimeSeconds } from "@/utils/tauri/audio/uiDelay";
 import {
   preprocessLyrics,
   type ParsedLrcLine,
@@ -24,7 +25,6 @@ function createEmptySongLyric(): SongLyric {
     hasYrc: false,
     hasYrcTran: false,
     hasYrcRoma: false,
-    formattedLrc: "",
     processedLyrics: [],
     settingsHash: "",
   } as SongLyric;
@@ -37,7 +37,6 @@ function createInitialSongLyric(): SongLyric {
     hasLrcRoma: true,
     hasYrcTran: true,
     hasYrcRoma: true,
-    settingsHash: "true-false-false",
   };
 }
 
@@ -78,7 +77,14 @@ export const useMusicLyricStore = defineStore("musicLyric", () => {
         }
       }
 
-      if (!value.lrcAMData || value.lrcAMData.length === 0) {
+      if (value.hasTTML === undefined) value.hasTTML = false;
+      if (value.ttml === undefined) value.ttml = [];
+
+      // TTML tracks resolve through processLyrics()'s canonical-TTML branch, so
+      // synthesising lrcAMData for them would allocate an array nothing reads.
+      const ttmlCanonical = value.hasTTML && value.ttml.length > 0;
+
+      if (!ttmlCanonical && (!value.lrcAMData || value.lrcAMData.length === 0)) {
         if (value.yrcAMData && value.yrcAMData.length > 0) {
           console.log("使用yrcAMData作为lrcAMData的备用");
           value.lrcAMData = [...value.yrcAMData];
@@ -101,9 +107,6 @@ export const useMusicLyricStore = defineStore("musicLyric", () => {
           }));
         }
       }
-
-      if (value.hasTTML === undefined) value.hasTTML = false;
-      if (value.ttml === undefined) value.ttml = [];
 
       console.time("预处理歌词");
       const settings = useSettingDataStore();
@@ -144,7 +147,7 @@ export const useMusicLyricStore = defineStore("musicLyric", () => {
     }
   }
 
-  function syncCurrentLyricIndex(displayCurrentTime: number) {
+  function syncCurrentLyricIndex(playbackCurrentTime: number) {
     const settings = useSettingDataStore();
     const lyrics =
       !songLyric.value.hasYrc || !settings.showYrc ? songLyric.value.lrc : songLyric.value.yrc;
@@ -155,7 +158,10 @@ export const useMusicLyricStore = defineStore("musicLyric", () => {
     }
 
     let currentIndex = playSongLyricIndex.value;
-    const offsetTime = displayCurrentTime + (settings.lyricTimeOffset ?? 0) / 1000;
+    const offsetTime = getLyricPresentationTimeSeconds(
+      playbackCurrentTime,
+      settings.lyricTimeOffset ?? 0,
+    );
     if (currentIndex > 0 && lyrics[currentIndex]?.time > offsetTime) currentIndex = -1;
     while (currentIndex < lyrics.length - 1 && lyrics[currentIndex + 1].time <= offsetTime) {
       currentIndex++;

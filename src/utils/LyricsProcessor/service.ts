@@ -85,7 +85,11 @@ class NeteaseLyricProvider implements LyricProvider {
           response.code = 200;
         }
       } else if (!response || response.code !== 200) {
-        console.warn("Netease lyric response indicates failure or no data:", response);
+        // Log a summary, not the response object: a retained console reference
+        // pins the whole payload for every failed track once devtools is open.
+        console.warn(
+          `[LyricService] Netease lyric response indicates failure or no data (id: ${id}, code: ${response?.code})`,
+        );
         return null; // Return null if code is not 200 or data is missing
       }
 

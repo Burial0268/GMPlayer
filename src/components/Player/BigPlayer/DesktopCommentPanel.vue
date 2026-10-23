@@ -40,7 +40,11 @@
           :disabled="loading || loadingMore"
           @click="refreshComments"
         >
-          <n-icon :class="{ spinning: loading }" size="20" :component="RefreshRound" />
+          <n-icon
+            :class="{ spinning: loading, 'motion-essential': loading }"
+            size="20"
+            :component="RefreshRound"
+          />
         </button>
         <button
           class="icon-action"
@@ -144,6 +148,8 @@ import {
 import { getComment } from "@/api/comment";
 import Comment from "@/components/Comment/index.vue";
 import { musicStore } from "@/store";
+// Aliased: this file already exposes a `coverUrl` computed of its own.
+import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
 import { Motion } from "motion-v";
 import { NVirtualList } from "naive-ui";
 import { getDesktopPlayerSharedLayoutIds } from "../desktopSharedLayout";
@@ -190,6 +196,14 @@ let readyTimer: number | null = null;
 let readyFrame: number | null = null;
 
 const songId = computed(() => Number(music.getPlaySongData?.id || 0));
+/**
+ * An imported local file has no Netease comment thread.
+ *
+ * Checked separately from `songId`, which cannot express it: a local id is a
+ * negative hash, so `Number(-N || 0)` is still `-N` and passes every falsy test
+ * here.
+ */
+const isLocalTrack = computed(() => Boolean(music.getPlaySongData?.local?.uri));
 const sharedLayoutIds = computed(() => getDesktopPlayerSharedLayoutIds(music.getPlaySongData?.id));
 const songName = computed(() => music.getPlaySongData?.name || "");
 const artistNames = computed(() =>
@@ -198,10 +212,7 @@ const artistNames = computed(() =>
     .filter(Boolean)
     .join(" / "),
 );
-const coverUrl = computed(() => {
-  const url = music.getPlaySongData?.album?.picUrl;
-  return url ? `${url.replace(/^http:/, "https:")}?param=96y96` : "/images/pic/default.png";
-});
+const coverUrl = computed(() => toCoverUrl(music.getPlaySongData?.album?.picUrl, 96));
 const visibleComments = computed(() =>
   activeTab.value === "hot" ? hotComments.value : allComments.value,
 );
@@ -248,8 +259,17 @@ const clearComments = () => {
 
 const requestComments = async (append = false) => {
   const currentSongId = songId.value;
-  if (!currentSongId) {
+  // No thread to ask for. Without the local test this fired `/comment/music`
+  // with a negative id on open and again on every track change while the panel
+  // stayed open, and rendered the refusal as "could not load" rather than as the
+  // empty state. `loading` is cleared here too: the watcher clears the list and
+  // calls straight back in, so a track change from a Netease song to a local one
+  // would otherwise leave the spinner up for good.
+  if (!currentSongId || isLocalTrack.value) {
     clearComments();
+    loading.value = false;
+    loadingMore.value = false;
+    loadError.value = false;
     commentsReady.value = true;
     return;
   }
@@ -684,6 +704,7 @@ onBeforeUnmount(cancelCommentsReady);
   }
 }
 
+// .motion-essential：reduced-motion 下仍要转，它是「正在刷新」的唯一提示
 .spinning {
   animation: comment-spin 0.8s linear infinite;
 }

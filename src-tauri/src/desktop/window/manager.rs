@@ -1,11 +1,11 @@
-use crate::desktop::window::{config::WindowConfig, effects};
+use crate::desktop::window::{config::WindowConfig, effects, webview_memory};
 use log::info;
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(target_os = "windows"))]
 use tauri::Theme;
 use tauri::{
-    AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    webview::PageLoadEvent, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, WebviewUrl,
+    WebviewWindow, WebviewWindowBuilder,
 };
 #[cfg(target_os = "macos")]
 use tauri_plugin_decorum::WebviewWindowExt;
@@ -36,6 +36,7 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
         if let Some(existing) = app.get_webview_window(label) {
             info!("Window '{}' already exists, focusing", label);
             apply_runtime_size_constraints(&existing, config)?;
+            webview_memory::on_shown(&existing);
             existing.show().map_err(|e| e.to_string())?;
             if existing.is_minimized().unwrap_or(false) {
                 existing.unminimize().map_err(|e| e.to_string())?;
@@ -111,6 +112,19 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
         if !args.is_empty() {
             builder = builder.additional_browser_args(args);
         }
+    }
+
+    // Windows that are pre-created hidden (tray popup, lyric controls) sit
+    // there for the whole session, so put them to sleep as soon as their page
+    // is loaded. `main` is excluded: it is only hidden for the moment it takes
+    // the frontend to pick a theme and reveal it, and nothing on that path
+    // would wake it back up.
+    if !config.visible && label != "main" {
+        builder = builder.on_page_load(|window, payload| {
+            if matches!(payload.event(), PageLoadEvent::Finished) {
+                webview_memory::on_loaded_while_hidden(&window);
+            }
+        });
     }
 
     // Apply min/max size constraints. Each dimension defaults to 0.0 if unset,
@@ -328,6 +342,7 @@ pub fn show_window(app: &AppHandle, label: &str) -> Result<(), String> {
     let window = app
         .get_webview_window(label)
         .ok_or_else(|| format!("Window '{}' not found", label))?;
+    webview_memory::on_shown(&window);
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     if label == "main" {
@@ -343,6 +358,7 @@ pub fn hide_window(app: &AppHandle, label: &str) -> Result<(), String> {
         .get_webview_window(label)
         .ok_or_else(|| format!("Window '{}' not found", label))?;
     window.hide().map_err(|e| e.to_string())?;
+    webview_memory::on_hidden(&window);
     if label == "main" {
         let _ = app.emit("main-window-visibility", false);
     }
@@ -367,6 +383,16 @@ pub fn close_window(app: &AppHandle, label: &str) -> Result<(), String> {
     window.destroy().map_err(|e| e.to_string())
 }
 
+/// A managed window was destroyed.
+///
+/// Announcing the close as a visibility change lets the master drop the window
+/// from its broadcast set immediately, instead of waiting for the reconcile
+/// poll to notice it is gone.
+pub fn on_window_destroyed(app: &AppHandle, label: &str) {
+    webview_memory::forget(label);
+    emit_window_visibility(app, label, false);
+}
+
 /// Toggle visibility of a window by label.
 pub fn toggle_window(app: &AppHandle, label: &str) -> Result<(), String> {
     let window = app
@@ -376,12 +402,14 @@ pub fn toggle_window(app: &AppHandle, label: &str) -> Result<(), String> {
     let is_visible = window.is_visible().map_err(|e| e.to_string())?;
     if is_visible {
         window.hide().map_err(|e| e.to_string())?;
+        webview_memory::on_hidden(&window);
         if label == "main" {
             let _ = app.emit("main-window-visibility", false);
         }
         emit_window_visibility(app, label, false);
         Ok(())
     } else {
+        webview_memory::on_shown(&window);
         window.show().map_err(|e| e.to_string())?;
         // Only unminimize if actually minimized — calling unminimize on a
         // hidden-but-not-minimized window can reset its size on Windows.
@@ -402,6 +430,7 @@ pub fn focus_window(app: &AppHandle, label: &str) -> Result<(), String> {
     let window = app
         .get_webview_window(label)
         .ok_or_else(|| format!("Window '{}' not found", label))?;
+    webview_memory::on_shown(&window);
     window.show().map_err(|e| e.to_string())?;
     if window.is_minimized().unwrap_or(false) {
         window.unminimize().map_err(|e| e.to_string())?;
@@ -459,6 +488,7 @@ pub fn show_window_at_position(app: &AppHandle, label: &str, x: f64, y: f64) -> 
     window
         .set_position(PhysicalPosition::new(x as i32, y as i32))
         .map_err(|e| e.to_string())?;
+    webview_memory::on_shown(&window);
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     emit_window_visibility(app, label, true);

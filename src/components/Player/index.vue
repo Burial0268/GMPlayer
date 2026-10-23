@@ -9,51 +9,20 @@
         @touchstart.passive="handleMiniTouchStart"
         @touchmove.passive="handleMiniTouchMove"
         @touchend.passive="handleMiniTouchEnd"
-        @touchcancel="resetMiniTouch"
+        @touchcancel="handleMiniTouchCancel"
       >
-        <div class="slider">
-          <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-          <vue-slider
-            v-model="music.getPlaySongTime.barMoveDistance"
-            @drag-start="sliderDragStart"
-            @dragging="sliderDragging"
-            @drag-end="sliderDragEnd"
-            @change="songTimeSliderUpdate"
-            @click.stop
-            :tooltip="'active'"
-            :lazy="true"
-            :use-keyboard="false"
-          >
-            <template v-slot:tooltip>
-              <div class="slider-tooltip">
-                {{
-                  getSongPlayingTime(
-                    (music.getPlaySongTime.duration / 100) * music.getPlaySongTime.barMoveDistance,
-                  )
-                }}
-              </div>
-            </template>
-          </vue-slider>
-          <span>{{ music.getPlaySongTime.songTimeDuration }}</span>
-        </div>
+        <MiniPlayerProgress />
         <div class="all">
           <div class="data">
             <div class="pic" data-mobile-player-artwork @click.stop="handleMiniArtworkClick">
               <img
-                :src="
-                  music.getPlaySongData
-                    ? music.getPlaySongData.album.picUrl.replace(/^http:/, 'https:') +
-                      '?param=50y50'
-                    : '/images/pic/default.png'
-                "
+                :src="coverUrl(music.getPlaySongData?.album?.picUrl, 50)"
+                decoding="async"
                 alt="pic"
               />
             </div>
             <div class="name">
-              <div
-                class="song text-hidden"
-                @click.stop="router.push(`/song?id=${music.getPlaySongData.id}`)"
-              >
+              <div class="song text-hidden" @click.stop="openSongDetail">
                 {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
               </div>
               <!-- 显示歌手或歌词 -->
@@ -223,9 +192,15 @@
               <template #trigger>
                 <div
                   :class="music.showPlayList ? 'playlist open' : 'playlist'"
+                  role="button"
+                  tabindex="0"
+                  :aria-pressed="music.showPlayList"
+                  :aria-label="$t('general.name.playlists')"
                   @pointerdown.stop="armPlaylistToggle"
                   @pointercancel="clearPlaylistToggleIntent"
                   @click.stop="togglePlaylist"
+                  @keydown.enter.prevent="togglePlaylist"
+                  @keydown.space.prevent="togglePlaylist"
                 >
                   <n-icon size="30" :component="PlaylistPlayRound" />
                 </div>
@@ -290,7 +265,6 @@ import {
   PauseCircleFilled,
   SkipNextRound,
   SkipPreviousRound,
-  PlaylistPlayRound,
   VolumeOffRound,
   VolumeMuteRound,
   VolumeDownRound,
@@ -299,10 +273,17 @@ import {
   FavoriteBorderRound,
   FavoriteRound,
   PlaylistAddRound,
+  PlaylistPlayRound,
 } from "@vicons/material";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { storeToRefs } from "pinia";
-import { musicStore, settingStore, siteStore, listenTogetherStore } from "@/store";
+import {
+  musicStore,
+  settingStore,
+  siteStore,
+  listenTogetherStore,
+  localLibraryStore,
+} from "@/store";
 import {
   createSound,
   setVolume,
@@ -311,24 +292,33 @@ import {
   getAutoMixEngine,
   getAudioPreloader,
   isNativeAdvanceHoldActiveFor,
+  adoptNativeBackendSession,
   SoundManager,
 } from "@/utils/AudioContext";
-import { getSongPlayingTime } from "@/utils/timeTools";
 import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { debounce } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
-import { NativeRustSound, isAudioBackendRuntimeAvailable } from "@/utils/tauri/NativeRustSound";
-import { windowManager } from "@/utils/tauri/windowManager";
+import {
+  NativeRustSound,
+  isAudioBackendRuntimeAvailable,
+  announceNativeTrack,
+} from "@/utils/tauri/audio/nativeRustSound";
+import {
+  toTrackDisplay,
+  publishNativeManifest,
+} from "@/utils/AudioContext/NativeManifestPublisher";
+import { windowManager } from "@/utils/tauri/window/manager";
 import {
   broadcastPlayerLyrics,
   broadcastPlayerSettings,
   broadcastPlayerState,
   broadcastPlayerTime,
   setupMainPlayerCommunication,
-} from "@/utils/tauri/playerCommunication";
+} from "@/utils/tauri/player/communication";
 import { useNativeMediaControls } from "@/composables/useNativeMediaControls";
-import VueSlider from "vue-slider-component";
+import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
 import PlayListDrawer from "@/components/DataModal/PlayListDrawer.vue";
 import ListenTogetherModal from "@/components/DataModal/ListenTogetherModal.vue";
@@ -336,13 +326,19 @@ import ListenTogetherStatus from "./ListenTogetherStatus.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import BigPlayer from "./BigPlayer/index.vue";
-import "vue-slider-component/theme/default.css";
+import MiniPlayerProgress from "./MiniPlayerProgress.vue";
 import { shallowRef, watch } from "vue";
 import { parseLyricData as parseLyric } from "@/utils/LyricsProcessor";
 import { lyricFetcher } from "@/utils/lyricFetcher";
+import { localLyricFor } from "@/utils/localLibrary";
+import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
+import { detectWordTimedLyricFormat } from "@/utils/LyricsProcessor/timeUtils";
+import { coverUrl } from "@/utils/coverUrl";
+import { setupNativePersonalFm, sendNativeFmPlaying } from "@/utils/AudioContext/NativePersonalFm";
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const setting = settingStore();
 const music = musicStore();
 const site = siteStore();
@@ -379,7 +375,8 @@ const armPlaylistToggle = () => {
 const togglePlaylist = () => {
   const nextShowState = playlistToggleIntent ?? !music.showPlayList;
   clearPlaylistToggleIntent();
-  music.showPlayList = nextShowState;
+  if (nextShowState) navigation.openQueue();
+  else navigation.closeQueue();
 };
 
 const getMobilePlayerTransitionDistance = () =>
@@ -434,7 +431,7 @@ const openBigPlayerFromMini = () => {
   const frames = getMiniSharedFrames();
   const result = bigPlayerRef.value?.openMobileFromMini?.(frames);
   if (result && typeof result.then === "function") return;
-  music.setBigPlayerState(true);
+  navigation.openPlayer(document.querySelector("[data-mobile-player-bg]"));
 };
 
 const openMiniPlayer = () => {
@@ -466,6 +463,13 @@ const releaseMiniClickSuppression = () => {
     suppressMiniClick = false;
   }, 240);
 };
+
+useMotionInterruption(() => {
+  if (!miniTouchState) return;
+  // Releasing an interrupted drag must not open a new player layer.
+  suppressMiniClick = true;
+  resetMiniTouch();
+});
 
 const handleMiniTouchStart = (event) => {
   if (music.showBigPlayer || !music.getPlaylists[0] || !music.showPlayBar) return;
@@ -514,9 +518,15 @@ const handleMiniTouchEnd = () => {
   if (start?.dragging) {
     const forceOpen = start.velocityY < MINI_OPEN_FLING_VELOCITY;
     bigPlayerRef.value?.finishMobileInteractiveOpen(forceOpen ? true : undefined);
-    releaseMiniClickSuppression();
   }
+  if (suppressMiniClick) releaseMiniClickSuppression();
   resetMiniTouch();
+};
+
+const handleMiniTouchCancel = () => {
+  if (miniTouchState?.dragging) bigPlayerRef.value?.finishMobileInteractiveOpen(false);
+  resetMiniTouch();
+  releaseMiniClickSuppression();
 };
 
 // 一起听歌模态框
@@ -533,6 +543,37 @@ const player = shallowRef(null);
 let _songLoadGeneration = 0;
 const failedAutoSkipSongIds = new Set();
 let failedAutoSkipQueueKey = "";
+/**
+ * Descriptor from `adoptNativeBackendSession()`, consumed once by the matching
+ * `getPlaySongData` call. Non-null only during boot, and only when the Rust
+ * backend outlived the WebView and is still playing a track we can name.
+ */
+let pendingBackendAttach = null;
+
+/** Unsubscribe for the local-library edit signal; see `applyLocalTrackChange`. */
+let unsubscribeLocalChanges = null;
+let unsubscribeNativeFm = null;
+let bootAdopting = isTauri();
+
+const attachNativeFmPlayback = (event) => {
+  if (bootAdopting || !music.nativeFmSession || !music.persistData.personalFmMode) return;
+  const data = event.data;
+  const identity = data.identity;
+  if (identity?.provider !== "netease" || !data.musicId?.startsWith("local:")) return;
+  const song = music.getPlaySongData;
+  if (!song || String(song.id) !== identity.id) return;
+  if (window.$player instanceof NativeRustSound && !window.$player.isDestroyed()) {
+    player.value = window.$player;
+    return;
+  }
+  const sourceUrl = data.musicId.slice("local:".length);
+  if (!sourceUrl) return;
+  player.value = createSound(sourceUrl, music.nativeFmSession.desiredPlaying, undefined, {
+    songId: song.id,
+    attachIdentity: identity,
+  });
+  loadLyricFor(song, song.id);
+};
 
 // 获取歌曲播放数据
 const getPlaySongData = async (data, level = setting.songLevel, requestedGeneration = null) => {
@@ -557,6 +598,21 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
 
     const autoMix = getAutoMixEngine();
 
+    // Boot adoption: the Rust backend survived a WebView reload and is already
+    // playing this exact track. Attach to it instead of resolving a fresh URL —
+    // that would restart playback from the stale persisted position.
+    if (pendingBackendAttach && Number(pendingBackendAttach.songId) === Number(id)) {
+      const attach = pendingBackendAttach;
+      pendingBackendAttach = null;
+      console.log(`[Player] Attaching to live backend playback for ID: ${id}`);
+      player.value = createSound(attach.sourceUrl, attach.isPlaying, undefined, {
+        songId: id,
+        attachIdentity: attach.identity,
+      });
+      loadLyricFor(data, id);
+      return;
+    }
+
     // Backend-initiated native advance (queue-window prefill): the active
     // NativeRustSound is already playing this song — reuse it instead of
     // resolving a fresh URL and re-creating the sound (which would restart
@@ -568,7 +624,20 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       }
       music.isLoadingSong = false;
       music.loadingStage = "idle";
-      fetchAndParseLyric(id);
+      // A background native advance through the FM buffer consumed part of the
+      // runway while JS was frozen. Now that we're alive, sync the home card's
+      // display head to what's actually playing and top the buffer back up (which
+      // also republishes the manifest) so the planner keeps having somewhere to go.
+      if (music.persistData.personalFmMode) {
+        music.persistData.personalFmData = data;
+        void music.refillFmBuffer();
+      }
+      loadLyricFor(data, id);
+      return;
+    }
+
+    if (isTauri() && music.persistData.personalFmMode) {
+      loadLyricFor(data, id);
       return;
     }
 
@@ -586,10 +655,23 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
         }
         music.isLoadingSong = false;
         music.loadingStage = "idle";
-        fetchAndParseLyric(id);
+        loadLyricFor(data, id);
         return;
       }
       autoMix.cancelCrossfade();
+    }
+
+    // Local file. Split off *before* the preloader and before
+    // `resolveSongUrl`: there is nothing to resolve (the locator is the source),
+    // and a local id is a negative hash — sending it to Netease would be a
+    // request for a track that does not exist.
+    if (data.local?.uri) {
+      const uri = String(data.local.uri);
+      announceNativeTrack({ provider: "local", path: uri }, toTrackDisplay(data));
+      console.log(`[Player] Creating sound instance for local file: ${uri}`);
+      player.value = createSound(uri, true, undefined, { songId: id });
+      loadLocalLyric(data);
+      return;
     }
 
     // Check audio preloader — if the next song was preloaded, use it directly.
@@ -616,8 +698,18 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       return;
     }
 
+    // Swap the OS media session to the new track *before* resolving its URL.
+    // Resolution is a network round trip and the download that follows is
+    // another; without this SMTC / MediaSession keeps showing the previous
+    // track for that whole window, so pressing next looks like nothing
+    // happened. The backend shows it as not-yet-playing until the load lands.
+    announceNativeTrack({ provider: "netease", id: String(id) }, toTrackDisplay(data));
+
     // Unified URL resolution (NCM + trial detection + UNM fallback + kuwo proxy)
-    const result = await resolveSongUrl({ id, fee, pc, name: data.name }, level);
+    // `local` is carried even though the branch above already returned for a
+    // local file: the narrowed object is the only thing the resolver sees, and a
+    // caller that silently drops the dispatch key is how this went wrong once.
+    const result = await resolveSongUrl({ id, fee, pc, name: data.name, local: data.local }, level);
     if (!isCurrentRequest()) return;
 
     if (result) {
@@ -679,55 +771,6 @@ const renderIcon = (icon) => {
   };
 };
 
-// 歌曲进度条更新
-const isSliderDragging = ref(false);
-const pendingSliderPercent = ref(null);
-const normalizeSliderPercent = (val) => {
-  const raw = Array.isArray(val) ? val[0] : val;
-  const num = Number(raw);
-  if (!Number.isFinite(num)) return null;
-  return Math.max(0, Math.min(100, num));
-};
-const previewSliderTime = (percent) => {
-  const duration = music.getPlaySongTime?.duration;
-  if (!duration) return;
-  const currentTime = (duration / 100) * percent;
-  music.setPlaySongTime({
-    currentTime,
-    displayCurrentTime: currentTime,
-    duration,
-  });
-};
-const sliderDragStart = () => {
-  isSliderDragging.value = true;
-  pendingSliderPercent.value = normalizeSliderPercent(music.getPlaySongTime.barMoveDistance);
-};
-const sliderDragging = (val) => {
-  const percent = normalizeSliderPercent(val);
-  if (percent === null) return;
-  pendingSliderPercent.value = percent;
-  previewSliderTime(percent);
-};
-const sliderDragEnd = () => {
-  isSliderDragging.value = false;
-};
-const songTimeSliderUpdate = (val) => {
-  if (player.value && music.getPlaySongTime?.duration) {
-    const percent = normalizeSliderPercent(
-      isSliderDragging.value ? (pendingSliderPercent.value ?? val) : val,
-    );
-    if (percent === null) return;
-    isSliderDragging.value = false;
-    pendingSliderPercent.value = null;
-    const currentTime = (music.getPlaySongTime.duration / 100) * percent;
-    setSeek(player.value, currentTime);
-    // 一起听歌：发送进度跳转命令（房主和房客均可）
-    if (listenTogether.isInRoom) {
-      listenTogether.sendPlayCommand("seek", Math.floor(currentTime * 1000));
-    }
-  }
-};
-
 // 静音事件
 const volumeMute = () => {
   if (persistData.value.playVolume > 0) {
@@ -777,13 +820,87 @@ const setupPlayerCommunication = () => {
   });
 };
 
+// 一起听歌：把本地列表变更推给房间。
+//
+// 一起听是「一份列表，两个消费者」—— 任何一方加歌 / 删歌 / 插播下一首，两边都要
+// 跟上。此前只有房主、且只在切歌时才整表上报一次，房客加的歌根本传不出去。
+//
+// 签名只在房间里才计算：不在房间时 getter 不触碰 playlists，也就不登记依赖，
+// 对普通播放路径零开销。
+const roomPlaylistSignature = () => {
+  if (!listenTogether.isInRoom) return "";
+  const list = music.persistData.playlists;
+  let signature = `${list.length}`;
+  for (let i = 0; i < list.length; i++) signature += `,${list[i]?.id}`;
+  return signature;
+};
+
+const syncRoomPlaylist = debounce(400, () => {
+  if (!listenTogether.isInRoom) return;
+  // 回推抑制靠 store 里的 lastPlaylistSignature（内容比对），不靠这里的时序 ——
+  // 这个回调是 debounce 之后才跑的，任何「正在处理远端命令」的标志早已清掉。
+  void listenTogether.syncCurrentPlaylist();
+});
+
+watch(roomPlaylistSignature, (val, oldVal) => {
+  // 空签名 = 不在房间，进出房间本身不该触发上报。
+  if (!val || !oldVal || val === oldVal) return;
+  syncRoomPlaylist();
+});
+
 onMounted(() => {
   // 挂载方法
   window.$getPlaySongData = getPlaySongData;
-  // 获取音乐数据
-  if (music.getPlaylists[0] && music.getPlaySongData) {
-    const generation = ++_songLoadGeneration;
-    getPlaySongData(music.getPlaySongData, setting.songLevel, generation);
+
+  // 随机模式的顺序装在队列里，所以在读索引的人（下面的恢复播放、后端会话采纳）
+  // 之前先把队列摆正。老版本升级上来时才真的会动，之后都是空转。
+  music.ensureShuffledInRandomMode();
+
+  const startRestoredPlayback = () => {
+    if (music.getPlaylists[0] && music.getPlaySongData) {
+      const generation = ++_songLoadGeneration;
+      getPlaySongData(music.getPlaySongData, setting.songLevel, generation);
+    }
+  };
+
+  if (isTauri()) {
+    // The Rust process — and playback — outlives the WebView on Android: the
+    // page is destroyed and reloaded while audio keeps going. Ask the backend
+    // what it is playing BEFORE touching the restored (stale) snapshot,
+    // otherwise we resolve a URL for the track that was playing when the app
+    // was backgrounded and cut off live audio.
+    setupNativePersonalFm(attachNativeFmPlayback)
+      .then((unsubscribe) => {
+        unsubscribeNativeFm = unsubscribe;
+        return adoptNativeBackendSession();
+      })
+      .then((adopted) => {
+        pendingBackendAttach = adopted;
+      })
+      .catch((err) => {
+        console.warn("[Player] Backend session adoption failed:", err);
+        pendingBackendAttach = null;
+      })
+      .finally(() => {
+        // Adoption moves playSongIndex, which fires the sync song watcher and
+        // schedules its own debounced load. Drop that one and drive the load
+        // from here so the attach descriptor is consumed exactly once.
+        songChange.cancel({ upcomingOnly: true });
+        bootAdopting = false;
+        if (pendingBackendAttach || !music.nativeFmSession) {
+          if (!pendingBackendAttach && music.persistData.personalFmMode) {
+            music.setPersonalFmMode(true);
+          } else {
+            startRestoredPlayback();
+          }
+        }
+        // `getPlaySongData` consumes the descriptor synchronously when the ids
+        // match. Anything left over describes a track we are not loading, and
+        // must not be applied to some later selection of the same song.
+        pendingBackendAttach = null;
+      });
+  } else {
+    startRestoredPlayback();
   }
 
   // Tauri: wire up tray control listeners + state broadcasting
@@ -791,11 +908,39 @@ onMounted(() => {
     setupPlayerCommunication();
   }
 
-  // 一起听歌：从 URL 参数自动加入房间
+  // 一起听歌：URL 邀请优先（用户的显式动作），否则尝试恢复重载前的房间。
+  // 只在主窗口执行 —— 从窗口走 slave-main.ts / SlaveApp.vue，不挂载本组件。
   setTimeout(() => {
-    listenTogether.joinFromUrl();
+    void listenTogether.joinFromUrl().then((joined) => {
+      if (!joined) void listenTogether.resumePersistedRoom();
+    });
   }, 1000);
+
+  // 本地曲目被编辑后，把播放态跟上。挂在这里而不是 store 里：`store/musicData`
+  // 已经 import 了 localLibrary store，反向再引就成环；而本组件只在主窗口挂载，
+  // 所以队列仍然只有一个写者。
+  unsubscribeLocalChanges = onLocalTracksChanged((change) => {
+    void applyLocalTrackChange(change);
+  });
 });
+
+onUnmounted(() => {
+  unsubscribeNativeFm?.();
+  unsubscribeNativeFm = null;
+  unsubscribeLocalChanges?.();
+  unsubscribeLocalChanges = null;
+});
+
+// Switching ownership invalidates a URL request even before the first FM row arrives.
+watch(
+  () => music.persistData.personalFmMode,
+  () => {
+    if (!isTauri()) return;
+    _songLoadGeneration++;
+    songChange.cancel({ upcomingOnly: true });
+  },
+  { flush: "sync" },
+);
 
 // 监听当前音乐数据变化
 watch(
@@ -806,6 +951,11 @@ watch(
     if (val?.id !== oldVal?.id) {
       const generation = ++_songLoadGeneration;
       songChange.cancel({ upcomingOnly: true });
+      if (bootAdopting || (isTauri() && music.persistData.personalFmMode)) {
+        if (!bootAdopting && val?.id) loadLyricFor(val, val.id);
+        broadcastPlayerState();
+        return;
+      }
       if (!val?.id) {
         failedAutoSkipSongIds.clear();
         failedAutoSkipQueueKey = "";
@@ -826,10 +976,6 @@ watch(
       // 一起听歌：发送切歌命令（房主和房客均可）
       if (listenTogether.isInRoom && val?.id && !listenTogether.isProcessingRemoteCommand) {
         listenTogether.sendPlayCommand("GOTO");
-        // 仅房主同步播放列表
-        if (listenTogether.isHost) {
-          listenTogether.syncCurrentPlaylist();
-        }
       }
 
       // Update tray tooltip with current song info
@@ -877,8 +1023,20 @@ watch(
   () => music.getPlayState,
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
+    if (bootAdopting) return;
+    if (isTauri() && music.persistData.personalFmMode) {
+      if (!music.nativeFmSession || music.nativeFmSession.desiredPlaying !== val) {
+        sendNativeFmPlaying(val);
+      }
+      broadcastPlayerState();
+      broadcastPlayerTime(true);
+      return;
+    }
     const currentSongId = Number(music.getPlaySongData?.id);
-    if (val && (!Number.isFinite(currentSongId) || currentSongId <= 0)) {
+    // `!== 0`, not `> 0`: a local file's id is a negative hash of its path, so a
+    // positive-only test refused to start playback for every imported track and
+    // immediately set the state back to paused.
+    if (val && (!Number.isFinite(currentSongId) || currentSongId === 0)) {
       music.setPlayState(false);
       return;
     }
@@ -1012,6 +1170,17 @@ watch(
   },
 );
 
+// Queue emptied: no track is live any more, so let the lyric cache drop the
+// processed-line graph it keeps warm for the playing song. Deliberately keyed
+// on the queue going empty rather than on resetSongLyricState(), which also
+// fires on every ordinary track switch (where the graph is about to be needed).
+watch(
+  () => music.getPlaySongData?.id ?? null,
+  (id) => {
+    if (id === null) lyricFetcher.releaseDerived();
+  },
+);
+
 // Tauri: broadcast settings when lyric-related settings change
 watch(
   () => [
@@ -1056,10 +1225,212 @@ const fetchAndParseLyric = async (id) => {
   } catch (err) {
     console.error(`[Player] Failed to fetch lyric for ${id}:`, err);
     const defaultResult = parseLyric(null);
-    defaultResult.formattedLrc = "";
     music.setPlaySongLyric(defaultResult);
     nextTick(() => broadcastPlayerLyrics(true));
   }
+};
+
+/**
+ * The Netease detail page for the track in the mini player.
+ *
+ * Inert for a local file. `/song?id=-N` would fire three requests on arrival
+ * (detail, comments, similar playlists) about an id that exists nowhere and land
+ * on an empty page; there is no local equivalent to route to instead.
+ */
+const openSongDetail = () => {
+  const data = music.getPlaySongData;
+  if (!data || data.local?.uri) return;
+  router.push(`/song?id=${data.id}`);
+};
+
+/**
+ * Lyrics for whichever kind of track this is.
+ *
+ * The three adoption branches above — a boot attach to a backend that kept
+ * playing, a backend-initiated native advance, an AutoMix handoff — are reached
+ * with a local row exactly as often as with a Netease one, and they run *before*
+ * the local dispatch because they must not re-resolve a source at all. Handing a
+ * negative id to `lyricFetcher` there did two wrong things at once: it asked
+ * Netease about a track that does not exist, and it left the sidecar `.lrc`
+ * unread, so the lyric panel stayed empty for precisely the tracks whose lyrics
+ * are sitting next to the file. The branches after the local dispatch keep
+ * calling `fetchAndParseLyric` directly — a local row cannot reach them.
+ */
+const loadLyricFor = (data, id) => {
+  if (data?.local?.uri) {
+    void loadLocalLyric(data);
+    return;
+  }
+  fetchAndParseLyric(id);
+};
+
+/**
+ * Lyrics for a local file: an import, then the embedded tag, then a sibling
+ * `.lrc`/`.ttml` — plus the stored translation and romanisation for whichever won.
+ *
+ * Deliberately separate from `fetchAndParseLyric`, which stays Netease-only —
+ * `lyricFetcher` is keyed on a Netease song id and caches against it, so a
+ * negative local id would either miss forever or collide with a real track.
+ * Parsed through the same `parseLyric`, so a local `.lrc` renders in AMLL exactly
+ * like a fetched one.
+ */
+const loadLocalLyric = async (data) => {
+  const key = data?.local?.uri;
+  const requestedId = Number(data?.id);
+  try {
+    const lyric = key ? await localLyricFor(String(key)) : null;
+    // The user may have skipped on while the file was being read.
+    if (Number(music.getPlaySongData?.id) !== requestedId) return;
+    music.setPlaySongLyric(parseLyric(await localLyricPayload(lyric)));
+  } catch (err) {
+    console.error("[Player] Failed to read local lyrics:", err);
+    if (Number(music.getPlaySongData?.id) !== requestedId) return;
+    music.setPlaySongLyric(parseLyric(null));
+  }
+  nextTick(() => broadcastPlayerLyrics(true));
+};
+
+/**
+ * Shape a local lyric into what `parseLyricData` accepts.
+ *
+ * `code: 200` is not decoration — the parser returns an empty result for
+ * anything else, so a perfectly good `.lrc` would render as "no lyrics".
+ *
+ * Three families, and each needs a *plain* LRC alongside whatever rich form it
+ * has: `parseLyricData` fills the line-level view from `lrc` and the word-level
+ * view from `yrc`/`ttml` independently, so shipping only the rich half leaves the
+ * mini player and the plain lyric list empty. Both rich families are therefore
+ * parsed here and flattened back to LRC lines.
+ *
+ * Rust's `kind` is only a hint (it comes from the file extension). The word-timed
+ * dialect is decided by `detectWordTimedLyricFormat` on the content, which is the
+ * same rule the Netease path uses — one implementation, not two.
+ */
+const localLyricPayload = async (lyric) => {
+  const raw = typeof lyric?.text === "string" ? lyric.text.trim() : "";
+  if (!raw) return null;
+
+  // Translation and romanisation ride along whatever the main lyric turns out to
+  // be: `parseLyricData` aligns them onto the LRC *and* the word-timed view, so
+  // they belong on all three shapes below rather than only on the plain one.
+  const companions = {
+    tlyric: lyric?.tlyric ? { lyric: lyric.tlyric } : null,
+    romalrc: lyric?.romalrc ? { lyric: lyric.romalrc } : null,
+  };
+
+  const looksTtml = lyric?.kind === "ttml" || raw.startsWith("<");
+  if (looksTtml) {
+    try {
+      const { parseTTML } = await import("@applemusic-like-lyrics/lyric");
+      const lines = parseTTML(raw)?.lines ?? [];
+      if (!lines.length) return null;
+      return {
+        code: 200,
+        lrc: { lyric: linesToLrc(lines) },
+        hasTTML: true,
+        ttml: lines,
+        ...companions,
+      };
+    } catch (err) {
+      console.warn("[Player] local TTML could not be parsed, ignoring:", err);
+      return null;
+    }
+  }
+
+  const wordFormat = detectWordTimedLyricFormat(raw);
+  if (lyric?.kind === "word" || wordFormat) {
+    try {
+      const amll = await import("@applemusic-like-lyrics/lyric");
+      const parse =
+        wordFormat === "qrc"
+          ? amll.parseQrc
+          : wordFormat === "eslrc"
+            ? amll.parseEslrc
+            : amll.parseYrc;
+      const lines = parse(raw) ?? [];
+      // A file labelled word-timed whose content is not: fall through to LRC
+      // rather than showing nothing.
+      if (lines.length) {
+        return {
+          code: 200,
+          lrc: { lyric: linesToLrc(lines) },
+          yrc: { lyric: raw },
+          ...companions,
+        };
+      }
+    } catch (err) {
+      console.warn("[Player] local word-timed lyric could not be parsed:", err);
+    }
+  }
+
+  return { code: 200, lrc: { lyric: raw }, ...companions };
+};
+
+/** Flatten parsed word-timed lines back into plain LRC text. */
+const linesToLrc = (lines) =>
+  lines
+    .filter((line) => line.words?.length)
+    .map((line) => {
+      const timeMs = line.words[0].startTime;
+      const minutes = String(Math.floor(timeMs / 60000)).padStart(2, "0");
+      const seconds = ((timeMs % 60000) / 1000).toFixed(2).padStart(5, "0");
+      return `[${minutes}:${seconds}]${line.words.map((word) => word.word).join("")}`;
+    })
+    .join("\n");
+
+/**
+ * A local track's data changed under us — a tag correction, a picked cover, an
+ * imported lyric — and the playing state has to follow.
+ *
+ * Nothing else re-reads it. A queued row is a whole `SongData` snapshot taken when
+ * it was queued, and `refreshRows` runs once, from `App.vue` at startup; the mini
+ * player, the queue panel and every slave window render off that snapshot.
+ *
+ * Split by kind because the two halves have nothing in common: a lyric import does
+ * not touch the index row (the import is stored beside it), and a cover or tag
+ * change does not touch the loaded lyric.
+ */
+const applyLocalTrackChange = async (change) => {
+  // A track that did not exist a moment ago is neither queued nor playing, so
+  // there is nothing on this side to follow. The list views are the ones that care,
+  // and `store/localLibrary` handles them.
+  if (change.kind === "added") return;
+
+  const keys = new Set(change.keys);
+
+  if (change.kind === "lyric") {
+    // Only the playing track's lyric is ever loaded, so it is the only one to redo.
+    // `setPlaySongLyric` then reaches the slave windows through the existing
+    // `watch(() => music.songLyric)`, which broadcasts.
+    const playing = music.getPlaySongData;
+    const uri = playing?.local?.uri;
+    if (typeof uri === "string" && keys.has(uri)) await loadLocalLyric(playing);
+    return;
+  }
+
+  // Tags and covers live on the row. Skip the round trip entirely when the edit
+  // was made on a track that is not queued — the common case for a bulk album
+  // apply, and for editing while listening to something else.
+  const touchesQueue = music.persistData.playlists.some((song) => {
+    const uri = song?.local?.uri;
+    return typeof uri === "string" && keys.has(uri);
+  });
+  if (!touchesQueue) return;
+
+  const refreshed = await localLibraryStore().refreshRows(music.persistData.playlists);
+  // Replaced, not mutated: queue entries are `markRaw`'d (see `utils/rawEntry`), so
+  // writing a field on one reaches no reactivity at all.
+  if (refreshed !== music.persistData.playlists) {
+    music.persistData.playlists = refreshed;
+  }
+  // The store watchers only fire on a *song id* change, and a local id is derived
+  // from the path — an edit cannot change it. So both of these have to be explicit.
+  broadcastPlayerState();
+  // The OS media session resolves its metadata from the manifest, not the store.
+  // Re-announcing the playing track is a no-op by design (`set_announcement`
+  // refuses an identity that is already current, to keep the live projection from
+  // stuttering backwards), so a republish is the only route in.
+  publishNativeManifest({ force: true });
 };
 
 watch(
@@ -1138,7 +1509,7 @@ watch(
   --player-control-edge-inset: 14px;
   --player-slider-edge-inset: 0px;
 
-  height: 70px;
+  height: var(--app-player-bar-height);
   position: fixed;
   bottom: 0;
   left: var(--sidebar-width, 240px);
@@ -1155,14 +1526,15 @@ watch(
     --player-surface-bg,
     var(--app-shell-bg, var(--layout-bg, #fff))
   ) !important;
-  border-top: 1px solid var(--mobile-mini-player-surface-border, var(--player-surface-border));
-  box-shadow: var(--mobile-mini-player-surface-shadow, none);
+  border-top: 1px solid var(--player-surface-border);
 
   // Mobile: player sits above tab bar, no sidebar
   @media (max-width: 768px) {
-    // Sit above the 56px tab bar; add safe-area-bottom so the home indicator /
-    // gesture bar on notched Android/iOS screens doesn't overlap the mini player.
-    bottom: calc(56px + var(--app-safe-area-bottom, 0px));
+    // Sit on top of the tab bar. --app-tab-bar-height already includes
+    // --app-safe-area-bottom (the tab bar reserves the home indicator strip inside its
+    // own box), so adding the inset again here would offset the mini player by a second
+    // copy of it.
+    bottom: var(--app-tab-bar-height);
     left: 0;
     width: 100%;
     --n-border-color: transparent !important;
@@ -1174,102 +1546,14 @@ watch(
     --player-data-edge-inset: 12px;
     --player-control-edge-inset: 12px;
     --player-slider-edge-inset: 0px;
+    // The mini bar and the tab bar share one glass surface (.bottom-glass in App.vue),
+    // so neither paints its own fill here — that shared layer is what removes the color
+    // step and the divider line that used to sit between them.
     background-color: transparent !important;
     border: none !important;
-    border-top: 1px solid var(--mobile-mini-player-surface-border, var(--player-surface-border)) !important;
     outline: none !important;
     box-shadow: none;
     overflow: visible !important;
-
-    &::before {
-      content: "";
-      position: absolute;
-      inset: 0;
-      z-index: -1;
-      // 素色底，与 sidebar / 队列 / 桌面播放栏一致；去掉亚克力与封面取色叠加，求和谐统一
-      background-color: var(
-        --mobile-mini-player-surface-bg,
-        var(--app-shell-bg, var(--layout-bg, #fff))
-      );
-      box-shadow: var(--mobile-mini-player-surface-shadow, 0 -10px 28px rgb(0 0 0 / 10%));
-      opacity: var(--mobile-mini-player-surface-opacity, 1);
-      transform: translate3d(0, var(--mobile-mini-player-mask-y, 0px), 0);
-      pointer-events: none;
-      will-change: opacity, transform;
-    }
-  }
-
-  .slider {
-    position: absolute;
-    top: -12px;
-    left: var(--player-slider-edge-inset, 0px);
-    right: var(--player-slider-edge-inset, 0px);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    z-index: 2;
-    opacity: var(--mobile-mini-player-chrome-opacity, var(--mobile-mini-player-ui-opacity, 1));
-    transform: translateY(var(--mobile-mini-player-ui-y, 0px));
-    will-change: opacity, transform;
-
-    @media (max-width: 640px) {
-      top: -8px;
-
-      > {
-        span {
-          display: none;
-        }
-      }
-    }
-
-    > {
-      span {
-        font-size: 12px;
-        white-space: nowrap;
-        background-color: var(--player-time-chip-bg);
-        outline: 1px solid var(--player-time-chip-border);
-        padding: 2px 8px;
-        border-radius: var(--radius-pill);
-        margin: 0 2px;
-      }
-    }
-
-    .vue-slider {
-      width: 100% !important;
-      height: 3px !important;
-      cursor: pointer;
-
-      .slider-tooltip {
-        font-size: 12px;
-        white-space: nowrap;
-        background-color: var(--player-time-chip-bg);
-        outline: 1px solid var(--player-time-chip-border);
-        padding: 2px 8px;
-        border-radius: var(--radius-pill);
-      }
-
-      :deep(.vue-slider-rail) {
-        background-color: var(--player-rail-color);
-        border-radius: var(--radius-pill);
-
-        .vue-slider-process {
-          background: linear-gradient(
-            90deg,
-            var(--player-accent-strong),
-            var(--player-accent-color)
-          );
-        }
-
-        .vue-slider-dot {
-          width: 12px !important;
-          height: 12px !important;
-        }
-
-        .vue-slider-dot-handle-focus {
-          box-shadow: 0px 0px 1px 2px var(--player-accent-color);
-        }
-      }
-    }
   }
 
   .all {
@@ -1546,6 +1830,12 @@ watch(
         display: flex;
         align-items: center;
         justify-content: center;
+
+        &:focus-visible {
+          outline: none;
+          border-radius: var(--radius-md);
+          box-shadow: var(--focus-ring);
+        }
 
         &.open {
           .n-icon {

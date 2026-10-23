@@ -1,16 +1,25 @@
 import { getUnifiedLyric } from "@/api/song";
-import { parseLyricData, formatAsLrc } from "@/utils/LyricsProcessor";
+import { parseLyricData } from "@/utils/LyricsProcessor";
 import type { ParsedLyricResult } from "@/utils/LyricsProcessor";
 import useSettingDataStore from "@/store/settingData";
 
-// Keep this small: cached entries are mutated in place downstream (the store
-// attaches lrcAMData / processedLyrics to them), so each slot can grow to
-// hundreds of KB for word-by-word tracks. 50 slots plateaued at ~10-25 MB.
+// Cached entries are handed to the store by reference, and the processing layer
+// attaches derived data (processedLyrics) to whatever object it is given — so a
+// cached slot would otherwise keep a full word-level object graph alive for
+// every track ever played, on top of its own parse output. releaseDerived()
+// strips that graph from every slot except the live track, which keeps the
+// steady-state cost proportional to *one* song rather than to MAX_CACHE_SIZE.
 const MAX_CACHE_SIZE = 20;
 
 interface CacheEntry {
   result: ParsedLyricResult;
   useTTMLRepo: boolean;
+}
+
+/** Fields the processing layer attaches to a lyric object after parsing. */
+interface DerivedLyricFields {
+  processedLyrics?: unknown;
+  settingsHash?: string;
 }
 
 class LyricFetcher {
@@ -40,6 +49,7 @@ class LyricFetcher {
       // LRU touch: delete + re-insert to move to end
       this._cache.delete(id);
       this._cache.set(id, cached);
+      this._releaseDerived(id);
       return { result: cached.result, stale: generation !== this._generation };
     }
 
@@ -47,6 +57,7 @@ class LyricFetcher {
     const pending = this._pending.get(id);
     if (pending) {
       const result = await pending;
+      this._releaseDerived(id);
       return { result, stale: generation !== this._generation };
     }
 
@@ -65,6 +76,7 @@ class LyricFetcher {
         }
       }
       this._cache.set(id, { result, useTTMLRepo });
+      this._releaseDerived(id);
 
       return { result, stale: generation !== this._generation };
     } finally {
@@ -72,11 +84,39 @@ class LyricFetcher {
     }
   }
 
+  /**
+   * Drop processing-layer output from every cached entry except `keepId`.
+   *
+   * processedLyrics is a full word-level object graph — for a word-by-word track
+   * it dwarfs the parse output it hangs off. Only the track being played needs
+   * it; for any other slot it is recoverable in a few milliseconds by
+   * re-running processLyrics(), which is a far better trade than keeping up to
+   * MAX_CACHE_SIZE of them resident. Clearing settingsHash alongside it is what
+   * makes the drop safe: getProcessedLyrics() treats a missing hash as a miss
+   * and rebuilds, so a re-visited track cannot read a stale graph.
+   */
+  private _releaseDerived(keepId: number | null): void {
+    for (const [id, entry] of this._cache) {
+      if (id === keepId) continue;
+      const derived = entry.result as ParsedLyricResult & DerivedLyricFields;
+      if (derived.processedLyrics === undefined && derived.settingsHash === undefined) continue;
+      derived.processedLyrics = undefined;
+      derived.settingsHash = undefined;
+    }
+  }
+
+  /**
+   * Drop derived data from every cached entry, including the most recent one.
+   * Called when the queue is cleared — no track is live, so nothing needs its
+   * processed graph kept warm.
+   */
+  releaseDerived(): void {
+    this._releaseDerived(null);
+  }
+
   private async _doFetch(id: number, useTTMLRepo: boolean): Promise<ParsedLyricResult> {
     const lyricData = await getUnifiedLyric(id, useTTMLRepo);
-    const parsedResult = parseLyricData(lyricData);
-    parsedResult.formattedLrc = formatAsLrc(parsedResult);
-    return parsedResult;
+    return parseLyricData(lyricData);
   }
 
   /** Invalidate a specific song's cached lyrics */

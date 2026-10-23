@@ -17,12 +17,12 @@
 
     <template v-if="backgroundImageShow === 'eplor'">
       <BackgroundRender
+        ref="backgroundRender"
         :fps="fps"
         :playing="backgroundPlaying"
         :flowSpeed="flowSpeed"
         :album="albumImageUrl === 'none' ? coverImageUrl : albumImageUrl"
         :renderScale="renderScale"
-        :lowFreqVolume="lowFreqVolume"
         :staticMode="staticMode"
         class="overlay"
       />
@@ -33,7 +33,9 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, onMounted, onUnmounted, useTemplateRef } from "vue";
+import { settingStore } from "@/store";
+import { subscribeLowFreqVolume } from "@/utils/AudioContext/lowFreqVolume";
 import BlurBackgroundRender from "../BlurBackgroundRender.vue";
 import BackgroundRender from "@/libs/apple-music-like/BackgroundRender.vue";
 
@@ -50,9 +52,40 @@ const props = defineProps<{
   coverImageUrl: string;
   albumImageUrl: string;
   flowSpeed: number;
-  lowFreqVolume: number;
   staticMode: boolean;
 }>();
+
+const setting = settingStore();
+
+// Low-frequency volume is deliberately kept OUT of the render graph and out of
+// reactive state entirely — see `@/utils/AudioContext/lowFreqVolume` for why.
+//
+// In short: the producer runs on requestAnimationFrame (so up to 144Hz on a
+// high-refresh panel) and the only consumer is amll-core's `setLowFreqVolume`,
+// a plain float assignment that the renderer samples from its own rAF loop.
+// Binding it as a prop made every analysis frame invalidate the component that
+// hosts the WebGL canvas wrapper, queueing vnode work against the renderer's
+// own tick — which is what caused the stutter.
+//
+// Subscribing to the plain signal gives the renderer identical data with zero
+// reactivity and zero render-graph work, and propagates a real jump on the very
+// next frame with no scheduler hop.
+const backgroundRenderRef = useTemplateRef<{
+  bgRender?: { setLowFreqVolume?: (v: number) => void };
+}>("backgroundRender");
+
+let unsubscribeLowFreq: (() => void) | null = null;
+
+onMounted(() => {
+  unsubscribeLowFreq = subscribeLowFreqVolume((value) => {
+    backgroundRenderRef.value?.bgRender?.setLowFreqVolume?.(setting.dynamicFlowSpeed ? value : 1.0);
+  });
+});
+
+onUnmounted(() => {
+  unsubscribeLowFreq?.();
+  unsubscribeLowFreq = null;
+});
 
 const isEplorOrBlurMode = computed(
   () => props.backgroundImageShow === "eplor" || props.backgroundImageShow === "blur",

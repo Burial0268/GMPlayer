@@ -54,6 +54,17 @@ pub(in crate::output) fn stable_buffer_size(
     }
 }
 
+/// Identity of the current default sink, taken straight from the device CPAL
+/// already resolved. On PulseAudio/PipeWire this is the sink name, which the
+/// server substituted for `@DEFAULT_SINK@` — so the periodic default-device
+/// poll can compare it directly instead of hashing the whole device list.
+/// That list costs a `list_sinks` + `list_sources` roundtrip pair on
+/// PulseAudio and, worse, a `snd_pcm_open()` per device on ALSA. Hosts whose
+/// default device is a fixed alias return `None` and keep that fallback.
+pub(in crate::output) fn default_output_id(device: &cpal::Device) -> Option<String> {
+    super::resolved_default_output_device_id(device)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

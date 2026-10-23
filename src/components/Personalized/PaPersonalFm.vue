@@ -28,7 +28,7 @@
               class="track-name text-hidden"
               type="button"
               :aria-label="fmData.name"
-              @click.stop="router.push(`/song?id=${fmData.id}`)"
+              @click.stop="navigation.openPage(`/song?id=${fmData.id}`, { origin: $event })"
             >
               {{ fmData.name }}
             </button>
@@ -84,7 +84,7 @@
 
 <script setup>
 import { computed, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import {
   PauseRound,
   PlayArrowRound,
@@ -97,7 +97,7 @@ import { musicStore, userStore } from "@/store";
 
 const music = musicStore();
 const user = userStore();
-const router = useRouter();
+const navigation = useLayerNavigation();
 const coverFailed = ref(false);
 
 const fmData = computed(() => music.getPersonalFmData);

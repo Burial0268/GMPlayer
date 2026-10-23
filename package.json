@@ -2,17 +2,22 @@
   "name": "GMPlayer",
   "version": "2.0",
   "author": "GBCLStudio",
-  "home": "https://gbclstudio.cn",
-  "github": "https://github.com/Burial0268/GMPlayer",
   "scripts": {
+    "tauri": "node scripts/tauri.mjs",
     "build:wasm:analysis": "node scripts/build-wasm.mjs src-tauri/crates/audio-analysis",
     "build:wasm:audio-backend": "node scripts/build-wasm.mjs src-tauri/crates/audio-backend",
     "build:wasm": "pnpm build:wasm:analysis && pnpm build:wasm:audio-backend",
+    "build:ncm-protocol": "node scripts/build-ncm-protocol.mjs",
+    "check:ncm-protocol": "node scripts/build-ncm-protocol.mjs --check",
     "prepare:wasm": "pnpm install && pnpm build:wasm",
     "install:with-deps": "pnpm prepare:wasm && pnpm install",
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview",
+    "test:navigation": "node scripts/test-navigation.mjs",
+    "test:audio-ui": "node scripts/test-audio-ui.mjs",
+    "test:audio-timeline": "node scripts/test-audio-timeline.mjs",
+    "test:native-sound-attach": "node scripts/test-native-sound-attach.mjs",
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",
     "fmt": "oxfmt src/",
@@ -37,7 +42,9 @@
     "@tauri-apps/api": "^2.11.1",
     "@tauri-apps/plugin-http": "~2.5.9",
     "@tauri-apps/plugin-log": "~2.8.0",
+    "@tauri-apps/plugin-opener": "^2.5.4",
     "@tauri-apps/plugin-updater": "~2.10.1",
+    "@tauri-store/pinia": "4.2.1",
     "@types/markdown-it": "^14.1.2",
     "@vicons/ionicons5": "^0.13.0",
     "artplayer": "^5.4.0",
@@ -77,6 +84,7 @@
     "@types/throttle-debounce": "^5.0.2",
     "@vicons/material": "^0.13.0",
     "@vitejs/plugin-vue": "^6.0.8",
+    "crypto-js": "^4.2.0",
     "esbuild": "^0.27.7",
     "naive-ui": "~2.43.2",
     "oxfmt": "^0.35.0",
@@ -104,5 +112,7 @@
       "@applemusic-like-lyrics/lyric",
       "wasm-pack"
     ]
-  }
+  },
+  "github": "https://github.com/Burial0268/GMPlayer",
+  "home": "https://gbclstudio.cn"
 }

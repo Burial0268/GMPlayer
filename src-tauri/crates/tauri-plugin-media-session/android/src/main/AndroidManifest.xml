@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <application>
+        <receiver
+            android:name="com.gbclstudio.gmplayer.media.MediaButtonReceiver"
+            android:exported="false" />
+
+        <!--
+          Long-lived: created once and demoted rather than stopped, so a clear
+          can never race a restart. See PlaybackService's class doc.
+        -->
+        <service
+            android:name="com.gbclstudio.gmplayer.media.PlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="false" />
+    </application>
+</manifest>

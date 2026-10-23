@@ -9,10 +9,13 @@ import {
   SubtitlesRound,
   AutoAwesomeRound,
   BuildRound,
+  DownloadRound,
+  InfoRound,
 } from "@vicons/material";
 import { settingStore, userStore } from "@/store";
 import { isTauri } from "@/utils/tauri";
-import { isWindowsTauri, windowManager } from "@/utils/tauri/windowManager";
+import { isWindowsTauri } from "@/utils/tauri/core/runtime";
+import { windowManager } from "@/utils/tauri/window/manager";
 import type { SettingsSection } from "./types";
 
 declare const $message: any;
@@ -156,6 +159,18 @@ export function useSettingsSections() {
           disabled: () => !hasUnmServer,
         },
         {
+          // 桌面/移动端才有内嵌协议层可用；Web 上没有可切换的对象。
+          key: "ncmTransport",
+          label: "setting.ncmTransport",
+          tip: "setting.ncmTransportTip",
+          control: "select",
+          show: () => isTauri(),
+          options: [
+            { label: "setting.ncmTransportRemote", value: "remote" },
+            { label: "setting.ncmTransportLocal", value: "local" },
+          ],
+        },
+        {
           key: "songVolumeFade",
           label: "setting.songVolumeFade",
           tip: "setting.songVolumeFadeTip",
@@ -185,6 +200,21 @@ export function useSettingsSections() {
       ],
     },
     {
+      key: "download",
+      label: "setting.sectionDownload",
+      icon: DownloadRound,
+      searchText: "download folder directory quality 下载 目录 音质 并发",
+      items: [
+        {
+          key: "downloadSettings",
+          label: "setting.download.title",
+          tip: "setting.download.tip",
+          control: "custom",
+          slot: "downloadSettings",
+        },
+      ],
+    },
+    {
       key: "player",
       label: "setting.sectionPlayerVisual",
       icon: SlideshowRound,
@@ -198,6 +228,7 @@ export function useSettingsSections() {
           options: [
             { label: "setting.cover", value: "cover" },
             { label: "setting.record", value: "record" },
+            { label: "setting.immersive", value: "immersive" },
           ],
         },
         {
@@ -461,6 +492,13 @@ export function useSettingsSections() {
           show: () => setting.autoMixEnabled,
         },
         {
+          key: "autoMixEmotionalTransition",
+          label: "setting.autoMixEmotionalTransition",
+          tip: "setting.autoMixEmotionalTransitionTip",
+          control: "switch",
+          show: () => setting.autoMixEnabled,
+        },
+        {
           key: "autoMixVolumeNorm",
           label: "setting.autoMixVolumeNorm",
           tip: "setting.autoMixVolumeNormTip",
@@ -512,6 +550,21 @@ export function useSettingsSections() {
           control: "button",
           buttonText: "general.name.restore",
           buttonType: "error",
+        },
+      ],
+    },
+    {
+      key: "about",
+      label: "setting.sectionAbout",
+      icon: InfoRound,
+      searchText: "setting.aboutTitle setting.aboutVersion setting.aboutSystem version about",
+      items: [
+        {
+          key: "aboutApp",
+          label: "setting.aboutTitle",
+          tip: "setting.aboutTip",
+          control: "custom",
+          slot: "aboutApp",
         },
       ],
     },

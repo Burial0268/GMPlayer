@@ -1,7 +1,7 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import { reactive } from "vue";
 import { getSongPlayingTime } from "@/utils/timeTools";
-import { applyMobileTauriAudioUiDelay } from "@/utils/tauri/audioUiDelay";
+import { applyMobileTauriAudioUiDelay } from "@/utils/tauri/audio/uiDelay";
 import useMusicPlaybackResumeStore from "./musicPlaybackResume";
 import { createDefaultPlaySongTime, type PlaySongTime } from "./musicTypes";
 

@@ -211,7 +211,7 @@ export default defineConfig(({ mode }) => {
       port: 25536,
       open: true,
       watch: {
-        ignored: ["**/src-tauri/**"],
+        ignored: ["**/src-tauri/**", "**/.cache/**"],
       },
       headers: {
         "Cross-Origin-Opener-Policy": "same-origin",
@@ -260,10 +260,16 @@ export default defineConfig(({ mode }) => {
         ...(isTauri
           ? {
               "@player-helper/gmplayer-audio-backend": fileURLToPath(
-                new URL("./src/utils/tauri/stubs/disabledAudioBackendWasm.ts", import.meta.url),
+                new URL(
+                  "./src/utils/tauri/audio/stubs/disabledAudioBackendWasm.ts",
+                  import.meta.url,
+                ),
               ),
               "@player-helper/audio-analysis": fileURLToPath(
-                new URL("./src/utils/tauri/stubs/disabledAudioAnalysisWasm.ts", import.meta.url),
+                new URL(
+                  "./src/utils/tauri/audio/stubs/disabledAudioAnalysisWasm.ts",
+                  import.meta.url,
+                ),
               ),
             }
           : {}),
@@ -332,10 +338,20 @@ export default defineConfig(({ mode }) => {
                 test: /node_modules[\\/](artplayer|plyr|swiper|screenfull)[\\/]/,
                 priority: 10,
               },
-              // Animation libs
+              // Animation libs.
+              //
+              // gsap 和 motion 拆开：两者在同一块里时，分配采样只会给出
+              // 混淆的 chunk 名（minify 后是 `h` / `g` 这种），没法判断
+              // 该优化哪一个。motion-dom / motion-utils / framer-motion 是
+              // motion-v 的运行时依赖，必须一起归组，否则会散进 vendor。
               {
-                name: "animation",
-                test: /node_modules[\\/](gsap|motion-v)[\\/]/,
+                name: "gsap",
+                test: /node_modules[\\/]gsap[\\/]/,
+                priority: 10,
+              },
+              {
+                name: "motion",
+                test: /node_modules[\\/](motion-v|motion-dom|motion-utils|framer-motion)[\\/]/,
                 priority: 10,
               },
               // AudioContext module
@@ -349,6 +365,20 @@ export default defineConfig(({ mode }) => {
                 name: "lyrics-processor",
                 test: /src[\\/]utils[\\/]LyricsProcessor[\\/]/,
                 priority: 10,
+              },
+              // Tauri store 持久化层。只有 Tauri 里才会动态 import，必须自成
+              // 一块——落进 vendor 的话会跟着首屏 chunk 一起预加载，Web 端白下。
+              // @tauri-apps/api 要用更高优先级先抢走：它同时被首屏代码静态
+              // import，跟着 @tauri-store 走的话会把整块拽成 eager chunk。
+              {
+                name: "tauri-api",
+                test: /node_modules[\\/]@tauri-apps[\\/]/,
+                priority: 16,
+              },
+              {
+                name: "tauri-store",
+                test: /node_modules[\\/]@tauri-store[\\/]/,
+                priority: 15,
               },
               // Remaining vendor
               {

@@ -93,8 +93,8 @@ import IconPause from "@/components/Player/icons/IconPause.vue";
 import IconPlay from "@/components/Player/icons/IconPlay.vue";
 import IconRewind from "@/components/Player/icons/IconRewind.vue";
 import "@/components/Player/icons/icon-animations.css";
-import { usePlayerBridge } from "@/utils/tauri/playerBridge";
-import { windowManager } from "@/utils/tauri/windowManager";
+import { usePlayerBridge } from "@/utils/tauri/player/bridge";
+import { windowManager } from "@/utils/tauri/window/manager";
 import type { AMLLLine } from "@/utils/LyricsProcessor";
 
 type Orientation = "horizontal" | "vertical";

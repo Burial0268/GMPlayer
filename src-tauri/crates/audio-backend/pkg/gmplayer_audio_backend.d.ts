@@ -30,6 +30,24 @@ export class LFOptionsJs {
 }
 
 /**
+ * AutoMix song sections for the Web path — the same analysis the native
+ * backend runs. Fed in chunks so a whole track is never copied into linear
+ * memory, which only ever grows.
+ */
+export class SongStructureAnalyzer {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Consumes the analyzer. `content_end` excludes trailing silence; a
+     * `bpm` of 0 means unknown. Returns `SectionAnalysis` JSON, or `null`
+     * when the track has no structure worth planning around.
+     */
+    finishJson(duration: number, content_end: number, bpm: number, bpm_confidence: number): string;
+    constructor(sample_rate: number);
+    push(samples: Float32Array): void;
+}
+
+/**
  * WASM-side state holder for the browser IPC runtime.
  *
  * It deliberately does not touch sockets, threads, files, CPAL, or Tauri.

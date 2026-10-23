@@ -14,6 +14,13 @@ pub(in crate::output) fn stable_buffer_size(
     // large real-time callback, which is more vulnerable to CPU-pressure
     // deadline misses. The preallocated 48-block rings and player prebuffer
     // remain the scheduler-jitter safety margin outside the callback.
+    //
+    // That tuning only grows `buffer_size_in_frames` up to the stream's
+    // *capacity*, which is why this crate does not enable CPAL's `realtime`
+    // feature for Android: it would open the stream in
+    // AAUDIO_PERFORMANCE_MODE_LOW_LATENCY, where the capacity is a couple of
+    // bursts and the self-healing has almost nothing to grow into. See the
+    // `cpal` tables in Cargo.toml.
     BufferSize::Default
 }
 

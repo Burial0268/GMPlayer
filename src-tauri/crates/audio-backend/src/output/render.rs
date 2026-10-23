@@ -541,6 +541,61 @@ mod tests {
     }
 
     #[test]
+    fn a_short_block_fades_out_instead_of_cutting_to_silence() {
+        // The mixer emits a short block when a deck starves rather than padding
+        // it with zeros, precisely so this fade engages. Padding would have
+        // handed the callback a full block of silence and hard-cut the signal.
+        let (mut data_tx, _recycle_rx, _alive, mut state) = test_state(4, 8, 0, 0, 2, 8);
+        let paused = AtomicBool::new(false);
+        let volume_bits = AtomicU32::new(1.0f32.to_bits());
+        let generation = AtomicU64::new(0);
+        let flush_epoch = AtomicU64::new(0);
+        let queued_samples = AtomicUsize::new(4);
+        let rendered_samples = AtomicU64::new(0);
+        assert!(data_tx
+            .push(OutputBlock {
+                samples: vec![0.8, -0.8, 0.8, -0.8],
+                generation: 0,
+                flush_epoch: 0,
+            })
+            .is_ok());
+        let mut data = vec![0.0f32; 16];
+
+        fill_output(
+            &mut data,
+            &mut state,
+            &paused,
+            &volume_bits,
+            &generation,
+            &flush_epoch,
+            &queued_samples,
+            &rendered_samples,
+        );
+
+        // The block itself renders untouched.
+        assert_eq!(&data[..4], &[0.8, -0.8, 0.8, -0.8]);
+        // Only the four supplied samples count as rendered.
+        assert_eq!(rendered_samples.load(Ordering::Acquire), 4);
+
+        // The tail decays from the last frame rather than snapping to zero. The
+        // first faded frame reuses the last rendered value at unity scale, so
+        // there is no step discontinuity at the splice.
+        let tail = &data[4..];
+        assert_eq!(tail[0], 0.8);
+        assert_eq!(tail[1], -0.8);
+        // Successive frames are monotonically quieter.
+        let mut previous = tail[0].abs();
+        for frame in tail.chunks_exact(2).skip(1) {
+            let current = frame[0].abs();
+            assert!(
+                current < previous,
+                "expected a decaying tail, got {previous} -> {current}"
+            );
+            previous = current;
+        }
+    }
+
+    #[test]
     fn dropping_callback_state_marks_consumer_dead() {
         let (_data_tx, _recycle_rx, callback_alive, state) = test_state(1, 1, 0, 0, 2, 1);
         assert!(callback_alive.load(Ordering::Acquire));

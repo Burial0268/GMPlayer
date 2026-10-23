@@ -45,9 +45,7 @@
           :disabled="!downloadChoose"
           :loading="downloadStatus"
           type="primary"
-          @click="
-            toSongDownload(songId, downloadChoose, songData.artist[0].name + '-' + songData.name)
-          "
+          @click="toSongDownload"
         >
           {{ downloadStatus ? $t("general.dialog.downloadingNow") : $t("general.dialog.download") }}
         </n-button>
@@ -57,14 +55,16 @@
 </template>
 
 <script setup>
-import { userStore } from "@/store";
+import { userStore, useDownloadStore } from "@/store";
 import { useRouter } from "vue-router";
-import { getMusicDetail, getSongDownload } from "@/api/song";
+import { getMusicDetail } from "@/api/song";
+import { downloadAvailable } from "@/utils/download";
 import { useI18n } from "vue-i18n";
 import SmallSongData from "@/components/DataList/SmallSongData.vue";
 
 const { t } = useI18n();
 const user = userStore();
+const download = useDownloadStore();
 const router = useRouter();
 
 // 歌曲下载数据
@@ -75,42 +75,42 @@ const downloadModal = ref(false);
 const downloadChoose = ref(null);
 const downloadLevel = ref(null);
 
-// 歌曲下载
-const toSongDownload = (id, br, name) => {
+/**
+ * 把这首歌交给 Rust 的下载队列。
+ *
+ * 这里**不再**自己发请求。以前是 `fetch` → `blob` → 造一个 `<a download>` 点一下：
+ * Android 上完全无效（WebView 没有 DownloadListener，`blob:` 也交不给系统下载器），
+ * 桌面上落点归 WebView2 所有、应用拿不到路径因此无法入库，而且整首歌会先在渲染进程
+ * 里驻留一份。签名 URL 的解析也挪到了队列里——它会过期，批量下载的队尾必然 403。
+ *
+ * 入队即关：进度在下载管理器里看，把弹窗按在这里等一首 40 MB 的无损没有意义。
+ */
+const toSongDownload = async () => {
+  if (!songId.value || !downloadChoose.value) return;
   downloadStatus.value = true;
-  getSongDownload(id, br)
-    .then((res) => {
-      console.log(name, res);
-      if (res.data.url) {
-        const type = res.data.type.toLowerCase();
-        const songName = name ? name : t("general.name.unknownSong");
-        fetch(res.data.url.replace(/^http:/, "https:"))
-          .then((response) => response.blob())
-          .then((blob) => {
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `${songName}.${type}`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            // Release after the click has been handed to the browser — the
-            // multi-MB blob stays pinned for the page lifetime otherwise.
-            setTimeout(() => window.URL.revokeObjectURL(url), 10_000);
-            closeDownloadModal();
-            downloadStatus.value = false;
-            $message.success(t("general.message.downloadSuccess", { name }));
-          });
-      } else {
-        downloadStatus.value = false;
-        $message.error(t("general.message.downloadFailure"));
-      }
-    })
-    .catch((err) => {
+  try {
+    const added = await download.enqueue([
+      {
+        songId: songId.value,
+        title: songData.value?.name ?? t("general.name.unknownSong"),
+        artist: songData.value?.artist?.[0]?.name ?? "",
+        album: songData.value?.album?.name ?? "",
+        br: Number(downloadChoose.value),
+        coverUrl: songData.value?.album?.picUrl ?? undefined,
+      },
+    ]);
+    if (added > 0) {
+      $message.success(t("download.queued", { count: added }));
       closeDownloadModal();
-      console.error(t("general.message.downloadError"), err);
-      $message.error(t("general.message.downloadError"));
-    });
+    } else {
+      // 0 有两种来路：这首已经在队列里，或者用户在目录选择器上点了取消。
+      downloadStatus.value = false;
+    }
+  } catch (error) {
+    console.error(t("general.message.downloadError"), error);
+    $message.error(t("general.message.downloadError"));
+    downloadStatus.value = false;
+  }
 };
 
 // 获取歌曲详情
@@ -174,6 +174,12 @@ const generateLists = (data) => {
     },
   ];
   console.log(downloadLevel.value);
+  // 预选：设置里的默认音质，前提是这首歌确实给这个档位。不给就退回最高的可用档，
+  // 免得用户每次都得先点一下才能按「下载」。
+  const preferred = download.settings?.defaultBr;
+  const enabled = downloadLevel.value.filter((item) => !item.disabled);
+  const match = enabled.find((item) => Number(item.value) === Number(preferred));
+  downloadChoose.value = (match ?? enabled[enabled.length - 1])?.value ?? null;
 };
 
 // 获取下载大小
@@ -200,6 +206,12 @@ const getSongSize = (data, type) => {
 
 // 开启歌曲下载
 const openDownloadModal = (data) => {
+  // Web 端没有可以落盘、并且随后能被本地库索引的位置，所以这里直说而不是让用户
+  // 走到底再失败。
+  if (!downloadAvailable()) {
+    $message.error(t("download.tauriOnly"));
+    return;
+  }
   if (user.userLogin) {
     if (
       router.currentRoute.value.name === "user-cloud" ||
@@ -209,6 +221,7 @@ const openDownloadModal = (data) => {
     ) {
       songId.value = data.id;
       downloadModal.value = true;
+      download.hydrate();
       getMusicDetailData(data.id);
     } else {
       $message.error(t("general.message.needVip"));

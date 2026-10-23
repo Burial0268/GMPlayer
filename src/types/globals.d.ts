@@ -13,11 +13,12 @@ declare global {
     $notification: NotificationApi;
     $dialog: DialogApi;
     $loadingBar: LoadingBarApi;
+    $setSiteThemeWithTransition?: (theme: "light" | "dark" | "auto") => void;
 
     // App-level helpers (mounted in App.vue onMounted)
     $setSiteTitle: (title: string) => void;
     $scrollToTop: () => void;
-    $cleanAll: () => void;
+    $cleanAll: () => Promise<void>;
     $signIn: () => void;
     $getPlaySongData: (data: unknown) => void;
   }

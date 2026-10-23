@@ -1,10 +1,62 @@
 use serde::{Deserialize, Serialize};
 
-#[cfg(all(target_os = "windows", debug_assertions))]
-pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle --disable-features=VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,msWebOOUI,msPdfOOUI --enable-threaded-compositing --num-raster-threads=4 --remote-debugging-port=9222";
+/// The parts of the WebView2 command line that are identical in every build.
+///
+/// Kept as a macro so the debug-only remote debugging port can be appended at
+/// compile time without duplicating the list.
+#[cfg(target_os = "windows")]
+macro_rules! window_args {
+    () => {
+        concat!(
+            // Rendering. The player animates continuously (lyrics, spectrum,
+            // cover blur), so hardware acceleration stays on: `--disable-gpu`
+            // is only a sensible memory trade for static UI.
+            "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle ",
+            "--enable-threaded-compositing --num-raster-threads=4 ",
+            // One merged `--disable-features` list; a second occurrence would
+            // replace this one instead of extending it.
+            "--disable-features=",
+            "VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,",
+            // wry's defaults. Passing `additional_browser_args` replaces them
+            // wholesale, so they have to be repeated or they come back on.
+            "msWebOOUI,msPdfOOUI,msSmartScreenProtection,",
+            // Edge consumer services the player never uses. Each one is a
+            // resident chunk of the browser process.
+            "msEdgeAutofill,msEdgeShopping,msEdgeWallet,",
+            // Browser retention experiment; Microsoft documents it as
+            // unsupported in WebView2.
+            "msFloatyMode,",
+            // A warm spare renderer process kept alive at all times to make the
+            // *next* window open faster. This app opens windows rarely, so the
+            // spare is a whole process of resident memory for a win we never
+            // collect.
+            "SpareRendererForSitePerProcess ",
+            // Cap V8's young generation per renderer: smaller heaps, more
+            // frequent but individually cheaper minor GCs. 8 MB is Microsoft's
+            // documented example value.
+            "--js-flags=--scavenger_max_new_space_capacity_mb=8 ",
+            // Bound the HTTP cache (covers, API responses); the default
+            // heuristic sizes it from free disk space and grows well past this.
+            "--disk-cache-size=67108864",
+        )
+    };
+}
 
+/// Browser command line shared by every WebView2 window in the app.
+///
+/// One user data folder means one WebView2 environment, and WebView2 requires
+/// consistent arguments across it (see [`WindowConfig::effective_additional_args`]),
+/// so this is the single definition — the taskbar lyric plugin is handed the
+/// same string.
+#[cfg(all(target_os = "windows", debug_assertions))]
+pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str =
+    concat!(window_args!(), " --remote-debugging-port=9222");
+
+/// Browser command line shared by every WebView2 window in the app.
+///
+/// See the debug variant above for the rationale behind each group of flags.
 #[cfg(all(target_os = "windows", not(debug_assertions)))]
-pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = "--enable-gpu-rasterization --enable-zero-copy --ignore-gpu-blocklist --use-gl=angle --disable-features=VaapiVideoDecoder,UseChromeOSDirectVideoDecoder,msWebOOUI,msPdfOOUI --enable-threaded-compositing --num-raster-threads=4";
+pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = window_args!();
 
 pub const TRAY_POPUP_WIDTH: f64 = 260.0;
 pub const TRAY_POPUP_BASE_HEIGHT: f64 = 334.0;
@@ -405,5 +457,43 @@ impl WindowConfig {
     #[cfg(not(target_os = "windows"))]
     pub fn effective_additional_args(&self) -> Option<&str> {
         self.additional_args.as_deref()
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::DEFAULT_ADDITIONAL_WINDOW_ARGS as ARGS;
+
+    /// The command line is assembled from string fragments, so a dropped
+    /// trailing space silently glues two switches into one unknown switch.
+    #[test]
+    fn browser_args_are_well_formed() {
+        assert!(!ARGS.contains("  "), "double space in {ARGS}");
+        assert!(!ARGS.starts_with(' ') && !ARGS.ends_with(' '));
+        for arg in ARGS.split(' ') {
+            assert!(
+                arg.starts_with("--"),
+                "malformed argument '{arg}' in {ARGS}"
+            );
+        }
+    }
+
+    /// Chromium keeps only the last occurrence of a switch, so every feature to
+    /// disable has to live in one list.
+    #[test]
+    fn disabled_features_are_a_single_list() {
+        let lists: Vec<&str> = ARGS
+            .split(' ')
+            .filter_map(|arg| arg.strip_prefix("--disable-features="))
+            .collect();
+        assert_eq!(lists.len(), 1, "expected exactly one --disable-features");
+        // wry passes these by default and `additional_browser_args` replaces
+        // its defaults rather than extending them.
+        for wry_default in ["msWebOOUI", "msPdfOOUI", "msSmartScreenProtection"] {
+            assert!(
+                lists[0].split(',').any(|feature| feature == wry_default),
+                "wry default '{wry_default}' was dropped"
+            );
+        }
     }
 }

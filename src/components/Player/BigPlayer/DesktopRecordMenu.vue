@@ -143,7 +143,8 @@ const setting = settingStore();
         --n-border: none;
         border: none;
         transition: all var(--duration-300) cubic-bezier(0.34, 1.56, 0.64, 1);
-        will-change: transform, background-color;
+        // background-color 走重绘，合成器接不了。
+        will-change: transform;
 
         &:hover {
           transform: scale(1.1);
@@ -165,7 +166,8 @@ const setting = settingStore();
       color: var(--main-cover-color);
       margin: 0 12px;
       transition: all var(--duration-300) cubic-bezier(0.34, 1.56, 0.64, 1);
-      will-change: transform, background-color;
+      // background-color 走重绘，合成器接不了。
+      will-change: transform;
 
       .n-icon {
         transition: all var(--duration-200) cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -194,7 +196,8 @@ const setting = settingStore();
     border-radius: var(--radius-md);
     opacity: 0.4;
     transition: all var(--duration-300) cubic-bezier(0.34, 1.56, 0.64, 1);
-    will-change: transform, opacity, background-color;
+    // background-color 走重绘，合成器接不了。
+    will-change: transform, opacity;
 
     &:hover {
       background-color: #ffffff30;

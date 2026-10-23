@@ -16,13 +16,22 @@
         android:theme="@style/Theme.gmplayer"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
 
+        <!--
+          targetSdk 36 起，大屏设备（sw >= 600dp）默认忽略 activity 的方向请求。
+          这里显式退出该行为，让 OrientationPlugin 在平板 / 折叠屏上也说得上话。
+          注意这是过渡开关：Android 17 会移除它，届时大屏只能靠自适应布局。
+        -->
+        <property
+            android:name="android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+            android:value="true" />
+
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="unspecified">
+            android:screenOrientation="nosensor">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

@@ -3,17 +3,18 @@
     class="liked-card"
     role="link"
     tabindex="0"
+    :data-navigation-identity="`playlist:${user.getUserPlayLists.own[0]?.id}`"
     @click="toLikeSongs"
     @keydown.enter="toLikeSongs"
     @keydown.space.prevent="toLikeSongs"
   >
-    <div class="liked-card__artwork" aria-hidden="true">
+    <div class="liked-card__artwork" data-navigation-cover aria-hidden="true">
       <img :src="cardImage" alt="" loading="lazy" @error="useFallbackCover" />
       <span class="liked-card__artwork-icon">♥</span>
     </div>
     <div class="liked-card__content">
       <span class="liked-card__eyebrow">{{ $t("home.modules.likeSong.eyebrow") }}</span>
-      <h3>{{ $t("home.modules.likeSong.title") }}</h3>
+      <h3 data-navigation-title>{{ $t("home.modules.likeSong.title") }}</h3>
       <p>{{ $t("home.modules.likeSong.subtitle") }}</p>
     </div>
     <span class="liked-card__arrow" aria-hidden="true">
@@ -26,11 +27,11 @@
 import { Right } from "@icon-park/vue-next";
 import { computed, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { userStore } from "@/store";
 
 const FALLBACK_COVER = "/images/pic/pic.jpg";
-const router = useRouter();
+const navigation = useLayerNavigation();
 const user = userStore();
 const { t } = useI18n();
 
@@ -46,15 +47,20 @@ const useFallbackCover = (event) => {
   }
 };
 
-const toLikeSongs = () => {
+const toLikeSongs = (origin) => {
   if (!user.userLogin) {
     $message.error(t("general.message.needLogin"));
-    router.push("/login");
+    navigation.openPage("/login", { origin });
     return;
   }
 
   const id = user.getUserPlayLists.own[0]?.id;
-  if (id) router.push(`/playlist?id=${id}&page=1`);
+  if (id)
+    navigation.openPage(`/playlist?id=${id}&page=1`, {
+      origin,
+      kind: "card",
+      identity: `playlist:${id}`,
+    });
 };
 
 onMounted(() => {

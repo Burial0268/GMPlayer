@@ -1,0 +1,19 @@
+[package]
+name = "tauri-plugin-local-files"
+version = "0.1.0"
+description = "Storage Access Framework bridge: persistable directory/file grants, document enumeration, and file descriptors for the native decoder."
+authors = ["GBCLStudio"]
+edition = "2021"
+rust-version = "1.80"
+links = "tauri-plugin-local-files"
+license = "AGPL-3.0"
+
+[dependencies]
+tauri = { version = "2", default-features = false, features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+log = "0.4"
+
+[build-dependencies]
+tauri-plugin = { version = "2.0.2", features = ["build"] }

@@ -128,6 +128,11 @@ export const user = {
 
   /**
    * 喜欢/取消喜欢歌曲
+   *
+   * `like` stays a boolean here because that is what a caller wants to pass.
+   * Both transports hand the endpoint module the string `"true"`/`"false"` —
+   * axios by serializing the query, the embedded layer by coercing it in
+   * `ncmLocalTransport.buildQuery`, which explains why the type matters.
    */
   likeSong: (id: number, like = true) =>
     request<any>({

@@ -42,7 +42,7 @@ export class PreBufferManager {
   startPreBuffer(
     musicStore: any,
     analysisCache: Map<number, CachedAnalysis>,
-    settings: { volumeNorm: boolean; bpmMatch: boolean },
+    settings: { volumeNorm: boolean; bpmMatch: boolean; sections: boolean },
     stateGetter: () => string,
     addToCache: (entry: CachedAnalysis) => void,
   ): void {
@@ -52,13 +52,9 @@ export class PreBufferManager {
     const currentIndex = musicStore.persistData.playSongIndex;
     const listLength = playlist.length;
 
-    // Determine next song index (same logic as _doCrossfade)
-    let nextIndex: number;
-    if (musicStore.persistData.playSongMode === "random") {
-      nextIndex = Math.floor(Math.random() * listLength);
-    } else {
-      nextIndex = (currentIndex + 1) % listLength;
-    }
+    // Next song index (same rule as _doCrossfade / the store's own advance):
+    // positional in every mode, because random mode shuffles the queue itself.
+    const nextIndex = listLength > 0 ? (currentIndex + 1) % listLength : currentIndex;
 
     const nextSong = playlist[nextIndex];
     if (!nextSong) return;
@@ -121,9 +117,10 @@ export class PreBufferManager {
         return;
       }
 
-      // Step 4: Analyze incoming track for volume normalization (if enabled + not cached)
+      // Step 4: Analyze incoming track for volume normalization / emotional
+      // transitions (if enabled + not cached)
       let preBufferedAnalysis: CachedAnalysis | null = null;
-      if (settings.volumeNorm) {
+      if (settings.volumeNorm || settings.sections) {
         const cached = analysisCache.get(nextSong.id);
         if (cached) {
           preBufferedAnalysis = cached;
@@ -131,7 +128,10 @@ export class PreBufferManager {
           try {
             const blobUrl = sound.getBlobUrl();
             if (blobUrl) {
-              const analysis = await analyzeTrack(blobUrl, { analyzeBPM: settings.bpmMatch });
+              const analysis = await analyzeTrack(blobUrl, {
+                analyzeBPM: settings.bpmMatch,
+                analyzeSections: settings.sections,
+              });
               preBufferedAnalysis = { songId: nextSong.id, analysis };
               // Share with the state machine's cache so a discarded pre-buffer
               // doesn't force a full re-decode of the same track later. Must

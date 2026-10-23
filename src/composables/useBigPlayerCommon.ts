@@ -1,20 +1,23 @@
 import { ref, computed, nextTick, type Ref } from "vue";
-import { useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore, settingStore } from "@/store";
 import { setSeek } from "@/utils/AudioContext";
+import { coverUrl } from "@/utils/coverUrl";
 
 export function useBigPlayerCommon(isMobile: Ref<boolean>) {
-  const router = useRouter();
+  const navigation = useLayerNavigation();
   const music = musicStore();
   const setting = settingStore();
 
   // --- Cover image URLs ---
-  const coverImageUrl = computed(() => {
-    if (!music.getPlaySongData?.album?.picUrl) return "/images/pic/default.png";
-    return music.getPlaySongData.album.picUrl.replace(/^http:/, "https:");
-  });
+  // Through `coverUrl` because a local track's cover is an asset-protocol URL:
+  // the old unconditional `http:` → `https:` rewrite turned
+  // `http://asset.localhost/…` into an origin with no protocol handler, and
+  // AMLL's `setAlbum` then retried a network fetch until it gave up.
+  const coverImageUrl = computed(() => coverUrl(music.getPlaySongData?.album?.picUrl));
 
-  const coverImageUrl500 = computed(() => coverImageUrl.value + "?param=500y500");
+  // The resize hint is Netease's; a file on disk is served as-is.
+  const coverImageUrl500 = computed(() => coverUrl(music.getPlaySongData?.album?.picUrl, 500));
 
   // --- Song metadata ---
   const artistList = computed(() => music.getPlaySongData?.artist ?? []);
@@ -34,12 +37,6 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   const hasLyrics = computed(() => {
     const lrc = music.getPlaySongLyric?.lrc;
     return !!(lrc && lrc[0] && lrc.length > 4);
-  });
-
-  // --- computedLowFreqVolume ---
-  const computedLowFreqVolume = computed(() => {
-    if (!setting.dynamicFlowSpeed) return 1.0;
-    return Math.round(music.lowFreqVolume * 100) / 100;
   });
 
   // --- Lyric mouse/scroll ---
@@ -77,7 +74,7 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
 
   // --- Actions ---
   const closeBigPlayer = () => {
-    music.setBigPlayerState(false);
+    navigation.closeTop("player");
   };
 
   const handleProgressSeek = (val: number) => {
@@ -87,8 +84,11 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   };
 
   const toComment = () => {
-    music.setBigPlayerState(false);
-    router.push({
+    // A local file has no comment thread, and `/comment?id=-N` would ask Netease
+    // for one anyway — the view fetches on mount. The button is hidden for local
+    // tracks; this is the guard for the paths that reach the handler directly.
+    if (music.getPlaySongData?.local?.uri) return;
+    navigation.openPage({
       path: "/comment",
       query: {
         id: music.getPlaySongData ? music.getPlaySongData.id : null,
@@ -122,7 +122,6 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
     songName,
     remainingTime,
     hasLyrics,
-    computedLowFreqVolume,
     lrcMouseStatus,
     lyricsScroll,
     lrcAllLeave,

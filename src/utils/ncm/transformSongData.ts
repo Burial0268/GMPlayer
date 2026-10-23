@@ -1,4 +1,5 @@
 import { getSongTime } from "@/utils/timeTools";
+import { asRawEntry } from "@/utils/rawEntry";
 import { ncmImageUrl } from "./ncmImageUrl";
 
 interface TransformOptions {
@@ -18,7 +19,8 @@ export const transformSongData = (songs: any[], options: TransformOptions = {}) 
   const { offset = 0, sourceId, albumTransform } = options;
   return songs.map((v, i) => {
     const rawAlbum = albumTransform ? albumTransform(v) : v.al;
-    return {
+    // 条目只读，不进深层响应式代理。见 utils/rawEntry。
+    return asRawEntry({
       id: v.id,
       num: i + 1 + offset,
       name: v.name,
@@ -30,6 +32,6 @@ export const transformSongData = (songs: any[], options: TransformOptions = {}) 
       pc: v.pc || null,
       mv: v.mv || null,
       ...(sourceId !== null && sourceId !== undefined ? { sourceId } : {}),
-    };
+    });
   });
 };
