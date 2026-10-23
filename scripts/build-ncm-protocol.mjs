@@ -25,9 +25,9 @@ import { build } from "esbuild";
 // dist.integrity for this exact version; a mismatch aborts the build rather
 // than silently baking in a different protocol implementation.
 const PKG_NAME = "@neteasecloudmusicapienhanced/api";
-const PKG_VERSION = "4.40.1";
+const PKG_VERSION = "4.41.1";
 const PKG_INTEGRITY =
-  "sha512-RUpVnxUCkeEt0yYeElc+UvCXqucikI/PIlJaLj18FlwHQ8X9wk4QkM/h7C+qePC97COMODcmgRXKgWO94YLuWA==";
+  "sha512-0QDKtLrSLfz4iP2M57nQTqRQuJkzJV2AUOjHSCSBgqOFQEoGkw4zSue8bbfkzz/lFRLvnIr9SjsrPj95BThxUQ==";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.resolve(HERE, "..");
@@ -87,6 +87,12 @@ const UNAVAILABLE = {
   tunnel: "HTTP CONNECT proxy support — configure it on the Rust HTTP client",
   "@neteasecloudmusicapienhanced/unblockmusic-utils":
     "in-package UNM unlocking — this app uses its own UNM service (VITE_UNM_API)",
+  // Required at load by util/zstd.js, which util/crypto.js imports. Only the
+  // neapi decrypt path calls it. weapi/eapi/xeapi never do, and pulling the
+  // pure-JS decompressor into the isolate would tax every startup for a
+  // protocol this build does not speak. zstdCompressSync stays absent so
+  // util/ncbl.js keeps its gzip fallback.
+  fzstd: "neapi response decompression (util/zstd.js) — not used by weapi, eapi, or xeapi",
   express: "the HTTP server shell, which the embedded build does not run",
   "express-fileupload": "the HTTP server shell",
   "safe-decode-uri-component": "the HTTP server shell",

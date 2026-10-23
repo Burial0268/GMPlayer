@@ -854,6 +854,21 @@ mod tests {
             eval(&core, r#"Buffer.from("5Lit5paH","base64").toString("utf8")"#).await,
             "中文"
         );
+        // xeapi writes its `C` parameter with toString('base64url'). Standard
+        // base64 of these bytes is `+/+/` and `YQ==`; either one grows inside
+        // URLSearchParams and is not what Node emits.
+        assert_eq!(
+            eval(&core, r#"Buffer.from([0xfb,0xff,0xbf]).toString("base64url")"#).await,
+            "-_-_"
+        );
+        assert_eq!(
+            eval(&core, r#"Buffer.from("a","utf8").toString("base64url")"#).await,
+            "YQ"
+        );
+        assert_eq!(
+            eval(&core, r#"Buffer.from("a","utf8").toString("base64")"#).await,
+            "YQ=="
+        );
         // latin1 is how forge-style binary strings cross the shim boundary.
         assert_eq!(
             eval(

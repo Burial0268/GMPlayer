@@ -2,10 +2,16 @@
 //
 // Scope is deliberately the subset `util/crypto.js`, `util/request.js`,
 // `util/ncbl.js` and the endpoint modules actually use — encodings
-// base64/hex/utf8/latin1(binary), alloc/concat/compare, and the fixed-width
-// integer accessors the NCBL log envelope reads and writes. It is NOT a general
-// Buffer polyfill; adding surface here should be driven by a real call site, not
-// by completeness.
+// base64/base64url/hex/utf8/latin1(binary), alloc/concat/compare, and the
+// fixed-width integer accessors the NCBL log envelope reads and writes. It is
+// NOT a general Buffer polyfill; adding surface here should be driven by a real
+// call site, not by completeness.
+//
+// base64url is a distinct encoding, not an alias of base64. xeapi's `C` field
+// (the playback `song_url_v1` body) is `Buffer#toString('base64url')`: '-'/'',
+// no '=' padding. Emitting standard base64 there percent-encodes '+', '/' and
+// '=' inside the form body, so the request is both larger and not what the
+// server decodes as base64url.
 //
 // UTF-8 goes through Rust host ops rather than a hand-rolled encoder: the
 // protocol signs UTF-8 bytes of JSON payloads that routinely contain CJK, and
@@ -55,11 +61,15 @@ const fromBase64 = (s) => {
 
 const toBase64 = (u8) => btoa(toLatin1(u8));
 
+// RFC 4648 §5, matching Node: URL-safe alphabet and no padding.
+const toBase64Url = (u8) => toBase64(u8).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
 const normalizeEncoding = (enc) => {
   const e = String(enc || "utf8").toLowerCase();
   if (e === "utf-8" || e === "utf8") return "utf8";
   if (e === "binary" || e === "latin1") return "latin1";
-  if (e === "base64" || e === "base64url") return "base64";
+  if (e === "base64url") return "base64url";
+  if (e === "base64") return "base64";
   if (e === "hex") return "hex";
   if (e === "ascii") return "latin1";
   throw new TypeError(`Unsupported encoding in embedded Buffer shim: ${enc}`);
@@ -136,6 +146,8 @@ class Buffer extends Uint8Array {
         return toLatin1(view);
       case "base64":
         return toBase64(view);
+      case "base64url":
+        return toBase64Url(view);
       case "hex":
         return toHex(view);
     }
