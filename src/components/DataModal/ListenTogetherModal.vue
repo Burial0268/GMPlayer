@@ -181,7 +181,7 @@
           <!-- ─── Online users ────────────────────────────── -->
           <div class="section">
             <div class="section-header">
-              <span class="section-title">{{ t("other.listenTogether.onlineUsers") }}</span>
+              <span class="section-title s-label">{{ t("other.listenTogether.onlineUsers") }}</span>
               <n-badge
                 :value="listenTogether.onlineCount"
                 :max="99"
@@ -264,7 +264,7 @@
           <!-- ─── Now playing ─────────────────────────────── -->
           <div v-if="musicStore.getPlaySongData" class="section now-playing-section">
             <div class="section-header">
-              <span class="section-title">{{ t("general.name.play") }}</span>
+              <span class="section-title s-label">{{ t("general.name.play") }}</span>
               <Transition name="lt-fade">
                 <div v-if="musicStore.getPlayState" class="playing-badge">
                   <span class="playing-dot" />
@@ -676,10 +676,6 @@ async function copyShareLink() {
   justify-content: space-between;
 
   .section-title {
-    font-size: 11px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
     color: var(--n-text-color-3);
   }
 

@@ -13,7 +13,7 @@
       <span class="liked-card__artwork-icon">♥</span>
     </div>
     <div class="liked-card__content">
-      <span class="liked-card__eyebrow">{{ $t("home.modules.likeSong.eyebrow") }}</span>
+      <span class="liked-card__eyebrow s-label">{{ $t("home.modules.likeSong.eyebrow") }}</span>
       <h3 data-navigation-title>{{ $t("home.modules.likeSong.title") }}</h3>
       <p>{{ $t("home.modules.likeSong.subtitle") }}</p>
     </div>
@@ -159,10 +159,6 @@ onMounted(() => {
 
 .liked-card__eyebrow {
   color: var(--n-text-color-3);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
 }
 
 .liked-card__arrow {
@@ -232,10 +228,6 @@ onMounted(() => {
   .liked-card__content h3 {
     margin-top: 2px;
     font-size: 15px;
-  }
-
-  .liked-card__eyebrow {
-    font-size: 8px;
   }
 
   .liked-card__arrow {

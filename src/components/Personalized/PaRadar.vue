@@ -14,7 +14,7 @@
       </span>
     </div>
     <div class="radar-card__content">
-      <span class="radar-card__eyebrow">{{ $t("home.modules.radar.eyebrow") }}</span>
+      <span class="radar-card__eyebrow s-label">{{ $t("home.modules.radar.eyebrow") }}</span>
       <h3>{{ $t("home.modules.radar.title") }}</h3>
       <p>{{ $t("home.modules.radar.subtitle") }}</p>
     </div>
@@ -119,10 +119,6 @@ const openRadar = (origin) => navigation.openPage(`/playlist?id=${radarId}&page=
 
 .radar-card__eyebrow {
   color: var(--n-text-color-3);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.11em;
-  text-transform: uppercase;
 }
 
 .radar-card__arrow {
@@ -192,10 +188,6 @@ const openRadar = (origin) => navigation.openPage(`/playlist?id=${radarId}&page=
   .radar-card__content h3 {
     margin-top: 2px;
     font-size: 15px;
-  }
-
-  .radar-card__eyebrow {
-    font-size: 8px;
   }
 
   .radar-card__arrow {

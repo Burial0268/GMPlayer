@@ -2,7 +2,7 @@
   <div class="search">
     <!-- 结果头部 -->
     <header class="search-head" v-if="searchKeywords">
-      <span class="eyebrow">{{ $t("nav.search.resultsLabel") }}</span>
+      <span class="eyebrow s-label">{{ $t("nav.search.resultsLabel") }}</span>
       <h1 class="title">{{ keywordText }}</h1>
     </header>
 
@@ -118,11 +118,6 @@ onMounted(() => {
 
     .eyebrow {
       margin-bottom: 10px;
-      font-size: 12px;
-      font-weight: 600;
-      line-height: 1;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
       color: var(--n-text-color-3);
     }
 

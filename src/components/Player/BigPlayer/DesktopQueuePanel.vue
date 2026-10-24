@@ -53,8 +53,10 @@
           @click="changeQueueIndex(row.index)"
           @keydown.enter.prevent="changeQueueIndex(row.index)"
         >
-          <div class="queue-index">
-            <span v-if="row.index !== music.persistData.playSongIndex">{{ row.index + 1 }}</span>
+          <div class="queue-index s-num">
+            <span v-if="row.index !== music.persistData.playSongIndex">{{
+              String(row.index + 1).padStart(2, "0")
+            }}</span>
             <div v-else class="playing-bars">
               <span class="line"></span>
               <span class="line"></span>
@@ -66,7 +68,7 @@
             <div class="queue-name text-hidden">{{ row.item.name }}</div>
             <div class="queue-artists text-hidden">{{ formatArtists(row.item.artist) }}</div>
           </div>
-          <div class="queue-duration" v-if="row.item.time">{{ row.item.time }}</div>
+          <div class="queue-duration s-num" v-if="row.item.time">{{ row.item.time }}</div>
           <button class="queue-remove" type="button" @click.stop="music.removeSong(row.index)">
             <n-icon size="17" :component="DeleteRound" />
           </button>
@@ -335,7 +337,6 @@ onBeforeUnmount(() => {
   justify-content: center;
   font-size: 0.78rem;
   opacity: 0.66;
-  font-variant-numeric: tabular-nums;
 }
 
 .playing-bars {
@@ -389,7 +390,6 @@ onBeforeUnmount(() => {
 .queue-duration {
   font-size: 0.76rem;
   opacity: 0.54;
-  font-variant-numeric: tabular-nums;
 }
 
 .queue-remove {

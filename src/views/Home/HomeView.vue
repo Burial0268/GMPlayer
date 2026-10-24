@@ -2,7 +2,7 @@
   <div ref="homeRoot" class="home">
     <header class="home-header home-section">
       <div>
-        <span class="date">{{ dateText }}</span>
+        <span class="date s-label">{{ dateText }}</span>
         <h1>{{ greetingText }}</h1>
       </div>
     </header>
@@ -14,7 +14,7 @@
     <section class="featured-section home-section">
       <div class="section-heading">
         <div>
-          <span class="section-kicker">{{ $t("home.kicker.featured") }}</span>
+          <span class="section-kicker s-label">{{ $t("home.kicker.featured") }}</span>
           <h2>{{ $t("home.title.forYou") }}</h2>
         </div>
       </div>
@@ -30,7 +30,7 @@
     <section class="feed-section home-section">
       <div class="section-heading feed-heading">
         <div>
-          <span class="section-kicker">{{ $t("home.kicker.explore") }}</span>
+          <span class="section-kicker s-label">{{ $t("home.kicker.explore") }}</span>
           <h2>{{ $t("home.title.exclusive") }}</h2>
         </div>
         <nav class="feed-links" :aria-label="$t('home.title.exclusive')">
@@ -60,7 +60,7 @@
         <article v-if="newSongsData.length" v-masonry-item class="hot-tracks-card">
           <header class="hot-tracks-card__header">
             <div>
-              <span>{{ $t("home.modules.hotTracks.eyebrow") }}</span>
+              <span class="s-label">{{ $t("home.modules.hotTracks.eyebrow") }}</span>
               <h3>{{ $t("home.modules.hotTracks.title") }}</h3>
               <p>{{ $t("home.modules.hotTracks.subtitle") }}</p>
             </div>
@@ -73,7 +73,7 @@
               class="hot-track"
               @click="playHotTrack(song)"
             >
-              <span class="hot-track__index">{{ String(index + 1).padStart(2, "0") }}</span>
+              <span class="hot-track__index s-num">{{ String(index + 1).padStart(2, "0") }}</span>
               <img
                 :src="normalizeCover(song.album?.picUrl, 160)"
                 :alt="song.name"
@@ -434,10 +434,6 @@ onBeforeUnmount(() => {
 .home-header {
   .date {
     color: var(--n-text-color-3);
-    font-size: var(--font-size-footnote);
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
   }
 
   h1 {
@@ -445,7 +441,7 @@ onBeforeUnmount(() => {
     font-size: var(--font-size-large-title);
     font-weight: 700;
     line-height: var(--line-height-heading);
-    letter-spacing: -0.025em;
+    letter-spacing: var(--tracking-display);
   }
 }
 
@@ -466,16 +462,12 @@ onBeforeUnmount(() => {
     font-size: var(--font-size-title);
     font-weight: 600;
     line-height: var(--line-height-heading);
-    letter-spacing: -0.02em;
+    letter-spacing: var(--tracking-display);
   }
 }
 
 .section-kicker {
   color: var(--n-text-color-3);
-  font-size: var(--font-size-caption);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
 }
 
 .featured-grid {
@@ -811,10 +803,6 @@ onBeforeUnmount(() => {
 
   span {
     color: var(--n-text-color-3);
-    font-size: var(--font-size-caption);
-    font-weight: 750;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
   }
 
   h3 {
@@ -822,7 +810,7 @@ onBeforeUnmount(() => {
     font-size: 20px;
     font-weight: 740;
     line-height: 1.2;
-    letter-spacing: -0.025em;
+    letter-spacing: var(--tracking-display);
   }
 
   p {
@@ -876,7 +864,6 @@ onBeforeUnmount(() => {
 .hot-track__index {
   color: var(--n-text-color-3);
   font-size: var(--font-size-caption);
-  font-variant-numeric: tabular-nums;
 }
 
 .hot-track__copy {

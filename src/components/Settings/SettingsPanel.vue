@@ -56,7 +56,7 @@
             <n-icon v-if="s.icon" :component="s.icon" />
           </span>
           <span class="nav-label">{{ resolve(s.label) }}</span>
-          <span class="nav-count">{{ s.count }}</span>
+          <span class="nav-count s-num">{{ s.count }}</span>
         </button>
       </nav>
     </aside>

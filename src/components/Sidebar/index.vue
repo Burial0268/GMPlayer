@@ -74,7 +74,7 @@
                   class="sidebar-section-header sidebar-virtual-section-header"
                   @click="toggleSection(item.section)"
                 >
-                  <span>{{ item.label }}</span>
+                  <span class="s-label">{{ item.label }}</span>
                   <div class="section-actions">
                     <n-tooltip v-if="item.action === 'create'" placement="top" :delay="300">
                       <template #trigger>
@@ -907,12 +907,8 @@ const goToPlaylist = (id: number) => {
   justify-content: space-between;
   gap: 8px;
   min-height: 24px;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
   color: var(--sidebar-text-secondary);
   padding: 1px 7px 3px 11px;
-  letter-spacing: 0;
   white-space: nowrap;
   overflow: hidden;
   cursor: pointer;

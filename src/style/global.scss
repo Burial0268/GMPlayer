@@ -59,6 +59,16 @@ textarea,
   --line-height-body: 1.5;
   --line-height-heading: 1.2;
 
+  /* Swiss 排版层 —— International Typographic Style 的最小增量。
+     只加两样东西：微型全大写标签（eyebrow）与等宽数据。
+     字距必须按语言分流：中文标签在 0.14em 下会散成散点，而 <html lang>
+     已随语言切换（App.vue / useSettingsSections），所以用 lang 选择器
+     给拉丁文放开字距，中文保持 0。 */
+  --font-size-label: 0.6875rem; /* 11px */
+  --font-weight-label: 700;
+  --tracking-label: 0.14em;
+  --tracking-display: -0.03em;
+
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -227,6 +237,38 @@ body {
   font-size: var(--font-size-body);
   line-height: var(--line-height-body);
   color: var(--text-primary);
+}
+
+/* ── Swiss type utilities ──────────────────────────────────────────
+   全项目共用的两个排版原子。此前 eyebrow / kicker / section-title /
+   sidebar-section-header 各自实现了一套近似值（9–13px、500–750、
+   0–0.12em），视觉上就是「差一点点」的散装感；收敛成同一个规格之后，
+   标签才像一套系统。只负责字形，颜色与位置仍由各组件决定。
+
+   `.detail-kind` 挂在同一组选择器下，是因为它本来就是一个跨视图的约定类：
+   Song / Album / Artist / PlayList / Local 各自的详情页头都手写了同一份
+   11px/700/大写 声明，这里把它升级成共享实现——各视图里剩下的那份声明
+   与这里同值，因此不需要改动八个模板。 */
+.s-label,
+.detail-kind {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-label);
+  font-weight: var(--font-weight-label);
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+/* 宽字距只在拉丁文下成立：中文标签在 0.14em 下会散成散点。 */
+html[lang^="en"] :is(.s-label, .detail-kind) {
+  letter-spacing: var(--tracking-label);
+}
+
+/* 等宽 + 表格数字：序号、时长、计数。
+   等宽栈里没有 CJK 字形，汉字会自然回落到 UI 字体，所以只影响数字本身。 */
+.s-num {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 // Custom cards and links need the same visible keyboard focus as native controls.
