@@ -12,6 +12,12 @@ const DEFAULT_ATOMIC_SEEK_GUARD_MS = 5000;
 const DEFAULT_SEEK_POSITION_ACCEPT_EPSILON_SECONDS = 0.35;
 const DEFAULT_SEEK_POSITION_FORWARD_TOLERANCE_SECONDS = 0.2;
 const DEFAULT_SMOOTHING_BACKSTEP_TOLERANCE_SECONDS = 0.2;
+/**
+ * Max believable event delivery latency. Beyond this, `sentAt` is treated as
+ * unusable (system clock step / resumed-from-freeze burst) and arrival time is
+ * used instead. Mirrors `MAX_ANCHOR_LATENCY_MS` in `player/bridge.ts`.
+ */
+const MAX_EVENT_LATENCY_MS = 2_000;
 
 export interface AudioTimelineSyncOptions {
   seekGuardMs?: number;
@@ -115,6 +121,38 @@ export class AudioTimelineSync {
     return this._position;
   }
 
+  /**
+   * Take the backend position for a playback that has just started.
+   *
+   * `beginTrack` for a load this side requested. The playing backstep smoother
+   * must not see that first sample: wall-clock extrapolation often starts
+   * (PlayStatus) before the backend's anchor arrives, and a lead inside the
+   * smoother is then held for the whole track. Pause and seek already adopt
+   * the backend position outright; this is the same adopt for the start.
+   *
+   * An active seek guard still wins. Startup autoresume parks the saved
+   * position behind that guard before the backend has published it, and the
+   * pre-seek snapshot is a `0` that must not wipe the saved spot. `null` means
+   * the packet was left for the guard — the caller keeps waiting for a sample
+   * the guard will accept.
+   *
+   * Deliberately not `sentAt`-compensated. The anchor is taken at arrival, the
+   * same way a pause sample is, so a stamp from before the output was running
+   * cannot start the lyric clock in the past. Later heartbeats still go
+   * through `acceptIncomingPosition`.
+   */
+  adoptPlaybackAnchor(position: number, duration?: number): number | null {
+    const now = this._nowMs();
+    const nextPosition = this._normalizePosition(position);
+    const anchor = this._pendingSeekAnchor;
+    if (anchor && now < anchor.guardUntil) {
+      const expected = this._expectedAnchorPosition(anchor, now);
+      if (this._isStaleAgainstSeek(anchor, nextPosition, expected)) return null;
+    }
+    if (duration === undefined || !(duration > 0)) return this.beginTrack(nextPosition);
+    return this.beginTrack(nextPosition, duration);
+  }
+
   setPlaybackState(isPlaying: boolean, pendingPlayCommand = false): void {
     const changed =
       this._isPlaying !== isPlaying || this._pendingPlayCommand !== pendingPlayCommand;
@@ -161,10 +199,11 @@ export class AudioTimelineSync {
     return nextPosition;
   }
 
-  acceptIncomingPosition(position: number): number {
+  acceptIncomingPosition(position: number, sentAt?: number): number {
     const now = this._nowMs();
     const nextPosition = this._normalizePosition(position);
     const anchor = this._pendingSeekAnchor;
+    const anchorAt = this._anchorTimeFor(now, sentAt);
 
     if (anchor) {
       if (now >= anchor.guardUntil) {
@@ -175,7 +214,7 @@ export class AudioTimelineSync {
           return this._position;
         }
 
-        this._applyAcceptedPosition(nextPosition, now, true);
+        this._applyAcceptedPosition(nextPosition, now, true, anchorAt);
         if (!anchor.atomicSeek || Math.abs(nextPosition - expected) <= this._acceptEpsilonSeconds) {
           this._pendingSeekAnchor = null;
         }
@@ -183,8 +222,28 @@ export class AudioTimelineSync {
       }
     }
 
-    this._applyAcceptedPosition(nextPosition, now);
+    this._applyAcceptedPosition(nextPosition, now, false, anchorAt);
     return this._position;
+  }
+
+  /**
+   * Time at which an incoming position was actually true. Backend events carry
+   * the timeline as of `sentAt`, so anchoring extrapolation at arrival time
+   * bakes the delivery latency in as permanent clock lag. Falls back to `now`
+   * when unstamped, when the stamp is unusable (clock skew, negative or
+   * implausible latency), or while paused — `readPosition()` does not
+   * extrapolate then, so there is nothing to compensate.
+   *
+   * Deliberately not applied to `_expectedAnchorPosition`: seek-staleness
+   * comparison is left on arrival time so this stays a fix to the extrapolation
+   * anchor alone and does not alter post-seek accept/reject behavior.
+   */
+  private _anchorTimeFor(now: number, sentAt?: number): number {
+    if (!this._isPlaying) return now;
+    if (typeof sentAt !== "number" || !Number.isFinite(sentAt) || sentAt <= 0) return now;
+    const latencyMs = now - sentAt;
+    if (latencyMs <= 0 || latencyMs > MAX_EVENT_LATENCY_MS) return now;
+    return sentAt;
   }
 
   commitSeek(requestId: number | null | undefined, position: number): number | null {
@@ -217,21 +276,33 @@ export class AudioTimelineSync {
     return this._position;
   }
 
-  private _applyAcceptedPosition(position: number, now: number, allowBackstep = false): void {
+  private _applyAcceptedPosition(
+    position: number,
+    now: number,
+    allowBackstep = false,
+    anchorAt = now,
+  ): void {
     let nextPosition = position;
+    let receivedAt = anchorAt;
 
     if (!allowBackstep && this._isPlaying && this._position > 0 && position < this._position) {
       const backstep = this._position - position;
       if (backstep > this._smoothingBackstepToleranceSeconds) {
+        // Rejected as a stale regression: re-anchor the *current* position at
+        // arrival time, since `this._position` is true now rather than at the
+        // rejected event's stamp.
         this._lastPositionEvent = { position: this._position, receivedAt: now };
         this._smoothedPosition = this._position;
         return;
       }
+      // Held at the current extrapolated value for the same reason — it is
+      // already current, so backdating it would advance the clock twice.
       nextPosition = this._position;
+      receivedAt = now;
     }
 
     this._position = nextPosition;
-    this._lastPositionEvent = { position: nextPosition, receivedAt: now };
+    this._lastPositionEvent = { position: nextPosition, receivedAt };
     this._smoothedPosition = nextPosition;
   }
 

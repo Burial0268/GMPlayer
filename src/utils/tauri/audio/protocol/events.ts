@@ -23,6 +23,17 @@ export interface AudioThreadEventMessage<T> {
    * legacy "no dedup" behavior in that case.
    */
   seq?: number;
+  /**
+   * Wall-clock ms (`Date.now()` domain) stamped by the Rust forwarder just
+   * before the envelope enters the transport. Position events describe the
+   * timeline at stamp time, so extrapolating consumers must subtract the
+   * delivery latency or the UI clock sits behind the audio by however long
+   * the envelope spent in the IPC queue.
+   *
+   * `0` (or missing) means unstamped — fall back to arrival time. The WASM
+   * backend leaves this unset because it has no transport hop.
+   */
+  sentAt?: number;
 }
 
 export interface AudioQuality {
@@ -233,4 +244,8 @@ export interface NowPlayingInfo {
   controls: SessionControls;
 }
 
-export type AudioThreadEventCallback = (event: AudioThreadEvent, seq?: number) => void;
+export type AudioThreadEventCallback = (
+  event: AudioThreadEvent,
+  seq?: number,
+  sentAt?: number,
+) => void;
