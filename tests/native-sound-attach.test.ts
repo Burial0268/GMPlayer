@@ -79,13 +79,17 @@ const statusFor = (snapshot: NativeSessionSnapshot, position: number): AudioThre
  * player loop being busy with a download. A `setPlaylist` is acknowledged with
  * the `loadAudio` the real backend would emit after restarting the track.
  */
-function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: number) {
+function environment(
+  snapshot: NativeSessionSnapshot | null,
+  statusDelayMs: number,
+  clock?: { now: number },
+) {
   const sent: AudioThreadMessage[] = [];
   let channel: { onmessage?: (envelope: AudioThreadEventMessage<AudioThreadEvent>) => void } | null =
     null;
   let seq = 0;
-  const emit = (data: AudioThreadEvent) => {
-    channel?.onmessage?.({ callbackId: "", data, seq: ++seq });
+  const emit = (data: AudioThreadEvent, sentAt?: number) => {
+    channel?.onmessage?.({ callbackId: "", data, seq: ++seq, sentAt });
   };
 
   class Channel {
@@ -149,6 +153,15 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
   };
 
   const module = { exports: {} as NativeRustSoundModule };
+  let dateGlobal: DateConstructor = Date;
+  if (clock) {
+    class ClockDate extends Date {
+      static override now(): number {
+        return clock.now;
+      }
+    }
+    dateGlobal = ClockDate;
+  }
   runInNewContext(bundled, {
     module,
     exports: module.exports,
@@ -156,7 +169,8 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
     window,
     setTimeout,
     clearTimeout,
-    Date,
+    queueMicrotask,
+    Date: dateGlobal,
     CustomEvent: class {
       constructor(
         public type: string,
@@ -225,6 +239,162 @@ test("a prompt status reply attaches as before", async () => {
   assert.deepEqual(env.restarts(), []);
   assert.equal(sound.playing(), true);
   assert.equal(env.sent.filter((msg) => msg.type === "syncStatus").length, 1);
+});
+
+const trackStatus = (
+  position: number,
+  isPlaying: boolean,
+  epoch = 13,
+): AudioThreadEvent => ({
+  type: "syncStatus",
+  data: {
+    musicId: `local:${sourceUrl}`,
+    musicInfo: {
+      name: "",
+      artist: "",
+      album: "",
+      lyric: "",
+      coverMediaType: "",
+      cover: null,
+      comment: "",
+      duration: 241.2,
+      position,
+    },
+    isPlaying,
+    duration: 241.2,
+    position,
+    volume: 1,
+    loadPosition: 0,
+    playlistInited: true,
+    playlist: [],
+    currentPlayIndex: 0,
+    quality: { bitrate: 320, sampleRate: 44100, channels: 2 },
+    identity,
+    timelineEpoch: epoch,
+  },
+});
+
+test("direct play anchors lyrics on the backend sample instead of a cold-start lead", async () => {
+  const clock = { now: 1_700_000_000_000 };
+  const env = environment(null, Infinity, clock);
+  const sound = new env.NativeRustSound(sourceUrl);
+  env.window.$player = sound;
+  const loading = sound.load(0);
+
+  // LoadAudio, then the same order the backend emits: PlayStatus, then the
+  // position snapshot. The lyric clock reads `seek()` in between.
+  await wait(30);
+  env.emit({ type: "playStatus", data: { isPlaying: true } });
+  clock.now += 500;
+  const lead = sound.seek() as number;
+  assert.ok(lead > 0.4, `wall clock should have run ahead, got ${lead}`);
+
+  env.emit(trackStatus(0.02, true), clock.now - 20);
+  const anchored = sound.seek() as number;
+  assert.ok(Math.abs(anchored - 0.02) < 1e-6, `start anchor ${anchored}`);
+
+  // Later heartbeats still follow the backend, including delivery compensation.
+  clock.now += 1_000;
+  env.emit(
+    { type: "playPosition", data: { position: 1.02, timelineEpoch: 13 } },
+    clock.now - 40,
+  );
+  const tracked = sound.seek() as number;
+  assert.ok(Math.abs(tracked - 1.06) < 1e-6, `tracked ${tracked}`);
+
+  // Pause adopts the backend position even when it disagrees, then resume
+  // extrapolates from that anchor rather than from the old lead.
+  sound.pause();
+  env.emit({ type: "playStatus", data: { isPlaying: false } });
+  env.emit({ type: "playPosition", data: { position: 1.2, timelineEpoch: 13 } });
+  assert.ok(Math.abs((sound.seek() as number) - 1.2) < 1e-6);
+
+  sound.play();
+  env.emit({ type: "playStatus", data: { isPlaying: true } });
+  clock.now += 500;
+  const resumed = sound.seek() as number;
+  assert.ok(Math.abs(resumed - 1.7) < 1e-6, `resumed ${resumed}`);
+
+  // Seek still ignores a packet from before the seek.
+  sound.seek(40);
+  clock.now += 200;
+  env.emit(
+    { type: "playPosition", data: { position: 1.9, timelineEpoch: 13 } },
+    clock.now - 50,
+  );
+  const afterSeek = sound.seek() as number;
+  assert.ok(Math.abs(afterSeek - 40.2) < 1e-6, `after seek ${afterSeek}`);
+
+  await loading;
+});
+
+test("a pre-play position zero does not spend the start anchor", async () => {
+  const clock = { now: 1_700_000_000_000 };
+  const env = environment(null, Infinity, clock);
+  const sound = new env.NativeRustSound(sourceUrl);
+  env.window.$player = sound;
+  const loading = sound.load(0);
+  await wait(30);
+
+  // Published while the output is still paused for prebuffer. Playback has
+  // not started on this side, so this must not be the anchor that sticks.
+  env.emit({ type: "playPosition", data: { position: 0, timelineEpoch: 13 } });
+  env.emit({ type: "playStatus", data: { isPlaying: true } });
+  clock.now += 500;
+  assert.ok((sound.seek() as number) > 0.4);
+
+  env.emit({ type: "playPosition", data: { position: 0.02, timelineEpoch: 13 } });
+  assert.ok(Math.abs((sound.seek() as number) - 0.02) < 1e-6, `late anchor ${sound.seek()}`);
+
+  await loading;
+});
+
+test("a small cold-start lead is snapped instead of held for the rest of the track", async () => {
+  const clock = { now: 1_700_000_000_000 };
+  const env = environment(null, Infinity, clock);
+  const sound = new env.NativeRustSound(sourceUrl);
+  env.window.$player = sound;
+  const loading = sound.load(0);
+  await wait(30);
+
+  env.emit({ type: "playStatus", data: { isPlaying: true } });
+  clock.now += 80;
+  assert.ok(Math.abs((sound.seek() as number) - 0.08) < 1e-6);
+
+  // 60ms behind the lyric clock: inside the smoother's hold, which used to
+  // freeze the lead until pause. The start anchor takes the backend sample.
+  env.emit(
+    { type: "playPosition", data: { position: 0.02, timelineEpoch: 13 } },
+    clock.now,
+  );
+  assert.ok(Math.abs((sound.seek() as number) - 0.02) < 1e-6, `held lead ${sound.seek()}`);
+
+  await loading;
+});
+
+test("startup resume keeps a saved position when the first sample is still zero", async () => {
+  const clock = { now: 1_700_000_000_000 };
+  const env = environment(null, Infinity, clock);
+  const sound = new env.NativeRustSound(sourceUrl);
+  env.window.$player = sound;
+  const loading = sound.load(30);
+  await wait(30);
+
+  env.emit({ type: "playStatus", data: { isPlaying: true } });
+  clock.now += 500;
+  const lead = sound.seek() as number;
+  assert.ok(Math.abs(lead - 30.5) < 1e-6, `resume lead ${lead}`);
+
+  env.emit({ type: "playPosition", data: { position: 0, timelineEpoch: 13 } });
+  assert.ok(
+    Math.abs((sound.seek() as number) - 30.5) < 1e-6,
+    `pre-seek zero moved the resume clock to ${sound.seek()}`,
+  );
+
+  env.emit(trackStatus(30.02, true));
+  assert.ok(Math.abs((sound.seek() as number) - 30.02) < 1e-6, `resume anchor ${sound.seek()}`);
+
+  await loading;
 });
 
 test("a backend on another track is not adopted and the track loads normally", async () => {

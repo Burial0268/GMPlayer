@@ -220,6 +220,21 @@ export class NativeRustSound implements ISound {
   /** Identity to match when attaching to an already-playing backend track. */
   private _attachIdentity: TrackIdentity | null = null;
   private _backendTrackReady: boolean = false;
+  /**
+   * A frontend-requested load has recorded its epoch but has not yet taken
+   * the backend's position. Cleared by the first anchor that actually lands
+   * (`_beginTrackTimeline` / a successful `_adoptStartAnchor`).
+   *
+   * `LoadAudio` for a load this side asked for does not change the epoch from
+   * the controller's point of view — the first observation is not a change,
+   * and it is recorded before `SyncStatus` — so the status that follows is
+   * reconciled as an intra-track update. `PlayStatus` has already started
+   * wall-clock extrapolation by then. The playing backstep smoother holds or
+   * rejects a backend sample behind that clock, and the lead stays until a
+   * pause or a seek adopts a position verbatim. Lyrics read this clock, so
+   * they drift for the whole track.
+   */
+  private _pendingStartAnchor: boolean = false;
   private _nextLoadRequestId: number = 0;
   private _nextSeekRequestId: number = 0;
   /** True once a queue window has been applied to the backend: track-end
@@ -325,6 +340,7 @@ export class NativeRustSound implements ISound {
 
     const initPos = this._normalizeSeekPosition(initialPosition ?? 0);
     this._backendTrackReady = false;
+    this._pendingStartAnchor = false;
     this._timeline.reset(initPos);
     this._attachIdentity = options?.attachIdentity ?? null;
 
@@ -544,6 +560,7 @@ export class NativeRustSound implements ISound {
     this._adoptNextBackendMusicId = false;
     this._nativeAutoMixSyncPending = false;
     this._backendTrackReady = false;
+    this._pendingStartAnchor = false;
     this._loaded = false;
 
     // Let an in-flight load() unwind without emitting a late load event.
@@ -648,9 +665,20 @@ export class NativeRustSound implements ISound {
         const backendTrackChanged =
           timelineChanged || adoptedBackendTrack || this._isBackendTrackChange(d.identity);
         const pendingNativeAutoMixIndex = this._state.currentPlayIndex;
-        const acceptedPosition = backendTrackChanged
-          ? this._beginTrackTimeline(d.position, d.duration)
-          : this._acceptIncomingPosition(this._coerceIncomingPosition(d.position), sentAt);
+        // A frontend-requested load still owes its start anchor. Track-change
+        // adoption already hard-anchors; this is the direct-play case, where
+        // the epoch was recorded by `LoadAudio` and no longer looks new.
+        const incoming = this._coerceIncomingPosition(d.position);
+        let acceptedPosition: number;
+        if (backendTrackChanged) {
+          acceptedPosition = this._beginTrackTimeline(d.position, d.duration);
+        } else if (this._shouldAdoptStartAnchor()) {
+          acceptedPosition =
+            this._adoptStartAnchor(d.position, d.duration) ??
+            this._acceptIncomingPosition(incoming, sentAt);
+        } else {
+          acceptedPosition = this._acceptIncomingPosition(incoming, sentAt);
+        }
         this._state = {
           musicId: d.musicId,
           position: acceptedPosition,
@@ -753,6 +781,13 @@ export class NativeRustSound implements ISound {
             // the decoder behind it (output-device rebuild). No store adoption
             // is due, but the clock still has to follow the new anchor.
             this._beginTrackTimeline(evt.data.musicInfo.position, evt.data.musicInfo.duration);
+          } else {
+            // Asked for by this controller. `musicInfo.position` is the anchor
+            // taken while the output is still paused for prebuffer, so it is
+            // not adopted here — `PlayStatus` is about to start the wall clock,
+            // and the first position snapshot after the output is running is
+            // the one that has to win (`_pendingStartAnchor`).
+            this._pendingStartAnchor = true;
           }
         }
         break;
@@ -772,7 +807,14 @@ export class NativeRustSound implements ISound {
         // Authoritative, but only about the timeline it names. One that is not
         // ours belongs to a track the load/status behind it will anchor us to.
         if (this._isForeignTimeline(evt.data.timelineEpoch)) break;
-        this._acceptIncomingPosition(this._coerceIncomingPosition(evt.data.position), sentAt);
+        const position = this._coerceIncomingPosition(evt.data.position);
+        if (
+          this._shouldAdoptStartAnchor() &&
+          this._adoptStartAnchor(position, this.duration()) !== null
+        ) {
+          break;
+        }
+        this._acceptIncomingPosition(position, sentAt);
         break;
       }
 
@@ -1107,6 +1149,43 @@ export class NativeRustSound implements ISound {
   }
 
   /**
+   * Whether the outstanding start anchor should be taken from this sample.
+   *
+   * Not while stopped. The backend publishes position 0 before the output is
+   * unpaused, and that packet can arrive after `LoadAudio` has raised the
+   * flag. Adopting it would spend the one shot on a clock that is not running
+   * yet; `PlayStatus` then starts wall-clock extrapolation and the smoother
+   * freezes the lead. Wait until this side is actually playing.
+   */
+  private _shouldAdoptStartAnchor(): boolean {
+    return (
+      this._pendingStartAnchor &&
+      (this._playbackState === "playing" || this._pendingPlayCommand)
+    );
+  }
+
+  /**
+   * Hard-anchor a frontend-requested load on the first backend sample that
+   * the resume seek-guard will accept.
+   *
+   * Returns null when that guard still owns the clock (a saved resume position
+   * waiting out a pre-seek `0`). The pending flag stays set so the next sample
+   * can still snap — falling through to the playing smoother is what froze the
+   * cold-start lead.
+   */
+  private _adoptStartAnchor(position: number, duration: number): number | null {
+    this._syncTimelineClock();
+    const nextDuration = duration > 0 ? duration : this.duration();
+    const anchored =
+      nextDuration > 0
+        ? this._timeline.adoptPlaybackAnchor(position, nextDuration)
+        : this._timeline.adoptPlaybackAnchor(position);
+    if (anchored === null) return null;
+    this._pendingStartAnchor = false;
+    return this._applyTimelinePosition(anchored);
+  }
+
+  /**
    * Hard-anchor the local clock on a track the backend has just loaded.
    *
    * The backend owns the timeline; this side extrapolates between its anchors.
@@ -1119,6 +1198,7 @@ export class NativeRustSound implements ISound {
     const nextDuration = duration > 0 ? duration : this.duration();
     if (nextDuration > 0) this._state.duration = nextDuration;
     this._syncTimelineClock();
+    this._pendingStartAnchor = false;
     // A zero is the absence of an answer rather than one — a republished-empty
     // `musicInfo` must not blank the total the timeline already holds, or the UI
     // shows 0:00 while the position keeps ticking.

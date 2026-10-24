@@ -121,6 +121,38 @@ export class AudioTimelineSync {
     return this._position;
   }
 
+  /**
+   * Take the backend position for a playback that has just started.
+   *
+   * `beginTrack` for a load this side requested. The playing backstep smoother
+   * must not see that first sample: wall-clock extrapolation often starts
+   * (PlayStatus) before the backend's anchor arrives, and a lead inside the
+   * smoother is then held for the whole track. Pause and seek already adopt
+   * the backend position outright; this is the same adopt for the start.
+   *
+   * An active seek guard still wins. Startup autoresume parks the saved
+   * position behind that guard before the backend has published it, and the
+   * pre-seek snapshot is a `0` that must not wipe the saved spot. `null` means
+   * the packet was left for the guard — the caller keeps waiting for a sample
+   * the guard will accept.
+   *
+   * Deliberately not `sentAt`-compensated. The anchor is taken at arrival, the
+   * same way a pause sample is, so a stamp from before the output was running
+   * cannot start the lyric clock in the past. Later heartbeats still go
+   * through `acceptIncomingPosition`.
+   */
+  adoptPlaybackAnchor(position: number, duration?: number): number | null {
+    const now = this._nowMs();
+    const nextPosition = this._normalizePosition(position);
+    const anchor = this._pendingSeekAnchor;
+    if (anchor && now < anchor.guardUntil) {
+      const expected = this._expectedAnchorPosition(anchor, now);
+      if (this._isStaleAgainstSeek(anchor, nextPosition, expected)) return null;
+    }
+    if (duration === undefined || !(duration > 0)) return this.beginTrack(nextPosition);
+    return this.beginTrack(nextPosition, duration);
+  }
+
   setPlaybackState(isPlaying: boolean, pendingPlayCommand = false): void {
     const changed =
       this._isPlaying !== isPlaying || this._pendingPlayCommand !== pendingPlayCommand;
