@@ -44,6 +44,7 @@ const decoded = ref(false);
 const failed = ref(false);
 const revealed = ref(false);
 const imageProps = computed(() => ({
+  alt: "",
   "data-navigation-artwork": "",
   "data-navigation-shared-image": "",
   style: { opacity: revealed.value ? 1 : 0 },

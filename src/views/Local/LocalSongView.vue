@@ -24,6 +24,7 @@
           <n-image
             show-toolbar-tooltip
             class="coverImg"
+            :alt="view?.title || view?.displayName"
             :src="coverUrl"
             :previewed-img-props="{ style: { borderRadius: 'var(--radius-md)' } }"
             :preview-src="coverUrl"
@@ -31,6 +32,7 @@
           />
           <n-image
             class="shadow"
+            :img-props="{ alt: '' }"
             preview-disabled
             :src="coverUrl"
             fallback-src="/images/pic/default.png"
