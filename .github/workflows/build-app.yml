@@ -193,9 +193,18 @@ jobs:
         shell: bash
 
       - name: 安装 wasm-pack
+        if: runner.os != 'Linux'
         uses: jetli/wasm-pack-action@v0.4.0
         with:
           version: "v0.13.1"
+
+      # jetli/wasm-pack-action 先解压到 /tmp 再 rename 到 ~/.cargo/bin；ubuntu-26.04 上两者跨设备，报 EXDEV
+      - name: 安装 wasm-pack (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
+            | tar xz --strip-components=1 -C "$RUNNER_TEMP" wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: 安装依赖 (包含子依赖和 WASM)
         run: |
@@ -335,10 +344,12 @@ jobs:
           toolchain: stable
           targets: "x86_64-unknown-linux-gnu,x86_64-linux-android,i686-linux-android,aarch64-linux-android,arm-linux-androideabi,armv7-linux-androideabi,thumbv7neon-linux-androideabi"
 
+      # jetli/wasm-pack-action 先解压到 /tmp 再 rename 到 ~/.cargo/bin；ubuntu-26.04 上两者跨设备，报 EXDEV
       - name: 安装 wasm-pack
-        uses: jetli/wasm-pack-action@v0.4.0
-        with:
-          version: "v0.13.1"
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
+            | tar xz --strip-components=1 -C "$RUNNER_TEMP" wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: 安装 wasm32 目标
         run: rustup target add wasm32-unknown-unknown
