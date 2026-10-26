@@ -1,10 +1,11 @@
 <template>
-  <div v-if="visible" class="mini-cover-frame" :style="frameStyle" @click="$emit('click')">
+  <div v-if="visible" v-button class="mini-cover-frame" :style="frameStyle" @click="$emit('click')">
     <img :src="coverUrl" alt="cover" />
   </div>
 </template>
 
 <script setup lang="ts">
+import { vButton } from "@/utils/buttonRole";
 defineProps<{
   visible: boolean;
   frameStyle: Record<string, string>;

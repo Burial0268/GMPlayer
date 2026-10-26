@@ -19,10 +19,8 @@ import {
   clearNativeManifest,
   publishSessionControls,
 } from "@/utils/AudioContext";
-import {
-  NativeRustSound,
-  isAudioBackendRuntimeAvailable,
-} from "@/utils/tauri/audio/nativeRustSound";
+import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
+import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";
 import getLanguageData from "@/utils/getLanguageData";
 import {
   likedPlaylistId,

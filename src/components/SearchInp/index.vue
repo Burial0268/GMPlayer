@@ -104,7 +104,7 @@
                     @click="toSearch(item, 0)"
                   />
                 </n-space>
-                <div class="del" @click="delHistory">
+                <div v-button class="del" @click="delHistory">
                   <n-icon size="16" :depth="3">
                     <DeleteFour theme="filled" />
                   </n-icon>
@@ -244,6 +244,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { animateMini } from "motion-v";
 import { getSearchHot, getSearchSuggest } from "@/api/search";

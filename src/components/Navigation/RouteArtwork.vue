@@ -19,7 +19,9 @@ import { layerMotion } from "@/utils/navigation/motion";
 
 const root = ref<HTMLElement>();
 const ready = ref(false);
+// NImage 写的是 `alt || imgProps.alt`，空串会被它吃掉，装饰图的空 alt 只能从 imgProps 进。
 const imageProps: ImgHTMLAttributes & { "data-navigation-artwork": string } = {
+  alt: "",
   "data-navigation-artwork": "",
 };
 

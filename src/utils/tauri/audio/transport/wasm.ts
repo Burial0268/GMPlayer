@@ -23,12 +23,6 @@ const WASM_WORKER_POSITION_SYNC_INTERVAL_MS = 1000;
 
 export type { AudioBackendTransport } from "./types";
 
-export function isWasmAudioBackendAvailable(): boolean {
-  return (
-    typeof window !== "undefined" && typeof Audio !== "undefined" && typeof Worker !== "undefined"
-  );
-}
-
 class TauriInvokeAudioIpc implements AudioBackendTransport {
   private _listeners: Set<AudioThreadEventCallback> = new Set();
   private _unlisten: (() => void) | null = null;

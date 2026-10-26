@@ -2,7 +2,7 @@
   <Transition mode="out-in" :css="animated">
     <n-card v-if="Object.keys(commentData).length" class="comment" hoverable>
       <div class="user">
-        <div class="avatar" @click="goToUser(commentData.user.userId)">
+        <div v-button class="avatar" @click="goToUser(commentData.user.userId)">
           <img
             class="avatarImg"
             :src="commentData.user.avatarUrl.replace(/^http:/, 'https:') + '?param=50y50'"
@@ -69,6 +69,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import { getCommentTime, formatNumber } from "@/utils/timeTools";
 import { Local, Time, ThumbsUp } from "@icon-park/vue-next";
 import { userStore } from "@/store";

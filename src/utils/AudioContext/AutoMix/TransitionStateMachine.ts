@@ -38,7 +38,7 @@ import {
 import { resolveSongUrl } from "../resolveSongUrl";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
 import { audioSendMsg } from "../../tauri/audio/bridge";
-import { isTauri } from "../../tauri/core/runtime";
+import { isNativeAudioBackendAvailable } from "../../tauri/audio/backendRuntime";
 import type { AudioThreadEvent } from "../../tauri/audio/protocol";
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
@@ -53,6 +53,10 @@ import type {
 } from "./types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
+
+/** 只有后端驱动的 sound 带 `getSourceUrl`（BufferedSound 走 blob URL）。 */
+const soundSourceUrl = (sound: ISound | null): string | null =>
+  (sound as { getSourceUrl?: () => string | null } | null)?.getSourceUrl?.() ?? null;
 
 /** Seconds before expected crossfade to start pre-analysis */
 const PREPARE_AHEAD = 13;
@@ -480,7 +484,7 @@ export class TransitionStateMachine {
 
   private _isNativeAutoMixSound(sound: ISound | null): boolean {
     return (
-      isTauri() &&
+      isNativeAudioBackendAvailable() &&
       !!sound &&
       typeof (sound as { getSourceUrl?: () => string | null }).getSourceUrl === "function"
     );
@@ -887,11 +891,7 @@ export class TransitionStateMachine {
     if (sound instanceof BufferedSound) {
       return sound.getBlobUrl();
     }
-    const sourceUrl = (sound as { getSourceUrl?: () => string | null }).getSourceUrl?.();
-    if (sourceUrl) {
-      return sourceUrl;
-    }
-    return null;
+    return soundSourceUrl(sound) || null;
   }
 
   // ─── Crossfade parameter computation ───────────────────────────
@@ -2081,7 +2081,7 @@ export class TransitionStateMachine {
     this._nativeNextIndex = -1;
     this._nativeHandoffHoldUntil = 0;
     this._clearTransition();
-    if (isTauri()) {
+    if (isNativeAudioBackendAvailable()) {
       try {
         getAudioBackendTransport().sendOrQueue({ type: "automixCancel" });
       } catch {
@@ -2252,11 +2252,7 @@ export class TransitionStateMachine {
       return;
     }
 
-    if (
-      this._enabled &&
-      (sound instanceof BufferedSound ||
-        !!(sound as { getSourceUrl?: () => string | null }).getSourceUrl?.())
-    ) {
+    if (this._enabled && (sound instanceof BufferedSound || !!soundSourceUrl(sound))) {
       this._preAnalyzeTrack(sound, songId);
       this._startWebPreBuffer();
     }

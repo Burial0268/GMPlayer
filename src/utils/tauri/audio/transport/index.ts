@@ -7,13 +7,6 @@ export type { AudioBackendTransport } from "./types";
 
 declare const __GMPLAYER_TAURI_BUILD__: boolean;
 
-export function isWasmAudioBackendAvailable(): boolean {
-  if (__GMPLAYER_TAURI_BUILD__ || isTauri()) return false;
-  return (
-    typeof window !== "undefined" && typeof Audio !== "undefined" && typeof Worker !== "undefined"
-  );
-}
-
 class LazyWasmAudioBackendTransport implements AudioBackendTransport {
   private _impl: AudioBackendTransport | null = null;
   private _loadPromise: Promise<AudioBackendTransport> | null = null;

@@ -434,7 +434,6 @@ onBeforeUnmount(cancelCommentsReady);
   &:focus-visible {
     opacity: 1;
     background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
-    outline: none;
   }
 
   &:active {
@@ -495,7 +494,6 @@ onBeforeUnmount(cancelCommentsReady);
     &:focus-visible,
     &.active {
       opacity: 0.94;
-      outline: none;
     }
 
     &.active::after {
@@ -700,7 +698,6 @@ onBeforeUnmount(cancelCommentsReady);
   &:focus-visible {
     opacity: 1;
     background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
-    outline: none;
   }
 }
 

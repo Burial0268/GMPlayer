@@ -236,7 +236,6 @@ onBeforeUnmount(() => {
     opacity: 1;
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.2);
-    outline: none;
   }
 }
 
@@ -455,7 +454,6 @@ onBeforeUnmount(() => {
   &:focus-visible {
     background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
     border-color: color-mix(in srgb, var(--main-cover-color) 32%, transparent);
-    outline: none;
   }
 
   &:active {

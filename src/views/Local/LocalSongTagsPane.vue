@@ -5,7 +5,13 @@
     </n-alert>
 
     <div class="cover-row">
-      <n-image class="thumb" preview-disabled :src="coverSrc" :fallback-src="DEFAULT_COVER" />
+      <n-image
+        class="thumb"
+        :img-props="{ alt: '' }"
+        preview-disabled
+        :src="coverSrc"
+        :fallback-src="DEFAULT_COVER"
+      />
       <div class="cover-meta">
         <div class="cover-status">
           <n-tag round :bordered="false" :type="coverTagType">{{ coverLabel }}</n-tag>

@@ -385,7 +385,7 @@
                 <AllArtists class="text-hidden" :artistsData="drawerData.artist" />
               </n-text>
             </div>
-            <div class="item info-item" @click="jumpLink(drawerData.album?.id, 10)">
+            <div v-button class="item info-item" @click="jumpLink(drawerData.album?.id, 10)">
               <n-icon size="20">
                 <RecordDisc theme="filled" />
               </n-icon>
@@ -490,6 +490,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 // `h` 显式引入而不靠 auto-import：unimport 只要在文件的**任意作用域**里看到一个同名
 // 声明，就认定该名字已存在、整个模块都不再注入它。这里的 `h` 只在右键菜单的
 // `renderIcon` 里用到，缺了它编译期无声无息，只有右键那一刻才 ReferenceError。
