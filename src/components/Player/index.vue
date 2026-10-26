@@ -14,7 +14,13 @@
         <MiniPlayerProgress />
         <div class="all">
           <div class="data">
-            <div class="pic" data-mobile-player-artwork @click.stop="handleMiniArtworkClick">
+            <div
+              v-button
+              class="pic"
+              data-mobile-player-artwork
+              :aria-label="music.getPlaySongData?.name"
+              @click.stop="handleMiniArtworkClick"
+            >
               <img
                 :src="coverUrl(music.getPlaySongData?.album?.picUrl, 50)"
                 decoding="async"
@@ -22,7 +28,7 @@
               />
             </div>
             <div class="name">
-              <div class="song text-hidden" @click.stop="openSongDetail">
+              <div v-button class="song text-hidden" @click.stop="openSongDetail">
                 {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
               </div>
               <!-- 显示歌手或歌词 -->
@@ -256,6 +262,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import { getMusicDetail } from "@/api/song";
 import { resolveSongUrl } from "@/utils/AudioContext/resolveSongUrl";
 import { Motion, AnimatePresence, LayoutGroup } from "motion-v";

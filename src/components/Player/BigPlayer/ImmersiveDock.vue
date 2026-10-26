@@ -11,7 +11,7 @@
           </span>
           <span v-if="artistList.length" class="dock-artists text-hidden">
             <template v-for="(ar, index) in artistList" :key="ar.id">
-              <span class="artist-name" @click="routerJump('/artist', { id: ar.id })">
+              <span v-button class="artist-name" @click="routerJump('/artist', { id: ar.id })">
                 {{ ar.name }}
               </span>
               <span v-if="index < artistList.length - 1"> / </span>
@@ -133,6 +133,7 @@
 </template>
 
 <script setup lang="ts">
+import { vButton } from "@/utils/buttonRole";
 import {
   ClosedCaptionRound,
   MessageRound,
