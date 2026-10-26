@@ -307,11 +307,8 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { debounce } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
-import {
-  NativeRustSound,
-  isAudioBackendRuntimeAvailable,
-  announceNativeTrack,
-} from "@/utils/tauri/audio/nativeRustSound";
+import { NativeRustSound, announceNativeTrack } from "@/utils/tauri/audio/nativeRustSound";
+import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";
 import {
   toTrackDisplay,
   publishNativeManifest,

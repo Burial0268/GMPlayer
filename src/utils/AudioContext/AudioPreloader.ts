@@ -13,7 +13,7 @@
 import { BufferedSound } from "./BufferedSound";
 import { resolveSongUrl } from "./resolveSongUrl";
 import { getAutoMixEngine } from "./AutoMix";
-import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/nativeRustSound";
+import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";
 // Import store directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 

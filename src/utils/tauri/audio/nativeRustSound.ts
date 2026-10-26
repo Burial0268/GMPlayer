@@ -32,11 +32,8 @@ import type {
   TrackDisplay,
   TrackIdentity,
 } from "./protocol";
-import {
-  getAudioBackendTransport,
-  isWasmAudioBackendAvailable,
-  type AudioBackendTransport,
-} from "./transport";
+import { getAudioBackendTransport, type AudioBackendTransport } from "./transport";
+import { isAudioBackendRuntimeAvailable } from "./backendRuntime";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 const LOAD_TIMEOUT_MS = 10_000;
@@ -86,10 +83,6 @@ interface LocalState {
 
 type EventMap = Record<string, SoundEventCallback[]>;
 
-export function isNativeAudioBackendAvailable(): boolean {
-  return isTauri();
-}
-
 /**
  * Tell the backend which track is about to load, before its URL is resolved.
  *
@@ -112,10 +105,6 @@ export function announceNativeTrack(
   } catch (err) {
     if (IS_DEV) console.warn("[NativeRustSound] announce failed", err);
   }
-}
-
-export function isAudioBackendRuntimeAvailable(): boolean {
-  return isTauri() || isWasmAudioBackendAvailable();
 }
 
 /** Resolved/rejected when the load completes — or rejected on timeout. */
