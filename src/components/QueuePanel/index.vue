@@ -247,7 +247,6 @@ defineExpose({ scrollToCurrent });
   &:focus-visible {
     color: var(--n-text-color);
     background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
-    outline: none;
   }
 }
 
@@ -395,7 +394,6 @@ defineExpose({ scrollToCurrent });
   &:hover,
   &:focus-visible {
     background-color: color-mix(in srgb, var(--main-color) 18%, transparent);
-    outline: none;
   }
 
   &:active {

@@ -144,7 +144,6 @@ onBeforeUnmount(() => {
   min-height: 30px;
   padding: 0;
   border: none;
-  outline: none;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -163,6 +162,12 @@ onBeforeUnmount(() => {
 
   &:active {
     background-color: color-mix(in srgb, currentColor 18%, transparent);
+  }
+
+  // 贴着窗口边缘，环画在按钮里面，免得被裁掉。
+  &:focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: -2px;
   }
 
   &.close:hover {
