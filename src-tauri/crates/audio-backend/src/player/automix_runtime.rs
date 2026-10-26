@@ -3,6 +3,7 @@
 //! The AutoMix *state machine* itself lives in `super::automix`.
 
 use std::path::Path;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -20,13 +21,16 @@ use super::{AudioPlayer, PlaybackIntent};
 impl AudioPlayer {
     pub(super) fn spawn_automix_prepare_task(&self, request: automix::AutoMixPrepareRequest) {
         let tx = self.automix_prepare_tx.clone();
+        let live = Arc::clone(&self.automix_prepare_generation);
         tokio::spawn(async move {
             let generation = request.generation;
             let transition_id = request.transition_id;
             let current_index = request.current_index;
             let current_id = request.current_id.clone();
-            let task =
-                tokio::task::spawn_blocking(move || automix::run_prepare_request_blocking(request));
+            let cancel = automix::PrepareCancel::new(live, generation);
+            let task = tokio::task::spawn_blocking(move || {
+                automix::run_prepare_request_blocking(request, &cancel)
+            });
             let result = match tokio::time::timeout(Duration::from_secs(60), task).await {
                 Ok(Ok(result)) => result,
                 Ok(Err(err)) => automix::AutoMixPrepareResult {
@@ -52,7 +56,7 @@ impl AudioPlayer {
         &mut self,
         result: automix::AutoMixPrepareResult,
     ) {
-        if result.generation != self.automix_prepare_generation {
+        if result.generation != self.automix_prepare_generation.load(Ordering::Acquire) {
             return;
         }
 

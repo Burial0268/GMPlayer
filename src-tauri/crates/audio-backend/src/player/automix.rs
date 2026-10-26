@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tracing::{info, warn};
 
@@ -75,6 +76,26 @@ pub(super) struct AutoMixPrepareRequest {
     pub next_song: SongData,
     pub config: AutoMixConfig,
 }
+
+/// Tells a blocking prepare it was superseded. The task cannot be aborted, so
+/// it polls this at its checkpoints and stops decoding instead of finishing a
+/// track nobody will use.
+pub(super) struct PrepareCancel {
+    live: Arc<AtomicU64>,
+    generation: u64,
+}
+
+impl PrepareCancel {
+    pub(super) fn new(live: Arc<AtomicU64>, generation: u64) -> Self {
+        Self { live, generation }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.live.load(Ordering::Acquire) != self.generation
+    }
+}
+
+const SUPERSEDED: &str = "AutoMix prepare superseded";
 
 pub(super) struct AutoMixPrepareResult {
     pub generation: u64,
@@ -345,7 +366,10 @@ impl AutoMixManager {
     }
 }
 
-pub(super) fn run_prepare_request_blocking(request: AutoMixPrepareRequest) -> AutoMixPrepareResult {
+pub(super) fn run_prepare_request_blocking(
+    request: AutoMixPrepareRequest,
+    cancel: &PrepareCancel,
+) -> AutoMixPrepareResult {
     let AutoMixPrepareRequest {
         generation,
         transition_id,
@@ -358,12 +382,18 @@ pub(super) fn run_prepare_request_blocking(request: AutoMixPrepareRequest) -> Au
         config,
     } = request;
 
-    let result = prepare_track_blocking(config, current_duration, current_source_path, next_song)
-        .map(|mut prepared| {
-            prepared.next_index = next_index;
-            prepared.transition_id = transition_id;
-            prepared
-        });
+    let result = prepare_track_blocking(
+        config,
+        current_duration,
+        current_source_path,
+        next_song,
+        cancel,
+    )
+    .map(|mut prepared| {
+        prepared.next_index = next_index;
+        prepared.transition_id = transition_id;
+        prepared
+    });
 
     AutoMixPrepareResult {
         generation,
@@ -379,6 +409,7 @@ fn prepare_track_blocking(
     current_duration: Option<f64>,
     current_source_path: Option<PathBuf>,
     next_song: SongData,
+    cancel: &PrepareCancel,
 ) -> Result<PreparedTrack, String> {
     let source = next_song
         .file_path()
@@ -386,6 +417,9 @@ fn prepare_track_blocking(
         .to_string();
 
     let (local_path, temp_file) = resolve_source_to_local_path(&source)?;
+    if cancel.is_cancelled() {
+        return Err(SUPERSEDED.into());
+    }
     let audio_info = decoder::symphonia::extract_metadata_only(&local_path)
         .map_err(|e| format!("read next track metadata: {e}"))?;
     let display_info = build_display_info(&audio_info, &source);
@@ -406,15 +440,18 @@ fn prepare_track_blocking(
     let analyze_current_bpm = config.beat_align;
     let current_analysis = current_source_path
         .as_deref()
-        .and_then(|path| analyze_cached("current", path, analyze_current_bpm));
+        .and_then(|path| analyze_cached("current", path, analyze_current_bpm, cancel));
     // Analyze with the same BPM policy as a "current" track so this result can be
     // reused straight from the cache when the next track later becomes current,
     // avoiding a second full decode of the same file.
     let next_analysis = if config.volume_norm || config.smart_curve || config.emotional_transition {
-        analyze_cached("next", &local_path, analyze_current_bpm)
+        analyze_cached("next", &local_path, analyze_current_bpm, cancel)
     } else {
         None
     };
+    if cancel.is_cancelled() {
+        return Err(SUPERSEDED.into());
+    }
     let plan = current_duration.map(|duration| {
         build_analysis_backed_plan(
             &config,
@@ -471,13 +508,28 @@ fn build_time_based_plan(config: &AutoMixConfig, current_duration: f64) -> Cross
     }
 }
 
+/// One full-track decode at a time. Every skip starts another prepare, and a
+/// superseded one used to keep its ~40 MB PCM buffer while the new one built
+/// its own; queuing here lets the old one see its cancel flag and leave first.
+fn analysis_gate() -> &'static Mutex<()> {
+    static GATE: OnceLock<Mutex<()>> = OnceLock::new();
+    GATE.get_or_init(|| Mutex::new(()))
+}
+
 fn analyze_optional(
     label: &str,
     path: &Path,
     analyze_bpm: bool,
+    cancel: &PrepareCancel,
 ) -> Option<automix_analysis::TrackAnalysis> {
-    match automix_analysis::analyze_audio_file(path, analyze_bpm) {
+    let _gate = analysis_gate().lock().unwrap_or_else(|e| e.into_inner());
+    if cancel.is_cancelled() {
+        return None;
+    }
+    match automix_analysis::analyze_audio_file_until(path, analyze_bpm, &|| cancel.is_cancelled())
+    {
         Ok(analysis) => Some(analysis),
+        Err(_) if cancel.is_cancelled() => None,
         Err(err) => {
             warn!("AutoMix {label} analysis failed: {err}");
             None
@@ -528,6 +580,7 @@ fn analyze_cached(
     label: &str,
     path: &Path,
     analyze_bpm: bool,
+    cancel: &PrepareCancel,
 ) -> Option<automix_analysis::TrackAnalysis> {
     let key = analysis_cache_key(path);
 
@@ -539,7 +592,7 @@ fn analyze_cached(
         }
     }
 
-    let analysis = analyze_optional(label, path, analyze_bpm)?;
+    let analysis = analyze_optional(label, path, analyze_bpm, cancel)?;
 
     if let Ok(mut cache) = analysis_cache().lock() {
         cache.retain(|entry| entry.key != key);

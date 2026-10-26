@@ -229,7 +229,7 @@ impl AudioPlayer {
 
         if clear_sink {
             self.cancel_pending_output_refresh();
-            self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
+            self.bump_automix_prepare_gen();
             if let Some(handle) = self.current_decoder_handle.take() {
                 handle.stop();
             }
