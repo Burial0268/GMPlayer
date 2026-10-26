@@ -456,9 +456,9 @@
       <component :is="AddPlaylistComponent" v-if="AddPlaylistComponent" ref="addPlayListRef" />
       <component :is="DownloadSongComponent" v-if="DownloadSongComponent" ref="downloadSongRef" />
       <!--
-        定位到正在播放。和 App.vue 的 BackTop 同一列、叠在它正上方，所以同样 teleport 到
-        body（页面转场的 transform 会让 fixed 相对转场层定位），落点读同一组 :root 令牌。
-        页面被 keep-alive 收起时 stopLocateTracking 会把它收掉。
+        定位到正在播放。和 App.vue 的 BackTop 同一列：BackTop 显示时叠在它上面，不显示时
+        落进它的位置。同样 teleport 到 body（页面转场的 transform 会让 fixed 相对转场层
+        定位），落点读同一组 :root 令牌。页面被 keep-alive 收起时 stopLocateTracking 会把它收掉。
       -->
       <Teleport to="body">
         <AnimatePresence :initial="false">
@@ -467,7 +467,8 @@
             key="locate-pill"
             as="button"
             type="button"
-            :class="['locate-pill', { 'with-player': hasPlayBar }]"
+            :class="['locate-pill', { 'with-player': hasPlayBar, stacked: backTopShown }]"
+            :style="pillColors"
             :title="$t('player.queue.locate')"
             :aria-label="$t('player.queue.locate')"
             :initial="pillHidden"
@@ -477,8 +478,8 @@
             :aria-busy="locating"
             @click="locatePlaying"
           >
-            <n-spin v-if="locating" :size="16" />
-            <n-icon v-else :size="20" :component="Aiming" />
+            <n-spin v-if="locating" :size="20" />
+            <n-icon v-else :size="26" :component="Aiming" />
           </Motion>
         </AnimatePresence>
       </Teleport>
@@ -515,7 +516,7 @@ import { localPlaylistAddTracks } from "@/utils/localLibrary";
 import { coverUrl } from "@/utils/coverUrl";
 import { useRouter } from "vue-router";
 import { setCloudDel } from "@/api/user";
-import { NIcon, NVirtualList } from "naive-ui";
+import { NIcon, NVirtualList, useThemeVars } from "naive-ui";
 import { soundStop } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
@@ -523,6 +524,7 @@ import SmallSongData from "./SmallSongData.vue";
 import { Motion, AnimatePresence } from "motion-v";
 import { miuixSpring, withReducedMotion } from "@/utils/motion/springs";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { backTopShown } from "@/utils/backTop";
 import { locateRow, locateVirtualRow } from "@/utils/locateRow";
 
 const { t } = useI18n();
@@ -1063,6 +1065,14 @@ let locateHandle = null;
 
 // 与 App.vue 的 BackTop 同一判据：有播放条时两颗钮一起抬高。
 const hasPlayBar = computed(() => Boolean(music.getPlaylists[0] && music.showPlayBar));
+
+// 配色取 BackTop 用的同一组 Naive 主题变量，两颗钮才是一对。
+const themeVars = useThemeVars();
+const pillColors = computed(() => ({
+  "--locate-bg": themeVars.value.popoverColor,
+  "--locate-icon": themeVars.value.textColor2,
+  "--locate-icon-hover": themeVars.value.primaryColorHover,
+}));
 
 const pillHidden = { opacity: 0, y: 12 };
 const pillShown = { opacity: 1, y: 0 };
@@ -2024,50 +2034,55 @@ const jumpLink = (id, type) => {
   margin: 40px 0;
 }
 
-// 零高度的 sticky 船坞，钉在滚动视口可见底边之上 40px，与右下角回到顶部按钮同一水平线。
-// 药丸从船坞线向上长出来；整条不接收指针，只有药丸自己可点。
-// 与 BackTop（40px 圆钮）同列，叠在它上面 12px。落点令牌见 global.scss，BackTop 和这里共用。
-// transform 归 motion-v（y 滑入），这里只过渡颜色和 bottom，免得和弹簧抢同一个属性。
+// 外观照搬 Naive 的 BackTop（44px 整圆、popover 底色、无边框、同一组阴影），同列同大小。
+// BackTop 显示（.stacked）时叠在它上面 12px，不显示时落进它的位置。落点令牌见 global.scss。
+// transform 归 motion-v（y 滑入），这里只过渡颜色、阴影和 bottom，免得和弹簧抢同一个属性。
 .locate-pill {
-  --locate-pill-size: 40px;
-  --locate-pill-gap: 12px;
+  --locate-size: 44px;
+  --locate-gap: 12px;
+  --locate-base: var(--app-back-top-bottom);
+  --locate-offset: 0px;
   position: fixed;
   right: var(--app-back-top-right);
-  bottom: calc(var(--app-back-top-bottom) + var(--locate-pill-size) + var(--locate-pill-gap));
+  bottom: calc(var(--locate-base) + var(--locate-offset));
   z-index: 999;
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
-  width: var(--locate-pill-size);
-  height: var(--locate-pill-size);
+  width: var(--locate-size);
+  height: var(--locate-size);
   padding: 0;
-  border: 1px solid var(--material-border);
-  border-radius: 50%;
-  background-color: var(--material-regular-bg);
-  // 前缀在前、标准在后（全项目同此约定，见 App.vue 的 bottom-glass）。
-  -webkit-backdrop-filter: var(--material-filter);
-  backdrop-filter: var(--material-filter);
-  box-shadow:
-    var(--shadow-3),
-    inset 0 1px 0 var(--material-highlight);
-  color: var(--main-color);
+  border: 0;
+  border-radius: calc(var(--locate-size) / 2);
+  background-color: var(--locate-bg);
+  box-shadow: 0 2px 8px 0 rgba(0, 0, 0, 0.12);
+  color: var(--locate-icon);
   cursor: pointer;
   transition:
-    background-color var(--duration-150) var(--ease-out),
+    color var(--duration-300) var(--ease-out),
+    box-shadow var(--duration-300) var(--ease-out),
     bottom var(--duration-300) var(--ease-out);
 
   &.with-player {
-    bottom: calc(
-      var(--app-back-top-bottom-with-player) + var(--locate-pill-size) + var(--locate-pill-gap)
-    );
+    --locate-base: var(--app-back-top-bottom-with-player);
+  }
+
+  &.stacked {
+    --locate-offset: calc(var(--locate-size) + var(--locate-gap));
   }
 
   .n-icon {
-    color: var(--main-color);
+    color: var(--locate-icon);
+    transition: color var(--duration-300) var(--ease-out);
   }
 
-  &:hover {
-    background-color: color-mix(in srgb, var(--main-color) 10%, var(--material-regular-bg));
+  &:hover,
+  &:active {
+    box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.18);
+
+    .n-icon {
+      color: var(--locate-icon-hover);
+    }
   }
 }
 

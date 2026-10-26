@@ -73,6 +73,7 @@
                       : 'var(--app-back-top-bottom)'
                   "
                   style="transition: all var(--duration-300) var(--ease-out); z-index: 999"
+                  @update:show="setBackTopShown"
                 />
                 <AppLayerHost />
               </main>
@@ -123,6 +124,7 @@ import MobileTabBar from "@/components/Sidebar/MobileTabBar.vue";
 import QueuePanel from "@/components/QueuePanel/index.vue";
 import AppLayerHost from "@/components/Navigation/AppLayerHost.vue";
 import { appInfo } from "@/utils/appInfo";
+import { backTopShown } from "@/utils/backTop";
 import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { ref, watch, computed, h } from "vue";
 
@@ -155,6 +157,9 @@ let inlineQueueMediaQuery: MediaQueryList | null = null;
 
 const showInlineQueue = computed(() => isInlineQueueLayout.value && music.showPlayList);
 const hasPlayBar = computed(() => Boolean(music.getPlaylists[0] && music.showPlayBar));
+const setBackTopShown = (show: boolean) => {
+  backTopShown.value = show;
+};
 const usesNativeWindowEffect = computed(
   () =>
     usesDesktopTauriChrome.value &&
