@@ -456,17 +456,20 @@
       <component :is="AddPlaylistComponent" v-if="AddPlaylistComponent" ref="addPlayListRef" />
       <component :is="DownloadSongComponent" v-if="DownloadSongComponent" ref="downloadSongRef" />
       <!--
-        定位到正在播放。零高度的 sticky 船坞钉在滚动视口的可见底边之上，药丸从船坞线向上
-        长出来：水平方向天然对齐列表，跟着页面一起转场、一起被 keep-alive 收起。
+        定位到正在播放。和 App.vue 的 BackTop 同一列、叠在它正上方，所以同样 teleport 到
+        body（页面转场的 transform 会让 fixed 相对转场层定位），落点读同一组 :root 令牌。
+        页面被 keep-alive 收起时 stopLocateTracking 会把它收掉。
       -->
-      <div class="locate-dock">
+      <Teleport to="body">
         <AnimatePresence :initial="false">
           <Motion
             v-if="showLocatePill"
             key="locate-pill"
             as="button"
             type="button"
-            class="locate-pill"
+            :class="['locate-pill', { 'with-player': hasPlayBar }]"
+            :title="$t('player.queue.locate')"
+            :aria-label="$t('player.queue.locate')"
             :initial="pillHidden"
             :animate="pillShown"
             :exit="pillHidden"
@@ -474,12 +477,11 @@
             :aria-busy="locating"
             @click="locatePlaying"
           >
-            <n-spin v-if="locating" :size="14" />
-            <n-icon v-else :size="16" :component="Aiming" />
-            <span>{{ $t("player.queue.locate") }}</span>
+            <n-spin v-if="locating" :size="16" />
+            <n-icon v-else :size="20" :component="Aiming" />
           </Motion>
         </AnimatePresence>
-      </div>
+      </Teleport>
     </div>
     <n-empty v-else-if="loading === false" class="empty" :description="emptyText || undefined" />
     <n-spin class="loading" size="small" v-else />
@@ -1058,6 +1060,9 @@ const locating = ref(false);
 let locateListening = false;
 let locateRaf = 0;
 let locateHandle = null;
+
+// 与 App.vue 的 BackTop 同一判据：有播放条时两颗钮一起抬高。
+const hasPlayBar = computed(() => Boolean(music.getPlaylists[0] && music.showPlayBar));
 
 const pillHidden = { opacity: 0, y: 12 };
 const pillShown = { opacity: 1, y: 0 };
@@ -2021,26 +2026,23 @@ const jumpLink = (id, type) => {
 
 // 零高度的 sticky 船坞，钉在滚动视口可见底边之上 40px，与右下角回到顶部按钮同一水平线。
 // 药丸从船坞线向上长出来；整条不接收指针，只有药丸自己可点。
-.locate-dock {
-  position: sticky;
-  bottom: calc(var(--content-sticky-bottom, 0px) + 40px);
-  z-index: 4;
-  height: 0;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  pointer-events: none;
-}
-
-// transform 归 motion-v（y 滑入），这里只过渡颜色，免得和弹簧抢同一个属性。
+// 与 BackTop（40px 圆钮）同列，叠在它上面 12px。落点令牌见 global.scss，BackTop 和这里共用。
+// transform 归 motion-v（y 滑入），这里只过渡颜色和 bottom，免得和弹簧抢同一个属性。
 .locate-pill {
+  --locate-pill-size: 40px;
+  --locate-pill-gap: 12px;
+  position: fixed;
+  right: var(--app-back-top-right);
+  bottom: calc(var(--app-back-top-bottom) + var(--locate-pill-size) + var(--locate-pill-gap));
+  z-index: 999;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  height: 40px;
-  padding: 0 16px;
+  justify-content: center;
+  width: var(--locate-pill-size);
+  height: var(--locate-pill-size);
+  padding: 0;
   border: 1px solid var(--material-border);
-  border-radius: var(--radius-pill);
+  border-radius: 50%;
   background-color: var(--material-regular-bg);
   // 前缀在前、标准在后（全项目同此约定，见 App.vue 的 bottom-glass）。
   -webkit-backdrop-filter: var(--material-filter);
@@ -2049,14 +2051,16 @@ const jumpLink = (id, type) => {
     var(--shadow-3),
     inset 0 1px 0 var(--material-highlight);
   color: var(--main-color);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1;
-  white-space: nowrap;
   cursor: pointer;
-  pointer-events: auto;
-  transition: background-color var(--duration-150) var(--ease-out);
+  transition:
+    background-color var(--duration-150) var(--ease-out),
+    bottom var(--duration-300) var(--ease-out);
+
+  &.with-player {
+    bottom: calc(
+      var(--app-back-top-bottom-with-player) + var(--locate-pill-size) + var(--locate-pill-gap)
+    );
+  }
 
   .n-icon {
     color: var(--main-color);
