@@ -297,8 +297,7 @@ impl AudioPlayer {
                 AudioThreadMessage::AutomixSetEnabled { enabled } => {
                     let events = self.automix.set_enabled(*enabled, self.current_play_index);
                     if !enabled {
-                        self.automix_prepare_generation =
-                            self.automix_prepare_generation.wrapping_add(1);
+                        self.bump_automix_prepare_gen();
                         self.cancel_native_automix_runtime().await;
                     }
                     self.emit_many(events).await;
@@ -308,8 +307,7 @@ impl AudioPlayer {
                         .automix
                         .configure(config.clone(), self.current_play_index);
                     if !config.enabled {
-                        self.automix_prepare_generation =
-                            self.automix_prepare_generation.wrapping_add(1);
+                        self.bump_automix_prepare_gen();
                         self.cancel_native_automix_runtime().await;
                     }
                     self.emit_many(events).await;
@@ -336,9 +334,7 @@ impl AudioPlayer {
                         "AutoMix prepare requested: current_index={}, next_index={}, transition_id={:?}",
                         current_index, next_index, transition_id
                     );
-                    self.automix_prepare_generation =
-                        self.automix_prepare_generation.wrapping_add(1);
-                    let generation = self.automix_prepare_generation;
+                    let generation = self.bump_automix_prepare_gen();
                     self.cancel_native_automix_runtime().await;
                     let current_song = self.current_song.clone();
                     let current_source_path = self.current_local_path.clone();
@@ -360,8 +356,7 @@ impl AudioPlayer {
                     self.emit_many(events).await;
                 }
                 AudioThreadMessage::AutomixCancel => {
-                    self.automix_prepare_generation =
-                        self.automix_prepare_generation.wrapping_add(1);
+                    self.bump_automix_prepare_gen();
                     self.cancel_native_automix_runtime().await;
                     let events = self.automix.cancel(self.current_play_index);
                     self.emit_many(events).await;

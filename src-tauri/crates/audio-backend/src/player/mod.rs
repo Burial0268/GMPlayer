@@ -159,7 +159,9 @@ struct AudioPlayer {
     native_crossfade_generation: Arc<AtomicU64>,
     native_crossfade_active: bool,
     native_crossfade_transition_id: Option<u64>,
-    automix_prepare_generation: u64,
+    /// Shared so a blocking AutoMix prepare can see that it was superseded and
+    /// stop decoding. Bump only through `bump_automix_prepare_gen`.
+    automix_prepare_generation: Arc<AtomicU64>,
 
     // Playlist
     playback_queue: PlaybackQueue,
@@ -425,7 +427,7 @@ impl AudioPlayer {
             native_crossfade_generation: Arc::new(AtomicU64::new(0)),
             native_crossfade_active: false,
             native_crossfade_transition_id: None,
-            automix_prepare_generation: 0,
+            automix_prepare_generation: Arc::new(AtomicU64::new(0)),
             playback_queue: PlaybackQueue::new(),
             playlist: Vec::new(),
             playlist_inited: false,
@@ -615,6 +617,13 @@ impl AudioPlayer {
     /// Invalidate any in-flight trigger poll task and return the new generation.
     fn bump_native_crossfade_gen(&self) -> u64 {
         self.native_crossfade_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+    }
+
+    /// Invalidate any in-flight prepare and return the new generation.
+    fn bump_automix_prepare_gen(&self) -> u64 {
+        self.automix_prepare_generation
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1)
     }
