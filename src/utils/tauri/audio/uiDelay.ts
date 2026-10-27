@@ -42,12 +42,36 @@ let measuredOutputLatencySeconds: number | null = null;
 /** Above this the figure is a broken timestamp, not a device. */
 const MAX_PLAUSIBLE_OUTPUT_LATENCY_SECONDS = 2;
 
+/**
+ * The backend re-reports every second and the figure jitters by a few ms. A
+ * smaller move than this is noise: adopting it would shift the lyric clock and,
+ * below, force a resync for nothing.
+ */
+const MIN_LATENCY_STEP_SECONDS = 0.03;
+
+const delayChangeListeners = new Set<() => void>();
+
+/**
+ * Called when the delay moved enough to matter. A lyric renderer that only
+ * feeds forward-moving times (AMLL's non-seek `setCurrentTime`) does not
+ * re-evaluate lines after the base time jumps *back*, so it has to be told to
+ * resync — otherwise a new device's delay waits for the next pause or seek.
+ */
+export function onAudioUiDelayChange(listener: () => void): () => void {
+  delayChangeListeners.add(listener);
+  return () => delayChangeListeners.delete(listener);
+}
+
 export function setMeasuredOutputLatencyMs(latencyMs: number): void {
   const seconds = latencyMs / 1000;
   if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_PLAUSIBLE_OUTPUT_LATENCY_SECONDS) {
     return;
   }
+  const previous = measuredOutputLatencySeconds;
+  if (previous !== null && Math.abs(seconds - previous) < MIN_LATENCY_STEP_SECONDS) return;
   measuredOutputLatencySeconds = seconds;
+  console.info(`[uiDelay] output latency ${latencyMs.toFixed(0)} ms`);
+  for (const listener of delayChangeListeners) listener();
 }
 
 /** The measurement when there is one, else the fixed mobile compensation. */
