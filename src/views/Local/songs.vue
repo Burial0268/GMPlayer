@@ -58,6 +58,7 @@
         :capabilities="capabilities"
         :empty-text="$t('local.noMatches')"
         :locate="locateAdapter"
+        :queue-data="fullQueue"
         show-header
         page-window
         :virtual-item-size="54"
@@ -153,6 +154,15 @@ const loadMore = async () => {
     if (token === requestToken) loading.value = false;
   }
 };
+
+/**
+ * 点播时入队的列表：整库、按当前排序、**不带筛选**。
+ *
+ * 这一页的 `songs` 既是分页前缀、筛选又在 Rust 里做，所以它从来不是完整列表——直接入队
+ * 会把播放队列缩成搜索结果（或只剩已翻到的几页）。`limit: 0` 是「不分页」，一次 IPC。
+ */
+const fullQueue = async (): Promise<SongData[]> =>
+  (await local.page({ sort: sort.value, descending: descending.value, limit: 0 })).songs;
 
 const importDirectory = async () => {
   await local.importDirectory();
