@@ -153,6 +153,7 @@ export type AudioThreadEvent =
         sampleFormat: string;
       };
     }
+  | { type: "outputLatency"; data: { latencyMs: number } }
   | { type: "audioOutputError"; data: { error: string; recoverable: boolean } }
   | { type: "fftData"; data: { data: number[] } }
   | { type: "lowFrequencyVolume"; data: { volume: number } }

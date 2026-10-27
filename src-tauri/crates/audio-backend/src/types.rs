@@ -527,6 +527,10 @@ pub enum AudioThreadEvent {
         sample_rate: u32,
         sample_format: String,
     },
+    /// How far the audible output trails the position clock. Follows the output
+    /// device, so it moves when headphones are connected or removed.
+    #[serde(rename_all = "camelCase")]
+    OutputLatency { latency_ms: f64 },
     #[serde(rename_all = "camelCase")]
     AudioOutputError { error: String, recoverable: bool },
     // FFTData → "fftData" needs explicit rename: serde's `rename_all = "camelCase"`
