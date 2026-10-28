@@ -274,7 +274,11 @@ impl Analysis {
             return true;
         }
 
-        while let Some(pcm) = self.delayed.pop_due(now) {
+        while let Some(mut pcm) = self.delayed.pop_due(now) {
+            let gain = downmix_gain(pcm.channels);
+            if gain != 1.0 {
+                pcm.samples.iter_mut().for_each(|s| *s *= gain);
+            }
             self.pending_mono_samples +=
                 self.fft
                     .push_interleaved_pcm(&pcm.samples, pcm.channels, pcm.sample_rate);
@@ -317,6 +321,19 @@ impl Analysis {
         for pcm in self.delayed.drain() {
             recycle(pcm);
         }
+    }
+}
+
+/// `push_interleaved_pcm` averages channels; AMLL's ffmpeg downmix is
+/// `0.7071 * (L + R)`, so a centred bass note comes out 1.41x louder. The FFT
+/// levels feed a log curve and a fixed 0.35 threshold, and at the averaged level
+/// the output moves about a quarter as much. Stereo only: other layouts use
+/// ffmpeg's own matrix and are left averaged.
+fn downmix_gain(channels: u16) -> f32 {
+    if channels == 2 {
+        std::f32::consts::SQRT_2
+    } else {
+        1.0
     }
 }
 
@@ -436,6 +453,14 @@ mod tests {
         );
         drop(sender);
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn stereo_downmix_matches_ffmpeg_not_the_average() {
+        // ffmpeg: mono = 0.7071 * (L + R); the processor averages, so scale by sqrt(2).
+        let (l, r) = (0.5f32, 0.1f32);
+        assert!((downmix_gain(2) * (l + r) / 2.0 - 0.7071 * (l + r)).abs() < 1e-4);
+        assert_eq!(downmix_gain(1), 1.0);
     }
 
     #[test]
