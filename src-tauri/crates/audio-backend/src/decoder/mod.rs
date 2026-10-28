@@ -908,6 +908,13 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                             samples: analysis_block,
                             channels: self.output_channels,
                             sample_rate: self.output_sample_rate,
+                            // Everything queued ahead of the block just pushed
+                            // plays first; analysis holds it back that long.
+                            lead: Duration::from_secs_f64(
+                                self.output.queued_samples() as f64
+                                    / (self.output_sample_rate.max(1) as f64
+                                        * self.output_channels.max(1) as f64),
+                            ),
                             recycle: Some(self.analysis_recycle_tx.clone()),
                         };
                         if let Err(err) = self.analysis_tx.try_send_pcm(pcm) {
@@ -1023,6 +1030,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             DecoderControl::SetPaused(paused) => {
                 self.paused = paused;
                 self.output.set_paused(paused);
+                let _ = self.analysis_tx.send(AnalysisCommand::SetPaused { paused });
                 true
             }
             DecoderControl::Stop => false,

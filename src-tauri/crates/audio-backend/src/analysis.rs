@@ -14,40 +14,110 @@
 //! The PCM channel is deliberately tiny and bounded: analysis may drop audio
 //! under load, but it can never backlog memory or stall playback/decoding.
 //!
-//! `LowFrequencyVolume` is derived from the same FFT frame here, matching
-//! AMLL's frontend low-pass path while keeping extra DSP out of the CPAL
-//! callback.
+//! The FFT runs once per `FFT_HOP` on the latest window, as AMLL's pacemaker
+//! does, and each frame also publishes the lowest bins as `LowFreqBins`; the
+//! frontend runs the low-pass gradient/smoothing on them per display frame.
+//! The decoder taps PCM well ahead of the device, so each block carries how
+//! long it will wait in the playback queues and is held back by that long; the
+//! visuals then follow what is audible instead of what was decoded.
 //!
 //! Events leave through the same `tokio::sync::mpsc::UnboundedSender` that
 //! every other player event uses, so the WS forwarder picks them up unchanged.
 
+use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use audio_analysis::{AudioProcessor, LowFreqConfig};
+use audio_analysis::{FftConfig, FftProcessor};
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 
 const FFT_SIZE: usize = 2048;
-const ANALYSIS_INTERVAL: Duration = Duration::from_millis(16);
-const FFT_EMIT_INTERVAL: Duration = Duration::from_millis(33);
+const TICK: Duration = Duration::from_millis(16);
+const FFT_HOP: Duration = Duration::from_millis(50);
 const PCM_QUEUE_CAPACITY: usize = 3;
-const PCM_BLOCKS_PER_TICK: usize = 2;
+/// Bound on blocks waiting out their lead; a runaway lead releases the oldest.
+const MAX_DELAYED_BLOCKS: usize = 512;
+/// Distance between the `result_buf` entries AMLL's `vec_interp` reads for
+/// bins 0 and 1 (`RESULT_BUF_SIZE >> 7`).
+const BIN_STRIDE: usize = 16;
+const LOW_BIN_COUNT: usize = 2;
 
 /// Reliable controls from the player and decoder threads.
 pub enum AnalysisCommand {
     Clear,
-    SetEnabled { enabled: bool },
-    SetFftEnabled { enabled: bool },
-    SetFreqRange { from: f32, to: f32 },
+    SetEnabled {
+        enabled: bool,
+    },
+    SetFftEnabled {
+        enabled: bool,
+    },
+    SetFreqRange {
+        from: f32,
+        to: f32,
+    },
+    /// Playback paused/resumed: blocks stop ageing while the device is stopped.
+    SetPaused {
+        paused: bool,
+    },
 }
 
 pub struct AnalysisPcm {
     pub samples: Vec<f32>,
     pub channels: u16,
     pub sample_rate: u32,
+    /// Time until the end of this block is audible (queued audio ahead of it).
+    pub lead: Duration,
     pub recycle: Option<mpsc::Sender<Vec<f32>>>,
+}
+
+/// PCM held until the device reaches it. Release times are monotonic and are
+/// pushed back by however long playback was paused.
+#[derive(Default)]
+struct DelayQueue {
+    blocks: VecDeque<(Instant, AnalysisPcm)>,
+    paused_at: Option<Instant>,
+}
+
+impl DelayQueue {
+    fn push(&mut self, now: Instant, pcm: AnalysisPcm) {
+        let at = self
+            .blocks
+            .back()
+            .map_or(now + pcm.lead, |(last, _)| (*last).max(now + pcm.lead));
+        self.blocks.push_back((at, pcm));
+    }
+
+    fn pop_due(&mut self, now: Instant) -> Option<AnalysisPcm> {
+        if self.paused_at.is_some() {
+            return None;
+        }
+        let due = self
+            .blocks
+            .front()
+            .is_some_and(|(at, _)| *at <= now || self.blocks.len() > MAX_DELAYED_BLOCKS);
+        due.then(|| self.blocks.pop_front().map(|(_, pcm)| pcm))
+            .flatten()
+    }
+
+    fn set_paused(&mut self, paused: bool, now: Instant) {
+        match (paused, self.paused_at) {
+            (true, None) => self.paused_at = Some(now),
+            (false, Some(since)) => {
+                let shift = now.saturating_duration_since(since);
+                for (at, _) in &mut self.blocks {
+                    *at += shift;
+                }
+                self.paused_at = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = AnalysisPcm> + '_ {
+        self.blocks.drain(..).map(|(_, pcm)| pcm)
+    }
 }
 
 #[derive(Clone)]
@@ -85,112 +155,30 @@ pub fn spawn_analysis_thread(
     Ok((AnalysisSender { control_tx, pcm_tx }, handle))
 }
 
+type EventSink = tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>;
+
 fn analysis_loop(
     control_rx: mpsc::Receiver<AnalysisCommand>,
     pcm_rx: mpsc::Receiver<AnalysisPcm>,
-    evt: tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
+    evt: EventSink,
 ) {
-    let cfg = LowFreqConfig::default();
-    let mut proc = AudioProcessor::new(
-        2048,
-        80.0,
-        2000.0,
-        cfg.bin_count,
-        cfg.window_size,
-        cfg.gradient_threshold,
-        cfg.smoothing_factor,
-    );
-
-    let mut last_analysis = Instant::now();
-    let mut last_fft_emit = Instant::now() - FFT_EMIT_INTERVAL;
-    let mut pending_mono_samples = 0usize;
-    let mut current_sample_rate = 44_100u32;
-    let mut analysis_enabled = true;
-    let mut fft_enabled = true;
-
-    // LowFreqAnalyzer::new starts at 1.0 for WASM compatibility. Native IPC
-    // should start from silence so the first lowFreq event does not jump.
-    proc.clear();
-
+    let mut state = Analysis::new(evt);
     loop {
         // Controls are reliable and always drained before best-effort PCM.
         while let Ok(cmd) = control_rx.try_recv() {
-            let result = handle_cmd(&mut proc, cmd, &mut analysis_enabled, &mut fft_enabled);
-            let reset = matches!(result, HandleCmdResult::Reset);
-            apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
-            if reset && emit_low_freq(&evt, 0.0).is_err() {
+            if !state.command(cmd, Instant::now()) {
                 return;
             }
         }
-
-        // Bound work per iteration so a PCM burst cannot starve controls or
-        // FFT cadence. Two blocks/tick still keeps up with 512-frame decode
-        // blocks at common sample rates during normal operation.
-        // Disabled analysis drains the bounded queue before sleeping so its
-        // decoder buffers are returned even when no further control arrives.
-        let pcm_budget = if analysis_enabled {
-            PCM_BLOCKS_PER_TICK
-        } else {
-            PCM_QUEUE_CAPACITY
-        };
-        for _ in 0..pcm_budget {
-            let Ok(pcm) = pcm_rx.try_recv() else {
-                break;
-            };
-            apply_cmd_result(
-                handle_pcm(&mut proc, pcm, analysis_enabled),
-                &mut pending_mono_samples,
-                &mut current_sample_rate,
-            );
-        }
-
-        if analysis_enabled
-            && last_analysis.elapsed() >= ANALYSIS_INTERVAL
-            && pending_mono_samples >= FFT_SIZE
-        {
-            let now = Instant::now();
-            let delta_ms = now.duration_since(last_analysis).as_secs_f32() * 1000.0;
-            // Native IPC emits raw FFT magnitudes from `proc.fft.raw_spectrum()`
-            // (matching AMLL's fftDataAtom data flow), so run the raw pipeline:
-            // it skips the WASM-only 0-255 normalization/EMA pass whose output
-            // nothing on this path ever reads.
-            let low_freq = proc.process_frame_raw(delta_ms);
-
-            let drained = ((delta_ms / 1000.0) * current_sample_rate.max(1) as f32) as usize;
-            pending_mono_samples = pending_mono_samples.saturating_sub(drained.max(1));
-            last_analysis = now;
-
-            if last_fft_emit.elapsed() >= FFT_EMIT_INTERVAL {
-                if emit_low_freq(&evt, low_freq).is_err() {
-                    break;
-                }
-                if fft_enabled {
-                    if evt
-                        .send(AudioThreadEventMessage::new(
-                            String::new(),
-                            Some(AudioThreadEvent::FFTData {
-                                data: proc.fft.raw_spectrum().to_vec(),
-                            }),
-                        ))
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                last_fft_emit = now;
-            }
+        if !state.tick(&pcm_rx, Instant::now()) {
+            return;
         }
 
         // Sleep on the reliable control channel rather than polling every
         // millisecond. A control wakes the thread immediately; PCM remains
-        // best-effort and is sampled on the next analysis tick.
-        let wait = if analysis_enabled && pending_mono_samples >= FFT_SIZE {
-            ANALYSIS_INTERVAL.saturating_sub(last_analysis.elapsed())
-        } else {
-            ANALYSIS_INTERVAL
-        };
-        let command = if analysis_enabled {
-            control_rx.recv_timeout(wait)
+        // best-effort and is picked up on the next analysis tick.
+        let command = if state.enabled {
+            control_rx.recv_timeout(TICK)
         } else {
             // Re-enabling and shutdown both arrive on this channel. No timer
             // can make disabled analysis useful, so it needs no periodic wake.
@@ -200,111 +188,148 @@ fn analysis_loop(
         };
         match command {
             Ok(cmd) => {
-                let result = handle_cmd(&mut proc, cmd, &mut analysis_enabled, &mut fft_enabled);
-                let reset = matches!(result, HandleCmdResult::Reset);
-                apply_cmd_result(result, &mut pending_mono_samples, &mut current_sample_rate);
-                if reset && emit_low_freq(&evt, 0.0).is_err() {
-                    break;
+                if !state.command(cmd, Instant::now()) {
+                    return;
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
     }
 }
 
-fn emit_low_freq(
-    evt: &tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
-    value: f32,
-) -> Result<(), tokio_mpsc::error::SendError<AudioThreadEventMessage<AudioThreadEvent>>> {
-    evt.send(AudioThreadEventMessage::new(
-        String::new(),
-        Some(AudioThreadEvent::LowFrequencyVolume {
-            volume: value as f64,
-        }),
-    ))
+struct Analysis {
+    fft: FftProcessor,
+    delayed: DelayQueue,
+    pending_mono_samples: usize,
+    sample_rate: u32,
+    enabled: bool,
+    fft_enabled: bool,
+    /// Next FFT slot. A fixed grid: ticks are 16 ms apart, so measuring the hop
+    /// from the last run would stretch 50 ms to 64 ms.
+    next_fft: Instant,
+    evt: EventSink,
 }
 
-#[derive(Clone, Copy)]
-enum HandleCmdResult {
-    Pushed { samples: usize, sample_rate: u32 },
-    Reset,
-    None,
-}
-
-fn apply_cmd_result(
-    result: HandleCmdResult,
-    pending_mono_samples: &mut usize,
-    current_sample_rate: &mut u32,
-) {
-    match result {
-        HandleCmdResult::Pushed {
-            samples,
-            sample_rate,
-        } => {
-            *pending_mono_samples += samples;
-            *current_sample_rate = sample_rate.max(1);
+impl Analysis {
+    fn new(evt: EventSink) -> Self {
+        Self {
+            fft: FftProcessor::new(FftConfig {
+                output_size: FFT_SIZE,
+                freq_min: 80.0,
+                freq_max: 2000.0,
+            }),
+            delayed: DelayQueue::default(),
+            pending_mono_samples: 0,
+            sample_rate: 44_100,
+            enabled: true,
+            fft_enabled: true,
+            next_fft: Instant::now(),
+            evt,
         }
-        HandleCmdResult::Reset => {
-            *pending_mono_samples = 0;
-        }
-        HandleCmdResult::None => {}
     }
-}
 
-fn handle_cmd(
-    proc: &mut AudioProcessor,
-    cmd: AnalysisCommand,
-    analysis_enabled: &mut bool,
-    fft_enabled: &mut bool,
-) -> HandleCmdResult {
-    match cmd {
-        AnalysisCommand::Clear => {
-            proc.clear();
-            HandleCmdResult::Reset
-        }
-        AnalysisCommand::SetEnabled { enabled } => {
-            if *analysis_enabled == enabled {
-                return HandleCmdResult::None;
+    /// Returns `false` once the event sink is closed.
+    fn command(&mut self, cmd: AnalysisCommand, now: Instant) -> bool {
+        match cmd {
+            // A seek or track change drops the audio in flight but keeps the
+            // FFT smoothing: resetting it halves the first frame's magnitudes
+            // (the smoothing averages with zero) and the background dipped on
+            // every jump. Nothing stale is read, because `pending_mono_samples`
+            // holds the next frame back until a whole window of new audio is in.
+            AnalysisCommand::Clear => {
+                self.pending_mono_samples = 0;
+                self.discard_delayed();
             }
-            *analysis_enabled = enabled;
-            proc.clear();
-            HandleCmdResult::Reset
+            AnalysisCommand::SetEnabled { enabled } => {
+                if self.enabled == enabled {
+                    return true;
+                }
+                self.enabled = enabled;
+                self.fft.clear_queue();
+                self.pending_mono_samples = 0;
+                self.discard_delayed();
+            }
+            AnalysisCommand::SetFftEnabled { enabled } => self.fft_enabled = enabled,
+            AnalysisCommand::SetFreqRange { from, to } => self.fft.set_freq_range(from, to),
+            AnalysisCommand::SetPaused { paused } => self.delayed.set_paused(paused, now),
         }
-        AnalysisCommand::SetFftEnabled { enabled } => {
-            *fft_enabled = enabled;
-            HandleCmdResult::None
+        true
+    }
+
+    /// One pass: intake, release what the device has reached, FFT on its hop.
+    /// Returns `false` once the sink is closed.
+    fn tick(&mut self, pcm_rx: &mpsc::Receiver<AnalysisPcm>, now: Instant) -> bool {
+        for _ in 0..PCM_QUEUE_CAPACITY {
+            let Ok(pcm) = pcm_rx.try_recv() else {
+                break;
+            };
+            if self.enabled {
+                self.delayed.push(now, pcm);
+            } else {
+                recycle(pcm);
+            }
         }
-        AnalysisCommand::SetFreqRange { from, to } => {
-            proc.fft.set_freq_range(from, to);
-            HandleCmdResult::None
+        if !self.enabled {
+            return true;
+        }
+
+        while let Some(pcm) = self.delayed.pop_due(now) {
+            self.pending_mono_samples +=
+                self.fft
+                    .push_interleaved_pcm(&pcm.samples, pcm.channels, pcm.sample_rate);
+            self.sample_rate = pcm.sample_rate.max(1);
+            recycle(pcm);
+        }
+
+        if now >= self.next_fft && self.pending_mono_samples >= FFT_SIZE {
+            return self.fft_frame(now);
+        }
+        true
+    }
+
+    fn fft_frame(&mut self, now: Instant) -> bool {
+        self.next_fft = (self.next_fft + FFT_HOP).max(now + FFT_HOP / 2);
+        self.fft.read_spectrum_raw();
+        let raw = self.fft.raw_spectrum();
+        let drained = (FFT_HOP.as_secs_f32() * self.sample_rate as f32) as usize;
+        self.pending_mono_samples = self.pending_mono_samples.saturating_sub(drained.max(1));
+
+        let bins = (0..LOW_BIN_COUNT).map(|i| raw[i * BIN_STRIDE]).collect();
+        let sent = self
+            .evt
+            .send(AudioThreadEventMessage::new(
+                String::new(),
+                Some(AudioThreadEvent::LowFreqBins { bins }),
+            ))
+            .is_ok();
+        sent && (!self.fft_enabled
+            || self
+                .evt
+                .send(AudioThreadEventMessage::new(
+                    String::new(),
+                    Some(AudioThreadEvent::FFTData { data: raw.to_vec() }),
+                ))
+                .is_ok())
+    }
+
+    fn discard_delayed(&mut self) {
+        for pcm in self.delayed.drain() {
+            recycle(pcm);
         }
     }
 }
 
-fn handle_pcm(proc: &mut AudioProcessor, pcm: AnalysisPcm, enabled: bool) -> HandleCmdResult {
+/// Hand the buffer back to the decoder's pool.
+fn recycle(pcm: AnalysisPcm) {
     let AnalysisPcm {
         mut samples,
-        channels,
-        sample_rate,
         recycle,
+        ..
     } = pcm;
-    let len = if enabled {
-        proc.push_interleaved_pcm(&samples, channels, sample_rate)
-    } else {
-        0
-    };
     if let Some(tx) = recycle {
         samples.clear();
         let _ = tx.send(samples);
-    }
-    if enabled {
-        HandleCmdResult::Pushed {
-            samples: len,
-            sample_rate,
-        }
-    } else {
-        HandleCmdResult::None
     }
 }
 
@@ -317,6 +342,7 @@ mod tests {
             samples: vec![value; 16],
             channels: 2,
             sample_rate: 48_000,
+            lead: Duration::ZERO,
             recycle: None,
         }
     }
@@ -359,10 +385,6 @@ mod tests {
             analysis_loop(control_rx, pcm_rx, evt_tx);
             done_tx.send(()).unwrap();
         });
-        wait_event(
-            &mut evt_rx,
-            |event| matches!(event, AudioThreadEvent::LowFrequencyVolume { volume } if *volume == 0.0),
-        );
         for _ in 0..PCM_QUEUE_CAPACITY {
             let buffer = recycle_rx.recv_timeout(Duration::from_secs(2)).unwrap();
             assert!(buffer.is_empty());
@@ -382,9 +404,6 @@ mod tests {
         sender
             .send(AnalysisCommand::SetEnabled { enabled: false })
             .unwrap();
-        wait_event(&mut received, |event| {
-            matches!(event, AudioThreadEvent::LowFrequencyVolume { .. })
-        });
         sender
             .send(AnalysisCommand::SetFreqRange {
                 from: 100.0,
@@ -395,29 +414,53 @@ mod tests {
             .send(AnalysisCommand::SetFftEnabled { enabled: true })
             .unwrap();
         sender.send(AnalysisCommand::Clear).unwrap();
-        wait_event(&mut received, |event| {
-            matches!(event, AudioThreadEvent::LowFrequencyVolume { .. })
-        });
         sender
             .send(AnalysisCommand::SetEnabled { enabled: true })
             .unwrap();
-        wait_event(&mut received, |event| {
-            matches!(event, AudioThreadEvent::LowFrequencyVolume { .. })
-        });
         assert!(sender
             .try_send_pcm(AnalysisPcm {
                 samples: vec![0.5; FFT_SIZE * 2],
                 channels: 1,
                 sample_rate: 48_000,
+                lead: Duration::ZERO,
                 recycle: None,
             })
             .is_ok());
+        wait_event(
+            &mut received,
+            |event| matches!(event, AudioThreadEvent::LowFreqBins { bins } if bins.len() == LOW_BIN_COUNT),
+        );
         wait_event(
             &mut received,
             |event| matches!(event, AudioThreadEvent::FFTData { data } if !data.is_empty()),
         );
         drop(sender);
         worker.join().unwrap();
+    }
+
+    #[test]
+    fn blocks_wait_out_their_lead_and_pausing_stops_the_clock() {
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let led = |ms: u64| AnalysisPcm {
+            lead: Duration::from_millis(ms),
+            ..pcm(0.0)
+        };
+        let mut queue = DelayQueue::default();
+        queue.push(t0, led(200));
+        // A shallower queue later must not overtake the block ahead of it.
+        queue.push(at(10), led(50));
+        assert!(queue.pop_due(at(199)).is_none());
+        assert!(queue.pop_due(at(200)).is_some());
+        assert!(queue.pop_due(at(200)).is_some());
+
+        queue.push(t0, led(100));
+        queue.set_paused(true, at(40));
+        assert!(queue.pop_due(at(500)).is_none());
+        queue.set_paused(false, at(540));
+        // 500 ms paused: the block due at 100 ms is now due at 600 ms.
+        assert!(queue.pop_due(at(599)).is_none());
+        assert!(queue.pop_due(at(600)).is_some());
     }
 
     #[test]
