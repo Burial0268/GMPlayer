@@ -334,9 +334,14 @@ impl AudioPlayer {
 
             loop {
                 time_it.tick().await;
-                let (is_playing, current_pos, timeline_epoch) = {
+                let (is_playing, current_pos, timeline_epoch, latency_us) = {
                     let clock = clock_reader.lock();
-                    (clock.is_playing(), clock.position(), clock.epoch())
+                    (
+                        clock.is_playing(),
+                        clock.position(),
+                        clock.epoch(),
+                        clock.output_latency_us(),
+                    )
                 };
                 if is_playing {
                     *position_writer.write().await = current_pos;
@@ -353,6 +358,15 @@ impl AudioPlayer {
                             timeline_epoch,
                         })
                         .await;
+                    // Rides the heartbeat instead of being edge-triggered, so a
+                    // page that reloaded mid-session learns it within a second.
+                    if latency_us != 0 {
+                        let _ = emitter_pos
+                            .emit(AudioThreadEvent::OutputLatency {
+                                latency_ms: latency_us as f64 / 1000.0,
+                            })
+                            .await;
+                    }
                 }
             }
         }));

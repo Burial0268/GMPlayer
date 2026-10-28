@@ -66,6 +66,14 @@ impl PlayerClock {
         self.clamp_position(position)
     }
 
+    /// Measured delay between the position this clock reports and what is
+    /// audible, in microseconds; `0` before the stream's first callback.
+    pub(super) fn output_latency_us(&self) -> u32 {
+        self.render_clock
+            .as_ref()
+            .map_or(0, OutputRenderClock::output_latency_us)
+    }
+
     pub(super) fn is_playing(&self) -> bool {
         self.is_playing
     }

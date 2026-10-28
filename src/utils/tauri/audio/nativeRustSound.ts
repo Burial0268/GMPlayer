@@ -23,6 +23,7 @@ import { isTauri } from "../core/runtime";
 import { audioGetSession } from "./bridge";
 import { AudioTimelineSync } from "./timeline";
 import { sameTrackIdentity } from "./identity";
+import { setMeasuredOutputLatencyMs } from "./uiDelay";
 import type {
   AudioQuality,
   AudioThreadEvent,
@@ -958,6 +959,10 @@ export class NativeRustSound implements ISound {
       }
 
       case "audioOutputChanged":
+        break;
+
+      case "outputLatency":
+        setMeasuredOutputLatencyMs(evt.data.latencyMs);
         break;
 
       case "audioOutputError":
