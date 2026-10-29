@@ -12,7 +12,11 @@ import type { WindowLabel } from "../window/types";
  */
 interface TauriGlobal {
   core: {
-    invoke: <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
+    invoke: <T>(
+      cmd: string,
+      args?: Record<string, unknown> | Uint8Array,
+      options?: { headers?: Record<string, string> },
+    ) => Promise<T>;
   };
   event: {
     listen: <T>(event: string, handler: (event: { payload: T }) => void) => Promise<() => void>;

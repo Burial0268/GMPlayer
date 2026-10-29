@@ -172,6 +172,11 @@ core-graphics = "0.25.0"
 jni = "0.21"
 ndk-context = "0.1"
 
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+# The system share sheet for a lyric card (`share.rs`). Pinned: it is a release
+# candidate, and its Android half is what builds the `ACTION_SEND` intent.
+tauri-plugin-sharekit = "=0.4.0-rc.7"
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"
 

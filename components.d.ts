@@ -52,6 +52,7 @@ declare module 'vue' {
     LyricOffsetControl: typeof import('./src/components/Player/BigPlayer/LyricOffsetControl.vue')['default']
     LyricScroll: typeof import('./src/components/Lyric/LyricScroll.vue')['default']
     LyricSetting: typeof import('./src/components/DataModal/LyricSetting.vue')['default']
+    LyricShare: typeof import('./src/components/Player/LyricShare.vue')['default']
     MiniPlayerProgress: typeof import('./src/components/Player/MiniPlayerProgress.vue')['default']
     MobileControls: typeof import('./src/components/Player/BigPlayer/MobileControls.vue')['default']
     MobileCoverFrame: typeof import('./src/components/Player/BigPlayer/MobileCoverFrame.vue')['default']

@@ -61,6 +61,7 @@ type SyncableSound = {
 const emit = defineEmits<{
   "line-click": [evt: LyricLineMouseEvent];
   lrcTextClick: [time: number];
+  lineShare: [lines: AMLLLine[], startTime: number];
 }>();
 
 function getDomPlayer(): DomLyricPlayer | undefined {
@@ -217,6 +218,14 @@ const jumpSeek = (evt: LyricLineMouseEvent) => {
   emit("line-click", evt);
 };
 
+// Right click on desktop; Android WebView fires `contextmenu` for a long press.
+const openShare = (evt: LyricLineMouseEvent) => {
+  const time = lineClickStartTime(evt);
+  if (typeof time !== "number") return;
+  evt.preventDefault();
+  emit("lineShare", amllLyricLines.value, time);
+};
+
 function passToPlayer(event: Event) {
   const playerEl = getDomPlayer()?.getElement();
   if (!playerEl) return;
@@ -228,6 +237,7 @@ onMounted(() => {
   if (host) {
     const lyricPlayer = new CoreLyricPlayer();
     lyricPlayer.addEventListener("line-click", jumpSeek);
+    lyricPlayer.addEventListener("line-contextmenu", openShare);
     const playerElement = lyricPlayer.getElement();
     playerElement.style.width = "100%";
     playerElement.style.height = "100%";
@@ -262,6 +272,7 @@ onBeforeUnmount(() => {
   }
 
   lyricPlayerRef.value?.removeEventListener("line-click", jumpSeek);
+  lyricPlayerRef.value?.removeEventListener("line-contextmenu", openShare);
   lyricPlayerRef.value?.dispose();
   lastLyricFrameTime = -1;
   lastSubmittedLyricTime = -1;
