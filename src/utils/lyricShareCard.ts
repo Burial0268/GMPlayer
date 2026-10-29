@@ -25,13 +25,15 @@ export interface LyricCardInput {
 }
 
 const WIDTH = 1080;
-const PAD = 88;
-const COVER = 144;
-const MAIN_SIZE = 60;
-const SUB_SIZE = 38;
-const GROUP_GAP = 40;
-const SECTION_GAP = 80;
-const FOOTER = 44;
+// 4:5 at the least, the portrait shape share targets crop to least.
+const MIN_HEIGHT = 1350;
+const PAD = 96;
+const MAIN_SIZE = 68;
+const SUB_SIZE = 40;
+const GROUP_GAP = 44;
+const SECTION_GAP = 96;
+const COVER = 120;
+const LOGO = 40;
 
 const loadImage = (src: string): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
@@ -68,6 +70,13 @@ function wrap(ctx: CanvasRenderingContext2D, text: string, width: number): strin
   return rows;
 }
 
+function ellipsize(ctx: CanvasRenderingContext2D, text: string, width: number): string {
+  if (ctx.measureText(text).width <= width) return text;
+  let cut = text;
+  while (cut && ctx.measureText(`${cut}…`).width > width) cut = cut.slice(0, -1);
+  return `${cut.trimEnd()}…`;
+}
+
 function roundRectPath(
   ctx: CanvasRenderingContext2D,
   x: number,
@@ -91,101 +100,94 @@ function draw(
   const textWidth = WIDTH - PAD * 2;
 
   // Measure first: the height depends on how the lines wrap.
-  ctx.font = font(700, MAIN_SIZE);
   const groups = input.lines.map((line) => {
-    ctx.font = font(700, MAIN_SIZE);
+    ctx.font = font(800, MAIN_SIZE);
     const main = wrap(ctx, line.text, textWidth);
-    ctx.font = font(500, SUB_SIZE);
+    ctx.font = font(600, SUB_SIZE);
     const subs = line.subs.flatMap((sub) => wrap(ctx, sub, textWidth));
     return { main, subs };
   });
-  const mainLH = MAIN_SIZE * 1.3;
+  const mainLH = MAIN_SIZE * 1.25;
   const subLH = SUB_SIZE * 1.4;
   const lyricsHeight =
     groups.reduce((h, g) => h + g.main.length * mainLH + g.subs.length * subLH, 0) +
     GROUP_GAP * Math.max(0, groups.length - 1);
-  const height = PAD + COVER + SECTION_GAP + lyricsHeight + SECTION_GAP + FOOTER + PAD;
+  const height = Math.ceil(Math.max(MIN_HEIGHT, PAD + lyricsHeight + SECTION_GAP + COVER + PAD));
   canvas.width = WIDTH;
-  canvas.height = Math.ceil(height);
+  canvas.height = height;
 
   // Background: theme colour underneath, so the blurred cover's soft edges
-  // fade into the song's own colour instead of transparency.
-  const theme = `rgb(${input.themeRgb})`;
-  ctx.fillStyle = theme;
-  ctx.fillRect(0, 0, WIDTH, canvas.height);
+  // fade into the song's own colour instead of transparency, then a shade that
+  // deepens towards the footer to keep white text readable on any artwork.
+  ctx.fillStyle = `rgb(${input.themeRgb})`;
+  ctx.fillRect(0, 0, WIDTH, height);
   if (cover) {
-    const bleed = 160;
-    const side = Math.max(WIDTH, canvas.height) + bleed * 2;
-    ctx.filter = "blur(64px) saturate(1.4)";
-    ctx.drawImage(cover, (WIDTH - side) / 2, (canvas.height - side) / 2, side, side);
+    const side = Math.max(WIDTH, height) * 1.3;
+    ctx.filter = "blur(72px) saturate(1.4)";
+    ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);
     ctx.filter = "none";
-  } else {
-    const shade = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    shade.addColorStop(0, "rgb(255 255 255 / 0.12)");
-    shade.addColorStop(1, "rgb(0 0 0 / 0.25)");
-    ctx.fillStyle = shade;
-    ctx.fillRect(0, 0, WIDTH, canvas.height);
   }
-  ctx.fillStyle = "rgb(0 0 0 / 0.28)";
-  ctx.fillRect(0, 0, WIDTH, canvas.height);
+  const shade = ctx.createLinearGradient(0, 0, 0, height);
+  shade.addColorStop(0, "rgb(0 0 0 / 0.18)");
+  shade.addColorStop(1, "rgb(0 0 0 / 0.42)");
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, 0, WIDTH, height);
 
-  // Header: cover thumbnail, title, artist.
-  let y = PAD;
-  if (cover) {
-    ctx.save();
-    roundRectPath(ctx, PAD, y, COVER, 16);
-    ctx.clip();
-    ctx.drawImage(cover, PAD, y, COVER, COVER);
-    ctx.restore();
-  }
-  const headerX = cover ? PAD + COVER + 32 : PAD;
-  const headerWidth = WIDTH - PAD - headerX;
-  ctx.textBaseline = "middle";
-  ctx.fillStyle = "#fff";
-  ctx.font = font(700, 44);
-  ctx.fillText(
-    wrap(ctx, input.title, headerWidth)[0] ?? "",
-    headerX,
-    y + COVER / 2 - 26,
-    headerWidth,
-  );
-  ctx.fillStyle = "rgb(255 255 255 / 0.7)";
-  ctx.font = font(500, 34);
-  ctx.fillText(
-    wrap(ctx, input.artist, headerWidth)[0] ?? "",
-    headerX,
-    y + COVER / 2 + 28,
-    headerWidth,
-  );
-
-  // Lyrics.
-  y += COVER + SECTION_GAP;
+  // Lyrics, centred in whatever room the footer leaves.
+  const footerTop = height - PAD - COVER;
+  let y = PAD + Math.max(0, (footerTop - SECTION_GAP - PAD - lyricsHeight) / 2);
   ctx.textBaseline = "top";
   groups.forEach((group, i) => {
     if (i > 0) y += GROUP_GAP;
     ctx.fillStyle = "#fff";
-    ctx.font = font(700, MAIN_SIZE);
+    ctx.font = font(800, MAIN_SIZE);
     for (const row of group.main) {
       ctx.fillText(row, PAD, y + (mainLH - MAIN_SIZE) / 2);
       y += mainLH;
     }
-    ctx.fillStyle = "rgb(255 255 255 / 0.7)";
-    ctx.font = font(500, SUB_SIZE);
+    ctx.fillStyle = "rgb(255 255 255 / 0.72)";
+    ctx.font = font(600, SUB_SIZE);
     for (const row of group.subs) {
       ctx.fillText(row, PAD, y + (subLH - SUB_SIZE) / 2);
       y += subLH;
     }
   });
 
-  // Footer: app mark.
-  y += SECTION_GAP;
-  ctx.globalAlpha = 0.75;
-  if (logo) ctx.drawImage(logo, PAD, y, FOOTER, FOOTER);
-  ctx.fillStyle = "#fff";
+  // Footer: artwork, title and artist on the left, the app mark on the right.
+  ctx.font = font(600, 28);
+  const brandWidth = ctx.measureText(input.brand).width + (logo ? LOGO + 12 : 0);
+  const brandX = WIDTH - PAD - brandWidth;
+  const midY = footerTop + COVER / 2;
+  ctx.globalAlpha = 0.8;
   ctx.textBaseline = "middle";
-  ctx.font = font(600, 30);
-  ctx.fillText(input.brand, logo ? PAD + FOOTER + 16 : PAD, y + FOOTER / 2);
+  if (logo) ctx.drawImage(logo, brandX, midY - LOGO / 2, LOGO, LOGO);
+  ctx.fillStyle = "#fff";
+  ctx.fillText(input.brand, logo ? brandX + LOGO + 12 : brandX, midY);
   ctx.globalAlpha = 1;
+
+  if (cover) {
+    ctx.save();
+    ctx.shadowColor = "rgb(0 0 0 / 0.3)";
+    ctx.shadowBlur = 24;
+    ctx.shadowOffsetY = 8;
+    roundRectPath(ctx, PAD, footerTop, COVER, 14);
+    ctx.fillStyle = "#000";
+    ctx.fill();
+    ctx.restore();
+    ctx.save();
+    roundRectPath(ctx, PAD, footerTop, COVER, 14);
+    ctx.clip();
+    ctx.drawImage(cover, PAD, footerTop, COVER, COVER);
+    ctx.restore();
+  }
+  const metaX = cover ? PAD + COVER + 28 : PAD;
+  const metaWidth = brandX - 40 - metaX;
+  ctx.fillStyle = "#fff";
+  ctx.font = font(700, 38);
+  ctx.fillText(ellipsize(ctx, input.title, metaWidth), metaX, midY - 24);
+  ctx.fillStyle = "rgb(255 255 255 / 0.7)";
+  ctx.font = font(500, 30);
+  ctx.fillText(ellipsize(ctx, input.artist, metaWidth), metaX, midY + 24);
 
   return canvas;
 }
@@ -201,8 +203,8 @@ const toPng = (canvas: HTMLCanvasElement): Promise<Blob> =>
 export async function renderLyricCard(input: LyricCardInput): Promise<Blob> {
   const [cover, logo] = await Promise.all([loadImage(input.coverSrc), loadImage(input.logoSrc)]);
   await Promise.all([
-    document.fonts.load(`700 ${MAIN_SIZE}px ${input.fontFamily}`),
-    document.fonts.load(`500 ${SUB_SIZE}px ${input.fontFamily}`),
+    document.fonts.load(`800 ${MAIN_SIZE}px ${input.fontFamily}`),
+    document.fonts.load(`600 ${SUB_SIZE}px ${input.fontFamily}`),
   ]).catch(() => undefined);
   try {
     return await toPng(draw(input, cover, logo));

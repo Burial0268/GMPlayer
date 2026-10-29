@@ -1,65 +1,92 @@
 <template>
-  <n-modal
-    v-model:show="show"
-    :bordered="false"
-    :z-index="2200"
-    class="s-modal lyric-share"
-    preset="card"
-    :title="t('player.share.title')"
-    @after-leave="clearImage"
-  >
-    <template v-if="!imageUrl">
-      <n-scrollbar class="lyric-share-list">
+  <n-modal v-model:show="show" :z-index="2200" :auto-focus="false" @after-leave="clearImage">
+    <div
+      class="lyric-share"
+      :style="{
+        '--share-theme': `rgb(${site.songPicColor})`,
+        '--lyric-share-font': setting.lyricFont,
+      }"
+    >
+      <img class="backdrop" :src="cover" alt="" aria-hidden="true" />
+      <header class="head">
+        <img class="cover" :src="cover" alt="" />
+        <div class="meta">
+          <div class="title">{{ song()?.name }}</div>
+          <div class="artist">{{ artists() }}</div>
+        </div>
+        <n-button quaternary circle :aria-label="t('general.dialog.cancel')" @click="show = false">
+          <template #icon><Close /></template>
+        </n-button>
+      </header>
+
+      <div v-if="!imageUrl" class="lines" role="group" :aria-label="t('player.share.title')">
         <div
           v-for="(line, index) in lines"
           :key="index"
           :ref="(el) => index === range[0] && (anchorEl = el as HTMLElement)"
-          :class="['line', { selected: index >= range[0] && index <= range[1] }]"
+          :class="['line', { selected: isSelected(index) }]"
+          role="checkbox"
+          :aria-checked="isSelected(index)"
+          tabindex="0"
           @click="toggle(index)"
+          @keydown.enter.space.prevent="toggle(index)"
         >
           <div class="text">{{ line.text }}</div>
           <div v-for="(sub, i) in line.subs" :key="i" class="sub">{{ sub }}</div>
         </div>
-      </n-scrollbar>
-      <div class="lyric-share-footer">
-        <span class="count">
-          {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
-        </span>
-        <n-space>
-          <n-button strong secondary round @click="copyText">{{ t("player.share.copy") }}</n-button>
-          <n-button v-if="canShareText" strong secondary round @click="shareText">
-            {{ t("player.share.share") }}
-          </n-button>
-          <n-button type="primary" strong round :loading="rendering" @click="makeImage">
-            {{ t("player.share.image") }}
-          </n-button>
-        </n-space>
       </div>
-    </template>
-    <template v-else>
-      <n-scrollbar class="lyric-share-list">
-        <img class="preview" :src="imageUrl" alt="" />
-      </n-scrollbar>
-      <div class="lyric-share-footer">
-        <n-button strong secondary round @click="clearImage">{{ t("player.share.back") }}</n-button>
-        <n-space>
-          <n-button v-if="canCopyImage" strong secondary round @click="copyImage">
-            {{ t("player.share.copyImage") }}
-          </n-button>
-          <n-button v-if="!isMobileApp" type="primary" strong round @click="saveImage">
-            {{ t("player.share.saveImage") }}
-          </n-button>
-          <n-button v-if="canShareImage" type="primary" strong round @click="shareImage">
-            {{ t("player.share.share") }}
-          </n-button>
-        </n-space>
+      <div v-else class="preview">
+        <img :src="imageUrl" alt="" />
       </div>
-    </template>
+
+      <footer class="foot">
+        <template v-if="!imageUrl">
+          <span class="count">
+            {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
+          </span>
+          <div class="actions">
+            <n-button round secondary @click="copyText">
+              <template #icon><Copy /></template>
+              {{ t("player.share.copy") }}
+            </n-button>
+            <n-button v-if="canShareText" round secondary @click="shareText">
+              <template #icon><ShareTwo /></template>
+              {{ t("player.share.share") }}
+            </n-button>
+            <n-button class="primary" round :loading="rendering" @click="makeImage">
+              <template #icon><Pic /></template>
+              {{ t("player.share.image") }}
+            </n-button>
+          </div>
+        </template>
+        <template v-else>
+          <n-button round secondary @click="clearImage">
+            <template #icon><Left /></template>
+            {{ t("player.share.back") }}
+          </n-button>
+          <div class="actions">
+            <n-button v-if="canCopyImage" round secondary @click="copyImage">
+              <template #icon><Copy /></template>
+              {{ t("player.share.copyImage") }}
+            </n-button>
+            <n-button v-if="!isMobileApp" class="primary" round @click="saveImage">
+              <template #icon><Download /></template>
+              {{ t("player.share.saveImage") }}
+            </n-button>
+            <n-button v-if="canShareImage" class="primary" round @click="shareImage">
+              <template #icon><ShareTwo /></template>
+              {{ t("player.share.share") }}
+            </n-button>
+          </div>
+        </template>
+      </footer>
+    </div>
   </n-modal>
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, shallowRef } from "vue";
+import { computed, nextTick, ref, shallowRef } from "vue";
+import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
@@ -129,6 +156,8 @@ function toggle(index: number) {
   }
 }
 
+const isSelected = (index: number) => index >= range.value[0] && index <= range.value[1];
+const cover = computed(() => coverUrl(song()?.album?.picUrl, 256));
 const selected = () => lines.value.slice(range.value[0], range.value[1] + 1);
 const song = () => music.getPlaySongData;
 const artists = () => (song()?.artist ?? []).map((a) => a.name).join(" / ");
@@ -229,66 +258,225 @@ function ignoreAbort(error: unknown) {
 defineExpose({ open });
 </script>
 
-<style lang="scss">
-.n-card.lyric-share {
-  width: min(560px, calc(100vw - 32px));
-  background-color: rgb(255 255 255 / 0.28);
+<style lang="scss" scoped>
+.lyric-share {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 32px));
+  height: min(720px, calc(100vh - 64px));
+  overflow: hidden;
+  border-radius: 24px;
   color: #fff;
-  -webkit-backdrop-filter: blur(28px);
-  backdrop-filter: blur(28px);
+  background-color: var(--share-theme);
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
 
-  .n-card-header .n-card-header__main,
-  .n-card-header .n-card-header__close {
-    color: #fff;
+  // The cover, blurred past recognition, under a shade dark enough for white
+  // text on any artwork — the same treatment the generated card gets.
+  .backdrop {
+    position: absolute;
+    inset: -20%;
+    width: 140%;
+    height: 140%;
+    object-fit: cover;
+    filter: blur(60px) saturate(1.4);
+    pointer-events: none;
   }
 
-  .lyric-share-list {
-    max-height: min(60vh, 560px);
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: rgb(0 0 0 / 0.32);
+    pointer-events: none;
+  }
+
+  > * {
+    position: relative;
+  }
+
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px 16px 12px 20px;
+
+    .cover {
+      width: 48px;
+      height: 48px;
+      border-radius: 8px;
+      object-fit: cover;
+      box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
+    }
+
+    .meta {
+      flex: 1;
+      min-width: 0;
+
+      .title,
+      .artist {
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
+      .title {
+        font-size: 16px;
+        font-weight: 700;
+      }
+
+      .artist {
+        font-size: 13px;
+        opacity: 0.7;
+      }
+    }
+
+    :deep(.n-button) {
+      color: #fff;
+    }
+  }
+
+  .lines {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    scrollbar-width: none;
+    font-family: var(--lyric-share-font);
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
   }
 
   .line {
-    padding: 10px 14px;
-    border-radius: 12px;
+    padding: 10px 12px;
+    border-radius: 14px;
     cursor: pointer;
-    opacity: 0.45;
+    opacity: 0.35;
+    outline: none;
+    user-select: none;
     transition:
       opacity var(--duration-200, 0.2s),
       background-color var(--duration-200, 0.2s);
-    user-select: none;
 
     .text {
-      font-size: 18px;
-      font-weight: 700;
+      font-size: 24px;
+      font-weight: 800;
+      line-height: 1.3;
     }
 
     .sub {
-      font-size: 14px;
+      margin-top: 2px;
+      font-size: 15px;
+      font-weight: 600;
       opacity: 0.75;
+    }
+
+    &:hover {
+      opacity: 0.6;
+    }
+
+    &:focus-visible {
+      background-color: rgb(255 255 255 / 0.1);
     }
 
     &.selected {
       opacity: 1;
-      background-color: rgb(255 255 255 / 0.16);
+      background-color: rgb(255 255 255 / 0.14);
     }
   }
 
   .preview {
-    display: block;
-    width: 100%;
-    border-radius: 12px;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 20px;
+
+    img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      border-radius: 16px;
+      box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+    }
   }
 
-  .lyric-share-footer {
+  .foot {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
+    gap: 10px;
     align-items: center;
     justify-content: space-between;
-    margin-top: 16px;
+    padding: 12px 16px 16px 20px;
+    background: linear-gradient(transparent, rgb(0 0 0 / 0.18));
 
     .count {
-      opacity: 0.7;
       font-size: 13px;
+      opacity: 0.7;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    :deep(.n-button) {
+      --n-color: rgb(255 255 255 / 0.16);
+      --n-color-hover: rgb(255 255 255 / 0.24);
+      --n-color-pressed: rgb(255 255 255 / 0.3);
+      --n-color-focus: rgb(255 255 255 / 0.24);
+      --n-text-color: #fff;
+      --n-text-color-hover: #fff;
+      --n-text-color-pressed: #fff;
+      --n-text-color-focus: #fff;
+      font-weight: 600;
+    }
+
+    :deep(.n-button.primary) {
+      --n-color: rgb(255 255 255 / 0.92);
+      --n-color-hover: #fff;
+      --n-color-pressed: rgb(255 255 255 / 0.8);
+      --n-color-focus: #fff;
+      --n-text-color: #111;
+      --n-text-color-hover: #111;
+      --n-text-color-pressed: #111;
+      --n-text-color-focus: #111;
+      --n-border: none;
+      --n-border-hover: none;
+      --n-border-pressed: none;
+      --n-border-focus: none;
+    }
+  }
+
+  // Phones get the whole screen, like the sheet it imitates.
+  @media (max-width: 768px) {
+    width: 100vw;
+    height: 100dvh;
+    border-radius: 0;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+
+    .line .text {
+      font-size: 22px;
+    }
+
+    .foot {
+      .count {
+        width: 100%;
+      }
+
+      .actions {
+        width: 100%;
+        margin-left: 0;
+
+        :deep(.n-button) {
+          flex: 1;
+        }
+      }
     }
   }
 }
