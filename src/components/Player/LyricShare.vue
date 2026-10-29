@@ -3,7 +3,8 @@
     <div
       class="lyric-share"
       :style="{
-        '--share-theme': `rgb(${site.songPicColor})`,
+        '--share-tone': shareTone(site.songPicColor),
+        '--share-veil': `linear-gradient(${shareTone(site.songPicColor, VEIL[0])}, ${shareTone(site.songPicColor, VEIL[1])})`,
         '--lyric-share-font': setting.lyricFont,
       }"
     >
@@ -93,7 +94,7 @@ import { coverUrl } from "@/utils/coverUrl";
 import { isInterludeLine, type AMLLLine } from "@/utils/LyricsProcessor";
 import { getTauri, isTauri } from "@/utils/tauri/core/runtime";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
-import { renderLyricCard, type LyricShareLine } from "@/utils/lyricShareCard";
+import { renderLyricCard, shareTone, VEIL, type LyricShareLine } from "@/utils/lyricShareCard";
 
 const MAX_LINES = 5;
 
@@ -268,18 +269,18 @@ defineExpose({ open });
   overflow: hidden;
   border-radius: 24px;
   color: #fff;
-  background-color: var(--share-theme);
+  background-color: var(--share-tone);
   box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
 
-  // The cover, blurred past recognition, under a shade dark enough for white
-  // text on any artwork — the same treatment the generated card gets.
+  // The cover, blurred past recognition, under a veil of the darkened theme
+  // tone — the same treatment the generated card gets.
   .backdrop {
     position: absolute;
     inset: -20%;
     width: 140%;
     height: 140%;
     object-fit: cover;
-    filter: blur(60px) saturate(1.4);
+    filter: blur(60px) saturate(1.3) brightness(0.75);
     pointer-events: none;
   }
 
@@ -287,7 +288,7 @@ defineExpose({ open });
     content: "";
     position: absolute;
     inset: 0;
-    background: rgb(0 0 0 / 0.32);
+    background: var(--share-veil);
     pointer-events: none;
   }
 
