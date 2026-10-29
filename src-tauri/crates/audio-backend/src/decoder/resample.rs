@@ -142,9 +142,17 @@ fn build_table(input_rate: u32, output_rate: u32) -> Vec<f32> {
 /// Fixed-rate polyphase resampler over one interleaved multi-channel stream.
 pub(super) struct PolyphaseResampler {
     table: Vec<f32>,
-    /// Interleaved history of the last `TAPS` input frames, mirrored so the
-    /// window is always readable as one contiguous slice. Length is
-    /// `2 * TAPS * channels`; every pushed frame is written twice.
+    /// Per-channel history of the last `TAPS` input frames. Each channel is
+    /// stored contiguously and mirrored, layout
+    /// `[ch0 | ch0 mirror | ch1 | ch1 mirror | ...]`, so a dot product reads
+    /// `TAPS` adjacent samples.
+    ///
+    /// An interleaved window made the generic tap loop (everything that is not
+    /// stereo) measure ~4.7× slower *per channel* than the stereo special case:
+    /// mono 44.1 kHz → 48 kHz ran at 253× realtime while stereo ran at 594× on
+    /// the same machine, despite doing half the multiply-accumulates. The
+    /// stride-2 stereo loop already kept both accumulators in registers; the
+    /// generic loop rebuilt a subslice and zipped it on every tap.
     history: Vec<f32>,
     channels: usize,
     /// Index (in frames, `0..TAPS`) of the oldest frame in the window.
@@ -187,22 +195,25 @@ impl PolyphaseResampler {
 
     #[inline]
     fn push_frame(&mut self, frame: &[f32]) {
-        let channels = self.channels;
-        let near = self.write_frame * channels;
-        let far = (self.write_frame + TAPS) * channels;
-        self.history[near..near + channels].copy_from_slice(&frame[..channels]);
-        self.history[far..far + channels].copy_from_slice(&frame[..channels]);
-        self.write_frame = (self.write_frame + 1) % TAPS;
+        let write = self.write_frame;
+        for channel in 0..self.channels {
+            let base = channel * (2 * TAPS);
+            let sample = frame[channel];
+            self.history[base + write] = sample;
+            self.history[base + write + TAPS] = sample;
+        }
+        self.write_frame = (write + 1) % TAPS;
     }
 
     #[inline]
     fn push_silence(&mut self) {
-        let channels = self.channels;
-        let near = self.write_frame * channels;
-        let far = (self.write_frame + TAPS) * channels;
-        self.history[near..near + channels].fill(0.0);
-        self.history[far..far + channels].fill(0.0);
-        self.write_frame = (self.write_frame + 1) % TAPS;
+        let write = self.write_frame;
+        for channel in 0..self.channels {
+            let base = channel * (2 * TAPS);
+            self.history[base + write] = 0.0;
+            self.history[base + write + TAPS] = 0.0;
+        }
+        self.write_frame = (write + 1) % TAPS;
     }
 
     /// Pull one input frame through `read`, falling back to zero-padding once
@@ -269,18 +280,35 @@ impl PolyphaseResampler {
         let high = &self.table[(phase + 1) * TAPS..(phase + 1) * TAPS + TAPS];
 
         let channels = self.channels;
-        let window_start = self.write_frame * channels;
-        let window = &self.history[window_start..window_start + TAPS * channels];
+        let write = self.write_frame;
 
-        if channels == 2 {
+        if channels == 1 {
+            let window = &self.history[write..write + TAPS];
+            let mut acc = 0.0f32;
+            for tap in 0..TAPS {
+                let coefficient = low[tap] + (high[tap] - low[tap]) * blend;
+                acc += window[tap] * coefficient;
+            }
+            output[0] = acc;
+        } else if channels == 2 {
             // Stereo is the overwhelmingly common layout; giving it its own loop
             // lets both accumulators stay in registers across the tap sweep.
+            // Each channel's window is contiguous, so the loads are a dense dot
+            // product rather than a stride-2 gather.
+            //
+            // Leave this as one accumulator per channel. Splitting the reduction
+            // into four FMAs was measured at 125× realtime against 597× for this
+            // loop — LLVM already vectorizes the single accumulator, and the
+            // manual unroll spilled.
+            let left_w = &self.history[write..write + TAPS];
+            let right_at = 2 * TAPS + write;
+            let right_w = &self.history[right_at..right_at + TAPS];
             let mut left = 0.0f32;
             let mut right = 0.0f32;
             for tap in 0..TAPS {
                 let coefficient = low[tap] + (high[tap] - low[tap]) * blend;
-                left += window[tap * 2] * coefficient;
-                right += window[tap * 2 + 1] * coefficient;
+                left += left_w[tap] * coefficient;
+                right += right_w[tap] * coefficient;
             }
             output[0] = left;
             output[1] = right;
@@ -288,9 +316,9 @@ impl PolyphaseResampler {
             output.fill(0.0);
             for tap in 0..TAPS {
                 let coefficient = low[tap] + (high[tap] - low[tap]) * blend;
-                let frame = &window[tap * channels..tap * channels + channels];
-                for (slot, &sample) in output.iter_mut().zip(frame) {
-                    *slot += sample * coefficient;
+                for channel in 0..channels {
+                    let at = channel * (2 * TAPS) + write + tap;
+                    output[channel] += self.history[at] * coefficient;
                 }
             }
         }
@@ -398,6 +426,53 @@ mod tests {
         output
     }
 
+    /// Local timing probe for the 44.1 kHz → 48 kHz stereo path (the conversion
+    /// almost every track pays). Ignored in CI: the number is machine-specific
+    /// and only meaningful under `--release`.
+    #[test]
+    #[ignore]
+    fn resample_stereo_441_to_48_throughput() {
+        let input: Vec<f32> = (0..44_100 * 30 * 2)
+            .map(|i| ((i as f32) * 0.017).sin() * 0.8)
+            .collect();
+        // Warm the coefficient table off the clock.
+        let _ = run_blocked(&input[..2 * 4_000], 2, 44_100, 48_000, 512);
+        let start = std::time::Instant::now();
+        let output = run_blocked(&input, 2, 44_100, 48_000, 512);
+        let elapsed = start.elapsed();
+        let out_frames = output.len() / 2;
+        let audio_secs = out_frames as f64 / 48_000.0;
+        eprintln!(
+            "resample 44.1->48 stereo: {out_frames} frames in {:.2} ms ({:.1}x realtime)",
+            elapsed.as_secs_f64() * 1_000.0,
+            audio_secs / elapsed.as_secs_f64()
+        );
+        assert!(out_frames > 44_100 * 20);
+    }
+
+    /// Same probe for mono. The generic tap loop used to be several times
+    /// slower per channel than the stereo special case; this stays ignored in
+    /// CI for the same reason as the stereo probe.
+    #[test]
+    #[ignore]
+    fn resample_mono_441_to_48_throughput() {
+        let input: Vec<f32> = (0..44_100 * 30)
+            .map(|i| ((i as f32) * 0.017).sin() * 0.8)
+            .collect();
+        let _ = run_blocked(&input[..4_000], 1, 44_100, 48_000, 512);
+        let start = std::time::Instant::now();
+        let output = run_blocked(&input, 1, 44_100, 48_000, 512);
+        let elapsed = start.elapsed();
+        let audio_secs = output.len() as f64 / 48_000.0;
+        eprintln!(
+            "resample 44.1->48 mono: {} frames in {:.2} ms ({:.1}x realtime)",
+            output.len(),
+            elapsed.as_secs_f64() * 1_000.0,
+            audio_secs / elapsed.as_secs_f64()
+        );
+        assert!(output.len() > 44_100 * 20);
+    }
+
     #[test]
     fn block_output_is_identical_to_frame_at_a_time_output() {
         // The block path exists purely to amortize bookkeeping, so it must not
@@ -413,6 +488,18 @@ mod tests {
             assert_eq!(
                 actual, expected,
                 "block size {block_frames} diverged from the per-frame path"
+            );
+        }
+
+        // Mono takes its own accumulator. The block API has to stay identical
+        // there too, or a later "faster" mono loop can drift from next_frame.
+        let mono: Vec<f32> = (0..5_000).map(|n| (n as f32 * 0.07).sin() * 0.8).collect();
+        let expected = run(&mono, 1, 44_100, 48_000);
+        for block_frames in [1, 64, 512] {
+            let actual = run_blocked(&mono, 1, 44_100, 48_000, block_frames);
+            assert_eq!(
+                actual, expected,
+                "mono block size {block_frames} diverged from the per-frame path"
             );
         }
     }
@@ -656,6 +743,27 @@ mod tests {
                 (sample - expected).abs() < 1e-3,
                 "channel {} expected flat {expected}, saw {sample}",
                 index % 2
+            );
+        }
+    }
+
+    #[test]
+    fn extra_channels_stay_on_their_own_planar_window() {
+        // Channel 2 used to be read as `window[tap * channels + 2]` out of an
+        // interleaved history. The planar layout stores it `2 * TAPS` samples
+        // away; a swapped base would dump that channel onto silence or onto
+        // channel 0. Neither the mono frequency tests nor the stereo constant
+        // test can see that.
+        const CH: [f32; 3] = [0.25, -0.5, 0.75];
+        let input: Vec<f32> = (0..4_000).flat_map(|_| CH).collect();
+        let output = run(&input, 3, 44_100, 48_000);
+        let body = &output[3 * TAPS..output.len() - 3 * TAPS];
+        for (index, &sample) in body.iter().enumerate() {
+            let expected = CH[index % 3];
+            assert!(
+                (sample - expected).abs() < 1e-3,
+                "channel {} expected {expected}, saw {sample}",
+                index % 3
             );
         }
     }

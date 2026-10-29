@@ -132,7 +132,8 @@ const EVENT_CHANNEL = "audio-player://event";
  * ack (data is null) — we filter those out here so consumers see only real
  * events. The envelope's `seq` is forwarded as the second handler argument
  * so consumers can dedup against duplicate deliveries from the primary
- * Channel transport during a fallback transition.
+ * Channel transport during a fallback transition. `sentAt` is forwarded so
+ * the timeline can subtract IPC delivery latency from the extrapolation anchor.
  */
 export async function listenPlayerEvents(handler: AudioThreadEventCallback): Promise<() => void> {
   if (!isTauri()) return () => {};
@@ -141,7 +142,7 @@ export async function listenPlayerEvents(handler: AudioThreadEventCallback): Pro
     (e) => {
       const payload = e.payload;
       if (payload && payload.data) {
-        handler(payload.data, payload.seq);
+        handler(payload.data, payload.seq, payload.sentAt);
       }
     },
   );
