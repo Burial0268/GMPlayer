@@ -37,8 +37,8 @@ const RESULT_BUF_SIZE: usize = 2048;
 const MAGNITUDE_GAIN: f32 = 10_000.0;
 /// Low-pass envelope: rise to a beat fast, let it go slower. Exponential so the
 /// result does not depend on the display's frame rate.
-const ATTACK_MS: f32 = 10.0;
-const RELEASE_MS: f32 = 150.0;
+const ATTACK_MS: f32 = 20.0;
+const RELEASE_MS: f32 = 250.0;
 /// Taste: with the fast attack every beat reaches its full `max²`, which zoomed
 /// harder than wanted.
 const OUTPUT_GAIN: f32 = 0.75;
@@ -533,7 +533,7 @@ impl LowFreqAnalyzer {
     /// - New value in partial window → push, return 0
     /// - Duplicate value in partial window → fall through to shift+push+compute
     /// - Window full → shift+push+compute
-    /// Returns max² (if diff > threshold) or min * 0.25.
+    /// Returns max² (if diff > threshold) or min² * 0.5.
     fn _calculate_gradient(&mut self, fft_data: &[f32]) -> f32 {
         let count = self.config.bin_count.min(fft_data.len());
         let mut sum = 0.0f32;
@@ -572,7 +572,10 @@ impl LowFreqAnalyzer {
         if diff > self.config.gradient_threshold {
             max_sq
         } else {
-            gmin * 0.25
+            // AMLL's `min * 0.25` dropped a held bass note to a quarter as soon
+            // as the window filled with it; squaring keeps loud passages up and
+            // quiet ones near zero.
+            gmin * gmin * 0.5
         }
     }
 

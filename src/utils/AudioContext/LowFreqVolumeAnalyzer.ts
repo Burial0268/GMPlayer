@@ -23,8 +23,8 @@ export interface LowFreqVolumeOptions {
   gradientThreshold?: number;
 }
 
-const ATTACK_MS = 10;
-const RELEASE_MS = 150;
+const ATTACK_MS = 20;
+const RELEASE_MS = 250;
 // Taste: with the fast attack every beat reaches its full max², which zoomed too hard.
 const OUTPUT_GAIN = 0.75;
 
@@ -91,7 +91,7 @@ export class LowFreqVolumeAnalyzer {
   /**
    * Calculate gradient from sliding window of low-freq bin levels.
    * Uses first N FFT bins averaged, tracks window of configurable size.
-   * Returns either maxInInterval² (if difference > threshold) or minInInterval * 0.25.
+   * Returns either maxInInterval² (if difference > threshold) or minInInterval² * 0.5.
    */
   private _calculateGradient(fftData: ArrayLike<number>): number {
     let sum = 0;
@@ -113,7 +113,9 @@ export class LowFreqVolumeAnalyzer {
     const minInInterval = Math.min(...this._gradient);
     const difference = maxInInterval - minInInterval;
 
-    return difference > this._gradientThreshold ? maxInInterval : minInInterval * 0.25;
+    // AMLL's `min * 0.25` dropped a held bass note to a quarter once the window filled
+    // with it; squaring keeps loud passages up and quiet ones near zero.
+    return difference > this._gradientThreshold ? maxInInterval : minInInterval ** 2 * 0.5;
   }
 
   /**
