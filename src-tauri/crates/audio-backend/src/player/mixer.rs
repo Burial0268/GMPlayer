@@ -221,6 +221,10 @@ impl PlaybackSink for DeckWriter {
         self.queued_samples.load(Ordering::Acquire) + self.output.read().queued_samples()
     }
 
+    fn output_latency_us(&self) -> u32 {
+        self.output.read().output_latency_us()
+    }
+
     fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
     }

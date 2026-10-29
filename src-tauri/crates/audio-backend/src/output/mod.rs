@@ -291,6 +291,11 @@ impl OutputWriter {
             .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Release);
     }
 
+    /// Same measurement as [`OutputRenderClock::output_latency_us`].
+    pub fn output_latency_us(&self) -> u32 {
+        self.output_latency_us.load(Ordering::Relaxed)
+    }
+
     pub fn queued_samples(&self) -> usize {
         // Queue depth participates in prebuffer and drain decisions. Pair the
         // read with producer/flush Release operations so control threads do
