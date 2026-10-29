@@ -569,13 +569,22 @@ jobs:
           name: GMPlayer Android Universal
           path: build-dist/*
 
-      # 与桌面 job 同一个 tag：clean-pre-release 已清空旧资产，桌面 job 建 release，
-      # 这里按 tag 追加；谁先到谁创建，action-gh-release 对已存在的 release 直接追加。
+      # 与桌面 job 同一个 tag：clean-pre-release 已清空旧资产，这里只往 release 里追加。
+      #
+      # 不用 softprops/action-gh-release：它找到已有 release 后会先 PATCH 一次并原样回发
+      # target_commitish，而 <分支>-player-dev 的 tag 停在建 release 时的旧提交上。旧提交的
+      # .github/workflows 与本次运行不同时，GitHub 要求 workflows 权限，GITHUB_TOKEN 给不了，
+      # 于是 403 Resource not accessible by integration（softprops/action-gh-release#836）。
+      # `gh release upload` 只传资产，不碰 release 本身。
       - name: 发布 Android 安装包至 GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_name }}-player-dev
-          prerelease: true
-          files: build-dist/*
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}-player-dev
+        run: |
+          # 新分支第一次跑时 release 可能还没被桌面 job 建出来；建在本次提交上不会触发上面的 403。
+          # 与桌面 job 抢着建时 create 会失败，交给下面的 upload 判断 release 是否真的存在。
+          gh release view "$TAG" > /dev/null 2>&1 \
+            || gh release create "$TAG" --prerelease --target "$GITHUB_SHA" \
+                 --title "GMPlayer ${GITHUB_REF_NAME} branch development build" --notes "" \
+            || true
+          gh release upload "$TAG" build-dist/* --clobber
