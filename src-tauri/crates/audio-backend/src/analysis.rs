@@ -250,7 +250,9 @@ impl Analysis {
         Self {
             fft: FftProcessor::new(FftConfig {
                 output_size: FFT_SIZE,
-                freq_min: 80.0,
+                // AMLL starts at 80 Hz, which puts both low bins near 100 Hz:
+                // bass and toms, above most kick fundamentals (45–65 Hz).
+                freq_min: 40.0,
                 freq_max: 2000.0,
             }),
             delayed: DelayQueue::default(),

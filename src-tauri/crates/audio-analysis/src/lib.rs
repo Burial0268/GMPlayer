@@ -31,13 +31,17 @@ const FFT_BIN_COUNT: usize = FFT_SIZE / 2 + 1;
 const RESULT_BUF_SIZE: usize = 2048;
 /// AMLL's window (below) is a ramp that peaks around 2·10⁴ instead of a taper
 /// peaking at 1, and its magnitudes are what the low-pass `/255` level and 0.35
-/// threshold, and the spectrum bars' 255 floor, were tuned on. This keeps that
-/// scale on the textbook window; measured to give AMLL's level distribution.
-const MAGNITUDE_GAIN: f32 = 20_000.0;
+/// threshold, and the spectrum bars' 255 floor, were tuned on. This puts the
+/// textbook window back on that scale; measured on the 40 Hz-up low bins so the
+/// share of time the background bounces stays where AMLL's was.
+const MAGNITUDE_GAIN: f32 = 10_000.0;
 /// Low-pass envelope: rise to a beat fast, let it go slower. Exponential so the
 /// result does not depend on the display's frame rate.
 const ATTACK_MS: f32 = 10.0;
 const RELEASE_MS: f32 = 150.0;
+/// Taste: with the fast attack every beat reaches its full `max²`, which zoomed
+/// harder than wanted.
+const OUTPUT_GAIN: f32 = 0.75;
 
 // ── FftConfig ──────────────────────────────────────────────────────
 
@@ -575,7 +579,7 @@ impl LowFreqAnalyzer {
     /// Analyze FFT raw bin data and return smoothed low-frequency volume.
     pub fn analyze(&mut self, fft_data: &[f32], delta_ms: f32) -> f32 {
         if fft_data.len() < self.config.bin_count {
-            return self.cur_value;
+            return self.value();
         }
 
         let delta = delta_ms.clamp(1.0, 100.0);
@@ -593,11 +597,11 @@ impl LowFreqAnalyzer {
             self.cur_value = 1.0;
         }
 
-        self.cur_value
+        self.value()
     }
 
     pub fn value(&self) -> f32 {
-        self.cur_value
+        self.cur_value * OUTPUT_GAIN
     }
 
     pub fn set_options(&mut self, options: &LowFreqOptions) {

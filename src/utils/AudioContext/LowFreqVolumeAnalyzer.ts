@@ -25,6 +25,8 @@ export interface LowFreqVolumeOptions {
 
 const ATTACK_MS = 10;
 const RELEASE_MS = 150;
+// Taste: with the fast attack every beat reaches its full max², which zoomed too hard.
+const OUTPUT_GAIN = 0.75;
 
 const DEFAULT_OPTIONS: Required<LowFreqVolumeOptions> = {
   binCount: 2,
@@ -122,7 +124,7 @@ export class LowFreqVolumeAnalyzer {
    */
   public analyze(fftData: ArrayLike<number>): number {
     if (!fftData || fftData.length < this._binCount) {
-      return this._curValue;
+      return this._curValue * OUTPUT_GAIN;
     }
 
     const now = performance.now();
@@ -136,7 +138,7 @@ export class LowFreqVolumeAnalyzer {
 
     if (Number.isNaN(this._curValue)) this._curValue = 1;
 
-    return this._curValue;
+    return this._curValue * OUTPUT_GAIN;
   }
 
   /**
