@@ -19,10 +19,12 @@ use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use tracing::{info, warn};
 
 mod config;
+mod latency;
 mod platform;
 mod render;
 
 use config::{select_any_output_config, select_output_config, stable_stream_config};
+use latency::{sample_us, LatencyMeter};
 use platform::DEFAULT_QUEUE_BLOCKS;
 use render::{fill_output, CallbackState, OutputBlock};
 
@@ -44,8 +46,6 @@ const RECYCLE_QUEUE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS + 4;
 // before stream start; matching the PCM queue depth lets the callback drain a
 // full ready queue without allocating even if the mixer is briefly descheduled.
 const PENDING_RECYCLE_BLOCKS: usize = DEFAULT_QUEUE_BLOCKS;
-/// EMA weight for the measured output delay; buffer fill varies per callback.
-const LATENCY_SMOOTHING: f32 = 1.0 / 16.0;
 const OUTPUT_INIT_TIMEOUT: Duration = Duration::from_secs(4);
 // Producers only ever block when the sink queue is *full*, which is the steady
 // state during playback: the consumer drains it in real time, so the slot we
@@ -187,9 +187,9 @@ pub struct OutputWriter {
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
     rendered_samples: Arc<AtomicU64>,
-    /// Smoothed delay, in microseconds, between a sample being counted in
-    /// `rendered_samples` and it leaving the device. `0` until the first callback.
-    output_latency_us: Arc<AtomicU32>,
+    /// Delay between a sample being counted in `rendered_samples` and it
+    /// leaving the device.
+    latency: Arc<LatencyMeter>,
     /// Interleaved samples the stream plays per second. Fixed once the device
     /// config is known, and only used to size the producer's wait on a full
     /// ring; a stale default merely makes that wait shorter.
@@ -204,7 +204,7 @@ pub struct OutputWriter {
 #[derive(Clone, Debug)]
 pub struct OutputRenderClock {
     rendered_samples: Arc<AtomicU64>,
-    output_latency_us: Arc<AtomicU32>,
+    latency: Arc<LatencyMeter>,
 }
 
 impl OutputRenderClock {
@@ -214,9 +214,10 @@ impl OutputRenderClock {
         self.rendered_samples.load(Ordering::Relaxed)
     }
 
-    /// Output-path delay in microseconds; `0` means not measured yet.
-    pub fn output_latency_us(&self) -> u32 {
-        self.output_latency_us.load(Ordering::Relaxed)
+    /// Output-path delay in microseconds, `0` until one settles. Publishes a
+    /// newly settled value, so it belongs on a slow periodic caller.
+    pub fn settle_latency_us(&self) -> u32 {
+        self.latency.settle()
     }
 }
 
@@ -291,9 +292,9 @@ impl OutputWriter {
             .store(volume.clamp(0.0, 1.0).to_bits(), Ordering::Release);
     }
 
-    /// Same measurement as [`OutputRenderClock::output_latency_us`].
+    /// The value [`OutputRenderClock::settle_latency_us`] last published.
     pub fn output_latency_us(&self) -> u32 {
-        self.output_latency_us.load(Ordering::Relaxed)
+        self.latency.settled_us()
     }
 
     pub fn queued_samples(&self) -> usize {
@@ -324,7 +325,7 @@ impl OutputWriter {
     pub fn render_clock(&self) -> OutputRenderClock {
         OutputRenderClock {
             rendered_samples: Arc::clone(&self.rendered_samples),
-            output_latency_us: Arc::clone(&self.output_latency_us),
+            latency: Arc::clone(&self.latency),
         }
     }
 
@@ -391,7 +392,7 @@ pub fn open_output(
     let flush_epoch = Arc::new(AtomicU64::new(0));
     let queued_samples = Arc::new(AtomicUsize::new(0));
     let rendered_samples = Arc::new(AtomicU64::new(0));
-    let output_latency_us = Arc::new(AtomicU32::new(0));
+    let latency = Arc::new(LatencyMeter::new());
     let stream_selector = selector.clone();
 
     let writer = OutputWriter {
@@ -404,7 +405,7 @@ pub fn open_output(
         flush_epoch: Arc::clone(&flush_epoch),
         queued_samples: Arc::clone(&queued_samples),
         rendered_samples: Arc::clone(&rendered_samples),
-        output_latency_us: Arc::clone(&output_latency_us),
+        latency: Arc::clone(&latency),
         samples_per_sec: DEFAULT_PRODUCER_SAMPLES_PER_SEC,
         recycle_rx: Arc::new(Mutex::new(recycle_rx)),
     };
@@ -428,7 +429,7 @@ pub fn open_output(
                 flush_epoch,
                 queued_samples,
                 rendered_samples,
-                output_latency_us,
+                latency,
             );
             match result {
                 Ok((stream, device_key, config_key)) => {
@@ -747,7 +748,7 @@ fn open_output_stream(
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
     rendered_samples: Arc<AtomicU64>,
-    output_latency_us: Arc<AtomicU32>,
+    latency: Arc<LatencyMeter>,
 ) -> Result<(Stream, OutputDeviceKey, OutputConfigKey), String> {
     let host = cpal::default_host();
     let device = resolve_output_device(&host, &selector)?;
@@ -803,7 +804,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         cpal::SampleFormat::I16 => build_stream::<i16>(
             &device,
@@ -818,7 +819,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         cpal::SampleFormat::I32 => build_stream::<i32>(
             &device,
@@ -833,7 +834,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         cpal::SampleFormat::U8 => build_stream::<u8>(
             &device,
@@ -848,7 +849,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         cpal::SampleFormat::U16 => build_stream::<u16>(
             &device,
@@ -863,7 +864,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         cpal::SampleFormat::U32 => build_stream::<u32>(
             &device,
@@ -878,7 +879,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         cpal::SampleFormat::F32 => build_stream::<f32>(
             &device,
@@ -893,7 +894,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         cpal::SampleFormat::F64 => build_stream::<f64>(
             &device,
@@ -908,7 +909,7 @@ fn open_output_stream(
             flush_epoch,
             queued_samples,
             rendered_samples,
-            output_latency_us,
+            latency,
         ),
         other => Err(format!("unsupported output sample format: {other:?}")),
     }?;
@@ -932,7 +933,7 @@ fn build_stream<T>(
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
     rendered_samples: Arc<AtomicU64>,
-    output_latency_us: Arc<AtomicU32>,
+    latency: Arc<LatencyMeter>,
 ) -> Result<Stream, String>
 where
     T: SizedSample + Sample + FromSample<f32>,
@@ -966,7 +967,7 @@ where
     };
 
     let samples_per_sec = stream_samples_per_sec(config.sample_rate, config.channels) as f32;
-    let mut smoothed_us = 0.0f32;
+    let mut last_playback = None;
 
     device
         .build_output_stream(
@@ -981,14 +982,14 @@ where
                 let ahead_us = ts
                     .playback
                     .saturating_duration_since(ts.callback)
-                    .as_micros() as f32;
-                let total_us = ahead_us + data.len() as f32 / samples_per_sec * 1e6;
-                smoothed_us = if smoothed_us == 0.0 {
-                    total_us
-                } else {
-                    smoothed_us + (total_us - smoothed_us) * LATENCY_SMOOTHING
-                };
-                output_latency_us.store(smoothed_us as u32, Ordering::Relaxed);
+                    .as_micros();
+                let buffer_us = data.len() as f32 / samples_per_sec * 1e6;
+                let repeated = last_playback.replace(ts.playback) == Some(ts.playback);
+                latency.record(sample_us(
+                    ahead_us.min(u32::MAX as u128) as u32,
+                    buffer_us as u32,
+                    repeated,
+                ));
                 fill_output(
                     data,
                     &mut state,
@@ -1133,7 +1134,7 @@ mod tests {
             flush_epoch: Arc::clone(&flush_epoch),
             queued_samples: Arc::clone(&queued_samples),
             rendered_samples: Arc::new(AtomicU64::new(0)),
-            output_latency_us: Arc::new(AtomicU32::new(0)),
+            latency: Arc::new(LatencyMeter::new()),
             samples_per_sec: DEFAULT_PRODUCER_SAMPLES_PER_SEC,
             recycle_rx: Arc::new(Mutex::new(recycle_rx)),
         };

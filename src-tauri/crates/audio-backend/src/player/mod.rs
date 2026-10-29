@@ -340,7 +340,7 @@ impl AudioPlayer {
                         clock.is_playing(),
                         clock.position(),
                         clock.epoch(),
-                        clock.output_latency_us(),
+                        clock.settle_output_latency_us(),
                     )
                 };
                 if is_playing {
