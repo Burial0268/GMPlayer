@@ -1,21 +1,31 @@
 //! Sharing a lyric card out of the app: the native save dialog on desktop, the
-//! system share sheet on Android. The PNG arrives as a raw IPC body (a JSON
-//! array of a megabyte of bytes would be four times the size); the suggested
-//! file name rides in an `x-share` header as a URL query, because a header
-//! value must be Latin-1 and song titles are not.
+//! system share sheet on mobile. The PNG is sent as a raw IPC body; the
+//! suggested file name rides in an `x-share` header as a URL query, because a
+//! header value must be Latin-1 and song titles are not.
 
+use std::borrow::Cow;
 use tauri::ipc::{InvokeBody, Request};
 
-fn png_and_name<'a>(request: &'a Request<'_>) -> Result<(&'a [u8], String), String> {
-    let InvokeBody::Raw(png) = request.body() else {
-        return Err("expected a raw PNG body".into());
+fn png_and_name<'a>(request: &'a Request<'_>) -> Result<(Cow<'a, [u8]>, String), String> {
+    let png = match request.body() {
+        InvokeBody::Raw(png) => Cow::Borrowed(png.as_slice()),
+        // Android has no raw IPC body: the request goes through `postMessage`,
+        // which JSON-encodes the bytes as an array of numbers.
+        InvokeBody::Json(value) => Cow::Owned(
+            serde_json::from_value::<Vec<u8>>(value.clone())
+                .map_err(|e| format!("expected PNG bytes: {e}"))?,
+        ),
     };
     let name = request
         .headers()
         .get("x-share")
         .and_then(|v| v.to_str().ok())
         .and_then(|q| tauri::Url::parse(&format!("http://_/?{q}")).ok())
-        .and_then(|url| url.query_pairs().find(|(k, _)| k == "name").map(|(_, v)| v.into_owned()))
+        .and_then(|url| {
+            url.query_pairs()
+                .find(|(k, _)| k == "name")
+                .map(|(_, v)| v.into_owned())
+        })
         // Path separators would let a song title pick the directory.
         .map(|n| n.replace(['/', '\\', ':'], "_"))
         .filter(|n| !n.trim().is_empty())
@@ -41,12 +51,14 @@ pub async fn share_save_image<R: tauri::Runtime>(
         .save_file(move |picked| {
             let _ = tx.send(picked);
         });
-    let picked = rx.await.map_err(|_| "save dialog was dropped".to_string())?;
+    let picked = rx
+        .await
+        .map_err(|_| "save dialog was dropped".to_string())?;
     let Some(path) = picked else { return Ok(false) };
     let path = path
         .into_path()
         .map_err(|e| format!("save dialog returned an unusable path: {e}"))?;
-    std::fs::write(&path, png).map_err(|e| format!("write {}: {e}", path.display()))?;
+    std::fs::write(&path, &png).map_err(|e| format!("write {}: {e}", path.display()))?;
     log::info!("[share] saved lyric card to {}", path.display());
     Ok(true)
 }
@@ -72,7 +84,14 @@ pub async fn share_text<R: tauri::Runtime>(
 
     dismissed_is_ok(
         app.share()
-            .share_text(window, text, ShareTextOptions { mime_type: None, position: None })
+            .share_text(
+                window,
+                text,
+                ShareTextOptions {
+                    mime_type: None,
+                    position: None,
+                },
+            )
             .await,
     )
 }
@@ -91,10 +110,14 @@ pub async fn share_image<R: tauri::Runtime>(
     // sharekit copies the file to `cacheDir/<file name>` before granting it to
     // the receiver, so the source must not already sit at that exact path — the
     // copy would truncate it to nothing first.
-    let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?.join("share");
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|e| e.to_string())?
+        .join("share");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join(&name);
-    std::fs::write(&path, png).map_err(|e| format!("write {}: {e}", path.display()))?;
+    std::fs::write(&path, &png).map_err(|e| format!("write {}: {e}", path.display()))?;
     dismissed_is_ok(
         app.share()
             .share_file(

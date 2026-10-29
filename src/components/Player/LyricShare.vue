@@ -46,7 +46,7 @@
           <n-button v-if="canCopyImage" strong secondary round @click="copyImage">
             {{ t("player.share.copyImage") }}
           </n-button>
-          <n-button v-if="!isAndroid" type="primary" strong round @click="saveImage">
+          <n-button v-if="!isMobileApp" type="primary" strong round @click="saveImage">
             {{ t("player.share.saveImage") }}
           </n-button>
           <n-button v-if="canShareImage" type="primary" strong round @click="shareImage">
@@ -65,6 +65,7 @@ import { musicStore, settingStore, siteStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
 import { isInterludeLine, type AMLLLine } from "@/utils/LyricsProcessor";
 import { getTauri, isTauri } from "@/utils/tauri/core/runtime";
+import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { renderLyricCard, type LyricShareLine } from "@/utils/lyricShareCard";
 
 const MAX_LINES = 5;
@@ -74,11 +75,12 @@ const music = musicStore();
 const setting = settingStore();
 const site = siteStore();
 
-const isAndroid = isTauri() && /Android/i.test(navigator.userAgent);
-const canShareText = isAndroid || (!isTauri() && typeof navigator.share === "function");
-const canShareImage = isAndroid || (!isTauri() && typeof navigator.canShare === "function");
-// Android WebView has no image clipboard; the share sheet covers it there.
-const canCopyImage = !isAndroid && typeof ClipboardItem !== "undefined";
+// The share commands are registered for mobile builds, the saver for desktop.
+const isMobileApp = isTauri() && isMobileDevice();
+const canShareText = isMobileApp || (!isTauri() && typeof navigator.share === "function");
+const canShareImage = isMobileApp || (!isTauri() && typeof navigator.canShare === "function");
+// Mobile WebViews have no image clipboard; the share sheet covers it there.
+const canCopyImage = !isMobileApp && typeof ClipboardItem !== "undefined";
 
 const show = ref(false);
 const lines = shallowRef<LyricShareLine[]>([]);
@@ -154,7 +156,7 @@ const copyText = () =>
 const shareText = () =>
   run(async () => {
     const text = `${lyricText()}\n\n—— ${fileName()}`;
-    if (isAndroid) await getTauri()!.core.invoke("share_text", { text });
+    if (isMobileApp) await getTauri()!.core.invoke("share_text", { text });
     else await navigator.share({ text }).catch(ignoreAbort);
   });
 
@@ -211,7 +213,7 @@ const saveImage = () =>
 
 const shareImage = () =>
   run(async () => {
-    if (isAndroid) {
+    if (isMobileApp) {
       await nativeImageCall("share_image");
       return;
     }
