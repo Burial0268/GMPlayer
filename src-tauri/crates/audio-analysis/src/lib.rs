@@ -41,7 +41,7 @@ const ATTACK_MS: f32 = 20.0;
 const RELEASE_MS: f32 = 250.0;
 /// Taste: with the fast attack every beat reaches its full `max²`, which zoomed
 /// harder than wanted.
-const OUTPUT_GAIN: f32 = 0.75;
+const OUTPUT_GAIN: f32 = 0.65;
 
 // ── FftConfig ──────────────────────────────────────────────────────
 
@@ -533,7 +533,7 @@ impl LowFreqAnalyzer {
     /// - New value in partial window → push, return 0
     /// - Duplicate value in partial window → fall through to shift+push+compute
     /// - Window full → shift+push+compute
-    /// Returns max² (if diff > threshold) or min² * 0.5.
+    /// Returns max² (if diff > threshold) or min² * 0.3.
     fn _calculate_gradient(&mut self, fft_data: &[f32]) -> f32 {
         let count = self.config.bin_count.min(fft_data.len());
         let mut sum = 0.0f32;
@@ -575,7 +575,7 @@ impl LowFreqAnalyzer {
             // AMLL's `min * 0.25` dropped a held bass note to a quarter as soon
             // as the window filled with it; squaring keeps loud passages up and
             // quiet ones near zero.
-            gmin * gmin * 0.5
+            gmin * gmin * 0.3
         }
     }
 
