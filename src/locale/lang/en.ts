@@ -513,6 +513,7 @@ const messages: Record<string, unknown> = {
     downloadingUpdate: "Downloading",
     installingUpdate: "Installing",
     installUpdate: "Install Update",
+    downloadUpdate: "Download Update",
     installUpdateConfirm:
       "Download and install GMPlayer {version}? Restart the app after installation to apply it.",
     updateInstalled: "Update installed",

@@ -550,10 +550,32 @@ jobs:
           export JAVA_HOME=$JAVA_HOME_17_X64
           pnpm tauri android build --split-per-abi
 
+      # 给文件名带上版本，Release 页里才分得清；Gradle 默认的 app-<abi>-release-*.apk 没有版本号。
+      - name: 整理 Android 构建包
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          mkdir -p build-dist
+          for f in src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk \
+                   src-tauri/gen/android/app/build/outputs/bundle/*/*.aab; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            cp "$f" "build-dist/GMPlayer_${VERSION}_${name#app-}"
+          done
+          ls -l build-dist
+
       - name: 上传产物到 Action Artifact
         uses: actions/upload-artifact@v4
         with:
           name: GMPlayer Android Universal
-          path: |
-            src-tauri/gen/android/app/build/outputs/apk/**/release/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+          path: build-dist/*
+
+      # 与桌面 job 同一个 tag：clean-pre-release 已清空旧资产，桌面 job 建 release，
+      # 这里按 tag 追加；谁先到谁创建，action-gh-release 对已存在的 release 直接追加。
+      - name: 发布 Android 安装包至 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}-player-dev
+          prerelease: true
+          files: build-dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

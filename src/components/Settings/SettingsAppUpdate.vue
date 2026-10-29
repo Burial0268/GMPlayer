@@ -167,6 +167,8 @@ const {
   etaSeconds,
   checkForUpdate,
   installAvailableUpdate,
+  linkOnly,
+  openReleasePage,
 } = useAppUpdater();
 
 const isDownloading = computed(() => updaterState.status === "downloading");
@@ -214,7 +216,7 @@ const statusVisual = computed(() => {
 const installButtonText = computed(() => {
   if (updaterState.status === "installing") return t("setting.installingUpdate");
   if (updaterState.status === "downloading") return t("setting.downloadingUpdate");
-  return t("setting.installUpdate");
+  return t(linkOnly ? "setting.downloadUpdate" : "setting.installUpdate");
 });
 
 const showUpdaterDetails = computed(
@@ -264,6 +266,10 @@ const handleCheckUpdate = async () => {
 
 const handleInstallUpdate = () => {
   if (!updaterState.update) return;
+  if (linkOnly) {
+    void openReleasePage();
+    return;
+  }
   $dialog.warning({
     class: "s-dialog",
     title: t("setting.installUpdate"),
