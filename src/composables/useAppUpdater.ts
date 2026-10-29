@@ -12,6 +12,9 @@ const MOBILE_MANIFEST_URL =
   "https://github.com/Burial0268/GMPlayer/releases/download/master-player-dev/latest.json";
 const MOBILE_RELEASE_URL = "https://github.com/Burial0268/GMPlayer/releases/tag/master-player-dev";
 
+// 只有 Android 有 APK 可下载；iOS 没有构建产物，也没有对应的版本号约定。
+const isAndroid = () => /Android/i.test(navigator.userAgent);
+
 // 版本形如 `0.1.1+<提交数>`（scripts/gen-dev-version.mjs），semver 会忽略 `+` 之后的部分，
 // 所以这里把它当作第四段数字比较。
 const versionParts = (v: string) => {
@@ -112,8 +115,9 @@ const flushPersistedStateBeforeExit = async () => {
 };
 
 export function useAppUpdater() {
-  const linkOnly = isMobileDevice();
-  const supported = computed(() => isTauri());
+  const linkOnly = isAndroid();
+  // 其余移动端（iOS）既没有官方 updater 也没有可下载的包，不检查。
+  const supported = computed(() => isTauri() && (linkOnly || !isMobileDevice()));
   const hasUpdate = computed(() => state.status === "available" && !!state.update);
   const isBusy = computed(() => ["checking", "downloading", "installing"].includes(state.status));
   const progressPercent = computed(() => {
