@@ -3,7 +3,7 @@
     <LyricPlayer
       class="am-lyric"
       @lrcTextClick="handleLrcTextClick"
-      @lineShare="(lines, time) => lyricShare?.open(lines, time)"
+      @lineShare="(lines, index) => lyricShare?.open(lines, index)"
     />
     <LyricShare ref="lyricShare" />
   </div>

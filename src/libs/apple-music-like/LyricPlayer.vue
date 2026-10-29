@@ -61,7 +61,7 @@ type SyncableSound = {
 const emit = defineEmits<{
   "line-click": [evt: LyricLineMouseEvent];
   lrcTextClick: [time: number];
-  lineShare: [lines: AMLLLine[], startTime: number];
+  lineShare: [lines: AMLLLine[], lineIndex: number];
 }>();
 
 function getDomPlayer(): DomLyricPlayer | undefined {
@@ -219,11 +219,13 @@ const jumpSeek = (evt: LyricLineMouseEvent) => {
 };
 
 // Right click on desktop; Android WebView fires `contextmenu` for a long press.
+// `lineIndex` rather than the start time: AMLL's optimiser advances every
+// line's start by up to 600 ms, so a time lookup lands on the line above. The
+// optimiser never adds or drops lines, so the index addresses our array too.
 const openShare = (evt: LyricLineMouseEvent) => {
-  const time = lineClickStartTime(evt);
-  if (typeof time !== "number") return;
+  if (evt.lineIndex < 0) return;
   evt.preventDefault();
-  emit("lineShare", amllLyricLines.value, time);
+  emit("lineShare", amllLyricLines.value, evt.lineIndex);
 };
 
 function passToPlayer(event: Event) {

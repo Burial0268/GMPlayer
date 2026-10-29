@@ -2,7 +2,7 @@
   <n-modal
     v-model:show="show"
     :bordered="false"
-    :z-index="10000"
+    :z-index="2200"
     class="s-modal lyric-share"
     preset="card"
     :title="t('player.share.title')"
@@ -90,19 +90,19 @@ const rendering = ref(false);
 const imageUrl = ref("");
 let imageBlob: Blob | null = null;
 
-/** Opens on the line that was right-clicked / long-pressed, by its start time. */
-function open(amllLines: AMLLLine[], startTime: number) {
-  const usable = amllLines.filter((line) => !line.isBG && !isInterludeLine(line));
+/** Opens on the line that was right-clicked / long-pressed. */
+function open(amllLines: AMLLLine[], lineIndex: number) {
+  const usable = amllLines.flatMap((line, raw) =>
+    line.isBG || isInterludeLine(line) ? [] : [{ line, raw }],
+  );
   if (!usable.length) return;
-  lines.value = usable.map((line) => ({
+  lines.value = usable.map(({ line }) => ({
     text: line.words.map((w) => w.word).join(""),
     subs: [line.translatedLyric, line.romanLyric].filter((s): s is string => Boolean(s?.trim())),
   }));
-  // An interlude or background line has no entry of its own: take the last
-  // line that started before it.
-  let index = usable.findIndex((line) => line.startTime > startTime) - 1;
-  if (index < -1) index = usable.length - 1;
-  range.value = [Math.max(0, index), Math.max(0, index)];
+  // An interlude has no entry of its own: take the last line before it.
+  const index = usable.reduce((found, { raw }, i) => (raw <= lineIndex ? i : found), 0);
+  range.value = [index, index];
   clearImage();
   show.value = true;
   nextTick(() => anchorEl.value?.scrollIntoView({ block: "center" }));
