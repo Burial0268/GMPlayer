@@ -1,6 +1,39 @@
 import { computed, markRaw, reactive } from "vue";
+import { getVersion } from "@tauri-apps/api/app";
+import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
-import { isTauri, windowManager } from "@/utils/tauri";
+import { openExternalUrl } from "@/utils/openLink";
+import { isMobileDevice, isTauri, windowManager } from "@/utils/tauri";
+
+// tauri-plugin-updater 在 Android / iOS 上没有实现（也无法静默安装 APK），
+// 移动端只比对版本，再把用户带到 Release 页自行下载。这两个地址要和
+// tauri.conf.json 里 updater 的 endpoints 保持一致。
+const MOBILE_MANIFEST_URL =
+  "https://github.com/Burial0268/GMPlayer/releases/download/master-player-dev/latest.json";
+const MOBILE_RELEASE_URL = "https://github.com/Burial0268/GMPlayer/releases/tag/master-player-dev";
+
+// 版本形如 `0.1.1+<提交数>`（scripts/gen-dev-version.mjs），semver 会忽略 `+` 之后的部分，
+// 所以这里把它当作第四段数字比较。
+const versionParts = (v: string) => {
+  const [base, build = "0"] = v.split("+");
+  return [...base.split(".").map(Number), Number(build)];
+};
+const isNewerVersion = (latest: string, current: string) => {
+  const a = versionParts(latest);
+  const b = versionParts(current);
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] > b[i];
+  return false;
+};
+
+/** 移动端的「检查更新」：界面只读 version / currentVersion / body，所以不必构造真正的 Update。 */
+const checkMobileUpdate = async (): Promise<Update | null> => {
+  const res = await tauriFetch(MOBILE_MANIFEST_URL);
+  if (!res.ok) throw new Error(`latest.json: HTTP ${res.status}`);
+  const manifest = (await res.json()) as { version: string; notes?: string };
+  const currentVersion = await getVersion();
+  if (!isNewerVersion(manifest.version, currentVersion)) return null;
+  return { version: manifest.version, currentVersion, body: manifest.notes } as unknown as Update;
+};
 
 type UpdaterStatus =
   | "idle"
@@ -79,6 +112,7 @@ const flushPersistedStateBeforeExit = async () => {
 };
 
 export function useAppUpdater() {
+  const linkOnly = isMobileDevice();
   const supported = computed(() => isTauri());
   const hasUpdate = computed(() => state.status === "available" && !!state.update);
   const isBusy = computed(() => ["checking", "downloading", "installing"].includes(state.status));
@@ -102,7 +136,7 @@ export function useAppUpdater() {
     state.status = "checking";
     resetDownloadStats();
 
-    activeCheck = check()
+    activeCheck = (linkOnly ? checkMobileUpdate() : check())
       .then(async (update) => {
         state.checked = true;
         state.lastCheckedAt = Date.now();
@@ -203,5 +237,7 @@ export function useAppUpdater() {
     etaSeconds,
     checkForUpdate,
     installAvailableUpdate,
+    linkOnly,
+    openReleasePage: () => openExternalUrl(MOBILE_RELEASE_URL),
   };
 }

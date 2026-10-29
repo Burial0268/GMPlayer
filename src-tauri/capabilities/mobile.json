@@ -14,7 +14,8 @@
       "allow": [
         "https://unm-api.prod.gbclstudio.cn/*",
         "https://ncm-api.prod.gbclstudio.cn/*",
-        "https://lyric-atlas-api.prod.gbclstudio.cn/*"
+        "https://lyric-atlas-api.prod.gbclstudio.cn/*",
+        "https://github.com/Burial0268/GMPlayer/releases/*"
       ]
     },
     "log:default",
