@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ::symphonia::core::audio::{AudioBufferRef, SampleBuffer, SignalSpec};
 use ::symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -918,15 +918,17 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                             // plays first, then the device adds its own delay
                             // (the one lyrics already compensate for); analysis
                             // holds the block back that long.
-                            lead: Duration::from_secs_f64(
-                                self.output.queued_samples() as f64
-                                    / (self.output_sample_rate.max(1) as f64
-                                        * self.output_channels.max(1) as f64),
-                            ) + Duration::from_micros(
-                                // Past 2 s it is a broken timestamp, as in the
-                                // frontend's `MAX_PLAUSIBLE_OUTPUT_LATENCY_SECONDS`.
-                                (self.output.output_latency_us() as u64).min(2_000_000),
-                            ),
+                            audible_at: Instant::now()
+                                + Duration::from_secs_f64(
+                                    self.output.queued_samples() as f64
+                                        / (self.output_sample_rate.max(1) as f64
+                                            * self.output_channels.max(1) as f64),
+                                )
+                                + Duration::from_micros(
+                                    // Past 2 s it is a broken timestamp, as in the
+                                    // frontend's `MAX_PLAUSIBLE_OUTPUT_LATENCY_SECONDS`.
+                                    (self.output.output_latency_us() as u64).min(2_000_000),
+                                ),
                             recycle: Some(self.analysis_recycle_tx.clone()),
                         };
                         if let Err(err) = self.analysis_tx.try_send_pcm(pcm) {
