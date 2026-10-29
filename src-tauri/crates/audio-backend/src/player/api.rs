@@ -60,7 +60,7 @@ impl EventBuffer {
 /// listen-together keepalive — observes playback without going through JS.
 ///
 /// Subscribers see every event the frontend sees **except** the high-rate
-/// analysis frames (`FFTData`, `LowFrequencyVolume`). Those are ~30 Hz of
+/// analysis frames (`FFTData`, `LowFreqBins`). Those are ~20 Hz of
 /// multi-kilobyte payloads that go straight to the webview channel without a
 /// clone; no in-process consumer has a use for them, and putting them through a
 /// fan-out would add a per-subscriber copy to the hot path for nothing.
@@ -415,7 +415,7 @@ fn update_shared_from_event(shared: &Arc<PlayerShared>, event: &AudioThreadEvent
 fn is_analysis_frame(event: &AudioThreadEvent) -> bool {
     matches!(
         event,
-        AudioThreadEvent::FFTData { .. } | AudioThreadEvent::LowFrequencyVolume { .. }
+        AudioThreadEvent::FFTData { .. } | AudioThreadEvent::LowFreqBins { .. }
     )
 }
 
@@ -426,7 +426,7 @@ fn collect_forward_message(
     latest_low_freq: &mut Option<AudioThreadEventMessage<AudioThreadEvent>>,
 ) {
     let is_fft = matches!(&msg.data, Some(AudioThreadEvent::FFTData { .. }));
-    let is_low_freq = matches!(&msg.data, Some(AudioThreadEvent::LowFrequencyVolume { .. }));
+    let is_low_freq = matches!(&msg.data, Some(AudioThreadEvent::LowFreqBins { .. }));
 
     if is_fft {
         *latest_fft = Some(msg);
@@ -522,8 +522,8 @@ mod tests {
         assert!(is_analysis_frame(&AudioThreadEvent::FFTData {
             data: vec![0.0; 2048]
         }));
-        assert!(is_analysis_frame(&AudioThreadEvent::LowFrequencyVolume {
-            volume: 0.5
+        assert!(is_analysis_frame(&AudioThreadEvent::LowFreqBins {
+            bins: vec![0.5; 2]
         }));
 
         // Everything a subscriber actually needs must pass through.

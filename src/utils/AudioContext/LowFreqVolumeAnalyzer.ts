@@ -4,7 +4,9 @@
  * Matching AMLL FFTToLowPassContext (commit 48fb050d):
  *   - amplitudeToLevel: log10-based conversion (amplitude / 255)
  *   - calculateGradient: sliding window, first N FFT bins averaged
- *   - Time-delta smoothing: curValue += (value - curValue) * smoothingFactor * delta
+ *   - Envelope: exponential attack/release (AMLL's linear `0.003 * delta` step is
+ *     frame-rate dependent and trails a kick by ~170 ms, so a short beat never
+ *     reached its peak). Keep in step with `LowFreqAnalyzer` in audio-analysis.
  *
  * Input: Raw WASM FFTPlayer magnitudes (NOT 0-255 normalized).
  *   In official AMLL, fftDataAtom contains raw float magnitudes from native FFTPlayer,
@@ -19,15 +21,17 @@ export interface LowFreqVolumeOptions {
   windowSize?: number;
   /** Gradient threshold — above this, use maxInInterval² (default: 0.35) */
   gradientThreshold?: number;
-  /** Time-delta smoothing factor (default: 0.003) */
-  smoothingFactor?: number;
 }
+
+const ATTACK_MS = 20;
+const RELEASE_MS = 250;
+// Taste: with the fast attack every beat reaches its full max², which zoomed too hard.
+const OUTPUT_GAIN = 0.65;
 
 const DEFAULT_OPTIONS: Required<LowFreqVolumeOptions> = {
   binCount: 2,
   windowSize: 10,
   gradientThreshold: 0.35,
-  smoothingFactor: 0.003,
 };
 
 /**
@@ -42,7 +46,6 @@ export class LowFreqVolumeAnalyzer {
   private _binCount: number;
   private _windowSize: number;
   private _gradientThreshold: number;
-  private _smoothingFactor: number;
 
   // Smoothed output state
   private _curValue: number = 1;
@@ -53,7 +56,6 @@ export class LowFreqVolumeAnalyzer {
     this._binCount = opts.binCount;
     this._windowSize = opts.windowSize;
     this._gradientThreshold = opts.gradientThreshold;
-    this._smoothingFactor = opts.smoothingFactor;
   }
 
   /**
@@ -64,7 +66,6 @@ export class LowFreqVolumeAnalyzer {
     if (options.windowSize !== undefined) this._windowSize = options.windowSize;
     if (options.gradientThreshold !== undefined)
       this._gradientThreshold = options.gradientThreshold;
-    if (options.smoothingFactor !== undefined) this._smoothingFactor = options.smoothingFactor;
   }
 
   /**
@@ -75,7 +76,6 @@ export class LowFreqVolumeAnalyzer {
       binCount: this._binCount,
       windowSize: this._windowSize,
       gradientThreshold: this._gradientThreshold,
-      smoothingFactor: this._smoothingFactor,
     };
   }
 
@@ -91,7 +91,7 @@ export class LowFreqVolumeAnalyzer {
   /**
    * Calculate gradient from sliding window of low-freq bin levels.
    * Uses first N FFT bins averaged, tracks window of configurable size.
-   * Returns either maxInInterval² (if difference > threshold) or minInInterval * 0.25.
+   * Returns either maxInInterval² (if difference > threshold) or minInInterval² * 0.3.
    */
   private _calculateGradient(fftData: ArrayLike<number>): number {
     let sum = 0;
@@ -113,7 +113,9 @@ export class LowFreqVolumeAnalyzer {
     const minInInterval = Math.min(...this._gradient);
     const difference = maxInInterval - minInInterval;
 
-    return difference > this._gradientThreshold ? maxInInterval : minInInterval * 0.25;
+    // AMLL's `min * 0.25` dropped a held bass note to a quarter once the window filled
+    // with it; squaring keeps loud passages up and quiet ones near zero.
+    return difference > this._gradientThreshold ? maxInInterval : minInInterval ** 2 * 0.3;
   }
 
   /**
@@ -124,7 +126,7 @@ export class LowFreqVolumeAnalyzer {
    */
   public analyze(fftData: ArrayLike<number>): number {
     if (!fftData || fftData.length < this._binCount) {
-      return this._curValue;
+      return this._curValue * OUTPUT_GAIN;
     }
 
     const now = performance.now();
@@ -133,23 +135,12 @@ export class LowFreqVolumeAnalyzer {
 
     const value = this._calculateGradient(fftData);
 
-    // Time-delta based smoothing (matching AMLL onFrame)
-    const increasing = this._curValue < value;
-    if (increasing) {
-      this._curValue = Math.min(
-        value,
-        this._curValue + (value - this._curValue) * this._smoothingFactor * delta,
-      );
-    } else {
-      this._curValue = Math.max(
-        value,
-        this._curValue + (value - this._curValue) * this._smoothingFactor * delta,
-      );
-    }
+    const tau = value > this._curValue ? ATTACK_MS : RELEASE_MS;
+    this._curValue += (value - this._curValue) * (1 - Math.exp(-delta / tau));
 
     if (Number.isNaN(this._curValue)) this._curValue = 1;
 
-    return this._curValue;
+    return this._curValue * OUTPUT_GAIN;
   }
 
   /**

@@ -53,7 +53,6 @@ export class DecodedAudioJs {
 export class LFOptionsJs {
   bin_count = 0;
   gradient_threshold = 0;
-  smoothing_factor = 0;
   window_size = 0;
 
   constructor() {

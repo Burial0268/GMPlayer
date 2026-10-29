@@ -364,6 +364,12 @@ impl AudioPlayer {
         let playback_id = self.decoder_playback_id;
         let decoder_event_tx = self.decoder_event_tx.clone();
         let start_paused = self.playback_intent == PlaybackIntent::Paused;
+        // Analysis keeps the pause it was last told; a new chain started after a
+        // pause never sends the resume that would clear it, which stalled every
+        // later track's visuals.
+        let _ = self.analysis_tx.send(AnalysisCommand::SetPaused {
+            paused: start_paused,
+        });
         let seek_into_open = initial_position.filter(|p| *p > 0.0);
         let analysis_enabled_for_open = Arc::clone(&self.analysis_enabled);
 

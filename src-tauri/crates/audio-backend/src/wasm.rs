@@ -194,7 +194,6 @@ impl AnalysisState {
             cfg.bin_count,
             cfg.window_size,
             cfg.gradient_threshold,
-            cfg.smoothing_factor,
         );
         processor.clear();
         let sample_rate = decoded.sample_rate.max(1);

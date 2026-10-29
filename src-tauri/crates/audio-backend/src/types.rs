@@ -538,10 +538,11 @@ pub enum AudioThreadEvent {
     // the frontend listener.
     #[serde(rename = "fftData", rename_all = "camelCase")]
     FFTData { data: Vec<f32> },
-    /// Smoothed low-frequency volume in `[0.0, ~1.0]`, computed from the same
-    /// raw FFT magnitudes emitted as `fftData`.
+    /// Raw magnitudes of the lowest FFT bins (AMLL's `fftData[0..N]`), one per
+    /// FFT frame. The frontend runs the low-pass gradient/smoothing on them per
+    /// display frame, as AMLL does.
     #[serde(rename_all = "camelCase")]
-    LowFrequencyVolume { volume: f64 },
+    LowFreqBins { bins: Vec<f32> },
     #[serde(rename_all = "camelCase")]
     AutomixStatus { status: AutoMixStatus },
     #[serde(rename_all = "camelCase")]

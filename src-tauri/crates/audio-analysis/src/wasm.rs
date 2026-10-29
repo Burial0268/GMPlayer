@@ -34,7 +34,6 @@ impl WasmAudioProcessor {
     /// - `bin_count`: raw FFT bins for lowFreq analysis (default 2)
     /// - `window_size`: gradient sliding window size (default 10)
     /// - `gradient_threshold`: gradient trigger threshold (default 0.35 desktop, 0.1 mobile)
-    /// - `smoothing_factor`: time-delta smoothing speed (default 0.003)
     #[wasm_bindgen(constructor)]
     pub fn new(
         output_size: usize,
@@ -43,7 +42,6 @@ impl WasmAudioProcessor {
         bin_count: usize,
         window_size: usize,
         gradient_threshold: f32,
-        smoothing_factor: f32,
     ) -> Self {
         let inner = AudioProcessor::new(
             output_size,
@@ -52,7 +50,6 @@ impl WasmAudioProcessor {
             bin_count,
             window_size,
             gradient_threshold,
-            smoothing_factor,
         );
         let out_size = output_size.max(1);
         Self {
@@ -130,13 +127,11 @@ impl WasmAudioProcessor {
         bin_count: Option<usize>,
         window_size: Option<usize>,
         gradient_threshold: Option<f32>,
-        smoothing_factor: Option<f32>,
     ) {
         self.inner.analyzer.set_options(&LowFreqOptions {
             bin_count,
             window_size,
             gradient_threshold,
-            smoothing_factor,
         });
     }
 
@@ -148,7 +143,6 @@ impl WasmAudioProcessor {
             bin_count: c.bin_count,
             window_size: c.window_size,
             gradient_threshold: c.gradient_threshold,
-            smoothing_factor: c.smoothing_factor,
         }
     }
 
@@ -191,5 +185,4 @@ pub struct LFOptionsJs {
     pub bin_count: usize,
     pub window_size: usize,
     pub gradient_threshold: f32,
-    pub smoothing_factor: f32,
 }

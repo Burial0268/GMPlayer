@@ -375,7 +375,7 @@ impl AudioPlayer {
         //
         // Moved out of this runtime entirely — see `crate::analysis`. The
         // dedicated OS thread owns the `AudioProcessor`, receives PCM via
-        // `analysis_tx`, and emits `FFTData` + `LowFrequencyVolume` events
+        // `analysis_tx`, and emits `FFTData` + `LowFreqBins` events
         // through the same `evt_sender` we use here.
 
         let (self_msg_tx, self_msg_rx) = mpsc::unbounded_channel();

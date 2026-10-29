@@ -157,6 +157,7 @@ export type AudioThreadEvent =
   | { type: "audioOutputError"; data: { error: string; recoverable: boolean } }
   | { type: "fftData"; data: { data: number[] } }
   | { type: "lowFrequencyVolume"; data: { volume: number } }
+  | { type: "lowFreqBins"; data: { bins: number[] } }
   | { type: "automixStatus"; data: { status: AutoMixNativeStatus } }
   | {
       type: "automixAnalysisReady";
