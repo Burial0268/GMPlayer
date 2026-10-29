@@ -30,19 +30,27 @@ use std::time::{Duration, Instant};
 
 use audio_analysis::{FftConfig, FftProcessor};
 use tokio::sync::mpsc as tokio_mpsc;
+use tracing::warn;
 
 use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 
 const FFT_SIZE: usize = 2048;
 const TICK: Duration = Duration::from_millis(16);
 const FFT_HOP: Duration = Duration::from_millis(50);
-const PCM_QUEUE_CAPACITY: usize = 3;
+/// Covers the deepest playback queue (48 deck + 48 output blocks): after a start
+/// or seek the decoder fills it in a burst, and those first blocks are the ones
+/// played first. A shorter channel dropped most of them, so the opening second
+/// had no visuals.
+const PCM_QUEUE_CAPACITY: usize = 128;
 /// Bound on blocks waiting out their lead; a runaway lead releases the oldest.
 const MAX_DELAYED_BLOCKS: usize = 512;
 /// Distance between the `result_buf` entries AMLL's `vec_interp` reads for
 /// bins 0 and 1 (`RESULT_BUF_SIZE >> 7`).
 const BIN_STRIDE: usize = 16;
 const LOW_BIN_COUNT: usize = 2;
+/// A playing stream produces a frame every `FFT_HOP`; a gap this long means the
+/// decoder or the playback queues stalled, which shows up as a dead background.
+const FRAME_GAP_WARN: Duration = Duration::from_millis(300);
 
 /// Reliable controls from the player and decoder threads.
 pub enum AnalysisCommand {
@@ -101,6 +109,10 @@ impl DelayQueue {
             .flatten()
     }
 
+    fn len(&self) -> usize {
+        self.blocks.len()
+    }
+
     fn set_paused(&mut self, paused: bool, now: Instant) {
         match (paused, self.paused_at) {
             (true, None) => self.paused_at = Some(now),
@@ -117,6 +129,16 @@ impl DelayQueue {
 
     fn drain(&mut self) -> impl Iterator<Item = AnalysisPcm> + '_ {
         self.blocks.drain(..).map(|(_, pcm)| pcm)
+    }
+
+    /// Blocks the device has already played (or, while paused, was about to).
+    fn take_past(&mut self, now: Instant) -> Vec<AnalysisPcm> {
+        let until = self.paused_at.unwrap_or(now);
+        let mut past = Vec::new();
+        while self.blocks.front().is_some_and(|(at, _)| *at <= until) {
+            past.extend(self.blocks.pop_front().map(|(_, pcm)| pcm));
+        }
+        past
     }
 }
 
@@ -208,6 +230,7 @@ struct Analysis {
     /// Next FFT slot. A fixed grid: ticks are 16 ms apart, so measuring the hop
     /// from the last run would stretch 50 ms to 64 ms.
     next_fft: Instant,
+    last_frame: Option<Instant>,
     evt: EventSink,
 }
 
@@ -225,12 +248,16 @@ impl Analysis {
             enabled: true,
             fft_enabled: true,
             next_fft: Instant::now(),
+            last_frame: None,
             evt,
         }
     }
 
     /// Returns `false` once the event sink is closed.
     fn command(&mut self, cmd: AnalysisCommand, now: Instant) -> bool {
+        // Every control either stops the stream or restarts it, so the next
+        // frame is not late for any reason worth reporting.
+        self.last_frame = None;
         match cmd {
             // A seek or track change drops the audio in flight but keeps the
             // FFT smoothing: resetting it halves the first frame's magnitudes
@@ -248,7 +275,14 @@ impl Analysis {
                 self.enabled = enabled;
                 self.fft.clear_queue();
                 self.pending_mono_samples = 0;
-                self.discard_delayed();
+                // The frontend turns analysis off while paused. What is already
+                // queued is still going to be played after resume, so keep it;
+                // dropping it left the first `lead` of audio without visuals.
+                if enabled {
+                    for pcm in self.delayed.take_past(now) {
+                        recycle(pcm);
+                    }
+                }
             }
             AnalysisCommand::SetFftEnabled { enabled } => self.fft_enabled = enabled,
             AnalysisCommand::SetFreqRange { from, to } => self.fft.set_freq_range(from, to),
@@ -294,6 +328,17 @@ impl Analysis {
 
     fn fft_frame(&mut self, now: Instant) -> bool {
         self.next_fft = (self.next_fft + FFT_HOP).max(now + FFT_HOP / 2);
+        if let Some(prev) = self.last_frame.replace(now) {
+            let gap = now.duration_since(prev);
+            if gap > FRAME_GAP_WARN {
+                warn!(
+                    "低频分析 {} ms 没有新 FFT 帧（排队 {} 块，待处理 {} 采样）",
+                    gap.as_millis(),
+                    self.delayed.len(),
+                    self.pending_mono_samples
+                );
+            }
+        }
         self.fft.read_spectrum_raw();
         let raw = self.fft.raw_spectrum();
         let drained = (FFT_HOP.as_secs_f32() * self.sample_rate as f32) as usize;
@@ -461,6 +506,34 @@ mod tests {
         let (l, r) = (0.5f32, 0.1f32);
         assert!((downmix_gain(2) * (l + r) / 2.0 - 0.7071 * (l + r)).abs() < 1e-4);
         assert_eq!(downmix_gain(1), 1.0);
+    }
+
+    #[test]
+    fn opening_burst_fits_the_channel_and_queued_audio_survives_a_toggle() {
+        let (events, _received) = tokio_mpsc::unbounded_channel();
+        let (sender, worker) = spawn_analysis_thread(events).unwrap();
+        // Deepest real queue: the decoder fills it in a burst after a start/seek.
+        for _ in 0..96 {
+            assert!(sender.try_send_pcm(pcm(0.1)).is_ok());
+        }
+        drop(sender);
+        worker.join().unwrap();
+
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut queue = DelayQueue::default();
+        for lead in [100, 300, 500] {
+            queue.push(
+                t0,
+                AnalysisPcm {
+                    lead: Duration::from_millis(lead),
+                    ..pcm(0.0)
+                },
+            );
+        }
+        // Analysis off and on again at 350 ms: only the played block goes.
+        assert_eq!(queue.take_past(at(350)).len(), 2);
+        assert!(queue.pop_due(at(500)).is_some());
     }
 
     #[test]
