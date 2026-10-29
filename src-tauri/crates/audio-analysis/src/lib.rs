@@ -29,6 +29,15 @@ use rustfft::{num_complex::Complex, FftPlanner};
 const FFT_SIZE: usize = 2048;
 const FFT_BIN_COUNT: usize = FFT_SIZE / 2 + 1;
 const RESULT_BUF_SIZE: usize = 2048;
+/// AMLL's window (below) is a ramp that peaks around 2·10⁴ instead of a taper
+/// peaking at 1, and its magnitudes are what the low-pass `/255` level and 0.35
+/// threshold, and the spectrum bars' 255 floor, were tuned on. This keeps that
+/// scale on the textbook window; measured to give AMLL's level distribution.
+const MAGNITUDE_GAIN: f32 = 20_000.0;
+/// Low-pass envelope: rise to a beat fast, let it go slower. Exponential so the
+/// result does not depend on the display's frame rate.
+const ATTACK_MS: f32 = 10.0;
+const RELEASE_MS: f32 = 150.0;
 
 // ── FftConfig ──────────────────────────────────────────────────────
 
@@ -236,7 +245,7 @@ impl FftProcessor {
 
         self.fft.process(&mut self.fft_input);
 
-        let scale = 1.0 / (FFT_SIZE as f32).sqrt();
+        let scale = MAGNITUDE_GAIN / (FFT_SIZE as f32).sqrt();
         for i in 0..FFT_BIN_COUNT {
             let c = self.fft_input[i];
             self.magnitudes[i] = (c.re * c.re + c.im * c.im).sqrt() * scale;
@@ -453,13 +462,13 @@ impl FftProcessor {
 
 fn build_hamming_window() -> [f32; FFT_SIZE] {
     let mut window = [0.0f32; FFT_SIZE];
-    // Match `spectrum_analyzer::windows::hamming_window`, which AMLL calls in
-    // `FFTPlayer::read`. The crate's formula is not the textbook Hamming
-    // window, but matching it keeps raw FFT/low-pass values identical in shape
-    // and scale to AMLL's player-core.
-    let divisor = ((FFT_SIZE - 1) as f32).cos();
+    // Textbook Hamming. AMLL uses spectrum-analyzer 1.7.0, whose window lacks
+    // the outer `cos` and is a ramp ending in a large step; that edge leaked into
+    // the low bins, so which beat registered depended on where a frame happened
+    // to cut the waveform. `MAGNITUDE_GAIN` restores the scale it produced.
+    let divisor = (FFT_SIZE - 1) as f32;
     for (i, value) in window.iter_mut().enumerate() {
-        *value = 0.54 - 0.46 * (std::f32::consts::TAU * i as f32 / divisor);
+        *value = 0.54 - 0.46 * (std::f32::consts::TAU * i as f32 / divisor).cos();
     }
     window
 }
@@ -471,7 +480,6 @@ pub struct LowFreqConfig {
     pub bin_count: usize,
     pub window_size: usize,
     pub gradient_threshold: f32,
-    pub smoothing_factor: f32,
 }
 
 impl Default for LowFreqConfig {
@@ -480,7 +488,6 @@ impl Default for LowFreqConfig {
             bin_count: 2,
             window_size: 10,
             gradient_threshold: 0.35,
-            smoothing_factor: 0.003,
         }
     }
 }
@@ -490,12 +497,12 @@ pub struct LowFreqOptions {
     pub bin_count: Option<usize>,
     pub window_size: Option<usize>,
     pub gradient_threshold: Option<f32>,
-    pub smoothing_factor: Option<f32>,
 }
 
 // ── LowFreqAnalyzer ────────────────────────────────────────────────
 
-/// Low-frequency volume analyzer. Matches AMLL FFTToLowPassContext (commit 48fb050d).
+/// Low-frequency volume analyzer. The gradient matches AMLL FFTToLowPassContext
+/// (commit 48fb050d); the envelope after it uses `ATTACK_MS`/`RELEASE_MS`.
 pub struct LowFreqAnalyzer {
     config: LowFreqConfig,
     gradient: Vec<f32>,
@@ -574,13 +581,13 @@ impl LowFreqAnalyzer {
         let delta = delta_ms.clamp(1.0, 100.0);
         let value = self._calculate_gradient(fft_data);
 
-        // Time-delta based smoothing (matching TS onFrame)
-        let step = (value - self.cur_value) * self.config.smoothing_factor * delta;
-        if self.cur_value < value {
-            self.cur_value = value.min(self.cur_value + step);
+        // Same envelope as the TS `LowFreqVolumeAnalyzer`; keep them in step.
+        let tau = if value > self.cur_value {
+            ATTACK_MS
         } else {
-            self.cur_value = value.max(self.cur_value + step);
-        }
+            RELEASE_MS
+        };
+        self.cur_value += (value - self.cur_value) * (1.0 - (-delta / tau).exp());
 
         if self.cur_value.is_nan() {
             self.cur_value = 1.0;
@@ -607,9 +614,6 @@ impl LowFreqAnalyzer {
         }
         if let Some(gt) = options.gradient_threshold {
             self.config.gradient_threshold = gt;
-        }
-        if let Some(sf) = options.smoothing_factor {
-            self.config.smoothing_factor = sf;
         }
     }
 
@@ -638,7 +642,6 @@ impl AudioProcessor {
         bin_count: usize,
         window_size: usize,
         gradient_threshold: f32,
-        smoothing_factor: f32,
     ) -> Self {
         Self {
             fft: FftProcessor::new(FftConfig {
@@ -650,7 +653,6 @@ impl AudioProcessor {
                 bin_count: bin_count.max(1),
                 window_size: window_size.max(2),
                 gradient_threshold,
-                smoothing_factor,
             }),
         }
     }
@@ -915,7 +917,7 @@ mod tests {
 
     #[test]
     fn test_audio_processor_process_frame() {
-        let mut proc = AudioProcessor::new(1024, 80.0, 2000.0, 2, 10, 0.35, 0.003);
+        let mut proc = AudioProcessor::new(1024, 80.0, 2000.0, 2, 10, 0.35);
         let rate = 44100.0;
         let samples: Vec<f32> = (0..FFT_SIZE * 2)
             .map(|i| (TAU * 440.0 * i as f32 / rate).sin())
@@ -940,8 +942,8 @@ mod tests {
         // the returned lowFreq value. process_frame_raw must keep those
         // bit-identical to process_frame while skipping the WASM-only
         // normalization work.
-        let mut full = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.35, 0.003);
-        let mut raw = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.35, 0.003);
+        let mut full = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.35);
+        let mut raw = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.35);
         full.clear();
         raw.clear();
 
@@ -990,8 +992,8 @@ mod tests {
 
     #[test]
     fn test_bass_vs_treble_lowfreq() {
-        let mut proc_bass = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.01, 0.003);
-        let mut proc_treble = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.01, 0.003);
+        let mut proc_bass = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.01);
+        let mut proc_treble = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.01);
 
         let rate = 44100.0;
 
@@ -1026,7 +1028,7 @@ mod tests {
 
     #[test]
     fn test_default_lowfreq_is_visible_for_bass() {
-        let mut proc = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.35, 0.003);
+        let mut proc = AudioProcessor::new(2048, 80.0, 2000.0, 2, 10, 0.35);
         proc.clear();
 
         let rate = 44100.0;

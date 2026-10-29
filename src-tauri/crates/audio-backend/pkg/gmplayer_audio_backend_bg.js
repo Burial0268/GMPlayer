@@ -110,13 +110,6 @@ export class LFOptionsJs {
     /**
      * @returns {number}
      */
-    get smoothing_factor() {
-        const ret = wasm.__wbg_get_lfoptionsjs_smoothing_factor(this.__wbg_ptr);
-        return ret;
-    }
-    /**
-     * @returns {number}
-     */
     get window_size() {
         const ret = wasm.__wbg_get_lfoptionsjs_window_size(this.__wbg_ptr);
         return ret >>> 0;
@@ -132,12 +125,6 @@ export class LFOptionsJs {
      */
     set gradient_threshold(arg0) {
         wasm.__wbg_set_lfoptionsjs_gradient_threshold(this.__wbg_ptr, arg0);
-    }
-    /**
-     * @param {number} arg0
-     */
-    set smoothing_factor(arg0) {
-        wasm.__wbg_set_lfoptionsjs_smoothing_factor(this.__wbg_ptr, arg0);
     }
     /**
      * @param {number} arg0
@@ -624,17 +611,15 @@ export class WasmAudioProcessor {
      * - `bin_count`: raw FFT bins for lowFreq analysis (default 2)
      * - `window_size`: gradient sliding window size (default 10)
      * - `gradient_threshold`: gradient trigger threshold (default 0.35 desktop, 0.1 mobile)
-     * - `smoothing_factor`: time-delta smoothing speed (default 0.003)
      * @param {number} output_size
      * @param {number} freq_min
      * @param {number} freq_max
      * @param {number} bin_count
      * @param {number} window_size
      * @param {number} gradient_threshold
-     * @param {number} smoothing_factor
      */
-    constructor(output_size, freq_min, freq_max, bin_count, window_size, gradient_threshold, smoothing_factor) {
-        const ret = wasm.wasmaudioprocessor_new(output_size, freq_min, freq_max, bin_count, window_size, gradient_threshold, smoothing_factor);
+    constructor(output_size, freq_min, freq_max, bin_count, window_size, gradient_threshold) {
+        const ret = wasm.wasmaudioprocessor_new(output_size, freq_min, freq_max, bin_count, window_size, gradient_threshold);
         this.__wbg_ptr = ret;
         WasmAudioProcessorFinalization.register(this, this.__wbg_ptr, this);
         return this;
@@ -694,10 +679,9 @@ export class WasmAudioProcessor {
      * @param {number | null} [bin_count]
      * @param {number | null} [window_size]
      * @param {number | null} [gradient_threshold]
-     * @param {number | null} [smoothing_factor]
      */
-    setLFOptions(bin_count, window_size, gradient_threshold, smoothing_factor) {
-        wasm.wasmaudioprocessor_setLFOptions(this.__wbg_ptr, isLikeNone(bin_count) ? Number.MAX_SAFE_INTEGER : (bin_count) >>> 0, isLikeNone(window_size) ? Number.MAX_SAFE_INTEGER : (window_size) >>> 0, isLikeNone(gradient_threshold) ? Number.MAX_SAFE_INTEGER : Math.fround(gradient_threshold), isLikeNone(smoothing_factor) ? Number.MAX_SAFE_INTEGER : Math.fround(smoothing_factor));
+    setLFOptions(bin_count, window_size, gradient_threshold) {
+        wasm.wasmaudioprocessor_setLFOptions(this.__wbg_ptr, isLikeNone(bin_count) ? Number.MAX_SAFE_INTEGER : (bin_count) >>> 0, isLikeNone(window_size) ? Number.MAX_SAFE_INTEGER : (window_size) >>> 0, isLikeNone(gradient_threshold) ? Number.MAX_SAFE_INTEGER : Math.fround(gradient_threshold));
     }
 }
 if (Symbol.dispose) WasmAudioProcessor.prototype[Symbol.dispose] = WasmAudioProcessor.prototype.free;

@@ -14,9 +14,11 @@
 //! The PCM channel is deliberately tiny and bounded: analysis may drop audio
 //! under load, but it can never backlog memory or stall playback/decoding.
 //!
-//! The FFT runs once per `FFT_HOP` on the latest window, as AMLL's pacemaker
-//! does, and each frame also publishes the lowest bins as `LowFreqBins`; the
-//! frontend runs the low-pass gradient/smoothing on them per display frame.
+//! The FFT runs once per `FFT_HOP` on the latest window and each frame
+//! publishes the lowest bins as `LowFreqBins`; the frontend runs the low-pass
+//! gradient/smoothing on them per display frame. AMLL's pacemaker hops 50 ms,
+//! longer than the 2048-sample window, so a kick landing between two windows
+//! went unseen and which beats moved the background depended on the phase.
 //! The decoder taps PCM well ahead of the device, so each block carries how
 //! long it will wait in the playback queues and is held back by that long; the
 //! visuals then follow what is audible instead of what was decoded.
@@ -35,8 +37,11 @@ use tracing::{info, warn};
 use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 
 const FFT_SIZE: usize = 2048;
-const TICK: Duration = Duration::from_millis(16);
-const FFT_HOP: Duration = Duration::from_millis(50);
+const TICK: Duration = Duration::from_millis(8);
+const FFT_HOP: Duration = Duration::from_millis(16);
+/// The full 2048-bin frame is only for the spectrum bars; at `FFT_HOP` it would
+/// triple the IPC traffic for no visible gain.
+const FFT_DATA_INTERVAL: Duration = Duration::from_millis(50);
 /// Covers the deepest playback queue (48 deck + 48 output blocks): after a start
 /// or seek the decoder fills it in a burst, and those first blocks are the ones
 /// played first. A shorter channel dropped most of them, so the opening second
@@ -230,9 +235,10 @@ struct Analysis {
     sample_rate: u32,
     enabled: bool,
     fft_enabled: bool,
-    /// Next FFT slot. A fixed grid: ticks are 16 ms apart, so measuring the hop
-    /// from the last run would stretch 50 ms to 64 ms.
+    /// Next FFT slot. A fixed grid: measuring the hop from the last run would
+    /// stretch it by up to a `TICK`.
     next_fft: Instant,
+    next_fft_data: Instant,
     last_frame: Option<Instant>,
     /// Min and max lead seen since the instant, for `LEAD_LOG_INTERVAL`.
     lead_range: Option<(Duration, Duration, Instant)>,
@@ -253,6 +259,7 @@ impl Analysis {
             enabled: true,
             fft_enabled: true,
             next_fft: Instant::now(),
+            next_fft_data: Instant::now(),
             last_frame: None,
             lead_range: None,
             evt,
@@ -359,14 +366,16 @@ impl Analysis {
                 Some(AudioThreadEvent::LowFreqBins { bins }),
             ))
             .is_ok();
-        sent && (!self.fft_enabled
-            || self
-                .evt
-                .send(AudioThreadEventMessage::new(
-                    String::new(),
-                    Some(AudioThreadEvent::FFTData { data: raw.to_vec() }),
-                ))
-                .is_ok())
+        if !sent || !self.fft_enabled || now < self.next_fft_data {
+            return sent;
+        }
+        self.next_fft_data = (self.next_fft_data + FFT_DATA_INTERVAL).max(now);
+        self.evt
+            .send(AudioThreadEventMessage::new(
+                String::new(),
+                Some(AudioThreadEvent::FFTData { data: raw.to_vec() }),
+            ))
+            .is_ok()
     }
 
     fn note_lead(&mut self, lead: Duration, now: Instant) {
