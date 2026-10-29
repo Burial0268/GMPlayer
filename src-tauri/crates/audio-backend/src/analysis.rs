@@ -30,7 +30,7 @@ use std::time::{Duration, Instant};
 
 use audio_analysis::{FftConfig, FftProcessor};
 use tokio::sync::mpsc as tokio_mpsc;
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 
@@ -51,6 +51,9 @@ const LOW_BIN_COUNT: usize = 2;
 /// A playing stream produces a frame every `FFT_HOP`; a gap this long means the
 /// decoder or the playback queues stalled, which shows up as a dead background.
 const FRAME_GAP_WARN: Duration = Duration::from_millis(300);
+/// How often the observed lead range is logged; it is what the visuals are
+/// held back by, and the one number that says whether they can line up.
+const LEAD_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Reliable controls from the player and decoder threads.
 pub enum AnalysisCommand {
@@ -231,6 +234,8 @@ struct Analysis {
     /// from the last run would stretch 50 ms to 64 ms.
     next_fft: Instant,
     last_frame: Option<Instant>,
+    /// Min and max lead seen since the instant, for `LEAD_LOG_INTERVAL`.
+    lead_range: Option<(Duration, Duration, Instant)>,
     evt: EventSink,
 }
 
@@ -249,6 +254,7 @@ impl Analysis {
             fft_enabled: true,
             next_fft: Instant::now(),
             last_frame: None,
+            lead_range: None,
             evt,
         }
     }
@@ -299,6 +305,7 @@ impl Analysis {
                 break;
             };
             if self.enabled {
+                self.note_lead(pcm.lead, now);
                 self.delayed.push(now, pcm);
             } else {
                 recycle(pcm);
@@ -360,6 +367,16 @@ impl Analysis {
                     Some(AudioThreadEvent::FFTData { data: raw.to_vec() }),
                 ))
                 .is_ok())
+    }
+
+    fn note_lead(&mut self, lead: Duration, now: Instant) {
+        let (min, max, since) = self.lead_range.get_or_insert((lead, lead, now));
+        *min = (*min).min(lead);
+        *max = (*max).max(lead);
+        if now.duration_since(*since) >= LEAD_LOG_INTERVAL {
+            info!("低频分析 lead {}–{} ms", min.as_millis(), max.as_millis());
+            self.lead_range = None;
+        }
     }
 
     fn discard_delayed(&mut self) {
