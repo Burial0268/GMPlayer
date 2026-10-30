@@ -1,110 +1,166 @@
 <template>
-  <!-- `show`, not `if`: rebuilding the panel per open re-decoded the blurred cover mid-animation. -->
-  <n-modal
-    v-model:show="show"
-    display-directive="show"
-    :z-index="2200"
-    :auto-focus="false"
-    @after-leave="clearImage"
-  >
-    <div ref="panel" :class="['lyric-share', { expand }]" :style="panelStyle">
-      <img class="backdrop" :src="cover" alt="" aria-hidden="true" />
-      <header class="head">
-        <img class="cover" :src="cover" alt="" />
-        <div class="meta">
-          <div class="title">{{ song?.name }}</div>
-          <div class="artist">{{ artists }}</div>
-        </div>
-        <n-button quaternary circle :aria-label="t('general.dialog.cancel')" @click="show = false">
-          <template #icon><Close /></template>
-        </n-button>
-      </header>
-
-      <div
-        v-if="!imageUrl"
-        ref="list"
-        class="lines"
-        role="group"
-        :aria-label="t('player.share.title')"
-      >
-        <div
-          v-for="(line, index) in lines"
-          :key="index"
-          v-memo="[line, isSelected(index)]"
-          :class="['line', { selected: isSelected(index) }]"
-          role="checkbox"
-          :aria-checked="isSelected(index)"
-          tabindex="0"
-          @click="toggle(index)"
-          @keydown.enter.space.prevent="toggle(index)"
+  <n-config-provider abstract :theme-overrides="SHARE_THEME">
+    <!-- `show`, not `if`: rebuilding the panel per open re-decoded the blurred cover mid-animation. -->
+    <n-modal
+      v-model:show="show"
+      display-directive="show"
+      :z-index="2200"
+      :auto-focus="false"
+      @after-leave="clearImage"
+    >
+      <div ref="panel" class="lyric-share" :style="panelStyle">
+        <img class="backdrop" :src="cover" alt="" aria-hidden="true" />
+        <Motion
+          as="header"
+          class="head"
+          :initial="enterFrom"
+          :animate="stage"
+          :variants="HEAD"
+          :transition="spring"
         >
-          <div class="text">{{ line.text }}</div>
-          <div v-for="(sub, i) in line.subs" :key="i" class="sub">{{ sub }}</div>
-        </div>
-      </div>
-      <div v-else class="preview">
-        <img :src="imageUrl" alt="" />
-      </div>
-
-      <footer class="foot">
-        <template v-if="!imageUrl">
-          <span class="count">
-            {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
-          </span>
-          <div class="actions">
-            <n-button round secondary @click="copyText">
-              <template #icon><Copy /></template>
-              {{ t("player.share.copy") }}
-            </n-button>
-            <n-button v-if="canShareText" round secondary @click="shareText">
-              <template #icon><ShareTwo /></template>
-              {{ t("player.share.share") }}
-            </n-button>
-            <n-button class="primary" round :loading="rendering" @click="makeImage">
-              <template #icon><Pic /></template>
-              {{ t("player.share.image") }}
-            </n-button>
+          <img class="cover" :src="cover" alt="" />
+          <div class="meta">
+            <div class="title">{{ song?.name }}</div>
+            <div class="artist">{{ artists }}</div>
           </div>
-        </template>
-        <template v-else>
-          <n-button round secondary @click="clearImage">
-            <template #icon><Left /></template>
-            {{ t("player.share.back") }}
+          <n-button
+            quaternary
+            circle
+            :aria-label="t('general.dialog.cancel')"
+            @click="show = false"
+          >
+            <template #icon><Close /></template>
           </n-button>
-          <div class="actions">
-            <n-button v-if="canCopyImage" round secondary @click="copyImage">
-              <template #icon><Copy /></template>
-              {{ t("player.share.copyImage") }}
-            </n-button>
-            <!-- The browser saves a plain download link; Tauri goes through a native dialog. -->
-            <n-button
-              v-if="!inTauri"
-              class="primary"
-              round
-              tag="a"
-              :href="imageUrl"
-              :download="`${fileName || 'lyrics'}.png`"
+        </Motion>
+
+        <Motion
+          v-if="!imageUrl"
+          ref="list"
+          class="lines"
+          role="group"
+          :aria-label="t('player.share.title')"
+          :initial="enterFrom"
+          :animate="stage"
+          :variants="LINES"
+          :transition="spring"
+        >
+          <n-scrollbar ref="scroller" content-style="padding: 8px 12px">
+            <div
+              v-for="(line, index) in lines"
+              :key="index"
+              :ref="(el) => (lineEls[index] = el as HTMLElement)"
+              v-memo="[line, isSelected(index)]"
+              :class="['line', { selected: isSelected(index) }]"
+              role="checkbox"
+              :aria-checked="isSelected(index)"
+              tabindex="0"
+              @click="toggle(index)"
+              @keydown.enter.space.prevent="toggle(index)"
             >
-              <template #icon><Download /></template>
-              {{ t("player.share.saveImage") }}
+              <div class="text">{{ line.text }}</div>
+              <div v-for="(sub, i) in line.subs" :key="i" class="sub">{{ sub }}</div>
+            </div>
+          </n-scrollbar>
+        </Motion>
+        <div v-else class="preview">
+          <img :src="imageUrl" alt="" />
+        </div>
+
+        <Motion
+          as="footer"
+          class="foot"
+          :initial="enterFrom"
+          :animate="stage"
+          :variants="FOOT"
+          :transition="spring"
+        >
+          <template v-if="!imageUrl">
+            <span class="count">
+              {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
+            </span>
+            <div class="actions">
+              <n-button round secondary @click="copyText">
+                <template #icon><Copy /></template>
+                {{ t("player.share.copy") }}
+              </n-button>
+              <n-button v-if="canShareText" round secondary @click="shareText">
+                <template #icon><ShareTwo /></template>
+                {{ t("player.share.share") }}
+              </n-button>
+              <n-button
+                round
+                color="#fff"
+                text-color="#111"
+                :loading="rendering"
+                @click="makeImage"
+              >
+                <template #icon><Pic /></template>
+                {{ t("player.share.image") }}
+              </n-button>
+            </div>
+          </template>
+          <template v-else>
+            <n-button round secondary @click="clearImage">
+              <template #icon><Left /></template>
+              {{ t("player.share.back") }}
             </n-button>
-            <n-button v-else-if="!isMobileApp" class="primary" round @click="saveImage">
-              <template #icon><Download /></template>
-              {{ t("player.share.saveImage") }}
-            </n-button>
-            <n-button v-if="canShareImage" class="primary" round @click="shareImage">
-              <template #icon><ShareTwo /></template>
-              {{ t("player.share.share") }}
-            </n-button>
-          </div>
-        </template>
-      </footer>
-    </div>
-  </n-modal>
+            <div class="actions">
+              <n-button v-if="canCopyImage" round secondary @click="copyImage">
+                <template #icon><Copy /></template>
+                {{ t("player.share.copyImage") }}
+              </n-button>
+              <!-- The browser saves a plain download link; Tauri goes through a native dialog. -->
+              <n-button
+                v-if="!inTauri"
+                round
+                color="#fff"
+                text-color="#111"
+                tag="a"
+                :href="imageUrl"
+                :download="`${fileName || 'lyrics'}.png`"
+              >
+                <template #icon><Download /></template>
+                {{ t("player.share.saveImage") }}
+              </n-button>
+              <n-button
+                v-else-if="!isMobileApp"
+                round
+                color="#fff"
+                text-color="#111"
+                @click="saveImage"
+              >
+                <template #icon><Download /></template>
+                {{ t("player.share.saveImage") }}
+              </n-button>
+              <n-button
+                v-if="canShareImage"
+                round
+                color="#fff"
+                text-color="#111"
+                @click="shareImage"
+              >
+                <template #icon><ShareTwo /></template>
+                {{ t("player.share.share") }}
+              </n-button>
+            </div>
+          </template>
+        </Motion>
+      </div>
+    </n-modal>
+  </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef, useTemplateRef } from "vue";
+import {
+  computed,
+  nextTick,
+  ref,
+  shallowRef,
+  useTemplateRef,
+  type ComponentPublicInstance,
+} from "vue";
+import { Motion } from "motion-v";
+import type { GlobalThemeOverrides, ScrollbarInst } from "naive-ui";
 import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
@@ -112,6 +168,8 @@ import { coverUrl } from "@/utils/coverUrl";
 import { isInterludeLine, type AMLLLine } from "@/utils/LyricsProcessor";
 import { getTauri, isTauri } from "@/utils/tauri/core/runtime";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
+import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
+import { miuixSpring, withReducedMotion } from "@/utils/motion/springs";
 import {
   BACKDROP_BRIGHTNESS,
   renderLyricCard,
@@ -121,6 +179,24 @@ import {
 } from "@/utils/lyricShareCard";
 
 const MAX_LINES = 5;
+
+// The panel is always the dark share tone, whatever the app theme.
+const SHARE_THEME: GlobalThemeOverrides = {
+  Button: {
+    fontWeight: "600",
+    textColor: "#fff",
+    colorSecondary: "rgb(255 255 255 / 0.16)",
+    colorSecondaryHover: "rgb(255 255 255 / 0.24)",
+    colorSecondaryPressed: "rgb(255 255 255 / 0.3)",
+    colorQuaternaryHover: "rgb(255 255 255 / 0.12)",
+    colorQuaternaryPressed: "rgb(255 255 255 / 0.18)",
+  },
+};
+// Phones: the list grows out of the pressed line while the bars slide in.
+const HEAD = { open: { opacity: 1, y: 0 }, closed: { opacity: 0, y: -24 } };
+const FOOT = { open: { opacity: 1, y: 0 }, closed: { opacity: 0, y: 24 } };
+const LINES = { open: { scale: 1 }, closed: { scale: 0.92 } };
+const spring = withReducedMotion(miuixSpring.gentle);
 
 const { t } = useI18n();
 const music = musicStore();
@@ -138,10 +214,16 @@ const canCopyImage = !isMobileApp && typeof ClipboardItem !== "undefined";
 const show = ref(false);
 const lines = shallowRef<LyricShareLine[]>([]);
 const range = ref<[number, number]>([0, 0]);
+const { isMobile } = useResponsiveLayout();
 const panel = useTemplateRef<HTMLElement>("panel");
-const list = useTemplateRef<HTMLElement>("list");
-// Phones: the list grows out of the pressed line, which sits at `originY` in it.
-const expand = ref(false);
+const list = useTemplateRef<ComponentPublicInstance>("list");
+const scroller = useTemplateRef<ScrollbarInst>("scroller");
+const lineEls: HTMLElement[] = [];
+// Desktop keeps naive's own scale-in, so its children never animate.
+const stage = computed(() => (show.value || !isMobile.value ? "open" : "closed"));
+// The modal mounts its content on first show, already "open": start phones closed.
+const enterFrom = computed(() => (isMobile.value ? "closed" : false));
+// Where the pressed line sits in the list, which the list grows out of.
 const originY = ref(0);
 const rendering = ref(false);
 const imageUrl = ref("");
@@ -161,18 +243,23 @@ function open(amllLines: AMLLLine[], lineIndex: number, origin: DOMRect) {
   const index = usable.reduce((found, { raw }, i) => (raw <= lineIndex ? i : found), 0);
   range.value = [index, index];
   clearImage();
-  expand.value = window.matchMedia("(max-width: 768px)").matches;
   show.value = true;
   // The one layout read here is the layout the opening frame needs anyway, and
   // the scroll that follows does not invalidate it.
   nextTick(() => {
-    const anchor = list.value?.children[index] as HTMLElement | undefined;
-    if (!anchor) return;
-    if (!expand.value) return anchor.scrollIntoView({ block: "center" });
+    const anchor = lineEls[index];
+    const listEl = list.value?.$el as HTMLElement | undefined;
+    if (!anchor || !listEl) return;
+    if (!isMobile.value) {
+      scroller.value!.scrollTo({
+        top: anchor.offsetTop - (listEl.clientHeight - anchor.offsetHeight) / 2,
+      });
+      return;
+    }
     // Keep the line where the finger is, so the list visibly grows around it.
-    // Offsets, not rects: the list is already under its scaled enter state.
-    const listTop = panel.value!.getBoundingClientRect().top + list.value!.offsetTop;
-    list.value!.scrollTop = listTop + anchor.offsetTop - origin.top;
+    // Offsets, not rects: the list is already under its scaled closed state.
+    const listTop = panel.value!.getBoundingClientRect().top + listEl.offsetTop;
+    scroller.value!.scrollTo({ top: listTop + anchor.offsetTop - origin.top });
     originY.value = origin.top + origin.height / 2 - listTop;
   });
 }
@@ -201,6 +288,8 @@ function toggle(index: number) {
 // Cached so a tap's re-render does not redo three OKLab conversions; the lines
 // themselves are skipped by `v-memo` unless their selection flipped.
 const panelStyle = computed(() => ({
+  // Inline beats the modal's scale-in class: on phones the panel only fades.
+  transform: isMobile.value ? "none" : undefined,
   "--share-origin-y": `${originY.value}px`,
   "--share-brightness": BACKDROP_BRIGHTNESS,
   "--share-tone": shareTone(site.songPicColor),
@@ -378,22 +467,13 @@ defineExpose({ open });
         opacity: 0.7;
       }
     }
-
-    :deep(.n-button) {
-      color: #fff;
-    }
   }
 
   .lines {
     flex: 1;
-    overflow-y: auto;
-    padding: 8px 12px;
-    scrollbar-width: none;
+    min-height: 0;
     font-family: var(--lyric-share-font);
-
-    &::-webkit-scrollbar {
-      display: none;
-    }
+    transform-origin: 50% var(--share-origin-y);
   }
 
   .line {
@@ -471,33 +551,6 @@ defineExpose({ open });
       gap: 8px;
       margin-left: auto;
     }
-
-    :deep(.n-button) {
-      --n-color: rgb(255 255 255 / 0.16);
-      --n-color-hover: rgb(255 255 255 / 0.24);
-      --n-color-pressed: rgb(255 255 255 / 0.3);
-      --n-color-focus: rgb(255 255 255 / 0.24);
-      --n-text-color: #fff;
-      --n-text-color-hover: #fff;
-      --n-text-color-pressed: #fff;
-      --n-text-color-focus: #fff;
-      font-weight: 600;
-    }
-
-    :deep(.n-button.primary) {
-      --n-color: rgb(255 255 255 / 0.92);
-      --n-color-hover: #fff;
-      --n-color-pressed: rgb(255 255 255 / 0.8);
-      --n-color-focus: #fff;
-      --n-text-color: #111;
-      --n-text-color-hover: #111;
-      --n-text-color-pressed: #111;
-      --n-text-color-focus: #111;
-      --n-border: none;
-      --n-border-hover: none;
-      --n-border-pressed: none;
-      --n-border-focus: none;
-    }
   }
 
   // Phones get the whole screen, like the sheet it imitates.
@@ -522,60 +575,10 @@ defineExpose({ open });
         width: 100%;
         margin-left: 0;
 
-        :deep(.n-button) {
+        > * {
           flex: 1;
         }
       }
-    }
-  }
-
-  // Replaces n-modal's scale-in, whose classes land on this element. Only
-  // opacity and transform move, so no frame re-rasters the blurred cover.
-  // The children's transitions are permanent rather than tied to the
-  // enter-active class, which Vue drops once this element's shorter fade ends.
-  &.expand {
-    .head,
-    .lines,
-    .foot {
-      transition:
-        transform 0.45s cubic-bezier(0.32, 0.72, 0, 1),
-        opacity 0.3s ease-out;
-    }
-
-    .lines {
-      transform-origin: 50% var(--share-origin-y);
-    }
-
-    &.fade-in-scale-up-transition-enter-active {
-      transition: opacity 0.25s ease-out;
-    }
-
-    &.fade-in-scale-up-transition-leave-active {
-      transition: opacity 0.2s ease-in;
-    }
-
-    &.fade-in-scale-up-transition-enter-from,
-    &.fade-in-scale-up-transition-leave-to {
-      transform: none;
-
-      .head {
-        opacity: 0;
-        transform: translateY(-24px);
-      }
-
-      .foot {
-        opacity: 0;
-        transform: translateY(24px);
-      }
-
-      .lines {
-        transform: scale(0.92);
-      }
-    }
-
-    &.fade-in-scale-up-transition-enter-to,
-    &.fade-in-scale-up-transition-leave-from {
-      transform: none;
     }
   }
 }
