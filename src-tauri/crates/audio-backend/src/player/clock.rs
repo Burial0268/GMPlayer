@@ -67,11 +67,12 @@ impl PlayerClock {
     }
 
     /// Measured delay between the position this clock reports and what is
-    /// audible, in microseconds; `0` before the stream's first callback.
-    pub(super) fn output_latency_us(&self) -> u32 {
+    /// audible, in microseconds; `0` until a measurement settles. Settles a new
+    /// one, so call it from the heartbeat, not per frame.
+    pub(super) fn settle_output_latency_us(&self) -> u32 {
         self.render_clock
             .as_ref()
-            .map_or(0, OutputRenderClock::output_latency_us)
+            .map_or(0, OutputRenderClock::settle_latency_us)
     }
 
     pub(super) fn is_playing(&self) -> bool {
