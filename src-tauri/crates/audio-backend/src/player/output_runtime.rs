@@ -170,7 +170,7 @@ impl AudioPlayer {
 
     async fn abandon_current_mixer_for_output_rebuild(&mut self) {
         self.cancel_native_automix_runtime().await;
-        self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
+        self.bump_automix_prepare_gen();
         let events = self.automix.cancel(self.current_play_index);
         self.emit_many(events).await;
 
@@ -499,8 +499,7 @@ impl AudioPlayer {
 
                 if self.current_song.is_some() {
                     self.cancel_native_automix_runtime().await;
-                    self.automix_prepare_generation =
-                        self.automix_prepare_generation.wrapping_add(1);
+                    self.bump_automix_prepare_gen();
                     let events = self.automix.cancel(self.current_play_index);
                     self.emit_many(events).await;
                     self.secondary_local_path = None;

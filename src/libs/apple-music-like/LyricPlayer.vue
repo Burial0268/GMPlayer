@@ -20,7 +20,7 @@ import {
   type LyricLineMouseEvent,
 } from "@applemusic-like-lyrics/core";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
-import { getLyricPresentationTimeSeconds } from "@/utils/tauri/audio/uiDelay";
+import { getLyricPresentationTimeSeconds, onAudioUiDelayChange } from "@/utils/tauri/audio/uiDelay";
 import "@applemusic-like-lyrics/core/style.css";
 
 const site = siteStore();
@@ -241,6 +241,8 @@ function passToPlayer(event: Event) {
   playerEl.dispatchEvent(new (event.constructor as typeof Event)(event.type, event));
 }
 
+let stopDelayWatch: (() => void) | null = null;
+
 onMounted(() => {
   const host = playerEl.value;
   if (host) {
@@ -261,11 +263,14 @@ onMounted(() => {
   window.addEventListener("focus", scheduleCurrentTimeSync);
   window.addEventListener("pageshow", scheduleCurrentTimeSync);
   document.addEventListener("visibilitychange", handleVisibilityChange);
+  stopDelayWatch = onAudioUiDelayChange(scheduleCurrentTimeSync);
 
   nextTick(scheduleCurrentTimeSync);
 });
 
 onBeforeUnmount(() => {
+  stopDelayWatch?.();
+  stopDelayWatch = null;
   window.removeEventListener("focus", scheduleCurrentTimeSync);
   window.removeEventListener("pageshow", scheduleCurrentTimeSync);
   document.removeEventListener("visibilitychange", handleVisibilityChange);

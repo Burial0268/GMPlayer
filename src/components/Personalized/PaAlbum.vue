@@ -2,7 +2,7 @@
   <div class="paalbum">
     <div class="home-section-head">
       <h2 class="head-title">{{ $t("home.title.newAlbum") }}</h2>
-      <span class="head-more" @click="router.push('/new-album?page=1')">
+      <span v-button class="head-more" @click="router.push('/new-album?page=1')">
         {{ $t("home.title.more") }}
       </span>
     </div>
@@ -11,6 +11,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import { getNewAlbum } from "@/api/home";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";

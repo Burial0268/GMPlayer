@@ -9,7 +9,7 @@
         <n-tab :name="8"> {{ $t("general.type.japan") }} </n-tab>
         <n-tab :name="16"> {{ $t("general.type.korea") }} </n-tab>
       </n-tabs>
-      <span class="head-more" @click="router.push('/discover/artists?page=1')">
+      <span v-button class="head-more" @click="router.push('/discover/artists?page=1')">
         {{ $t("home.title.more") }}
       </span>
     </div>
@@ -18,6 +18,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import { getArtistList } from "@/api/artist";
 import { useRouter } from "vue-router";
 import ArtistLists from "@/components/DataList/ArtistLists.vue";

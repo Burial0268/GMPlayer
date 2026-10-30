@@ -2,7 +2,7 @@
  * AudioAnalysisProcessor — WASM wrapper replacing WasmFFTManager + LowFreqVolumeAnalyzer
  *
  * Single WASM call per RAF frame: processFrame() runs FFT + dynamic peak normalization
- * + raw bin aggregation + amplitude-to-level + gradient + time-delta smoothing.
+ * + raw bin aggregation + amplitude-to-level + gradient + attack/release envelope.
  *
  * Pipeline:
  *   AudioWorklet PCM → pushData() → [WASM ring buffer]
@@ -24,7 +24,7 @@ interface WasmProcessor {
   processFrame(deltaMs: number, spectrum: Float32Array): number;
   getRawBins(count: number): Float32Array;
   setFreqRange(min: number, max: number): void;
-  setLFOptions(bc: number | null, ws: number | null, th: number | null, sf: number | null): void;
+  setLFOptions(bc: number | null, ws: number | null, th: number | null): void;
   isReady(): boolean;
   reset(): void;
   clear(): void;
@@ -38,7 +38,6 @@ type WasmProcessorCtor = new (
   binCount: number,
   windowSize: number,
   gradientThreshold: number,
-  smoothingFactor: number,
 ) => WasmProcessor;
 
 let _WasmCtor: WasmProcessorCtor | null = null;
@@ -92,24 +91,15 @@ export class AudioAnalysisProcessor {
     binCount: number = 2,
     windowSize: number = 10,
     gradientThreshold: number = 0.35,
-    smoothingFactor: number = 0.003,
   ) {
     this._outputSize = outputSize;
     this._outputBuf = new Float32Array(outputSize);
     this._rawBinCount = binCount;
-    this._lfOptions = { binCount, windowSize, gradientThreshold, smoothingFactor };
+    this._lfOptions = { binCount, windowSize, gradientThreshold };
     this._cachedSpectrum = new Float32Array(outputSize);
     this._rawBinsCache = new Float32Array(binCount);
 
-    this._tryCreateProc(
-      outputSize,
-      freqMin,
-      freqMax,
-      binCount,
-      windowSize,
-      gradientThreshold,
-      smoothingFactor,
-    );
+    this._tryCreateProc(outputSize, freqMin, freqMax, binCount, windowSize, gradientThreshold);
   }
 
   private _tryCreateProc(
@@ -119,7 +109,6 @@ export class AudioAnalysisProcessor {
     binCount: number,
     windowSize: number,
     gradientThreshold: number,
-    smoothingFactor: number,
   ): void {
     if (!_WasmCtor) return;
     try {
@@ -130,7 +119,6 @@ export class AudioAnalysisProcessor {
         binCount,
         windowSize,
         gradientThreshold,
-        smoothingFactor,
       );
     } catch (err) {
       // 只会走到一次：置空 _WasmCtor 之后上面的守卫会挡住所有后续调用
@@ -154,7 +142,6 @@ export class AudioAnalysisProcessor {
         this._rawBinCount,
         this._lfOptions.windowSize,
         this._lfOptions.gradientThreshold,
-        this._lfOptions.smoothingFactor,
       );
       if (!this._proc) return; // Still not ready, drop this PCM block
     }
@@ -219,14 +206,11 @@ export class AudioAnalysisProcessor {
     if (options.windowSize !== undefined) this._lfOptions.windowSize = options.windowSize;
     if (options.gradientThreshold !== undefined)
       this._lfOptions.gradientThreshold = options.gradientThreshold;
-    if (options.smoothingFactor !== undefined)
-      this._lfOptions.smoothingFactor = options.smoothingFactor;
 
     this._proc?.setLFOptions(
       options.binCount ?? null,
       options.windowSize ?? null,
       options.gradientThreshold ?? null,
-      options.smoothingFactor ?? null,
     );
   }
 

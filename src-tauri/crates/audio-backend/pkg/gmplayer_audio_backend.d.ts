@@ -25,7 +25,6 @@ export class LFOptionsJs {
     [Symbol.dispose](): void;
     bin_count: number;
     gradient_threshold: number;
-    smoothing_factor: number;
     window_size: number;
 }
 
@@ -137,9 +136,8 @@ export class WasmAudioProcessor {
      * - `bin_count`: raw FFT bins for lowFreq analysis (default 2)
      * - `window_size`: gradient sliding window size (default 10)
      * - `gradient_threshold`: gradient trigger threshold (default 0.35 desktop, 0.1 mobile)
-     * - `smoothing_factor`: time-delta smoothing speed (default 0.003)
      */
-    constructor(output_size: number, freq_min: number, freq_max: number, bin_count: number, window_size: number, gradient_threshold: number, smoothing_factor: number);
+    constructor(output_size: number, freq_min: number, freq_max: number, bin_count: number, window_size: number, gradient_threshold: number);
     /**
      * Single WASM call per RAF frame (~60 fps).
      *
@@ -173,5 +171,5 @@ export class WasmAudioProcessor {
      * Update low-frequency analyzer options at runtime.
      * All parameters are optional — pass undefined/null to keep current value.
      */
-    setLFOptions(bin_count?: number | null, window_size?: number | null, gradient_threshold?: number | null, smoothing_factor?: number | null): void;
+    setLFOptions(bin_count?: number | null, window_size?: number | null, gradient_threshold?: number | null): void;
 }

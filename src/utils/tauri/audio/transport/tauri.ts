@@ -66,7 +66,7 @@ class TauriInvokeAudioIpc implements AudioBackendTransport {
       this._scheduleVisualDispatch();
       return;
     }
-    if (event.type === "lowFrequencyVolume") {
+    if (event.type === "lowFrequencyVolume" || event.type === "lowFreqBins") {
       this._pendingLowFreq = { event, seq };
       this._scheduleVisualDispatch();
       return;
@@ -167,7 +167,7 @@ class TauriChannelAudioIpc implements AudioBackendTransport {
       this._scheduleVisualDispatch();
       return;
     }
-    if (event.type === "lowFrequencyVolume") {
+    if (event.type === "lowFrequencyVolume" || event.type === "lowFreqBins") {
       this._pendingLowFreq = { event, seq };
       this._scheduleVisualDispatch();
       return;

@@ -153,9 +153,11 @@ export type AudioThreadEvent =
         sampleFormat: string;
       };
     }
+  | { type: "outputLatency"; data: { latencyMs: number } }
   | { type: "audioOutputError"; data: { error: string; recoverable: boolean } }
   | { type: "fftData"; data: { data: number[] } }
   | { type: "lowFrequencyVolume"; data: { volume: number } }
+  | { type: "lowFreqBins"; data: { bins: number[] } }
   | { type: "automixStatus"; data: { status: AutoMixNativeStatus } }
   | {
       type: "automixAnalysisReady";

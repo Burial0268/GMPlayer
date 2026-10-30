@@ -1,7 +1,7 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import { reactive } from "vue";
 import { getSongPlayingTime } from "@/utils/timeTools";
-import { applyMobileTauriAudioUiDelay } from "@/utils/tauri/audio/uiDelay";
+import { applyAudioUiDelay } from "@/utils/tauri/audio/uiDelay";
 import useMusicPlaybackResumeStore from "./musicPlaybackResume";
 import { createDefaultPlaySongTime, type PlaySongTime } from "./musicTypes";
 
@@ -39,7 +39,7 @@ export const useMusicPlaybackDataStore = defineStore("musicPlaybackData", () => 
       duration > 0 ? Math.min(incomingCurrentTime, duration) : incomingCurrentTime;
     const incomingDisplayTime = Number.isFinite(value.displayCurrentTime)
       ? Math.max(0, value.displayCurrentTime ?? 0)
-      : applyMobileTauriAudioUiDelay(currentTime, duration);
+      : applyAudioUiDelay(currentTime, duration);
     const displayCurrentTime =
       duration > 0 ? Math.min(incomingDisplayTime, duration) : incomingDisplayTime;
 

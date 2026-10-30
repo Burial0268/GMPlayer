@@ -1,7 +1,11 @@
 <template>
   <n-tooltip placement="right" :disabled="!collapsed" :delay="300">
     <template #trigger>
-      <div :class="['sidebar-playlist-item', { collapsed }]" @click="$emit('navigate', id)">
+      <div
+        v-button
+        :class="['sidebar-playlist-item', { collapsed }]"
+        @click="$emit('navigate', id)"
+      >
         <span class="sidebar-playlist-cover-slot">
           <img
             class="sidebar-playlist-cover"
@@ -22,6 +26,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import { NTooltip } from "naive-ui";
 
 defineProps({

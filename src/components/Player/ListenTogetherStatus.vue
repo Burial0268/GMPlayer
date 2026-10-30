@@ -1,7 +1,12 @@
 <template>
   <n-popover v-if="listenTogether.isInRoom" trigger="hover" :keep-alive-on-hover="false">
     <template #trigger>
-      <div class="listen-together-status" @click.stop="$emit('click')">
+      <div
+        v-button
+        class="listen-together-status"
+        :aria-label="t('setting.listenTogether')"
+        @click.stop="$emit('click')"
+      >
         <n-badge :value="listenTogether.onlineCount" :max="99" type="success">
           <n-icon size="22" :component="PeopleOutline" />
         </n-badge>
@@ -27,7 +32,12 @@
   </n-popover>
   <n-popover v-else trigger="hover" :keep-alive-on-hover="false">
     <template #trigger>
-      <div class="listen-together-status inactive" @click.stop="$emit('click')">
+      <div
+        v-button
+        class="listen-together-status inactive"
+        :aria-label="t('setting.listenTogether')"
+        @click.stop="$emit('click')"
+      >
         <n-icon size="22" :component="PeopleOutline" />
       </div>
     </template>
@@ -36,6 +46,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import { useI18n } from "vue-i18n";
 import { listenTogetherStore } from "@/store";
 import { PeopleOutline } from "@vicons/ionicons5";

@@ -6,6 +6,7 @@
       '--shadow-intro-duration': `${layerMotion.content}s`,
       '--shadow-intro-ease': `cubic-bezier(${layerMotion.ease})`,
     }"
+    :img-props="{ alt: '' }"
     :src="src"
     object-fit="cover"
     preview-disabled

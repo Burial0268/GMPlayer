@@ -527,6 +527,10 @@ pub enum AudioThreadEvent {
         sample_rate: u32,
         sample_format: String,
     },
+    /// How far the audible output trails the position clock. Follows the output
+    /// device, so it moves when headphones are connected or removed.
+    #[serde(rename_all = "camelCase")]
+    OutputLatency { latency_ms: f64 },
     #[serde(rename_all = "camelCase")]
     AudioOutputError { error: String, recoverable: bool },
     // FFTData → "fftData" needs explicit rename: serde's `rename_all = "camelCase"`
@@ -534,10 +538,11 @@ pub enum AudioThreadEvent {
     // the frontend listener.
     #[serde(rename = "fftData", rename_all = "camelCase")]
     FFTData { data: Vec<f32> },
-    /// Smoothed low-frequency volume in `[0.0, ~1.0]`, computed from the same
-    /// raw FFT magnitudes emitted as `fftData`.
+    /// Raw magnitudes of the lowest FFT bins (AMLL's `fftData[0..N]`), one per
+    /// FFT frame. The frontend runs the low-pass gradient/smoothing on them per
+    /// display frame, as AMLL does.
     #[serde(rename_all = "camelCase")]
-    LowFrequencyVolume { volume: f64 },
+    LowFreqBins { bins: Vec<f32> },
     #[serde(rename_all = "camelCase")]
     AutomixStatus { status: AutoMixStatus },
     #[serde(rename_all = "camelCase")]

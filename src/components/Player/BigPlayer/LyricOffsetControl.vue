@@ -8,6 +8,7 @@
   >
     <!-- [+] button -->
     <div
+      v-button
       class="offset-btn"
       @click.stop="adjustOffset(500)"
       :title="t('setting.lyricOffsetAdvance')"
@@ -16,18 +17,29 @@
     </div>
 
     <!-- Offset value badge (click to reset) -->
-    <div class="offset-value" @click.stop="resetOffset" :title="t('setting.lyricOffsetReset')">
+    <div
+      v-button
+      class="offset-value"
+      @click.stop="resetOffset"
+      :title="t('setting.lyricOffsetReset')"
+    >
       {{ offsetDisplay }}
     </div>
 
     <!-- [-] button -->
-    <div class="offset-btn" @click.stop="adjustOffset(-500)" :title="t('setting.lyricOffsetDelay')">
+    <div
+      v-button
+      class="offset-btn"
+      @click.stop="adjustOffset(-500)"
+      :title="t('setting.lyricOffsetDelay')"
+    >
       <n-icon size="18" :component="RemoveRound" />
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { vButton } from "@/utils/buttonRole";
 import { computed } from "vue";
 import { AddRound, RemoveRound } from "@vicons/material";
 import { settingStore } from "@/store";

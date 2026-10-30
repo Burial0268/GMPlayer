@@ -1307,7 +1307,6 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
     opacity: 1;
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.2);
-    outline: none;
   }
 }
 

@@ -128,7 +128,7 @@ impl AudioPlayer {
 
     async fn retire_fm_audio(&mut self) {
         self.cancel_pending_output_refresh();
-        self.automix_prepare_generation = self.automix_prepare_generation.wrapping_add(1);
+        self.bump_automix_prepare_gen();
         self.cancel_native_automix_runtime().await;
         if let Some(handle) = self.current_decoder_handle.take() {
             handle.stop();

@@ -519,6 +519,7 @@ const messages: Record<string, unknown> = {
     downloadingUpdate: "正在下载",
     installingUpdate: "正在安装",
     installUpdate: "安装更新",
+    downloadUpdate: "前往下载",
     installUpdateConfirm: "确认下载并安装 GMPlayer {version}？安装完成后需要重启应用生效。",
     updateInstalled: "更新已安装",
     updateInstalledTip: "GMPlayer {version} 已安装，重启应用后生效。",

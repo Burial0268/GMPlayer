@@ -32,13 +32,57 @@ export function isMobileTauriAudioUiDelayEnabled(): boolean {
   return false;
 }
 
-export function getMobileTauriAudioUiDelaySeconds(): number {
+/**
+ * How far the audible output trails the backend's position clock, as the
+ * output stream measures it. It follows the device, so it moves when headphones
+ * are connected or removed; `null` until a native stream has reported one.
+ */
+let measuredOutputLatencySeconds: number | null = null;
+
+/** Above this the figure is a broken timestamp, not a device. */
+const MAX_PLAUSIBLE_OUTPUT_LATENCY_SECONDS = 2;
+
+/**
+ * The backend re-reports every second and the figure jitters by a few ms. A
+ * smaller move than this is noise: adopting it would shift the lyric clock and,
+ * below, force a resync for nothing.
+ */
+const MIN_LATENCY_STEP_SECONDS = 0.03;
+
+const delayChangeListeners = new Set<() => void>();
+
+/**
+ * Called when the delay moved enough to matter. A lyric renderer that only
+ * feeds forward-moving times (AMLL's non-seek `setCurrentTime`) does not
+ * re-evaluate lines after the base time jumps *back*, so it has to be told to
+ * resync — otherwise a new device's delay waits for the next pause or seek.
+ */
+export function onAudioUiDelayChange(listener: () => void): () => void {
+  delayChangeListeners.add(listener);
+  return () => delayChangeListeners.delete(listener);
+}
+
+export function setMeasuredOutputLatencyMs(latencyMs: number): void {
+  const seconds = latencyMs / 1000;
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > MAX_PLAUSIBLE_OUTPUT_LATENCY_SECONDS) {
+    return;
+  }
+  const previous = measuredOutputLatencySeconds;
+  if (previous !== null && Math.abs(seconds - previous) < MIN_LATENCY_STEP_SECONDS) return;
+  measuredOutputLatencySeconds = seconds;
+  console.info(`[uiDelay] output latency ${latencyMs.toFixed(0)} ms`);
+  for (const listener of delayChangeListeners) listener();
+}
+
+/** The measurement when there is one, else the fixed mobile compensation. */
+export function getAudioUiDelaySeconds(): number {
+  if (measuredOutputLatencySeconds !== null) return measuredOutputLatencySeconds;
   return isMobileTauriAudioUiDelayEnabled() ? MOBILE_TAURI_AUDIO_UI_DELAY_SECONDS : 0;
 }
 
-export function applyMobileTauriAudioUiDelay(currentTime: number, duration = 0): number {
+export function applyAudioUiDelay(currentTime: number, duration = 0): number {
   const normalizedTime = Number.isFinite(currentTime) ? Math.max(0, currentTime) : 0;
-  const delay = getMobileTauriAudioUiDelaySeconds();
+  const delay = getAudioUiDelaySeconds();
   const displayTime = delay > 0 ? Math.max(0, normalizedTime - delay) : normalizedTime;
 
   return duration > 0 ? Math.min(displayTime, duration) : displayTime;
@@ -49,7 +93,7 @@ export function applyMobileTauriAudioUiDelay(currentTime: number, duration = 0):
  * caught up with it.
  *
  * The lyric view jumps to a tapped line at once, but the conversion below runs
- * `MOBILE_TAURI_AUDIO_UI_DELAY_SECONDS` behind the playback clock — so on the
+ * the output delay behind the playback clock — so on the
  * very next frame it reads ~450 ms *before* the target and springs the view
  * back to the previous line, then forward again once the clock has advanced
  * past the delay. The hold pins the presentation at the target through that
@@ -64,7 +108,7 @@ export function armLyricSeekPresentationHold(targetSeconds: number): void {
 
 /** Convert a raw playback position for lyrics only; never use it as a seek target. */
 export function getLyricPresentationTimeSeconds(playbackTime: number, lyricOffsetMs = 0): number {
-  const natural = applyMobileTauriAudioUiDelay(playbackTime) + lyricOffsetMs / 1000;
+  const natural = applyAudioUiDelay(playbackTime) + lyricOffsetMs / 1000;
   const target = lyricSeekPresentationTarget;
   if (target === null || !Number.isFinite(playbackTime)) return natural;
   // Pinned while the clock sits at or just past the target and the delayed

@@ -159,7 +159,9 @@ struct AudioPlayer {
     native_crossfade_generation: Arc<AtomicU64>,
     native_crossfade_active: bool,
     native_crossfade_transition_id: Option<u64>,
-    automix_prepare_generation: u64,
+    /// Shared so a blocking AutoMix prepare can see that it was superseded and
+    /// stop decoding. Bump only through `bump_automix_prepare_gen`.
+    automix_prepare_generation: Arc<AtomicU64>,
 
     // Playlist
     playback_queue: PlaybackQueue,
@@ -332,9 +334,14 @@ impl AudioPlayer {
 
             loop {
                 time_it.tick().await;
-                let (is_playing, current_pos, timeline_epoch) = {
+                let (is_playing, current_pos, timeline_epoch, latency_us) = {
                     let clock = clock_reader.lock();
-                    (clock.is_playing(), clock.position(), clock.epoch())
+                    (
+                        clock.is_playing(),
+                        clock.position(),
+                        clock.epoch(),
+                        clock.output_latency_us(),
+                    )
                 };
                 if is_playing {
                     *position_writer.write().await = current_pos;
@@ -351,6 +358,15 @@ impl AudioPlayer {
                             timeline_epoch,
                         })
                         .await;
+                    // Rides the heartbeat instead of being edge-triggered, so a
+                    // page that reloaded mid-session learns it within a second.
+                    if latency_us != 0 {
+                        let _ = emitter_pos
+                            .emit(AudioThreadEvent::OutputLatency {
+                                latency_ms: latency_us as f64 / 1000.0,
+                            })
+                            .await;
+                    }
                 }
             }
         }));
@@ -359,7 +375,7 @@ impl AudioPlayer {
         //
         // Moved out of this runtime entirely — see `crate::analysis`. The
         // dedicated OS thread owns the `AudioProcessor`, receives PCM via
-        // `analysis_tx`, and emits `FFTData` + `LowFrequencyVolume` events
+        // `analysis_tx`, and emits `FFTData` + `LowFreqBins` events
         // through the same `evt_sender` we use here.
 
         let (self_msg_tx, self_msg_rx) = mpsc::unbounded_channel();
@@ -425,7 +441,7 @@ impl AudioPlayer {
             native_crossfade_generation: Arc::new(AtomicU64::new(0)),
             native_crossfade_active: false,
             native_crossfade_transition_id: None,
-            automix_prepare_generation: 0,
+            automix_prepare_generation: Arc::new(AtomicU64::new(0)),
             playback_queue: PlaybackQueue::new(),
             playlist: Vec::new(),
             playlist_inited: false,
@@ -615,6 +631,13 @@ impl AudioPlayer {
     /// Invalidate any in-flight trigger poll task and return the new generation.
     fn bump_native_crossfade_gen(&self) -> u64 {
         self.native_crossfade_generation
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+    }
+
+    /// Invalidate any in-flight prepare and return the new generation.
+    fn bump_automix_prepare_gen(&self) -> u64 {
+        self.automix_prepare_generation
             .fetch_add(1, Ordering::AcqRel)
             .wrapping_add(1)
     }

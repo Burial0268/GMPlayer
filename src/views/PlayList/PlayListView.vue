@@ -138,7 +138,7 @@
       </div>
       <DataLists
         :listData="displayData"
-        :queue-data="playListData"
+        :queue-data="fullQueue"
         page-window
         :total-rows="displayTotalRows"
         :virtual-item-size="54"
@@ -746,9 +746,19 @@ watch(normalizedKeyword, (keyword, prev) => {
   }, SEARCH_HYDRATE_DELAY);
 });
 
+/**
+ * 入队的整张歌单。`playListData` 只是已 hydrate 的前缀——长歌单没滚到底、或搜索的整表
+ * 补齐还没跑完时点播，直接入队会漏掉后面的歌。这里补齐到底再交出去；已补齐就是空转。
+ * 某块请求失败时补齐会停下，那就交出已有的部分，播放不因此打断。
+ */
+const fullQueue = async () => {
+  await hydrateUntil(manifestIds.value.length);
+  return playListData.value;
+};
+
 // 播放歌单所有歌曲
-const playAllSong = () => {
-  playAll(playListData.value);
+const playAllSong = async () => {
+  playAll(await fullQueue());
 };
 
 // ── 歌单写入后的就地更新 ──────────────────────────────────────

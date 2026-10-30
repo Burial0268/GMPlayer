@@ -385,7 +385,7 @@
                 <AllArtists class="text-hidden" :artistsData="drawerData.artist" />
               </n-text>
             </div>
-            <div class="item info-item" @click="jumpLink(drawerData.album?.id, 10)">
+            <div v-button class="item info-item" @click="jumpLink(drawerData.album?.id, 10)">
               <n-icon size="20">
                 <RecordDisc theme="filled" />
               </n-icon>
@@ -490,6 +490,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 // `h` 显式引入而不靠 auto-import：unimport 只要在文件的**任意作用域**里看到一个同名
 // 声明，就认定该名字已存在、整个模块都不再注入它。这里的 `h` 只在右键菜单的
 // `renderIcon` 里用到，缺了它编译期无声无息，只有右键那一刻才 ReferenceError。
@@ -598,9 +599,13 @@ const props = defineProps({
    *
    * 列表内搜索时 listData 是过滤后的候选集，直接拿它入队会把播放队列缩成搜索
    * 结果。传入完整列表，让「播放某一条」把整张列表入队、再定位到点中的这首。
+   *
+   * 也可以是返回（或 resolve 出）完整列表的函数，点播时才调用：给 listData 只是
+   * 分页前缀、筛选又在服务端做的页面用，它们手上根本没有完整列表（本地「全部歌曲」）。
+   * 函数失败或返回空则退回 listData，播放不因此中断。
    */
   queueData: {
-    type: Array,
+    type: [Array, Function],
     default: null,
   },
   /**
@@ -1672,17 +1677,29 @@ const openDrawer = (data) => {
   drawerShow.value = true;
 };
 
+const resolveQueue = async (visible) => {
+  try {
+    const source = props.queueData;
+    const queue = typeof source === "function" ? await source() : source;
+    if (queue?.length) return queue;
+  } catch (err) {
+    console.warn("queue-data failed, queueing the visible rows", err);
+  }
+  return visible;
+};
+
 // 播放并添加
-const playSong = (data, song) => {
+const playSong = async (data, song) => {
   console.log(data, song);
+  // 先取队列再动播放状态，免得 setPlayState 在旧队列上先起播。
+  const queue = await resolveQueue(data);
   if (music.getPersonalFmMode && typeof $player !== "undefined") {
     soundStop($player);
     music.setPersonalFmMode(false);
   }
   music.setPlayState(true);
-  // data 可能是列表内搜索过滤后的候选集；有完整队列就用它入队，再由
+  // 入队的是完整队列而不是 data（可能是搜索过滤后的候选集），再由
   // addSongToPlaylists 定位到点中的这首，避免把播放队列缩成搜索结果。
-  const queue = props.queueData?.length ? props.queueData : data;
   if (router.currentRoute.value.name !== "history") music.setPlaylists(queue);
   // 检查是否为云盘歌曲
   if (router.currentRoute.value.name === "user-cloud") {

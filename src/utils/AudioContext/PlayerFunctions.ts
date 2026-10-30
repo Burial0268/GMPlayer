@@ -36,11 +36,11 @@ import { publishSessionControls } from "./NativeSessionControlsSync";
 import { clearSpectrumFrame, setSpectrumFrame } from "./SpectrumFrame";
 import { publishLowFreqVolume, resetLowFreqVolume } from "./lowFreqVolume";
 import type { ISound } from "./types";
+import { NativeRustSound } from "../tauri/audio/nativeRustSound";
 import {
-  NativeRustSound,
   isAudioBackendRuntimeAvailable,
   isNativeAudioBackendAvailable,
-} from "../tauri/audio/nativeRustSound";
+} from "../tauri/audio/backendRuntime";
 import { getAudioBackendTransport } from "../tauri/audio/transport";
 import { armLyricSeekPresentationHold } from "../tauri/audio/uiDelay";
 import type { TrackIdentity } from "../tauri/audio/protocol";

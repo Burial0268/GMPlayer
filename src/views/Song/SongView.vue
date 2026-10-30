@@ -5,6 +5,7 @@
         <n-image
           show-toolbar-tooltip
           class="coverImg"
+          :alt="musicDetail.name"
           :previewed-img-props="{ style: { borderRadius: 'var(--radius-md)' } }"
           :preview-src="getCoverUrl(musicDetail.al.picUrl)"
           :src="getCoverUrl(musicDetail.al.picUrl, 1024)"
@@ -18,6 +19,7 @@
         </n-image>
         <n-image
           class="shadow"
+          :img-props="{ alt: '' }"
           preview-disabled
           :src="getCoverUrl(musicDetail.al.picUrl, 1024)"
           fallback-src="/images/pic/default.png"

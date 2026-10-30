@@ -19,10 +19,12 @@
  */
 
 import type { ISound, SoundEventCallback, SoundEventType } from "../../AudioContext/types";
+import { LowFreqVolumeAnalyzer } from "../../AudioContext/LowFreqVolumeAnalyzer";
 import { isTauri } from "../core/runtime";
 import { audioGetSession } from "./bridge";
 import { AudioTimelineSync } from "./timeline";
 import { sameTrackIdentity } from "./identity";
+import { setMeasuredOutputLatencyMs } from "./uiDelay";
 import type {
   AudioQuality,
   AudioThreadEvent,
@@ -32,11 +34,8 @@ import type {
   TrackDisplay,
   TrackIdentity,
 } from "./protocol";
-import {
-  getAudioBackendTransport,
-  isWasmAudioBackendAvailable,
-  type AudioBackendTransport,
-} from "./transport";
+import { getAudioBackendTransport, type AudioBackendTransport } from "./transport";
+import { isAudioBackendRuntimeAvailable } from "./backendRuntime";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 const LOAD_TIMEOUT_MS = 10_000;
@@ -86,10 +85,6 @@ interface LocalState {
 
 type EventMap = Record<string, SoundEventCallback[]>;
 
-export function isNativeAudioBackendAvailable(): boolean {
-  return isTauri();
-}
-
 /**
  * Tell the backend which track is about to load, before its URL is resolved.
  *
@@ -112,10 +107,6 @@ export function announceNativeTrack(
   } catch (err) {
     if (IS_DEV) console.warn("[NativeRustSound] announce failed", err);
   }
-}
-
-export function isAudioBackendRuntimeAvailable(): boolean {
-  return isTauri() || isWasmAudioBackendAvailable();
 }
 
 /** Resolved/rejected when the load completes — or rejected on timeout. */
@@ -202,9 +193,13 @@ export class NativeRustSound implements ISound {
   private _fftData: number[] = [];
   private _frequencyData: Uint8Array<ArrayBuffer> = new Uint8Array(0);
   private _averageAmplitude: number = 0;
-  /** Rust-computed low-frequency volume from the `lowFrequencyVolume`
-   * event, derived from the same raw FFT frame as `fftData`. */
+  /** Low-frequency volume from the `lowFrequencyVolume` event (WASM backend,
+   * which computes it in its worker). */
   private _lowFreqVolume: number = 0;
+  /** Native backend: the lowest raw FFT bins of the latest frame. The AMLL
+   * low-pass runs on them per display frame in `getLowFrequencyVolume`. */
+  private _lowFreqBins: number[] | null = null;
+  private readonly _lowFreq = new LowFreqVolumeAnalyzer();
   private _analysisEnabled: boolean | null = null;
   private _fftEventsEnabled: boolean | null = null;
 
@@ -565,7 +560,7 @@ export class NativeRustSound implements ISound {
     this._quality = null;
     this._timeline.reset(0, 0);
     this._clearFFTState();
-    this._lowFreqVolume = 0;
+    this._clearLowFreq();
   }
 
   setAnalysisEnabled(enabled: boolean): void {
@@ -573,7 +568,7 @@ export class NativeRustSound implements ISound {
     this._analysisEnabled = enabled;
     if (!enabled) {
       this._clearFFTState();
-      this._lowFreqVolume = 0;
+      this._clearLowFreq();
     }
     this._sendCommand({ type: "setAnalysis", enabled });
   }
@@ -596,6 +591,13 @@ export class NativeRustSound implements ISound {
     }
     this._averageAmplitude = 0;
     this._clearNoFFTWarning();
+  }
+
+  /** Back to rest. Not for seeks or track changes: AMLL keeps its smoothing. */
+  private _clearLowFreq(): void {
+    this._lowFreqVolume = 0;
+    this._lowFreqBins = null;
+    this._lowFreq.reset();
   }
 
   private _clearNoFFTWarning(): void {
@@ -968,7 +970,16 @@ export class NativeRustSound implements ISound {
         break;
       }
 
+      case "lowFreqBins": {
+        this._lowFreqBins = evt.data.bins;
+        break;
+      }
+
       case "audioOutputChanged":
+        break;
+
+      case "outputLatency":
+        setMeasuredOutputLatencyMs(evt.data.latencyMs);
         break;
 
       case "audioOutputError":
@@ -1626,9 +1637,9 @@ export class NativeRustSound implements ISound {
   }
 
   getLowFrequencyVolume(): number {
-    // Rust computes this from raw FFT bins; the frontend only reads the latest
-    // value and does not re-run FFT-derived lowfreq work per RAF.
-    return this._lowFreqVolume;
+    // Called once per rAF by the spectrum loop, which is the cadence AMLL's
+    // gradient window and smoothing are defined on.
+    return this._lowFreqBins ? this._lowFreq.analyze(this._lowFreqBins) : this._lowFreqVolume;
   }
 
   getAverageAmplitude(): number {
@@ -1704,7 +1715,7 @@ export class NativeRustSound implements ISound {
     this._state.playlist = [];
     this._musicInfo = null;
     this._quality = null;
-    this._lowFreqVolume = 0;
+    this._clearLowFreq();
     this._analysisEnabled = false;
     this._fftEventsEnabled = false;
     this._pendingPlayCommand = false;

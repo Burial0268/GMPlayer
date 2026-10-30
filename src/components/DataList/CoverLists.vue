@@ -25,6 +25,7 @@
           <div class="cover" data-navigation-cover>
             <n-image
               lazy
+              :img-props="{ alt: '' }"
               class="coverImg"
               preview-disabled
               :src="getCoverUrl(item.cover, 300)"

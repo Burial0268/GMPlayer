@@ -52,7 +52,7 @@
           >
             <span class="artists text-hidden">
               <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
-                <span class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{
+                <span v-button class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{
                   ar.name
                 }}</span>
                 <span v-if="index < music.getPlaySongData.artist.length - 1"> / </span>
@@ -161,6 +161,7 @@
 </template>
 
 <script setup>
+import { vButton } from "@/utils/buttonRole";
 import {
   MoreHorizRound,
   ThumbDownRound,

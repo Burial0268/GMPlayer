@@ -171,7 +171,6 @@ export class AudioEffectManager {
           this.options.lowFreqBinCount,
           this.options.lowFreqOptions?.windowSize,
           this.options.lowFreqOptions?.gradientThreshold,
-          this.options.lowFreqOptions?.smoothingFactor,
         );
       }
     } catch (err) {

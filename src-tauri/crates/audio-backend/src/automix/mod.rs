@@ -352,6 +352,23 @@ fn decode_source_to_mono<R>(input: R) -> Result<(Vec<f32>, u32, f32), String>
 where
     R: std::io::Read + std::io::Seek + Send + Sync + 'static,
 {
+    decode_source_to_mono_until(input, &|| false)
+}
+
+/// How often the decode loop asks whether it was superseded: ~1.5 s of audio at
+/// 44.1 kHz, so a skipped prepare stops within milliseconds and the check costs
+/// nothing per sample. Must be a power of two.
+#[cfg(not(target_arch = "wasm32"))]
+const CANCEL_POLL_FRAMES: usize = 1 << 16;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_source_to_mono_until<R>(
+    input: R,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<f32>, u32, f32), String>
+where
+    R: std::io::Read + std::io::Seek + Send + Sync + 'static,
+{
     let decoder = Decoder::new(input).map_err(|e| format!("decode audio: {e}"))?;
     let channels = decoder.channels().get() as usize;
     let sample_rate = decoder.sample_rate().get();
@@ -376,6 +393,10 @@ where
             mono.push(frame_sum / channels as f32);
             frame_sum = 0.0;
             frame_channel = 0;
+
+            if mono.len() & (CANCEL_POLL_FRAMES - 1) == 0 && cancelled() {
+                return Err("decode audio: cancelled".into());
+            }
         }
     }
 
@@ -536,6 +557,18 @@ pub fn analyze_audio_file(
     path: impl AsRef<Path>,
     analyze_bpm: bool,
 ) -> Result<TrackAnalysis, String> {
+    analyze_audio_file_until(path, analyze_bpm, &|| false)
+}
+
+/// `analyze_audio_file` that gives up once `cancelled` turns true. A blocking
+/// task cannot be aborted, so without this a superseded AutoMix prepare keeps
+/// decoding a whole track nobody will use.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn analyze_audio_file_until(
+    path: impl AsRef<Path>,
+    analyze_bpm: bool,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<TrackAnalysis, String> {
     // Stream the compressed file from disk instead of fs::read-ing it whole:
     // the encoded bytes would otherwise stay resident (owned by the decoder's
     // Cursor) for the entire full-track decode, adding the whole file size on
@@ -553,13 +586,16 @@ pub fn analyze_audio_file(
         inner: std::io::BufReader::new(opened),
         latch: Arc::clone(&io_error),
     };
-    let decoded = decode_source_to_mono(reader);
+    let decoded = decode_source_to_mono_until(reader, cancelled);
     // Surface underlying disk errors exactly like the old whole-file read did,
     // whether or not the decoder managed to limp past them with partial PCM.
     if let Some(err) = io_error.lock().ok().and_then(|mut latch| latch.take()) {
         return Err(format!("read audio source: {err}"));
     }
     let (samples, sample_rate, duration) = decoded?;
+    if cancelled() {
+        return Err("analysis cancelled".into());
+    }
     Ok(analyze_mono_samples(
         &samples,
         sample_rate,
@@ -622,6 +658,16 @@ mod tests {
         assert_eq!(rate_bytes, rate_file);
         assert_eq!(duration_bytes, duration_file);
         assert_eq!(mono_bytes, mono_file);
+    }
+
+    #[test]
+    fn cancelled_decode_stops_instead_of_finishing_the_track() {
+        let bytes = wav_bytes(CANCEL_POLL_FRAMES * 4, 2, 44_100);
+
+        let err = decode_source_to_mono_until(Cursor::new(bytes), &|| true)
+            .expect_err("a cancelled decode must not return PCM");
+
+        assert!(err.contains("cancelled"), "unexpected error: {err}");
     }
 
     #[test]
