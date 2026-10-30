@@ -10,15 +10,16 @@
     >
       <div
         v-if="visible"
-        class="lyric-share"
+        :class="['lyric-share', { desktop: !isMobile }]"
         data-navigation-layer="share-player"
         role="dialog"
         aria-modal="true"
         :aria-label="t('player.share.title')"
         :style="layerStyle"
+        @contextmenu.prevent
       >
         <div class="column">
-          <header class="head">
+          <header v-if="isMobile" class="head">
             <img class="cover" :src="cover" alt="" />
             <div class="meta">
               <div class="title">{{ song?.name }}</div>
@@ -30,10 +31,12 @@
           </header>
 
           <div
-            v-if="!imageUrl"
+            v-if="!isMobile || !imageUrl"
             ref="list"
             class="lines"
             role="group"
+            tabindex="-1"
+            autofocus
             :aria-label="t('player.share.title')"
           >
             <!-- Room above and below, so any line can be scrolled to where it was pressed. -->
@@ -59,7 +62,7 @@
             <img :src="imageUrl" alt="" />
           </div>
 
-          <footer class="foot">
+          <footer v-if="isMobile" class="foot">
             <template v-if="!imageUrl">
               <span class="count">
                 {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
@@ -91,54 +94,70 @@
                 {{ t("player.share.back") }}
               </n-button>
               <div class="actions">
-                <n-button v-if="canCopyImage" round secondary @click="copyImage">
-                  <template #icon><Copy /></template>
-                  {{ t("player.share.copyImage") }}
-                </n-button>
-                <!-- The browser saves a plain download link; Tauri goes through a native dialog. -->
                 <n-button
-                  v-if="!inTauri"
+                  v-for="action in imageActions"
+                  :key="action.key"
                   round
-                  color="#fff"
-                  text-color="#111"
-                  tag="a"
-                  :href="imageUrl"
-                  :download="`${fileName || 'lyrics'}.png`"
+                  v-bind="action.primary ? PRIMARY : SECONDARY"
+                  :tag="action.href ? 'a' : 'button'"
+                  :href="action.href"
+                  :download="action.download"
+                  @click="action.run?.()"
                 >
-                  <template #icon><Download /></template>
-                  {{ t("player.share.saveImage") }}
-                </n-button>
-                <n-button
-                  v-else-if="!isMobileApp"
-                  round
-                  color="#fff"
-                  text-color="#111"
-                  @click="saveImage"
-                >
-                  <template #icon><Download /></template>
-                  {{ t("player.share.saveImage") }}
-                </n-button>
-                <n-button
-                  v-if="canShareImage"
-                  round
-                  color="#fff"
-                  text-color="#111"
-                  @click="shareImage"
-                >
-                  <template #icon><ShareTwo /></template>
-                  {{ t("player.share.share") }}
+                  <template #icon><component :is="action.icon" /></template>
+                  {{ action.label }}
                 </n-button>
               </div>
             </template>
           </footer>
         </div>
+
+        <!-- Desktop has the room to show the card as it will be shared, so there
+             is no separate preview step. -->
+        <aside v-if="!isMobile" class="stage">
+          <!-- Holds the card's place while the first draw runs, so the buttons stay put. -->
+          <div class="frame">
+            <img v-if="imageUrl" class="card" :src="imageUrl" :alt="t('player.share.image')" />
+          </div>
+          <div class="actions">
+            <n-button round secondary @click="copyText">
+              <template #icon><Copy /></template>
+              {{ t("player.share.copy") }}
+            </n-button>
+            <n-button
+              v-for="action in imageActions"
+              :key="action.key"
+              round
+              v-bind="action.primary ? PRIMARY : SECONDARY"
+              :disabled="!imageUrl"
+              :tag="action.href ? 'a' : 'button'"
+              :href="action.href"
+              :download="action.download"
+              @click="action.run?.()"
+            >
+              <template #icon><component :is="action.icon" /></template>
+              {{ action.label }}
+            </n-button>
+          </div>
+        </aside>
+        <n-button
+          v-if="!isMobile"
+          class="dismiss"
+          quaternary
+          circle
+          size="large"
+          :aria-label="t('general.dialog.cancel')"
+          @click="close"
+        >
+          <template #icon><Close /></template>
+        </n-button>
       </div>
     </Transition>
   </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, useTemplateRef, watch } from "vue";
+import { computed, ref, useTemplateRef, watch, type Component } from "vue";
 import type { GlobalThemeOverrides, ScrollbarInst } from "naive-ui";
 import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
@@ -158,6 +177,8 @@ const props = defineProps<{
 }>();
 
 const MAX_LINES = 5;
+const PRIMARY = { color: "#fff", textColor: "#111" };
+const SECONDARY = { secondary: true };
 
 // The layer sits on the player's background, dark whatever the app theme.
 const BUTTON_THEME: GlobalThemeOverrides["Button"] = {
@@ -200,6 +221,8 @@ const range = ref<[number, number]>([0, 0]);
 const rendering = ref(false);
 const imageUrl = ref("");
 let imageBlob: Blob | null = null;
+// Taken once per opening: every card drawn from it then shows the same frame.
+let still: Promise<HTMLCanvasElement | undefined> = Promise.resolve(undefined);
 
 const visible = computed(() => navigation.playerShareVisible.value && Boolean(request.value));
 
@@ -229,6 +252,7 @@ watch(
     if (!shown || !request.value) return;
     range.value = [originIndex.value, originIndex.value];
     clearImage();
+    still = props.captureStill();
     const anchor = lineEls[originIndex.value];
     if (!anchor || !list.value) return;
     const listTop = list.value.getBoundingClientRect().top;
@@ -256,6 +280,7 @@ function revealOrigin() {
 const close = () => navigation.closeTop("share");
 
 function leave() {
+  previewRun++;
   clear();
   clearImage();
 }
@@ -307,6 +332,25 @@ const lyricText = computed(() =>
   selected.value.map((line) => [line.text, ...line.subs].join("\n")).join("\n"),
 );
 
+// Desktop redraws the card as the selection changes. Debounced, because a
+// draw is a large blurred canvas; a draw the selection has outrun is dropped.
+const PREVIEW_DELAY = 120;
+let previewTimer = 0;
+let previewRun = 0;
+watch([visible, selected, isMobile], ([shown, , mobile]) => {
+  clearTimeout(previewTimer);
+  if (!shown || mobile) return;
+  previewTimer = window.setTimeout(
+    () =>
+      run(async () => {
+        const current = ++previewRun;
+        const blob = await renderCard();
+        if (current === previewRun) setImage(blob);
+      }),
+    PREVIEW_DELAY,
+  );
+});
+
 async function run(task: () => Promise<unknown>) {
   try {
     await task();
@@ -329,26 +373,34 @@ const shareText = () =>
     else await navigator.share({ text }).catch(ignoreAbort);
   });
 
+const renderCard = async () =>
+  renderLyricCard({
+    lines: selected.value,
+    title: song.value?.name ?? "",
+    artist: artists.value,
+    coverSrc: coverUrl(song.value?.album?.picUrl, 512),
+    backdrop: await still,
+    themeRgb: site.songPicColor,
+    fontFamily: setting.lyricFont,
+    brand: "GMPlayer",
+    logoSrc: "/images/logo/favicon.png",
+  });
+
 const makeImage = () =>
   run(async () => {
     rendering.value = true;
     try {
-      imageBlob = await renderLyricCard({
-        lines: selected.value,
-        title: song.value?.name ?? "",
-        artist: artists.value,
-        coverSrc: coverUrl(song.value?.album?.picUrl, 512),
-        backdrop: await props.captureStill(),
-        themeRgb: site.songPicColor,
-        fontFamily: setting.lyricFont,
-        brand: "GMPlayer",
-        logoSrc: "/images/logo/favicon.png",
-      });
-      imageUrl.value = URL.createObjectURL(imageBlob);
+      setImage(await renderCard());
     } finally {
       rendering.value = false;
     }
   });
+
+function setImage(blob: Blob) {
+  clearImage();
+  imageBlob = blob;
+  imageUrl.value = URL.createObjectURL(blob);
+}
 
 function clearImage() {
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value);
@@ -384,6 +436,47 @@ const shareImage = () =>
     await navigator.share({ files: [file] }).catch(ignoreAbort);
   });
 
+interface ImageAction {
+  key: string;
+  label: string;
+  icon: Component;
+  primary?: boolean;
+  run?: () => void;
+  /** The browser saves through a plain download link; Tauri goes through a native dialog. */
+  href?: string;
+  download?: string;
+}
+const imageActions = computed(() => {
+  const save = t("player.share.saveImage");
+  const actions: ImageAction[] = [];
+  if (canCopyImage) {
+    actions.push({ key: "copy", label: t("player.share.copyImage"), icon: Copy, run: copyImage });
+  }
+  if (!inTauri) {
+    const download = `${fileName.value || "lyrics"}.png`;
+    actions.push({
+      key: "save",
+      label: save,
+      icon: Download,
+      primary: true,
+      href: imageUrl.value,
+      download,
+    });
+  } else if (!isMobileApp) {
+    actions.push({ key: "save", label: save, icon: Download, primary: true, run: saveImage });
+  }
+  if (canShareImage) {
+    actions.push({
+      key: "share",
+      label: t("player.share.share"),
+      icon: ShareTwo,
+      primary: true,
+      run: shareImage,
+    });
+  }
+  return actions;
+});
+
 // Dismissing the browser share sheet rejects with AbortError; that is not a failure.
 function ignoreAbort(error: unknown) {
   if (!(error instanceof DOMException && error.name === "AbortError")) throw error;
@@ -396,6 +489,53 @@ function ignoreAbort(error: unknown) {
   inset: 0;
   z-index: 20;
   color: #fff;
+}
+
+.dismiss {
+  position: absolute;
+  top: calc(var(--app-safe-area-top, 0px) + 20px);
+  right: 24px;
+  z-index: 1;
+}
+
+// Everything left of the lyrics column.
+.stage {
+  position: absolute;
+  top: var(--app-safe-area-top, 0px);
+  bottom: var(--app-safe-area-bottom, 0px);
+  left: 0;
+  width: var(--share-left);
+  box-sizing: border-box;
+  padding: 48px 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+
+  .frame {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .card {
+    max-width: min(100%, 420px);
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 16px;
+    box-shadow: 0 16px 48px rgb(0 0 0 / 0.4);
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
 }
 
 // AMLL's column: the list stays where the lyrics were. Not env(): the Android
@@ -450,6 +590,8 @@ function ignoreAbort(error: unknown) {
 .lines {
   flex: 1;
   min-height: 0;
+  // Focused on open only as the dialog's start; its lines carry the rings.
+  outline: none;
   font-family: var(--share-font);
   font-weight: var(--share-weight);
   letter-spacing: var(--share-spacing);
@@ -556,7 +698,9 @@ function ignoreAbort(error: unknown) {
 // the bars come in, and the lifted line settles into its selection box.
 .lyric-share-enter-active {
   .head,
-  .foot {
+  .foot,
+  .stage,
+  .dismiss {
     transition:
       opacity 0.3s ease-out 0.2s,
       translate 0.45s cubic-bezier(0.32, 0.72, 0, 1) 0.2s;
@@ -579,6 +723,15 @@ function ignoreAbort(error: unknown) {
   .foot {
     opacity: 0;
     translate: 0 16px;
+  }
+
+  .stage {
+    opacity: 0;
+    translate: -16px 0;
+  }
+
+  .dismiss {
+    opacity: 0;
   }
 
   .line {

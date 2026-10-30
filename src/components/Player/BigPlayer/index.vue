@@ -924,7 +924,10 @@ const desktopDragBlockSelector = [
   ".controls",
   ".lrcShow",
   ".desktop-lyric-offset",
-  ".lyric-share",
+  // The share layer's empty background still drags, like the player's.
+  ".lyric-share .column",
+  ".lyric-share .stage",
+  ".lyric-share .dismiss",
   ".bouncing-slider",
   ".n-slider",
   ".vue-slider",
