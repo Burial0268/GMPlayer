@@ -2,8 +2,15 @@ import type { HistoryState, RouterHistory } from "vue-router";
 import { HISTORY_KEY, MAX_LAYERS, type AppLayer, type LayerHistory } from "./layers";
 
 const roots = new Set(["home", "discover", "library", "settings"]);
-const kinds = new Set(["page", "search", "player", "queue"]);
-const presentations = new Set(["page", "search", "player", "queue-player", "queue-floating"]);
+const kinds = new Set(["page", "search", "player", "queue", "share"]);
+const presentations = new Set([
+  "page",
+  "search",
+  "player",
+  "queue-player",
+  "queue-floating",
+  "share-player",
+]);
 
 export function readLayerHistory(state: HistoryState): LayerHistory | undefined {
   const value = state[HISTORY_KEY] as unknown as LayerHistory | undefined;

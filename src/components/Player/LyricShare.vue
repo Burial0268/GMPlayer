@@ -1,186 +1,165 @@
 <template>
   <n-config-provider abstract :theme-overrides="shareTheme">
-    <!-- `show`, not `if`: rebuilding the panel per open re-decoded the blurred cover mid-animation. -->
-    <n-modal
-      v-model:show="show"
-      display-directive="show"
-      :z-index="2200"
-      :auto-focus="false"
-      @after-leave="clearImage"
+    <!-- A page of the player, like its queue: it shows over the player's own background. -->
+    <Transition
+      name="lyric-share"
+      appear
+      :duration="{ enter: 650, leave: 250 }"
+      @after-enter="revealOrigin"
+      @after-leave="leave"
     >
-      <div ref="panel" class="lyric-share" :style="panelStyle">
-        <img class="backdrop" :src="cover" alt="" aria-hidden="true" />
-        <Motion
-          as="header"
-          class="head"
-          :initial="enterFrom"
-          :animate="stage"
-          :variants="HEAD"
-          :transition="spring"
-        >
-          <img class="cover" :src="cover" alt="" />
-          <div class="meta">
-            <div class="title">{{ song?.name }}</div>
-            <div class="artist">{{ artists }}</div>
-          </div>
-          <n-button
-            quaternary
-            circle
-            :aria-label="t('general.dialog.cancel')"
-            @click="show = false"
-          >
-            <template #icon><Close /></template>
-          </n-button>
-        </Motion>
-
-        <Motion
-          v-if="!imageUrl"
-          ref="list"
-          class="lines"
-          role="group"
-          :aria-label="t('player.share.title')"
-          :initial="enterFrom"
-          :animate="stage"
-          :variants="LINES"
-          :transition="spring"
-        >
-          <n-scrollbar ref="scroller" content-style="padding: 8px 12px">
-            <div
-              v-for="(line, index) in lines"
-              :key="index"
-              :ref="(el) => (lineEls[index] = el as HTMLElement)"
-              v-memo="[line, isSelected(index)]"
-              :class="['line', { selected: isSelected(index) }]"
-              role="checkbox"
-              :aria-checked="isSelected(index)"
-              tabindex="0"
-              @click="toggle(index)"
-              @keydown.enter.space.prevent="toggle(index)"
-            >
-              <div class="text">{{ line.text }}</div>
-              <div v-for="(sub, i) in line.subs" :key="i" class="sub">{{ sub }}</div>
+      <div
+        v-if="visible"
+        class="lyric-share"
+        data-navigation-layer="share-player"
+        role="dialog"
+        aria-modal="true"
+        :aria-label="t('player.share.title')"
+        :style="layerStyle"
+      >
+        <div class="column">
+          <header class="head">
+            <img class="cover" :src="cover" alt="" />
+            <div class="meta">
+              <div class="title">{{ song?.name }}</div>
+              <div class="artist">{{ artists }}</div>
             </div>
-          </n-scrollbar>
-        </Motion>
-        <div v-else class="preview">
-          <img :src="imageUrl" alt="" />
-        </div>
-
-        <Motion
-          as="footer"
-          class="foot"
-          :initial="enterFrom"
-          :animate="stage"
-          :variants="FOOT"
-          :transition="spring"
-        >
-          <template v-if="!imageUrl">
-            <span class="count">
-              {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
-            </span>
-            <div class="actions">
-              <n-button round secondary @click="copyText">
-                <template #icon><Copy /></template>
-                {{ t("player.share.copy") }}
-              </n-button>
-              <n-button v-if="canShareText" round secondary @click="shareText">
-                <template #icon><ShareTwo /></template>
-                {{ t("player.share.share") }}
-              </n-button>
-              <n-button
-                round
-                color="#fff"
-                text-color="#111"
-                :loading="rendering"
-                @click="makeImage"
-              >
-                <template #icon><Pic /></template>
-                {{ t("player.share.image") }}
-              </n-button>
-            </div>
-          </template>
-          <template v-else>
-            <n-button round secondary @click="clearImage">
-              <template #icon><Left /></template>
-              {{ t("player.share.back") }}
+            <n-button quaternary circle :aria-label="t('general.dialog.cancel')" @click="close">
+              <template #icon><Close /></template>
             </n-button>
-            <div class="actions">
-              <n-button v-if="canCopyImage" round secondary @click="copyImage">
-                <template #icon><Copy /></template>
-                {{ t("player.share.copyImage") }}
-              </n-button>
-              <!-- The browser saves a plain download link; Tauri goes through a native dialog. -->
-              <n-button
-                v-if="!inTauri"
-                round
-                color="#fff"
-                text-color="#111"
-                tag="a"
-                :href="imageUrl"
-                :download="`${fileName || 'lyrics'}.png`"
+          </header>
+
+          <div
+            v-if="!imageUrl"
+            ref="list"
+            class="lines"
+            role="group"
+            :aria-label="t('player.share.title')"
+          >
+            <!-- Room above and below, so any line can be scrolled to where it was pressed. -->
+            <n-scrollbar ref="scroller" content-style="padding-block: 30vh">
+              <div
+                v-for="(line, index) in lines"
+                :key="index"
+                :ref="(el) => (lineEls[index] = el as HTMLElement)"
+                v-memo="[line, isSelected(index), index === originIndex]"
+                :class="['line', { selected: isSelected(index), origin: index === originIndex }]"
+                role="checkbox"
+                :aria-checked="isSelected(index)"
+                tabindex="0"
+                @click="toggle(index)"
+                @keydown.enter.space.prevent="toggle(index)"
               >
-                <template #icon><Download /></template>
-                {{ t("player.share.saveImage") }}
+                <div class="text">{{ line.text }}</div>
+                <div v-for="(sub, i) in line.subs" :key="i" class="sub">{{ sub }}</div>
+              </div>
+            </n-scrollbar>
+          </div>
+          <div v-else class="preview">
+            <img :src="imageUrl" alt="" />
+          </div>
+
+          <footer class="foot">
+            <template v-if="!imageUrl">
+              <span class="count">
+                {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
+              </span>
+              <div class="actions">
+                <n-button round secondary @click="copyText">
+                  <template #icon><Copy /></template>
+                  {{ t("player.share.copy") }}
+                </n-button>
+                <n-button v-if="canShareText" round secondary @click="shareText">
+                  <template #icon><ShareTwo /></template>
+                  {{ t("player.share.share") }}
+                </n-button>
+                <n-button
+                  round
+                  color="#fff"
+                  text-color="#111"
+                  :loading="rendering"
+                  @click="makeImage"
+                >
+                  <template #icon><Pic /></template>
+                  {{ t("player.share.image") }}
+                </n-button>
+              </div>
+            </template>
+            <template v-else>
+              <n-button round secondary @click="clearImage">
+                <template #icon><Left /></template>
+                {{ t("player.share.back") }}
               </n-button>
-              <n-button
-                v-else-if="!isMobileApp"
-                round
-                color="#fff"
-                text-color="#111"
-                @click="saveImage"
-              >
-                <template #icon><Download /></template>
-                {{ t("player.share.saveImage") }}
-              </n-button>
-              <n-button
-                v-if="canShareImage"
-                round
-                color="#fff"
-                text-color="#111"
-                @click="shareImage"
-              >
-                <template #icon><ShareTwo /></template>
-                {{ t("player.share.share") }}
-              </n-button>
-            </div>
-          </template>
-        </Motion>
+              <div class="actions">
+                <n-button v-if="canCopyImage" round secondary @click="copyImage">
+                  <template #icon><Copy /></template>
+                  {{ t("player.share.copyImage") }}
+                </n-button>
+                <!-- The browser saves a plain download link; Tauri goes through a native dialog. -->
+                <n-button
+                  v-if="!inTauri"
+                  round
+                  color="#fff"
+                  text-color="#111"
+                  tag="a"
+                  :href="imageUrl"
+                  :download="`${fileName || 'lyrics'}.png`"
+                >
+                  <template #icon><Download /></template>
+                  {{ t("player.share.saveImage") }}
+                </n-button>
+                <n-button
+                  v-else-if="!isMobileApp"
+                  round
+                  color="#fff"
+                  text-color="#111"
+                  @click="saveImage"
+                >
+                  <template #icon><Download /></template>
+                  {{ t("player.share.saveImage") }}
+                </n-button>
+                <n-button
+                  v-if="canShareImage"
+                  round
+                  color="#fff"
+                  text-color="#111"
+                  @click="shareImage"
+                >
+                  <template #icon><ShareTwo /></template>
+                  {{ t("player.share.share") }}
+                </n-button>
+              </div>
+            </template>
+          </footer>
+        </div>
       </div>
-    </n-modal>
+    </Transition>
   </n-config-provider>
 </template>
 
 <script setup lang="ts">
-import {
-  computed,
-  nextTick,
-  ref,
-  shallowRef,
-  useTemplateRef,
-  type ComponentPublicInstance,
-} from "vue";
-import { Motion } from "motion-v";
+import { computed, ref, useTemplateRef, watch } from "vue";
 import type { GlobalThemeOverrides, ScrollbarInst } from "naive-ui";
 import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
-import { isInterludeLine, type AMLLLine } from "@/utils/LyricsProcessor";
+import { isInterludeLine } from "@/utils/LyricsProcessor";
 import { getTauri, isTauri } from "@/utils/tauri/core/runtime";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
-import { miuixSpring, withReducedMotion } from "@/utils/motion/springs";
-import {
-  BACKDROP_BRIGHTNESS,
-  renderLyricCard,
-  shareTone,
-  VEIL,
-  type LyricShareLine,
-} from "@/utils/lyricShareCard";
+import { useLyricShare } from "@/composables/useLyricShare";
+import { useLayerNavigation } from "@/utils/navigation";
+import { renderLyricCard, type LyricShareLine } from "@/utils/lyricShareCard";
+
+const props = defineProps<{
+  /** A still of the player's fluid background, when that is what it shows. */
+  captureStill: () => Promise<HTMLCanvasElement | undefined>;
+}>();
 
 const MAX_LINES = 5;
 
-// The panel is always the dark share tone, whatever the app theme.
+// The layer sits on the player's background, dark whatever the app theme.
 const BUTTON_THEME: GlobalThemeOverrides["Button"] = {
   fontWeight: "600",
   textColor: "#fff",
@@ -190,16 +169,13 @@ const BUTTON_THEME: GlobalThemeOverrides["Button"] = {
   colorQuaternaryHover: "rgb(255 255 255 / 0.12)",
   colorQuaternaryPressed: "rgb(255 255 255 / 0.18)",
 };
-// Phones: the list grows out of the pressed line while the bars slide in.
-const HEAD = { open: { opacity: 1, y: 0 }, closed: { opacity: 0, y: -24 } };
-const FOOT = { open: { opacity: 1, y: 0 }, closed: { opacity: 0, y: 24 } };
-const LINES = { open: { scale: 1 }, closed: { scale: 0.92 } };
-const spring = withReducedMotion(miuixSpring.gentle);
 
 const { t } = useI18n();
 const music = musicStore();
 const setting = settingStore();
 const site = siteStore();
+const navigation = useLayerNavigation();
+const { request, clear } = useLyricShare();
 
 // The share commands are registered for mobile builds, the saver for desktop.
 const inTauri = isTauri();
@@ -209,9 +185,6 @@ const canShareImage = isMobileApp || (!inTauri && typeof navigator.canShare === 
 // Mobile WebViews have no image clipboard; the share sheet covers it there.
 const canCopyImage = !isMobileApp && typeof ClipboardItem !== "undefined";
 
-const show = ref(false);
-const lines = shallowRef<LyricShareLine[]>([]);
-const range = ref<[number, number]>([0, 0]);
 const { isMobile } = useResponsiveLayout();
 // Touch fires the scrollbar's hover show/hide on every tap, flashing the bar
 // in and out; phones scroll by touch and get no bar, as naive does on iOS.
@@ -219,53 +192,72 @@ const shareTheme = computed<GlobalThemeOverrides>(() => ({
   Button: BUTTON_THEME,
   Scrollbar: isMobile.value ? { color: "transparent", colorHover: "transparent" } : undefined,
 }));
-const panel = useTemplateRef<HTMLElement>("panel");
-const list = useTemplateRef<ComponentPublicInstance>("list");
+
+const list = useTemplateRef<HTMLElement>("list");
 const scroller = useTemplateRef<ScrollbarInst>("scroller");
 const lineEls: HTMLElement[] = [];
-// Desktop keeps naive's own scale-in, so its children never animate.
-const stage = computed(() => (show.value || !isMobile.value ? "open" : "closed"));
-// The modal mounts its content on first show, already "open": start phones closed.
-const enterFrom = computed(() => (isMobile.value ? "closed" : false));
-// Where the pressed line sits in the list, which the list grows out of.
-const originY = ref(0);
+const range = ref<[number, number]>([0, 0]);
 const rendering = ref(false);
 const imageUrl = ref("");
 let imageBlob: Blob | null = null;
 
-/** Opens on the line that was right-clicked / long-pressed; `origin` is that line's rect. */
-function open(amllLines: AMLLLine[], lineIndex: number, origin: DOMRect) {
-  const usable = amllLines.flatMap((line, raw) =>
+const visible = computed(() => navigation.playerShareVisible.value && Boolean(request.value));
+
+// Interludes and background vocals are not lines anyone shares.
+const usable = computed(() =>
+  (request.value?.lines ?? []).flatMap((line, raw) =>
     line.isBG || isInterludeLine(line) ? [] : [{ line, raw }],
-  );
-  if (!usable.length) return;
-  lines.value = usable.map(({ line }) => ({
+  ),
+);
+const lines = computed<LyricShareLine[]>(() =>
+  usable.value.map(({ line }) => ({
     text: line.words.map((w) => w.word).join(""),
     subs: [line.translatedLyric, line.romanLyric].filter((s): s is string => Boolean(s?.trim())),
-  }));
-  // An interlude has no entry of its own: take the last line before it.
-  const index = usable.reduce((found, { raw }, i) => (raw <= lineIndex ? i : found), 0);
-  range.value = [index, index];
+  })),
+);
+// An interlude has no entry of its own: take the last line before it.
+const originIndex = computed(() => {
+  const pressed = request.value?.lineIndex ?? 0;
+  return usable.value.reduce((found, { raw }, i) => (raw <= pressed ? i : found), 0);
+});
+
+// The pressed line opens selected and scrolled to exactly where it was
+// pressed, so the layer takes it over without it moving.
+watch(
+  visible,
+  (shown) => {
+    if (!shown || !request.value) return;
+    range.value = [originIndex.value, originIndex.value];
+    clearImage();
+    const anchor = lineEls[originIndex.value];
+    if (!anchor || !list.value) return;
+    const listTop = list.value.getBoundingClientRect().top;
+    scroller.value?.scrollTo({ top: anchor.offsetTop - (request.value.origin.rect.top - listTop) });
+  },
+  { flush: "post" },
+);
+
+// A share layer restored from history (reload, forward) has nothing to show.
+watch(
+  () => navigation.playerShareVisible.value && !request.value,
+  (stale) => stale && navigation.closeTop("share"),
+  { immediate: true },
+);
+
+// It opened where it was pressed, which may be under the bars that just came in.
+function revealOrigin() {
+  const anchor = lineEls[originIndex.value]?.getBoundingClientRect();
+  const view = list.value?.getBoundingClientRect();
+  if (!anchor || !view) return;
+  const offset = Math.max(0, anchor.bottom - view.bottom) || Math.min(0, anchor.top - view.top);
+  if (offset) scroller.value?.scrollBy({ top: offset, behavior: "smooth" });
+}
+
+const close = () => navigation.closeTop("share");
+
+function leave() {
+  clear();
   clearImage();
-  show.value = true;
-  // The one layout read here is the layout the opening frame needs anyway, and
-  // the scroll that follows does not invalidate it.
-  nextTick(() => {
-    const anchor = lineEls[index];
-    const listEl = list.value?.$el as HTMLElement | undefined;
-    if (!anchor || !listEl) return;
-    if (!isMobile.value) {
-      scroller.value!.scrollTo({
-        top: anchor.offsetTop - (listEl.clientHeight - anchor.offsetHeight) / 2,
-      });
-      return;
-    }
-    // Keep the line where the finger is, so the list visibly grows around it.
-    // Offsets, not rects: the list is already under its scaled closed state.
-    const listTop = panel.value!.getBoundingClientRect().top + listEl.offsetTop;
-    scroller.value!.scrollTo({ top: listTop + anchor.offsetTop - origin.top });
-    originY.value = origin.top + origin.height / 2 - listTop;
-  });
 }
 
 // Selection stays one consecutive run: tapping a neighbour grows it, tapping an
@@ -289,20 +281,24 @@ function toggle(index: number) {
   }
 }
 
-// Cached so a tap's re-render does not redo three OKLab conversions; the lines
-// themselves are skipped by `v-memo` unless their selection flipped.
-const panelStyle = computed(() => ({
-  // Inline beats the modal's scale-in class: on phones the panel only fades.
-  transform: isMobile.value ? "none" : undefined,
-  "--share-origin-y": `${originY.value}px`,
-  "--share-brightness": BACKDROP_BRIGHTNESS,
-  "--share-tone": shareTone(site.songPicColor),
-  "--share-veil": `linear-gradient(${shareTone(site.songPicColor, VEIL[0])}, ${shareTone(site.songPicColor, VEIL[1])})`,
-  "--lyric-share-font": setting.lyricFont,
-}));
+// The list takes AMLL's column and type, so the pressed line lines up with
+// the one it replaces.
+const layerStyle = computed(() => {
+  const origin = request.value?.origin;
+  return {
+    "--share-left": `${origin?.rect.left ?? 0}px`,
+    "--share-width": `${origin?.rect.width ?? 0}px`,
+    "--share-font-size": `${origin?.fontSize ?? 24}px`,
+    "--share-padding": origin?.padding ?? "0px",
+    "--share-font": setting.lyricFont,
+    "--share-weight": setting.lyricFontWeight,
+    "--share-spacing": setting.lyricLetterSpacing,
+    "--share-align": setting.lyricsPosition === "center" ? "center" : "left",
+  };
+});
 const isSelected = (index: number) => index >= range.value[0] && index <= range.value[1];
 const song = computed(() => music.getPlaySongData);
-// PlayerCover's size, so the panel opens on an image that is already decoded.
+// PlayerCover's size, so the header shows an image that is already decoded.
 const cover = computed(() => coverUrl(song.value?.album?.picUrl, 1024));
 const artists = computed(() => (song.value?.artist ?? []).map((a) => a.name).join(" / "));
 const fileName = computed(() => [song.value?.name, artists.value].filter(Boolean).join(" - "));
@@ -342,6 +338,7 @@ const makeImage = () =>
         title: song.value?.name ?? "",
         artist: artists.value,
         coverSrc: coverUrl(song.value?.album?.picUrl, 512),
+        backdrop: await props.captureStill(),
         themeRgb: site.songPicColor,
         fontFamily: setting.lyricFont,
         brand: "GMPlayer",
@@ -391,203 +388,215 @@ const shareImage = () =>
 function ignoreAbort(error: unknown) {
   if (!(error instanceof DOMException && error.name === "AbortError")) throw error;
 }
-
-defineExpose({ open });
 </script>
 
 <style lang="scss" scoped>
 .lyric-share {
-  position: relative;
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  color: #fff;
+}
+
+// AMLL's column: the list stays where the lyrics were. Not env(): the Android
+// WebView reports only the cutout there, never the system bars.
+.column {
+  position: absolute;
+  top: var(--app-safe-area-top, 0px);
+  bottom: var(--app-safe-area-bottom, 0px);
+  left: var(--share-left);
+  width: var(--share-width);
   display: flex;
   flex-direction: column;
-  width: min(520px, calc(100vw - 32px));
-  height: min(720px, calc(100vh - 64px));
-  overflow: hidden;
-  border-radius: 24px;
-  box-sizing: border-box;
-  color: #fff;
-  background-color: var(--share-tone);
-  box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
+}
 
-  // The cover, blurred past recognition, under a veil of the darkened theme
-  // tone — the same treatment the generated card gets.
-  .backdrop {
-    position: absolute;
-    inset: -20%;
-    width: 140%;
-    height: 140%;
+.head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 4px 12px 12px;
+
+  .cover {
+    width: 48px;
+    height: 48px;
+    border-radius: 8px;
     object-fit: cover;
-    filter: blur(60px) saturate(1.3) brightness(var(--share-brightness));
-    pointer-events: none;
-    // Own layer, so the blur is rastered once rather than under every line
-    // that fades on a selection change (measured ~32 ms → ~9 ms per tap).
-    will-change: transform;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
   }
 
-  &::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: var(--share-veil);
-    pointer-events: none;
-  }
-
-  > * {
-    position: relative;
-  }
-
-  .head {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 20px 16px 12px 20px;
-
-    .cover {
-      width: 48px;
-      height: 48px;
-      border-radius: 8px;
-      object-fit: cover;
-      box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
-    }
-
-    .meta {
-      flex: 1;
-      min-width: 0;
-
-      .title,
-      .artist {
-        overflow: hidden;
-        white-space: nowrap;
-        text-overflow: ellipsis;
-      }
-
-      .title {
-        font-size: 16px;
-        font-weight: 700;
-      }
-
-      .artist {
-        font-size: 13px;
-        opacity: 0.7;
-      }
-    }
-  }
-
-  .lines {
+  .meta {
     flex: 1;
-    min-height: 0;
-    font-family: var(--lyric-share-font);
-    transform-origin: 50% var(--share-origin-y);
-  }
+    min-width: 0;
 
-  .line {
-    padding: 10px 12px;
-    border-radius: 14px;
-    cursor: pointer;
-    opacity: 0.5;
-    outline: none;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent;
-    transition:
-      opacity var(--duration-200, 0.2s),
-      background-color var(--duration-200, 0.2s);
-
-    .text {
-      font-size: 24px;
-      font-weight: 800;
-      line-height: 1.3;
+    .title,
+    .artist {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
     }
 
-    .sub {
-      margin-top: 2px;
-      font-size: 15px;
-      font-weight: 600;
-      opacity: 0.75;
+    .title {
+      font-size: 16px;
+      font-weight: 700;
     }
 
-    // Touch keeps :hover on the last tapped line, which then sits between states.
-    @media (hover: hover) and (pointer: fine) {
-      &:hover {
-        opacity: 0.7;
-      }
-    }
-
-    &:focus-visible {
-      background-color: rgb(255 255 255 / 0.1);
-    }
-
-    &.selected {
-      opacity: 1;
-      background-color: rgb(255 255 255 / 0.14);
-    }
-  }
-
-  .preview {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 20px;
-
-    img {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-      border-radius: 16px;
-      box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
-    }
-  }
-
-  .foot {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px 16px 20px;
-    background: linear-gradient(transparent, rgb(0 0 0 / 0.18));
-
-    .count {
+    .artist {
       font-size: 13px;
       opacity: 0.7;
     }
+  }
+}
+
+.lines {
+  flex: 1;
+  min-height: 0;
+  font-family: var(--share-font);
+  font-weight: var(--share-weight);
+  letter-spacing: var(--share-spacing);
+  text-align: var(--share-align);
+}
+
+// AMLL's line box and type (`lyricMainLine` 1em / 1.2, `lyricSubLine` 0.5em / 1.5).
+.line {
+  padding: var(--share-padding);
+  font-size: var(--share-font-size);
+  border-radius: 12px;
+  cursor: pointer;
+  opacity: 0.5;
+  outline: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transform-origin: var(--share-align) center;
+  transition:
+    opacity var(--duration-200, 0.2s),
+    background-color var(--duration-200, 0.2s);
+
+  .text {
+    line-height: 1.2;
+  }
+
+  .sub {
+    font-size: 0.5em;
+    line-height: 1.5;
+    opacity: 0.75;
+  }
+
+  // Touch keeps :hover on the last tapped line, which then sits between states.
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      opacity: 0.7;
+    }
+  }
+
+  &:focus-visible {
+    background-color: rgb(255 255 255 / 0.1);
+  }
+
+  &.selected {
+    opacity: 1;
+    background-color: rgb(255 255 255 / 0.14);
+  }
+}
+
+.preview {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 0;
+
+  img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    border-radius: 16px;
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  }
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 4px 16px 12px;
+
+  .count {
+    font-size: 13px;
+    opacity: 0.7;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-left: auto;
+  }
+
+  @media (max-width: 768px) {
+    .count {
+      width: 100%;
+    }
 
     .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-left: auto;
-    }
-  }
+      width: 100%;
+      margin-left: 0;
 
-  // Phones get the whole screen, like the sheet it imitates.
-  @media (max-width: 768px) {
-    width: 100vw;
-    height: 100dvh;
-    border-radius: 0;
-    // Not env(): the Android WebView reports only the cutout there, never the system bars.
-    padding: var(--app-safe-area-top, 0px) var(--app-safe-area-right, 0px)
-      var(--app-safe-area-bottom, 0px) var(--app-safe-area-left, 0px);
-
-    .line .text {
-      font-size: 22px;
-    }
-
-    .foot {
-      .count {
-        width: 100%;
-      }
-
-      .actions {
-        width: 100%;
-        margin-left: 0;
-
-        > * {
-          flex: 1;
-        }
+      > * {
+        flex: 1;
       }
     }
   }
+}
+
+// Apple Music's order: the pressed line is already lifted (LyricPlayer lifts
+// it on a long press), the player fades from around it, the other lines and
+// the bars come in, and the lifted line settles into its selection box.
+.lyric-share-enter-active {
+  .head,
+  .foot {
+    transition:
+      opacity 0.3s ease-out 0.2s,
+      translate 0.45s cubic-bezier(0.32, 0.72, 0, 1) 0.2s;
+  }
+
+  .line {
+    transition:
+      opacity 0.3s ease-out 0.15s,
+      scale 0.4s cubic-bezier(0.32, 0.72, 0, 1) 0.2s,
+      background-color 0.3s ease-out 0.3s;
+  }
+}
+
+.lyric-share-enter-from {
+  .head {
+    opacity: 0;
+    translate: 0 -16px;
+  }
+
+  .foot {
+    opacity: 0;
+    translate: 0 16px;
+  }
+
+  .line {
+    opacity: 0;
+  }
+
+  .line.origin {
+    opacity: 1;
+    scale: 1.04;
+    background-color: transparent;
+  }
+}
+
+.lyric-share-leave-active {
+  transition: opacity 0.25s ease-in;
+}
+
+.lyric-share-leave-to {
+  opacity: 0;
 }
 </style>

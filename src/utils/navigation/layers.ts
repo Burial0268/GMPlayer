@@ -2,7 +2,7 @@ import type { RouteLocationNormalized } from "vue-router";
 import { refFromQuery, refToQuery } from "@/utils/playlistSource";
 
 export type RootEntry = "home" | "discover" | "library" | "settings";
-export type LayerKind = "page" | "search" | "player" | "queue";
+export type LayerKind = "page" | "search" | "player" | "queue" | "share";
 export type LayerDirection = "push" | "pop" | "root" | "replace" | "none";
 export type SourceKind = "card" | "cover" | "control";
 export type NavigationRoute = Pick<
@@ -27,7 +27,7 @@ export interface AppLayer {
   pageKey: string;
   label: string;
   source?: LayerSource;
-  presentation: "page" | "search" | "player" | "queue-player" | "queue-floating";
+  presentation: "page" | "search" | "player" | "queue-player" | "queue-floating" | "share-player";
   search?: { query: string; phase: "input" | "results" };
 }
 
@@ -117,7 +117,8 @@ export function visibleOverlays(layers: readonly AppLayer[]): AppLayer[] {
   const overlays = layers.slice(page + 1);
   const top = topLayer(overlays);
   if (!top) return [];
-  if (top.presentation === "queue-player") {
+  // Both are pages of the player and show over its background, so it stays presented.
+  if (top.presentation === "queue-player" || top.presentation === "share-player") {
     return overlays.filter((layer) => layer.kind === "player" || layer.id === top.id);
   }
   return [top];

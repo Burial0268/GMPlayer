@@ -17,6 +17,8 @@ export interface LyricCardInput {
   title: string;
   artist: string;
   coverSrc: string;
+  /** A still of the player's fluid background; drawn instead of the blurred cover. */
+  backdrop?: HTMLCanvasElement;
   /** `"r, g, b"`, the shape `siteStore.songPicColor` holds. */
   themeRgb: string;
   fontFamily: string;
@@ -29,10 +31,9 @@ import { srgbToOkLab } from "@applemusic-like-lyrics/core";
 /**
  * The theme colour pulled dark enough for white text: lightness and chroma
  * capped in OKLCH, hue kept, so a pale or neon cover still reads as its own
- * colour but never as a backdrop white text disappears into. Shared by the
- * selection sheet and the card so both sit on the same tone.
+ * colour but never as a backdrop white text disappears into.
  */
-export function shareTone(themeRgb: string, alpha = 1): string {
+function shareTone(themeRgb: string, alpha = 1): string {
   const [r, g, b] = themeRgb.split(",").map((v) => Number(v) / 255);
   const [l, a, bb] = srgbToOkLab([r, g, b]);
   const lightness = Math.min(l, 0.3);
@@ -52,9 +53,9 @@ const SECTION_GAP = 96;
 const COVER = 120;
 const LOGO = 40;
 /** Veil opacity at the top and bottom edge of the card. */
-export const VEIL = [0.62, 0.8] as const;
+const VEIL = [0.62, 0.8] as const;
 // With the 0.3 lightness cap, a white cover still leaves white text at 6.6:1.
-export const BACKDROP_BRIGHTNESS = 0.4;
+const BACKDROP_BRIGHTNESS = 0.4;
 
 const loadImage = (src: string): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
@@ -142,7 +143,20 @@ function draw(
   // veil would grey a pale cover out; the tone keeps its hue.
   ctx.fillStyle = shareTone(input.themeRgb);
   ctx.fillRect(0, 0, WIDTH, height);
-  if (cover) {
+  if (input.backdrop) {
+    // Cover-fit the still: the mesh is soft enough to scale up from render size.
+    const { width: w, height: h } = input.backdrop;
+    const scale = Math.max(WIDTH / w, height / h);
+    ctx.filter = `saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
+    ctx.drawImage(
+      input.backdrop,
+      (WIDTH - w * scale) / 2,
+      (height - h * scale) / 2,
+      w * scale,
+      h * scale,
+    );
+    ctx.filter = "none";
+  } else if (cover) {
     const side = Math.max(WIDTH, height) * 1.3;
     ctx.filter = `blur(72px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
     ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);

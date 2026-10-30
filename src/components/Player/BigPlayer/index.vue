@@ -46,6 +46,7 @@
               :style="mobileBackgroundVisualStyle"
             >
               <BigPlayerBackground
+                ref="background"
                 :songPicGradient="songPicGradient"
                 :backgroundImageShow="setting.backgroundImageShow"
                 :hasPlayData="!!music.getPlaySongData"
@@ -64,6 +65,7 @@
 
             <MobilePlayerLayout
               ref="mobileLayoutRef"
+              :class="['share-fade', { 'share-hidden': shareOpen }]"
               :songName="songName"
               :artistList="artistList"
               :isNameOverflow="isNameOverflow"
@@ -94,7 +96,7 @@
             />
 
             <Spectrum
-              v-if="setting.musicFrequency && !mobileQueueOpen && mobileContentReady"
+              v-if="setting.musicFrequency && !mobileQueueOpen && !shareOpen && mobileContentReady"
               :height="60"
               :show="music.showBigPlayer"
             />
@@ -105,6 +107,7 @@
       <!-- 桌面端布局 -->
       <template v-else>
         <BigPlayerBackground
+          ref="background"
           :songPicGradient="songPicGradient"
           :backgroundImageShow="setting.backgroundImageShow"
           :hasPlayData="!!music.getPlaySongData"
@@ -121,12 +124,14 @@
         />
 
         <BigPlayerTopBar
+          :class="['share-fade', { 'share-hidden': shareOpen }]"
           :showLyricSetting="setting.showLyricSetting"
           @openSettings="openLyricSetting()"
         />
 
         <DesktopPlayerLayout
           ref="desktopLayoutRef"
+          :class="['share-fade', { 'share-hidden': shareOpen }]"
           :lrcMouseStatus="lrcMouseStatus"
           :menuShow="menuShow"
           :hasLyrics="hasLyrics"
@@ -142,6 +147,7 @@
         />
 
         <DesktopToggleControls
+          :class="['share-fade', { 'share-hidden': shareOpen }]"
           :lyricsVisible="desktopLyricsVisible && hasLyrics"
           :queueOpen="desktopQueueOpen"
           :hasLyrics="hasLyrics"
@@ -149,10 +155,15 @@
           @toggleQueue="toggleDesktopQueue"
         />
 
-        <Spectrum v-if="setting.musicFrequency" :height="60" :show="music.showBigPlayer" />
+        <Spectrum
+          v-if="setting.musicFrequency && !shareOpen"
+          :height="60"
+          :show="music.showBigPlayer"
+        />
       </template>
 
       <!-- 共用组件 -->
+      <LyricShare :captureStill="captureBackgroundStill" />
       <!-- 首次点开设置才拉取：它经 SettingsWorkspace 拖进整个 n-color-picker 分包，
            而它只是个模态框，不参与大播放器的开合动画。 -->
       <component :is="LyricSettingComponent" v-if="LyricSettingComponent" ref="LyricSettingRef" />
@@ -165,7 +176,16 @@ import { musicStore, settingStore, siteStore } from "@/store";
 import Spectrum from "../Spectrum.vue";
 import { storeToRefs } from "pinia";
 import gsap from "gsap";
-import { onMounted, nextTick, watch, ref, computed, onBeforeUnmount, shallowRef } from "vue";
+import {
+  onMounted,
+  nextTick,
+  watch,
+  ref,
+  computed,
+  onBeforeUnmount,
+  shallowRef,
+  useTemplateRef,
+} from "vue";
 import { Motion, animate, useMotionValue, type MotionValue } from "motion-v";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "../icons/icon-animations.css";
@@ -186,6 +206,7 @@ import BigPlayerTopBar from "./BigPlayerTopBar.vue";
 import MobilePlayerLayout from "./MobilePlayerLayout.vue";
 import DesktopPlayerLayout from "./DesktopPlayerLayout.vue";
 import DesktopToggleControls from "./DesktopToggleControls.vue";
+import LyricShare from "../LyricShare.vue";
 
 const music = musicStore();
 const navigation = useLayerNavigation();
@@ -241,6 +262,11 @@ const mobileCoverRootRef = computed(() =>
 // 移动端层级 & 封面帧
 const mobileLayer = ref(1);
 const mobileQueueOpen = computed(() => isMobile.value && navigation.playerQueueVisible.value);
+// The lyric share layer is a page of the player: everything but the background
+// steps aside for it.
+const shareOpen = navigation.playerShareVisible;
+const background = useTemplateRef<InstanceType<typeof BigPlayerBackground>>("background");
+const captureBackgroundStill = async () => background.value?.captureStill();
 const desktopQueueOpen = computed(() => !isMobile.value && navigation.playerQueueVisible.value);
 const desktopCommentsOpen = ref(false);
 const mobileExiting = ref(false);
@@ -898,6 +924,7 @@ const desktopDragBlockSelector = [
   ".controls",
   ".lrcShow",
   ".desktop-lyric-offset",
+  ".lyric-share",
   ".bouncing-slider",
   ".n-slider",
   ".vue-slider",
@@ -1439,6 +1466,14 @@ defineExpose({
 }
 .bplayer.navigation-resuming {
   transition: none !important;
+}
+
+.share-fade {
+  transition: opacity 0.25s ease-out;
+}
+
+.share-hidden {
+  opacity: 0;
 }
 
 .bplayer {

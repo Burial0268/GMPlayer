@@ -3,24 +3,23 @@
     <LyricPlayer
       class="am-lyric"
       @lrcTextClick="handleLrcTextClick"
-      @lineShare="(lines, index, origin) => lyricShare?.open(lines, index, origin)"
+      @lineShare="(lines, lineIndex, origin) => lyricShare.open({ lines, lineIndex, origin })"
     />
-    <LyricShare ref="lyricShare" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, useTemplateRef } from "vue";
+import { computed } from "vue";
 import { musicStore, settingStore } from "../../store";
 import LyricPlayer from "../../libs/apple-music-like/LyricPlayer.vue";
-import LyricShare from "./LyricShare.vue";
+import { useLyricShare } from "@/composables/useLyricShare";
 
 const emit = defineEmits<{
   lrcTextClick: [time: number];
 }>();
 
 const music = musicStore();
-const lyricShare = useTemplateRef("lyricShare");
+const lyricShare = useLyricShare();
 const setting = settingStore();
 
 // 直接处理从 LyricPlayer 传递的 lrcTextClick 事件
