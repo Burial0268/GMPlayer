@@ -39,24 +39,36 @@
             autofocus
             :aria-label="t('player.share.title')"
           >
-            <!-- Room above and below, so any line can be scrolled to where it was pressed. -->
-            <n-scrollbar ref="scroller" content-style="padding-block: 30vh">
-              <div
-                v-for="(line, index) in lines"
-                :key="index"
-                :ref="(el) => (lineEls[index] = el as HTMLElement)"
-                v-memo="[line, isSelected(index), index === originIndex]"
-                :class="['line', { selected: isSelected(index), origin: index === originIndex }]"
-                role="checkbox"
-                :aria-checked="isSelected(index)"
-                tabindex="0"
-                @click="toggle(index)"
-                @keydown.enter.space.prevent="toggle(index)"
-              >
-                <div class="text">{{ line.text }}</div>
-                <div v-for="(sub, i) in line.subs" :key="i" class="sub">{{ sub }}</div>
-              </div>
-            </n-scrollbar>
+            <!-- Virtual: a lyric can run to thousands of lines. -->
+            <n-virtual-list
+              ref="scroller"
+              class="virtual"
+              :items="rows"
+              :item-size="rowFloor"
+              item-resizable
+              :padding-top="pad[0]"
+              :padding-bottom="pad[1]"
+            >
+              <template #default="{ item: row }: { item: LineRow }">
+                <div
+                  :key="row.key"
+                  :ref="(el) => (lineEls[row.key] = el as HTMLElement)"
+                  v-memo="[row.line, isSelected(row.key), row.key === originIndex]"
+                  :class="[
+                    'line',
+                    { selected: isSelected(row.key), origin: row.key === originIndex },
+                  ]"
+                  role="checkbox"
+                  :aria-checked="isSelected(row.key)"
+                  tabindex="0"
+                  @click="toggle(row.key)"
+                  @keydown.enter.space.prevent="toggle(row.key)"
+                >
+                  <div class="text">{{ row.line.text }}</div>
+                  <div v-for="(sub, i) in row.line.subs" :key="i" class="sub">{{ sub }}</div>
+                </div>
+              </template>
+            </n-virtual-list>
           </div>
           <div v-else class="preview">
             <img :src="imageUrl" alt="" />
@@ -115,9 +127,11 @@
         <!-- Desktop has the room to show the card as it will be shared, so there
              is no separate preview step. -->
         <aside v-if="!isMobile" class="stage">
-          <!-- Holds the card's place while the first draw runs, so the buttons stay put. -->
-          <div class="frame">
-            <img v-if="imageUrl" class="card" :src="imageUrl" :alt="t('player.share.image')" />
+          <!-- Two canvases: each draw goes into the hidden one and fades in over
+               the other. The frame holds their place, so the buttons stay put. -->
+          <div class="frame" role="img" :aria-label="t('player.share.image')">
+            <canvas ref="cardA" :class="['card', { shown: front === 0 }]" />
+            <canvas ref="cardB" :class="['card', { shown: front === 1 }]" />
           </div>
           <div class="actions">
             <n-button round secondary @click="copyText">
@@ -129,7 +143,7 @@
               :key="action.key"
               round
               v-bind="action.primary ? PRIMARY : SECONDARY"
-              :disabled="!imageUrl"
+              :disabled="action.disabled"
               :tag="action.href ? 'a' : 'button'"
               :href="action.href"
               :download="action.download"
@@ -157,8 +171,8 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, useTemplateRef, watch, type Component } from "vue";
-import type { GlobalThemeOverrides, ScrollbarInst } from "naive-ui";
+import { computed, nextTick, ref, useTemplateRef, watch, type Component } from "vue";
+import type { GlobalThemeOverrides, NVirtualList } from "naive-ui";
 import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
@@ -169,7 +183,15 @@ import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { useLyricShare } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
-import { renderLyricCard, type LyricShareLine } from "@/utils/lyricShareCard";
+import {
+  drawLyricCard,
+  encodeLyricCard,
+  loadCardAssets,
+  renderLyricCard,
+  type CardAssets,
+  type LyricCardInput,
+  type LyricShareLine,
+} from "@/utils/lyricShareCard";
 
 const props = defineProps<{
   /** A still of the player's fluid background, when that is what it shows. */
@@ -215,12 +237,13 @@ const shareTheme = computed<GlobalThemeOverrides>(() => ({
 }));
 
 const list = useTemplateRef<HTMLElement>("list");
-const scroller = useTemplateRef<ScrollbarInst>("scroller");
+const scroller = useTemplateRef<InstanceType<typeof NVirtualList>>("scroller");
 const lineEls: HTMLElement[] = [];
 const range = ref<[number, number]>([0, 0]);
 const rendering = ref(false);
 const imageUrl = ref("");
-let imageBlob: Blob | null = null;
+// The PNG of whatever card is showing; see `cardBlob`.
+let imageBlob: Promise<Blob> | null = null;
 // Taken once per opening: every card drawn from it then shows the same frame.
 let still: Promise<HTMLCanvasElement | undefined> = Promise.resolve(undefined);
 
@@ -238,28 +261,83 @@ const lines = computed<LyricShareLine[]>(() =>
     subs: [line.translatedLyric, line.romanLyric].filter((s): s is string => Boolean(s?.trim())),
   })),
 );
+// vueuc renders `listHeight / itemSize + 1` rows from the window's start, so an
+// estimate above any real row leaves the window short: the shortest a line can
+// be, one text row (AMLL's 1.2 line height) plus its padding.
+const rowFloor = computed(() => {
+  const origin = request.value?.origin;
+  if (!origin) return 48;
+  const [top, , bottom = top] = origin.padding.split(" ").map(Number.parseFloat);
+  return origin.fontSize * 1.2 + top + bottom;
+});
+
+interface LineRow {
+  key: number;
+  line: LyricShareLine;
+}
+const rows = computed<LineRow[]>(() => lines.value.map((line, key) => ({ key, line })));
 // An interlude has no entry of its own: take the last line before it.
 const originIndex = computed(() => {
   const pressed = request.value?.lineIndex ?? 0;
   return usable.value.reduce((found, { raw }, i) => (raw <= pressed ? i : found), 0);
 });
 
-// The pressed line opens selected and scrolled to exactly where it was
-// pressed, so the layer takes it over without it moving.
+// The pressed line opens selected and placed exactly where it was pressed, so
+// the layer takes it over without it moving. AMLL puts a line anywhere
+// (centred at the end of a song, say), where a list would run out of content,
+// so the list gets the room above and below that this takes. Sized from the
+// estimate before the first scroll: vueuc picks its window from the last
+// scroll it saw, so padding changed after a scroll renders the wrong rows.
+// One line of slack covers the estimate, which near either end spans few lines.
+// About a second at most; done once it has held for a few frames.
+const SETTLE_FRAMES = 60;
+const SETTLED_FRAMES = 3;
+const pad = ref<[number, number]>([0, 0]);
 watch(
   visible,
-  (shown) => {
-    if (!shown || !request.value) return;
+  async (shown) => {
+    if (!shown || !request.value || !list.value) return;
     range.value = [originIndex.value, originIndex.value];
     clearImage();
     still = props.captureStill();
-    const anchor = lineEls[originIndex.value];
-    if (!anchor || !list.value) return;
-    const listTop = list.value.getBoundingClientRect().top;
-    scroller.value?.scrollTo({ top: anchor.offsetTop - (request.value.origin.rect.top - listTop) });
+    assets = undefined;
+    const size = rowFloor.value;
+    const target = request.value.origin.rect.top - list.value.getBoundingClientRect().top;
+    const above = originIndex.value * size;
+    const below = (lines.value.length - originIndex.value) * size;
+    pad.value = [
+      Math.max(0, target - above + size),
+      Math.max(0, list.value.clientHeight - target - below + size),
+    ];
+    await nextTick();
+    scroller.value?.scrollTo({ index: originIndex.value });
+    settle(SETTLE_FRAMES);
   },
   { flush: "post" },
 );
+
+// vueuc renders a new window on the scroll event and measures its rows a frame
+// later, which moves them; a long jump keeps measuring for a while. Re-aim each
+// frame until the line has held still for a few, within a bound.
+function settle(left: number, still = 0) {
+  requestAnimationFrame(() => {
+    const container = scroller.value?.getScrollContainer();
+    if (!visible.value || !request.value || !container) return;
+    const anchor = lineEls[originIndex.value];
+    let moved = true;
+    if (!anchor) scroller.value?.scrollTo({ index: originIndex.value });
+    else {
+      // Still lifted while it settles: aim the resting box, which shares the lifted one's centre.
+      const box = anchor.getBoundingClientRect();
+      const top = box.top + (box.height - anchor.offsetHeight) / 2;
+      const delta = top - request.value.origin.rect.top;
+      moved = Math.abs(delta) > 0.5;
+      if (moved) scroller.value?.scrollTo({ top: container.scrollTop + delta });
+    }
+    const held = moved ? 0 : still + 1;
+    if (held < SETTLED_FRAMES && left > 1) settle(left - 1, held);
+  });
+}
 
 // A share layer restored from history (reload, forward) has nothing to show.
 watch(
@@ -274,13 +352,17 @@ function revealOrigin() {
   const view = list.value?.getBoundingClientRect();
   if (!anchor || !view) return;
   const offset = Math.max(0, anchor.bottom - view.bottom) || Math.min(0, anchor.top - view.top);
-  if (offset) scroller.value?.scrollBy({ top: offset, behavior: "smooth" });
+  const scrolled = scroller.value?.getScrollContainer()?.scrollTop ?? 0;
+  if (offset) scroller.value?.scrollTo({ top: scrolled + offset, behavior: "smooth" });
 }
 
 const close = () => navigation.closeTop("share");
 
 function leave() {
-  previewRun++;
+  drawRun++;
+  clearTimeout(linkTimer);
+  front.value = -1;
+  drawn = undefined;
   clear();
   clearImage();
 }
@@ -332,24 +414,56 @@ const lyricText = computed(() =>
   selected.value.map((line) => [line.text, ...line.subs].join("\n")).join("\n"),
 );
 
-// Desktop redraws the card as the selection changes. Debounced, because a
-// draw is a large blurred canvas; a draw the selection has outrun is dropped.
-const PREVIEW_DELAY = 120;
-let previewTimer = 0;
-let previewRun = 0;
+// Desktop draws the card straight into the preview as the selection changes,
+// at the size it is shown: the full 1080-wide card is rasterised and encoded
+// only when an action needs the PNG. A draw the selection has outrun is dropped.
+const PREVIEW_WIDTH = 420;
+const LINK_DELAY = 400;
+const cardA = useTemplateRef<HTMLCanvasElement>("cardA");
+const cardB = useTemplateRef<HTMLCanvasElement>("cardB");
+const front = ref(-1);
+let assets: Promise<CardAssets> | undefined;
+let drawn: { input: LyricCardInput; assets: CardAssets } | undefined;
+let drawRun = 0;
+let linkTimer = 0;
 watch([visible, selected, isMobile], ([shown, , mobile]) => {
-  clearTimeout(previewTimer);
   if (!shown || mobile) return;
-  previewTimer = window.setTimeout(
-    () =>
-      run(async () => {
-        const current = ++previewRun;
-        const blob = await renderCard();
-        if (current === previewRun) setImage(blob);
-      }),
-    PREVIEW_DELAY,
-  );
+  const current = ++drawRun;
+  run(async () => {
+    const input = cardInput(await still);
+    assets ??= loadCardAssets(input);
+    const loaded = await assets;
+    const target = front.value === 0 ? cardB.value : cardA.value;
+    if (current !== drawRun || !target) return;
+    const scale = Math.min(1, (PREVIEW_WIDTH * window.devicePixelRatio) / 1080);
+    drawLyricCard(input, loaded, target, scale);
+    front.value = target === cardA.value ? 0 : 1;
+    clearImage();
+    drawn = { input, assets: loaded };
+    // The browser saves through a link, which needs its URL before the click;
+    // made once the selection settles, not per tap.
+    if (inTauri) return;
+    clearTimeout(linkTimer);
+    linkTimer = window.setTimeout(
+      () =>
+        run(async () => {
+          const url = URL.createObjectURL(await cardBlob());
+          if (current === drawRun) imageUrl.value = url;
+          else URL.revokeObjectURL(url);
+        }),
+      LINK_DELAY,
+    );
+  });
 });
+
+/** The PNG being shared: the phone's generated image, or desktop's last draw at full size. */
+function cardBlob(): Promise<Blob> {
+  if (!imageBlob && drawn) {
+    const { input, assets: loaded } = drawn;
+    imageBlob = encodeLyricCard(drawLyricCard(input, loaded), input, loaded);
+  }
+  return imageBlob!;
+}
 
 async function run(task: () => Promise<unknown>) {
   try {
@@ -373,34 +487,30 @@ const shareText = () =>
     else await navigator.share({ text }).catch(ignoreAbort);
   });
 
-const renderCard = async () =>
-  renderLyricCard({
-    lines: selected.value,
-    title: song.value?.name ?? "",
-    artist: artists.value,
-    coverSrc: coverUrl(song.value?.album?.picUrl, 512),
-    backdrop: await still,
-    themeRgb: site.songPicColor,
-    fontFamily: setting.lyricFont,
-    brand: "GMPlayer",
-    logoSrc: "/images/logo/favicon.png",
-  });
+const cardInput = (backdrop?: HTMLCanvasElement): LyricCardInput => ({
+  lines: selected.value,
+  title: song.value?.name ?? "",
+  artist: artists.value,
+  coverSrc: coverUrl(song.value?.album?.picUrl, 512),
+  backdrop,
+  themeRgb: site.songPicColor,
+  fontFamily: setting.lyricFont,
+  brand: "GMPlayer",
+  logoSrc: "/images/logo/favicon.png",
+});
 
 const makeImage = () =>
   run(async () => {
     rendering.value = true;
     try {
-      setImage(await renderCard());
+      const blob = await renderLyricCard(cardInput(await still));
+      clearImage();
+      imageBlob = Promise.resolve(blob);
+      imageUrl.value = URL.createObjectURL(blob);
     } finally {
       rendering.value = false;
     }
   });
-
-function setImage(blob: Blob) {
-  clearImage();
-  imageBlob = blob;
-  imageUrl.value = URL.createObjectURL(blob);
-}
 
 function clearImage() {
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value);
@@ -410,14 +520,19 @@ function clearImage() {
 
 const copyImage = () =>
   run(async () => {
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": imageBlob! })]);
+    // The promise, not the blob: awaiting the encode first would spend the click's activation.
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": cardBlob() })]);
     window.$message.success(t("general.message.copySuccess"));
   });
 
 const nativeImageCall = async (cmd: string) =>
-  getTauri()!.core.invoke<boolean | null>(cmd, new Uint8Array(await imageBlob!.arrayBuffer()), {
-    headers: { "x-share": new URLSearchParams({ name: fileName.value }).toString() },
-  });
+  getTauri()!.core.invoke<boolean | null>(
+    cmd,
+    new Uint8Array(await (await cardBlob()).arrayBuffer()),
+    {
+      headers: { "x-share": new URLSearchParams({ name: fileName.value }).toString() },
+    },
+  );
 
 const saveImage = () =>
   run(async () => {
@@ -432,7 +547,9 @@ const shareImage = () =>
       await nativeImageCall("share_image");
       return;
     }
-    const file = new File([imageBlob!], `${fileName.value || "lyrics"}.png`, { type: "image/png" });
+    const file = new File([await cardBlob()], `${fileName.value || "lyrics"}.png`, {
+      type: "image/png",
+    });
     await navigator.share({ files: [file] }).catch(ignoreAbort);
   });
 
@@ -444,13 +561,22 @@ interface ImageAction {
   run?: () => void;
   /** The browser saves through a plain download link; Tauri goes through a native dialog. */
   href?: string;
+  disabled?: boolean;
   download?: string;
 }
 const imageActions = computed(() => {
   const save = t("player.share.saveImage");
+  // Desktop: nothing to act on before the first draw, nor to link before its encode.
+  const disabled = front.value < 0;
   const actions: ImageAction[] = [];
   if (canCopyImage) {
-    actions.push({ key: "copy", label: t("player.share.copyImage"), icon: Copy, run: copyImage });
+    actions.push({
+      key: "copy",
+      label: t("player.share.copyImage"),
+      icon: Copy,
+      run: copyImage,
+      disabled,
+    });
   }
   if (!inTauri) {
     const download = `${fileName.value || "lyrics"}.png`;
@@ -461,9 +587,17 @@ const imageActions = computed(() => {
       primary: true,
       href: imageUrl.value,
       download,
+      disabled: !imageUrl.value,
     });
   } else if (!isMobileApp) {
-    actions.push({ key: "save", label: save, icon: Download, primary: true, run: saveImage });
+    actions.push({
+      key: "save",
+      label: save,
+      icon: Download,
+      primary: true,
+      run: saveImage,
+      disabled,
+    });
   }
   if (canShareImage) {
     actions.push({
@@ -472,6 +606,7 @@ const imageActions = computed(() => {
       icon: ShareTwo,
       primary: true,
       run: shareImage,
+      disabled,
     });
   }
   return actions;
@@ -514,20 +649,27 @@ function ignoreAbort(error: unknown) {
   gap: 24px;
 
   .frame {
+    position: relative;
     flex: 1;
     min-height: 0;
     width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
 
+  // Stacked and centred at their own aspect ratio; the shown one fades in over the other.
   .card {
+    position: absolute;
+    inset: 0;
+    margin: auto;
     max-width: min(100%, 420px);
     max-height: 100%;
-    object-fit: contain;
     border-radius: 16px;
     box-shadow: 0 16px 48px rgb(0 0 0 / 0.4);
+    opacity: 0;
+    transition: opacity 0.2s ease-out;
+
+    &.shown {
+      opacity: 1;
+    }
   }
 
   .actions {
@@ -596,6 +738,10 @@ function ignoreAbort(error: unknown) {
   font-weight: var(--share-weight);
   letter-spacing: var(--share-spacing);
   text-align: var(--share-align);
+
+  .virtual {
+    height: 100%;
+  }
 }
 
 // AMLL's line box and type (`lyricMainLine` 1em / 1.2, `lyricSubLine` 0.5em / 1.5).

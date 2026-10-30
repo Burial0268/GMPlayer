@@ -116,8 +116,9 @@ function draw(
   input: LyricCardInput,
   cover: HTMLImageElement | null,
   logo: HTMLImageElement | null,
+  canvas = document.createElement("canvas"),
+  scale = 1,
 ) {
-  const canvas = document.createElement("canvas");
   const ctx = canvas.getContext("2d")!;
   const font = (weight: number, size: number) =>
     `${weight} ${size}px ${input.fontFamily}, system-ui, sans-serif`;
@@ -137,8 +138,10 @@ function draw(
     groups.reduce((h, g) => h + g.main.length * mainLH + g.subs.length * subLH, 0) +
     GROUP_GAP * Math.max(0, groups.length - 1);
   const height = Math.ceil(Math.max(MIN_HEIGHT, PAD + lyricsHeight + SECTION_GAP + COVER + PAD));
-  canvas.width = WIDTH;
-  canvas.height = height;
+  // Laid out at 1080 wide either way; a preview rasterises fewer pixels.
+  canvas.width = Math.round(WIDTH * scale);
+  canvas.height = Math.round(height * scale);
+  ctx.scale(scale, scale);
 
   // Background: the darkened tone underneath, so the blurred cover's soft
   // edges fade into it, then a veil of the same tone over the cover. A black
@@ -167,7 +170,7 @@ function draw(
   } else {
     if (cover) {
       const side = Math.max(WIDTH, height) * 1.3;
-      ctx.filter = `blur(72px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
+      ctx.filter = `blur(${72 * scale}px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
       ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);
       ctx.filter = "none";
     }
@@ -213,8 +216,9 @@ function draw(
   if (cover) {
     ctx.save();
     ctx.shadowColor = "rgb(0 0 0 / 0.3)";
-    ctx.shadowBlur = 24;
-    ctx.shadowOffsetY = 8;
+    // Shadows, like filters, are in canvas pixels and ignore the transform.
+    ctx.shadowBlur = 24 * scale;
+    ctx.shadowOffsetY = 8 * scale;
     roundRectPath(ctx, PAD, footerTop, COVER, 14);
     ctx.fillStyle = "#000";
     ctx.fill();
@@ -245,19 +249,47 @@ const toPng = (canvas: HTMLCanvasElement): Promise<Blob> =>
     );
   });
 
-export async function renderLyricCard(input: LyricCardInput): Promise<Blob> {
+export interface CardAssets {
+  cover: HTMLImageElement | null;
+  logo: HTMLImageElement | null;
+}
+
+/** Everything a draw waits on; load once and draw as often as the lines change. */
+export async function loadCardAssets(input: LyricCardInput): Promise<CardAssets> {
   const [cover, logo] = await Promise.all([loadImage(input.coverSrc), loadImage(input.logoSrc)]);
   await Promise.all([
     document.fonts.load(`800 ${MAIN_SIZE}px ${input.fontFamily}`),
     document.fonts.load(`600 ${SUB_SIZE}px ${input.fontFamily}`),
   ]).catch(() => undefined);
+  return { cover, logo };
+}
+
+/** Draws synchronously, into `canvas` when given, so a preview can skip encoding. */
+export const drawLyricCard = (
+  input: LyricCardInput,
+  assets: CardAssets,
+  canvas?: HTMLCanvasElement,
+  scale?: number,
+) => draw(input, assets.cover, assets.logo, canvas, scale);
+
+/** The PNG of a drawn card. */
+export async function encodeLyricCard(
+  canvas: HTMLCanvasElement,
+  input: LyricCardInput,
+  assets: CardAssets,
+): Promise<Blob> {
   try {
-    return await toPng(draw(input, cover, logo));
+    return await toPng(canvas);
   } catch (error) {
     // A cover served without CORS headers taints the canvas and export throws;
     // the card is still worth having on the theme colour alone.
     if (!(error instanceof DOMException && error.name === "SecurityError")) throw error;
     console.warn("[lyricShare] cover tainted the canvas, rendering without it", error);
-    return toPng(draw(input, null, logo));
+    return toPng(draw(input, null, assets.logo));
   }
+}
+
+export async function renderLyricCard(input: LyricCardInput): Promise<Blob> {
+  const assets = await loadCardAssets(input);
+  return encodeLyricCard(drawLyricCard(input, assets), input, assets);
 }
