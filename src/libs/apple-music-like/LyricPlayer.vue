@@ -230,16 +230,25 @@ const lineElement = (line: unknown) => (line as HasElement).getElement();
 
 // How AMLL is drawing the line right now. Its focus scaling shows in the rect
 // but not in the styles, so the type is scaled by the same factor.
+// AMLL stacks lines by their group wrapper (the parent), whose vertical padding
+// is the gap between lines; the line's own is cancelled by an equal negative
+// margin. So the box handed over is the line's horizontally and the wrapper's
+// vertically, or the share list's lines sit closer than AMLL's.
 function measureLine(el: HTMLElement): LyricShareOrigin {
-  const rect = el.getBoundingClientRect();
+  const line = el.getBoundingClientRect();
   const style = getComputedStyle(el);
-  const scale = rect.width / el.offsetWidth || 1;
+  const group = getComputedStyle(el.parentElement ?? el);
+  const scale = line.width / el.offsetWidth || 1;
+  const px = (from: CSSStyleDeclaration, side: string) =>
+    Number.parseFloat(from[`padding${side}` as "paddingTop"]) * scale;
+  const top = px(group, "Top");
+  const bottom = px(group, "Bottom");
+  const textTop = line.top + px(style, "Top");
+  const textHeight = line.height - px(style, "Top") - px(style, "Bottom");
   return {
-    rect,
+    rect: new DOMRect(line.left, textTop - top, line.width, textHeight + top + bottom),
     fontSize: Number.parseFloat(style.fontSize) * scale,
-    padding: ["Top", "Right", "Bottom", "Left"]
-      .map((side) => `${Number.parseFloat(style[`padding${side}` as "paddingTop"]) * scale}px`)
-      .join(" "),
+    padding: `${top}px ${px(style, "Right")}px ${bottom}px ${px(style, "Left")}px`,
   };
 }
 
