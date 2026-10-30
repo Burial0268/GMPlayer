@@ -64,7 +64,16 @@
                   @click="toggle(row.key)"
                   @keydown.enter.space.prevent="toggle(row.key)"
                 >
-                  <div class="text">{{ row.line.text }}</div>
+                  <!-- AMLL's units and its breaks between them (`lyricLineBreak`). -->
+                  <div class="text">
+                    <template v-for="(units, r) in rowsOf(row)" :key="r">
+                      <br v-if="r" />
+                      <template v-for="(unit, u) in units" :key="u">
+                        <template v-if="plainText || unit.isSpace">{{ unit.text }}</template>
+                        <span v-else>{{ unit.text }}</span>
+                      </template>
+                    </template>
+                  </div>
                   <div v-for="(sub, i) in row.line.subs" :key="i" class="sub">{{ sub }}</div>
                 </div>
               </template>
@@ -177,7 +186,8 @@ import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next"
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
-import { isInterludeLine } from "@/utils/LyricsProcessor";
+import type { AMLLLine } from "@/utils/LyricsProcessor";
+import { balancedBreaks, lineUnits, type BreakUnit } from "@/utils/lyricLineBreak";
 import { getTauri, isTauri } from "@/utils/tauri/core/runtime";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
@@ -249,11 +259,10 @@ let still: Promise<HTMLCanvasElement | undefined> = Promise.resolve(undefined);
 
 const visible = computed(() => navigation.playerShareVisible.value && Boolean(request.value));
 
-// Interludes and background vocals are not lines anyone shares.
+// Every line AMLL shows as a row is selectable, `♪` and `……` included: the
+// list mirrors the view. Background vocals ride inside their main line's row.
 const usable = computed(() =>
-  (request.value?.lines ?? []).flatMap((line, raw) =>
-    line.isBG || isInterludeLine(line) ? [] : [{ line, raw }],
-  ),
+  (request.value?.lines ?? []).flatMap((line, raw) => (line.isBG ? [] : [{ line, raw }])),
 );
 const lines = computed<LyricShareLine[]>(() =>
   usable.value.map(({ line }) => ({
@@ -274,9 +283,44 @@ const rowFloor = computed(() => {
 interface LineRow {
   key: number;
   line: LyricShareLine;
+  words: AMLLLine["words"];
 }
-const rows = computed<LineRow[]>(() => lines.value.map((line, key) => ({ key, line })));
-// An interlude has no entry of its own: take the last line before it.
+const rows = computed<LineRow[]>(() =>
+  usable.value.map(({ line }, key) => ({ key, line: lines.value[key], words: line.words })),
+);
+
+// Lines break where AMLL breaks them. AMLL treats a lyric as plain text when no
+// line has more than one word, and balances nothing without a segmenter.
+const segmenter =
+  typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter(undefined, { granularity: "word" })
+    : null;
+const plainText = computed(() => (request.value?.lines ?? []).every((l) => l.words.length <= 1));
+let measureCtx: CanvasRenderingContext2D | null = null;
+// Per opening, and only for the rows the list renders.
+const breakCache = computed(() => (request.value, new Map<number, BreakUnit[][]>()));
+function rowsOf(row: LineRow): BreakUnit[][] {
+  const cached = breakCache.value.get(row.key);
+  if (cached) return cached;
+  const origin = request.value?.origin;
+  const units = segmenter ? lineUnits(row.words, plainText.value, segmenter) : [];
+  let rowsOut = [units.length ? units : [{ text: row.line.text, isSpace: false }]];
+  measureCtx ??= document.createElement("canvas").getContext("2d");
+  if (segmenter && origin && measureCtx) {
+    const [, right = 0, , left = right] = origin.padding.split(" ").map(Number.parseFloat);
+    measureCtx.font = `${setting.lyricFontWeight} ${origin.fontSize}px ${setting.lyricFont}`;
+    measureCtx.letterSpacing =
+      setting.lyricLetterSpacing && setting.lyricLetterSpacing !== "normal"
+        ? setting.lyricLetterSpacing
+        : "0px";
+    const widths = units.map((unit) => measureCtx!.measureText(unit.text).width);
+    const breaks = balancedBreaks(units, widths, origin.rect.width - left - right, segmenter);
+    rowsOut = [0, ...breaks].map((start, i) => units.slice(start, breaks[i] ?? units.length));
+  }
+  breakCache.value.set(row.key, rowsOut);
+  return rowsOut;
+}
+// A background line has no row of its own: take the main line before it.
 const originIndex = computed(() => {
   const pressed = request.value?.lineIndex ?? 0;
   return usable.value.reduce((found, { raw }, i) => (raw <= pressed ? i : found), 0);
@@ -744,7 +788,8 @@ function ignoreAbort(error: unknown) {
   }
 }
 
-// AMLL's line box and type (`lyricMainLine` 1em / 1.2, `lyricSubLine` 0.5em / 1.5).
+// AMLL's line box and type (`lyricMainLine` 1em / 1.2, `lyricSubLine` 0.5em / 1.5),
+// and its word layout below.
 .line {
   padding: var(--share-padding);
   font-size: var(--share-font-size);
@@ -761,6 +806,13 @@ function ignoreAbort(error: unknown) {
 
   .text {
     line-height: 1.2;
+
+    // AMLL's `lyricMainLine > span`: a word never breaks, a line breaks between words.
+    > span {
+      display: inline-block;
+      white-space: pre-wrap;
+      vertical-align: bottom;
+    }
   }
 
   .sub {

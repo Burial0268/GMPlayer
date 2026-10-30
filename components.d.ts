@@ -121,6 +121,7 @@ declare module 'vue' {
     NTag: typeof import('naive-ui')['NTag']
     NText: typeof import('naive-ui')['NText']
     NThing: typeof import('naive-ui')['NThing']
+    NVirtualList: typeof import('naive-ui')['NVirtualList']
     OverflowMarquee: typeof import('./src/components/Common/OverflowMarquee.vue')['default']
     PaAlbum: typeof import('./src/components/Personalized/PaAlbum.vue')['default']
     PaArtists: typeof import('./src/components/Personalized/PaArtists.vue')['default']
