@@ -10,7 +10,7 @@
     >
       <div
         v-if="visible"
-        :class="['lyric-share', { desktop: !isMobile }]"
+        :class="['lyric-share', { desktop: !isMobile, aligning }]"
         data-navigation-layer="share-player"
         role="dialog"
         aria-modal="true"
@@ -86,14 +86,14 @@
           <footer v-if="isMobile" class="foot">
             <template v-if="!imageUrl">
               <span class="count">
-                {{ t("player.share.selected", { count: range[1] - range[0] + 1, max: MAX_LINES }) }}
+                {{ t("player.share.selected", { count: selected.length, max: MAX_LINES }) }}
               </span>
               <div class="actions">
-                <n-button round secondary @click="copyText">
+                <n-button round secondary :disabled="!range" @click="copyText">
                   <template #icon><Copy /></template>
                   {{ t("player.share.copy") }}
                 </n-button>
-                <n-button v-if="canShareText" round secondary @click="shareText">
+                <n-button v-if="canShareText" round secondary :disabled="!range" @click="shareText">
                   <template #icon><ShareTwo /></template>
                   {{ t("player.share.share") }}
                 </n-button>
@@ -102,6 +102,7 @@
                   color="#fff"
                   text-color="#111"
                   :loading="rendering"
+                  :disabled="!range"
                   @click="makeImage"
                 >
                   <template #icon><Pic /></template>
@@ -143,7 +144,7 @@
             <canvas ref="cardB" :class="['card', { shown: front === 1 }]" />
           </div>
           <div class="actions">
-            <n-button round secondary @click="copyText">
+            <n-button round secondary :disabled="!range" @click="copyText">
               <template #icon><Copy /></template>
               {{ t("player.share.copy") }}
             </n-button>
@@ -249,7 +250,8 @@ const shareTheme = computed<GlobalThemeOverrides>(() => ({
 const list = useTemplateRef<HTMLElement>("list");
 const scroller = useTemplateRef<InstanceType<typeof NVirtualList>>("scroller");
 const lineEls: HTMLElement[] = [];
-const range = ref<[number, number]>([0, 0]);
+// A consecutive run, or nothing: the pressed line can be let go of like any other.
+const range = ref<[number, number] | null>(null);
 const rendering = ref(false);
 const imageUrl = ref("");
 // The PNG of whatever card is showing; see `cardBlob`.
@@ -337,11 +339,15 @@ const originIndex = computed(() => {
 const SETTLE_FRAMES = 60;
 const SETTLED_FRAMES = 3;
 const pad = ref<[number, number]>([0, 0]);
+// The pressed line stays hidden until it sits where it was pressed: AMLL's own,
+// still on screen under the layer, covers it meanwhile.
+const aligning = ref(false);
 watch(
   visible,
   async (shown) => {
     if (!shown || !request.value || !list.value) return;
     range.value = [originIndex.value, originIndex.value];
+    aligning.value = true;
     clearImage();
     still = props.captureStill();
     assets = undefined;
@@ -366,7 +372,10 @@ watch(
 function settle(left: number, still = 0) {
   requestAnimationFrame(() => {
     const container = scroller.value?.getScrollContainer();
-    if (!visible.value || !request.value || !container) return;
+    if (!visible.value || !request.value || !container) {
+      aligning.value = false;
+      return;
+    }
     const anchor = lineEls[originIndex.value];
     let moved = true;
     if (!anchor) scroller.value?.scrollTo({ index: originIndex.value });
@@ -380,6 +389,7 @@ function settle(left: number, still = 0) {
     }
     const held = moved ? 0 : still + 1;
     if (held < SETTLED_FRAMES && left > 1) settle(left - 1, held);
+    else aligning.value = false;
   });
 }
 
@@ -412,8 +422,13 @@ function leave() {
 }
 
 // Selection stays one consecutive run: tapping a neighbour grows it, tapping an
-// end shrinks it, tapping inside cuts it there, tapping elsewhere starts over.
+// end shrinks it, tapping inside cuts it there, tapping elsewhere starts over,
+// and tapping the only line clears it.
 function toggle(index: number) {
+  if (!range.value) {
+    range.value = [index, index];
+    return;
+  }
   const [start, end] = range.value;
   if (index < start - 1 || index > end + 1) {
     range.value = [index, index];
@@ -424,7 +439,7 @@ function toggle(index: number) {
     }
     range.value = [Math.min(start, index), Math.max(end, index)];
   } else if (start === end) {
-    return;
+    range.value = null;
   } else if (index === start) {
     range.value = [start + 1, end];
   } else {
@@ -447,13 +462,16 @@ const layerStyle = computed(() => {
     "--share-align": setting.lyricsPosition === "center" ? "center" : "left",
   };
 });
-const isSelected = (index: number) => index >= range.value[0] && index <= range.value[1];
+const isSelected = (index: number) =>
+  !!range.value && index >= range.value[0] && index <= range.value[1];
 const song = computed(() => music.getPlaySongData);
 // PlayerCover's size, so the header shows an image that is already decoded.
 const cover = computed(() => coverUrl(song.value?.album?.picUrl, 1024));
 const artists = computed(() => (song.value?.artist ?? []).map((a) => a.name).join(" / "));
 const fileName = computed(() => [song.value?.name, artists.value].filter(Boolean).join(" - "));
-const selected = computed(() => lines.value.slice(range.value[0], range.value[1] + 1));
+const selected = computed(() =>
+  range.value ? lines.value.slice(range.value[0], range.value[1] + 1) : [],
+);
 const lyricText = computed(() =>
   selected.value.map((line) => [line.text, ...line.subs].join("\n")).join("\n"),
 );
@@ -470,9 +488,17 @@ let assets: Promise<CardAssets> | undefined;
 let drawn: { input: LyricCardInput; assets: CardAssets } | undefined;
 let drawRun = 0;
 let linkTimer = 0;
-watch([visible, selected, isMobile], ([shown, , mobile]) => {
+watch([visible, selected, isMobile], ([shown, chosen, mobile]) => {
   if (!shown || mobile) return;
   const current = ++drawRun;
+  if (!chosen.length) {
+    // Nothing selected: nothing to preview or share.
+    clearTimeout(linkTimer);
+    clearImage();
+    front.value = -1;
+    drawn = undefined;
+    return;
+  }
   run(async () => {
     const input = cardInput(await still);
     assets ??= loadCardAssets(input);
@@ -941,6 +967,12 @@ function ignoreAbort(error: unknown) {
     scale: 1.04;
     background-color: transparent;
   }
+}
+
+// Until it is aligned; its enter transition runs on underneath, so it shows
+// mid-lift, where AMLL's lifted line is.
+.lyric-share.aligning .line.origin {
+  visibility: hidden;
 }
 
 .lyric-share-leave-active {
