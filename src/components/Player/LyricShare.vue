@@ -1,5 +1,5 @@
 <template>
-  <n-config-provider abstract :theme-overrides="SHARE_THEME">
+  <n-config-provider abstract :theme-overrides="shareTheme">
     <!-- `show`, not `if`: rebuilding the panel per open re-decoded the blurred cover mid-animation. -->
     <n-modal
       v-model:show="show"
@@ -181,16 +181,14 @@ import {
 const MAX_LINES = 5;
 
 // The panel is always the dark share tone, whatever the app theme.
-const SHARE_THEME: GlobalThemeOverrides = {
-  Button: {
-    fontWeight: "600",
-    textColor: "#fff",
-    colorSecondary: "rgb(255 255 255 / 0.16)",
-    colorSecondaryHover: "rgb(255 255 255 / 0.24)",
-    colorSecondaryPressed: "rgb(255 255 255 / 0.3)",
-    colorQuaternaryHover: "rgb(255 255 255 / 0.12)",
-    colorQuaternaryPressed: "rgb(255 255 255 / 0.18)",
-  },
+const BUTTON_THEME: GlobalThemeOverrides["Button"] = {
+  fontWeight: "600",
+  textColor: "#fff",
+  colorSecondary: "rgb(255 255 255 / 0.16)",
+  colorSecondaryHover: "rgb(255 255 255 / 0.24)",
+  colorSecondaryPressed: "rgb(255 255 255 / 0.3)",
+  colorQuaternaryHover: "rgb(255 255 255 / 0.12)",
+  colorQuaternaryPressed: "rgb(255 255 255 / 0.18)",
 };
 // Phones: the list grows out of the pressed line while the bars slide in.
 const HEAD = { open: { opacity: 1, y: 0 }, closed: { opacity: 0, y: -24 } };
@@ -215,6 +213,12 @@ const show = ref(false);
 const lines = shallowRef<LyricShareLine[]>([]);
 const range = ref<[number, number]>([0, 0]);
 const { isMobile } = useResponsiveLayout();
+// Touch fires the scrollbar's hover show/hide on every tap, flashing the bar
+// in and out; phones scroll by touch and get no bar, as naive does on iOS.
+const shareTheme = computed<GlobalThemeOverrides>(() => ({
+  Button: BUTTON_THEME,
+  Scrollbar: isMobile.value ? { color: "transparent", colorHover: "transparent" } : undefined,
+}));
 const panel = useTemplateRef<HTMLElement>("panel");
 const list = useTemplateRef<ComponentPublicInstance>("list");
 const scroller = useTemplateRef<ScrollbarInst>("scroller");
@@ -483,6 +487,7 @@ defineExpose({ open });
     opacity: 0.5;
     outline: none;
     user-select: none;
+    -webkit-tap-highlight-color: transparent;
     transition:
       opacity var(--duration-200, 0.2s),
       background-color var(--duration-200, 0.2s);
@@ -500,8 +505,11 @@ defineExpose({ open });
       opacity: 0.75;
     }
 
-    &:hover {
-      opacity: 0.7;
+    // Touch keeps :hover on the last tapped line, which then sits between states.
+    @media (hover: hover) and (pointer: fine) {
+      &:hover {
+        opacity: 0.7;
+      }
     }
 
     &:focus-visible {
