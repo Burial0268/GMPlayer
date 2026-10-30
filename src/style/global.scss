@@ -620,6 +620,11 @@ html.has-floating-titlebar {
   .n-drawer--right-placement .n-drawer-header {
     margin-top: var(--app-titlebar-safe-top, 42px);
   }
+
+  // 歌词分享层的关闭按钮同在右上角
+  .lyric-share .dismiss {
+    top: calc(var(--app-titlebar-safe-top, 42px) + 10px);
+  }
 }
 
 // Nalert

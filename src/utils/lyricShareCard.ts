@@ -56,6 +56,8 @@ const LOGO = 40;
 const VEIL = [0.62, 0.8] as const;
 // With the 0.3 lightness cap, a white cover still leaves white text at 6.6:1.
 const BACKDROP_BRIGHTNESS = 0.4;
+/** Black over the fluid still, top to bottom edge. */
+const STILL_SHADE = [0.12, 0.4] as const;
 
 const loadImage = (src: string): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
@@ -144,10 +146,12 @@ function draw(
   ctx.fillStyle = shareTone(input.themeRgb);
   ctx.fillRect(0, 0, WIDTH, height);
   if (input.backdrop) {
-    // Cover-fit the still: the mesh is soft enough to scale up from render size.
+    // The player's own background, as it looked: the player sets its white
+    // lyrics straight on it, so it gets only a light shade for the footer
+    // rather than the cover's darkening. Cover-fit; the mesh is soft enough to
+    // scale up from render size.
     const { width: w, height: h } = input.backdrop;
     const scale = Math.max(WIDTH / w, height / h);
-    ctx.filter = `saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
     ctx.drawImage(
       input.backdrop,
       (WIDTH - w * scale) / 2,
@@ -155,18 +159,24 @@ function draw(
       w * scale,
       h * scale,
     );
-    ctx.filter = "none";
-  } else if (cover) {
-    const side = Math.max(WIDTH, height) * 1.3;
-    ctx.filter = `blur(72px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
-    ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);
-    ctx.filter = "none";
+    const shade = ctx.createLinearGradient(0, 0, 0, height);
+    shade.addColorStop(0, `rgb(0 0 0 / ${STILL_SHADE[0]})`);
+    shade.addColorStop(1, `rgb(0 0 0 / ${STILL_SHADE[1]})`);
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, WIDTH, height);
+  } else {
+    if (cover) {
+      const side = Math.max(WIDTH, height) * 1.3;
+      ctx.filter = `blur(72px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
+      ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);
+      ctx.filter = "none";
+    }
+    const veil = ctx.createLinearGradient(0, 0, 0, height);
+    veil.addColorStop(0, shareTone(input.themeRgb, VEIL[0]));
+    veil.addColorStop(1, shareTone(input.themeRgb, VEIL[1]));
+    ctx.fillStyle = veil;
+    ctx.fillRect(0, 0, WIDTH, height);
   }
-  const shade = ctx.createLinearGradient(0, 0, 0, height);
-  shade.addColorStop(0, shareTone(input.themeRgb, VEIL[0]));
-  shade.addColorStop(1, shareTone(input.themeRgb, VEIL[1]));
-  ctx.fillStyle = shade;
-  ctx.fillRect(0, 0, WIDTH, height);
 
   // Lyrics, centred in whatever room the footer leaves.
   const footerTop = height - PAD - COVER;
