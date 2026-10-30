@@ -1630,7 +1630,8 @@ defineExpose({
     &.mobile-visible {
       :deep(.mobile-thumb),
       :deep(.mobile-cover-frame),
-      :deep(.mobile-cover-layout) {
+      :deep(.mobile-cover-layout),
+      :deep(.lyric-share) {
         pointer-events: auto;
       }
     }

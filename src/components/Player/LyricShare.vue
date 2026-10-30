@@ -910,8 +910,9 @@ function ignoreAbort(error: unknown) {
       width: 100%;
       margin-left: 0;
 
+      // Fill the row, but never below their own label; wrap instead.
       > * {
-        flex: 1;
+        flex: 1 0 auto;
       }
     }
   }
