@@ -16,6 +16,7 @@ import { musicStore, settingStore, siteStore } from "../../store";
 import {
   LyricPlayer as CoreLyricPlayer,
   type DomLyricPlayer,
+  type HasElement,
   type LyricLineMouseEvent,
 } from "@applemusic-like-lyrics/core";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
@@ -61,7 +62,7 @@ type SyncableSound = {
 const emit = defineEmits<{
   "line-click": [evt: LyricLineMouseEvent];
   lrcTextClick: [time: number];
-  lineShare: [lines: AMLLLine[], lineIndex: number];
+  lineShare: [lines: AMLLLine[], lineIndex: number, origin: DOMRect];
 }>();
 
 function getDomPlayer(): DomLyricPlayer | undefined {
@@ -225,7 +226,13 @@ const jumpSeek = (evt: LyricLineMouseEvent) => {
 const openShare = (evt: LyricLineMouseEvent) => {
   if (evt.lineIndex < 0) return;
   evt.preventDefault();
-  emit("lineShare", amllLyricLines.value, evt.lineIndex);
+  emit(
+    "lineShare",
+    amllLyricLines.value,
+    evt.lineIndex,
+    // The DOM player's lines are LyricLineEl, which AMLL does not export.
+    (evt.line as unknown as HasElement).getElement().getBoundingClientRect(),
+  );
 };
 
 function passToPlayer(event: Event) {

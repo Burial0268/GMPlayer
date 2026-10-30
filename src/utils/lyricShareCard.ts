@@ -35,7 +35,7 @@ import { srgbToOkLab } from "@applemusic-like-lyrics/core";
 export function shareTone(themeRgb: string, alpha = 1): string {
   const [r, g, b] = themeRgb.split(",").map((v) => Number(v) / 255);
   const [l, a, bb] = srgbToOkLab([r, g, b]);
-  const lightness = Math.min(l, 0.4);
+  const lightness = Math.min(l, 0.3);
   const chroma = Math.min(Math.hypot(a, bb), 0.12);
   const hue = (Math.atan2(bb, a) * 180) / Math.PI;
   return `oklch(${lightness.toFixed(3)} ${chroma.toFixed(3)} ${hue.toFixed(1)} / ${alpha})`;
@@ -53,6 +53,8 @@ const COVER = 120;
 const LOGO = 40;
 /** Veil opacity at the top and bottom edge of the card. */
 export const VEIL = [0.62, 0.8] as const;
+// With the 0.3 lightness cap, a white cover still leaves white text at 6.6:1.
+export const BACKDROP_BRIGHTNESS = 0.4;
 
 const loadImage = (src: string): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
@@ -142,7 +144,7 @@ function draw(
   ctx.fillRect(0, 0, WIDTH, height);
   if (cover) {
     const side = Math.max(WIDTH, height) * 1.3;
-    ctx.filter = "blur(72px) saturate(1.3) brightness(0.75)";
+    ctx.filter = `blur(72px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
     ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);
     ctx.filter = "none";
   }

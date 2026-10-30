@@ -1,30 +1,29 @@
 <template>
   <n-modal v-model:show="show" :z-index="2200" :auto-focus="false" @after-leave="clearImage">
-    <div
-      class="lyric-share"
-      :style="{
-        '--share-tone': shareTone(site.songPicColor),
-        '--share-veil': `linear-gradient(${shareTone(site.songPicColor, VEIL[0])}, ${shareTone(site.songPicColor, VEIL[1])})`,
-        '--lyric-share-font': setting.lyricFont,
-      }"
-    >
+    <div :class="['lyric-share', { expand }]" :style="panelStyle">
       <img class="backdrop" :src="cover" alt="" aria-hidden="true" />
       <header class="head">
         <img class="cover" :src="cover" alt="" />
         <div class="meta">
-          <div class="title">{{ song()?.name }}</div>
-          <div class="artist">{{ artists() }}</div>
+          <div class="title">{{ song?.name }}</div>
+          <div class="artist">{{ artists }}</div>
         </div>
         <n-button quaternary circle :aria-label="t('general.dialog.cancel')" @click="show = false">
           <template #icon><Close /></template>
         </n-button>
       </header>
 
-      <div v-if="!imageUrl" class="lines" role="group" :aria-label="t('player.share.title')">
+      <div
+        v-if="!imageUrl"
+        ref="list"
+        class="lines"
+        role="group"
+        :aria-label="t('player.share.title')"
+      >
         <div
           v-for="(line, index) in lines"
           :key="index"
-          :ref="(el) => index === range[0] && (anchorEl = el as HTMLElement)"
+          v-memo="[line, isSelected(index)]"
           :class="['line', { selected: isSelected(index) }]"
           role="checkbox"
           :aria-checked="isSelected(index)"
@@ -70,7 +69,19 @@
               <template #icon><Copy /></template>
               {{ t("player.share.copyImage") }}
             </n-button>
-            <n-button v-if="!isMobileApp" class="primary" round @click="saveImage">
+            <!-- The browser saves a plain download link; Tauri goes through a native dialog. -->
+            <n-button
+              v-if="!inTauri"
+              class="primary"
+              round
+              tag="a"
+              :href="imageUrl"
+              :download="`${fileName || 'lyrics'}.png`"
+            >
+              <template #icon><Download /></template>
+              {{ t("player.share.saveImage") }}
+            </n-button>
+            <n-button v-else-if="!isMobileApp" class="primary" round @click="saveImage">
               <template #icon><Download /></template>
               {{ t("player.share.saveImage") }}
             </n-button>
@@ -86,7 +97,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef } from "vue";
+import { computed, nextTick, ref, shallowRef, useTemplateRef } from "vue";
 import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
@@ -94,7 +105,13 @@ import { coverUrl } from "@/utils/coverUrl";
 import { isInterludeLine, type AMLLLine } from "@/utils/LyricsProcessor";
 import { getTauri, isTauri } from "@/utils/tauri/core/runtime";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
-import { renderLyricCard, shareTone, VEIL, type LyricShareLine } from "@/utils/lyricShareCard";
+import {
+  BACKDROP_BRIGHTNESS,
+  renderLyricCard,
+  shareTone,
+  VEIL,
+  type LyricShareLine,
+} from "@/utils/lyricShareCard";
 
 const MAX_LINES = 5;
 
@@ -104,22 +121,26 @@ const setting = settingStore();
 const site = siteStore();
 
 // The share commands are registered for mobile builds, the saver for desktop.
-const isMobileApp = isTauri() && isMobileDevice();
-const canShareText = isMobileApp || (!isTauri() && typeof navigator.share === "function");
-const canShareImage = isMobileApp || (!isTauri() && typeof navigator.canShare === "function");
+const inTauri = isTauri();
+const isMobileApp = inTauri && isMobileDevice();
+const canShareText = isMobileApp || (!inTauri && typeof navigator.share === "function");
+const canShareImage = isMobileApp || (!inTauri && typeof navigator.canShare === "function");
 // Mobile WebViews have no image clipboard; the share sheet covers it there.
 const canCopyImage = !isMobileApp && typeof ClipboardItem !== "undefined";
 
 const show = ref(false);
 const lines = shallowRef<LyricShareLine[]>([]);
 const range = ref<[number, number]>([0, 0]);
-const anchorEl = ref<HTMLElement | null>(null);
+const list = useTemplateRef<HTMLElement>("list");
+// Phones: the sheet grows out of the pressed line, clipped from `from`.
+const expand = ref(false);
+const from = ref("");
 const rendering = ref(false);
 const imageUrl = ref("");
 let imageBlob: Blob | null = null;
 
-/** Opens on the line that was right-clicked / long-pressed. */
-function open(amllLines: AMLLLine[], lineIndex: number) {
+/** Opens on the line that was right-clicked / long-pressed; `origin` is that line's rect. */
+function open(amllLines: AMLLLine[], lineIndex: number, origin: DOMRect) {
   const usable = amllLines.flatMap((line, raw) =>
     line.isBG || isInterludeLine(line) ? [] : [{ line, raw }],
   );
@@ -132,8 +153,18 @@ function open(amllLines: AMLLLine[], lineIndex: number) {
   const index = usable.reduce((found, { raw }, i) => (raw <= lineIndex ? i : found), 0);
   range.value = [index, index];
   clearImage();
+  expand.value = window.matchMedia("(max-width: 768px)").matches;
+  from.value = `inset(${origin.top}px ${innerWidth - origin.right}px ${innerHeight - origin.bottom}px ${origin.left}px round 14px)`;
   show.value = true;
-  nextTick(() => anchorEl.value?.scrollIntoView({ block: "center" }));
+  // The one layout read here is the layout the opening frame needs anyway, and
+  // the scroll that follows does not invalidate it.
+  nextTick(() => {
+    const anchor = list.value?.children[index];
+    if (!anchor) return;
+    // Keep the line where the finger is, so the sheet visibly grows around it.
+    if (expand.value) list.value!.scrollTop += anchor.getBoundingClientRect().top - origin.top;
+    else anchor.scrollIntoView({ block: "center" });
+  });
 }
 
 // Selection stays one consecutive run: tapping a neighbour grows it, tapping an
@@ -157,16 +188,24 @@ function toggle(index: number) {
   }
 }
 
+// Cached so a tap's re-render does not redo three OKLab conversions; the lines
+// themselves are skipped by `v-memo` unless their selection flipped.
+const panelStyle = computed(() => ({
+  "--share-from": from.value,
+  "--share-brightness": BACKDROP_BRIGHTNESS,
+  "--share-tone": shareTone(site.songPicColor),
+  "--share-veil": `linear-gradient(${shareTone(site.songPicColor, VEIL[0])}, ${shareTone(site.songPicColor, VEIL[1])})`,
+  "--lyric-share-font": setting.lyricFont,
+}));
 const isSelected = (index: number) => index >= range.value[0] && index <= range.value[1];
-const cover = computed(() => coverUrl(song()?.album?.picUrl, 256));
-const selected = () => lines.value.slice(range.value[0], range.value[1] + 1);
-const song = () => music.getPlaySongData;
-const artists = () => (song()?.artist ?? []).map((a) => a.name).join(" / ");
-const lyricText = () =>
-  selected()
-    .map((line) => [line.text, ...line.subs].join("\n"))
-    .join("\n");
-const fileName = () => [song()?.name, artists()].filter(Boolean).join(" - ");
+const song = computed(() => music.getPlaySongData);
+const cover = computed(() => coverUrl(song.value?.album?.picUrl, 256));
+const artists = computed(() => (song.value?.artist ?? []).map((a) => a.name).join(" / "));
+const fileName = computed(() => [song.value?.name, artists.value].filter(Boolean).join(" - "));
+const selected = computed(() => lines.value.slice(range.value[0], range.value[1] + 1));
+const lyricText = computed(() =>
+  selected.value.map((line) => [line.text, ...line.subs].join("\n")).join("\n"),
+);
 
 async function run(task: () => Promise<unknown>) {
   try {
@@ -179,13 +218,13 @@ async function run(task: () => Promise<unknown>) {
 
 const copyText = () =>
   run(async () => {
-    await navigator.clipboard.writeText(lyricText());
+    await navigator.clipboard.writeText(lyricText.value);
     window.$message.success(t("general.message.copySuccess"));
   });
 
 const shareText = () =>
   run(async () => {
-    const text = `${lyricText()}\n\n—— ${fileName()}`;
+    const text = `${lyricText.value}\n\n—— ${fileName.value}`;
     if (isMobileApp) await getTauri()!.core.invoke("share_text", { text });
     else await navigator.share({ text }).catch(ignoreAbort);
   });
@@ -195,10 +234,10 @@ const makeImage = () =>
     rendering.value = true;
     try {
       imageBlob = await renderLyricCard({
-        lines: selected(),
-        title: song()?.name ?? "",
-        artist: artists(),
-        coverSrc: coverUrl(song()?.album?.picUrl, 512),
+        lines: selected.value,
+        title: song.value?.name ?? "",
+        artist: artists.value,
+        coverSrc: coverUrl(song.value?.album?.picUrl, 512),
         themeRgb: site.songPicColor,
         fontFamily: setting.lyricFont,
         brand: "GMPlayer",
@@ -224,21 +263,14 @@ const copyImage = () =>
 
 const nativeImageCall = async (cmd: string) =>
   getTauri()!.core.invoke<boolean | null>(cmd, new Uint8Array(await imageBlob!.arrayBuffer()), {
-    headers: { "x-share": new URLSearchParams({ name: fileName() }).toString() },
+    headers: { "x-share": new URLSearchParams({ name: fileName.value }).toString() },
   });
 
 const saveImage = () =>
   run(async () => {
-    if (isTauri()) {
-      if (await nativeImageCall("share_save_image")) {
-        window.$message.success(t("player.share.saved"));
-      }
-      return;
+    if (await nativeImageCall("share_save_image")) {
+      window.$message.success(t("player.share.saved"));
     }
-    const a = document.createElement("a");
-    a.href = imageUrl.value;
-    a.download = `${fileName() || "lyrics"}.png`;
-    a.click();
   });
 
 const shareImage = () =>
@@ -247,7 +279,7 @@ const shareImage = () =>
       await nativeImageCall("share_image");
       return;
     }
-    const file = new File([imageBlob!], `${fileName() || "lyrics"}.png`, { type: "image/png" });
+    const file = new File([imageBlob!], `${fileName.value || "lyrics"}.png`, { type: "image/png" });
     await navigator.share({ files: [file] }).catch(ignoreAbort);
   });
 
@@ -280,8 +312,11 @@ defineExpose({ open });
     width: 140%;
     height: 140%;
     object-fit: cover;
-    filter: blur(60px) saturate(1.3) brightness(0.75);
+    filter: blur(60px) saturate(1.3) brightness(var(--share-brightness));
     pointer-events: none;
+    // Own layer, so the blur is rastered once rather than under every line
+    // that fades on a selection change (measured ~32 ms → ~9 ms per tap).
+    will-change: transform;
   }
 
   &::before {
@@ -353,7 +388,7 @@ defineExpose({ open });
     padding: 10px 12px;
     border-radius: 14px;
     cursor: pointer;
-    opacity: 0.35;
+    opacity: 0.5;
     outline: none;
     user-select: none;
     transition:
@@ -374,7 +409,7 @@ defineExpose({ open });
     }
 
     &:hover {
-      opacity: 0.6;
+      opacity: 0.7;
     }
 
     &:focus-visible {
@@ -458,8 +493,9 @@ defineExpose({ open });
     width: 100vw;
     height: 100dvh;
     border-radius: 0;
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
+    // Not env(): the Android WebView reports only the cutout there, never the system bars.
+    padding: var(--app-safe-area-top, 0px) var(--app-safe-area-right, 0px)
+      var(--app-safe-area-bottom, 0px) var(--app-safe-area-left, 0px);
 
     .line .text {
       font-size: 22px;
@@ -478,6 +514,35 @@ defineExpose({ open });
           flex: 1;
         }
       }
+    }
+  }
+
+  // Replaces n-modal's scale-in, whose classes land on this element.
+  &.expand {
+    &.fade-in-scale-up-transition-enter-active {
+      transition: clip-path 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+
+    &.fade-in-scale-up-transition-leave-active {
+      transition:
+        clip-path 0.3s cubic-bezier(0.4, 0, 1, 1),
+        opacity 0.3s cubic-bezier(0.4, 0, 1, 1);
+    }
+
+    &.fade-in-scale-up-transition-enter-from,
+    &.fade-in-scale-up-transition-leave-to {
+      transform: none;
+      clip-path: var(--share-from);
+    }
+
+    &.fade-in-scale-up-transition-enter-from {
+      opacity: 1;
+    }
+
+    &.fade-in-scale-up-transition-enter-to,
+    &.fade-in-scale-up-transition-leave-from {
+      transform: none;
+      clip-path: inset(0 round 0);
     }
   }
 }
