@@ -175,6 +175,7 @@ pub fn run() {
             crate::download::download_settings_get,
             crate::download::download_config_set,
             crate::download::download_dir_pick,
+            crate::share::share_save_image,
             crate::download::download_subscribe,
             crate::download::download_list,
             crate::download::download_set_credentials,

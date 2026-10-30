@@ -3,6 +3,7 @@ pub mod download;
 pub mod local;
 pub mod media;
 pub mod ncm;
+pub mod share;
 pub mod shared;
 
 #[cfg(not(mobile))]

@@ -418,6 +418,18 @@ const messages: Record<string, unknown> = {
       collapse: "Hide queue",
       locate: "Jump to current",
     },
+    share: {
+      title: "Share lyrics",
+      limit: "Select up to {max} consecutive lines",
+      copy: "Copy",
+      share: "Share",
+      image: "Make image",
+      copyImage: "Copy image",
+      saveImage: "Save image",
+      saved: "Image saved",
+      rendering: "Rendering image…",
+      failed: "Something went wrong",
+    },
     loading: {
       resolving: "Fetching audio",
       buffering: "Buffering",

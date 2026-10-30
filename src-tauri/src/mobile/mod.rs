@@ -52,6 +52,7 @@ pub fn run() {
         // no persistable grant) and `tauri-plugin-persisted-scope` persists
         // Tauri's own ACL rather than the system's URI-permission table.
         .plugin(tauri_plugin_local_files::init())
+        .plugin(tauri_plugin_sharekit::init())
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
             shared::desktop_environment,
@@ -111,6 +112,8 @@ pub fn run() {
             crate::download::download_settings_get,
             crate::download::download_config_set,
             crate::download::download_dir_pick,
+            crate::share::share_text,
+            crate::share::share_image,
             crate::download::download_subscribe,
             crate::download::download_list,
             crate::download::download_set_credentials,

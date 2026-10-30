@@ -111,8 +111,13 @@ export function useLayerPresentation() {
           if (branch === document.body) break;
         }
       }
+      // `[autofocus]` lets a surface name its own start, e.g. a container that
+      // should take focus without drawing a ring on its first control.
       const target =
-        surface.querySelector<HTMLInputElement>("input") ?? focusable(surface)[0] ?? surface;
+        surface.querySelector<HTMLElement>("[autofocus]") ??
+        surface.querySelector<HTMLInputElement>("input") ??
+        focusable(surface)[0] ??
+        surface;
       if (target === surface) surface.setAttribute("tabindex", "-1");
       target.focus({ preventScroll: true });
     },
