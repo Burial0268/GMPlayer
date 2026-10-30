@@ -1,6 +1,13 @@
 <template>
-  <n-modal v-model:show="show" :z-index="2200" :auto-focus="false" @after-leave="clearImage">
-    <div :class="['lyric-share', { expand }]" :style="panelStyle">
+  <!-- `show`, not `if`: rebuilding the panel per open re-decoded the blurred cover mid-animation. -->
+  <n-modal
+    v-model:show="show"
+    display-directive="show"
+    :z-index="2200"
+    :auto-focus="false"
+    @after-leave="clearImage"
+  >
+    <div ref="panel" :class="['lyric-share', { expand }]" :style="panelStyle">
       <img class="backdrop" :src="cover" alt="" aria-hidden="true" />
       <header class="head">
         <img class="cover" :src="cover" alt="" />
@@ -131,10 +138,11 @@ const canCopyImage = !isMobileApp && typeof ClipboardItem !== "undefined";
 const show = ref(false);
 const lines = shallowRef<LyricShareLine[]>([]);
 const range = ref<[number, number]>([0, 0]);
+const panel = useTemplateRef<HTMLElement>("panel");
 const list = useTemplateRef<HTMLElement>("list");
-// Phones: the sheet grows out of the pressed line, clipped from `from`.
+// Phones: the list grows out of the pressed line, which sits at `originY` in it.
 const expand = ref(false);
-const from = ref("");
+const originY = ref(0);
 const rendering = ref(false);
 const imageUrl = ref("");
 let imageBlob: Blob | null = null;
@@ -154,16 +162,18 @@ function open(amllLines: AMLLLine[], lineIndex: number, origin: DOMRect) {
   range.value = [index, index];
   clearImage();
   expand.value = window.matchMedia("(max-width: 768px)").matches;
-  from.value = `inset(${origin.top}px ${innerWidth - origin.right}px ${innerHeight - origin.bottom}px ${origin.left}px round 14px)`;
   show.value = true;
   // The one layout read here is the layout the opening frame needs anyway, and
   // the scroll that follows does not invalidate it.
   nextTick(() => {
-    const anchor = list.value?.children[index];
+    const anchor = list.value?.children[index] as HTMLElement | undefined;
     if (!anchor) return;
-    // Keep the line where the finger is, so the sheet visibly grows around it.
-    if (expand.value) list.value!.scrollTop += anchor.getBoundingClientRect().top - origin.top;
-    else anchor.scrollIntoView({ block: "center" });
+    if (!expand.value) return anchor.scrollIntoView({ block: "center" });
+    // Keep the line where the finger is, so the list visibly grows around it.
+    // Offsets, not rects: the list is already under its scaled enter state.
+    const listTop = panel.value!.getBoundingClientRect().top + list.value!.offsetTop;
+    list.value!.scrollTop = listTop + anchor.offsetTop - origin.top;
+    originY.value = origin.top + origin.height / 2 - listTop;
   });
 }
 
@@ -191,7 +201,7 @@ function toggle(index: number) {
 // Cached so a tap's re-render does not redo three OKLab conversions; the lines
 // themselves are skipped by `v-memo` unless their selection flipped.
 const panelStyle = computed(() => ({
-  "--share-from": from.value,
+  "--share-origin-y": `${originY.value}px`,
   "--share-brightness": BACKDROP_BRIGHTNESS,
   "--share-tone": shareTone(site.songPicColor),
   "--share-veil": `linear-gradient(${shareTone(site.songPicColor, VEIL[0])}, ${shareTone(site.songPicColor, VEIL[1])})`,
@@ -199,7 +209,8 @@ const panelStyle = computed(() => ({
 }));
 const isSelected = (index: number) => index >= range.value[0] && index <= range.value[1];
 const song = computed(() => music.getPlaySongData);
-const cover = computed(() => coverUrl(song.value?.album?.picUrl, 256));
+// PlayerCover's size, so the panel opens on an image that is already decoded.
+const cover = computed(() => coverUrl(song.value?.album?.picUrl, 1024));
 const artists = computed(() => (song.value?.artist ?? []).map((a) => a.name).join(" / "));
 const fileName = computed(() => [song.value?.name, artists.value].filter(Boolean).join(" - "));
 const selected = computed(() => lines.value.slice(range.value[0], range.value[1] + 1));
@@ -300,6 +311,7 @@ defineExpose({ open });
   height: min(720px, calc(100vh - 64px));
   overflow: hidden;
   border-radius: 24px;
+  box-sizing: border-box;
   color: #fff;
   background-color: var(--share-tone);
   box-shadow: 0 24px 64px rgb(0 0 0 / 0.35);
@@ -517,32 +529,53 @@ defineExpose({ open });
     }
   }
 
-  // Replaces n-modal's scale-in, whose classes land on this element.
+  // Replaces n-modal's scale-in, whose classes land on this element. Only
+  // opacity and transform move, so no frame re-rasters the blurred cover.
+  // The children's transitions are permanent rather than tied to the
+  // enter-active class, which Vue drops once this element's shorter fade ends.
   &.expand {
+    .head,
+    .lines,
+    .foot {
+      transition:
+        transform 0.45s cubic-bezier(0.32, 0.72, 0, 1),
+        opacity 0.3s ease-out;
+    }
+
+    .lines {
+      transform-origin: 50% var(--share-origin-y);
+    }
+
     &.fade-in-scale-up-transition-enter-active {
-      transition: clip-path 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+      transition: opacity 0.25s ease-out;
     }
 
     &.fade-in-scale-up-transition-leave-active {
-      transition:
-        clip-path 0.3s cubic-bezier(0.4, 0, 1, 1),
-        opacity 0.3s cubic-bezier(0.4, 0, 1, 1);
+      transition: opacity 0.2s ease-in;
     }
 
     &.fade-in-scale-up-transition-enter-from,
     &.fade-in-scale-up-transition-leave-to {
       transform: none;
-      clip-path: var(--share-from);
-    }
 
-    &.fade-in-scale-up-transition-enter-from {
-      opacity: 1;
+      .head {
+        opacity: 0;
+        transform: translateY(-24px);
+      }
+
+      .foot {
+        opacity: 0;
+        transform: translateY(24px);
+      }
+
+      .lines {
+        transform: scale(0.92);
+      }
     }
 
     &.fade-in-scale-up-transition-enter-to,
     &.fade-in-scale-up-transition-leave-from {
       transform: none;
-      clip-path: inset(0 round 0);
     }
   }
 }
