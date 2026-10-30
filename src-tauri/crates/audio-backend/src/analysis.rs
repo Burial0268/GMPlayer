@@ -32,11 +32,12 @@ use std::time::{Duration, Instant};
 
 use audio_analysis::{FftConfig, FftProcessor};
 use tokio::sync::mpsc as tokio_mpsc;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 
 const FFT_SIZE: usize = 2048;
+/// Poll interval while a frame is due but not enough audio has arrived yet.
 const TICK: Duration = Duration::from_millis(8);
 const FFT_HOP: Duration = Duration::from_millis(16);
 /// The full 2048-bin frame is only for the spectrum bars; at `FFT_HOP` it would
@@ -56,9 +57,6 @@ const LOW_BIN_COUNT: usize = 2;
 /// A playing stream produces a frame every `FFT_HOP`; a gap this long means the
 /// decoder or the playback queues stalled, which shows up as a dead background.
 const FRAME_GAP_WARN: Duration = Duration::from_millis(300);
-/// How often the observed lead range is logged; it is what the visuals are
-/// held back by, and the one number that says whether they can line up.
-const LEAD_LOG_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Reliable controls from the player and decoder threads.
 pub enum AnalysisCommand {
@@ -83,8 +81,9 @@ pub struct AnalysisPcm {
     pub samples: Vec<f32>,
     pub channels: u16,
     pub sample_rate: u32,
-    /// Time until the end of this block is audible (queued audio ahead of it).
-    pub lead: Duration,
+    /// When the end of this block is audible. Stamped by the producer, so the
+    /// moment analysis picks the block up does not shift it.
+    pub audible_at: Instant,
     pub recycle: Option<mpsc::Sender<Vec<f32>>>,
 }
 
@@ -97,11 +96,11 @@ struct DelayQueue {
 }
 
 impl DelayQueue {
-    fn push(&mut self, now: Instant, pcm: AnalysisPcm) {
+    fn push(&mut self, pcm: AnalysisPcm) {
         let at = self
             .blocks
             .back()
-            .map_or(now + pcm.lead, |(last, _)| (*last).max(now + pcm.lead));
+            .map_or(pcm.audible_at, |(last, _)| (*last).max(pcm.audible_at));
         self.blocks.push_back((at, pcm));
     }
 
@@ -204,11 +203,11 @@ fn analysis_loop(
             return;
         }
 
-        // Sleep on the reliable control channel rather than polling every
-        // millisecond. A control wakes the thread immediately; PCM remains
-        // best-effort and is picked up on the next analysis tick.
+        // Sleep on the reliable control channel until the next frame is due. A
+        // control wakes the thread immediately; PCM is best-effort and carries
+        // its own due time, so picking it up late costs nothing.
         let command = if state.enabled {
-            control_rx.recv_timeout(TICK)
+            control_rx.recv_timeout(state.wake_in(Instant::now()))
         } else {
             // Re-enabling and shutdown both arrive on this channel. No timer
             // can make disabled analysis useful, so it needs no periodic wake.
@@ -240,8 +239,6 @@ struct Analysis {
     next_fft: Instant,
     next_fft_data: Instant,
     last_frame: Option<Instant>,
-    /// Min and max lead seen since the instant, for `LEAD_LOG_INTERVAL`.
-    lead_range: Option<(Duration, Duration, Instant)>,
     evt: EventSink,
 }
 
@@ -263,7 +260,6 @@ impl Analysis {
             next_fft: Instant::now(),
             next_fft_data: Instant::now(),
             last_frame: None,
-            lead_range: None,
             evt,
         }
     }
@@ -314,8 +310,7 @@ impl Analysis {
                 break;
             };
             if self.enabled {
-                self.note_lead(pcm.lead, now);
-                self.delayed.push(now, pcm);
+                self.delayed.push(pcm);
             } else {
                 recycle(pcm);
             }
@@ -380,13 +375,12 @@ impl Analysis {
             .is_ok()
     }
 
-    fn note_lead(&mut self, lead: Duration, now: Instant) {
-        let (min, max, since) = self.lead_range.get_or_insert((lead, lead, now));
-        *min = (*min).min(lead);
-        *max = (*max).max(lead);
-        if now.duration_since(*since) >= LEAD_LOG_INTERVAL {
-            info!("低频分析 lead {}–{} ms", min.as_millis(), max.as_millis());
-            self.lead_range = None;
+    /// Until the next frame slot; a slot already passed is waiting on audio
+    /// (start, seek) and is polled at `TICK` rather than spun on.
+    fn wake_in(&self, now: Instant) -> Duration {
+        match self.next_fft.saturating_duration_since(now) {
+            Duration::ZERO => TICK,
+            wait => wait,
         }
     }
 
@@ -432,7 +426,7 @@ mod tests {
             samples: vec![value; 16],
             channels: 2,
             sample_rate: 48_000,
-            lead: Duration::ZERO,
+            audible_at: Instant::now(),
             recycle: None,
         }
     }
@@ -512,7 +506,7 @@ mod tests {
                 samples: vec![0.5; FFT_SIZE * 2],
                 channels: 1,
                 sample_rate: 48_000,
-                lead: Duration::ZERO,
+                audible_at: Instant::now(),
                 recycle: None,
             })
             .is_ok());
@@ -550,14 +544,11 @@ mod tests {
         let t0 = Instant::now();
         let at = |ms: u64| t0 + Duration::from_millis(ms);
         let mut queue = DelayQueue::default();
-        for lead in [100, 300, 500] {
-            queue.push(
-                t0,
-                AnalysisPcm {
-                    lead: Duration::from_millis(lead),
-                    ..pcm(0.0)
-                },
-            );
+        for ms in [100, 300, 500] {
+            queue.push(AnalysisPcm {
+                audible_at: at(ms),
+                ..pcm(0.0)
+            });
         }
         // Analysis off and on again at 350 ms: only the played block goes.
         assert_eq!(queue.take_past(at(350)).len(), 2);
@@ -568,25 +559,36 @@ mod tests {
     fn blocks_wait_out_their_lead_and_pausing_stops_the_clock() {
         let t0 = Instant::now();
         let at = |ms: u64| t0 + Duration::from_millis(ms);
-        let led = |ms: u64| AnalysisPcm {
-            lead: Duration::from_millis(ms),
+        let due = |ms: u64| AnalysisPcm {
+            audible_at: at(ms),
             ..pcm(0.0)
         };
         let mut queue = DelayQueue::default();
-        queue.push(t0, led(200));
+        queue.push(due(200));
         // A shallower queue later must not overtake the block ahead of it.
-        queue.push(at(10), led(50));
+        queue.push(due(60));
         assert!(queue.pop_due(at(199)).is_none());
         assert!(queue.pop_due(at(200)).is_some());
         assert!(queue.pop_due(at(200)).is_some());
 
-        queue.push(t0, led(100));
+        queue.push(due(100));
         queue.set_paused(true, at(40));
         assert!(queue.pop_due(at(500)).is_none());
         queue.set_paused(false, at(540));
         // 500 ms paused: the block due at 100 ms is now due at 600 ms.
         assert!(queue.pop_due(at(599)).is_none());
         assert!(queue.pop_due(at(600)).is_some());
+    }
+
+    #[test]
+    fn sleeps_until_the_next_frame_and_polls_once_it_is_overdue() {
+        let (evt, _rx) = tokio_mpsc::unbounded_channel();
+        let mut state = Analysis::new(evt);
+        let now = Instant::now();
+        state.next_fft = now + Duration::from_millis(5);
+        assert_eq!(state.wake_in(now), Duration::from_millis(5));
+        state.next_fft = now;
+        assert_eq!(state.wake_in(now), TICK);
     }
 
     #[test]
