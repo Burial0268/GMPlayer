@@ -52,12 +52,24 @@ const GROUP_GAP = 44;
 const SECTION_GAP = 96;
 const COVER = 120;
 const LOGO = 40;
+/** The card's layout in its own 1080-wide units, for a live card that scales it to fit. */
+export const CARD_METRICS = {
+  width: WIDTH,
+  pad: PAD,
+  main: MAIN_SIZE,
+  sub: SUB_SIZE,
+  gap: GROUP_GAP,
+  cover: COVER,
+  logo: LOGO,
+};
 /** Veil opacity at the top and bottom edge of the card. */
 const VEIL = [0.62, 0.8] as const;
 // With the 0.3 lightness cap, a white cover still leaves white text at 6.6:1.
 const BACKDROP_BRIGHTNESS = 0.4;
 /** Black over the fluid still, top to bottom edge. */
 const STILL_SHADE = [0.12, 0.4] as const;
+// Lyrics and title sit a touch under pure white, as the player draws them.
+const TEXT = "rgb(255 255 255 / 0.9)";
 
 const loadImage = (src: string): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
@@ -112,6 +124,46 @@ function roundRectPath(
   ctx.roundRect(x, y, size, size, r);
 }
 
+function paintBackground(
+  ctx: CanvasRenderingContext2D,
+  input: LyricCardInput,
+  cover: HTMLImageElement | null,
+  height: number,
+  scale: number,
+) {
+  // Background: the darkened tone underneath, so the blurred cover's soft
+  // edges fade into it, then a veil of the same tone over the cover. A black
+  // veil would grey a pale cover out; the tone keeps its hue.
+  ctx.fillStyle = shareTone(input.themeRgb);
+  ctx.fillRect(0, 0, WIDTH, height);
+  if (input.backdrop) {
+    // The player's own background, as it looked: the player sets its white
+    // lyrics straight on it, so it gets only a light shade for the footer
+    // rather than the cover's darkening. Cover-fit; the mesh is soft enough to
+    // scale up from render size.
+    const { width: w, height: h } = input.backdrop;
+    const fit = Math.max(WIDTH / w, height / h);
+    ctx.drawImage(input.backdrop, (WIDTH - w * fit) / 2, (height - h * fit) / 2, w * fit, h * fit);
+    const shade = ctx.createLinearGradient(0, 0, 0, height);
+    shade.addColorStop(0, `rgb(0 0 0 / ${STILL_SHADE[0]})`);
+    shade.addColorStop(1, `rgb(0 0 0 / ${STILL_SHADE[1]})`);
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, 0, WIDTH, height);
+  } else {
+    if (cover) {
+      const side = Math.max(WIDTH, height) * 1.3;
+      ctx.filter = `blur(${72 * scale}px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
+      ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);
+      ctx.filter = "none";
+    }
+    const veil = ctx.createLinearGradient(0, 0, 0, height);
+    veil.addColorStop(0, shareTone(input.themeRgb, VEIL[0]));
+    veil.addColorStop(1, shareTone(input.themeRgb, VEIL[1]));
+    ctx.fillStyle = veil;
+    ctx.fillRect(0, 0, WIDTH, height);
+  }
+}
+
 function draw(
   input: LyricCardInput,
   cover: HTMLImageElement | null,
@@ -143,43 +195,7 @@ function draw(
   canvas.height = Math.round(height * scale);
   ctx.scale(scale, scale);
 
-  // Background: the darkened tone underneath, so the blurred cover's soft
-  // edges fade into it, then a veil of the same tone over the cover. A black
-  // veil would grey a pale cover out; the tone keeps its hue.
-  ctx.fillStyle = shareTone(input.themeRgb);
-  ctx.fillRect(0, 0, WIDTH, height);
-  if (input.backdrop) {
-    // The player's own background, as it looked: the player sets its white
-    // lyrics straight on it, so it gets only a light shade for the footer
-    // rather than the cover's darkening. Cover-fit; the mesh is soft enough to
-    // scale up from render size.
-    const { width: w, height: h } = input.backdrop;
-    const scale = Math.max(WIDTH / w, height / h);
-    ctx.drawImage(
-      input.backdrop,
-      (WIDTH - w * scale) / 2,
-      (height - h * scale) / 2,
-      w * scale,
-      h * scale,
-    );
-    const shade = ctx.createLinearGradient(0, 0, 0, height);
-    shade.addColorStop(0, `rgb(0 0 0 / ${STILL_SHADE[0]})`);
-    shade.addColorStop(1, `rgb(0 0 0 / ${STILL_SHADE[1]})`);
-    ctx.fillStyle = shade;
-    ctx.fillRect(0, 0, WIDTH, height);
-  } else {
-    if (cover) {
-      const side = Math.max(WIDTH, height) * 1.3;
-      ctx.filter = `blur(${72 * scale}px) saturate(1.3) brightness(${BACKDROP_BRIGHTNESS})`;
-      ctx.drawImage(cover, (WIDTH - side) / 2, (height - side) / 2, side, side);
-      ctx.filter = "none";
-    }
-    const veil = ctx.createLinearGradient(0, 0, 0, height);
-    veil.addColorStop(0, shareTone(input.themeRgb, VEIL[0]));
-    veil.addColorStop(1, shareTone(input.themeRgb, VEIL[1]));
-    ctx.fillStyle = veil;
-    ctx.fillRect(0, 0, WIDTH, height);
-  }
+  paintBackground(ctx, input, cover, height, scale);
 
   // Lyrics, centred in whatever room the footer leaves.
   const footerTop = height - PAD - COVER;
@@ -187,7 +203,7 @@ function draw(
   ctx.textBaseline = "top";
   groups.forEach((group, i) => {
     if (i > 0) y += GROUP_GAP;
-    ctx.fillStyle = "#fff";
+    ctx.fillStyle = TEXT;
     ctx.font = font(800, MAIN_SIZE);
     for (const row of group.main) {
       ctx.fillText(row, PAD, y + (mainLH - MAIN_SIZE) / 2);
@@ -231,7 +247,7 @@ function draw(
   }
   const metaX = cover ? PAD + COVER + 28 : PAD;
   const metaWidth = brandX - 40 - metaX;
-  ctx.fillStyle = "#fff";
+  ctx.fillStyle = TEXT;
   ctx.font = font(700, 38);
   ctx.fillText(ellipsize(ctx, input.title, metaWidth), metaX, midY - 24);
   ctx.fillStyle = "rgb(255 255 255 / 0.7)";
@@ -271,6 +287,25 @@ export const drawLyricCard = (
   canvas?: HTMLCanvasElement,
   scale?: number,
 ) => draw(input, assets.cover, assets.logo, canvas, scale);
+
+/**
+ * Only the card's background, for a live card laid out in the DOM: `aspect` is
+ * its height over its width, `scale` its canvas pixels per 1080-wide unit.
+ */
+export function drawCardBackdrop(
+  input: LyricCardInput,
+  assets: CardAssets,
+  canvas: HTMLCanvasElement,
+  aspect: number,
+  scale: number,
+) {
+  const height = WIDTH * aspect;
+  canvas.width = Math.round(WIDTH * scale);
+  canvas.height = Math.round(height * scale);
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(scale, scale);
+  paintBackground(ctx, input, assets.cover, height, scale);
+}
 
 /** The PNG of a drawn card. */
 export async function encodeLyricCard(

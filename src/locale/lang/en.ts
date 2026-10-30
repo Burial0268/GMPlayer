@@ -420,12 +420,10 @@ const messages: Record<string, unknown> = {
     },
     share: {
       title: "Share lyrics",
-      selected: "{count}/{max} lines selected",
       limit: "Select up to {max} consecutive lines",
       copy: "Copy",
       share: "Share",
       image: "Make image",
-      back: "Back",
       copyImage: "Copy image",
       saveImage: "Save image",
       saved: "Image saved",

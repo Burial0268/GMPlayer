@@ -10,7 +10,7 @@
     >
       <div
         v-if="visible"
-        :class="['lyric-share', { desktop: !isMobile, aligning }]"
+        :class="['lyric-share', `phase-${phase}`, { desktop: !isMobile, aligning }]"
         data-navigation-layer="share-player"
         role="dialog"
         aria-modal="true"
@@ -18,20 +18,11 @@
         :style="layerStyle"
         @contextmenu.prevent
       >
+        <!-- On a phone the column is a card of its own, laid out as the image is:
+             lines are picked where they will be shared. -->
         <div class="column">
-          <header v-if="isMobile" class="head">
-            <img class="cover" :src="cover" alt="" />
-            <div class="meta">
-              <div class="title">{{ song?.name }}</div>
-              <div class="artist">{{ artists }}</div>
-            </div>
-            <n-button quaternary circle :aria-label="t('general.dialog.cancel')" @click="close">
-              <template #icon><Close /></template>
-            </n-button>
-          </header>
-
+          <canvas v-if="isMobile" ref="backdrop" :class="['backdrop', { shown: backdropShown }]" />
           <div
-            v-if="!isMobile || !imageUrl"
             ref="list"
             class="lines"
             role="group"
@@ -53,7 +44,7 @@
                 <div
                   :key="row.key"
                   :ref="(el) => (lineEls[row.key] = el as HTMLElement)"
-                  v-memo="[row.line, isSelected(row.key), row.key === originIndex]"
+                  v-memo="[row.line, isSelected(row.key), row.key === originIndex, isMobile]"
                   :class="[
                     'line',
                     { selected: isSelected(row.key), origin: row.key === originIndex },
@@ -64,8 +55,10 @@
                   @click="toggle(row.key)"
                   @keydown.enter.space.prevent="toggle(row.key)"
                 >
-                  <!-- AMLL's units and its breaks between them (`lyricLineBreak`). -->
-                  <div class="text">
+                  <!-- The card wraps as the image does; desktop keeps AMLL's units and
+                       its breaks between them (`lyricLineBreak`). -->
+                  <div v-if="isMobile" class="text">{{ row.line.text }}</div>
+                  <div v-else class="text">
                     <template v-for="(units, r) in rowsOf(row)" :key="r">
                       <br v-if="r" />
                       <template v-for="(unit, u) in units" :key="u">
@@ -79,60 +72,40 @@
               </template>
             </n-virtual-list>
           </div>
-          <div v-else class="preview">
-            <img :src="imageUrl" alt="" />
+          <!-- The image's footer: artwork, title and artist, the app mark. -->
+          <div v-if="isMobile" class="meta">
+            <img class="cover" :src="cover" alt="" />
+            <div class="text">
+              <div class="title">{{ song?.name }}</div>
+              <div class="artist">{{ artists }}</div>
+            </div>
+            <div class="brand">
+              <img src="/images/logo/favicon.png" alt="" />
+              GMPlayer
+            </div>
           </div>
-
-          <footer v-if="isMobile" class="foot">
-            <template v-if="!imageUrl">
-              <span class="count">
-                {{ t("player.share.selected", { count: selected.length, max: MAX_LINES }) }}
-              </span>
-              <div class="actions">
-                <n-button round secondary :disabled="!range" @click="copyText">
-                  <template #icon><Copy /></template>
-                  {{ t("player.share.copy") }}
-                </n-button>
-                <n-button v-if="canShareText" round secondary :disabled="!range" @click="shareText">
-                  <template #icon><ShareTwo /></template>
-                  {{ t("player.share.share") }}
-                </n-button>
-                <n-button
-                  round
-                  color="#fff"
-                  text-color="#111"
-                  :loading="rendering"
-                  :disabled="!range"
-                  @click="makeImage"
-                >
-                  <template #icon><Pic /></template>
-                  {{ t("player.share.image") }}
-                </n-button>
-              </div>
-            </template>
-            <template v-else>
-              <n-button round secondary @click="clearImage">
-                <template #icon><Left /></template>
-                {{ t("player.share.back") }}
-              </n-button>
-              <div class="actions">
-                <n-button
-                  v-for="action in imageActions"
-                  :key="action.key"
-                  round
-                  v-bind="action.primary ? PRIMARY : SECONDARY"
-                  :tag="action.href ? 'a' : 'button'"
-                  :href="action.href"
-                  :download="action.download"
-                  @click="action.run?.()"
-                >
-                  <template #icon><component :is="action.icon" /></template>
-                  {{ action.label }}
-                </n-button>
-              </div>
-            </template>
-          </footer>
         </div>
+
+        <footer v-if="isMobile" class="foot">
+          <n-button round secondary :disabled="!range" @click="copyText">
+            <template #icon><Copy /></template>
+            {{ t("player.share.copy") }}
+          </n-button>
+          <n-button
+            v-for="action in imageActions"
+            :key="action.key"
+            round
+            v-bind="action.primary ? PRIMARY : SECONDARY"
+            :disabled="action.disabled"
+            :tag="action.href ? 'a' : 'button'"
+            :href="action.href"
+            :download="action.download"
+            @click="action.run?.()"
+          >
+            <template #icon><component :is="action.icon" /></template>
+            {{ action.label }}
+          </n-button>
+        </footer>
 
         <!-- Desktop has the room to show the card as it will be shared, so there
              is no separate preview step. -->
@@ -164,8 +137,26 @@
             </n-button>
           </div>
         </aside>
+        <!-- The pressed line as AMLL lifted it, flying into its place in the card. -->
+        <div
+          v-if="isMobile && phase !== 'done' && originRow"
+          ref="ghost"
+          class="ghost"
+          :style="{ transform: liftTransform }"
+        >
+          <div class="text">
+            <template v-for="(units, r) in rowsOf(originRow)" :key="r">
+              <br v-if="r" />
+              <template v-for="(unit, u) in units" :key="u">
+                <template v-if="plainText || unit.isSpace">{{ unit.text }}</template>
+                <span v-else>{{ unit.text }}</span>
+              </template>
+            </template>
+          </div>
+          <div v-for="(sub, i) in originRow.line.subs" :key="i" class="sub">{{ sub }}</div>
+        </div>
+
         <n-button
-          v-if="!isMobile"
           class="dismiss"
           quaternary
           circle
@@ -181,9 +172,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, useTemplateRef, watch, type Component } from "vue";
+import { computed, nextTick, ref, shallowRef, useTemplateRef, watch, type Component } from "vue";
+import { animateMini } from "motion-v";
 import type { GlobalThemeOverrides, NVirtualList } from "naive-ui";
-import { Close, Copy, Download, Left, Pic, ShareTwo } from "@icon-park/vue-next";
+import { Close, Copy, Download, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
@@ -194,11 +186,13 @@ import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { useLyricShare } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
+import { motionDuration } from "@/utils/navigation/motion";
 import {
+  CARD_METRICS,
+  drawCardBackdrop,
   drawLyricCard,
   encodeLyricCard,
   loadCardAssets,
-  renderLyricCard,
   type CardAssets,
   type LyricCardInput,
   type LyricShareLine,
@@ -210,6 +204,10 @@ const props = defineProps<{
 }>();
 
 const MAX_LINES = 5;
+// LyricPlayer's lift: scale and ease.
+const LIFT = 1.04;
+const LIFT_EASE = [0.32, 0.72, 0, 1] as const;
+const FLIGHT = 0.5;
 const PRIMARY = { color: "#fff", textColor: "#111" };
 const SECONDARY = { secondary: true };
 
@@ -234,7 +232,6 @@ const { request, clear } = useLyricShare();
 // The share commands are registered for mobile builds, the saver for desktop.
 const inTauri = isTauri();
 const isMobileApp = inTauri && isMobileDevice();
-const canShareText = isMobileApp || (!inTauri && typeof navigator.share === "function");
 const canShareImage = isMobileApp || (!inTauri && typeof navigator.canShare === "function");
 // Mobile WebViews have no image clipboard; the share sheet covers it there.
 const canCopyImage = !isMobileApp && typeof ClipboardItem !== "undefined";
@@ -252,9 +249,8 @@ const scroller = useTemplateRef<InstanceType<typeof NVirtualList>>("scroller");
 const lineEls: HTMLElement[] = [];
 // A consecutive run, or nothing: the pressed line can be let go of like any other.
 const range = ref<[number, number] | null>(null);
-const rendering = ref(false);
 const imageUrl = ref("");
-// The PNG of whatever card is showing; see `cardBlob`.
+// The PNG of the card as last drawn; see `cardBlob`.
 let imageBlob: Promise<Blob> | null = null;
 // Taken once per opening: every card drawn from it then shows the same frame.
 let still: Promise<HTMLCanvasElement | undefined> = Promise.resolve(undefined);
@@ -272,10 +268,13 @@ const lines = computed<LyricShareLine[]>(() =>
     subs: [line.translatedLyric, line.romanLyric].filter((s): s is string => Boolean(s?.trim())),
   })),
 );
+// The phone's card, in pixels per 1080-wide unit of the image; measured on opening.
+const cardUnit = ref(0);
 // vueuc renders `listHeight / itemSize + 1` rows from the window's start, so an
 // estimate above any real row leaves the window short: the shortest a line can
-// be, one text row (AMLL's 1.2 line height) plus its padding.
+// be, one text row (AMLL's 1.2 line height, the card's 1.25) plus its padding.
 const rowFloor = computed(() => {
+  if (isMobile.value) return cardUnit.value * (CARD_METRICS.main * 1.25 + CARD_METRICS.gap) || 24;
   const origin = request.value?.origin;
   if (!origin) return 48;
   const [top, , bottom = top] = origin.padding.split(" ").map(Number.parseFloat);
@@ -327,9 +326,11 @@ const originIndex = computed(() => {
   const pressed = request.value?.lineIndex ?? 0;
   return usable.value.reduce((found, { raw }, i) => (raw <= pressed ? i : found), 0);
 });
+const originRow = computed<LineRow | undefined>(() => rows.value[originIndex.value]);
 
-// The pressed line opens selected and placed exactly where it was pressed, so
-// the layer takes it over without it moving. AMLL puts a line anywhere
+// Desktop: the pressed line opens selected and placed exactly where it was
+// pressed, so the layer takes it over without it moving. Phone: it is placed a
+// third of the way down the card, and flies there from where it was pressed. AMLL puts a line anywhere
 // (centred at the end of a song, say), where a list would run out of content,
 // so the list gets the room above and below that this takes. Sized from the
 // estimate before the first scroll: vueuc picks its window from the last
@@ -342,17 +343,28 @@ const pad = ref<[number, number]>([0, 0]);
 // The pressed line stays hidden until it sits where it was pressed: AMLL's own,
 // still on screen under the layer, covers it meanwhile.
 const aligning = ref(false);
+// Phone only: lifted where it was pressed, flying into the card, landed.
+const phase = ref<"lift" | "fly" | "landing" | "done">("done");
+const ghost = useTemplateRef<HTMLElement>("ghost");
+const backdrop = useTemplateRef<HTMLCanvasElement>("backdrop");
+const backdropShown = ref(false);
 watch(
   visible,
   async (shown) => {
     if (!shown || !request.value || !list.value) return;
     range.value = [originIndex.value, originIndex.value];
     aligning.value = true;
+    phase.value = isMobile.value ? "lift" : "done";
     clearImage();
     still = props.captureStill();
     assets = undefined;
+    cardUnit.value = list.value.clientWidth / CARD_METRICS.width;
+    if (isMobile.value) paintBackdrop();
     const size = rowFloor.value;
-    const target = request.value.origin.rect.top - list.value.getBoundingClientRect().top;
+    const listTop = list.value.getBoundingClientRect().top;
+    const target = isMobile.value
+      ? list.value.clientHeight / 3
+      : request.value.origin.rect.top - listTop;
     const above = originIndex.value * size;
     const below = (lines.value.length - originIndex.value) * size;
     pad.value = [
@@ -361,7 +373,7 @@ watch(
     ];
     await nextTick();
     scroller.value?.scrollTo({ index: originIndex.value });
-    settle(SETTLE_FRAMES);
+    settle(listTop + target, SETTLE_FRAMES);
   },
   { flush: "post" },
 );
@@ -369,11 +381,12 @@ watch(
 // vueuc renders a new window on the scroll event and measures its rows a frame
 // later, which moves them; a long jump keeps measuring for a while. Re-aim each
 // frame until the line has held still for a few, within a bound.
-function settle(left: number, still = 0) {
+function settle(aim: number, left: number, still = 0) {
   requestAnimationFrame(() => {
     const container = scroller.value?.getScrollContainer();
     if (!visible.value || !request.value || !container) {
       aligning.value = false;
+      phase.value = "done";
       return;
     }
     const anchor = lineEls[originIndex.value];
@@ -383,13 +396,82 @@ function settle(left: number, still = 0) {
       // Still lifted while it settles: aim the resting box, which shares the lifted one's centre.
       const box = anchor.getBoundingClientRect();
       const top = box.top + (box.height - anchor.offsetHeight) / 2;
-      const delta = top - request.value.origin.rect.top;
+      const delta = top - aim;
       moved = Math.abs(delta) > 0.5;
       if (moved) scroller.value?.scrollTo({ top: container.scrollTop + delta });
     }
     const held = moved ? 0 : still + 1;
-    if (held < SETTLED_FRAMES && left > 1) settle(left - 1, held);
-    else aligning.value = false;
+    if (held < SETTLED_FRAMES && left > 1) settle(aim, left - 1, held);
+    else {
+      aligning.value = false;
+      if (phase.value === "lift") fly();
+    }
+  });
+}
+
+// The ghost starts as AMLL left the line, lifted about AMLL's transform origin
+// (expressed from its top-left corner, which the flight scales about), and ends
+// on the card's line at the card's type size; the two cross-fade on landing.
+const liftTransform = computed(() => {
+  const rect = request.value?.origin.rect;
+  if (!rect) return "none";
+  const pivotX = setting.lyricsPosition === "center" ? rect.width / 2 : 0;
+  return `translate(${pivotX * (1 - LIFT)}px, ${(rect.height / 2) * (1 - LIFT)}px) scale(${LIFT})`;
+});
+
+function fly() {
+  const el = ghost.value;
+  const anchor = lineEls[originIndex.value];
+  const origin = request.value?.origin;
+  if (!el || !anchor || !origin) {
+    phase.value = "done";
+    return;
+  }
+  const [padTop, , , padLeft] = origin.padding.split(" ").map(Number.parseFloat);
+  const style = getComputedStyle(anchor);
+  const box = anchor.getBoundingClientRect();
+  const scale = Number.parseFloat(style.fontSize) / origin.fontSize;
+  const x = box.left + Number.parseFloat(style.paddingLeft) - origin.rect.left - padLeft * scale;
+  const y = box.top + Number.parseFloat(style.paddingTop) - origin.rect.top - padTop * scale;
+  const duration = motionDuration(FLIGHT);
+  phase.value = "fly";
+  const move = animateMini(
+    el,
+    { transform: [liftTransform.value, `translate(${x}px, ${y}px) scale(${scale})`] },
+    { duration, ease: LIFT_EASE },
+  );
+  const fade = animateMini(
+    el,
+    { opacity: [1, 0] },
+    { duration: duration * 0.4, delay: duration * 0.6 },
+  );
+  // The card's own line fades in as the ghost fades out.
+  window.setTimeout(() => {
+    if (phase.value === "fly") phase.value = "landing";
+  }, duration * 600);
+  void Promise.all([move, fade]).then(() => {
+    if (phase.value === "landing") phase.value = "done";
+  });
+}
+
+// The card's background is the image's, painted once per opening.
+function paintBackdrop() {
+  backdropShown.value = false;
+  run(async () => {
+    const input = cardInput(await still);
+    assets ??= loadCardAssets(input);
+    const loaded = await assets;
+    const canvas = backdrop.value;
+    if (!canvas || !visible.value) return;
+    const { clientWidth: w, clientHeight: h } = canvas;
+    drawCardBackdrop(
+      input,
+      loaded,
+      canvas,
+      h / w,
+      (w * window.devicePixelRatio) / CARD_METRICS.width,
+    );
+    backdropShown.value = true;
   });
 }
 
@@ -416,7 +498,8 @@ function leave() {
   drawRun++;
   clearTimeout(linkTimer);
   front.value = -1;
-  drawn = undefined;
+  drawn.value = undefined;
+  phase.value = "done";
   clear();
   clearImage();
 }
@@ -448,14 +531,17 @@ function toggle(index: number) {
 }
 
 // The list takes AMLL's column and type, so the pressed line lines up with
-// the one it replaces.
+// the one it replaces; the phone's card takes the image's layout instead.
 const layerStyle = computed(() => {
   const origin = request.value?.origin;
   return {
     "--share-left": `${origin?.rect.left ?? 0}px`,
+    "--share-top": `${origin?.rect.top ?? 0}px`,
     "--share-width": `${origin?.rect.width ?? 0}px`,
     "--share-font-size": `${origin?.fontSize ?? 24}px`,
     "--share-padding": origin?.padding ?? "0px",
+    "--card-unit": `${cardUnit.value}px`,
+    ...Object.fromEntries(Object.entries(CARD_METRICS).map(([k, v]) => [`--card-${k}`, v])),
     "--share-font": setting.lyricFont,
     "--share-weight": setting.lyricFontWeight,
     "--share-spacing": setting.lyricLetterSpacing,
@@ -477,39 +563,43 @@ const lyricText = computed(() =>
 );
 
 // Desktop draws the card straight into the preview as the selection changes,
-// at the size it is shown: the full 1080-wide card is rasterised and encoded
-// only when an action needs the PNG. A draw the selection has outrun is dropped.
+// at the size it is shown; a phone's card is the live list itself. The full
+// 1080-wide card is rasterised and encoded only when an action needs the PNG.
+// A draw the selection has outrun is dropped.
 const PREVIEW_WIDTH = 420;
 const LINK_DELAY = 400;
 const cardA = useTemplateRef<HTMLCanvasElement>("cardA");
 const cardB = useTemplateRef<HTMLCanvasElement>("cardB");
 const front = ref(-1);
 let assets: Promise<CardAssets> | undefined;
-let drawn: { input: LyricCardInput; assets: CardAssets } | undefined;
+const drawn = shallowRef<{ input: LyricCardInput; assets: CardAssets }>();
 let drawRun = 0;
 let linkTimer = 0;
 watch([visible, selected, isMobile], ([shown, chosen, mobile]) => {
-  if (!shown || mobile) return;
+  if (!shown) return;
   const current = ++drawRun;
   if (!chosen.length) {
     // Nothing selected: nothing to preview or share.
     clearTimeout(linkTimer);
     clearImage();
     front.value = -1;
-    drawn = undefined;
+    drawn.value = undefined;
     return;
   }
   run(async () => {
     const input = cardInput(await still);
     assets ??= loadCardAssets(input);
     const loaded = await assets;
-    const target = front.value === 0 ? cardB.value : cardA.value;
-    if (current !== drawRun || !target) return;
-    const scale = Math.min(1, (PREVIEW_WIDTH * window.devicePixelRatio) / 1080);
-    drawLyricCard(input, loaded, target, scale);
-    front.value = target === cardA.value ? 0 : 1;
+    if (current !== drawRun) return;
+    if (!mobile) {
+      const target = front.value === 0 ? cardB.value : cardA.value;
+      if (!target) return;
+      const scale = Math.min(1, (PREVIEW_WIDTH * window.devicePixelRatio) / 1080);
+      drawLyricCard(input, loaded, target, scale);
+      front.value = target === cardA.value ? 0 : 1;
+    }
     clearImage();
-    drawn = { input, assets: loaded };
+    drawn.value = { input, assets: loaded };
     // The browser saves through a link, which needs its URL before the click;
     // made once the selection settles, not per tap.
     if (inTauri) return;
@@ -526,10 +616,10 @@ watch([visible, selected, isMobile], ([shown, chosen, mobile]) => {
   });
 });
 
-/** The PNG being shared: the phone's generated image, or desktop's last draw at full size. */
+/** The PNG being shared: the last draw, at full size. */
 function cardBlob(): Promise<Blob> {
-  if (!imageBlob && drawn) {
-    const { input, assets: loaded } = drawn;
+  if (!imageBlob && drawn.value) {
+    const { input, assets: loaded } = drawn.value;
     imageBlob = encodeLyricCard(drawLyricCard(input, loaded), input, loaded);
   }
   return imageBlob!;
@@ -550,13 +640,6 @@ const copyText = () =>
     window.$message.success(t("general.message.copySuccess"));
   });
 
-const shareText = () =>
-  run(async () => {
-    const text = `${lyricText.value}\n\n—— ${fileName.value}`;
-    if (isMobileApp) await getTauri()!.core.invoke("share_text", { text });
-    else await navigator.share({ text }).catch(ignoreAbort);
-  });
-
 const cardInput = (backdrop?: HTMLCanvasElement): LyricCardInput => ({
   lines: selected.value,
   title: song.value?.name ?? "",
@@ -568,19 +651,6 @@ const cardInput = (backdrop?: HTMLCanvasElement): LyricCardInput => ({
   brand: "GMPlayer",
   logoSrc: "/images/logo/favicon.png",
 });
-
-const makeImage = () =>
-  run(async () => {
-    rendering.value = true;
-    try {
-      const blob = await renderLyricCard(cardInput(await still));
-      clearImage();
-      imageBlob = Promise.resolve(blob);
-      imageUrl.value = URL.createObjectURL(blob);
-    } finally {
-      rendering.value = false;
-    }
-  });
 
 function clearImage() {
   if (imageUrl.value) URL.revokeObjectURL(imageUrl.value);
@@ -636,8 +706,8 @@ interface ImageAction {
 }
 const imageActions = computed(() => {
   const save = t("player.share.saveImage");
-  // Desktop: nothing to act on before the first draw, nor to link before its encode.
-  const disabled = front.value < 0;
+  // Nothing to act on before the first draw, nor to link before its encode.
+  const disabled = !drawn.value;
   const actions: ImageAction[] = [];
   if (canCopyImage) {
     actions.push({
@@ -750,85 +820,11 @@ function ignoreAbort(error: unknown) {
   }
 }
 
-// AMLL's column: the list stays where the lyrics were. Not env(): the Android
-// WebView reports only the cutout there, never the system bars.
-.column {
-  position: absolute;
-  top: var(--app-safe-area-top, 0px);
-  bottom: var(--app-safe-area-bottom, 0px);
-  left: var(--share-left);
-  width: var(--share-width);
-  display: flex;
-  flex-direction: column;
-}
-
-.head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 20px 4px 12px 12px;
-
-  .cover {
-    width: 48px;
-    height: 48px;
-    border-radius: 8px;
-    object-fit: cover;
-    box-shadow: 0 4px 12px rgb(0 0 0 / 0.25);
-  }
-
-  .meta {
-    flex: 1;
-    min-width: 0;
-
-    .title,
-    .artist {
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-
-    .title {
-      font-size: 16px;
-      font-weight: 700;
-    }
-
-    .artist {
-      font-size: 13px;
-      opacity: 0.7;
-    }
-  }
-}
-
-.lines {
-  flex: 1;
-  min-height: 0;
-  // Focused on open only as the dialog's start; its lines carry the rings.
-  outline: none;
-  font-family: var(--share-font);
-  font-weight: var(--share-weight);
-  letter-spacing: var(--share-spacing);
-  text-align: var(--share-align);
-
-  .virtual {
-    height: 100%;
-  }
-}
-
-// AMLL's line box and type (`lyricMainLine` 1em / 1.2, `lyricSubLine` 0.5em / 1.5),
-// and its word layout below.
-.line {
+// AMLL's type (`lyricMainLine` 1em / 1.2, `lyricSubLine` 0.5em / 1.5), and its
+// word layout: the desktop list and the line flying into the phone's card.
+@mixin amll-type {
   padding: var(--share-padding);
   font-size: var(--share-font-size);
-  border-radius: 12px;
-  cursor: pointer;
-  opacity: 0.5;
-  outline: none;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-  transform-origin: var(--share-align) center;
-  transition:
-    opacity var(--duration-200, 0.2s),
-    background-color var(--duration-200, 0.2s);
 
   .text {
     line-height: 1.2;
@@ -846,6 +842,52 @@ function ignoreAbort(error: unknown) {
     line-height: 1.5;
     opacity: 0.75;
   }
+}
+
+// A length in the image's 1080-wide units, at the phone card's size.
+@function card($name) {
+  @return calc(var(--card-#{$name}) * var(--card-unit));
+}
+
+// AMLL's column: the list stays where the lyrics were. Not env(): the Android
+// WebView reports only the cutout there, never the system bars.
+.column {
+  position: absolute;
+  top: var(--app-safe-area-top, 0px);
+  bottom: var(--app-safe-area-bottom, 0px);
+  left: var(--share-left);
+  width: var(--share-width);
+  display: flex;
+  flex-direction: column;
+}
+
+.lines {
+  flex: 1;
+  min-height: 0;
+  // Focused on open only as the dialog's start; its lines carry the rings.
+  outline: none;
+  font-family: var(--share-font);
+  font-weight: var(--share-weight);
+  letter-spacing: var(--share-spacing);
+  text-align: var(--share-align);
+
+  .virtual {
+    height: 100%;
+  }
+}
+
+.line {
+  @include amll-type;
+  border-radius: 12px;
+  cursor: pointer;
+  opacity: 0.5;
+  outline: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transform-origin: var(--share-align) center;
+  transition:
+    opacity var(--duration-200, 0.2s),
+    background-color var(--duration-200, 0.2s);
 
   // Touch keeps :hover on the last tapped line, which then sits between states.
   @media (hover: hover) and (pointer: fine) {
@@ -864,65 +906,201 @@ function ignoreAbort(error: unknown) {
   }
 }
 
-.preview {
-  flex: 1;
-  min-height: 0;
+// A phone dims the player and centres the card over its actions.
+.lyric-share:not(.desktop) {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 8px 0;
+  padding: calc(var(--app-safe-area-top, 0px) + 56px) 24px
+    calc(var(--app-safe-area-bottom, 0px) + 16px);
 
-  img {
-    max-width: 100%;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: rgb(0 0 0 / 0.35);
+  }
+
+  .dismiss {
+    top: calc(var(--app-safe-area-top, 0px) + 8px);
+    right: 8px;
+  }
+
+  // The image's shape at the least; shorter if the screen is.
+  .column {
+    position: relative;
+    inset: auto;
+    flex: 0 1 auto;
+    width: min(100%, 400px);
+    aspect-ratio: 4 / 5;
+    min-height: 0;
     max-height: 100%;
-    object-fit: contain;
-    border-radius: 16px;
-    box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
-  }
-}
-
-.foot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 4px 16px 12px;
-
-  .count {
-    font-size: 13px;
-    opacity: 0.7;
+    border-radius: 24px;
+    overflow: hidden;
+    isolation: isolate;
+    background: rgb(0 0 0 / 0.3);
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 0.1),
+      0 16px 48px rgb(0 0 0 / 0.35);
+    transition: opacity 0.4s ease-out;
   }
 
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin-left: auto;
+  // Laid out but unseen while the line is still lifted, so it can be aimed at.
+  &.phase-lift .column {
+    opacity: 0;
   }
 
-  @media (max-width: 768px) {
-    .count {
-      width: 100%;
+  .backdrop {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 0.3s ease-out;
+
+    &.shown {
+      opacity: 1;
+    }
+  }
+
+  // The image's type: 800 at its main size, wrapped anywhere a word must break.
+  .lines {
+    font-family: var(--share-font), system-ui, sans-serif;
+    font-weight: 800;
+    letter-spacing: normal;
+    text-align: left;
+    mask-image: linear-gradient(
+      transparent,
+      #000 #{card(pad)},
+      #000 calc(100% - #{card(gap)}),
+      transparent
+    );
+  }
+
+  .line {
+    padding: calc(#{card(gap)} / 2) card(pad);
+    font-size: card(main);
+    border-radius: 0;
+    opacity: 0.4;
+
+    .text {
+      line-height: 1.25;
+      overflow-wrap: anywhere;
     }
 
-    .actions {
-      width: 100%;
-      margin-left: 0;
+    .sub {
+      font-size: calc(var(--card-sub) / var(--card-main) * 1em);
+      font-weight: 600;
+      line-height: 1.4;
+      opacity: 0.8;
+    }
 
-      // Fill the row, but never below their own label; wrap instead.
-      > * {
-        flex: 1 0 auto;
+    // Bright or dim, as the image will have it; no boxes.
+    &.selected {
+      opacity: 0.9;
+      background-color: transparent;
+    }
+  }
+
+  // The ghost stands in for it until it lands.
+  &.phase-lift .line.origin,
+  &.phase-fly .line.origin {
+    opacity: 0;
+  }
+
+  .meta {
+    display: flex;
+    align-items: center;
+    gap: calc(28 * var(--card-unit));
+    padding: card(gap) card(pad) card(pad);
+
+    .cover {
+      width: card(cover);
+      height: card(cover);
+      border-radius: calc(14 * var(--card-unit));
+      object-fit: cover;
+      box-shadow: 0 4px 12px rgb(0 0 0 / 0.3);
+    }
+
+    .text {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .title,
+    .artist {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+
+    .title {
+      font-size: calc(38 * var(--card-unit));
+      font-weight: 700;
+      opacity: 0.9;
+    }
+
+    .artist {
+      font-size: calc(30 * var(--card-unit));
+      font-weight: 500;
+      opacity: 0.7;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: calc(12 * var(--card-unit));
+      font-size: calc(28 * var(--card-unit));
+      font-weight: 600;
+      opacity: 0.8;
+
+      img {
+        width: card(logo);
+        height: card(logo);
       }
     }
   }
 }
 
+// Where AMLL drew the pressed line, in its type; `fly` moves it from there.
+.ghost {
+  @include amll-type;
+  position: absolute;
+  top: var(--share-top);
+  left: var(--share-left);
+  width: var(--share-width);
+  box-sizing: border-box;
+  z-index: 2;
+  font-family: var(--share-font);
+  font-weight: var(--share-weight);
+  letter-spacing: var(--share-spacing);
+  text-align: var(--share-align);
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: min(100%, 400px);
+  margin-top: 16px;
+
+  // Fill the row, but never below their own label; wrap instead.
+  > * {
+    flex: 1 0 auto;
+  }
+}
+
 // Apple Music's order: the pressed line is already lifted (LyricPlayer lifts
-// it on a long press), the player fades from around it, the other lines and
-// the bars come in, and the lifted line settles into its selection box.
+// it on a long press) and the player fades from around it. On desktop the
+// other lines and the bars come in and the lifted line settles into its
+// selection; on a phone the line flies into the card as the card comes in.
 .lyric-share-enter-active {
-  .head,
+  &::before,
   .foot,
   .stage,
   .dismiss {
@@ -931,7 +1109,7 @@ function ignoreAbort(error: unknown) {
       translate 0.45s cubic-bezier(0.32, 0.72, 0, 1) 0.2s;
   }
 
-  .line {
+  &.desktop .line {
     transition:
       opacity 0.3s ease-out 0.15s,
       scale 0.4s cubic-bezier(0.32, 0.72, 0, 1) 0.2s,
@@ -940,9 +1118,8 @@ function ignoreAbort(error: unknown) {
 }
 
 .lyric-share-enter-from {
-  .head {
+  &::before {
     opacity: 0;
-    translate: 0 -16px;
   }
 
   .foot {
@@ -959,11 +1136,11 @@ function ignoreAbort(error: unknown) {
     opacity: 0;
   }
 
-  .line {
+  &.desktop .line {
     opacity: 0;
   }
 
-  .line.origin {
+  &.desktop .line.origin {
     opacity: 1;
     scale: 1.04;
     background-color: transparent;

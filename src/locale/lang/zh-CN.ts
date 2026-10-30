@@ -415,12 +415,10 @@ const messages: Record<string, unknown> = {
     },
     share: {
       title: "分享歌词",
-      selected: "已选 {count}/{max} 行",
       limit: "最多选择 {max} 行连续歌词",
       copy: "复制",
       share: "分享",
       image: "生成图片",
-      back: "返回",
       copyImage: "复制图片",
       saveImage: "保存图片",
       saved: "图片已保存",
