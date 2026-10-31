@@ -487,13 +487,16 @@ function fly() {
       { opacity: [0, 1], transform: ["translateY(24px) scale(0.92)", "none"] },
       path,
     ),
-  ]).then(() => {
+  ]).then(async () => {
     if (phase.value !== "fly") return;
-    // One frame with the card's line shown unfaded, as the twin it matches leaves.
+    // The card's line takes over unfaded as the twin it matches leaves. Not a
+    // frame later: this runs as animations update, before that frame's rAF
+    // callbacks, so "landing" would never be styled and the line would fade in.
     phase.value = "landing";
-    requestAnimationFrame(() => {
-      if (phase.value === "landing") phase.value = "done";
-    });
+    await nextTick();
+    const line = lineEls[originIndex.value];
+    if (line) void getComputedStyle(line).opacity;
+    if (phase.value === "landing") phase.value = "done";
   });
 }
 
