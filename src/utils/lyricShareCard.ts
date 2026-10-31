@@ -68,8 +68,8 @@ const VEIL = [0.62, 0.8] as const;
 const BACKDROP_BRIGHTNESS = 0.4;
 /** Black over the fluid still, top to bottom edge. */
 const STILL_SHADE = [0.12, 0.4] as const;
-// Lyrics and title sit a touch under pure white, as the player draws them.
-const TEXT = "rgb(255 255 255 / 0.9)";
+// Lyrics and title sit under pure white, which reads harsh over the backdrop.
+const TEXT = "rgb(255 255 255 / 0.8)";
 
 const loadImage = (src: string): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
@@ -209,7 +209,7 @@ function draw(
       ctx.fillText(row, PAD, y + (mainLH - MAIN_SIZE) / 2);
       y += mainLH;
     }
-    ctx.fillStyle = "rgb(255 255 255 / 0.72)";
+    ctx.fillStyle = "rgb(255 255 255 / 0.64)";
     ctx.font = font(600, SUB_SIZE);
     for (const row of group.subs) {
       ctx.fillText(row, PAD, y + (subLH - SUB_SIZE) / 2);

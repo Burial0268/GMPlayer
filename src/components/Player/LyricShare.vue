@@ -215,7 +215,7 @@ const LIFT = 1.04;
 const LIFT_EASE = [0.32, 0.72, 0, 1] as const;
 const FLIGHT = 0.5;
 // The mobile card's opacity for a selected line.
-const CARD_SELECTED = 0.9;
+const CARD_SELECTED = 0.8;
 const PRIMARY = { color: "#fff", textColor: "#111" };
 const SECONDARY = { secondary: true };
 
@@ -1050,7 +1050,7 @@ function ignoreAbort(error: unknown) {
 
     // Bright or dim, as the image will have it; no boxes.
     &.selected {
-      opacity: 0.9;
+      opacity: 0.8;
       background-color: transparent;
     }
   }
@@ -1095,7 +1095,7 @@ function ignoreAbort(error: unknown) {
     .title {
       font-size: calc(38 * var(--card-unit));
       font-weight: 700;
-      opacity: 0.9;
+      opacity: 0.8;
     }
 
     .artist {
