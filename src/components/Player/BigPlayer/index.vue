@@ -441,7 +441,6 @@ const rangeProgress = (value: number, from: number, to: number) =>
 // One spring drives everything. Geometry (sheet, artwork) rides the whole span; only the
 // opacities get their own window, and each window opens while something is already moving.
 const MOBILE_MINI_CHROME_FADE_END = 0.2;
-const MOBILE_SHEET_FADE_END = 0.3;
 const MOBILE_TABBAR_EXIT_END = 0.3;
 // The mini bar stays above the sheet until its own fade is done.
 const MOBILE_MINI_UI_FADE_END = 0.3;
@@ -747,11 +746,8 @@ const applyProgressState = (value: number) => {
   controlsY.set(mix(14, 0, easeOutCubic(controlsEnter)));
   headerOpacity.set(rangeProgress(progress, MOBILE_CONTENT_REVEAL_START, MOBILE_HEADER_REVEAL_END));
   headerY.set(0);
-  // The sheet grows out of the bar, so it has to arrive as the bar leaves: an opaque
-  // sheet at progress 0 is a black block over the bar for the frames before motion starts.
-  backgroundVisualOpacity.set(
-    backgroundVisible ? easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END)) : 0,
-  );
+  // Opaque from the first frame: the sheet is the thing the finger is pulling up.
+  backgroundVisualOpacity.set(backgroundVisible ? 1 : 0);
   artworkOpacity.set(albumLayerOpacity);
   scrimOpacity.set(MOBILE_SCRIM_OPACITY * progress);
   applyMiniUiVars(progress);
