@@ -359,13 +359,18 @@ const twin = useTemplateRef<HTMLElement>("twin");
 const column = useTemplateRef<HTMLElement>("column");
 const backdrop = useTemplateRef<HTMLCanvasElement>("backdrop");
 const backdropShown = ref(false);
+// Before the layer's first render: rendered as "done" first, the measuring
+// below resolves the card visible and its opacity transition then fades it out.
+watch(visible, (shown) => {
+  if (!shown) return;
+  aligning.value = true;
+  phase.value = isMobile.value ? "lift" : "done";
+});
 watch(
   visible,
   async (shown) => {
     if (!shown || !request.value || !list.value) return;
     range.value = [originIndex.value, originIndex.value];
-    aligning.value = true;
-    phase.value = isMobile.value ? "lift" : "done";
     clearImage();
     still = props.captureStill();
     assets = undefined;
