@@ -7,6 +7,9 @@
     @touchstart.self="passToPlayer"
     @touchmove.self="passToPlayer"
     @touchend.self="passToPlayer"
+    @pointerdown="pressLine"
+    @pointerup="dropLine"
+    @pointercancel="dropLine"
   />
 </template>
 
@@ -16,9 +19,13 @@ import { musicStore, settingStore, siteStore } from "../../store";
 import {
   LyricPlayer as CoreLyricPlayer,
   type DomLyricPlayer,
+  type HasElement,
   type LyricLineMouseEvent,
 } from "@applemusic-like-lyrics/core";
+import { animateMini } from "motion-v";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
+import type { LyricShareOrigin } from "@/composables/useLyricShare";
+import { useLayerNavigation } from "@/utils/navigation";
 import { getLyricPresentationTimeSeconds, onAudioUiDelayChange } from "@/utils/tauri/audio/uiDelay";
 import "@applemusic-like-lyrics/core/style.css";
 
@@ -61,6 +68,7 @@ type SyncableSound = {
 const emit = defineEmits<{
   "line-click": [evt: LyricLineMouseEvent];
   lrcTextClick: [time: number];
+  lineShare: [lines: AMLLLine[], lineIndex: number, origin: LyricShareOrigin];
 }>();
 
 function getDomPlayer(): DomLyricPlayer | undefined {
@@ -217,6 +225,91 @@ const jumpSeek = (evt: LyricLineMouseEvent) => {
   emit("line-click", evt);
 };
 
+// The DOM player's lines are LyricLineEl, which AMLL does not export.
+const lineElement = (line: unknown) => (line as HasElement).getElement();
+
+// How AMLL is drawing the line right now. Its focus scaling shows in the rect
+// but not in the styles, so the type is scaled by the same factor.
+// AMLL stacks lines by their group wrapper (the parent), whose vertical padding
+// is the gap between lines; the line's own is cancelled by an equal negative
+// margin. So the box handed over is the line's horizontally and the wrapper's
+// vertically, or the share list's lines sit closer than AMLL's.
+function measureLine(el: HTMLElement): LyricShareOrigin {
+  const line = el.getBoundingClientRect();
+  const style = getComputedStyle(el);
+  const group = getComputedStyle(el.parentElement ?? el);
+  const scale = line.width / el.offsetWidth || 1;
+  const px = (from: CSSStyleDeclaration, side: string) =>
+    Number.parseFloat(from[`padding${side}` as "paddingTop"]) * scale;
+  const top = px(group, "Top");
+  const bottom = px(group, "Bottom");
+  const textTop = line.top + px(style, "Top");
+  const textHeight = line.height - px(style, "Top") - px(style, "Bottom");
+  return {
+    rect: new DOMRect(line.left, textTop - top, line.width, textHeight + top + bottom),
+    fontSize: Number.parseFloat(style.fontSize) * scale,
+    padding: `${top}px ${px(style, "Right")}px ${bottom}px ${px(style, "Left")}px`,
+  };
+}
+
+// A long press lifts the line before the share layer takes it over, as in
+// Apple Music. Measured before the lift, so the layer gets the resting box.
+const navigation = useLayerNavigation();
+const LIFT_EASE = [0.32, 0.72, 0, 1] as const;
+let pressed: { el: HTMLElement; origin: LyricShareOrigin } | undefined;
+let lifted: HTMLElement | undefined;
+let liftTimer = 0;
+let sharing = false;
+
+function pressLine(event: PointerEvent) {
+  // A mouse opens on right click with nothing to hold.
+  if (event.pointerType !== "touch") return;
+  const map = getDomPlayer()?.lyricGroupElementMap;
+  let node = event.target instanceof Element ? event.target : null;
+  while (node && map && !map.has(node)) node = node.parentElement;
+  const group = node && map?.get(node);
+  if (!group) return;
+  const el = lineElement(group.mainLine);
+  pressed = { el, origin: measureLine(el) };
+  // A tap seeks; only a press that outlasts one starts to lift.
+  liftTimer = window.setTimeout(() => {
+    lifted = el;
+    animateMini(el, { scale: 1.04 }, { duration: 0.4, ease: LIFT_EASE });
+  }, 150);
+}
+
+function dropLine() {
+  clearTimeout(liftTimer);
+  pressed = undefined;
+  if (sharing || !lifted) return;
+  animateMini(lifted, { scale: 1 }, { duration: 0.3, ease: LIFT_EASE });
+  lifted = undefined;
+}
+
+// The line stays lifted under the layer and settles back as the layer leaves.
+watch(navigation.playerShareVisible, (visible) => {
+  if (visible) return;
+  sharing = false;
+  dropLine();
+});
+
+// Right click on desktop; Android WebView fires `contextmenu` for a long press.
+// `lineIndex` rather than the start time: AMLL's optimiser advances every
+// line's start by up to 600 ms, so a time lookup lands on the line above. The
+// optimiser never adds or drops lines, so the index addresses our array too.
+const openShare = (evt: LyricLineMouseEvent) => {
+  if (evt.lineIndex < 0) return;
+  evt.preventDefault();
+  const el = lineElement(evt.line);
+  sharing = true;
+  emit(
+    "lineShare",
+    amllLyricLines.value,
+    evt.lineIndex,
+    pressed?.el === el ? pressed.origin : measureLine(el),
+  );
+};
+
 function passToPlayer(event: Event) {
   const playerEl = getDomPlayer()?.getElement();
   if (!playerEl) return;
@@ -230,6 +323,7 @@ onMounted(() => {
   if (host) {
     const lyricPlayer = new CoreLyricPlayer();
     lyricPlayer.addEventListener("line-click", jumpSeek);
+    lyricPlayer.addEventListener("line-contextmenu", openShare);
     const playerElement = lyricPlayer.getElement();
     playerElement.style.width = "100%";
     playerElement.style.height = "100%";
@@ -267,6 +361,7 @@ onBeforeUnmount(() => {
   }
 
   lyricPlayerRef.value?.removeEventListener("line-click", jumpSeek);
+  lyricPlayerRef.value?.removeEventListener("line-contextmenu", openShare);
   lyricPlayerRef.value?.dispose();
   lastLyricFrameTime = -1;
   lastSubmittedLyricTime = -1;

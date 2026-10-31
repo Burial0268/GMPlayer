@@ -64,6 +64,7 @@ export function createLayerNavigation(router: Router) {
   const playerQueueVisible = computed(() =>
     overlays.value.some((layer) => layer.presentation === "queue-player"),
   );
+  const playerShareVisible = computed(() => current.value?.presentation === "share-player");
   const searchVisible = computed(() => current.value?.presentation === "search");
   const searchLayer = computed(() =>
     [...state.value.layers].reverse().find((layer) => layer.kind === "search"),
@@ -230,7 +231,10 @@ export function createLayerNavigation(router: Router) {
     return go(to, [{ ...next, root, isRoot: true, parentId: undefined, source: undefined }]);
   }
 
-  function openTemporary(kind: "search" | "player" | "queue", options: OpenPageOptions = {}) {
+  function openTemporary(
+    kind: "search" | "player" | "queue" | "share",
+    options: OpenPageOptions = {},
+  ) {
     const previous = current.value;
     if (!previous || (previous.kind === kind && previous.presentation !== "page")) return;
     if (kind === "search" && previous.kind === "search") {
@@ -260,9 +264,17 @@ export function createLayerNavigation(router: Router) {
           ? "navigation.search"
           : kind === "player"
             ? "navigation.player"
-            : "general.name.playlists",
+            : kind === "share"
+              ? "player.share.title"
+              : "general.name.playlists",
       presentation:
-        kind === "queue" ? (previous.kind === "player" ? "queue-player" : "queue-floating") : kind,
+        kind === "queue"
+          ? previous.kind === "player"
+            ? "queue-player"
+            : "queue-floating"
+          : kind === "share"
+            ? "share-player"
+            : kind,
       source: sourceFor(options),
       ...(kind === "search" ? { search: { query: "", phase: "input" as const } } : {}),
     };
@@ -331,6 +343,7 @@ export function createLayerNavigation(router: Router) {
     playerVisible,
     queueVisible,
     playerQueueVisible,
+    playerShareVisible,
     searchVisible,
     searchLayer,
     canGoBack,
@@ -352,6 +365,9 @@ export function createLayerNavigation(router: Router) {
     },
     openSearch: (origin?: Event | HTMLElement) => openTemporary("search", { origin }),
     openPlayer: (origin?: Event | HTMLElement) => openTemporary("player", { origin }),
+    // Only over the player (its queue page included): the share layer is one of its pages.
+    openShare: () =>
+      overlays.value.some((layer) => layer.kind === "player") ? openTemporary("share") : undefined,
     hasLayer: (kind: LayerKind) => state.value.layers.some((layer) => layer.kind === kind),
     finishTransition: (id: number) => {
       if (transition.value.id === id) transitioning.value = false;

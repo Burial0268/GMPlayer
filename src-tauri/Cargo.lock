@@ -2225,6 +2225,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-orientation",
  "tauri-plugin-pinia",
+ "tauri-plugin-sharekit",
  "tauri-plugin-single-instance",
  "tauri-plugin-taskbar-lyric",
  "tauri-plugin-updater",
@@ -6150,6 +6151,28 @@ dependencies = [
  "tauri",
  "tauri-plugin",
  "tauri-store",
+]
+
+[[package]]
+name = "tauri-plugin-sharekit"
+version = "0.4.0-rc.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "865a541921689b0a952bbd1fd28bb148148f70848bf47842929f7c394e0a1e6b"
+dependencies = [
+ "log",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-core-foundation",
+ "objc2-foundation",
+ "serde",
+ "serde_json",
+ "serde_repr",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.18",
+ "tokio",
+ "windows 0.61.3",
+ "windows-collections 0.2.0",
 ]
 
 [[package]]

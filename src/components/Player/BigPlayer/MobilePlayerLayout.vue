@@ -224,6 +224,9 @@
       @touchend.passive="handleQueueTouchEnd"
       @touchcancel="handleQueueTouchCancel"
     >
+      <div class="mobile-thumb" @click="$emit('closeQueue')">
+        <div class="handle-bar"></div>
+      </div>
       <div class="mobile-queue-content">
         <div class="mobile-queue-panel">
           <div class="mobile-queue-header">
@@ -655,11 +658,13 @@ const handleQueueTouchStart = (event: TouchEvent) => {
   if (event.target instanceof HTMLElement && event.target.closest("button")) return;
   const touch = event.changedTouches?.[0];
   if (!touch) return;
+  const inList = event.target instanceof Element && event.target.closest(".mobile-queue-list");
   queueTouch.value = {
     x: touch.clientX,
     y: touch.clientY,
     dragging: false,
-    scrollTop: queueScrollTop.value,
+    // Only the list scrolls; a pull from the handle or header pages back from anywhere in it.
+    scrollTop: inList ? queueScrollTop.value : 0,
     progress: 0,
   };
 };

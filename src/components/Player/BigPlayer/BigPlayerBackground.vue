@@ -71,8 +71,39 @@ const setting = settingStore();
 // reactivity and zero render-graph work, and propagates a real jump on the very
 // next frame with no scheduler hop.
 const backgroundRenderRef = useTemplateRef<{
-  bgRender?: { setLowFreqVolume?: (v: number) => void };
+  bgRender?: { setLowFreqVolume?: (v: number) => void; getElement(): HTMLCanvasElement };
 }>("backgroundRender");
+
+const STILL_ATTEMPTS = 10;
+
+/**
+ * A still of the fluid background, or nothing outside that mode. AMLL's WebGL
+ * canvas reads back blank once its frame is composited, so the copy is taken
+ * in a frame AMLL has just drawn — it registered its callback a frame earlier,
+ * so it runs first — and retried while the FPS cap has it skip frames.
+ */
+function captureStill(): Promise<HTMLCanvasElement | undefined> {
+  const source = backgroundRenderRef.value?.bgRender?.getElement();
+  if (!source?.width || !source.height) return Promise.resolve(undefined);
+  const still = document.createElement("canvas");
+  still.width = source.width;
+  still.height = source.height;
+  const ctx = still.getContext("2d", { willReadFrequently: true })!;
+  return new Promise((resolve) => {
+    const attempt = (left: number) =>
+      requestAnimationFrame(() => {
+        ctx.clearRect(0, 0, still.width, still.height);
+        ctx.drawImage(source, 0, 0);
+        const drawn = ctx.getImageData(still.width >> 1, still.height >> 1, 1, 1).data[3] > 0;
+        if (drawn) resolve(still);
+        else if (left > 1) attempt(left - 1);
+        else resolve(undefined);
+      });
+    attempt(STILL_ATTEMPTS);
+  });
+}
+
+defineExpose({ captureStill });
 
 let unsubscribeLowFreq: (() => void) | null = null;
 
