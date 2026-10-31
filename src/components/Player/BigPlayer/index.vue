@@ -80,6 +80,7 @@
               :contentShellStyle="mobileContentShellStyle"
               :fullUiMotionStyle="mobileFullUiMotionStyle"
               :controlsMotionStyle="mobileControlsMotionStyle"
+              :headerMotionStyle="mobileHeaderMotionStyle"
               :albumLayerStyle="mobileArtworkMotionStyle"
               :albumLayerVisible="mobileAlbumLayerVisible"
               @close="handleMobileClose"
@@ -339,6 +340,9 @@ const playerProgress = useMotionValue(0);
 const fullUiOpacity = useMotionValue(0);
 const fullUiY = useMotionValue(20);
 const controlsOpacity = useMotionValue(0);
+// Layer 2's title row sits beside the small cover, so it rides the cover's travel.
+const headerOpacity = useMotionValue(0);
+const headerY = useMotionValue(0);
 const controlsY = useMotionValue(18);
 const backgroundVisualOpacity = useMotionValue(0);
 // Dims the page behind the sheet in step with it, like a drawer's backdrop.
@@ -402,6 +406,10 @@ const mobileFullUiMotionStyle = computed<MotionStyleRecord>(() => ({
   opacity: fullUiOpacity,
   y: fullUiY,
 }));
+const mobileHeaderMotionStyle = computed<MotionStyleRecord>(() => ({
+  opacity: headerOpacity,
+  y: headerY,
+}));
 const mobileControlsMotionStyle = computed<MotionStyleRecord>(() => ({
   opacity: controlsOpacity,
   y: controlsY,
@@ -440,6 +448,7 @@ const MOBILE_MINI_UI_FADE_END = 0.3;
 const MOBILE_CONTENT_REVEAL_START = 0.45;
 const MOBILE_CONTENT_REVEAL_END = 0.95;
 const MOBILE_CONTROLS_REVEAL_START = 0.6;
+const MOBILE_HEADER_REVEAL_END = 0.8;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
@@ -643,7 +652,9 @@ const applyInteractiveFrame = (progress: number) => {
   const { miniBg, fullBg, miniArtwork, fullArtwork } = interactiveFrames;
   backgroundTop.set(mix(miniBg.top, fullBg.top, progress));
   backgroundRadius.set(mix(miniBg.borderRadius || 12, fullBg.borderRadius, progress));
-  applyArtworkFrame(interpolateFrame(miniArtwork, fullArtwork, progress));
+  const artwork = interpolateFrame(miniArtwork, fullArtwork, progress);
+  applyArtworkFrame(artwork);
+  headerY.set(artwork.top - fullArtwork.top);
 };
 
 const clearMiniUiVars = () => {
@@ -734,6 +745,8 @@ const applyProgressState = (value: number) => {
   fullUiY.set(mix(14, 0, easeOutCubic(fullUiEnter)));
   controlsOpacity.set(controlsEnter);
   controlsY.set(mix(14, 0, easeOutCubic(controlsEnter)));
+  headerOpacity.set(rangeProgress(progress, MOBILE_CONTENT_REVEAL_START, MOBILE_HEADER_REVEAL_END));
+  headerY.set(0);
   // The sheet grows out of the bar, so it has to arrive as the bar leaves: an opaque
   // sheet at progress 0 is a black block over the bar for the frames before motion starts.
   backgroundVisualOpacity.set(
@@ -794,6 +807,8 @@ const resetClosedMobileState = () => {
   fullUiY.set(14);
   controlsOpacity.set(0);
   controlsY.set(14);
+  headerOpacity.set(0);
+  headerY.set(0);
   backgroundVisualOpacity.set(0);
   scrimOpacity.set(0);
   backgroundTop.set(0);
