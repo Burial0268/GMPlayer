@@ -31,6 +31,7 @@
     >
       <!-- 移动端布局 -->
       <template v-if="isMobile">
+        <Motion class="mobile-scrim" :style="mobileScrimStyle" />
         <Motion as-child :style="mobileShellMotionStyle">
           <div
             ref="mobileShellRef"
@@ -340,6 +341,8 @@ const fullUiY = useMotionValue(20);
 const controlsOpacity = useMotionValue(0);
 const controlsY = useMotionValue(18);
 const backgroundVisualOpacity = useMotionValue(0);
+// Dims the page behind the sheet in step with it, like a drawer's backdrop.
+const scrimOpacity = useMotionValue(0);
 const backgroundTop = useMotionValue(0);
 const backgroundRadius = useMotionValue(0);
 const artworkLeft = useMotionValue(0);
@@ -367,6 +370,7 @@ const mobileTransitionPhase = ref<"mini" | "shared-expand" | "full-content">("mi
 const mobileTransitionDirection = ref<"opening" | "closing" | null>(null);
 
 const mobileShellMotionStyle = computed<MotionStyleRecord>(() => ({}));
+const mobileScrimStyle = computed<MotionStyleRecord>(() => ({ opacity: scrimOpacity }));
 const mobileArtworkMotionStyle = computed<MotionStyleRecord>(() => ({
   left: artworkLeft,
   top: artworkTop,
@@ -438,6 +442,7 @@ const MOBILE_CONTENT_REVEAL_END = 0.95;
 const MOBILE_CONTROLS_REVEAL_START = 0.6;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
+const MOBILE_SCRIM_OPACITY = 0.75;
 
 const getTransitionDistance = () => Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
 
@@ -695,6 +700,7 @@ const applyMiniUiVars = (progress: number) => {
 const applyProgressState = (value: number) => {
   if (!isMobile.value) {
     clearMiniUiVars();
+    scrimOpacity.set(0);
     backgroundVisualOpacity.set(0);
     artworkOpacity.set(1);
     mobileAlbumLayerReady.value = false;
@@ -734,6 +740,7 @@ const applyProgressState = (value: number) => {
     backgroundVisible ? easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END)) : 0,
   );
   artworkOpacity.set(albumLayerOpacity);
+  scrimOpacity.set(MOBILE_SCRIM_OPACITY * progress);
   applyMiniUiVars(progress);
 
   if (!mobileInteractive.value || !interactiveFrames) return;
@@ -772,7 +779,6 @@ const resetClosedMobileState = () => {
   resolveInteractive?.(false);
   resolveInteractive = undefined;
   stopArtworkFrameAnimations();
-  mobileLayer.value = 1;
   mobileInteractive.value = false;
   mobileTransitionActive.value = false;
   mobileTransitionDirection.value = null;
@@ -789,6 +795,7 @@ const resetClosedMobileState = () => {
   controlsOpacity.set(0);
   controlsY.set(14);
   backgroundVisualOpacity.set(0);
+  scrimOpacity.set(0);
   backgroundTop.set(0);
   backgroundRadius.set(0);
   artworkOpacity.set(0);
@@ -957,7 +964,6 @@ const beginMobileInteractive = async (
   pendingInteractiveProgress = clamp(initialProgress);
   mobileTransitionDirection.value = direction;
   if (pendingInteractiveProgress <= 0.001) {
-    mobileLayer.value = 1;
     mobileContentReady.value = false;
     mobileContentVisible.value = false;
     mobileTransitionPhase.value = "mini";
@@ -1452,6 +1458,14 @@ defineExpose({
     }
 
     &.mobile-exiting {
+      pointer-events: none;
+    }
+
+    .mobile-scrim {
+      position: absolute;
+      inset: 0;
+      background: #000;
+      opacity: 0;
       pointer-events: none;
     }
 
