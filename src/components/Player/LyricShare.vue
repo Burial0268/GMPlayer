@@ -20,7 +20,7 @@
       >
         <!-- On a phone the column is a card of its own, laid out as the image is:
              lines are picked where they will be shared. -->
-        <div class="column">
+        <div ref="column" class="column">
           <canvas v-if="isMobile" ref="backdrop" :class="['backdrop', { shown: backdropShown }]" />
           <div
             ref="list"
@@ -139,7 +139,7 @@
         </aside>
         <!-- The pressed line as AMLL lifted it, flying into its place in the card. -->
         <div
-          v-if="isMobile && phase !== 'done' && originRow"
+          v-if="isMobile && flying && originRow"
           ref="ghost"
           class="ghost"
           :style="{ transform: liftTransform }"
@@ -153,6 +153,12 @@
               </template>
             </template>
           </div>
+          <div v-for="(sub, i) in originRow.line.subs" :key="i" class="sub">{{ sub }}</div>
+        </div>
+        <!-- The card's line, flying with the ghost and fading in over it: the two
+             type sizes and wraps trade places in motion, not on top of each other. -->
+        <div v-if="isMobile && flying && originRow" ref="twin" class="twin">
+          <div class="text">{{ originRow.line.text }}</div>
           <div v-for="(sub, i) in originRow.line.subs" :key="i" class="sub">{{ sub }}</div>
         </div>
 
@@ -208,6 +214,8 @@ const MAX_LINES = 5;
 const LIFT = 1.04;
 const LIFT_EASE = [0.32, 0.72, 0, 1] as const;
 const FLIGHT = 0.5;
+// The mobile card's opacity for a selected line.
+const CARD_SELECTED = 0.9;
 const PRIMARY = { color: "#fff", textColor: "#111" };
 const SECONDARY = { secondary: true };
 
@@ -345,7 +353,10 @@ const pad = ref<[number, number]>([0, 0]);
 const aligning = ref(false);
 // Phone only: lifted where it was pressed, flying into the card, landed.
 const phase = ref<"lift" | "fly" | "landing" | "done">("done");
+const flying = computed(() => phase.value === "lift" || phase.value === "fly");
 const ghost = useTemplateRef<HTMLElement>("ghost");
+const twin = useTemplateRef<HTMLElement>("twin");
+const column = useTemplateRef<HTMLElement>("column");
 const backdrop = useTemplateRef<HTMLCanvasElement>("backdrop");
 const backdropShown = ref(false);
 watch(
@@ -412,45 +423,72 @@ function settle(aim: number, left: number, still = 0) {
 // The ghost starts as AMLL left the line, lifted about AMLL's transform origin
 // (expressed from its top-left corner, which the flight scales about), and ends
 // on the card's line at the card's type size; the two cross-fade on landing.
-const liftTransform = computed(() => {
+const lift = computed(() => {
   const rect = request.value?.origin.rect;
-  if (!rect) return "none";
+  if (!rect) return [0, 0];
   const pivotX = setting.lyricsPosition === "center" ? rect.width / 2 : 0;
-  return `translate(${pivotX * (1 - LIFT)}px, ${(rect.height / 2) * (1 - LIFT)}px) scale(${LIFT})`;
+  return [pivotX * (1 - LIFT), (rect.height / 2) * (1 - LIFT)];
 });
+const liftTransform = computed(
+  () => `translate(${lift.value[0]}px, ${lift.value[1]}px) scale(${LIFT})`,
+);
 
 function fly() {
   const el = ghost.value;
+  const card = twin.value;
   const anchor = lineEls[originIndex.value];
   const origin = request.value?.origin;
-  if (!el || !anchor || !origin) {
+  if (!el || !card || !anchor || !column.value || !origin) {
     phase.value = "done";
     return;
   }
+  // Measured before the card starts growing in: these are its resting places.
   const [padTop, , , padLeft] = origin.padding.split(" ").map(Number.parseFloat);
   const style = getComputedStyle(anchor);
   const box = anchor.getBoundingClientRect();
+  const cardLeft = Number.parseFloat(style.paddingLeft);
+  const cardTop = Number.parseFloat(style.paddingTop);
   const scale = Number.parseFloat(style.fontSize) / origin.fontSize;
-  const x = box.left + Number.parseFloat(style.paddingLeft) - origin.rect.left - padLeft * scale;
-  const y = box.top + Number.parseFloat(style.paddingTop) - origin.rect.top - padTop * scale;
+  const x = box.left + cardLeft - origin.rect.left - padLeft * scale;
+  const y = box.top + cardTop - origin.rect.top - padTop * scale;
+  // The twin rests on the card's line and starts on the lifted ghost, text start on text start.
+  const twinScale = LIFT / scale;
+  const twinX = origin.rect.left + lift.value[0] + LIFT * padLeft - twinScale * cardLeft - box.left;
+  const twinY = origin.rect.top + lift.value[1] + LIFT * padTop - twinScale * cardTop - box.top;
+  card.style.left = `${box.left}px`;
+  card.style.top = `${box.top}px`;
+  card.style.width = `${anchor.offsetWidth}px`;
+
   const duration = motionDuration(FLIGHT);
+  const path = { duration, ease: LIFT_EASE };
+  // While the line is still moving fast, so neither shape is seen standing still.
+  const swap = { duration: duration * 0.4, delay: duration * 0.1 };
   phase.value = "fly";
-  const move = animateMini(
-    el,
-    { transform: [liftTransform.value, `translate(${x}px, ${y}px) scale(${scale})`] },
-    { duration, ease: LIFT_EASE },
-  );
-  const fade = animateMini(
-    el,
-    { opacity: [1, 0] },
-    { duration: duration * 0.4, delay: duration * 0.6 },
-  );
-  // The card's own line fades in as the ghost fades out.
-  window.setTimeout(() => {
-    if (phase.value === "fly") phase.value = "landing";
-  }, duration * 600);
-  void Promise.all([move, fade]).then(() => {
-    if (phase.value === "landing") phase.value = "done";
+  void Promise.all([
+    animateMini(
+      el,
+      { transform: [liftTransform.value, `translate(${x}px, ${y}px) scale(${scale})`] },
+      path,
+    ),
+    animateMini(el, { opacity: [1, 0] }, swap),
+    animateMini(
+      card,
+      { transform: [`translate(${twinX}px, ${twinY}px) scale(${twinScale})`, "none"] },
+      path,
+    ),
+    animateMini(card, { opacity: [0, CARD_SELECTED] }, swap),
+    animateMini(
+      column.value,
+      { opacity: [0, 1], transform: ["translateY(24px) scale(0.92)", "none"] },
+      path,
+    ),
+  ]).then(() => {
+    if (phase.value !== "fly") return;
+    // One frame with the card's line shown unfaded, as the twin it matches leaves.
+    phase.value = "landing";
+    requestAnimationFrame(() => {
+      if (phase.value === "landing") phase.value = "done";
+    });
   });
 }
 
@@ -849,6 +887,28 @@ function ignoreAbort(error: unknown) {
   @return calc(var(--card-#{$name}) * var(--card-unit));
 }
 
+// The image's type: 800 at its main size, wrapped anywhere a word must break.
+@mixin card-type {
+  padding: calc(#{card(gap)} / 2) card(pad);
+  font-family: var(--share-font), system-ui, sans-serif;
+  font-size: card(main);
+  font-weight: 800;
+  letter-spacing: normal;
+  text-align: left;
+
+  .text {
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .sub {
+    font-size: calc(var(--card-sub) / var(--card-main) * 1em);
+    font-weight: 600;
+    line-height: 1.4;
+    opacity: 0.8;
+  }
+}
+
 // AMLL's column: the list stays where the lyrics were. Not env(): the Android
 // WebView reports only the cutout there, never the system bars.
 .column {
@@ -966,12 +1026,7 @@ function ignoreAbort(error: unknown) {
     }
   }
 
-  // The image's type: 800 at its main size, wrapped anywhere a word must break.
   .lines {
-    font-family: var(--share-font), system-ui, sans-serif;
-    font-weight: 800;
-    letter-spacing: normal;
-    text-align: left;
     mask-image: linear-gradient(
       transparent,
       #000 #{card(pad)},
@@ -981,22 +1036,9 @@ function ignoreAbort(error: unknown) {
   }
 
   .line {
-    padding: calc(#{card(gap)} / 2) card(pad);
-    font-size: card(main);
+    @include card-type;
     border-radius: 0;
     opacity: 0.4;
-
-    .text {
-      line-height: 1.25;
-      overflow-wrap: anywhere;
-    }
-
-    .sub {
-      font-size: calc(var(--card-sub) / var(--card-main) * 1em);
-      font-weight: 600;
-      line-height: 1.4;
-      opacity: 0.8;
-    }
 
     // Bright or dim, as the image will have it; no boxes.
     &.selected {
@@ -1009,6 +1051,11 @@ function ignoreAbort(error: unknown) {
   &.phase-lift .line.origin,
   &.phase-fly .line.origin {
     opacity: 0;
+  }
+
+  // The twin covers it exactly, so it takes over at once; a fade would dip.
+  &.phase-landing .line.origin {
+    transition: none;
   }
 
   .meta {
@@ -1078,6 +1125,17 @@ function ignoreAbort(error: unknown) {
   font-weight: var(--share-weight);
   letter-spacing: var(--share-spacing);
   text-align: var(--share-align);
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+// Positioned on the card's line by `fly`; starts on the ghost.
+.twin {
+  @include card-type;
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  opacity: 0;
   transform-origin: top left;
   pointer-events: none;
 }
@@ -1155,9 +1213,29 @@ function ignoreAbort(error: unknown) {
 
 .lyric-share-leave-active {
   transition: opacity 0.25s ease-in;
+
+  // A phone's card sinks back as it fades, the actions drop away under it.
+  &:not(.desktop) {
+    .column,
+    .foot {
+      transition:
+        scale 0.25s ease-in,
+        translate 0.25s ease-in;
+    }
+  }
 }
 
 .lyric-share-leave-to {
   opacity: 0;
+
+  &:not(.desktop) {
+    .column {
+      scale: 0.94;
+    }
+
+    .foot {
+      translate: 0 16px;
+    }
+  }
 }
 </style>
