@@ -568,6 +568,16 @@ impl AudioPlayer {
                         handle.stop();
                     }
                     self.decoder_playback_id = playback_id;
+                    // The old decoder's "has enough again" is now ignored (other
+                    // playback_id) and the new gate reports only a fresh starve, so a
+                    // flag left set would keep the output paused on a playable file.
+                    if std::mem::take(&mut self.stream_buffering) {
+                        let music_id = self.session.lock().music_id.clone();
+                        let _ = self
+                            .emitter()
+                            .emit(AudioThreadEvent::Buffering { music_id, is_buffering: false })
+                            .await;
+                    }
                     let writer = output.writer();
                     let config = output.config();
                     self.output = output;

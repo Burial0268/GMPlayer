@@ -142,6 +142,14 @@ impl Progress {
         s.covered_end(pos).map_or(0, |end| end - pos)
     }
 
+    /// The reader's interval runs to the end of the file, so waiting for more
+    /// lead would wait on bytes that do not exist (a seek near the tail while
+    /// the head writer is still far from done).
+    pub(crate) fn reaches_end(&self) -> bool {
+        let pos = self.read_pos.load(Ordering::Relaxed);
+        self.lock().covered_end(pos) == Some(self.total)
+    }
+
     /// Nothing more will arrive: complete, failed or cancelled. A reader waiting
     /// on this must stop waiting and let `read` report which.
     pub(crate) fn is_finished(&self) -> bool {

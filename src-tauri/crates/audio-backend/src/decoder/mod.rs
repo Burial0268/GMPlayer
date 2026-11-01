@@ -829,7 +829,7 @@ impl StreamGate {
     /// Whether the decoder must hold now. A finished download never holds, which
     /// is also what releases the tail: less than `high` may be left to arrive.
     fn should_hold(&self) -> bool {
-        if self.progress.is_finished() {
+        if self.progress.is_finished() || self.progress.reaches_end() {
             return false;
         }
         self.progress.lead() < if self.starved { self.high } else { self.low }
