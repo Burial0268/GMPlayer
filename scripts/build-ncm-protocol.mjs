@@ -387,6 +387,40 @@ const routingPlugin = {
       };
     });
 
+    // Login requests must not carry NMTID. Netease's risk control answers a
+    // cellphone login that does with -462 (verifyType 40, a captcha challenge)
+    // even for a correct SMS code; the same request without it goes through to
+    // the account check. Measured against the unmodified upstream, same host,
+    // same code: with NMTID -462, without 410 "account not registered".
+    // ncm-api-rs omits it for every `login` URI too. processCookieObject has no
+    // uri, so it is threaded in. Each edit is asserted, so an upstream bump that
+    // moves the lines fails the build instead of silently shipping the bug.
+    b.onLoad({ filter: /[\\/]util[\\/]request\.js$/ }, (args) => {
+      if (!args.path.startsWith(PKG_DIR)) return null;
+      let src = fs.readFileSync(args.path, "utf8");
+      const edits = [
+        [
+          "const processCookieObject = (cookie, crypto) => {",
+          "const processCookieObject = (cookie, crypto, uri = '') => {",
+        ],
+        [
+          "cookie = processCookieObject(cookie, crypto)",
+          "cookie = processCookieObject(cookie, crypto, uri)",
+        ],
+        [
+          "  if (cookie.NMTID) {\n    processedCookie['NMTID'] = cookie.NMTID",
+          "  if (uri.includes('login')) {\n    delete processedCookie.NMTID\n  } else if (cookie.NMTID) {\n    processedCookie['NMTID'] = cookie.NMTID",
+        ],
+      ];
+      for (const [from, to] of edits) {
+        if (src.split(from).length !== 2) {
+          return { errors: [{ text: `util/request.js no longer matches the NMTID patch: ${from}` }] };
+        }
+        src = src.replace(from, () => to);
+      }
+      return { contents: src, loader: "js", resolveDir: path.dirname(args.path) };
+    });
+
     b.onLoad({ filter: /.*/, namespace: "ncm-unavailable" }, (args) => ({
       contents:
         `import { unavailable } from ${JSON.stringify(path.join(SHIM, "unavailable.js").replace(/\\/g, "/"))};\n` +
