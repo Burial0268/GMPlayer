@@ -205,6 +205,52 @@ textarea,
   }
 }
 
+/* 触屏 APP 手感：去掉网页痕迹（点按高亮、长按菜单、误选文字、橡皮筋回弹、
+   300ms 点击延迟）。输入框与歌词等需要选择的区域显式放行。 */
+@media (max-width: 768px) and (pointer: coarse) {
+  html,
+  body {
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+  /* 锁住视口：滚动只发生在 .n-layout-content 内部，页面本身被拖动会露出底色/接缝。 */
+  html,
+  body,
+  #app {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    overflow: hidden;
+  }
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  .selectable {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+  a,
+  button,
+  [role="button"],
+  .n-button,
+  input,
+  select {
+    touch-action: manipulation;
+  }
+  :where(button:not(:disabled), [role="button"], .n-button) {
+    transition: transform var(--duration-150, 150ms) var(--ease-out, ease-out);
+    &:active {
+      transform: scale(0.96);
+    }
+  }
+}
+
 /* 深色模式语义 token — 边框/蒙层换白色基调，阴影加深保证层级仍可读 */
 html[data-theme="dark"] {
   --text-primary: #f5f5f7;
