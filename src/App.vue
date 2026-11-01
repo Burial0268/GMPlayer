@@ -843,6 +843,11 @@ onBeforeUnmount(() => {
     // BigPlayer(z-index:2000) 在 scrim(1999) 之上，其自身交互不受影响；
     // TitleBar(9999)、侧栏搜索浮层(--z-search-overlay:2200) 亦在其上，窗口控制仍可点。
     pointer-events: auto;
+
+    // 手机上遮罩由 BigPlayer 按开合进度自己画（像抽屉的背板）；这里只留吞指针的作用。
+    @media (max-width: 768px) {
+      opacity: 0;
+    }
   }
 
   &.native-traffic-lights {

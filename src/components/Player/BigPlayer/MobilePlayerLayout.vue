@@ -29,7 +29,7 @@
           >
             <div class="mobile-phony-small-cover mobile-cover-slot" ref="phonySmallCoverRef"></div>
             <div class="mobile-small-controls">
-              <Motion class="mobile-small-controls-inner" :style="contentUiMotionStyle">
+              <Motion class="mobile-small-controls-inner" :style="smallControlsMotionStyle">
                 <div class="mobile-song-info">
                   <div class="name-wrapper">
                     <div class="name" :class="{ 'is-marquee': isNameOverflow }">
@@ -377,6 +377,7 @@ const props = defineProps<{
   contentShellStyle: StaticStyleRecord;
   fullUiMotionStyle: MotionStyleRecord;
   controlsMotionStyle: MotionStyleRecord;
+  headerMotionStyle: MotionStyleRecord;
   albumLayerStyle: MotionStyleRecord;
   albumLayerVisible: boolean;
 }>();
@@ -488,6 +489,10 @@ watch(
 const contentUiMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.fullUiMotionStyle,
+}));
+const smallControlsMotionStyle = computed<MotionStyleRecord>(() => ({
+  ...props.contentShellStyle,
+  ...props.headerMotionStyle,
 }));
 
 // ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──
