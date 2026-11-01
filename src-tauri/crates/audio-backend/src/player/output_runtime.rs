@@ -119,7 +119,7 @@ impl AudioPlayer {
         output.writer().set_volume(self.volume as f32);
         output
             .writer()
-            .set_paused(self.playback_intent == PlaybackIntent::Paused);
+            .set_paused(self.playback_intent == PlaybackIntent::Paused || self.stream_buffering);
         self.output = output;
         self.mark_output_chain_committed();
         {
@@ -163,7 +163,7 @@ impl AudioPlayer {
         self.output.writer().set_volume(self.volume as f32);
         self.output
             .writer()
-            .set_paused(self.playback_intent == PlaybackIntent::Paused);
+            .set_paused(self.playback_intent == PlaybackIntent::Paused || self.stream_buffering);
         self.reset_output_health();
         Ok(())
     }
@@ -239,7 +239,9 @@ impl AudioPlayer {
         let writer = self.output.writer();
         let rendered_samples = writer.render_clock().rendered_samples();
         let queued_samples = self.deck_mixer.queued_samples();
+        // A rebuffering stream pauses the output on purpose; no samples render.
         if self.playback_intent != PlaybackIntent::Playing
+            || self.stream_buffering
             || self.current_song.is_none()
             || self.current_decoder_handle.is_none()
         {
@@ -566,6 +568,16 @@ impl AudioPlayer {
                         handle.stop();
                     }
                     self.decoder_playback_id = playback_id;
+                    // The old decoder's "has enough again" is now ignored (other
+                    // playback_id) and the new gate reports only a fresh starve, so a
+                    // flag left set would keep the output paused on a playable file.
+                    if std::mem::take(&mut self.stream_buffering) {
+                        let music_id = self.session.lock().music_id.clone();
+                        let _ = self
+                            .emitter()
+                            .emit(AudioThreadEvent::Buffering { music_id, is_buffering: false })
+                            .await;
+                    }
                     let writer = output.writer();
                     let config = output.config();
                     self.output = output;

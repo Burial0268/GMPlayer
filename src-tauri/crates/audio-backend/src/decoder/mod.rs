@@ -80,8 +80,18 @@ pub fn is_http_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
 }
 
-/// Download `url` to a temporary file. The returned `TempPath` deletes the
-/// file when dropped — keep it alive for the lifetime of playback.
+/// Bodies under this are downloaded whole before returning: the handshake for a
+/// background writer costs more than it saves on a file that lands in a moment.
+const STREAM_MIN_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Download `url` to a temporary file. The returned guard deletes the file when
+/// dropped — keep it alive for the lifetime of playback.
+///
+/// When the server declares a `Content-Length` of at least `STREAM_MIN_BYTES`
+/// this returns as soon as the response headers are in, with the body still
+/// landing on a writer thread. The path is registered with `source`, so every
+/// `source::open` of it waits for bytes rather than seeing EOF; dropping the
+/// guard stops the writer. Anything else is downloaded whole, as it always was.
 ///
 /// The agent is built per call, and must stay that way. Sharing one — i.e.
 /// pooling the connection between track downloads — saves a TLS handshake per
@@ -90,8 +100,13 @@ pub fn is_http_url(s: &str) -> bool {
 /// undrained body looks like. A whole audio body is the one response here, so
 /// any framing slip corrupts the file rather than erroring, and the file is the
 /// thing playback is built on. One handshake per track, on a path the planner
-/// already runs a track ahead, is not worth that.
-pub fn download_to_temp_path(url: &str) -> AudioResult<tempfile::TempPath> {
+/// already runs a track ahead, is not worth that. Streaming keeps that
+/// guarantee by reading exactly `Content-Length` bytes and failing on a short
+/// body, never by trusting the connection to be at a boundary.
+pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard> {
+    use crate::source::growing::{self, Progress};
+    use std::io::Read;
+
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
         .timeout_read(Duration::from_secs(60))
@@ -100,6 +115,10 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<tempfile::TempPath> {
         .get(url)
         .call()
         .map_err(|e| AudioError::Download(format!("Request failed: {e}")))?;
+    let total = response
+        .header("Content-Length")
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n >= STREAM_MIN_BYTES);
 
     let mut temp = tempfile::Builder::new()
         .prefix("gmplayer-audio-")
@@ -108,10 +127,79 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<tempfile::TempPath> {
         .map_err(|e| AudioError::Download(format!("Create temp file: {e}")))?;
 
     let mut reader = response.into_reader();
-    std::io::copy(&mut reader, &mut temp)
-        .map_err(|e| AudioError::Download(format!("Write temp file: {e}")))?;
+    let Some(total) = total else {
+        std::io::copy(&mut reader, &mut temp)
+            .map_err(|e| AudioError::Download(format!("Write temp file: {e}")))?;
+        return Ok(temp.into_temp_path().into());
+    };
 
-    Ok(temp.into_temp_path())
+    let (file, path) = temp.into_parts();
+    let progress = Progress::new(total);
+    growing::register(&path, progress.clone());
+
+    // A forward seek far past the head writer starts a second one at the target.
+    let (jump_url, jump_path) = (url.to_string(), path.to_path_buf());
+    progress.set_jumper(Box::new(move |progress, id, start| {
+        let (url, path) = (jump_url.clone(), jump_path.clone());
+        let worker = Arc::clone(&progress);
+        let spawned = std::thread::Builder::new().name("audio-download-range".into()).spawn(move || {
+            let outcome = open_range(&url, start, worker.total()).and_then(|body| {
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .open(&path)
+                    .map_err(|e| format!("Open temp file: {e}"))?;
+                growing::pump(&worker, id, file, body)
+            });
+            worker.end_writer(id, outcome);
+        });
+        if let Err(e) = spawned {
+            progress.end_writer(id, Err(format!("Start range thread: {e}")));
+        }
+    }));
+
+    let guard = crate::source::TempGuard::streaming(path, progress.clone());
+    let head = progress.begin_writer(0);
+    let writer = progress.clone();
+    let spawned = std::thread::Builder::new().name("audio-download".into()).spawn(move || {
+        let outcome = growing::pump(&writer, head, file, reader.take(total));
+        writer.end_writer(head, outcome);
+    });
+    spawned.map_err(|e| AudioError::Download(format!("Start download thread: {e}")))?;
+
+    Ok(guard)
+}
+
+/// Open `bytes=start-` of `url`. A server that answers anything but a matching
+/// `206` is refused outright: the bytes would be appended at the offset we
+/// asked for regardless of where they came from, which is a corrupt track
+/// rather than a failed request. Per call, like the main download, for the same
+/// reason.
+fn open_range(url: &str, start: u64, total: u64) -> Result<Box<dyn std::io::Read + Send>, String> {
+    use std::io::Read;
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(60))
+        .build();
+    let response = agent
+        .get(url)
+        .set("Range", &format!("bytes={start}-"))
+        .call()
+        .map_err(|e| format!("Range request failed: {e}"))?;
+    if response.status() != 206 {
+        return Err(format!("server answered {} to a Range request", response.status()));
+    }
+    // "bytes <start>-<end>/<total>"
+    let range = response.header("Content-Range").unwrap_or_default();
+    let matches = range
+        .strip_prefix("bytes ")
+        .and_then(|r| r.split_once('/'))
+        .and_then(|(span, t)| Some((span.split_once('-')?.0.parse::<u64>().ok()?, t.parse::<u64>().ok()?)))
+        .is_some_and(|(s, t)| s == start && t == total);
+    if !matches {
+        return Err(format!("Content-Range {range:?} does not start at {start} of {total}"));
+    }
+    Ok(Box::new(response.into_reader().take(total - start)))
 }
 
 // ── DecoderHandle ────────────────────────────────────────────────
@@ -219,6 +307,9 @@ fn join_decoder_thread_async(handle: std::thread::JoinHandle<()>) {
 #[derive(Debug, Clone, Copy)]
 pub enum DecoderEvent {
     Finished { playback_id: u64 },
+    /// The decoder ran ahead of a download still landing and is holding for it
+    /// (`starved`), or has enough again. Only streamed sources emit it.
+    Starved { playback_id: u64, starved: bool },
 }
 
 const DECODE_BLOCK_FRAMES: usize = 512;
@@ -244,7 +335,7 @@ struct SeekableSymphoniaSource {
 
 impl SeekableSymphoniaSource {
     fn open(path: &Path) -> AudioResult<Self> {
-        let opened = crate::source::open(crate::source::SourceLocator::from_path(path))?;
+        let opened = crate::source::open_playback(crate::source::SourceLocator::from_path(path))?;
         let mut hint = Hint::new();
         // symphonia 0.5's `Probe::format` takes the hint as `_hint` and never
         // reads it — format detection is a pure magic-byte scan, so a container
@@ -632,6 +723,9 @@ where
             .map_err(|e| AudioError::Decode(format!("initial seek failed: {e}")))?;
     }
 
+    let gate = crate::source::growing::lookup(path)
+        .map(|progress| StreamGate::new(progress, rodio::Source::total_duration(&source)));
+
     let (control_tx, control_rx) = mpsc::channel();
     let stop_flag = Arc::new(AtomicBool::new(false));
     let seek_epoch = Arc::new(AtomicU64::new(0));
@@ -667,6 +761,7 @@ where
                 worker_stop,
                 worker_seek_epoch,
                 start_paused,
+                gate,
             );
             worker.run();
         })
@@ -700,6 +795,45 @@ struct DecodeWorker<S: PlaybackSink> {
     start_ramp_frames_remaining: usize,
     applied_seek_epoch: u64,
     pending_seek_flush_epoch: Option<u64>,
+    gate: Option<StreamGate>,
+}
+
+/// Watermarks for a source that is still downloading. The decoder stops
+/// producing when the bytes ahead of it fall below `low` and resumes at `high`;
+/// the gap is hysteresis, so a link running just under the bitrate stalls in
+/// long rebuffers instead of flapping every block.
+struct StreamGate {
+    progress: Arc<crate::source::growing::Progress>,
+    low: u64,
+    high: u64,
+    starved: bool,
+}
+
+const GATE_LOW_SECONDS: f64 = 1.0;
+const GATE_HIGH_SECONDS: f64 = 3.0;
+/// Bytes per second assumed when the container declares no duration.
+const GATE_FALLBACK_BYTES_PER_SEC: f64 = 128.0 * 1024.0;
+const GATE_POLL: Duration = Duration::from_millis(100);
+
+impl StreamGate {
+    fn new(progress: Arc<crate::source::growing::Progress>, duration: Option<Duration>) -> Self {
+        let rate = duration
+            .map(|d| d.as_secs_f64())
+            .filter(|d| *d > 0.0)
+            .map_or(GATE_FALLBACK_BYTES_PER_SEC, |d| progress.total() as f64 / d);
+        let low = ((rate * GATE_LOW_SECONDS) as u64).max(16 * 1024);
+        let high = ((rate * GATE_HIGH_SECONDS) as u64).max(low * 2);
+        Self { progress, low, high, starved: false }
+    }
+
+    /// Whether the decoder must hold now. A finished download never holds, which
+    /// is also what releases the tail: less than `high` may be left to arrive.
+    fn should_hold(&self) -> bool {
+        if self.progress.is_finished() || self.progress.reaches_end() {
+            return false;
+        }
+        self.progress.lead() < if self.starved { self.high } else { self.low }
+    }
 }
 
 /// Frames of pre-roll silence to emit in one run of the decode loop.
@@ -735,6 +869,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
         stop_flag: Arc<AtomicBool>,
         seek_epoch: Arc<AtomicU64>,
         paused: bool,
+        gate: Option<StreamGate>,
     ) -> Self {
         let (analysis_recycle_tx, analysis_recycle_rx) = mpsc::channel();
         Self {
@@ -763,6 +898,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             start_ramp_frames_remaining: START_RAMP_FRAMES,
             applied_seek_epoch: 0,
             pending_seek_flush_epoch: None,
+            gate,
         }
     }
 
@@ -783,6 +919,13 @@ impl<S: PlaybackSink> DecodeWorker<S> {
 
             if self.seek_epoch.load(Ordering::Acquire) != self.applied_seek_epoch {
                 std::thread::yield_now();
+                continue;
+            }
+
+            if !self.hold_for_stream() {
+                break;
+            }
+            if self.paused || self.seek_epoch.load(Ordering::Acquire) != self.applied_seek_epoch {
                 continue;
             }
 
@@ -954,6 +1097,52 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                     break;
                 }
             }
+        }
+    }
+
+    /// Hold while the download is too far behind to decode without waiting,
+    /// reporting the edges so the player can freeze its clock and show a
+    /// rebuffer instead of playing silence. Controls keep being served, so a
+    /// pause, seek or stop does not wait for the network. `false` means stop.
+    fn hold_for_stream(&mut self) -> bool {
+        let Some(gate) = self.gate.as_mut() else {
+            return true;
+        };
+        if !gate.should_hold() {
+            if gate.starved {
+                gate.starved = false;
+                let _ = self.event_tx.send(DecoderEvent::Starved {
+                    playback_id: self.playback_id,
+                    starved: false,
+                });
+            }
+            return true;
+        }
+        if !gate.starved {
+            gate.starved = true;
+            let _ = self.event_tx.send(DecoderEvent::Starved {
+                playback_id: self.playback_id,
+                starved: true,
+            });
+        }
+        let progress = Arc::clone(&gate.progress);
+        loop {
+            if self.stop_flag.load(Ordering::Acquire) || !self.drain_controls() {
+                return false;
+            }
+            if self.paused
+                || self.seek_epoch.load(Ordering::Acquire) != self.applied_seek_epoch
+            {
+                // Let the main loop serve it; the gate re-evaluates on return.
+                return true;
+            }
+            let Some(gate) = self.gate.as_mut() else {
+                return true;
+            };
+            if !gate.should_hold() {
+                return true;
+            }
+            progress.wait_for_change(GATE_POLL);
         }
     }
 
@@ -1135,5 +1324,200 @@ mod tests {
         assert_eq!(frames, 1);
         assert_eq!(offset, 4);
         assert_eq!(output, vec![7.0, 0.2, -0.2]);
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Serve `declared` bytes of header but only `sent` of body, in slow chunks.
+    fn serve(declared: usize, sent: usize) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/t.mp3", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut req = [0u8; 1024];
+            let _ = s.read(&mut req);
+            let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {declared}\r\n\r\n");
+            let chunk = vec![7u8; 256 * 1024];
+            let mut left = sent;
+            while left > 0 {
+                let n = left.min(chunk.len());
+                if s.write_all(&chunk[..n]).is_err() {
+                    return;
+                }
+                left -= n;
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_large_body_is_readable_while_it_lands() {
+        let total = 3 * 1024 * 1024;
+        let t0 = Instant::now();
+        let guard = download_to_temp_path(&serve(total, total)).unwrap();
+        // Returned before the ~360 ms the body takes to send.
+        assert!(t0.elapsed() < Duration::from_millis(250));
+        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
+        assert_eq!(src.size(), Some(total as u64));
+        let mut all = Vec::new();
+        src.read_to_end(&mut all).unwrap();
+        assert_eq!(all.len(), total);
+    }
+
+    #[test]
+    fn a_body_cut_short_fails_the_read() {
+        let guard = download_to_temp_path(&serve(3 * 1024 * 1024, 1024 * 1024)).unwrap();
+        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
+        assert!(src.read_to_end(&mut Vec::new()).is_err());
+    }
+
+    #[test]
+    fn dropping_the_guard_unblocks_a_waiting_reader() {
+        let guard = download_to_temp_path(&serve(3 * 1024 * 1024, 256 * 1024)).unwrap();
+        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
+        let t = std::thread::spawn(move || src.read_to_end(&mut Vec::new()));
+        std::thread::sleep(Duration::from_millis(300));
+        drop(guard);
+        assert!(t.join().unwrap().is_err());
+    }
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+    use crate::source::growing::Progress;
+
+    #[test]
+    fn the_gate_holds_below_low_and_releases_only_at_high() {
+        // 100 KB/s declared: low = 100 KB, high = 300 KB.
+        let progress = Progress::new(10_000_000);
+        let mut gate = StreamGate::new(progress.clone(), Some(Duration::from_secs(100)));
+        assert_eq!((gate.low, gate.high), (100_000, 300_000));
+
+        let id = progress.begin_writer(0);
+        assert!(gate.should_hold(), "nothing landed yet");
+        progress.advance(id, 150_000);
+        assert!(!gate.should_hold(), "above low and not yet starved");
+
+        gate.starved = true;
+        assert!(gate.should_hold(), "starved: 150 KB is below high");
+        progress.advance(id, 200_000);
+        assert!(!gate.should_hold(), "350 KB clears high");
+    }
+
+    #[test]
+    fn a_finished_download_never_holds() {
+        let progress = Progress::new(1000);
+        let gate = StreamGate::new(progress.clone(), None);
+        assert!(gate.should_hold());
+        let id = progress.begin_writer(0);
+        progress.advance(id, 1000);
+        progress.end_writer(id, Ok(()));
+        assert!(!gate.should_hold(), "the tail is released by completion");
+    }
+}
+
+#[cfg(test)]
+mod range_tests {
+    use super::*;
+    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::AtomicUsize;
+
+    const TOTAL: usize = 12 * 1024 * 1024;
+
+    fn byte(i: usize) -> u8 {
+        (i % 251) as u8
+    }
+
+    /// Serves `TOTAL` bytes at roughly 3 MB/s per connection. With
+    /// `honor_range` off it answers every request `200` from byte 0.
+    fn serve(honor_range: bool) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/t.flac", listener.local_addr().unwrap());
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counted = connections.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { return };
+                counted.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut req = [0u8; 2048];
+                    let n = s.read(&mut req).unwrap_or(0);
+                    let req = String::from_utf8_lossy(&req[..n]).to_string();
+                    let start = req
+                        .lines()
+                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("range: bytes=").map(str::to_string))
+                        .and_then(|r| r.trim_end_matches('-').parse::<usize>().ok())
+                        .filter(|_| honor_range)
+                        .unwrap_or(0);
+                    let head = if honor_range && start > 0 {
+                        format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{TOTAL}\r\n\r\n",
+                            TOTAL - start,
+                            TOTAL - 1
+                        )
+                    } else {
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: {TOTAL}\r\n\r\n")
+                    };
+                    if s.write_all(head.as_bytes()).is_err() {
+                        return;
+                    }
+                    let mut at = start;
+                    while at < TOTAL {
+                        let end = (at + 128 * 1024).min(TOTAL);
+                        let chunk: Vec<u8> = (at..end).map(byte).collect();
+                        if s.write_all(&chunk).is_err() {
+                            return;
+                        }
+                        at = end;
+                        std::thread::sleep(Duration::from_millis(40));
+                    }
+                });
+            }
+        });
+        (url, connections)
+    }
+
+    #[test]
+    fn a_far_seek_is_served_by_a_second_range_request() {
+        let (url, connections) = serve(true);
+        let guard = download_to_temp_path(&url).unwrap();
+        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
+
+        // The whole body takes ~3.8 s at the server's pace; the tail must not.
+        let at = TOTAL - 50_000;
+        let t0 = Instant::now();
+        src.seek(SeekFrom::Start(at as u64)).unwrap();
+        let mut got = vec![0u8; 1000];
+        src.read_exact(&mut got).unwrap();
+        assert!(t0.elapsed() < Duration::from_millis(1500), "took {:?}", t0.elapsed());
+        assert!(got.iter().enumerate().all(|(i, b)| *b == byte(at + i)));
+        assert_eq!(connections.load(Ordering::SeqCst), 2);
+
+        // And the file still ends up whole and exact, with the writers met.
+        src.seek(SeekFrom::Start(0)).unwrap();
+        let mut all = Vec::new();
+        src.read_to_end(&mut all).unwrap();
+        assert_eq!(all.len(), TOTAL);
+        assert!(all.iter().enumerate().all(|(i, b)| *b == byte(i)));
+    }
+
+    #[test]
+    fn a_server_that_ignores_range_falls_back_to_waiting() {
+        let (url, _) = serve(false);
+        let guard = download_to_temp_path(&url).unwrap();
+        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
+        let at = TOTAL - 50_000;
+        src.seek(SeekFrom::Start(at as u64)).unwrap();
+        let mut got = vec![0u8; 1000];
+        src.read_exact(&mut got).unwrap();
+        assert!(got.iter().enumerate().all(|(i, b)| *b == byte(at + i)));
     }
 }

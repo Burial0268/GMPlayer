@@ -24,7 +24,8 @@ export type SoundEventType =
   | "playerror"
   | "progress"
   | "stalled"
-  | "waiting";
+  | "waiting"
+  | "resumed";
 
 /**
  * Sound event callback function signature

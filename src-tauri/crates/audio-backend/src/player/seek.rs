@@ -41,7 +41,7 @@ impl AudioPlayer {
             return Ok(false);
         };
 
-        let was_playing = self.playback_intent == PlaybackIntent::Playing;
+        let was_playing = self.playback_intent == PlaybackIntent::Playing && !self.stream_buffering;
         if was_playing {
             self.output.writer().set_paused(true);
         }

@@ -56,6 +56,7 @@ pub mod session_controls;
 mod source_cache;
 pub mod source_resolver;
 mod status;
+mod stream_stall;
 
 #[allow(unused_imports)]
 pub use api::{
@@ -116,11 +117,11 @@ struct AudioPlayer {
     current_local_path: Option<PathBuf>,
     /// RAII guard for the downloaded temp file — dropped when a new track
     /// loads, which deletes the temp file from disk.
-    current_temp_file: Option<tempfile::TempPath>,
+    current_temp_file: Option<crate::source::TempGuard>,
     current_decoder_handle: Option<decoder::DecoderHandle>,
     pending_seek: Option<SeekRequest>,
     secondary_decoder_handle: Option<decoder::DecoderHandle>,
-    secondary_temp_file: Option<tempfile::TempPath>,
+    secondary_temp_file: Option<crate::source::TempGuard>,
     secondary_local_path: Option<PathBuf>,
     secondary_song: Option<SongData>,
     secondary_duration: f64,
@@ -186,6 +187,10 @@ struct AudioPlayer {
     /// `LoadingAudio` → `LoadAudio` event pair, and is cleared on the failure
     /// paths those events do not cover.
     load_in_flight: bool,
+    /// The decoder is holding for a download that fell behind (see
+    /// `stream_stall`). The output is paused and the clock frozen while true,
+    /// though `playback_intent` still says playing.
+    stream_buffering: bool,
 
     // Manifest-driven planning. The bounded `playback_queue` above stays the
     // transport to the decoder; these own *what plays next* across the full
@@ -450,6 +455,7 @@ impl AudioPlayer {
             pending_display: now_playing::PendingDisplay::default(),
             announced_track: None,
             load_in_flight: false,
+            stream_buffering: false,
             manifest: ManifestStore::new(),
             planner: Planner::new(),
             source_cache: SourceCache::new(),
@@ -531,8 +537,14 @@ impl AudioPlayer {
               }
 
               event = self.decoder_event_rx.recv() => {
-                if let Some(decoder::DecoderEvent::Finished { playback_id }) = event {
-                  self.handle_decoder_finished(playback_id).await;
+                match event {
+                  Some(decoder::DecoderEvent::Finished { playback_id }) => {
+                    self.handle_decoder_finished(playback_id).await;
+                  }
+                  Some(decoder::DecoderEvent::Starved { playback_id, starved }) => {
+                    self.handle_decoder_starved(playback_id, starved).await;
+                  }
+                  None => {}
                 }
               }
 

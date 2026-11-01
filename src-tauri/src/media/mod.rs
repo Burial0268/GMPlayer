@@ -429,6 +429,10 @@ impl PlayerEventSubscriber for MediaSessionBridge {
                 // the resolve/download window, which is over by the time it does.
                 AudioThreadEvent::LoadingAudio { .. } => state.apply_loading(true),
                 AudioThreadEvent::LoadAudio { .. } => state.apply_loading(false),
+                // A download that fell behind reads the same on the OS surface.
+                AudioThreadEvent::Buffering { is_buffering, .. } => {
+                    state.apply_loading(*is_buffering)
+                }
 
                 AudioThreadEvent::PlayPosition { position, .. } => state.apply_position(*position),
 

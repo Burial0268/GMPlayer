@@ -930,6 +930,8 @@ const setupNativeSound = (
     clearLoadRetryCount(boundSongId);
     music.playingSongId = boundSongId;
     music.setPlayState(true);
+    // Resumed into a stall the backend has not cleared yet.
+    if ((sound as { isBuffering?: () => boolean }).isBuffering?.()) applyRebuffering();
 
     if (typeof window.$message !== "undefined" && songArtist !== null) {
       window.$message.info(`${songName} - ${songArtist}`, {
@@ -972,9 +974,34 @@ const setupNativeSound = (
 
   sound.on("play", handleNativePlay);
 
+  // ── Rebuffer ──────────────────────────────────────────────────
+  // The download fell behind playback. Intermediate state: the user still wants
+  // to play (playState stays true) while the spinner shows and the timeline is
+  // frozen by the sound. Not the track-load "buffering" stage, which cannot be
+  // paused out of.
+  const applyRebuffering = (): void => {
+    music.isLoadingSong = true;
+    music.loadingStage = "rebuffering";
+  };
+  const clearRebuffering = (): void => {
+    if (music.loadingStage !== "rebuffering") return;
+    music.isLoadingSong = false;
+    music.loadingStage = "idle";
+  };
+  sound.on("waiting", () => {
+    if (!isActiveBoundSound()) return;
+    // Paused during the stall: nothing to show until play resumes it.
+    if (music.getPlayState) applyRebuffering();
+  });
+  sound.on("resumed", () => {
+    if (!isActiveBoundSound()) return;
+    clearRebuffering();
+  });
+
   // ── Pause ─────────────────────────────────────────────────────
   sound.on("pause", () => {
     if (!isActiveBoundSound()) return;
+    clearRebuffering();
     const autoMix = getAutoMixEngine();
     if (autoMix.isCrossfading()) return;
     checkpointActivePosition(sound, music);

@@ -469,6 +469,11 @@ pub enum AudioThreadEvent {
         current_play_index: usize,
         load_request_id: Option<u64>,
     },
+    /// The track is playing from a download that fell behind: output is paused
+    /// and the clock frozen until it catches up. Not a pause — `PlayStatus` is
+    /// unchanged, and the user's intent to play survives it.
+    #[serde(rename_all = "camelCase")]
+    Buffering { music_id: String, is_buffering: bool },
     #[serde(rename_all = "camelCase")]
     AudioPlayFinished { music_id: String },
     #[serde(rename_all = "camelCase")]

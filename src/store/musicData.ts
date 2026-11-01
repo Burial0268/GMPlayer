@@ -125,7 +125,7 @@ interface MusicDataState {
   catList: Record<string, any>;
   highqualityCatList: any[];
   isLoadingSong: boolean;
-  loadingStage: "idle" | "resolving" | "buffering" | "stalled" | "error";
+  loadingStage: "idle" | "resolving" | "buffering" | "rebuffering" | "stalled" | "error";
   preloadedSongIds: Set<number>;
   // persistData.likeList 的查询索引。数组本身仍是持久化的唯一真源，
   // 这里只是派生索引：Array.includes 是 O(n)，而且会把整个数组登记为依赖，
@@ -213,7 +213,9 @@ const useMusicDataStore = defineStore("musicData", {
     getLoadingState(state): boolean {
       return state.isLoadingSong;
     },
-    getLoadingStage(state): "idle" | "resolving" | "buffering" | "stalled" | "error" {
+    getLoadingStage(
+      state,
+    ): "idle" | "resolving" | "buffering" | "rebuffering" | "stalled" | "error" {
       return state.loadingStage;
     },
     getDailySongs(state): SongData[] {

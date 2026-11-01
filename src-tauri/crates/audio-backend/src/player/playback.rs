@@ -89,6 +89,11 @@ impl AudioPlayer {
             let _ = handle.set_paused(false);
         }
 
+        // Still waiting on the download: the decoder is holding, so unpausing
+        // would play an empty ring as silence while the clock ran on.
+        if self.stream_buffering {
+            return;
+        }
         self.wait_for_start_prebuffer().await;
         self.output.writer().set_paused(false);
     }
@@ -171,6 +176,8 @@ impl AudioPlayer {
         load_request_id: Option<u64>,
     ) -> anyhow::Result<()> {
         self.pending_seek = None;
+        // A new decoder gets its own gate; the old one's stall dies with it.
+        self.stream_buffering = false;
         // `current_identity` describes what is loaded *now*. A planner-driven
         // load supplies one via `pending_identity`; a frontend-driven one is
         // named by the announcement it always sends first (`AnnounceTrack`),
@@ -270,7 +277,7 @@ impl AudioPlayer {
         } else {
             let resolve_path = file_path.clone();
             let resolve_result = tokio::task::spawn_blocking(
-                move || -> AudioResult<(PathBuf, Option<tempfile::TempPath>)> {
+                move || -> AudioResult<(PathBuf, Option<crate::source::TempGuard>)> {
                     if decoder::is_http_url(&resolve_path) {
                         let temp = decoder::download_to_temp_path(&resolve_path)?;
                         let path = temp.to_path_buf();

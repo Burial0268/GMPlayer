@@ -208,6 +208,9 @@ export class NativeRustSound implements ISound {
   private _terminallyCleared: boolean = false;
   private _playbackState: "stopped" | "playing" | "paused" | "ended" = "stopped";
   private _pendingPlayCommand: boolean = false;
+  // The backend is holding playback for a download that fell behind. Distinct
+  // from "paused": the user still wants to play, but the timeline must not run.
+  private _buffering: boolean = false;
   private _optimisticPlayback: boolean = isTauri();
   private _adoptNextBackendMusicId: boolean = false;
   private _nativeAutoMixSyncPending: boolean = false;
@@ -758,8 +761,18 @@ export class NativeRustSound implements ISound {
         break;
       }
 
+      case "buffering": {
+        // Same track only: a late packet for a track already replaced is noise.
+        if (evt.data.musicId && this._expectedMusicId && evt.data.musicId !== this._expectedMusicId)
+          break;
+        this._setBuffering(evt.data.isBuffering);
+        break;
+      }
+
       case "loadingAudio":
         if (!this._matchesPendingLoadRequest(evt.data.loadRequestId)) break;
+        // A new load replaces the decoder, and its stall with it.
+        this._buffering = false;
         if (this._nativeAdvancePending) {
           // Backend confirmed the advance and is resolving the next source —
           // give the download room before falling back to the JS path.
@@ -1086,9 +1099,23 @@ export class NativeRustSound implements ISound {
     return requestId === undefined || requestId === null;
   }
 
+  isBuffering(): boolean {
+    return this._buffering;
+  }
+
+  private _setBuffering(value: boolean): void {
+    if (this._buffering === value) return;
+    this._buffering = value;
+    this._syncTimelineClock();
+    this._emit(value ? "waiting" : "resumed");
+  }
+
   private _syncTimelineClock(): void {
     this._timeline.setDuration(this.duration());
-    this._timeline.setPlaybackState(this._playbackState === "playing", this._pendingPlayCommand);
+    this._timeline.setPlaybackState(
+      this._playbackState === "playing" && !this._buffering,
+      this._pendingPlayCommand,
+    );
   }
 
   private _applyTimelinePosition(position: number): number {

@@ -36,7 +36,7 @@ pub(super) struct PreparedTrack {
     transition_id: Option<u64>,
     #[allow(dead_code)]
     local_path: PathBuf,
-    _temp_file: Option<tempfile::TempPath>,
+    _temp_file: Option<crate::source::TempGuard>,
     duration: f64,
     plan: Option<CrossfadePlan>,
     display_info: DisplayAudioInfo,
@@ -48,7 +48,7 @@ pub struct PreparedAutoMixStart {
     pub song: SongData,
     pub transition_id: Option<u64>,
     pub local_path: PathBuf,
-    pub _temp_file: Option<tempfile::TempPath>,
+    pub _temp_file: Option<crate::source::TempGuard>,
     pub plan: Option<CrossfadePlan>,
     pub analysis_duration: f64,
     pub display_info: DisplayAudioInfo,
@@ -563,9 +563,13 @@ fn analysis_cache_key(path: &Path) -> String {
     // degenerates to the URI. That is still correct as an identity — SAF
     // document ids are stable — it just means a document replaced in place
     // keeps its cached analysis until the process restarts.
+    // A download of ours grows under this key and its mtime moves with it, so
+    // its declared size stands in for both.
+    let streamed = crate::source::expected_len(path);
     let meta = std::fs::metadata(path).ok();
-    let len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let len = streamed.or_else(|| meta.as_ref().map(|m| m.len())).unwrap_or(0);
     let mtime = meta
+        .filter(|_| streamed.is_none())
         .and_then(|m| m.modified().ok())
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map(|d| d.as_secs())
@@ -937,7 +941,7 @@ fn clamp_plan_to_content(mut plan: CrossfadePlan, effective_end: f64) -> Crossfa
 
 fn resolve_source_to_local_path(
     source: &str,
-) -> Result<(PathBuf, Option<tempfile::TempPath>), String> {
+) -> Result<(PathBuf, Option<crate::source::TempGuard>), String> {
     if decoder::is_http_url(source) {
         let temp = decoder::download_to_temp_path(source).map_err(|e| e.to_string())?;
         let path = temp.to_path_buf();
