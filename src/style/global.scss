@@ -226,6 +226,18 @@ html[data-theme="dark"] {
   --shadow-hover: 0 12px 30px rgba(0, 0, 0, 0.46), 0 3px 8px rgba(0, 0, 0, 0.32);
 }
 
+/* 锁住视口：滚动只发生在 .n-layout-content 内部。页面本身被拖动会让固定的
+   tint/玻璃层与内容错位，露出底色和接缝。 */
+html,
+body,
+#app {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 html,
 body,
 #app {
