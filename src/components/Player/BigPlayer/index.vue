@@ -443,12 +443,16 @@ const rangeProgress = (value: number, from: number, to: number) =>
 const MOBILE_MINI_CHROME_FADE_END = 0.2;
 const MOBILE_SHEET_FADE_END = 0.12;
 const MOBILE_TABBAR_EXIT_END = 0.3;
+const MOBILE_SHEET_PEAK_RADIUS = 28;
+const MOBILE_SHEET_SETTLE_START = 0.7;
 // The mini bar stays above the sheet until its own fade is done.
 const MOBILE_MINI_UI_FADE_END = 0.3;
 const MOBILE_CONTENT_REVEAL_START = 0.45;
 const MOBILE_CONTENT_REVEAL_END = 0.95;
 const MOBILE_CONTROLS_REVEAL_START = 0.6;
 const MOBILE_HEADER_REVEAL_END = 0.8;
+const MOBILE_FULL_UI_RISE = 28;
+const MOBILE_CONTROLS_RISE = 20;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
@@ -651,7 +655,15 @@ const applyInteractiveFrame = (progress: number) => {
   if (!interactiveFrames) return;
   const { miniBg, fullBg, miniArtwork, fullArtwork } = interactiveFrames;
   backgroundTop.set(mix(miniBg.top, fullBg.top, progress));
-  backgroundRadius.set(mix(miniBg.borderRadius || 12, fullBg.borderRadius, progress));
+  // Corners swell like a device's while the sheet rises, then relax to square on arrival.
+  const swelling = mix(
+    miniBg.borderRadius || 12,
+    MOBILE_SHEET_PEAK_RADIUS,
+    easeOutCubic(rangeProgress(progress, 0, 0.3)),
+  );
+  backgroundRadius.set(
+    mix(swelling, fullBg.borderRadius, rangeProgress(progress, MOBILE_SHEET_SETTLE_START, 1)),
+  );
   const artwork = interpolateFrame(miniArtwork, fullArtwork, progress);
   applyArtworkFrame(artwork);
   headerY.set(artwork.top - fullArtwork.top);
@@ -742,9 +754,9 @@ const applyProgressState = (value: number) => {
     mobileTransitionPhase.value = nextPhase;
   }
   fullUiOpacity.set(fullUiEnter);
-  fullUiY.set(mix(14, 0, easeOutCubic(fullUiEnter)));
+  fullUiY.set(mix(MOBILE_FULL_UI_RISE, 0, easeOutCubic(fullUiEnter)));
   controlsOpacity.set(controlsEnter);
-  controlsY.set(mix(14, 0, easeOutCubic(controlsEnter)));
+  controlsY.set(mix(MOBILE_CONTROLS_RISE, 0, easeOutCubic(controlsEnter)));
   headerOpacity.set(rangeProgress(progress, MOBILE_CONTENT_REVEAL_START, MOBILE_HEADER_REVEAL_END));
   headerY.set(0);
   // Near-opaque within the first few px of a drag, but not a hard cut over the glass bar.
@@ -803,9 +815,9 @@ const resetClosedMobileState = () => {
   interactiveFrames = null;
   playerProgress.set(0);
   fullUiOpacity.set(0);
-  fullUiY.set(14);
+  fullUiY.set(MOBILE_FULL_UI_RISE);
   controlsOpacity.set(0);
-  controlsY.set(14);
+  controlsY.set(MOBILE_CONTROLS_RISE);
   headerOpacity.set(0);
   headerY.set(0);
   backgroundVisualOpacity.set(0);
