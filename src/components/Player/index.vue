@@ -1197,6 +1197,7 @@ watch(
     setting.showYrcAnimation,
     setting.showTransl,
     setting.showRoma,
+    setting.showRuby,
   ],
   () => {
     broadcastPlayerSettings();
@@ -1215,7 +1216,7 @@ watch(
 
 // 切换 TTML 翻译语言：原文在 IndexedDB 里，重新取词只是重新解析一遍
 watch(
-  () => setting.lyricTranslationLanguage,
+  () => [setting.lyricTranslationLanguage, setting.language],
   () => {
     const data = music.getPlaySongData;
     if (!data || data.local?.uri || music.songLyric.translationLanguages.length < 2) return;

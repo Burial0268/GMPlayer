@@ -14,7 +14,7 @@ const MAX_CACHE_SIZE = 20;
 interface CacheEntry {
   result: ParsedLyricResult;
   useTTMLRepo: boolean;
-  /** 取词时用的翻译语言偏好；只对带多语言翻译的歌有意义 */
+  /** 取词时的翻译语言偏好（明确选择 + 界面语言）；只对带多语言翻译的歌有意义 */
   translationPref: string;
 }
 
@@ -44,7 +44,8 @@ class LyricFetcher {
     const generation = ++this._generation;
     const settingStore = useSettingDataStore();
     const useTTMLRepo = settingStore.useTTMLRepo;
-    const translationPref = settingStore.lyricTranslationLanguage;
+    // 自动模式跟随界面语言，所以界面语言也算偏好的一部分
+    const translationPref = `${settingStore.lyricTranslationLanguage}|${settingStore.language}`;
 
     // 1. Cache hit (setting must match)
     const cached = this._cache.get(id);
