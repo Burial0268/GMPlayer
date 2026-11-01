@@ -399,7 +399,7 @@ watch(
 );
 
 watch(
-  () => [music.songLyric, setting.showYrc, setting.showRoma, setting.showTransl],
+  () => [music.songLyric, setting.showYrc, setting.showRoma, setting.showTransl, setting.showRuby],
   () => {
     const rawSongLyric = toRaw(music.songLyric);
 
@@ -414,6 +414,7 @@ watch(
         showYrc: setting.showYrc,
         showRoma: setting.showRoma,
         showTransl: setting.showTransl,
+        showRuby: setting.showRuby,
       });
     } catch (error) {
       console.error("[LyricPlayer] 预处理歌词失败", error);
@@ -427,6 +428,7 @@ watch(
       showYrc: setting.showYrc,
       showRoma: setting.showRoma,
       showTransl: setting.showTransl,
+      showRuby: setting.showRuby,
     });
     amllLyricLines.value = lines;
     applyLyricLines(lines);

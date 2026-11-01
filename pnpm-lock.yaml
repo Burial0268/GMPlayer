@@ -18,6 +18,9 @@ importers:
       '@applemusic-like-lyrics/lyric':
         specifier: ^1.1.0
         version: 1.1.0
+      '@applemusic-like-lyrics/ttml':
+        specifier: ^1.0.1
+        version: 1.0.1
       '@applemusic-like-lyrics/vue':
         specifier: ^0.6.0
         version: 0.6.0(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))(vue@3.5.44(typescript@5.9.3))

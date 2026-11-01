@@ -4,8 +4,10 @@
  */
 
 import request from "@/utils/request";
-import { parseEslrc, parseQrc, parseTTML, parseYrc } from "@applemusic-like-lyrics/lyric";
-import type { TTMLLyric } from "@applemusic-like-lyrics/lyric";
+import { parseEslrc, parseQrc, parseYrc } from "@applemusic-like-lyrics/lyric";
+import useSettingDataStore from "@/store/settingData";
+import { parseTTMLForLanguage } from "./parser/ttmlLanguage";
+import { getCachedTTML, setCachedTTML } from "@/utils/ttmlCache";
 import {
   detectWordTimedLyricFormat,
   detectLrcTimestampMode,
@@ -49,6 +51,8 @@ interface LyricMeta {
   id: string;
   availableFormats?: string[]; // 如 ["yrc", "eslrc", "lrc", "ttml"]
   hasTranslation?: boolean;
+  translationLanguages?: string[];
+  translationLanguage?: string;
   hasRomaji?: boolean;
   foundNCM?: boolean;
   source?: string; // 添加歌词来源字段
@@ -113,10 +117,13 @@ const TTML_MIRROR_URLS = [
 class TTMLRepoProvider implements LyricProvider {
   /**
    * Try each mirror URL sequentially until one returns a valid TTML file.
-   * @param id Song ID
-   * @returns TTML text content or null if all mirrors fail
+   * `definitiveMiss` is true only when every mirror answered and none had the
+   * file; a timeout or network error says nothing about the library.
    */
-  private async fetchTTMLFromMirrors(id: number): Promise<string | null> {
+  private async fetchTTMLFromMirrors(
+    id: number,
+  ): Promise<{ content: string | null; definitiveMiss: boolean }> {
+    let sawFailure = false;
     for (const urlTemplate of TTML_MIRROR_URLS) {
       const url = urlTemplate.replace("{id}", String(id));
       try {
@@ -130,11 +137,14 @@ class TTMLRepoProvider implements LyricProvider {
           const text = await response.text();
           if (text && text.includes("<tt")) {
             console.log(`[TTMLRepoProvider] Successfully fetched TTML for id ${id} from ${url}`);
-            return text;
+            return { content: text, definitiveMiss: false };
           }
+        } else if (response.status !== 404) {
+          sawFailure = true;
         }
         console.log(`[TTMLRepoProvider] Mirror returned ${response.status} for id ${id}: ${url}`);
       } catch (error: any) {
+        sawFailure = true;
         if (error.name === "AbortError") {
           console.log(`[TTMLRepoProvider] Timeout fetching id ${id} from ${url}`);
         } else {
@@ -142,20 +152,38 @@ class TTMLRepoProvider implements LyricProvider {
         }
       }
     }
-    return null;
+    return { content: null, definitiveMiss: !sawFailure };
+  }
+
+  /** IndexedDB 命中且新鲜就不上网；失败时用过期内容兜底，查不到的记负缓存 */
+  private async loadTTML(id: number): Promise<string | null> {
+    const cached = await getCachedTTML(id);
+    if (cached?.fresh) return cached.content;
+
+    const { content, definitiveMiss } = await this.fetchTTMLFromMirrors(id);
+    if (content) {
+      void setCachedTTML(id, content);
+      return content;
+    }
+    if (definitiveMiss) void setCachedTTML(id, null);
+    return cached?.content ?? null;
   }
 
   async getLyric(id: number, _fast?: boolean): Promise<LyricData | null> {
     try {
-      const ttmlContent = await this.fetchTTMLFromMirrors(id);
+      const ttmlContent = await this.loadTTML(id);
 
       if (!ttmlContent) {
         console.log(`[TTMLRepoProvider] No TTML found for id ${id} in any mirror`);
         return null;
       }
 
-      // Parse TTML using the parser bundled in @applemusic-like-lyrics/lyric.
-      const ttmlLyric = parseTTML(ttmlContent) as TTMLLyric;
+      const setting = useSettingDataStore();
+      const {
+        lyric: ttmlLyric,
+        translationLanguages,
+        translationLanguage,
+      } = parseTTMLForLanguage(ttmlContent, setting.language, setting.lyricTranslationLanguage);
 
       if (!ttmlLyric || !ttmlLyric.lines || ttmlLyric.lines.length === 0) {
         console.warn(`[TTMLRepoProvider] TTML parsing resulted in empty lines for id: ${id}`);
@@ -164,17 +192,23 @@ class TTMLRepoProvider implements LyricProvider {
 
       console.log(`[TTMLRepoProvider] Parsed TTML for id ${id}: ${ttmlLyric.lines.length} lines`);
 
-      // Build fallback LRC text from TTML lines
+      // 行级 LRC，以及 TTML 自带的翻译/音译：接到 tlyric / romalrc，和网易云来源走同一条路径
       let lrcText = "";
+      let tlyricText = "";
+      let romalrcText = "";
       ttmlLyric.lines.forEach((line) => {
-        if (line.words && line.words.length > 0) {
-          const timeMs = line.words[0].startTime;
-          const minutes = Math.floor(timeMs / 60000);
-          const seconds = ((timeMs % 60000) / 1000).toFixed(2);
-          const timeStr = `${minutes.toString().padStart(2, "0")}:${seconds.padStart(5, "0")}`;
-          const content = line.words.map((w: any) => w.word).join("");
-          lrcText += `[${timeStr}]${content}\n`;
-        }
+        if (!line.words || line.words.length === 0) return;
+        const stamp = `[${formatLrcTime(line.words[0].startTime)}]`;
+        lrcText += `${stamp}${line.words.map((w: any) => w.word).join("")}\n`;
+        if (line.translatedLyric) tlyricText += `${stamp}${line.translatedLyric}\n`;
+        // 逐字音译拼回整行，供只读行级音译的界面使用；渲染仍用逐字的那份
+        const roma =
+          line.romanLyric ||
+          line.words
+            .map((w: any) => w.romanWord ?? "")
+            .join(" ")
+            .trim();
+        if (roma) romalrcText += `${stamp}${roma}\n`;
       });
 
       if (!lrcText.trim()) {
@@ -184,8 +218,8 @@ class TTMLRepoProvider implements LyricProvider {
       const result: LyricData = {
         code: 200,
         lrc: { lyric: lrcText },
-        tlyric: null,
-        romalrc: null,
+        tlyric: tlyricText ? { lyric: tlyricText } : null,
+        romalrc: romalrcText ? { lyric: romalrcText } : null,
         yrc: null,
         ytlrc: null,
         yromalrc: null,
@@ -197,6 +231,8 @@ class TTMLRepoProvider implements LyricProvider {
           found: true,
           id: String(id),
           source: "repository",
+          translationLanguages,
+          translationLanguage,
         },
       };
 

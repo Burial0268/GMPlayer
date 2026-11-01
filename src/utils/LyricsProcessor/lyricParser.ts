@@ -109,6 +109,8 @@ export const createEmptyLyricResult = (): ParsedLyricResult => ({
   hasYrcTran: false,
   hasYrcRoma: false,
   hasTTML: false,
+  translationLanguages: [],
+  translationLanguage: "",
   lrc: [],
   yrc: [],
   ttml: [],
@@ -150,6 +152,9 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
       data.hasTTML && Array.isArray(data.ttml) && data.ttml.length > 0
         ? normalizeTTMLLines(data.ttml as ParsedSourceLine[])
         : [];
+
+    result.translationLanguages = data.meta?.translationLanguages ?? [];
+    result.translationLanguage = data.meta?.translationLanguage ?? "";
 
     // --- LAAPI data parsing ---
     let laapiTranslationLyricLines: ParsedSourceLine[] | null = null;

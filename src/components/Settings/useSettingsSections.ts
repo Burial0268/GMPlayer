@@ -324,6 +324,13 @@ export function useSettingsSections() {
           show: () => setting.showYrc,
         },
         {
+          key: "showRuby",
+          label: "setting.showRuby",
+          tip: "setting.showRubyTip",
+          control: "switch",
+          show: () => setting.showYrc,
+        },
+        {
           key: "springParams",
           label: "setting.springParams",
           tip: "setting.springParamsTip",

@@ -269,7 +269,10 @@ function buildPlayerTimePayload(): PlayerTimePayload {
 
 function lyricSettingsKey(setting: SettingStore) {
   return String(
-    (setting.showYrc ? 4 : 0) | (setting.showRoma ? 2 : 0) | (setting.showTransl ? 1 : 0),
+    (setting.showRuby ? 8 : 0) |
+      (setting.showYrc ? 4 : 0) |
+      (setting.showRoma ? 2 : 0) |
+      (setting.showTransl ? 1 : 0),
   );
 }
 
@@ -320,6 +323,7 @@ function buildPlayerLyricPayload(force = false): PlayerLyricPayload | null {
       showYrc: setting.showYrc,
       showRoma: setting.showRoma,
       showTransl: setting.showTransl,
+      showRuby: setting.showRuby,
     });
   } catch (err) {
     console.error("[PlayerCommunication] Failed to process lyrics for broadcast:", err);

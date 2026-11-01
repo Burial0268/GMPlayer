@@ -15,6 +15,8 @@ export interface LyricWord {
   startTime: number;
   endTime: number;
   romanWord?: string;
+  /** 注音片段（TTML <ruby>）；沿用 AMLL 的 LyricWordBase 形状 */
+  ruby?: { word: string; startTime: number; endTime: number }[];
 }
 
 // Backward compatibility alias
@@ -49,17 +51,13 @@ export interface ParsedLrcLine {
   roma?: string;
 }
 
-/** Parsed YRC line with word-by-word timing (time in seconds) */
+/**
+ * Parsed YRC line (time in seconds). Word timing lives in `yrcAMData`; this
+ * only carries what index sync and the plain-text surfaces read.
+ */
 export interface ParsedYrcLine {
   time: number;
   endTime: number;
-  content: {
-    time: number;
-    endTime: number;
-    duration: number;
-    content: string;
-    endsWithSpace: boolean;
-  }[];
   TextContent: string;
   tran?: string;
   roma?: string;
@@ -94,6 +92,8 @@ export interface LyricMeta {
   id: string;
   availableFormats?: string[];
   hasTranslation?: boolean;
+  translationLanguages?: string[];
+  translationLanguage?: string;
   hasRomaji?: boolean;
   foundNCM?: boolean;
   source?: string;
@@ -109,6 +109,9 @@ export interface ParsedLyricResult {
   hasYrcTran: boolean;
   hasYrcRoma: boolean;
   hasTTML: boolean;
+  /** TTML 里出现过的翻译语言（供切换），以及本次选中的那一种 */
+  translationLanguages: string[];
+  translationLanguage: string;
   lrc: ParsedLrcLine[];
   yrc: ParsedYrcLine[];
   ttml: any[];
@@ -127,6 +130,8 @@ export interface SongLyric {
   hasYrcTran: boolean;
   hasYrcRoma: boolean;
   hasTTML: boolean;
+  translationLanguages: string[];
+  translationLanguage: string;
   // Parsed lyric data
   lrc: ParsedLrcLine[];
   yrc: ParsedYrcLine[];
@@ -150,6 +155,7 @@ export interface ProcessingSettings {
   showYrc: boolean;
   showRoma: boolean;
   showTransl: boolean;
+  showRuby: boolean;
 }
 
 // Backward compatibility alias

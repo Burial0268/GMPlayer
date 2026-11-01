@@ -14,6 +14,8 @@ const MAX_CACHE_SIZE = 20;
 interface CacheEntry {
   result: ParsedLyricResult;
   useTTMLRepo: boolean;
+  /** 取词时用的翻译语言偏好；只对带多语言翻译的歌有意义 */
+  translationPref: string;
 }
 
 /** Fields the processing layer attaches to a lyric object after parsing. */
@@ -42,10 +44,15 @@ class LyricFetcher {
     const generation = ++this._generation;
     const settingStore = useSettingDataStore();
     const useTTMLRepo = settingStore.useTTMLRepo;
+    const translationPref = settingStore.lyricTranslationLanguage;
 
     // 1. Cache hit (setting must match)
     const cached = this._cache.get(id);
-    if (cached && cached.useTTMLRepo === useTTMLRepo) {
+    if (
+      cached &&
+      cached.useTTMLRepo === useTTMLRepo &&
+      (cached.translationPref === translationPref || cached.result.translationLanguages.length < 2)
+    ) {
       // LRU touch: delete + re-insert to move to end
       this._cache.delete(id);
       this._cache.set(id, cached);
@@ -75,7 +82,7 @@ class LyricFetcher {
           this._cache.delete(oldest);
         }
       }
-      this._cache.set(id, { result, useTTMLRepo });
+      this._cache.set(id, { result, useTTMLRepo, translationPref });
       this._releaseDerived(id);
 
       return { result, stale: generation !== this._generation };

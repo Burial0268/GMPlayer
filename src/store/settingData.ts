@@ -36,7 +36,9 @@ interface SettingDataState {
   bottomLyricShow: boolean;
   showYrc: boolean;
   showYrcAnimation: boolean;
-  showYrcTransform: boolean;
+  showRuby: boolean;
+  /** TTML 翻译语言；空 = 跟随界面语言 */
+  lyricTranslationLanguage: string;
   showTransl: boolean;
   showRoma: boolean;
   taskbarLyrics: boolean;
@@ -167,6 +169,8 @@ export function migrateLegacySettingPayload(payload: any): any {
     if (!("useTTMLRepo" in payload)) payload.useTTMLRepo = payload.useLyricAtlasAPI;
     delete payload.useLyricAtlasAPI;
   }
+  // 逐字歌词上浮开关早已没有消费者，旧值不迁移，只清掉
+  delete payload.showYrcTransform;
   // themeAuto + theme → themeMode
   if (!("themeMode" in payload) && ("themeAuto" in payload || "theme" in payload)) {
     payload.themeMode = payload.themeAuto ? "system" : payload.theme;
@@ -236,7 +240,8 @@ const useSettingDataStore = defineStore("settingData", {
       bottomLyricShow: true,
       showYrc: true,
       showYrcAnimation: true,
-      showYrcTransform: false,
+      showRuby: true,
+      lyricTranslationLanguage: "",
       showTransl: false,
       showRoma: false,
       taskbarLyrics: true,
