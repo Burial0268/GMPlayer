@@ -14,14 +14,18 @@ import { parseLrcToEntries } from "./parser/entryParser";
 import { buildIndexMatching } from "./alignment";
 import { convertToAMLL, splitRomaToWords } from "./parser/formatParser";
 
-const PROCESSING_CACHE_VERSION = "lyrics-processor-v2";
+const PROCESSING_CACHE_VERSION = "lyrics-processor-v3";
 
 /**
  * 生成设置状态的哈希值
  */
 function generateSettingsFlags(settings: ProcessingSettings): number {
-  // Use bit flags for faster comparison (3 booleans = 3 bits)
-  return (settings.showYrc ? 4 : 0) | (settings.showRoma ? 2 : 0) | (settings.showTransl ? 1 : 0);
+  return (
+    (settings.showRuby ? 8 : 0) |
+    (settings.showYrc ? 4 : 0) |
+    (settings.showRoma ? 2 : 0) |
+    (settings.showTransl ? 1 : 0)
+  );
 }
 
 function finiteTime(value: unknown): number {
@@ -129,45 +133,6 @@ function hasWordRomanization(line: AMLLLine): boolean {
   return false;
 }
 
-function getCanonicalTTMLLines(songLyric: SongLyric, settings: ProcessingSettings): AMLLLine[] {
-  const source = toRaw(songLyric.ttml) as unknown as AMLLLine[];
-  const result: AMLLLine[] = [];
-  result.length = source.length;
-
-  let count = 0;
-  const keepTransl = settings.showTransl;
-  const keepRoma = settings.showRoma;
-
-  for (let i = 0; i < source.length; i++) {
-    const line = source[i];
-    if (!hasRenderableWords(line)) continue;
-
-    const shouldHideTransl = !keepTransl && Boolean(line.translatedLyric);
-    const shouldHideLineRoma = !keepRoma && Boolean(line.romanLyric);
-    const shouldHideWordRoma = !keepRoma && hasWordRomanization(line);
-
-    if (!shouldHideTransl && !shouldHideLineRoma && !shouldHideWordRoma) {
-      result[count++] = line;
-      continue;
-    }
-
-    result[count++] = {
-      ...line,
-      translatedLyric: keepTransl ? (line.translatedLyric ?? "") : "",
-      romanLyric: keepRoma ? (line.romanLyric ?? "") : "",
-      words: shouldHideWordRoma
-        ? line.words.map((word) => ({
-            ...word,
-            romanWord: "",
-          }))
-        : line.words,
-    };
-  }
-
-  result.length = count;
-  return result;
-}
-
 function getMedianPositiveGap(lines: readonly AMLLLine[]): number {
   const starts: number[] = [];
   starts.length = lines.length;
@@ -241,86 +206,128 @@ function normalizeLrcTimeline(lines: AMLLLine[]): AMLLLine[] {
 }
 
 /**
- * 处理歌词数据 - 使用行索引匹配 (优化版)
+ * 整首歌一起决定逐字音译：只要有一行自带逐字音译，所有行都只显示逐字音译
+ * （没有的行就不显示，不用行级音译补）；否则只有每一行的行级音译都能拆成
+ * 逐字时才拆，否则整首歌保持行级。逐行判断会让同一首歌里两种样式混着出现。
+ */
+function unifyRomanization(lines: AMLLLine[], own: (i: number) => AMLLLine): void {
+  let nativeWord = false;
+  let anyLine = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (hasWordRomanization(lines[i])) nativeWord = true;
+    if (lines[i].romanLyric) anyLine = true;
+  }
+
+  if (nativeWord) {
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].romanLyric) own(i).romanLyric = "";
+    }
+    return;
+  }
+  if (!anyLine) return;
+
+  const splits = new Map<number, string[]>();
+  for (let i = 0; i < lines.length; i++) {
+    const roma = lines[i].romanLyric;
+    if (!roma) continue;
+    const perWord = splitRomaToWords(lines[i].words, roma);
+    if (!perWord) return;
+    splits.set(i, perWord);
+  }
+  for (const [i, perWord] of splits) {
+    const line = own(i);
+    for (let j = 0; j < line.words.length; j++) line.words[j].romanWord = perWord[j] || "";
+    line.romanLyric = "";
+  }
+}
+
+/**
+ * 处理歌词数据 - 使用行索引匹配
+ *
+ * TTML 的行已是毫秒时间的规范 AMLL 行，不再重建或重新对齐，但和其他来源走同一段
+ * 后处理（翻译/音译开关、tlyric/romalrc 补全、整首歌统一逐字音译）。TTML 行是
+ * store 里的原数据，只在要改动时才复制那一行。
  *
  * @param songLyric 歌曲歌词
  * @param settings 设置状态
  * @returns 处理后的歌词行数组
  */
 export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings): AMLLLine[] {
-  // TTML parser already returns canonical AMLL lines with millisecond timings.
-  // Do not rebuild, realign, or infer timeline/content here.
+  let validLines: AMLLLine[];
+  // 非 TTML 来源的行由 convertToAMLL 新建，可以直接改
+  let ownsLines = true;
+
   if (songLyric.hasTTML && songLyric.ttml && songLyric.ttml.length > 0) {
-    return getCanonicalTTMLLines(songLyric, settings);
-  }
-
-  // 选择歌词源：YRC > LRC
-  let rawLyricsSource: InputLyricLine[];
-
-  const hasYrc = settings.showYrc && songLyric.yrcAMData && songLyric.yrcAMData.length > 0;
-  const hasLrc = songLyric.lrcAMData && songLyric.lrcAMData.length > 0;
-  let sourceKind: "yrc" | "lrc";
-
-  if (hasYrc) {
-    rawLyricsSource = toRaw(songLyric.yrcAMData) as InputLyricLine[];
-    sourceKind = "yrc";
-  } else if (hasLrc) {
-    rawLyricsSource = toRaw(songLyric.lrcAMData) as InputLyricLine[];
-    sourceKind = "lrc";
+    validLines = (toRaw(songLyric.ttml) as unknown as AMLLLine[]).filter(hasRenderableWords);
+    ownsLines = false;
   } else {
-    return [];
+    // 选择歌词源：YRC > LRC
+    let rawLyricsSource: InputLyricLine[];
+
+    const hasYrc = settings.showYrc && songLyric.yrcAMData && songLyric.yrcAMData.length > 0;
+    const hasLrc = songLyric.lrcAMData && songLyric.lrcAMData.length > 0;
+    let sourceKind: "yrc" | "lrc";
+
+    if (hasYrc) {
+      rawLyricsSource = toRaw(songLyric.yrcAMData) as InputLyricLine[];
+      sourceKind = "yrc";
+    } else if (hasLrc) {
+      rawLyricsSource = toRaw(songLyric.lrcAMData) as InputLyricLine[];
+      sourceKind = "lrc";
+    } else {
+      return [];
+    }
+
+    const amllLines =
+      sourceKind === "lrc"
+        ? normalizeLrcTimeline(convertToAMLL(rawLyricsSource))
+        : convertToAMLL(rawLyricsSource);
+
+    validLines = amllLines.filter(hasRenderableWords);
   }
 
-  // 转换为 AMLL 格式
-  const amllLines =
-    sourceKind === "lrc"
-      ? normalizeLrcTimeline(convertToAMLL(rawLyricsSource))
-      : convertToAMLL(rawLyricsSource);
+  const owned = new Set<AMLLLine>();
+  const own = (i: number): AMLLLine => {
+    const line = validLines[i];
+    if (ownsLines || owned.has(line)) return line;
+    const copy = { ...line, words: line.words.map((word) => ({ ...word })) };
+    owned.add(copy);
+    validLines[i] = copy;
+    return copy;
+  };
 
-  // 过滤完全空白的行 - 使用更高效的过滤
-  const validLines: AMLLLine[] = [];
-  validLines.length = amllLines.length;
-  let validCount = 0;
-
-  for (let i = 0; i < amllLines.length; i++) {
-    const line = amllLines[i];
-    const words = line.words;
-    if (!words || words.length === 0) continue;
-
-    if (hasRenderableWords(line)) {
-      validLines[validCount++] = line;
+  if (!settings.showRuby) {
+    for (let i = 0; i < validLines.length; i++) {
+      if (!validLines[i].words.some((word) => word.ruby)) continue;
+      for (const word of own(i).words) delete word.ruby;
     }
   }
-  validLines.length = validCount;
 
   // 根据设置清除源数据中的音译/翻译（TTML等格式可能自带这些数据）
   if (!settings.showRoma) {
-    for (let i = 0; i < validCount; i++) {
-      const line = validLines[i];
+    for (let i = 0; i < validLines.length; i++) {
+      if (!validLines[i].romanLyric && !hasWordRomanization(validLines[i])) continue;
+      const line = own(i);
       line.romanLyric = "";
-      const words = line.words;
-      for (let j = 0; j < words.length; j++) {
-        words[j].romanWord = "";
-      }
+      for (const word of line.words) word.romanWord = "";
     }
   }
 
   if (!settings.showTransl) {
-    for (let i = 0; i < validCount; i++) {
-      validLines[i].translatedLyric = "";
+    for (let i = 0; i < validLines.length; i++) {
+      if (validLines[i].translatedLyric) own(i).translatedLyric = "";
     }
   }
 
-  // 早期返回：如果不需要翻译和音译
-  if (!settings.showTransl && !settings.showRoma) {
-    return validLines;
-  }
+  if (!settings.showTransl && !settings.showRoma) return validLines;
 
   // 解析翻译和音译（只在需要时解析）
   let translationMatchMap: Map<number, string> | null = null;
   let romajiMatchMap: Map<number, string> | null = null;
 
-  if (settings.showTransl) {
+  // 来源自带翻译/音译（TTML）就整首歌都以它为准：TTML 导出的 tlyric/romalrc 只含
+  // 有内容的行，按序号再匹配一遍会把它们错位贴到没有翻译的行上
+  if (settings.showTransl && !validLines.some((line) => line.translatedLyric)) {
     const transText = extractTranslationText(songLyric);
     if (transText) {
       const translationEntries = parseLrcToEntries(transText);
@@ -330,7 +337,10 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
     }
   }
 
-  if (settings.showRoma) {
+  if (
+    settings.showRoma &&
+    !validLines.some((line) => line.romanLyric || hasWordRomanization(line))
+  ) {
     const romaText = extractRomajiText(songLyric);
     if (romaText) {
       const romajiEntries = parseLrcToEntries(romaText);
@@ -340,74 +350,15 @@ export function processLyrics(songLyric: SongLyric, settings: ProcessingSettings
     }
   }
 
-  // 如果没有任何匹配，直接返回
-  if (!translationMatchMap && !romajiMatchMap) {
-    return validLines;
+  for (let i = 0; i < validLines.length; i++) {
+    const translated = translationMatchMap?.get(i);
+    if (translated) own(i).translatedLyric = translated;
+
+    const roma = romajiMatchMap?.get(i);
+    if (roma) own(i).romanLyric = roma;
   }
 
-  // 应用翻译和音译 - 修改原数组以减少内存分配
-  for (let i = 0; i < validCount; i++) {
-    const line = validLines[i];
-
-    // 处理翻译
-    if (translationMatchMap) {
-      // 优先使用行内已有的翻译（来自 TTML 等格式）
-      if (!line.translatedLyric) {
-        const matched = translationMatchMap.get(i);
-        if (matched) {
-          line.translatedLyric = matched;
-        }
-      }
-    }
-
-    // 处理音译
-    if (romajiMatchMap) {
-      if (!line.romanLyric) {
-        const matched = romajiMatchMap.get(i);
-        if (matched) {
-          line.romanLyric = matched;
-          // 尝试将匹配到的行级音译拆分为逐字
-          const perWord = splitRomaToWords(line.words, matched);
-          if (perWord) {
-            for (let j = 0; j < line.words.length; j++) {
-              line.words[j].romanWord = perWord[j] || "";
-            }
-            line.romanLyric = ""; // 避免与逐字音译重复
-          }
-        }
-      }
-    }
-  }
-
-  // 逐字音译去重：若逐字音译已存在（来自 TTML 等），清除行级音译
-  if (settings.showRoma) {
-    for (let i = 0; i < validCount; i++) {
-      const line = validLines[i];
-      if (!line.romanLyric || line.words.length === 0) continue;
-
-      // 检查是否已有逐字音译
-      let hasPerWordRoma = false;
-      for (let j = 0; j < line.words.length; j++) {
-        if (line.words[j].romanWord) {
-          hasPerWordRoma = true;
-          break;
-        }
-      }
-
-      if (hasPerWordRoma) {
-        line.romanLyric = ""; // 避免重复
-      } else {
-        // 尝试将行级音译拆分为逐字
-        const perWord = splitRomaToWords(line.words, line.romanLyric);
-        if (perWord) {
-          for (let j = 0; j < line.words.length; j++) {
-            line.words[j].romanWord = perWord[j] || "";
-          }
-          line.romanLyric = "";
-        }
-      }
-    }
-  }
+  if (settings.showRoma) unifyRomanization(validLines, own);
 
   return validLines;
 }

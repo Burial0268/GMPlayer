@@ -599,8 +599,9 @@ const messages: Record<string, unknown> = {
     showYrcAnimation: "Word by word lyric step animation",
     showYrcAnimationTip:
       "Whether to display verbatim lyrics step - by - step animation, more cost performance",
-    showYrcTransform: "Word for word lyrics come up",
-    showYrcTransformTip: "Whether to display verbatim lyrics text floating animation",
+    showRuby: "Ruby annotations",
+    showRubyTip:
+      "Show ruby text (e.g. furigana) above word-by-word lyrics; only TTML lyrics carry it",
     lrcMousePause: "Intelligent Scroll Pause",
     lrcMousePauseTip: "Whether to pause scrolling when the mouse is over the lyrics area",
     lyricsBlock: "Lyric Scrolling Position",
@@ -622,6 +623,8 @@ const messages: Record<string, unknown> = {
     lyricOffsetAdvance: "Advance lyrics",
     lyricOffsetDelay: "Delay lyrics",
     lyricOffsetReset: "Reset Offset",
+    lyricTranslationLanguage: "Translation language",
+    lyricTranslationLanguageAuto: "Follow interface language",
     bottomClick: "Bottomclick to expand Player ",
     bottomClickTip: "It may cause mistouch, please open with caution ",
     sidebarCollapsed: "Collapse Sidebar by Default",

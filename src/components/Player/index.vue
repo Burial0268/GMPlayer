@@ -392,14 +392,10 @@ const miniLyricLine = computed(() => {
   const index = music.getPlaySongLyricIndex;
   if (!lyric?.lrc?.length || index === -1) return null;
 
-  if (setting.showYrc && lyric.hasYrc && lyric.yrc?.[index]?.content?.length) {
-    return {
-      key: `yrc-${index}`,
-      words: lyric.yrc[index].content.map((item, wordIndex) => ({
-        key: item.time ?? wordIndex,
-        content: item.content,
-      })),
-    };
+  // 逐字与否按整首歌定：index 此时索引的就是 yrc，不能退回按同一个 index 去读 lrc
+  if (setting.showYrc && lyric.hasYrc) {
+    const text = lyric.yrc?.[index]?.TextContent;
+    return text ? { key: `yrc-${index}`, words: [{ key: index, content: text }] } : null;
   }
 
   const content = lyric.lrc?.[index]?.content;
@@ -1201,6 +1197,7 @@ watch(
     setting.showYrcAnimation,
     setting.showTransl,
     setting.showRoma,
+    setting.showRuby,
   ],
   () => {
     broadcastPlayerSettings();
@@ -1214,6 +1211,16 @@ watch(
   () => [setting.desktopLyricsFontSizeOffset, setting.hidePassedLines],
   () => {
     broadcastPlayerSettings();
+  },
+);
+
+// 切换 TTML 翻译语言：原文在 IndexedDB 里，重新取词只是重新解析一遍
+watch(
+  () => [setting.lyricTranslationLanguage, setting.language],
+  () => {
+    const data = music.getPlaySongData;
+    if (!data || data.local?.uri || music.songLyric.translationLanguages.length < 2) return;
+    void fetchAndParseLyric(data.id);
   },
 );
 

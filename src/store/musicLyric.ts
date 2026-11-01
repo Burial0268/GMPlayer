@@ -19,6 +19,8 @@ function createEmptySongLyric(): SongLyric {
     lrcAMData: [],
     yrcAMData: [],
     hasTTML: false,
+    translationLanguages: [],
+    translationLanguage: "",
     ttml: [],
     hasLrcTran: false,
     hasLrcRoma: false,
@@ -115,6 +117,7 @@ export const useMusicLyricStore = defineStore("musicLyric", () => {
           showYrc: settings.showYrc,
           showRoma: settings.showRoma,
           showTransl: settings.showTransl,
+          showRuby: settings.showRuby,
         });
         console.log("歌词数据预处理完成");
       } catch (error) {

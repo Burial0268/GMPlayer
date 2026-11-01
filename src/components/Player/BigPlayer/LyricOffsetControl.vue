@@ -6,6 +6,19 @@
       'has-offset': offset !== 0,
     }"
   >
+    <!-- 翻译语言：仅 TTML 带多种语言翻译时出现 -->
+    <n-popselect
+      v-if="languageOptions.length > 1"
+      v-model:value="selectedLanguage"
+      :options="languageOptions"
+      trigger="click"
+      size="small"
+    >
+      <div v-button class="offset-btn" :title="t('setting.lyricTranslationLanguage')" @click.stop>
+        <n-icon size="18" :component="TranslateFilled" />
+      </div>
+    </n-popselect>
+
     <!-- [+] button -->
     <div
       v-button
@@ -41,8 +54,8 @@
 <script setup lang="ts">
 import { vButton } from "@/utils/buttonRole";
 import { computed } from "vue";
-import { AddRound, RemoveRound } from "@vicons/material";
-import { settingStore } from "@/store";
+import { AddRound, RemoveRound, TranslateFilled } from "@vicons/material";
+import { musicStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 
 const { t } = useI18n();
@@ -52,6 +65,37 @@ defineProps<{
 }>();
 
 const setting = settingStore();
+const music = musicStore();
+
+const AUTO = "__auto";
+
+const languageName = (tag: string) => {
+  try {
+    return new Intl.DisplayNames([setting.language], { type: "language" }).of(tag) ?? tag;
+  } catch {
+    return tag;
+  }
+};
+
+const languageOptions = computed(() => {
+  const languages = music.songLyric.translationLanguages;
+  if (languages.length < 2) return [];
+  return [
+    { label: t("setting.lyricTranslationLanguageAuto"), value: AUTO },
+    ...languages.map((tag) => ({ label: languageName(tag), value: tag })),
+  ];
+});
+
+// 明确选过且这首歌里有的才算选中，否则显示「跟随界面语言」
+const selectedLanguage = computed({
+  get: () =>
+    music.songLyric.translationLanguages.includes(setting.lyricTranslationLanguage)
+      ? setting.lyricTranslationLanguage
+      : AUTO,
+  set: (value: string) => {
+    setting.lyricTranslationLanguage = value === AUTO ? "" : value;
+  },
+});
 
 const offset = computed(() => setting.lyricTimeOffset ?? 0);
 

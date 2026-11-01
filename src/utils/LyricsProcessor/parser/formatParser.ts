@@ -307,45 +307,20 @@ export const parseYrcLines = (yrcData: LyricLine[]): ParsedYrcLine[] => {
 
     if (!words || words.length === 0) continue;
 
-    const wordsLen = words.length;
     const lineStartTime = resolveLineStart(line);
     const lineEndTime = resolveLineEnd(yrcData, i, lineStartTime, false);
     const time = msToS(lineStartTime);
     const endTime = msToS(lineEndTime);
-    const wordTimes = resolveLineWordTimes(words, lineStartTime, lineEndTime);
 
-    // Build content array and string in one pass
-    const content: ParsedYrcLine["content"] = [];
-    content.length = wordsLen;
+    // Word text keeps its trailing spaces: TTML relies on them to separate words.
     let textContent = "";
-
-    for (let j = 0; j < wordsLen; j++) {
-      const word = words[j];
-      const wordTime = wordTimes[j];
-      const wordText = word.word;
-      // Preserve original word text including trailing spaces.
-      // TTML lyrics rely on trailing spaces to separate words;
-      // trimming here would cause words to be concatenated together.
-      const endsWithSpace = wordText.endsWith(" ");
-      const processedWord = wordText;
-
-      content[j] = {
-        time: msToS(wordTime.startTime),
-        endTime: msToS(wordTime.endTime),
-        duration: msToS(wordTime.endTime - wordTime.startTime),
-        content: processedWord,
-        endsWithSpace,
-      };
-
-      textContent += processedWord;
-    }
+    for (let j = 0; j < words.length; j++) textContent += words[j].word;
 
     if (!textContent) continue;
 
     result[count++] = {
       time,
       endTime,
-      content,
       TextContent: textContent,
     };
   }
@@ -561,6 +536,7 @@ export const buildAMLLData = (
         startTime: wordTime.startTime,
         endTime: wordTime.endTime,
         romanWord: w.romanWord || "",
+        ruby: w.ruby,
       };
     }
 
@@ -634,6 +610,7 @@ export function convertToAMLL(lines: InputLyricLine[]): AMLLLine[] {
         endTime: wordTime.endTime,
         word: w.word,
         romanWord: w.romanWord || "",
+        ruby: w.ruby,
       };
     }
 
