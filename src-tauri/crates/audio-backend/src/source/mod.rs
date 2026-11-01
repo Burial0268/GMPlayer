@@ -324,6 +324,16 @@ pub fn open_str(locator: &str) -> AudioResult<OpenedSource> {
 /// symphonia's probe seeks backwards, so handing it a pipe fails at the first
 /// format check rather than at a boundary anyone can act on.
 pub fn open(loc: SourceLocator<'_>) -> AudioResult<OpenedSource> {
+    open_as(loc, false)
+}
+
+/// `open` for the reader the decoder plays from: only this one publishes its
+/// cursor, which `StreamGate` reads as the decoder's headroom.
+pub fn open_playback(loc: SourceLocator<'_>) -> AudioResult<OpenedSource> {
+    open_as(loc, true)
+}
+
+fn open_as(loc: SourceLocator<'_>, playback: bool) -> AudioResult<OpenedSource> {
     let ext_hint = loc.extension();
 
     match loc {
@@ -331,14 +341,14 @@ pub fn open(loc: SourceLocator<'_>) -> AudioResult<OpenedSource> {
             // A download still landing is registered under its path; reading it
             // as a plain file would hit EOF at the writer's current end.
             let media: Box<dyn MediaSource> = match growing::lookup(path) {
-                Some(progress) => Box::new(growing::GrowingFile::open(path, progress)?),
+                Some(progress) => Box::new(growing::GrowingFile::open(path, progress, playback)?),
                 None => Box::new(std::fs::File::open(path)?),
             };
             Ok(OpenedSource { media, ext_hint, spooled: false, _temp: None })
         }
         SourceLocator::Http(url) => {
             let temp = crate::decoder::download_to_temp_path(url)?;
-            let mut opened = open(SourceLocator::Path(&temp))?;
+            let mut opened = open_as(SourceLocator::Path(&temp), playback)?;
             opened.ext_hint = ext_hint;
             opened._temp = Some(temp);
             Ok(opened)

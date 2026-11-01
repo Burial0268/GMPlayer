@@ -387,14 +387,18 @@ pub(crate) struct GrowingFile {
     file: File,
     pos: u64,
     progress: Arc<Progress>,
+    /// Only the playback reader moves `Progress::read_pos`; a probe or an
+    /// analyzer on the same path would otherwise steer the decoder's gate.
+    publishes: bool,
 }
 
 impl GrowingFile {
-    pub(crate) fn open(path: &Path, progress: Arc<Progress>) -> io::Result<Self> {
+    pub(crate) fn open(path: &Path, progress: Arc<Progress>, publishes: bool) -> io::Result<Self> {
         Ok(Self {
             file: File::open(path)?,
             pos: 0,
             progress,
+            publishes,
         })
     }
 }
@@ -411,7 +415,9 @@ impl Read for GrowingFile {
         let want = buf.len().min(usize::try_from(avail).unwrap_or(usize::MAX));
         let n = self.file.read(&mut buf[..want])?;
         self.pos += n as u64;
-        self.progress.read_pos.store(self.pos, Ordering::Relaxed);
+        if self.publishes {
+            self.progress.read_pos.store(self.pos, Ordering::Relaxed);
+        }
         Ok(n)
     }
 }
@@ -427,7 +433,9 @@ impl Seek for GrowingFile {
         // Position only; the wait happens on the read that needs the bytes.
         self.file.seek(SeekFrom::Start(target))?;
         self.pos = target;
-        self.progress.read_pos.store(target, Ordering::Relaxed);
+        if self.publishes {
+            self.progress.read_pos.store(target, Ordering::Relaxed);
+        }
         self.progress.request_jump(target);
         Ok(target)
     }
@@ -512,7 +520,7 @@ mod tests {
         let (file, path) = tempfile::NamedTempFile::new().unwrap().into_parts();
         file.set_len(total).unwrap();
         let progress = Progress::new(total);
-        let reader = GrowingFile::open(&path, progress.clone()).unwrap();
+        let reader = GrowingFile::open(&path, progress.clone(), true).unwrap();
         Rig {
             path: path.to_path_buf(),
             _path: path,

@@ -335,7 +335,7 @@ struct SeekableSymphoniaSource {
 
 impl SeekableSymphoniaSource {
     fn open(path: &Path) -> AudioResult<Self> {
-        let opened = crate::source::open(crate::source::SourceLocator::from_path(path))?;
+        let opened = crate::source::open_playback(crate::source::SourceLocator::from_path(path))?;
         let mut hint = Hint::new();
         // symphonia 0.5's `Probe::format` takes the hint as `_hint` and never
         // reads it — format detection is a pure magic-byte scan, so a container
