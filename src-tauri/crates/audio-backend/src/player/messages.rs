@@ -30,7 +30,8 @@ impl AudioPlayer {
                     self.playback_intent = PlaybackIntent::Playing;
                     self.resume_audio_output().await;
                     let current_pos = self.clock_position();
-                    self.publish_position_anchor(true, current_pos).await;
+                    self.publish_position_anchor(!self.stream_buffering, current_pos)
+                        .await;
                     let _ = emitter
                         .emit(AudioThreadEvent::PlayStatus { is_playing: true })
                         .await;
@@ -74,7 +75,8 @@ impl AudioPlayer {
                             let _ = handle.set_paused(true);
                         }
                     }
-                    self.publish_position_anchor(was_paused, current_pos).await;
+                    self.publish_position_anchor(was_paused && !self.stream_buffering, current_pos)
+                        .await;
                     let _ = emitter
                         .emit(AudioThreadEvent::PlayStatus {
                             is_playing: was_paused,

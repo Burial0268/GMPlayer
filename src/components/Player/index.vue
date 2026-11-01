@@ -99,7 +99,11 @@
             />
             <div
               class="play-state"
-              @click.stop="music.getLoadingState ? null : music.setPlayState(!music.getPlayState)"
+              @click.stop="
+                music.getLoadingState && music.getLoadingStage !== 'rebuffering'
+                  ? null
+                  : music.setPlayState(!music.getPlayState)
+              "
             >
               <AnimatePresence mode="wait">
                 <Motion

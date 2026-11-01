@@ -119,7 +119,7 @@ impl AudioPlayer {
         output.writer().set_volume(self.volume as f32);
         output
             .writer()
-            .set_paused(self.playback_intent == PlaybackIntent::Paused);
+            .set_paused(self.playback_intent == PlaybackIntent::Paused || self.stream_buffering);
         self.output = output;
         self.mark_output_chain_committed();
         {
@@ -163,7 +163,7 @@ impl AudioPlayer {
         self.output.writer().set_volume(self.volume as f32);
         self.output
             .writer()
-            .set_paused(self.playback_intent == PlaybackIntent::Paused);
+            .set_paused(self.playback_intent == PlaybackIntent::Paused || self.stream_buffering);
         self.reset_output_health();
         Ok(())
     }

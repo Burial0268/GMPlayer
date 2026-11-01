@@ -22,6 +22,9 @@ use symphonia::core::io::MediaSource;
 
 use crate::error::{AudioError, AudioResult};
 
+pub(crate) mod growing;
+pub use growing::{expected_len, TempGuard};
+
 // ── Locator ──────────────────────────────────────────────────────
 
 /// Where a track's bytes come from. Borrowed on purpose: classification happens
@@ -207,7 +210,7 @@ fn hash_uri(uri: &str) -> String {
 ///
 /// Written to a sibling `.part` and renamed, so an interrupted copy can never
 /// be picked up as a complete one by a later run.
-fn spool_to_file<R: Read>(uri: &str, mut reader: R) -> AudioResult<(std::fs::File, Option<tempfile::TempPath>)> {
+fn spool_to_file<R: Read>(uri: &str, mut reader: R) -> AudioResult<(std::fs::File, Option<TempGuard>)> {
     if let Some(dir) = STREAM_CACHE_DIR.get() {
         let target = dir.join(format!("{}.bin", hash_uri(uri)));
         if let Ok(file) = std::fs::File::open(&target) {
@@ -233,7 +236,7 @@ fn spool_to_file<R: Read>(uri: &str, mut reader: R) -> AudioResult<(std::fs::Fil
     std::io::copy(&mut reader, &mut temp)?;
     let path = temp.into_temp_path();
     let file = std::fs::File::open(&path)?;
-    Ok((file, Some(path)))
+    Ok((file, Some(path.into())))
 }
 
 // ── Opened source ────────────────────────────────────────────────
@@ -254,7 +257,7 @@ pub struct OpenedSource {
     spooled: bool,
     /// Kept alive for exactly as long as the read: dropping it deletes the
     /// downloaded or spooled file.
-    _temp: Option<tempfile::TempPath>,
+    _temp: Option<TempGuard>,
 }
 
 impl OpenedSource {
@@ -279,7 +282,7 @@ impl OpenedSource {
     /// Detach the temp-file guard so a caller that keeps the bytes around (the
     /// player, which holds a downloaded file for the length of the track) can
     /// own it directly.
-    pub fn into_parts(self) -> (Box<dyn MediaSource>, Option<tempfile::TempPath>) {
+    pub fn into_parts(self) -> (Box<dyn MediaSource>, Option<TempGuard>) {
         (self.media, self._temp)
     }
 }
@@ -315,7 +318,7 @@ pub fn open_str(locator: &str) -> AudioResult<OpenedSource> {
 
 /// Open whatever `loc` points at.
 ///
-/// Blocking. `Http` downloads the whole body first (see
+/// Blocking. `Http` starts the download and reads it as it lands (see
 /// `decoder::download_to_temp_path` for why the agent is per-call), and a
 /// non-seekable `Content` source is spooled to a file before it is returned —
 /// symphonia's probe seeks backwards, so handing it a pipe fails at the first
@@ -325,23 +328,20 @@ pub fn open(loc: SourceLocator<'_>) -> AudioResult<OpenedSource> {
 
     match loc {
         SourceLocator::Path(path) => {
-            let file = std::fs::File::open(path)?;
-            Ok(OpenedSource {
-                media: Box::new(file),
-                ext_hint,
-                spooled: false,
-                _temp: None,
-            })
+            // A download still landing is registered under its path; reading it
+            // as a plain file would hit EOF at the writer's current end.
+            let media: Box<dyn MediaSource> = match growing::lookup(path) {
+                Some(progress) => Box::new(growing::GrowingFile::open(path, progress)?),
+                None => Box::new(std::fs::File::open(path)?),
+            };
+            Ok(OpenedSource { media, ext_hint, spooled: false, _temp: None })
         }
         SourceLocator::Http(url) => {
             let temp = crate::decoder::download_to_temp_path(url)?;
-            let file = std::fs::File::open(&temp)?;
-            Ok(OpenedSource {
-                media: Box::new(file),
-                ext_hint,
-                spooled: false,
-                _temp: Some(temp),
-            })
+            let mut opened = open(SourceLocator::Path(&temp))?;
+            opened.ext_hint = ext_hint;
+            opened._temp = Some(temp);
+            Ok(opened)
         }
         SourceLocator::Content(uri) => open_content(uri, ext_hint),
     }

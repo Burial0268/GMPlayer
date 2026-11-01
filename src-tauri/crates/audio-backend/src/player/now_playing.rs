@@ -289,7 +289,7 @@ impl AudioPlayer {
             duration,
             position,
             is_playing,
-            is_loading: self.load_in_flight,
+            is_loading: self.load_in_flight || self.stream_buffering,
             playlist_index: self.current_play_index,
             controls: self.session_controls(),
         }

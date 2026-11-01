@@ -106,6 +106,7 @@ export type AudioThreadEvent =
       type: "loadingAudio";
       data: { musicId: string; currentPlayIndex: number; loadRequestId?: number | null };
     }
+  | { type: "buffering"; data: { musicId: string; isBuffering: boolean } }
   | { type: "audioPlayFinished"; data: { musicId: string } }
   | {
       type: "syncStatus";
