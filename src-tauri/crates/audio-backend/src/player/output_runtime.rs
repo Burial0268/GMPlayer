@@ -239,7 +239,9 @@ impl AudioPlayer {
         let writer = self.output.writer();
         let rendered_samples = writer.render_clock().rendered_samples();
         let queued_samples = self.deck_mixer.queued_samples();
+        // A rebuffering stream pauses the output on purpose; no samples render.
         if self.playback_intent != PlaybackIntent::Playing
+            || self.stream_buffering
             || self.current_song.is_none()
             || self.current_decoder_handle.is_none()
         {
