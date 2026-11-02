@@ -41,7 +41,7 @@
               `mobile-phase-${mobileTransitionPhase}`,
             ]"
           >
-            <div class="mobile-background-visual">
+            <Motion class="mobile-background-visual" :style="mobileBackgroundVisualStyle">
               <BigPlayerBackground
                 ref="background"
                 :songPicGradient="songPicGradient"
@@ -58,7 +58,7 @@
                 :flowSpeed="setting.flowSpeed"
                 :staticMode="mobileBackgroundStatic"
               />
-            </div>
+            </Motion>
 
             <MobilePlayerLayout
               ref="mobileLayoutRef"
@@ -403,7 +403,8 @@ const rangeProgress = (value: number, from: number, to: number) =>
 // One spring drives everything. The sheet (offset, corners, fade) and the artwork ride the whole
 // span and the content is carried by the sheet; only a few things get a window, and each window
 // opens while something is already moving.
-const MOBILE_MINI_CHROME_FADE_END = 0.2;
+// The mini bar rides the sheet's edge while it fades, so it is gone by the time the tab bar is.
+const MOBILE_MINI_CHROME_FADE_END = 0.3;
 const MOBILE_SHEET_FADE_END = 0.12;
 const MOBILE_TABBAR_EXIT_END = 0.3;
 const MOBILE_SHEET_PEAK_RADIUS = 28;
@@ -411,13 +412,14 @@ const MOBILE_SHEET_SETTLE_START = 0.7;
 // The mini bar stays above the sheet until its own fade is done.
 const MOBILE_MINI_UI_FADE_END = 0.3;
 // What can be on screen while the sheet is still low — the handle on its top edge, and in layer 2
-// the compact title row and the lyrics — waits for the mini bar's chrome to go (it fades until
-// MOBILE_MINI_CHROME_FADE_END) so two sets of text never share a spot; the handle goes first.
-// Layer 1's info and controls start below the screen edge and need no window.
-const MOBILE_HANDLE_REVEAL_START = 0.1;
-const MOBILE_HANDLE_REVEAL_END = 0.3;
-const MOBILE_CONTENT_REVEAL_START = 0.2;
-const MOBILE_CONTENT_REVEAL_END = 0.45;
+// the compact title row and the lyrics — sits exactly where the mini bar is carried, so it waits
+// for the bar to be nearly gone (MOBILE_MINI_CHROME_FADE_END) and two sets of text never share a
+// spot; the handle goes first. Layer 1's info and controls start below the screen edge and need
+// no window.
+const MOBILE_HANDLE_REVEAL_START = 0.25;
+const MOBILE_HANDLE_REVEAL_END = 0.45;
+const MOBILE_CONTENT_REVEAL_START = 0.3;
+const MOBILE_CONTENT_REVEAL_END = 0.55;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
@@ -426,7 +428,8 @@ const MOBILE_SCRIM_OPACITY = 0.75;
 // only its own transform, fade and corners move per frame, nothing inside it is touched.
 const sheetOffset = (progress: number) => (1 - clamp(progress)) * sheetTravel.get();
 const sheetY = useTransform(() => sheetOffset(playerProgress.get()));
-// Cross-fades with the glass mini bar it rises from.
+// Cross-fades with the glass mini bar it rises from. Only the background: the artwork replaces the
+// bar's own from the first pixel, so fading the whole sheet would make it blink.
 const sheetOpacity = useTransform(() =>
   easeOutCubic(rangeProgress(playerProgress.get(), 0, MOBILE_SHEET_FADE_END)),
 );
@@ -451,16 +454,19 @@ const contentOpacity = useTransform(() =>
 
 const mobileShellMotionStyle: MotionStyleRecord = {
   y: sheetY,
-  opacity: sheetOpacity,
   borderTopLeftRadius: sheetRadius,
   borderTopRightRadius: sheetRadius,
 };
+const mobileBackgroundVisualStyle: MotionStyleRecord = { opacity: sheetOpacity };
 const mobileScrimStyle: MotionStyleRecord = { opacity: scrimOpacity };
 const mobileFullUiMotionStyle: MotionStyleRecord = { opacity: contentOpacity };
 const mobileHeaderMotionStyle: MotionStyleRecord = { opacity: contentOpacity, y: headerY };
 const mobileHandleMotionStyle: MotionStyleRecord = { opacity: handleOpacity };
 
-const getTransitionDistance = () => Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
+// The sheet follows the finger one to one, like the queue drawer; the fallback only covers a bar
+// that could not be measured.
+const getTransitionDistance = () =>
+  sheetTravel.get() || Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
 
 const readRadius = (el: Element | null, fallback: number) => {
   if (!(el instanceof HTMLElement)) return fallback;
@@ -561,31 +567,44 @@ const scheduleArtworkLayerSync = () => {
   });
 };
 
+// Where the bar sits at rest: a gesture that began a frame ago may already have lifted it.
+const readRestRect = (el: Element | null) => {
+  const rect = el?.getBoundingClientRect();
+  return rect && miniBarRise
+    ? new DOMRect(rect.x, rect.y - miniBarRise, rect.width, rect.height)
+    : rect;
+};
+
 const readMiniSharedFrames = (frames?: MiniSharedFrames) => {
   const artworkEl = document.querySelector("[data-mobile-player-artwork]");
   const backgroundEl = document.querySelector("[data-mobile-player-bg]");
   return {
-    artworkRect: frames?.artwork ?? artworkEl?.getBoundingClientRect(),
-    backgroundRect: frames?.background ?? backgroundEl?.getBoundingClientRect() ?? null,
+    artworkRect: frames?.artwork ?? readRestRect(artworkEl),
+    backgroundRect: frames?.background ?? readRestRect(backgroundEl) ?? null,
     artworkRadius: readRadius(artworkEl, 8),
     backgroundRadius: readRadius(backgroundEl, 16),
   };
 };
 
 // Frames are measured against the player root, not the shell: the shell is the sheet and moves.
+// Synchronous and first in a gesture, because the finger-to-sheet ratio depends on the travel.
+const measureSheetTravel = (frames?: MiniSharedFrames) => {
+  const mini = readMiniSharedFrames(frames);
+  if (!mini.backgroundRect) return;
+  sheetTravel.set(mini.backgroundRect.top - (bigPlayerRef.value?.getBoundingClientRect().top ?? 0));
+  sheetMiniRadius.set(mini.backgroundRadius || 12);
+};
+
 const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   const mini = readMiniSharedFrames(frames);
   const rootRect = bigPlayerRef.value?.getBoundingClientRect();
   const rootLeft = rootRect?.left ?? 0;
   const rootTop = rootRect?.top ?? 0;
-  const barTop = mini.backgroundRect ? mini.backgroundRect.top - rootTop : 0;
-  sheetTravel.set(barTop);
-  sheetMiniRadius.set(mini.backgroundRadius || 12);
   if (mini.artworkRect) {
-    // The artwork sits inside the sheet, which starts out `barTop` down.
+    // The artwork sits inside the sheet, which starts out `sheetTravel` down.
     setArtworkFrame({
       left: mini.artworkRect.left - rootLeft,
-      top: mini.artworkRect.top - rootTop - barTop,
+      top: mini.artworkRect.top - rootTop - sheetTravel.get(),
       width: mini.artworkRect.width,
       height: mini.artworkRect.height,
       borderRadius: mini.artworkRadius,
@@ -601,8 +620,6 @@ const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
   const fullArtwork = frameFromCoverLayout(12);
   if (!mini.artworkRect || !mini.backgroundRect || !fullArtwork) return false;
 
-  sheetTravel.set(mini.backgroundRect.top - rootRect.top);
-  sheetMiniRadius.set(mini.backgroundRadius || 12);
   interactiveFrames = {
     miniArtwork: frameFromRect(mini.artworkRect, rootRect, mini.artworkRadius),
     fullArtwork,
@@ -653,7 +670,25 @@ const applyInteractiveFrame = (progress: number) => {
   headerY.set(artwork.top - fullArtwork.top);
 };
 
+// The mini bar is the sheet's top while it lifts: it rides the sheet's edge and fades as it goes,
+// instead of fading in place and leaving a new sheet to appear behind it. A transform on the
+// bar's own element, not a variable on <html>: that restyles the whole document every frame, and
+// this one changes for the whole span. Cleared at rest, where the bar's rect is what the next
+// gesture measures.
+let miniBarElement: HTMLElement | null = null;
+let miniBarRise = 0;
+const setMiniBarRise = (y: number) => {
+  if (miniBarRise === y) return;
+  if (!miniBarElement?.isConnected) {
+    miniBarElement = document.querySelector<HTMLElement>("[data-mobile-player-bg]");
+  }
+  if (!miniBarElement) return;
+  miniBarRise = y;
+  miniBarElement.style.transform = y ? `translate3d(0, ${y}px, 0)` : "";
+};
+
 const clearMiniUiVars = () => {
+  setMiniBarRise(0);
   removeMiniUiVar("--mobile-mini-player-root-y");
   removeMiniUiVar("--mobile-mini-player-z-index");
   removeMiniUiVar("--mobile-mini-player-pointer-events");
@@ -676,7 +711,8 @@ const applyMiniUiVars = (progress: number) => {
   const miniTransitioning = progress > 0.001 || mobileTransitionActive.value || music.showBigPlayer;
   // Everything the mini bar sheds is a function of progress, never a switch. A switch is a
   // one-frame cut, and the cut is what read as the bar blinking out before the sheet arrived.
-  const chromeExit = easeOutCubic(rangeProgress(progress, 0, MOBILE_MINI_CHROME_FADE_END));
+  // Linear: the bar is seen travelling up, so the fade must not be front-loaded.
+  const chromeExit = rangeProgress(progress, 0, MOBILE_MINI_CHROME_FADE_END);
   const tabBarExit = easeOutCubic(rangeProgress(progress, 0, MOBILE_TABBAR_EXIT_END));
   const chromeOpacity = String(1 - chromeExit);
   setMiniUiVar(
@@ -732,6 +768,7 @@ const applyProgressState = (value: number) => {
   }
   artworkOpacity.set(albumLayerOpacity);
   applyMiniUiVars(progress);
+  setMiniBarRise(progress > 0.001 && progress < 0.999 ? -progress * sheetTravel.get() : 0);
 
   if (!mobileInteractive.value || !interactiveFrames) {
     headerY.set(0);
@@ -959,6 +996,7 @@ const beginMobileInteractive = async (
   mobileTransitionActive.value = true;
   mobileExiting.value = false;
   clearMobileExitFallback();
+  if (!retainFrames) measureSheetTravel(frames);
   playerProgress.jump(pendingInteractiveProgress);
   await nextTick();
   if (generation !== interactiveGeneration) return false;
@@ -1493,8 +1531,8 @@ defineExpose({
       border-radius: 0;
       background-color: transparent;
       transform-origin: bottom center;
-      // The shell is the sheet: background and content move as one layer (y, fade and top
-      // corners come from `mobileShellMotionStyle`), like the queue drawer's panel.
+      // The shell is the sheet: background and content move as one layer (y and top corners
+      // come from `mobileShellMotionStyle`), like the queue drawer's panel.
       will-change: transform, opacity;
       isolation: isolate;
 

@@ -485,6 +485,7 @@ const handleMiniTouchStart = (event) => {
     lastY: touch.clientY,
     lastTime: performance.now(),
     velocityY: 0,
+    travel: 0,
     dragging: false,
   };
 };
@@ -510,10 +511,12 @@ const handleMiniTouchMove = (event) => {
     start.dragging = true;
     suppressMiniClick = true;
     const frames = getMiniSharedFrames();
+    // The bar rises with the finger one to one: its distance to the screen top is the travel.
+    start.travel = frames.background?.top || getMobilePlayerTransitionDistance();
     bigPlayerRef.value?.beginMobileInteractiveOpen(frames);
   }
 
-  const progress = clamp(-deltaY / getMobilePlayerTransitionDistance(), 0, 1);
+  const progress = clamp(-deltaY / start.travel, 0, 1);
   bigPlayerRef.value?.updateMobileInteractiveProgress(progress);
 };
 
@@ -1547,6 +1550,8 @@ watch(
     pointer-events: var(--mobile-mini-player-pointer-events, auto);
     touch-action: pan-x;
     isolation: isolate;
+    // BigPlayer lifts the whole bar with an inline transform while the sheet opens.
+    will-change: transform;
     --player-data-edge-inset: 12px;
     --player-control-edge-inset: 12px;
     --player-slider-edge-inset: 0px;
