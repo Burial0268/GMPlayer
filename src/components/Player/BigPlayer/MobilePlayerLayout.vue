@@ -10,7 +10,7 @@
           <!-- AMLL .thumb — 抽屉把手 -->
           <Motion
             class="mobile-thumb"
-            :style="contentUiMotionStyle"
+            :style="handleUiMotionStyle"
             @click="handleThumbClick"
             @touchstart.passive="handlePlayerTouchStart"
             @touchmove.passive="handlePlayerTouchMove"
@@ -378,6 +378,7 @@ const props = defineProps<{
   fullUiMotionStyle: MotionStyleRecord;
   controlsMotionStyle: MotionStyleRecord;
   headerMotionStyle: MotionStyleRecord;
+  handleMotionStyle: MotionStyleRecord;
   albumLayerStyle: MotionStyleRecord;
   albumLayerVisible: boolean;
 }>();
@@ -493,6 +494,10 @@ const contentUiMotionStyle = computed<MotionStyleRecord>(() => ({
 const smallControlsMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.headerMotionStyle,
+}));
+const handleUiMotionStyle = computed<MotionStyleRecord>(() => ({
+  ...props.contentShellStyle,
+  ...props.handleMotionStyle,
 }));
 
 // ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──

@@ -81,6 +81,7 @@
               :fullUiMotionStyle="mobileFullUiMotionStyle"
               :controlsMotionStyle="mobileControlsMotionStyle"
               :headerMotionStyle="mobileHeaderMotionStyle"
+              :handleMotionStyle="mobileHandleMotionStyle"
               :albumLayerStyle="mobileArtworkMotionStyle"
               :albumLayerVisible="mobileAlbumLayerVisible"
               @close="handleMobileClose"
@@ -343,6 +344,7 @@ const controlsOpacity = useMotionValue(0);
 // Layer 2's title row sits beside the small cover, so it rides the cover's travel.
 const headerOpacity = useMotionValue(0);
 const headerY = useMotionValue(0);
+const handleOpacity = useMotionValue(0);
 const controlsY = useMotionValue(18);
 const backgroundVisualOpacity = useMotionValue(0);
 // Dims the page behind the sheet in step with it, like a drawer's backdrop.
@@ -423,6 +425,12 @@ const mobileControlsMotionStyle = computed<MotionStyleRecord>(() => ({
   opacity: controlsOpacity,
   y: controlsY,
 }));
+// The handle is pinned to the sheet's top edge: it moves with the sheet and has no rise of its
+// own, and its window opens before anything else's.
+const mobileHandleMotionStyle = computed<MotionStyleRecord>(() => ({
+  opacity: handleOpacity,
+  ...(mobileInteractive.value ? { y: backgroundTop } : {}),
+}));
 
 // --- 仅本组件需要的局部状态 ---
 const forcePlaying = ref(true);
@@ -456,10 +464,16 @@ const MOBILE_SHEET_PEAK_RADIUS = 28;
 const MOBILE_SHEET_SETTLE_START = 0.7;
 // The mini bar stays above the sheet until its own fade is done.
 const MOBILE_MINI_UI_FADE_END = 0.3;
-const MOBILE_CONTENT_REVEAL_START = 0.45;
-const MOBILE_CONTENT_REVEAL_END = 0.95;
-const MOBILE_CONTROLS_REVEAL_START = 0.6;
-const MOBILE_HEADER_REVEAL_END = 0.8;
+// The content is carried by the sheet (`fullUiFollowY`), so its windows are short and open early,
+// like a drawer's. The handle sits on the sheet's edge and goes first; the rest wait for the mini
+// bar's chrome to be gone (MOBILE_MINI_CHROME_FADE_END) so two sets of text never share a spot.
+const MOBILE_HANDLE_REVEAL_START = 0.1;
+const MOBILE_HANDLE_REVEAL_END = 0.3;
+const MOBILE_CONTENT_REVEAL_START = 0.2;
+const MOBILE_CONTENT_REVEAL_END = 0.5;
+const MOBILE_CONTROLS_REVEAL_START = 0.3;
+const MOBILE_CONTROLS_REVEAL_END = 0.58;
+const MOBILE_HEADER_REVEAL_END = 0.45;
 const MOBILE_FULL_UI_RISE = 28;
 const MOBILE_CONTROLS_RISE = 20;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
@@ -744,10 +758,15 @@ const applyProgressState = (value: number) => {
     MOBILE_CONTENT_REVEAL_START,
     MOBILE_CONTENT_REVEAL_END,
   );
-  const controlsEnter = rangeProgress(progress, MOBILE_CONTROLS_REVEAL_START, 1);
+  const controlsEnter = rangeProgress(
+    progress,
+    MOBILE_CONTROLS_REVEAL_START,
+    MOBILE_CONTROLS_REVEAL_END,
+  );
   const backgroundVisible = progress > 0.001 || music.showBigPlayer || mobileTransitionActive.value;
   const albumLayerOpacity = backgroundVisible ? 1 : 0;
-  const contentVisible = progress >= MOBILE_CONTENT_REVEAL_START;
+  // The earliest window: the shell must be visible for the handle to show.
+  const contentVisible = progress >= MOBILE_HANDLE_REVEAL_START;
   const contentReady = progress >= MOBILE_CONTENT_INTERACTIVE_START;
   const nextPhase =
     progress <= 0.001
@@ -768,6 +787,7 @@ const applyProgressState = (value: number) => {
   controlsY.set(mix(MOBILE_CONTROLS_RISE, 0, easeOutCubic(controlsEnter)));
   headerOpacity.set(rangeProgress(progress, MOBILE_CONTENT_REVEAL_START, MOBILE_HEADER_REVEAL_END));
   headerY.set(0);
+  handleOpacity.set(rangeProgress(progress, MOBILE_HANDLE_REVEAL_START, MOBILE_HANDLE_REVEAL_END));
   // Near-opaque within the first few px of a drag, but not a hard cut over the glass bar.
   backgroundVisualOpacity.set(
     backgroundVisible ? easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END)) : 0,
@@ -829,6 +849,7 @@ const resetClosedMobileState = () => {
   controlsY.set(MOBILE_CONTROLS_RISE);
   headerOpacity.set(0);
   headerY.set(0);
+  handleOpacity.set(0);
   backgroundVisualOpacity.set(0);
   scrimOpacity.set(0);
   backgroundTop.set(0);
