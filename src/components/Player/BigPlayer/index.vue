@@ -442,8 +442,11 @@ const MOBILE_HANDLE_REVEAL_END = 0.45;
 const MOBILE_CONTENT_REVEAL_START = 0.3;
 const MOBILE_CONTENT_REVEAL_END = 0.55;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
-// The floating title replaces the bar's own within this window, where the two are still close.
-const MOBILE_TITLE_FADE_END = 0.05;
+// The floating title is fully in by the first, then the bar's own text goes by the second. It is
+// the float that arrives on top while the bar's text is still whole beneath it, so the hand-over
+// never shows both at half strength (which reads as a dip).
+const MOBILE_TITLE_FLOAT_IN_END = 0.045;
+const MOBILE_TITLE_MINI_OUT_END = 0.05;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
 
@@ -480,7 +483,7 @@ const contentOpacity = useTransform(() =>
 const titleFloatOpacity = useTransform(() => {
   const progress = playerProgress.get();
   return (
-    rangeProgress(progress, 0, MOBILE_TITLE_FADE_END) *
+    rangeProgress(progress, 0, MOBILE_TITLE_FLOAT_IN_END) *
     (1 - rangeProgress(progress, MOBILE_CONTENT_INTERACTIVE_START, 1))
   );
 });
@@ -775,11 +778,14 @@ const applyInteractiveFrame = (progress: number) => {
   applyArtworkFrame(artwork);
   headerY.set(artwork.top - fullArtwork.top);
   if (!title) return;
-  // Same straight blend as the artwork, in the sheet's space, scaled from the bar's font size.
-  const placed = interpolateFrame(title.mini, title.full, progress);
-  titleLeft.set(placed.left);
-  titleTop.set(placed.top - sheetOffset(progress));
-  titleScale.set(mix(title.scale, 1, progress));
+  // In the sheet's space, from where the text sits inside the bar to its slot. It starts out
+  // riding the sheet like the bar's own text (a smoothstep has no slope at 0), so while the two
+  // copies hand over they coincide instead of ghosting; it has caught up with a straight blend
+  // by the middle.
+  const weight = progress * progress * (3 - 2 * progress);
+  titleLeft.set(mix(title.mini.left, title.full.left, weight));
+  titleTop.set(mix(title.mini.top - sheetTravel.get(), title.full.top, weight));
+  titleScale.set(mix(title.scale, 1, weight));
 };
 
 // The mini bar is the sheet's top while it lifts: it rides the sheet's edge and fades as it goes,
@@ -843,7 +849,9 @@ const applyMiniUiVars = (progress: number) => {
   const titleHandedOver = titleMorph.get() === 1;
   setMiniUiVar(
     "--mobile-mini-player-text-opacity",
-    titleHandedOver ? String(1 - rangeProgress(progress, 0, MOBILE_TITLE_FADE_END)) : chromeOpacity,
+    titleHandedOver
+      ? String(1 - rangeProgress(progress, MOBILE_TITLE_FLOAT_IN_END, MOBILE_TITLE_MINI_OUT_END))
+      : chromeOpacity,
   );
   // Nested in the text block, which already carries the fade.
   setMiniUiVar("--mobile-mini-player-detail-opacity", titleHandedOver ? "1" : chromeOpacity);
@@ -1122,6 +1130,10 @@ const beginMobileInteractive = async (
   if (!retainFrames && initialProgress <= 0.001) {
     detachMiniSharedAlbum();
     seedInteractiveFromMini(frames);
+    // A drag has already moved by the time the next frame comes round, so the artwork and the
+    // title must follow the finger from the first painted frame; the frame-after capture below
+    // only refreshes these numbers.
+    captureInteractiveFrames(frames);
   } else if (!retainFrames && initialProgress >= 0.999) {
     prepareMiniAlbumCloseHandoff();
     seedInteractiveFromFull();
