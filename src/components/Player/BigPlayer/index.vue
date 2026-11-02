@@ -77,6 +77,9 @@
               :fullUiMotionStyle="mobileFullUiMotionStyle"
               :headerMotionStyle="mobileHeaderMotionStyle"
               :handleMotionStyle="mobileHandleMotionStyle"
+              :titleMotionStyle="mobileTitleMotionStyle"
+              :titleRealStyle="mobileTitleRealStyle"
+              :titleMetrics="mobileTitleMetrics"
               :albumLayerStyle="mobileArtworkMotionStyle"
               :albumLayerVisible="mobileAlbumLayerVisible"
               @close="handleMobileClose"
@@ -317,6 +320,15 @@ type MiniSharedFrames = {
   artwork?: DOMRect;
   background?: DOMRect;
 };
+type TitleMetrics = {
+  width: number;
+  nameSize: number;
+  nameHeight: number;
+  artistsSize: number;
+  artistsHeight: number;
+  gap: number;
+};
+type TitleFrames = { mini: SharedFrame; full: SharedFrame; scale: number; metrics: TitleMetrics };
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
@@ -337,6 +349,14 @@ const headerY = useMotionValue(0);
 // gesture; it only scales (1 - progress), so it is irrelevant once the player is open.
 const sheetTravel = useMotionValue(0);
 const sheetMiniRadius = useMotionValue(12);
+// The title block is shared with the mini bar like the artwork: a floating copy travels from the
+// bar's title to the active layer's slot while the real one waits, then hands over to it.
+const titleLeft = useMotionValue(0);
+const titleTop = useMotionValue(0);
+const titleScale = useMotionValue(1);
+// 1 while the gesture's frames include the title. A MotionValue because derived values read it.
+const titleMorph = useMotionValue(0);
+const mobileTitleMetrics = ref<TitleMetrics | null>(null);
 const artworkLeft = useMotionValue(0);
 const artworkTop = useMotionValue(0);
 const artworkWidth = useMotionValue(0);
@@ -350,6 +370,7 @@ let artworkFrameAnimations: ReturnType<typeof animate>[] = [];
 let interactiveFrames: {
   miniArtwork: SharedFrame;
   fullArtwork: SharedFrame;
+  title: TitleFrames | null;
 } | null = null;
 let pendingInteractiveProgress = 0;
 let closeDragOrigin = 1;
@@ -421,6 +442,8 @@ const MOBILE_HANDLE_REVEAL_END = 0.45;
 const MOBILE_CONTENT_REVEAL_START = 0.3;
 const MOBILE_CONTENT_REVEAL_END = 0.55;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
+// The floating title replaces the bar's own within this window, where the two are still close.
+const MOBILE_TITLE_FADE_END = 0.05;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
 
@@ -452,6 +475,25 @@ const contentOpacity = useTransform(() =>
   rangeProgress(playerProgress.get(), MOBILE_CONTENT_REVEAL_START, MOBILE_CONTENT_REVEAL_END),
 );
 
+// The real title is already fully there, under the float, when the float fades away at the end, so
+// the hand-over has no dip. Without frames for the title the real one is simply always shown.
+const titleFloatOpacity = useTransform(() => {
+  const progress = playerProgress.get();
+  return (
+    rangeProgress(progress, 0, MOBILE_TITLE_FADE_END) *
+    (1 - rangeProgress(progress, MOBILE_CONTENT_INTERACTIVE_START, 1))
+  );
+});
+const titleRealOpacity = useTransform(() =>
+  titleMorph.get()
+    ? rangeProgress(
+        playerProgress.get(),
+        MOBILE_CONTENT_INTERACTIVE_START - 0.04,
+        MOBILE_CONTENT_INTERACTIVE_START,
+      )
+    : 1,
+);
+
 const mobileShellMotionStyle: MotionStyleRecord = {
   y: sheetY,
   borderTopLeftRadius: sheetRadius,
@@ -462,6 +504,13 @@ const mobileScrimStyle: MotionStyleRecord = { opacity: scrimOpacity };
 const mobileFullUiMotionStyle: MotionStyleRecord = { opacity: contentOpacity };
 const mobileHeaderMotionStyle: MotionStyleRecord = { opacity: contentOpacity, y: headerY };
 const mobileHandleMotionStyle: MotionStyleRecord = { opacity: handleOpacity };
+const mobileTitleMotionStyle: MotionStyleRecord = {
+  x: titleLeft,
+  y: titleTop,
+  scale: titleScale,
+  opacity: titleFloatOpacity,
+};
+const mobileTitleRealStyle: MotionStyleRecord = { opacity: titleRealOpacity };
 
 // The sheet follows the finger one to one, like the queue drawer; the fallback only covers a bar
 // that could not be measured.
@@ -612,6 +661,60 @@ const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   }
 };
 
+// The bar's title block (top-left corner, font size) and the active layer's real one, as the title's
+// shared frames. The real one is measured by its wrapper, which never carries a transform.
+const measureTitle = (rootRect: DOMRect): TitleFrames | null => {
+  const miniEl = document.querySelector("[data-mobile-player-title]");
+  const miniRect = readRestRect(miniEl);
+  const layout = mobileLayoutRef.value;
+  const slot =
+    (mobileLayer.value === 1 ? layout?.bigSongInfoRef : layout?.smallSongInfoRef) ?? null;
+  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
+  const nameEl = slot?.querySelector<HTMLElement>(".name");
+  if (!miniEl || !miniRect || !slot || !contentRect || !nameEl) return null;
+
+  const miniSize = Number.parseFloat(
+    getComputedStyle(miniEl.querySelector(".song") ?? miniEl).fontSize,
+  );
+  const nameStyle = getComputedStyle(nameEl);
+  const nameSize = Number.parseFloat(nameStyle.fontSize);
+  if (!(miniSize > 0) || !(nameSize > 0)) return null;
+  const slotRect = slot.getBoundingClientRect();
+  const artistsEl = slot.querySelector<HTMLElement>(".artists");
+  return {
+    mini: frameFromRect(miniRect, rootRect, 0),
+    full: frameFromRect(slotRect, contentRect, 0),
+    scale: miniSize / nameSize,
+    metrics: {
+      width: slotRect.width,
+      nameSize,
+      nameHeight: nameEl.getBoundingClientRect().height,
+      artistsSize: artistsEl ? Number.parseFloat(getComputedStyle(artistsEl).fontSize) : 0,
+      artistsHeight: artistsEl ? artistsEl.getBoundingClientRect().height : 0,
+      gap: Number.parseFloat(nameStyle.marginBottom) || 0,
+    },
+  };
+};
+
+// The ref changes the layout's props, so only touch it when the numbers really differ.
+const setTitleMorph = (metrics: TitleMetrics | null) => {
+  titleMorph.set(metrics ? 1 : 0);
+  const current = mobileTitleMetrics.value;
+  const same =
+    metrics === current ||
+    (metrics &&
+      current &&
+      (Object.keys(metrics) as (keyof TitleMetrics)[]).every(
+        (key) => metrics[key] === current[key],
+      ));
+  if (!same) mobileTitleMetrics.value = metrics;
+};
+
+const releaseInteractiveFrames = () => {
+  interactiveFrames = null;
+  setTitleMorph(null);
+};
+
 const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
   const root = bigPlayerRef.value;
   if (!root) return false;
@@ -620,10 +723,13 @@ const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
   const fullArtwork = frameFromCoverLayout(12);
   if (!mini.artworkRect || !mini.backgroundRect || !fullArtwork) return false;
 
+  const title = measureTitle(rootRect);
   interactiveFrames = {
     miniArtwork: frameFromRect(mini.artworkRect, rootRect, mini.artworkRadius),
     fullArtwork,
+    title,
   };
+  setTitleMorph(title?.metrics ?? null);
   return true;
 };
 
@@ -661,13 +767,19 @@ const interpolateFrame = (from: SharedFrame, to: SharedFrame, progress: number):
 // edge, so a straight blend keeps it inside without help.
 const applyInteractiveFrame = (progress: number) => {
   if (!interactiveFrames) return;
-  const { miniArtwork, fullArtwork } = interactiveFrames;
+  const { miniArtwork, fullArtwork, title } = interactiveFrames;
   // The blend is the artwork's path on screen; it lives inside the sheet, so subtract the
   // sheet's own offset to place it. The title row beside the small cover follows the same way.
   const artwork = interpolateFrame(miniArtwork, fullArtwork, progress);
   artwork.top -= sheetOffset(progress);
   applyArtworkFrame(artwork);
   headerY.set(artwork.top - fullArtwork.top);
+  if (!title) return;
+  // Same straight blend as the artwork, in the sheet's space, scaled from the bar's font size.
+  const placed = interpolateFrame(title.mini, title.full, progress);
+  titleLeft.set(placed.left);
+  titleTop.set(placed.top - sheetOffset(progress));
+  titleScale.set(mix(title.scale, 1, progress));
 };
 
 // The mini bar is the sheet's top while it lifts: it rides the sheet's edge and fades as it goes,
@@ -726,10 +838,17 @@ const applyMiniUiVars = (progress: number) => {
   setMiniUiVar("--mobile-mini-player-surface-opacity", chromeOpacity);
   setMiniUiVar("--mobile-mini-player-ui-opacity", chromeOpacity);
   setMiniUiVar("--mobile-mini-player-chrome-opacity", chromeOpacity);
-  setMiniUiVar("--mobile-mini-player-text-opacity", chromeOpacity);
-  setMiniUiVar("--mobile-mini-player-detail-opacity", chromeOpacity);
+  // The title block is handed to the floating copy within the first few percent, in place: it
+  // neither drifts nor fades with the rest of the bar. Without a measured title it fades as before.
+  const titleHandedOver = titleMorph.get() === 1;
+  setMiniUiVar(
+    "--mobile-mini-player-text-opacity",
+    titleHandedOver ? String(1 - rangeProgress(progress, 0, MOBILE_TITLE_FADE_END)) : chromeOpacity,
+  );
+  // Nested in the text block, which already carries the fade.
+  setMiniUiVar("--mobile-mini-player-detail-opacity", titleHandedOver ? "1" : chromeOpacity);
   setMiniUiVar("--mobile-mini-player-ui-y", `${mix(0, -4, chromeExit)}px`);
-  setMiniUiVar("--mobile-mini-player-text-y", `${mix(0, -8, chromeExit)}px`);
+  setMiniUiVar("--mobile-mini-player-text-y", `${titleHandedOver ? 0 : mix(0, -8, chromeExit)}px`);
   // The album layer sits on the exact same rect at progress 0, so this swap is invisible.
   setMiniUiVar("--mobile-mini-player-artwork-opacity", miniTransitioning ? "0" : "1");
   setMiniUiVar("--mobile-mini-player-bottom-y", `${mix(0, 110, tabBarExit)}%`);
@@ -818,7 +937,7 @@ const resetClosedMobileState = () => {
   mobileTransitionPhase.value = "mini";
   mobileAlbumLayerReady.value = false;
   pendingInteractiveProgress = 0;
-  interactiveFrames = null;
+  releaseInteractiveFrames();
   playerProgress.set(0);
   headerY.set(0);
   artworkOpacity.set(0);
@@ -1089,7 +1208,7 @@ const finishMobileInteractive = (forceOpen?: boolean) =>
         mobileInteractive.value = false;
         mobileTransitionActive.value = false;
         mobileTransitionDirection.value = null;
-        interactiveFrames = null;
+        releaseInteractiveFrames();
         syncArtworkToCurrentLayer();
         applyProgressState(1);
       }
@@ -1182,7 +1301,7 @@ useMotionInterruption(() => {
     mobileTransitionActive.value = false;
     mobileTransitionDirection.value = null;
     mobileExiting.value = false;
-    interactiveFrames = null;
+    releaseInteractiveFrames();
     playerProgress.set(1);
     applyProgressState(1);
     detachMiniSharedAlbum();

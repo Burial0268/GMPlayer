@@ -27,7 +27,7 @@
                 alt="pic"
               />
             </div>
-            <div class="name">
+            <div class="name" data-mobile-player-title>
               <div v-button class="song text-hidden" @click.stop="openSongDetail">
                 {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
               </div>

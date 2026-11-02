@@ -30,29 +30,31 @@
             <div class="mobile-phony-small-cover mobile-cover-slot" ref="phonySmallCoverRef"></div>
             <div class="mobile-small-controls">
               <Motion class="mobile-small-controls-inner" :style="smallControlsMotionStyle">
-                <div class="mobile-song-info">
-                  <div class="name-wrapper">
-                    <div class="name" :class="{ 'is-marquee': isNameOverflow }">
-                      <span class="name-inner name-measure">{{
-                        songName || $t("other.noSong")
-                      }}</span>
-                      <OverflowMarquee
-                        v-if="isNameOverflow"
-                        class="mobile-name-marquee"
-                        :speed="36"
-                      >
-                        <span class="mobile-name-marquee-content">
-                          {{ songName || $t("other.noSong") }}
-                        </span>
-                      </OverflowMarquee>
+                <Motion as-child :style="titleRealStyle">
+                  <div ref="smallSongInfoRef" class="mobile-song-info">
+                    <div class="name-wrapper">
+                      <div class="name" :class="{ 'is-marquee': isNameOverflow }">
+                        <span class="name-inner name-measure">{{
+                          songName || $t("other.noSong")
+                        }}</span>
+                        <OverflowMarquee
+                          v-if="isNameOverflow"
+                          class="mobile-name-marquee"
+                          :speed="36"
+                        >
+                          <span class="mobile-name-marquee-content">
+                            {{ songName || $t("other.noSong") }}
+                          </span>
+                        </OverflowMarquee>
+                      </div>
+                    </div>
+                    <div class="artists text-hidden" v-if="artistList.length">
+                      <span v-for="(item, index) in artistList" :key="'s' + index">
+                        {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                      </span>
                     </div>
                   </div>
-                  <div class="artists text-hidden" v-if="artistList.length">
-                    <span v-for="(item, index) in artistList" :key="'s' + index">
-                      {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-                    </span>
-                  </div>
-                </div>
+                </Motion>
                 <div class="mobile-header-actions">
                   <n-icon
                     size="24"
@@ -116,29 +118,35 @@
                   :inert="activeMobileLayer === 2"
                   :aria-hidden="activeMobileLayer === 2"
                 >
-                  <div class="mobile-song-info">
-                    <div class="name-wrapper" ref="nameWrapperRef">
-                      <div class="name" ref="nameTextRef" :class="{ 'is-marquee': isNameOverflow }">
-                        <span class="name-inner name-measure">{{
-                          songName || $t("other.noSong")
-                        }}</span>
-                        <OverflowMarquee
-                          v-if="isNameOverflow"
-                          class="mobile-name-marquee"
-                          :speed="36"
+                  <Motion as-child :style="titleRealStyle">
+                    <div ref="bigSongInfoRef" class="mobile-song-info">
+                      <div class="name-wrapper" ref="nameWrapperRef">
+                        <div
+                          class="name"
+                          ref="nameTextRef"
+                          :class="{ 'is-marquee': isNameOverflow }"
                         >
-                          <span class="mobile-name-marquee-content">
-                            {{ songName || $t("other.noSong") }}
-                          </span>
-                        </OverflowMarquee>
+                          <span class="name-inner name-measure">{{
+                            songName || $t("other.noSong")
+                          }}</span>
+                          <OverflowMarquee
+                            v-if="isNameOverflow"
+                            class="mobile-name-marquee"
+                            :speed="36"
+                          >
+                            <span class="mobile-name-marquee-content">
+                              {{ songName || $t("other.noSong") }}
+                            </span>
+                          </OverflowMarquee>
+                        </div>
+                      </div>
+                      <div class="artists text-hidden" v-if="artistList.length">
+                        <span v-for="(item, index) in artistList" :key="'b' + index">
+                          {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                        </span>
                       </div>
                     </div>
-                    <div class="artists text-hidden" v-if="artistList.length">
-                      <span v-for="(item, index) in artistList" :key="'b' + index">
-                        {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-                      </span>
-                    </div>
-                  </div>
+                  </Motion>
                   <div class="mobile-header-actions">
                     <n-icon
                       size="24"
@@ -209,6 +217,20 @@
           @touchend.passive="handlePlayerTouchEnd"
           @touchcancel="handlePlayerTouchCancel"
         />
+
+        <!-- 歌名块的浮动副本：和封面一样不受两层布局的裁剪，从 mini 条的歌名位置缩放到
+             各层的歌名位置，落定后与真实歌名交接。 -->
+        <Motion
+          v-if="titleMetrics"
+          class="mobile-title-frame"
+          aria-hidden="true"
+          :style="titleFrameStyle"
+        >
+          <div class="title-name">{{ songName || $t("other.noSong") }}</div>
+          <div class="title-artists" v-if="artistList.length">
+            {{ artistList.map((item) => item.name).join(" / ") }}
+          </div>
+        </Motion>
       </Motion>
     </div>
 
@@ -360,6 +382,15 @@ type QueueSong = {
 };
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
+// Typography and slot of the real title in the active layer, which the floating copy mirrors.
+type TitleMetrics = {
+  width: number;
+  nameSize: number;
+  nameHeight: number;
+  artistsSize: number;
+  artistsHeight: number;
+  gap: number;
+};
 
 const props = defineProps<{
   songName: string;
@@ -376,6 +407,9 @@ const props = defineProps<{
   fullUiMotionStyle: MotionStyleRecord;
   headerMotionStyle: MotionStyleRecord;
   handleMotionStyle: MotionStyleRecord;
+  titleMotionStyle: MotionStyleRecord;
+  titleRealStyle: MotionStyleRecord;
+  titleMetrics: TitleMetrics | null;
   albumLayerStyle: MotionStyleRecord;
   albumLayerVisible: boolean;
 }>();
@@ -403,6 +437,9 @@ const phonyBigCoverRef = ref<HTMLElement | null>(null);
 const phonySmallCoverRef = ref<HTMLElement | null>(null);
 const nameWrapperRef = ref<HTMLElement | null>(null);
 const nameTextRef = ref<HTMLElement | null>(null);
+// The real title blocks of each layer: their natural slots are what the floating copy lands on.
+const bigSongInfoRef = ref<HTMLElement | null>(null);
+const smallSongInfoRef = ref<HTMLElement | null>(null);
 const queueListRef = ref<VirtualListInst | null>(null);
 let locateHandle: LocateHandle | null = null;
 const queueScrollTop = ref(0);
@@ -496,6 +533,19 @@ const handleUiMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.handleMotionStyle,
 }));
+const titleFrameStyle = computed<MotionStyleRecord>(() => {
+  const metrics = props.titleMetrics;
+  if (!metrics) return props.titleMotionStyle;
+  return {
+    ...props.titleMotionStyle,
+    width: `${metrics.width}px`,
+    "--title-name-size": `${metrics.nameSize}px`,
+    "--title-name-height": `${metrics.nameHeight}px`,
+    "--title-artists-size": `${metrics.artistsSize}px`,
+    "--title-artists-height": `${metrics.artistsHeight}px`,
+    "--title-gap": `${metrics.gap}px`,
+  };
+});
 
 // ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──
 // 0 = 主内容，1 = Playlist。y 用像素数值而非百分比字符串：progress 归零时
@@ -796,7 +846,14 @@ onBeforeUnmount(() => {
   locateHandle?.cancel();
 });
 
-defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef });
+defineExpose({
+  phonyBigCoverRef,
+  phonySmallCoverRef,
+  nameWrapperRef,
+  nameTextRef,
+  bigSongInfoRef,
+  smallSongInfoRef,
+});
 </script>
 
 <style lang="scss" scoped>
@@ -821,6 +878,40 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 
 .mobile-player-page {
   transform-origin: center 22%;
+}
+
+// Placed by transform only (x, y, scale from the top-left corner), so it moves without layout.
+// The sizes mirror the real title of the active layer; see `titleMetrics`.
+.mobile-title-frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  transform-origin: 0 0;
+  color: var(--main-cover-color);
+  will-change: transform, opacity;
+
+  .title-name {
+    height: var(--title-name-height);
+    margin-bottom: var(--title-gap);
+    font-size: var(--title-name-size);
+    font-weight: 600;
+    line-height: var(--title-name-height);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .title-artists {
+    height: var(--title-artists-height);
+    font-size: var(--title-artists-size);
+    line-height: var(--title-artists-height);
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 // .mobile-player-content / .mobile-full-ui 不得挂常驻 will-change（或其他产生
