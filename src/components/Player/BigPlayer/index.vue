@@ -399,8 +399,11 @@ const mobileBackgroundVisualStyle = computed<MotionStyleRecord>(() => ({
       }
     : {}),
 }));
+// `inherit`, not `visible`: an explicit `visible` on these wrappers beats the
+// `visibility: hidden` that `.navigation-suspended` puts on the root, so the song
+// info and controls stayed painted over the page (comments, …) opened on top.
 const mobileContentShellStyle = computed<StaticStyleRecord>(() => ({
-  visibility: mobileContentVisible.value ? "visible" : "hidden",
+  visibility: mobileContentVisible.value ? "inherit" : "hidden",
 }));
 const mobileFullUiMotionStyle = computed<MotionStyleRecord>(() => ({
   opacity: fullUiOpacity,
