@@ -188,7 +188,7 @@ import {
   shallowRef,
   useTemplateRef,
 } from "vue";
-import { Motion, animate, useMotionValue, type MotionValue } from "motion-v";
+import { Motion, animate, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "../icons/icon-animations.css";
 
@@ -348,6 +348,10 @@ const backgroundVisualOpacity = useMotionValue(0);
 // Dims the page behind the sheet in step with it, like a drawer's backdrop.
 const scrimOpacity = useMotionValue(0);
 const backgroundTop = useMotionValue(0);
+// The content rides the sheet's travel (plus its small rise) instead of waiting at its final
+// spot and fading under a sheet that has already left — the handle and the upper half of the
+// screen were left hanging over the page on close.
+const fullUiFollowY = useTransform(() => fullUiY.get() + backgroundTop.get());
 const backgroundRadius = useMotionValue(0);
 const artworkLeft = useMotionValue(0);
 const artworkTop = useMotionValue(0);
@@ -405,9 +409,11 @@ const mobileBackgroundVisualStyle = computed<MotionStyleRecord>(() => ({
 const mobileContentShellStyle = computed<StaticStyleRecord>(() => ({
   visibility: mobileContentVisible.value ? "inherit" : "hidden",
 }));
+// `backgroundTop` only drives the sheet while a gesture owns it (see the background style),
+// so the content follows under the same condition and never trails a stale offset.
 const mobileFullUiMotionStyle = computed<MotionStyleRecord>(() => ({
   opacity: fullUiOpacity,
-  y: fullUiY,
+  y: mobileInteractive.value ? fullUiFollowY : fullUiY,
 }));
 const mobileHeaderMotionStyle = computed<MotionStyleRecord>(() => ({
   opacity: headerOpacity,
