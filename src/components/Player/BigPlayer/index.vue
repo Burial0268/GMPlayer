@@ -1065,8 +1065,9 @@ const updateMobileInteractiveClose = (distance: number) => {
 };
 
 const beginStoreCloseHandoff = () => {
-  if (!music.showBigPlayer) return;
+  // Also when the store has already closed (back, Escape): the overlay must outlive the flag.
   mobileExiting.value = true;
+  if (!music.showBigPlayer) return;
   mobileSkipNextStoreCloseAnimation = true;
   navigation.closeTop("player");
 };
@@ -1364,10 +1365,10 @@ watch(
         clearMobileExitFallback();
         return;
       }
-      interactiveGeneration++;
+      // Back and Escape close the way a drag does: the sheet sinks into the mini bar with
+      // its content, instead of fading where it stands.
       mobileExiting.value = true;
-      mobileInteractive.value = false;
-      animateProgressTo(0, finishMobileExit);
+      void closeMobileWithProgress();
       scheduleMobileExitFallback();
     } else {
       resetDesktopOverlayState();
