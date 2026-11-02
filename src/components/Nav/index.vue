@@ -9,14 +9,14 @@
   >
     <div class="left">
       <button
-        v-if="isCompactViewport && navigation.canGoBack.value"
+        v-if="isCompactViewport && (navigation.canGoBack.value || rootBack)"
         type="button"
         class="layer-back"
         :aria-label="$t('general.name.goBack')"
-        @click="navigation.closeTop()"
+        @click="navigation.canGoBack.value ? navigation.closeTop() : router.back()"
       >
         <n-icon size="26" :component="Left" />
-        <span>{{ backLabel }}</span>
+        <span>{{ navigation.canGoBack.value ? backLabel : t("general.name.goBack") }}</span>
       </button>
       <div v-else-if="!isCompactViewport" class="controls">
         <button type="button" :aria-label="$t('general.name.goBack')" @click="router.back()">
@@ -61,6 +61,12 @@ const backLabel = computed(() => {
   return parent?.label
     ? t(parent.label)
     : t(`sidebar.tab.${navigation.current.value?.root ?? "home"}`);
+});
+// Settings is a tab root, but the one tab whose first screen is a menu: entered from
+// another page it should lead back there, so offer the previous history entry.
+const rootBack = computed(() => {
+  const top = navigation.current.value;
+  return top?.isRoot && top.root === "settings" && router.options.history.state.back !== null;
 });
 const isMobileState = ref(isMobileDevice());
 const compactViewportQuery = window.matchMedia("(max-width: 768px)");

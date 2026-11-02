@@ -127,6 +127,7 @@ import { appInfo } from "@/utils/appInfo";
 import { backTopShown } from "@/utils/backTop";
 import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { ref, watch, computed, h } from "vue";
+import { useEdgeSwipeBack } from "@/composables/useEdgeSwipeBack";
 
 const { t } = useI18n();
 const music = musicStore();
@@ -135,6 +136,7 @@ const setting = settingStore();
 const site = siteStore();
 const router = useRouter();
 const route = useRoute();
+useEdgeSwipeBack();
 const contentStage = ref<HTMLElement | null>(null);
 const mainContent = ref<HTMLElement | null>(null);
 // Mirrors iOS scrollEdgeAppearance: the mobile header glass only materializes
