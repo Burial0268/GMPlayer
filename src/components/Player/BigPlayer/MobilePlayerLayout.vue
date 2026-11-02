@@ -109,7 +109,7 @@
               :inert="activeMobileLayer === 2 && !lyricControlsVisible"
               :aria-hidden="activeMobileLayer === 2 && !lyricControlsVisible"
             >
-              <Motion class="mobile-big-controls-inner" :style="contentUiMotionStyle">
+              <div class="mobile-big-controls-inner" :style="contentShellStyle">
                 <!-- 歌曲信息（展开） -->
                 <div
                   class="mobile-song-info-row"
@@ -162,34 +162,32 @@
                     <n-icon size="24" :component="MoreVertRound" @click.stop="" />
                   </div>
                 </div>
-                <Motion as-child :style="controlsMotionStyle">
-                  <div
-                    ref="playbackControlsRef"
-                    class="mobile-controls-motion"
-                    @pointerdown.capture="holdLyricControls"
-                    @click.capture="scheduleLyricControlsHide"
-                    @focusin="clearLyricControlsTimer"
-                    @focusout="scheduleLyricControlsHide"
-                  >
-                    <!-- 进度条 -->
-                    <div class="mobile-progress">
-                      <BouncingSlider
-                        :value="music.getPlaySongTime.currentTime || 0"
-                        :min="0"
-                        :max="music.getPlaySongTime.duration || 1"
-                        :is-playing="music.getPlayState"
-                        @update:value="handleProgressSeek"
-                      />
-                      <div class="time-display">
-                        <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                        <span>-{{ remainingTime }}</span>
-                      </div>
+                <div
+                  ref="playbackControlsRef"
+                  class="mobile-controls-motion"
+                  @pointerdown.capture="holdLyricControls"
+                  @click.capture="scheduleLyricControlsHide"
+                  @focusin="clearLyricControlsTimer"
+                  @focusout="scheduleLyricControlsHide"
+                >
+                  <!-- 进度条 -->
+                  <div class="mobile-progress">
+                    <BouncingSlider
+                      :value="music.getPlaySongTime.currentTime || 0"
+                      :min="0"
+                      :max="music.getPlaySongTime.duration || 1"
+                      :is-playing="music.getPlayState"
+                      @update:value="handleProgressSeek"
+                    />
+                    <div class="time-display">
+                      <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+                      <span>-{{ remainingTime }}</span>
                     </div>
-                    <!-- 控制按钮 + 音量 -->
-                    <MobileControls @toComment="$emit('toComment')" />
                   </div>
-                </Motion>
-              </Motion>
+                  <!-- 控制按钮 + 音量 -->
+                  <MobileControls @toComment="$emit('toComment')" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -376,7 +374,6 @@ const props = defineProps<{
   layoutTransition: Record<string, unknown>;
   contentShellStyle: StaticStyleRecord;
   fullUiMotionStyle: MotionStyleRecord;
-  controlsMotionStyle: MotionStyleRecord;
   headerMotionStyle: MotionStyleRecord;
   handleMotionStyle: MotionStyleRecord;
   albumLayerStyle: MotionStyleRecord;

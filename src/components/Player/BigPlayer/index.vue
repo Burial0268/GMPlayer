@@ -41,11 +41,7 @@
               `mobile-phase-${mobileTransitionPhase}`,
             ]"
           >
-            <Motion
-              class="mobile-background-visual"
-              :transition="backgroundLayoutTransition"
-              :style="mobileBackgroundVisualStyle"
-            >
+            <div class="mobile-background-visual">
               <BigPlayerBackground
                 ref="background"
                 :songPicGradient="songPicGradient"
@@ -62,7 +58,7 @@
                 :flowSpeed="setting.flowSpeed"
                 :staticMode="mobileBackgroundStatic"
               />
-            </Motion>
+            </div>
 
             <MobilePlayerLayout
               ref="mobileLayoutRef"
@@ -79,7 +75,6 @@
               :layoutTransition="sharedLayoutTransition"
               :contentShellStyle="mobileContentShellStyle"
               :fullUiMotionStyle="mobileFullUiMotionStyle"
-              :controlsMotionStyle="mobileControlsMotionStyle"
               :headerMotionStyle="mobileHeaderMotionStyle"
               :handleMotionStyle="mobileHandleMotionStyle"
               :albumLayerStyle="mobileArtworkMotionStyle"
@@ -301,11 +296,6 @@ const sharedLayoutTransition = {
   restDelta: 0.001,
   restSpeed: 0.02,
 } as const;
-const backgroundLayoutTransition = {
-  type: "tween",
-  duration: 0.24,
-  ease: [0.22, 1, 0.36, 1],
-} as const;
 const albumLayoutTransition = {
   type: "spring",
   stiffness: 380,
@@ -337,24 +327,16 @@ const { calcCoverLayout } = useMobileCoverFrame(
 );
 
 const mobileInteractive = ref(false);
+// The one source of truth, like the queue sheet's. The sheet's offset, fade and corners, the scrim
+// and the reveal windows are all derived from it below, so nothing is pushed or reset per frame and
+// an interrupted gesture cannot leave a stale offset behind.
 const playerProgress = useMotionValue(0);
-const fullUiOpacity = useMotionValue(0);
-const fullUiY = useMotionValue(20);
-const controlsOpacity = useMotionValue(0);
-// Layer 2's title row sits beside the small cover, so it rides the cover's travel.
-const headerOpacity = useMotionValue(0);
+// Layer 2's title row sits beside the small cover, so it rides the cover's travel inside the sheet.
 const headerY = useMotionValue(0);
-const handleOpacity = useMotionValue(0);
-const controlsY = useMotionValue(18);
-const backgroundVisualOpacity = useMotionValue(0);
-// Dims the page behind the sheet in step with it, like a drawer's backdrop.
-const scrimOpacity = useMotionValue(0);
-const backgroundTop = useMotionValue(0);
-// The content rides the sheet's travel (plus its small rise) instead of waiting at its final
-// spot and fading under a sheet that has already left — the handle and the upper half of the
-// screen were left hanging over the page on close.
-const fullUiFollowY = useTransform(() => fullUiY.get() + backgroundTop.get());
-const backgroundRadius = useMotionValue(0);
+// How far below its open position the closed sheet sits: the mini bar's top edge. Measured per
+// gesture; it only scales (1 - progress), so it is irrelevant once the player is open.
+const sheetTravel = useMotionValue(0);
+const sheetMiniRadius = useMotionValue(12);
 const artworkLeft = useMotionValue(0);
 const artworkTop = useMotionValue(0);
 const artworkWidth = useMotionValue(0);
@@ -368,8 +350,6 @@ let artworkFrameAnimations: ReturnType<typeof animate>[] = [];
 let interactiveFrames: {
   miniArtwork: SharedFrame;
   fullArtwork: SharedFrame;
-  miniBg: SharedFrame;
-  fullBg: SharedFrame;
 } | null = null;
 let pendingInteractiveProgress = 0;
 let closeDragOrigin = 1;
@@ -379,8 +359,6 @@ const mobileContentVisible = ref(false);
 const mobileTransitionPhase = ref<"mini" | "shared-expand" | "full-content">("mini");
 const mobileTransitionDirection = ref<"opening" | "closing" | null>(null);
 
-const mobileShellMotionStyle = computed<MotionStyleRecord>(() => ({}));
-const mobileScrimStyle = computed<MotionStyleRecord>(() => ({ opacity: scrimOpacity }));
 const mobileArtworkMotionStyle = computed<MotionStyleRecord>(() => ({
   left: artworkLeft,
   top: artworkTop,
@@ -392,44 +370,11 @@ const mobileArtworkMotionStyle = computed<MotionStyleRecord>(() => ({
 const mobileAlbumLayerVisible = computed(
   () => isMobile.value && mobileOverlayVisible.value && mobileAlbumLayerReady.value,
 );
-const mobileBackgroundVisualStyle = computed<MotionStyleRecord>(() => ({
-  opacity: backgroundVisualOpacity,
-  "--mobile-player-bg-reveal-y": backgroundTop,
-  ...(mobileInteractive.value
-    ? {
-        y: backgroundTop,
-        borderTopLeftRadius: backgroundRadius,
-        borderTopRightRadius: backgroundRadius,
-        borderBottomLeftRadius: 0,
-        borderBottomRightRadius: 0,
-      }
-    : {}),
-}));
 // `inherit`, not `visible`: an explicit `visible` on these wrappers beats the
 // `visibility: hidden` that `.navigation-suspended` puts on the root, so the song
 // info and controls stayed painted over the page (comments, …) opened on top.
 const mobileContentShellStyle = computed<StaticStyleRecord>(() => ({
   visibility: mobileContentVisible.value ? "inherit" : "hidden",
-}));
-// `backgroundTop` only drives the sheet while a gesture owns it (see the background style),
-// so the content follows under the same condition and never trails a stale offset.
-const mobileFullUiMotionStyle = computed<MotionStyleRecord>(() => ({
-  opacity: fullUiOpacity,
-  y: mobileInteractive.value ? fullUiFollowY : fullUiY,
-}));
-const mobileHeaderMotionStyle = computed<MotionStyleRecord>(() => ({
-  opacity: headerOpacity,
-  y: headerY,
-}));
-const mobileControlsMotionStyle = computed<MotionStyleRecord>(() => ({
-  opacity: controlsOpacity,
-  y: controlsY,
-}));
-// The handle is pinned to the sheet's top edge: it moves with the sheet and has no rise of its
-// own, and its window opens before anything else's.
-const mobileHandleMotionStyle = computed<MotionStyleRecord>(() => ({
-  opacity: handleOpacity,
-  ...(mobileInteractive.value ? { y: backgroundTop } : {}),
 }));
 
 // --- 仅本组件需要的局部状态 ---
@@ -455,8 +400,9 @@ const easeOutCubic = (value: number) => 1 - Math.pow(1 - clamp(value), 3);
 const rangeProgress = (value: number, from: number, to: number) =>
   clamp((value - from) / (to - from));
 
-// One spring drives everything. Geometry (sheet, artwork) rides the whole span; only the
-// opacities get their own window, and each window opens while something is already moving.
+// One spring drives everything. The sheet (offset, corners, fade) and the artwork ride the whole
+// span and the content is carried by the sheet; only a few things get a window, and each window
+// opens while something is already moving.
 const MOBILE_MINI_CHROME_FADE_END = 0.2;
 const MOBILE_SHEET_FADE_END = 0.12;
 const MOBILE_TABBAR_EXIT_END = 0.3;
@@ -464,21 +410,55 @@ const MOBILE_SHEET_PEAK_RADIUS = 28;
 const MOBILE_SHEET_SETTLE_START = 0.7;
 // The mini bar stays above the sheet until its own fade is done.
 const MOBILE_MINI_UI_FADE_END = 0.3;
-// The content is carried by the sheet (`fullUiFollowY`), so its windows are short and open early,
-// like a drawer's. The handle sits on the sheet's edge and goes first; the rest wait for the mini
-// bar's chrome to be gone (MOBILE_MINI_CHROME_FADE_END) so two sets of text never share a spot.
+// What can be on screen while the sheet is still low — the handle on its top edge, and in layer 2
+// the compact title row and the lyrics — waits for the mini bar's chrome to go (it fades until
+// MOBILE_MINI_CHROME_FADE_END) so two sets of text never share a spot; the handle goes first.
+// Layer 1's info and controls start below the screen edge and need no window.
 const MOBILE_HANDLE_REVEAL_START = 0.1;
 const MOBILE_HANDLE_REVEAL_END = 0.3;
 const MOBILE_CONTENT_REVEAL_START = 0.2;
-const MOBILE_CONTENT_REVEAL_END = 0.5;
-const MOBILE_CONTROLS_REVEAL_START = 0.3;
-const MOBILE_CONTROLS_REVEAL_END = 0.58;
-const MOBILE_HEADER_REVEAL_END = 0.45;
-const MOBILE_FULL_UI_RISE = 28;
-const MOBILE_CONTROLS_RISE = 20;
+const MOBILE_CONTENT_REVEAL_END = 0.45;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
+
+// The sheet is the whole shell (background + content), one rigid layer like the queue drawer's:
+// only its own transform, fade and corners move per frame, nothing inside it is touched.
+const sheetOffset = (progress: number) => (1 - clamp(progress)) * sheetTravel.get();
+const sheetY = useTransform(() => sheetOffset(playerProgress.get()));
+// Cross-fades with the glass mini bar it rises from.
+const sheetOpacity = useTransform(() =>
+  easeOutCubic(rangeProgress(playerProgress.get(), 0, MOBILE_SHEET_FADE_END)),
+);
+// Corners swell like a device's while the sheet rises, then relax to square on arrival.
+const sheetRadius = useTransform(() => {
+  const progress = clamp(playerProgress.get());
+  const swelling = mix(
+    sheetMiniRadius.get(),
+    MOBILE_SHEET_PEAK_RADIUS,
+    easeOutCubic(rangeProgress(progress, 0, 0.3)),
+  );
+  return mix(swelling, 0, rangeProgress(progress, MOBILE_SHEET_SETTLE_START, 1));
+});
+// Dims the page behind the sheet in step with it, like a drawer's backdrop.
+const scrimOpacity = useTransform(() => MOBILE_SCRIM_OPACITY * clamp(playerProgress.get()));
+const handleOpacity = useTransform(() =>
+  rangeProgress(playerProgress.get(), MOBILE_HANDLE_REVEAL_START, MOBILE_HANDLE_REVEAL_END),
+);
+const contentOpacity = useTransform(() =>
+  rangeProgress(playerProgress.get(), MOBILE_CONTENT_REVEAL_START, MOBILE_CONTENT_REVEAL_END),
+);
+
+const mobileShellMotionStyle: MotionStyleRecord = {
+  y: sheetY,
+  opacity: sheetOpacity,
+  borderTopLeftRadius: sheetRadius,
+  borderTopRightRadius: sheetRadius,
+};
+const mobileScrimStyle: MotionStyleRecord = { opacity: scrimOpacity };
+const mobileFullUiMotionStyle: MotionStyleRecord = { opacity: contentOpacity };
+const mobileHeaderMotionStyle: MotionStyleRecord = { opacity: contentOpacity, y: headerY };
+const mobileHandleMotionStyle: MotionStyleRecord = { opacity: handleOpacity };
 
 const getTransitionDistance = () => Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
 
@@ -592,20 +572,20 @@ const readMiniSharedFrames = (frames?: MiniSharedFrames) => {
   };
 };
 
+// Frames are measured against the player root, not the shell: the shell is the sheet and moves.
 const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   const mini = readMiniSharedFrames(frames);
-  const shellRect = mobileShellRef.value?.getBoundingClientRect();
-  const rootLeft = shellRect?.left ?? 0;
-  const rootTop = shellRect?.top ?? 0;
-  if (mini.backgroundRect) {
-    const backgroundTopValue = mini.backgroundRect.top - rootTop;
-    backgroundTop.set(backgroundTopValue);
-    backgroundRadius.set(0);
-  }
+  const rootRect = bigPlayerRef.value?.getBoundingClientRect();
+  const rootLeft = rootRect?.left ?? 0;
+  const rootTop = rootRect?.top ?? 0;
+  const barTop = mini.backgroundRect ? mini.backgroundRect.top - rootTop : 0;
+  sheetTravel.set(barTop);
+  sheetMiniRadius.set(mini.backgroundRadius || 12);
   if (mini.artworkRect) {
+    // The artwork sits inside the sheet, which starts out `barTop` down.
     setArtworkFrame({
       left: mini.artworkRect.left - rootLeft,
-      top: mini.artworkRect.top - rootTop,
+      top: mini.artworkRect.top - rootTop - barTop,
       width: mini.artworkRect.width,
       height: mini.artworkRect.height,
       borderRadius: mini.artworkRadius,
@@ -614,30 +594,18 @@ const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
 };
 
 const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
-  const shell = mobileShellRef.value;
-  if (!shell) return false;
-  const shellRect = shell.getBoundingClientRect();
+  const root = bigPlayerRef.value;
+  if (!root) return false;
+  const rootRect = root.getBoundingClientRect();
   const mini = readMiniSharedFrames(frames);
-  const miniArtwork = mini.artworkRect
-    ? frameFromRect(mini.artworkRect, shellRect, mini.artworkRadius)
-    : null;
-  const miniBg = mini.backgroundRect
-    ? frameFromRect(mini.backgroundRect, shellRect, mini.backgroundRadius)
-    : null;
   const fullArtwork = frameFromCoverLayout(12);
-  if (!miniArtwork || !miniBg || !fullArtwork) return false;
+  if (!mini.artworkRect || !mini.backgroundRect || !fullArtwork) return false;
 
+  sheetTravel.set(mini.backgroundRect.top - rootRect.top);
+  sheetMiniRadius.set(mini.backgroundRadius || 12);
   interactiveFrames = {
-    miniArtwork,
+    miniArtwork: frameFromRect(mini.artworkRect, rootRect, mini.artworkRadius),
     fullArtwork,
-    miniBg,
-    fullBg: {
-      left: 0,
-      top: 0,
-      width: shellRect.width,
-      height: shellRect.height,
-      borderRadius: 0,
-    },
   };
   return true;
 };
@@ -676,18 +644,11 @@ const interpolateFrame = (from: SharedFrame, to: SharedFrame, progress: number):
 // edge, so a straight blend keeps it inside without help.
 const applyInteractiveFrame = (progress: number) => {
   if (!interactiveFrames) return;
-  const { miniBg, fullBg, miniArtwork, fullArtwork } = interactiveFrames;
-  backgroundTop.set(mix(miniBg.top, fullBg.top, progress));
-  // Corners swell like a device's while the sheet rises, then relax to square on arrival.
-  const swelling = mix(
-    miniBg.borderRadius || 12,
-    MOBILE_SHEET_PEAK_RADIUS,
-    easeOutCubic(rangeProgress(progress, 0, 0.3)),
-  );
-  backgroundRadius.set(
-    mix(swelling, fullBg.borderRadius, rangeProgress(progress, MOBILE_SHEET_SETTLE_START, 1)),
-  );
+  const { miniArtwork, fullArtwork } = interactiveFrames;
+  // The blend is the artwork's path on screen; it lives inside the sheet, so subtract the
+  // sheet's own offset to place it. The title row beside the small cover follows the same way.
   const artwork = interpolateFrame(miniArtwork, fullArtwork, progress);
+  artwork.top -= sheetOffset(progress);
   applyArtworkFrame(artwork);
   headerY.set(artwork.top - fullArtwork.top);
 };
@@ -746,23 +707,11 @@ const applyMiniUiVars = (progress: number) => {
 const applyProgressState = (value: number) => {
   if (!isMobile.value) {
     clearMiniUiVars();
-    scrimOpacity.set(0);
-    backgroundVisualOpacity.set(0);
     artworkOpacity.set(1);
     mobileAlbumLayerReady.value = false;
     return;
   }
   const progress = clamp(value);
-  const fullUiEnter = rangeProgress(
-    progress,
-    MOBILE_CONTENT_REVEAL_START,
-    MOBILE_CONTENT_REVEAL_END,
-  );
-  const controlsEnter = rangeProgress(
-    progress,
-    MOBILE_CONTROLS_REVEAL_START,
-    MOBILE_CONTROLS_REVEAL_END,
-  );
   const backgroundVisible = progress > 0.001 || music.showBigPlayer || mobileTransitionActive.value;
   const albumLayerOpacity = backgroundVisible ? 1 : 0;
   // The earliest window: the shell must be visible for the handle to show.
@@ -781,22 +730,13 @@ const applyProgressState = (value: number) => {
   if (mobileTransitionPhase.value !== nextPhase) {
     mobileTransitionPhase.value = nextPhase;
   }
-  fullUiOpacity.set(fullUiEnter);
-  fullUiY.set(mix(MOBILE_FULL_UI_RISE, 0, easeOutCubic(fullUiEnter)));
-  controlsOpacity.set(controlsEnter);
-  controlsY.set(mix(MOBILE_CONTROLS_RISE, 0, easeOutCubic(controlsEnter)));
-  headerOpacity.set(rangeProgress(progress, MOBILE_CONTENT_REVEAL_START, MOBILE_HEADER_REVEAL_END));
-  headerY.set(0);
-  handleOpacity.set(rangeProgress(progress, MOBILE_HANDLE_REVEAL_START, MOBILE_HANDLE_REVEAL_END));
-  // Near-opaque within the first few px of a drag, but not a hard cut over the glass bar.
-  backgroundVisualOpacity.set(
-    backgroundVisible ? easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END)) : 0,
-  );
   artworkOpacity.set(albumLayerOpacity);
-  scrimOpacity.set(MOBILE_SCRIM_OPACITY * progress);
   applyMiniUiVars(progress);
 
-  if (!mobileInteractive.value || !interactiveFrames) return;
+  if (!mobileInteractive.value || !interactiveFrames) {
+    headerY.set(0);
+    return;
+  }
   applyInteractiveFrame(progress);
 };
 
@@ -843,17 +783,7 @@ const resetClosedMobileState = () => {
   pendingInteractiveProgress = 0;
   interactiveFrames = null;
   playerProgress.set(0);
-  fullUiOpacity.set(0);
-  fullUiY.set(MOBILE_FULL_UI_RISE);
-  controlsOpacity.set(0);
-  controlsY.set(MOBILE_CONTROLS_RISE);
-  headerOpacity.set(0);
   headerY.set(0);
-  handleOpacity.set(0);
-  backgroundVisualOpacity.set(0);
-  scrimOpacity.set(0);
-  backgroundTop.set(0);
-  backgroundRadius.set(0);
   artworkOpacity.set(0);
   clearMiniUiVars();
 };
@@ -1312,7 +1242,9 @@ onMounted(() => {
   initMobileElements();
   progressUnsubscribe = playerProgress.on("change", applyProgressState);
   if (isMobile.value) {
-    applyProgressState(music.showBigPlayer ? 1 : 0);
+    // The sheet is derived from the progress, so it has to move too, not only the side state.
+    playerProgress.set(music.showBigPlayer ? 1 : 0);
+    applyProgressState(playerProgress.get());
     if (music.showBigPlayer) scheduleArtworkLayerSync();
   } else {
     clearMiniUiVars();
@@ -1412,7 +1344,8 @@ watch(
       clearMiniUiVars();
       clearMobileExitFallback();
     } else {
-      applyProgressState(music.showBigPlayer ? 1 : 0);
+      playerProgress.set(music.showBigPlayer ? 1 : 0);
+      applyProgressState(playerProgress.get());
       if (music.showBigPlayer) scheduleArtworkLayerSync();
     }
     nextTick(() => {
@@ -1560,6 +1493,8 @@ defineExpose({
       border-radius: 0;
       background-color: transparent;
       transform-origin: bottom center;
+      // The shell is the sheet: background and content move as one layer (y, fade and top
+      // corners come from `mobileShellMotionStyle`), like the queue drawer's panel.
       will-change: transform, opacity;
       isolation: isolate;
 
@@ -1575,13 +1510,11 @@ defineExpose({
         overflow: hidden;
         background: rgb(0 0 0);
         pointer-events: none;
-        // border-radius 改动要重绘，合成器接不了；opacity 一项已足以保持图层。
-        // 这一层正好裹着背景画布（下面的 :deep(.big-player-background)）。
+        // 这一层裹着背景画布（下面的 :deep(.big-player-background)），保持单独的合成层。
         will-change: opacity;
 
         :deep(.big-player-background) {
           z-index: 0;
-          transform: translate3d(0, calc(var(--mobile-player-bg-reveal-y, 0) * -1px), 0);
           will-change: transform, opacity;
         }
       }
