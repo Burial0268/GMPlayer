@@ -387,14 +387,20 @@ const routingPlugin = {
       };
     });
 
-    // Login requests must not carry NMTID. Netease's risk control answers a
-    // cellphone login that does with -462 (verifyType 40, a captcha challenge)
-    // even for a correct SMS code; the same request without it goes through to
-    // the account check. Measured against the unmodified upstream, same host,
-    // same code: with NMTID -462, without 410 "account not registered".
-    // ncm-api-rs omits it for every `login` URI too. processCookieObject has no
-    // uri, so it is threaded in. Each edit is asserted, so an upstream bump that
-    // moves the lines fails the build instead of silently shipping the bug.
+    // Two things make Netease's risk control reject a cellphone login, and they
+    // stack: the second only shows once the first is fixed.
+    //
+    // 1. Login requests must not carry a *fabricated* NMTID. NMTID is a device token
+    // Netease issues; upstream mints a random "00O" + hex for weapi requests, which
+    // Netease's risk control rejects: a cellphone login with it answers -462
+    // (verifyType 40, a captcha challenge) even for a correct SMS code. Measured
+    // against unmodified upstream, same host, same code: fabricated -462; none, or
+    // the real value harvested from an earlier eapi response, goes through to the
+    // account check. A real NMTID (the caller's, or the one cached from a response)
+    // is kept; only the invented fallback is dropped for `login` URIs, as ncm-api-rs
+    // does. processCookieObject has no uri, so it is threaded in. Each edit is
+    // asserted, so an upstream bump that moves the lines fails the build instead of
+    // silently shipping the bug.
     b.onLoad({ filter: /[\\/]util[\\/]request\.js$/ }, (args) => {
       if (!args.path.startsWith(PKG_DIR)) return null;
       let src = fs.readFileSync(args.path, "utf8");
@@ -408,8 +414,15 @@ const routingPlugin = {
           "cookie = processCookieObject(cookie, crypto, uri)",
         ],
         [
-          "  if (cookie.NMTID) {\n    processedCookie['NMTID'] = cookie.NMTID",
-          "  if (uri.includes('login')) {\n    delete processedCookie.NMTID\n  } else if (cookie.NMTID) {\n    processedCookie['NMTID'] = cookie.NMTID",
+          // weapi always sends a macOS User-Agent, but the cookie defaults to os=pc
+          // (a Windows build string). On a login that mismatch is answered 10004
+          // "login has security risk" (phoneReuse); os=osx with the Mac UA logs in.
+          "const os = osMap[cookie.os] || osMap['pc']",
+          "const os =\n    osMap[cookie.os] ||\n    osMap[crypto === 'weapi' && uri.includes('login') ? 'osx' : 'pc']",
+        ],
+        [
+          "  } else if (NMTID_RETRIES_LEFT <= 0 || crypto !== 'eapi') {",
+          "  } else if (\n    (NMTID_RETRIES_LEFT <= 0 || crypto !== 'eapi') &&\n    !uri.includes('login')\n  ) {",
         ],
       ];
       for (const [from, to] of edits) {
