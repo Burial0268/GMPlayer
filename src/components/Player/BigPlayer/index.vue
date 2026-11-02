@@ -94,7 +94,7 @@
               @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
               @lrcAllLeave="lrcAllLeave"
               @lrcTextClick="lrcTextClick"
-              @toComment="toComment"
+              @toComment="toComment(retractMobilePlayer)"
             />
 
             <Spectrum
@@ -1129,6 +1129,28 @@ const closeMobileWithProgress = async () => {
     return;
   }
   if (await beginMobileInteractiveClose()) await finishMobileInteractive(false);
+};
+
+// For a page opened from the player: retract first, so the page lands on the one
+// underneath and back returns there rather than to a parked player. True only once
+// the player layer has really left the stack.
+const retractMobilePlayer = async () => {
+  if (!(await beginMobileInteractiveClose())) return false;
+  if (await finishMobileInteractive(false)) return false;
+  // closeTop's router.back() lands asynchronously, and under reduced motion the
+  // animation does not outlast it.
+  if (navigation.hasLayer("player")) {
+    await new Promise<void>((resolve) => {
+      const stop = watch(
+        () => navigation.hasLayer("player"),
+        () => {
+          stop();
+          resolve();
+        },
+      );
+    });
+  }
+  return true;
 };
 
 const removeCancelledNavigation = navigation.onNavigationCancelled(() => {

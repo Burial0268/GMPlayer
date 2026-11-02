@@ -83,17 +83,16 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
     }
   };
 
-  const toComment = () => {
+  // `beforeOpen` runs first and answers whether to go on (the mobile player retracts).
+  const toComment = async (beforeOpen?: () => Promise<boolean>) => {
     // A local file has no comment thread, and `/comment?id=-N` would ask Netease
     // for one anyway — the view fetches on mount. The button is hidden for local
     // tracks; this is the guard for the paths that reach the handler directly.
     if (music.getPlaySongData?.local?.uri) return;
-    navigation.openPage({
-      path: "/comment",
-      query: {
-        id: music.getPlaySongData ? music.getPlaySongData.id : null,
-      },
-    });
+    // Read before waiting: the track can change while the player retracts.
+    const id = music.getPlaySongData ? music.getPlaySongData.id : null;
+    if (beforeOpen && !(await beforeOpen())) return;
+    navigation.openPage({ path: "/comment", query: { id } });
   };
 
   // --- Name overflow detection (mobile) ---
