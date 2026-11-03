@@ -79,6 +79,7 @@
               :handleMotionStyle="mobileHandleMotionStyle"
               :titleMotionStyle="mobileTitleMotionStyle"
               :titleRealStyle="mobileTitleRealStyle"
+              :textTravelling="mobileInteractive"
               :titleMetrics="mobileTitleMetrics"
               :artistsMotionStyle="mobileArtistsMotionStyle"
               :artistsMetrics="mobileArtistsMetrics"
@@ -329,6 +330,8 @@ type TextFrames = {
   mini: SharedFrame;
   full: SharedFrame;
   scale: number;
+  // How wide the bar lets the text run before it cuts it off, in screen pixels.
+  miniWidth: number;
   // The text's colour in the bar and in the active layer; null when either could not be read.
   color: { from: Rgba; to: Rgba } | null;
   metrics: TextMetrics;
@@ -361,6 +364,9 @@ const createSharedText = () => ({
   left: useMotionValue(0),
   top: useMotionValue(0),
   scale: useMotionValue(1),
+  // The float's own width in its local units: the window the text is cut off in. It travels
+  // from the bar's width to the slot's, so no frame shows more or less text than its neighbours.
+  width: useMotionValue(0),
   color: useMotionValue(""),
   // 1 while the text has a float. A MotionValue because derived values read it.
   morph: useMotionValue(0),
@@ -505,6 +511,7 @@ const textMotionStyle = (text: ReturnType<typeof createSharedText>): MotionStyle
   x: text.left,
   y: text.top,
   scale: text.scale,
+  width: text.width,
   color: text.color,
 });
 const mobileTitleMotionStyle = textMotionStyle(sharedTexts.name);
@@ -749,6 +756,7 @@ const measureText = (kind: TextKind, rootRect: DOMRect): TextFrames | null => {
     mini: frameFromRect(miniRect, rootRect, 0),
     full: slot.frame,
     scale: miniSize / slot.metrics.size,
+    miniWidth: miniRect.width,
     color: from && slot.color ? { from, to: slot.color } : null,
     metrics: slot.metrics,
   };
@@ -758,6 +766,7 @@ const measureText = (kind: TextKind, rootRect: DOMRect): TextFrames | null => {
 const setTextMorph = (kind: TextKind, metrics: TextMetrics | null) => {
   const text = sharedTexts[kind];
   text.morph.set(metrics ? 1 : 0);
+  text.width.set(metrics?.width ?? 0);
   const current = text.metrics.value;
   const same =
     metrics === current ||
@@ -849,7 +858,12 @@ const applyInteractiveFrame = (progress: number) => {
     const text = sharedTexts[kind];
     text.left.set(mix(frames.mini.left, frames.full.left, weight));
     text.top.set(mix(frames.mini.top - sheetTravel.get(), frames.full.top, weight));
-    text.scale.set(mix(frames.scale, 1, weight));
+    const scale = mix(frames.scale, 1, weight);
+    text.scale.set(scale);
+    // The window is the bar's at the start and the slot's at the end, in between a straight blend
+    // of the two on screen: the cut-off moves smoothly instead of jumping when the float takes
+    // over from the bar (or hands back to it).
+    text.width.set(mix(frames.miniWidth, frames.metrics.width, weight) / scale);
     if (!frames.color) return;
     const [r, g, b, a] = frames.color.from.map((value, i) => mix(value, frames.color!.to[i], turn));
     text.color.set(`rgba(${r}, ${g}, ${b}, ${a})`);
