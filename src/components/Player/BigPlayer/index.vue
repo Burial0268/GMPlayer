@@ -41,11 +41,7 @@
               `mobile-phase-${mobileTransitionPhase}`,
             ]"
           >
-            <Motion
-              class="mobile-background-visual"
-              :transition="backgroundLayoutTransition"
-              :style="mobileBackgroundVisualStyle"
-            >
+            <Motion class="mobile-background-visual" :style="mobileBackgroundVisualStyle">
               <BigPlayerBackground
                 ref="background"
                 :songPicGradient="songPicGradient"
@@ -79,8 +75,13 @@
               :layoutTransition="sharedLayoutTransition"
               :contentShellStyle="mobileContentShellStyle"
               :fullUiMotionStyle="mobileFullUiMotionStyle"
-              :controlsMotionStyle="mobileControlsMotionStyle"
               :headerMotionStyle="mobileHeaderMotionStyle"
+              :handleMotionStyle="mobileHandleMotionStyle"
+              :titleMotionStyle="mobileTitleMotionStyle"
+              :titleRealStyle="mobileTitleRealStyle"
+              :titleMetrics="mobileTitleMetrics"
+              :artistsMotionStyle="mobileArtistsMotionStyle"
+              :artistsMetrics="mobileArtistsMetrics"
               :albumLayerStyle="mobileArtworkMotionStyle"
               :albumLayerVisible="mobileAlbumLayerVisible"
               @close="handleMobileClose"
@@ -94,7 +95,7 @@
               @lrcMouseEnter="lrcMouseStatus = setting.lrcMousePause ? true : false"
               @lrcAllLeave="lrcAllLeave"
               @lrcTextClick="lrcTextClick"
-              @toComment="toComment"
+              @toComment="toComment(retractMobilePlayer)"
             />
 
             <Spectrum
@@ -188,7 +189,7 @@ import {
   shallowRef,
   useTemplateRef,
 } from "vue";
-import { Motion, animate, useMotionValue, type MotionValue } from "motion-v";
+import { Motion, animate, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import "../icons/icon-animations.css";
 
@@ -300,11 +301,6 @@ const sharedLayoutTransition = {
   restDelta: 0.001,
   restSpeed: 0.02,
 } as const;
-const backgroundLayoutTransition = {
-  type: "tween",
-  duration: 0.24,
-  ease: [0.22, 1, 0.36, 1],
-} as const;
 const albumLayoutTransition = {
   type: "spring",
   stiffness: 380,
@@ -326,6 +322,17 @@ type MiniSharedFrames = {
   artwork?: DOMRect;
   background?: DOMRect;
 };
+type TextKind = "name" | "artists";
+type TextMetrics = { width: number; size: number; height: number };
+type Rgba = [number, number, number, number];
+type TextFrames = {
+  mini: SharedFrame;
+  full: SharedFrame;
+  scale: number;
+  // The text's colour in the bar and in the active layer; null when either could not be read.
+  color: { from: Rgba; to: Rgba } | null;
+  metrics: TextMetrics;
+};
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
@@ -336,19 +343,33 @@ const { calcCoverLayout } = useMobileCoverFrame(
 );
 
 const mobileInteractive = ref(false);
+// The one source of truth, like the queue sheet's. The sheet's offset, fade and corners, the scrim
+// and the reveal windows are all derived from it below, so nothing is pushed or reset per frame and
+// an interrupted gesture cannot leave a stale offset behind.
 const playerProgress = useMotionValue(0);
-const fullUiOpacity = useMotionValue(0);
-const fullUiY = useMotionValue(20);
-const controlsOpacity = useMotionValue(0);
-// Layer 2's title row sits beside the small cover, so it rides the cover's travel.
-const headerOpacity = useMotionValue(0);
+// Layer 2's title row sits beside the small cover, so it rides the cover's travel inside the sheet.
 const headerY = useMotionValue(0);
-const controlsY = useMotionValue(18);
-const backgroundVisualOpacity = useMotionValue(0);
-// Dims the page behind the sheet in step with it, like a drawer's backdrop.
-const scrimOpacity = useMotionValue(0);
-const backgroundTop = useMotionValue(0);
-const backgroundRadius = useMotionValue(0);
+// How far below its open position the closed sheet sits: the mini bar's top edge. Measured per
+// gesture; it only scales (1 - progress), so it is irrelevant once the player is open.
+const sheetTravel = useMotionValue(0);
+const sheetMiniRadius = useMotionValue(12);
+// The song name, and the artists line when the bar shows artists rather than a lyric, are shared
+// with the mini bar like the artwork: one floating element each, swapped in for the bar's in a
+// single frame, travelling (and changing colour) to the active layer's slot and staying there as
+// the visible text. The real ones are measuring slots only.
+const createSharedText = () => ({
+  left: useMotionValue(0),
+  top: useMotionValue(0),
+  scale: useMotionValue(1),
+  color: useMotionValue(""),
+  // 1 while the text has a float. A MotionValue because derived values read it.
+  morph: useMotionValue(0),
+  metrics: ref<TextMetrics | null>(null),
+});
+const sharedTexts = { name: createSharedText(), artists: createSharedText() };
+const textKinds = Object.keys(sharedTexts) as TextKind[];
+const mobileTitleMetrics = sharedTexts.name.metrics;
+const mobileArtistsMetrics = sharedTexts.artists.metrics;
 const artworkLeft = useMotionValue(0);
 const artworkTop = useMotionValue(0);
 const artworkWidth = useMotionValue(0);
@@ -362,8 +383,7 @@ let artworkFrameAnimations: ReturnType<typeof animate>[] = [];
 let interactiveFrames: {
   miniArtwork: SharedFrame;
   fullArtwork: SharedFrame;
-  miniBg: SharedFrame;
-  fullBg: SharedFrame;
+  texts: Record<TextKind, TextFrames | null>;
 } | null = null;
 let pendingInteractiveProgress = 0;
 let closeDragOrigin = 1;
@@ -373,8 +393,6 @@ const mobileContentVisible = ref(false);
 const mobileTransitionPhase = ref<"mini" | "shared-expand" | "full-content">("mini");
 const mobileTransitionDirection = ref<"opening" | "closing" | null>(null);
 
-const mobileShellMotionStyle = computed<MotionStyleRecord>(() => ({}));
-const mobileScrimStyle = computed<MotionStyleRecord>(() => ({ opacity: scrimOpacity }));
 const mobileArtworkMotionStyle = computed<MotionStyleRecord>(() => ({
   left: artworkLeft,
   top: artworkTop,
@@ -386,33 +404,11 @@ const mobileArtworkMotionStyle = computed<MotionStyleRecord>(() => ({
 const mobileAlbumLayerVisible = computed(
   () => isMobile.value && mobileOverlayVisible.value && mobileAlbumLayerReady.value,
 );
-const mobileBackgroundVisualStyle = computed<MotionStyleRecord>(() => ({
-  opacity: backgroundVisualOpacity,
-  "--mobile-player-bg-reveal-y": backgroundTop,
-  ...(mobileInteractive.value
-    ? {
-        y: backgroundTop,
-        borderTopLeftRadius: backgroundRadius,
-        borderTopRightRadius: backgroundRadius,
-        borderBottomLeftRadius: 0,
-        borderBottomRightRadius: 0,
-      }
-    : {}),
-}));
+// `inherit`, not `visible`: an explicit `visible` on these wrappers beats the
+// `visibility: hidden` that `.navigation-suspended` puts on the root, so the song
+// info and controls stayed painted over the page (comments, …) opened on top.
 const mobileContentShellStyle = computed<StaticStyleRecord>(() => ({
-  visibility: mobileContentVisible.value ? "visible" : "hidden",
-}));
-const mobileFullUiMotionStyle = computed<MotionStyleRecord>(() => ({
-  opacity: fullUiOpacity,
-  y: fullUiY,
-}));
-const mobileHeaderMotionStyle = computed<MotionStyleRecord>(() => ({
-  opacity: headerOpacity,
-  y: headerY,
-}));
-const mobileControlsMotionStyle = computed<MotionStyleRecord>(() => ({
-  opacity: controlsOpacity,
-  y: controlsY,
+  visibility: mobileContentVisible.value ? "inherit" : "hidden",
 }));
 
 // --- 仅本组件需要的局部状态 ---
@@ -438,26 +434,87 @@ const easeOutCubic = (value: number) => 1 - Math.pow(1 - clamp(value), 3);
 const rangeProgress = (value: number, from: number, to: number) =>
   clamp((value - from) / (to - from));
 
-// One spring drives everything. Geometry (sheet, artwork) rides the whole span; only the
-// opacities get their own window, and each window opens while something is already moving.
-const MOBILE_MINI_CHROME_FADE_END = 0.2;
+// One spring drives everything. The sheet (offset, corners, fade) and the artwork ride the whole
+// span and the content is carried by the sheet; only a few things get a window, and each window
+// opens while something is already moving.
+// The mini bar rides the sheet's edge while it fades, so it is gone by the time the tab bar is.
+const MOBILE_MINI_CHROME_FADE_END = 0.3;
 const MOBILE_SHEET_FADE_END = 0.12;
 const MOBILE_TABBAR_EXIT_END = 0.3;
 const MOBILE_SHEET_PEAK_RADIUS = 28;
 const MOBILE_SHEET_SETTLE_START = 0.7;
 // The mini bar stays above the sheet until its own fade is done.
 const MOBILE_MINI_UI_FADE_END = 0.3;
-const MOBILE_CONTENT_REVEAL_START = 0.45;
-const MOBILE_CONTENT_REVEAL_END = 0.95;
-const MOBILE_CONTROLS_REVEAL_START = 0.6;
-const MOBILE_HEADER_REVEAL_END = 0.8;
-const MOBILE_FULL_UI_RISE = 28;
-const MOBILE_CONTROLS_RISE = 20;
+// What can be on screen while the sheet is still low — the handle on its top edge, and in layer 2
+// the compact title row and the lyrics — sits exactly where the mini bar is carried, so it waits
+// for the bar to be nearly gone (MOBILE_MINI_CHROME_FADE_END) and two sets of text never share a
+// spot; the handle goes first. Layer 1's info and controls start below the screen edge and need
+// no window.
+const MOBILE_HANDLE_REVEAL_START = 0.25;
+const MOBILE_HANDLE_REVEAL_END = 0.45;
+const MOBILE_CONTENT_REVEAL_START = 0.3;
+const MOBILE_CONTENT_REVEAL_END = 0.55;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
 
-const getTransitionDistance = () => Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
+// The sheet is the whole shell (background + content), one rigid layer like the queue drawer's:
+// only its own transform, fade and corners move per frame, nothing inside it is touched.
+const sheetOffset = (progress: number) => (1 - clamp(progress)) * sheetTravel.get();
+const sheetY = useTransform(() => sheetOffset(playerProgress.get()));
+// Cross-fades with the glass mini bar it rises from. Only the background: the artwork replaces the
+// bar's own from the first pixel, so fading the whole sheet would make it blink.
+const sheetOpacity = useTransform(() =>
+  easeOutCubic(rangeProgress(playerProgress.get(), 0, MOBILE_SHEET_FADE_END)),
+);
+// Corners swell like a device's while the sheet rises, then relax to square on arrival.
+const sheetRadius = useTransform(() => {
+  const progress = clamp(playerProgress.get());
+  const swelling = mix(
+    sheetMiniRadius.get(),
+    MOBILE_SHEET_PEAK_RADIUS,
+    easeOutCubic(rangeProgress(progress, 0, 0.3)),
+  );
+  return mix(swelling, 0, rangeProgress(progress, MOBILE_SHEET_SETTLE_START, 1));
+});
+// Dims the page behind the sheet in step with it, like a drawer's backdrop.
+const scrimOpacity = useTransform(() => MOBILE_SCRIM_OPACITY * clamp(playerProgress.get()));
+const handleOpacity = useTransform(() =>
+  rangeProgress(playerProgress.get(), MOBILE_HANDLE_REVEAL_START, MOBILE_HANDLE_REVEAL_END),
+);
+const contentOpacity = useTransform(() =>
+  rangeProgress(playerProgress.get(), MOBILE_CONTENT_REVEAL_START, MOBILE_CONTENT_REVEAL_END),
+);
+
+// Like the album layer, the floating name is the only visible one for as long as it exists; the
+// real name is a measuring slot and never shows. There is no hand-over at the open end to time.
+// Without a float (nothing to measure) the real one is simply shown.
+const titleRealOpacity = useTransform(() => (sharedTexts.name.morph.get() ? 0 : 1));
+
+const mobileShellMotionStyle: MotionStyleRecord = {
+  y: sheetY,
+  borderTopLeftRadius: sheetRadius,
+  borderTopRightRadius: sheetRadius,
+};
+const mobileBackgroundVisualStyle: MotionStyleRecord = { opacity: sheetOpacity };
+const mobileScrimStyle: MotionStyleRecord = { opacity: scrimOpacity };
+const mobileFullUiMotionStyle: MotionStyleRecord = { opacity: contentOpacity };
+const mobileHeaderMotionStyle: MotionStyleRecord = { opacity: contentOpacity, y: headerY };
+const mobileHandleMotionStyle: MotionStyleRecord = { opacity: handleOpacity };
+const textMotionStyle = (text: ReturnType<typeof createSharedText>): MotionStyleRecord => ({
+  x: text.left,
+  y: text.top,
+  scale: text.scale,
+  color: text.color,
+});
+const mobileTitleMotionStyle = textMotionStyle(sharedTexts.name);
+const mobileArtistsMotionStyle = textMotionStyle(sharedTexts.artists);
+const mobileTitleRealStyle: MotionStyleRecord = { opacity: titleRealOpacity };
+
+// The sheet follows the finger one to one, like the queue drawer; the fallback only covers a bar
+// that could not be measured.
+const getTransitionDistance = () =>
+  sheetTravel.get() || Math.min(760, Math.max(460, window.innerHeight * 0.72 || 560));
 
 const readRadius = (el: Element | null, fallback: number) => {
   if (!(el instanceof HTMLElement)) return fallback;
@@ -542,7 +599,41 @@ const animateArtworkFrameTo = (frame: SharedFrame) => {
   ];
 };
 
+// Where a text rests: the active layer's slot, at its own size, in the page's own colour. The
+// artists line only follows a float a gesture started: it appears when the bar shows artists, not
+// on its own.
+const syncTextToCurrentLayer = (kind: TextKind) => {
+  const text = sharedTexts[kind];
+  if (kind === "artists" && !text.metrics.value) return;
+  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
+  const slot = contentRect && measureTextSlot(contentRect, kind);
+  if (!slot) return setTextMorph(kind, null);
+  text.left.set(slot.frame.left);
+  text.top.set(slot.frame.top);
+  text.scale.set(1);
+  text.color.set("");
+  setTextMorph(kind, slot.metrics);
+};
+
+// Layer switch: the float takes the new slot's size at once but is drawn at the old glyph size, so
+// nothing jumps, then settles into the slot together with the artwork.
+const animateTextToCurrentLayer = (kind: TextKind) => {
+  const text = sharedTexts[kind];
+  const previous = text.metrics.value;
+  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
+  const slot = contentRect && measureTextSlot(contentRect, kind);
+  if (!previous || !slot || prefersReducedMotion()) return syncTextToCurrentLayer(kind);
+  text.scale.set((previous.size * text.scale.get()) / slot.metrics.size);
+  setTextMorph(kind, slot.metrics);
+  artworkFrameAnimations.push(
+    animate(text.left, slot.frame.left, albumLayoutTransition),
+    animate(text.top, slot.frame.top, albumLayoutTransition),
+    animate(text.scale, 1, albumLayoutTransition),
+  );
+};
+
 const syncArtworkToCurrentLayer = () => {
+  textKinds.forEach(syncTextToCurrentLayer);
   const frame = frameFromCoverLayout(mobileLayer.value === 1 ? 12 : 8);
   if (!frame) return false;
   setArtworkFrame(frame);
@@ -558,31 +649,44 @@ const scheduleArtworkLayerSync = () => {
   });
 };
 
+// Where the bar sits at rest: a gesture that began a frame ago may already have lifted it.
+const readRestRect = (el: Element | null) => {
+  const rect = el?.getBoundingClientRect();
+  return rect && miniBarRise
+    ? new DOMRect(rect.x, rect.y - miniBarRise, rect.width, rect.height)
+    : rect;
+};
+
 const readMiniSharedFrames = (frames?: MiniSharedFrames) => {
   const artworkEl = document.querySelector("[data-mobile-player-artwork]");
   const backgroundEl = document.querySelector("[data-mobile-player-bg]");
   return {
-    artworkRect: frames?.artwork ?? artworkEl?.getBoundingClientRect(),
-    backgroundRect: frames?.background ?? backgroundEl?.getBoundingClientRect() ?? null,
+    artworkRect: frames?.artwork ?? readRestRect(artworkEl),
+    backgroundRect: frames?.background ?? readRestRect(backgroundEl) ?? null,
     artworkRadius: readRadius(artworkEl, 8),
     backgroundRadius: readRadius(backgroundEl, 16),
   };
 };
 
+// Frames are measured against the player root, not the shell: the shell is the sheet and moves.
+// Synchronous and first in a gesture, because the finger-to-sheet ratio depends on the travel.
+const measureSheetTravel = (frames?: MiniSharedFrames) => {
+  const mini = readMiniSharedFrames(frames);
+  if (!mini.backgroundRect) return;
+  sheetTravel.set(mini.backgroundRect.top - (bigPlayerRef.value?.getBoundingClientRect().top ?? 0));
+  sheetMiniRadius.set(mini.backgroundRadius || 12);
+};
+
 const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   const mini = readMiniSharedFrames(frames);
-  const shellRect = mobileShellRef.value?.getBoundingClientRect();
-  const rootLeft = shellRect?.left ?? 0;
-  const rootTop = shellRect?.top ?? 0;
-  if (mini.backgroundRect) {
-    const backgroundTopValue = mini.backgroundRect.top - rootTop;
-    backgroundTop.set(backgroundTopValue);
-    backgroundRadius.set(0);
-  }
+  const rootRect = bigPlayerRef.value?.getBoundingClientRect();
+  const rootLeft = rootRect?.left ?? 0;
+  const rootTop = rootRect?.top ?? 0;
   if (mini.artworkRect) {
+    // The artwork sits inside the sheet, which starts out `sheetTravel` down.
     setArtworkFrame({
       left: mini.artworkRect.left - rootLeft,
-      top: mini.artworkRect.top - rootTop,
+      top: mini.artworkRect.top - rootTop - sheetTravel.get(),
       width: mini.artworkRect.width,
       height: mini.artworkRect.height,
       borderRadius: mini.artworkRadius,
@@ -590,32 +694,105 @@ const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   }
 };
 
-const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
-  const shell = mobileShellRef.value;
-  if (!shell) return false;
-  const shellRect = shell.getBoundingClientRect();
-  const mini = readMiniSharedFrames(frames);
-  const miniArtwork = mini.artworkRect
-    ? frameFromRect(mini.artworkRect, shellRect, mini.artworkRadius)
-    : null;
-  const miniBg = mini.backgroundRect
-    ? frameFromRect(mini.backgroundRect, shellRect, mini.backgroundRadius)
-    : null;
-  const fullArtwork = frameFromCoverLayout(12);
-  if (!miniArtwork || !miniBg || !fullArtwork) return false;
+// Computed colours come back as rgb()/rgba(), in comma or space syntax.
+const parseColor = (css: string): Rgba | null => {
+  const match = css.match(
+    /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)/,
+  );
+  if (!match) return null;
+  const alpha = match[4] === undefined ? 1 : Number(match[4]) / (match[5] ? 100 : 1);
+  return [Number(match[1]), Number(match[2]), Number(match[3]), alpha];
+};
 
-  interactiveFrames = {
-    miniArtwork,
-    fullArtwork,
-    miniBg,
-    fullBg: {
-      left: 0,
-      top: 0,
-      width: shellRect.width,
-      height: shellRect.height,
-      borderRadius: 0,
-    },
+const textSelectors: Record<TextKind, { real: string; mini: string }> = {
+  name: { real: ".name", mini: "[data-mobile-player-title]" },
+  artists: { real: ".artists", mini: "[data-mobile-player-artists]" },
+};
+
+// The active layer's slot for a text: where its float has to sit, at what size, in what colour.
+// The slot's own box (no transform on it, unlike its wrapper's motion style), and its colour with
+// the element's own opacity folded in, since the float has none.
+const measureTextSlot = (contentRect: DOMRect, kind: TextKind) => {
+  const layout = mobileLayoutRef.value;
+  const info =
+    (mobileLayer.value === 1 ? layout?.bigSongInfoRef : layout?.smallSongInfoRef) ?? null;
+  const el = info?.querySelector<HTMLElement>(textSelectors[kind].real);
+  if (!el) return null;
+  const style = getComputedStyle(el);
+  const size = Number.parseFloat(style.fontSize);
+  if (!(size > 0)) return null;
+  const rect = el.getBoundingClientRect();
+  const color = parseColor(style.color);
+  if (color) color[3] *= Number(style.opacity);
+  return {
+    frame: frameFromRect(rect, contentRect, 0),
+    color,
+    metrics: { width: rect.width, size, height: rect.height },
   };
+};
+
+// The bar's text (top-left corner, font size, colour) against the active layer's slot, as the
+// text's shared frames. Null when the bar has no such text (a lyric instead of the artists).
+const measureText = (kind: TextKind, rootRect: DOMRect): TextFrames | null => {
+  const miniEl = document.querySelector<HTMLElement>(textSelectors[kind].mini);
+  const miniRect = readRestRect(miniEl);
+  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
+  const slot = contentRect && measureTextSlot(contentRect, kind);
+  if (!miniEl || !miniRect || !slot) return null;
+
+  // The artists are n-text spans inside the bar's row; their colour is on the span.
+  const miniStyle = getComputedStyle(miniEl.querySelector<HTMLElement>(".name") ?? miniEl);
+  const miniSize = Number.parseFloat(getComputedStyle(miniEl).fontSize);
+  if (!(miniSize > 0)) return null;
+  const from = parseColor(miniStyle.color);
+  return {
+    mini: frameFromRect(miniRect, rootRect, 0),
+    full: slot.frame,
+    scale: miniSize / slot.metrics.size,
+    color: from && slot.color ? { from, to: slot.color } : null,
+    metrics: slot.metrics,
+  };
+};
+
+// The ref changes the layout's props, so only touch it when the numbers really differ.
+const setTextMorph = (kind: TextKind, metrics: TextMetrics | null) => {
+  const text = sharedTexts[kind];
+  text.morph.set(metrics ? 1 : 0);
+  const current = text.metrics.value;
+  const same =
+    metrics === current ||
+    (metrics &&
+      current &&
+      (Object.keys(metrics) as (keyof TextMetrics)[]).every(
+        (key) => metrics[key] === current[key],
+      ));
+  if (!same) text.metrics.value = metrics;
+};
+
+// The texts are not part of this: their floats stay for as long as the player is open, like the
+// album layer. Only closing (or a slot that cannot be measured) takes them away.
+const releaseInteractiveFrames = () => {
+  interactiveFrames = null;
+};
+
+const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
+  const root = bigPlayerRef.value;
+  if (!root) return false;
+  const rootRect = root.getBoundingClientRect();
+  const mini = readMiniSharedFrames(frames);
+  const fullArtwork = frameFromCoverLayout(12);
+  if (!mini.artworkRect || !mini.backgroundRect || !fullArtwork) return false;
+
+  const texts = {
+    name: measureText("name", rootRect),
+    artists: measureText("artists", rootRect),
+  };
+  interactiveFrames = {
+    miniArtwork: frameFromRect(mini.artworkRect, rootRect, mini.artworkRadius),
+    fullArtwork,
+    texts,
+  };
+  textKinds.forEach((kind) => setTextMorph(kind, texts[kind]?.metrics ?? null));
   return true;
 };
 
@@ -653,23 +830,51 @@ const interpolateFrame = (from: SharedFrame, to: SharedFrame, progress: number):
 // edge, so a straight blend keeps it inside without help.
 const applyInteractiveFrame = (progress: number) => {
   if (!interactiveFrames) return;
-  const { miniBg, fullBg, miniArtwork, fullArtwork } = interactiveFrames;
-  backgroundTop.set(mix(miniBg.top, fullBg.top, progress));
-  // Corners swell like a device's while the sheet rises, then relax to square on arrival.
-  const swelling = mix(
-    miniBg.borderRadius || 12,
-    MOBILE_SHEET_PEAK_RADIUS,
-    easeOutCubic(rangeProgress(progress, 0, 0.3)),
-  );
-  backgroundRadius.set(
-    mix(swelling, fullBg.borderRadius, rangeProgress(progress, MOBILE_SHEET_SETTLE_START, 1)),
-  );
+  const { miniArtwork, fullArtwork, texts } = interactiveFrames;
+  // The blend is the artwork's path on screen; it lives inside the sheet, so subtract the
+  // sheet's own offset to place it. The title row beside the small cover follows the same way.
   const artwork = interpolateFrame(miniArtwork, fullArtwork, progress);
+  artwork.top -= sheetOffset(progress);
   applyArtworkFrame(artwork);
   headerY.set(artwork.top - fullArtwork.top);
+  // In the sheet's space, from where a text sits inside the bar to its slot. It starts out riding
+  // the sheet together with the rest of the bar's content (a smoothstep has no slope at 0) and has
+  // caught up with a straight blend by the middle.
+  const weight = progress * progress * (3 - 2 * progress);
+  // The colour turns with the sheet's fade-in, so the text and what is behind it change together.
+  const turn = easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END));
+  textKinds.forEach((kind) => {
+    const frames = texts[kind];
+    if (!frames) return;
+    const text = sharedTexts[kind];
+    text.left.set(mix(frames.mini.left, frames.full.left, weight));
+    text.top.set(mix(frames.mini.top - sheetTravel.get(), frames.full.top, weight));
+    text.scale.set(mix(frames.scale, 1, weight));
+    if (!frames.color) return;
+    const [r, g, b, a] = frames.color.from.map((value, i) => mix(value, frames.color!.to[i], turn));
+    text.color.set(`rgba(${r}, ${g}, ${b}, ${a})`);
+  });
+};
+
+// The mini bar is the sheet's top while it lifts: it rides the sheet's edge and fades as it goes,
+// instead of fading in place and leaving a new sheet to appear behind it. A transform on the
+// bar's own element, not a variable on <html>: that restyles the whole document every frame, and
+// this one changes for the whole span. Cleared at rest, where the bar's rect is what the next
+// gesture measures.
+let miniBarElement: HTMLElement | null = null;
+let miniBarRise = 0;
+const setMiniBarRise = (y: number) => {
+  if (miniBarRise === y) return;
+  if (!miniBarElement?.isConnected) {
+    miniBarElement = document.querySelector<HTMLElement>("[data-mobile-player-bg]");
+  }
+  if (!miniBarElement) return;
+  miniBarRise = y;
+  miniBarElement.style.transform = y ? `translate3d(0, ${y}px, 0)` : "";
 };
 
 const clearMiniUiVars = () => {
+  setMiniBarRise(0);
   removeMiniUiVar("--mobile-mini-player-root-y");
   removeMiniUiVar("--mobile-mini-player-z-index");
   removeMiniUiVar("--mobile-mini-player-pointer-events");
@@ -682,6 +887,8 @@ const clearMiniUiVars = () => {
   removeMiniUiVar("--mobile-mini-player-detail-margin");
   removeMiniUiVar("--mobile-mini-player-ui-y");
   removeMiniUiVar("--mobile-mini-player-text-y");
+  removeMiniUiVar("--mobile-mini-player-title-opacity");
+  removeMiniUiVar("--mobile-mini-player-artists-opacity");
   removeMiniUiVar("--mobile-mini-player-artwork-opacity");
   removeMiniUiVar("--mobile-mini-player-bottom-y");
   removeMiniUiVar("--mobile-mini-player-bottom-z-index");
@@ -692,7 +899,8 @@ const applyMiniUiVars = (progress: number) => {
   const miniTransitioning = progress > 0.001 || mobileTransitionActive.value || music.showBigPlayer;
   // Everything the mini bar sheds is a function of progress, never a switch. A switch is a
   // one-frame cut, and the cut is what read as the bar blinking out before the sheet arrived.
-  const chromeExit = easeOutCubic(rangeProgress(progress, 0, MOBILE_MINI_CHROME_FADE_END));
+  // Linear: the bar is seen travelling up, so the fade must not be front-loaded.
+  const chromeExit = rangeProgress(progress, 0, MOBILE_MINI_CHROME_FADE_END);
   const tabBarExit = easeOutCubic(rangeProgress(progress, 0, MOBILE_TABBAR_EXIT_END));
   const chromeOpacity = String(1 - chromeExit);
   setMiniUiVar(
@@ -710,6 +918,11 @@ const applyMiniUiVars = (progress: number) => {
   setMiniUiVar("--mobile-mini-player-detail-opacity", chromeOpacity);
   setMiniUiVar("--mobile-mini-player-ui-y", `${mix(0, -4, chromeExit)}px`);
   setMiniUiVar("--mobile-mini-player-text-y", `${mix(0, -8, chromeExit)}px`);
+  // The name, and the artists when the bar shows them, are shared: each hands over to its floating
+  // element in the same frame, like the artwork, so there is never a second copy on screen. A lyric
+  // line is not shared and fades with the bar.
+  setMiniUiVar("--mobile-mini-player-title-opacity", sharedTexts.name.morph.get() ? "0" : "1");
+  setMiniUiVar("--mobile-mini-player-artists-opacity", sharedTexts.artists.morph.get() ? "0" : "1");
   // The album layer sits on the exact same rect at progress 0, so this swap is invisible.
   setMiniUiVar("--mobile-mini-player-artwork-opacity", miniTransitioning ? "0" : "1");
   setMiniUiVar("--mobile-mini-player-bottom-y", `${mix(0, 110, tabBarExit)}%`);
@@ -723,22 +936,15 @@ const applyMiniUiVars = (progress: number) => {
 const applyProgressState = (value: number) => {
   if (!isMobile.value) {
     clearMiniUiVars();
-    scrimOpacity.set(0);
-    backgroundVisualOpacity.set(0);
     artworkOpacity.set(1);
     mobileAlbumLayerReady.value = false;
     return;
   }
   const progress = clamp(value);
-  const fullUiEnter = rangeProgress(
-    progress,
-    MOBILE_CONTENT_REVEAL_START,
-    MOBILE_CONTENT_REVEAL_END,
-  );
-  const controlsEnter = rangeProgress(progress, MOBILE_CONTROLS_REVEAL_START, 1);
   const backgroundVisible = progress > 0.001 || music.showBigPlayer || mobileTransitionActive.value;
   const albumLayerOpacity = backgroundVisible ? 1 : 0;
-  const contentVisible = progress >= MOBILE_CONTENT_REVEAL_START;
+  // The earliest window: the shell must be visible for the handle to show.
+  const contentVisible = progress >= MOBILE_HANDLE_REVEAL_START;
   const contentReady = progress >= MOBILE_CONTENT_INTERACTIVE_START;
   const nextPhase =
     progress <= 0.001
@@ -753,21 +959,14 @@ const applyProgressState = (value: number) => {
   if (mobileTransitionPhase.value !== nextPhase) {
     mobileTransitionPhase.value = nextPhase;
   }
-  fullUiOpacity.set(fullUiEnter);
-  fullUiY.set(mix(MOBILE_FULL_UI_RISE, 0, easeOutCubic(fullUiEnter)));
-  controlsOpacity.set(controlsEnter);
-  controlsY.set(mix(MOBILE_CONTROLS_RISE, 0, easeOutCubic(controlsEnter)));
-  headerOpacity.set(rangeProgress(progress, MOBILE_CONTENT_REVEAL_START, MOBILE_HEADER_REVEAL_END));
-  headerY.set(0);
-  // Near-opaque within the first few px of a drag, but not a hard cut over the glass bar.
-  backgroundVisualOpacity.set(
-    backgroundVisible ? easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END)) : 0,
-  );
   artworkOpacity.set(albumLayerOpacity);
-  scrimOpacity.set(MOBILE_SCRIM_OPACITY * progress);
   applyMiniUiVars(progress);
+  setMiniBarRise(progress > 0.001 && progress < 0.999 ? -progress * sheetTravel.get() : 0);
 
-  if (!mobileInteractive.value || !interactiveFrames) return;
+  if (!mobileInteractive.value || !interactiveFrames) {
+    headerY.set(0);
+    return;
+  }
   applyInteractiveFrame(progress);
 };
 
@@ -812,18 +1011,10 @@ const resetClosedMobileState = () => {
   mobileTransitionPhase.value = "mini";
   mobileAlbumLayerReady.value = false;
   pendingInteractiveProgress = 0;
-  interactiveFrames = null;
+  releaseInteractiveFrames();
+  textKinds.forEach((kind) => setTextMorph(kind, null));
   playerProgress.set(0);
-  fullUiOpacity.set(0);
-  fullUiY.set(MOBILE_FULL_UI_RISE);
-  controlsOpacity.set(0);
-  controlsY.set(MOBILE_CONTROLS_RISE);
-  headerOpacity.set(0);
   headerY.set(0);
-  backgroundVisualOpacity.set(0);
-  scrimOpacity.set(0);
-  backgroundTop.set(0);
-  backgroundRadius.set(0);
   artworkOpacity.set(0);
   clearMiniUiVars();
 };
@@ -837,6 +1028,7 @@ const switchMobileLayer = (targetLayer: number) => {
     requestAnimationFrame(() => {
       const frame = frameFromCoverLayout(targetLayer === 1 ? 12 : 8);
       if (frame) animateArtworkFrameTo(frame);
+      textKinds.forEach(animateTextToCurrentLayer);
     });
   });
 };
@@ -999,12 +1191,17 @@ const beginMobileInteractive = async (
   mobileTransitionActive.value = true;
   mobileExiting.value = false;
   clearMobileExitFallback();
+  if (!retainFrames) measureSheetTravel(frames);
   playerProgress.jump(pendingInteractiveProgress);
   await nextTick();
   if (generation !== interactiveGeneration) return false;
   if (!retainFrames && initialProgress <= 0.001) {
     detachMiniSharedAlbum();
     seedInteractiveFromMini(frames);
+    // A drag has already moved by the time the next frame comes round, so the artwork and the
+    // title must follow the finger from the first painted frame; the frame-after capture below
+    // only refreshes these numbers.
+    captureInteractiveFrames(frames);
   } else if (!retainFrames && initialProgress >= 0.999) {
     prepareMiniAlbumCloseHandoff();
     seedInteractiveFromFull();
@@ -1056,8 +1253,9 @@ const updateMobileInteractiveClose = (distance: number) => {
 };
 
 const beginStoreCloseHandoff = () => {
-  if (!music.showBigPlayer) return;
+  // Also when the store has already closed (back, Escape): the overlay must outlive the flag.
   mobileExiting.value = true;
+  if (!music.showBigPlayer) return;
   mobileSkipNextStoreCloseAnimation = true;
   navigation.closeTop("player");
 };
@@ -1090,7 +1288,7 @@ const finishMobileInteractive = (forceOpen?: boolean) =>
         mobileInteractive.value = false;
         mobileTransitionActive.value = false;
         mobileTransitionDirection.value = null;
-        interactiveFrames = null;
+        releaseInteractiveFrames();
         syncArtworkToCurrentLayer();
         applyProgressState(1);
       }
@@ -1128,6 +1326,28 @@ const closeMobileWithProgress = async () => {
   if (await beginMobileInteractiveClose()) await finishMobileInteractive(false);
 };
 
+// For a page opened from the player: retract first, so the page lands on the one
+// underneath and back returns there rather than to a parked player. True only once
+// the player layer has really left the stack.
+const retractMobilePlayer = async () => {
+  if (!(await beginMobileInteractiveClose())) return false;
+  if (await finishMobileInteractive(false)) return false;
+  // closeTop's router.back() lands asynchronously, and under reduced motion the
+  // animation does not outlast it.
+  if (navigation.hasLayer("player")) {
+    await new Promise<void>((resolve) => {
+      const stop = watch(
+        () => navigation.hasLayer("player"),
+        () => {
+          stop();
+          resolve();
+        },
+      );
+    });
+  }
+  return true;
+};
+
 const removeCancelledNavigation = navigation.onNavigationCancelled(() => {
   if (!isMobile.value || !mobileTransitionActive.value) return;
   interactiveGeneration++;
@@ -1161,7 +1381,7 @@ useMotionInterruption(() => {
     mobileTransitionActive.value = false;
     mobileTransitionDirection.value = null;
     mobileExiting.value = false;
-    interactiveFrames = null;
+    releaseInteractiveFrames();
     playerProgress.set(1);
     applyProgressState(1);
     detachMiniSharedAlbum();
@@ -1259,7 +1479,9 @@ onMounted(() => {
   initMobileElements();
   progressUnsubscribe = playerProgress.on("change", applyProgressState);
   if (isMobile.value) {
-    applyProgressState(music.showBigPlayer ? 1 : 0);
+    // The sheet is derived from the progress, so it has to move too, not only the side state.
+    playerProgress.set(music.showBigPlayer ? 1 : 0);
+    applyProgressState(playerProgress.get());
     if (music.showBigPlayer) scheduleArtworkLayerSync();
   } else {
     clearMiniUiVars();
@@ -1333,10 +1555,10 @@ watch(
         clearMobileExitFallback();
         return;
       }
-      interactiveGeneration++;
+      // Back and Escape close the way a drag does: the sheet sinks into the mini bar with
+      // its content, instead of fading where it stands.
       mobileExiting.value = true;
-      mobileInteractive.value = false;
-      animateProgressTo(0, finishMobileExit);
+      void closeMobileWithProgress();
       scheduleMobileExitFallback();
     } else {
       resetDesktopOverlayState();
@@ -1359,7 +1581,8 @@ watch(
       clearMiniUiVars();
       clearMobileExitFallback();
     } else {
-      applyProgressState(music.showBigPlayer ? 1 : 0);
+      playerProgress.set(music.showBigPlayer ? 1 : 0);
+      applyProgressState(playerProgress.get());
       if (music.showBigPlayer) scheduleArtworkLayerSync();
     }
     nextTick(() => {
@@ -1507,6 +1730,8 @@ defineExpose({
       border-radius: 0;
       background-color: transparent;
       transform-origin: bottom center;
+      // The shell is the sheet: background and content move as one layer (y and top corners
+      // come from `mobileShellMotionStyle`), like the queue drawer's panel.
       will-change: transform, opacity;
       isolation: isolate;
 
@@ -1522,13 +1747,11 @@ defineExpose({
         overflow: hidden;
         background: rgb(0 0 0);
         pointer-events: none;
-        // border-radius 改动要重绘，合成器接不了；opacity 一项已足以保持图层。
-        // 这一层正好裹着背景画布（下面的 :deep(.big-player-background)）。
+        // 这一层裹着背景画布（下面的 :deep(.big-player-background)），保持单独的合成层。
         will-change: opacity;
 
         :deep(.big-player-background) {
           z-index: 0;
-          transform: translate3d(0, calc(var(--mobile-player-bg-reveal-y, 0) * -1px), 0);
           will-change: transform, opacity;
         }
       }

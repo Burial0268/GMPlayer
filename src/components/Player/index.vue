@@ -28,7 +28,12 @@
               />
             </div>
             <div class="name">
-              <div v-button class="song text-hidden" @click.stop="openSongDetail">
+              <div
+                v-button
+                class="song text-hidden"
+                data-mobile-player-title
+                @click.stop="openSongDetail"
+              >
                 {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
               </div>
               <!-- 显示歌手或歌词 -->
@@ -71,12 +76,17 @@
                         v-else
                         key="artists"
                         class="text-hidden"
+                        data-mobile-player-artists
                         :artistsData="music.getPlaySongData.artist"
                       />
                     </Transition>
                   </template>
                   <template v-else>
-                    <AllArtists class="text-hidden" :artistsData="music.getPlaySongData.artist" />
+                    <AllArtists
+                      class="text-hidden"
+                      data-mobile-player-artists
+                      :artistsData="music.getPlaySongData.artist"
+                    />
                   </template>
                 </Transition>
               </div>
@@ -485,6 +495,7 @@ const handleMiniTouchStart = (event) => {
     lastY: touch.clientY,
     lastTime: performance.now(),
     velocityY: 0,
+    travel: 0,
     dragging: false,
   };
 };
@@ -510,10 +521,12 @@ const handleMiniTouchMove = (event) => {
     start.dragging = true;
     suppressMiniClick = true;
     const frames = getMiniSharedFrames();
+    // The bar rises with the finger one to one: its distance to the screen top is the travel.
+    start.travel = frames.background?.top || getMobilePlayerTransitionDistance();
     bigPlayerRef.value?.beginMobileInteractiveOpen(frames);
   }
 
-  const progress = clamp(-deltaY / getMobilePlayerTransitionDistance(), 0, 1);
+  const progress = clamp(-deltaY / start.travel, 0, 1);
   bigPlayerRef.value?.updateMobileInteractiveProgress(progress);
 };
 
@@ -1558,6 +1571,8 @@ watch(
     pointer-events: var(--mobile-mini-player-pointer-events, auto);
     touch-action: pan-x;
     isolation: isolate;
+    // BigPlayer lifts the whole bar with an inline transform while the sheet opens.
+    will-change: transform;
     --player-data-edge-inset: 12px;
     --player-control-edge-inset: 12px;
     --player-slider-edge-inset: 0px;
@@ -1631,7 +1646,10 @@ watch(
           font-size: 16px;
           font-weight: bold;
           cursor: pointer;
-          transition: all var(--duration-300) var(--ease-out);
+          // BigPlayer swaps the name for its floating copy in one frame while the player opens, so
+          // this must not fade: `transition: all` used to cover opacity too.
+          opacity: var(--mobile-mini-player-title-opacity, 1);
+          transition: color var(--duration-300) var(--ease-out);
 
           &:hover {
             color: var(--player-accent-color);
@@ -1646,6 +1664,11 @@ watch(
           opacity: var(--mobile-mini-player-detail-opacity, 1);
           overflow: hidden;
           will-change: opacity, max-height, margin-top;
+
+          // Like the song name: BigPlayer swaps it for its floating copy in one frame.
+          [data-mobile-player-artists] {
+            opacity: var(--mobile-mini-player-artists-opacity, 1);
+          }
 
           .lrc {
             display: block !important;

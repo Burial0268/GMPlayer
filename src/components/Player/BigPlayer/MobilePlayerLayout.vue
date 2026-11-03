@@ -10,7 +10,7 @@
           <!-- AMLL .thumb — 抽屉把手 -->
           <Motion
             class="mobile-thumb"
-            :style="contentUiMotionStyle"
+            :style="handleUiMotionStyle"
             @click="handleThumbClick"
             @touchstart.passive="handlePlayerTouchStart"
             @touchmove.passive="handlePlayerTouchMove"
@@ -30,24 +30,29 @@
             <div class="mobile-phony-small-cover mobile-cover-slot" ref="phonySmallCoverRef"></div>
             <div class="mobile-small-controls">
               <Motion class="mobile-small-controls-inner" :style="smallControlsMotionStyle">
-                <div class="mobile-song-info">
-                  <div class="name-wrapper">
-                    <div class="name" :class="{ 'is-marquee': isNameOverflow }">
-                      <span class="name-inner name-measure">{{
-                        songName || $t("other.noSong")
-                      }}</span>
-                      <OverflowMarquee
-                        v-if="isNameOverflow"
-                        class="mobile-name-marquee"
-                        :speed="36"
-                      >
-                        <span class="mobile-name-marquee-content">
-                          {{ songName || $t("other.noSong") }}
-                        </span>
-                      </OverflowMarquee>
+                <div ref="smallSongInfoRef" class="mobile-song-info">
+                  <Motion as-child :style="titleRealStyle">
+                    <div class="name-wrapper">
+                      <div class="name" :class="{ 'is-marquee': isNameOverflow }">
+                        <span class="name-inner name-measure">{{
+                          songName || $t("other.noSong")
+                        }}</span>
+                        <OverflowMarquee
+                          v-if="isNameOverflow"
+                          class="mobile-name-marquee"
+                          :speed="36"
+                        >
+                          <span class="mobile-name-marquee-content">
+                            {{ songName || $t("other.noSong") }}
+                          </span>
+                        </OverflowMarquee>
+                      </div>
                     </div>
-                  </div>
-                  <div class="artists text-hidden" v-if="artistList.length">
+                  </Motion>
+                  <div
+                    :class="['artists', 'text-hidden', { 'is-shared': artistsMetrics }]"
+                    v-if="artistList.length"
+                  >
                     <span v-for="(item, index) in artistList" :key="'s' + index">
                       {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
                     </span>
@@ -109,31 +114,40 @@
               :inert="activeMobileLayer === 2 && !lyricControlsVisible"
               :aria-hidden="activeMobileLayer === 2 && !lyricControlsVisible"
             >
-              <Motion class="mobile-big-controls-inner" :style="contentUiMotionStyle">
+              <div class="mobile-big-controls-inner" :style="contentShellStyle">
                 <!-- 歌曲信息（展开） -->
                 <div
                   class="mobile-song-info-row"
                   :inert="activeMobileLayer === 2"
                   :aria-hidden="activeMobileLayer === 2"
                 >
-                  <div class="mobile-song-info">
-                    <div class="name-wrapper" ref="nameWrapperRef">
-                      <div class="name" ref="nameTextRef" :class="{ 'is-marquee': isNameOverflow }">
-                        <span class="name-inner name-measure">{{
-                          songName || $t("other.noSong")
-                        }}</span>
-                        <OverflowMarquee
-                          v-if="isNameOverflow"
-                          class="mobile-name-marquee"
-                          :speed="36"
+                  <div ref="bigSongInfoRef" class="mobile-song-info">
+                    <Motion as-child :style="titleRealStyle">
+                      <div class="name-wrapper" ref="nameWrapperRef">
+                        <div
+                          class="name"
+                          ref="nameTextRef"
+                          :class="{ 'is-marquee': isNameOverflow }"
                         >
-                          <span class="mobile-name-marquee-content">
-                            {{ songName || $t("other.noSong") }}
-                          </span>
-                        </OverflowMarquee>
+                          <span class="name-inner name-measure">{{
+                            songName || $t("other.noSong")
+                          }}</span>
+                          <OverflowMarquee
+                            v-if="isNameOverflow"
+                            class="mobile-name-marquee"
+                            :speed="36"
+                          >
+                            <span class="mobile-name-marquee-content">
+                              {{ songName || $t("other.noSong") }}
+                            </span>
+                          </OverflowMarquee>
+                        </div>
                       </div>
-                    </div>
-                    <div class="artists text-hidden" v-if="artistList.length">
+                    </Motion>
+                    <div
+                      :class="['artists', 'text-hidden', { 'is-shared': artistsMetrics }]"
+                      v-if="artistList.length"
+                    >
                       <span v-for="(item, index) in artistList" :key="'b' + index">
                         {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
                       </span>
@@ -162,34 +176,32 @@
                     <n-icon size="24" :component="MoreVertRound" @click.stop="" />
                   </div>
                 </div>
-                <Motion as-child :style="controlsMotionStyle">
-                  <div
-                    ref="playbackControlsRef"
-                    class="mobile-controls-motion"
-                    @pointerdown.capture="holdLyricControls"
-                    @click.capture="scheduleLyricControlsHide"
-                    @focusin="clearLyricControlsTimer"
-                    @focusout="scheduleLyricControlsHide"
-                  >
-                    <!-- 进度条 -->
-                    <div class="mobile-progress">
-                      <BouncingSlider
-                        :value="music.getPlaySongTime.currentTime || 0"
-                        :min="0"
-                        :max="music.getPlaySongTime.duration || 1"
-                        :is-playing="music.getPlayState"
-                        @update:value="handleProgressSeek"
-                      />
-                      <div class="time-display">
-                        <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                        <span>-{{ remainingTime }}</span>
-                      </div>
+                <div
+                  ref="playbackControlsRef"
+                  class="mobile-controls-motion"
+                  @pointerdown.capture="holdLyricControls"
+                  @click.capture="scheduleLyricControlsHide"
+                  @focusin="clearLyricControlsTimer"
+                  @focusout="scheduleLyricControlsHide"
+                >
+                  <!-- 进度条 -->
+                  <div class="mobile-progress">
+                    <BouncingSlider
+                      :value="music.getPlaySongTime.currentTime || 0"
+                      :min="0"
+                      :max="music.getPlaySongTime.duration || 1"
+                      :is-playing="music.getPlayState"
+                      @update:value="handleProgressSeek"
+                    />
+                    <div class="time-display">
+                      <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+                      <span>-{{ remainingTime }}</span>
                     </div>
-                    <!-- 控制按钮 + 音量 -->
-                    <MobileControls @toComment="$emit('toComment')" />
                   </div>
-                </Motion>
-              </Motion>
+                  <!-- 控制按钮 + 音量 -->
+                  <MobileControls @toComment="$emit('toComment')" />
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -211,6 +223,32 @@
           @touchend.passive="handlePlayerTouchEnd"
           @touchcancel="handlePlayerTouchCancel"
         />
+
+        <!-- 唯一可见的歌名：和封面一样不受两层布局的裁剪，从 mini 条的歌名位置缩放到各层的
+             歌名位置并留在那里；两层里真实的歌名只用来量位置，不显示。 -->
+        <Motion
+          v-if="titleMetrics"
+          :class="['mobile-title-frame', { blended: activeMobileLayer === 2 }]"
+          aria-hidden="true"
+          :style="titleFrameStyle"
+        >
+          <div class="title-name">
+            <OverflowMarquee v-if="isNameOverflow" class="title-marquee" :speed="36">
+              <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
+            </OverflowMarquee>
+            <template v-else>{{ songName || $t("other.noSong") }}</template>
+          </div>
+        </Motion>
+
+        <!-- 歌手行同理，只在 mini 条显示的是歌手（不是歌词）时共享。 -->
+        <Motion
+          v-if="artistsMetrics"
+          :class="['mobile-artists-frame', { blended: activeMobileLayer === 2 }]"
+          aria-hidden="true"
+          :style="artistsFrameStyle"
+        >
+          <div class="artists-line">{{ artistNames }}</div>
+        </Motion>
       </Motion>
     </div>
 
@@ -362,6 +400,13 @@ type QueueSong = {
 };
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
+// Typography and slot of a real text (the song name, the artists) in the active layer, which its
+// floating copy mirrors.
+type TextMetrics = {
+  width: number;
+  size: number;
+  height: number;
+};
 
 const props = defineProps<{
   songName: string;
@@ -376,8 +421,13 @@ const props = defineProps<{
   layoutTransition: Record<string, unknown>;
   contentShellStyle: StaticStyleRecord;
   fullUiMotionStyle: MotionStyleRecord;
-  controlsMotionStyle: MotionStyleRecord;
   headerMotionStyle: MotionStyleRecord;
+  handleMotionStyle: MotionStyleRecord;
+  titleMotionStyle: MotionStyleRecord;
+  titleRealStyle: MotionStyleRecord;
+  titleMetrics: TextMetrics | null;
+  artistsMotionStyle: MotionStyleRecord;
+  artistsMetrics: TextMetrics | null;
   albumLayerStyle: MotionStyleRecord;
   albumLayerVisible: boolean;
 }>();
@@ -405,6 +455,9 @@ const phonyBigCoverRef = ref<HTMLElement | null>(null);
 const phonySmallCoverRef = ref<HTMLElement | null>(null);
 const nameWrapperRef = ref<HTMLElement | null>(null);
 const nameTextRef = ref<HTMLElement | null>(null);
+// The real title blocks of each layer: their natural slots are what the floating copy lands on.
+const bigSongInfoRef = ref<HTMLElement | null>(null);
+const smallSongInfoRef = ref<HTMLElement | null>(null);
 const queueListRef = ref<VirtualListInst | null>(null);
 let locateHandle: LocateHandle | null = null;
 const queueScrollTop = ref(0);
@@ -494,6 +547,25 @@ const smallControlsMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.headerMotionStyle,
 }));
+const handleUiMotionStyle = computed<MotionStyleRecord>(() => ({
+  ...props.contentShellStyle,
+  ...props.handleMotionStyle,
+}));
+const textFrameStyle = (motion: MotionStyleRecord, metrics: TextMetrics | null) =>
+  metrics
+    ? {
+        ...motion,
+        width: `${metrics.width}px`,
+        "--text-size": `${metrics.size}px`,
+        "--text-height": `${metrics.height}px`,
+      }
+    : motion;
+const titleFrameStyle = computed(() => textFrameStyle(props.titleMotionStyle, props.titleMetrics));
+const artistsFrameStyle = computed(() =>
+  textFrameStyle(props.artistsMotionStyle, props.artistsMetrics),
+);
+// Same text the real line renders: names joined by " / ".
+const artistNames = computed(() => props.artistList.map((item) => item.name).join(" / "));
 
 // ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──
 // 0 = 主内容，1 = Playlist。y 用像素数值而非百分比字符串：progress 归零时
@@ -794,7 +866,14 @@ onBeforeUnmount(() => {
   locateHandle?.cancel();
 });
 
-defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef });
+defineExpose({
+  phonyBigCoverRef,
+  phonySmallCoverRef,
+  nameWrapperRef,
+  nameTextRef,
+  bigSongInfoRef,
+  smallSongInfoRef,
+});
 </script>
 
 <style lang="scss" scoped>
@@ -819,6 +898,80 @@ defineExpose({ phonyBigCoverRef, phonySmallCoverRef, nameWrapperRef, nameTextRef
 
 .mobile-player-page {
   transform-origin: center 22%;
+}
+
+// The song name and the artists line, shared with the mini bar like the artwork: the one visible
+// copy of each, placed by transform only (x, y, scale from the top-left corner), so it moves
+// without layout. The colour is a motion value while it travels and the page's own afterwards. The
+// sizes mirror the real text of the active layer; see `titleMetrics` / `artistsMetrics`.
+.mobile-title-frame,
+.mobile-artists-frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  overflow: hidden;
+  white-space: nowrap;
+  pointer-events: none;
+  transform-origin: 0 0;
+  will-change: transform;
+
+  // Layer 2's real text sits in the lyric layout, which blends onto the background canvas.
+  &.blended {
+    mix-blend-mode: plus-lighter;
+  }
+}
+
+.mobile-title-frame {
+  color: var(--main-cover-color);
+
+  .title-name {
+    height: var(--text-height);
+    font-size: var(--text-size);
+    font-weight: 600;
+    line-height: var(--text-height);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .title-marquee {
+    width: 100%;
+    min-width: 0;
+    height: 1.25em;
+    line-height: 1.25;
+    color: inherit;
+
+    :deep(.overflow-marquee__group) {
+      align-items: center;
+      height: 1.25em;
+      line-height: 1.25;
+      min-width: max-content;
+      white-space: nowrap;
+    }
+  }
+
+  .title-marquee-content {
+    display: inline-block;
+    padding-right: 2em;
+    white-space: nowrap;
+  }
+}
+
+// The real line has `opacity: 0.7`; the float has none, so its resting colour carries it.
+.mobile-artists-frame {
+  color: color-mix(in srgb, var(--main-cover-color) 70%, transparent);
+
+  .artists-line {
+    height: var(--text-height);
+    font-size: var(--text-size);
+    line-height: var(--text-height);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.mobile-song-info .artists.is-shared {
+  visibility: hidden;
 }
 
 // .mobile-player-content / .mobile-full-ui 不得挂常驻 will-change（或其他产生
