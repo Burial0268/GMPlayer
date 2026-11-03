@@ -80,6 +80,8 @@
               :titleMotionStyle="mobileTitleMotionStyle"
               :titleRealStyle="mobileTitleRealStyle"
               :titleMetrics="mobileTitleMetrics"
+              :artistsMotionStyle="mobileArtistsMotionStyle"
+              :artistsMetrics="mobileArtistsMetrics"
               :albumLayerStyle="mobileArtworkMotionStyle"
               :albumLayerVisible="mobileAlbumLayerVisible"
               @close="handleMobileClose"
@@ -320,15 +322,16 @@ type MiniSharedFrames = {
   artwork?: DOMRect;
   background?: DOMRect;
 };
-type TitleMetrics = { width: number; nameSize: number; nameHeight: number };
+type TextKind = "name" | "artists";
+type TextMetrics = { width: number; size: number; height: number };
 type Rgba = [number, number, number, number];
-type TitleFrames = {
+type TextFrames = {
   mini: SharedFrame;
   full: SharedFrame;
   scale: number;
-  // The name's colour in the bar and in the active layer; null when either could not be read.
+  // The text's colour in the bar and in the active layer; null when either could not be read.
   color: { from: Rgba; to: Rgba } | null;
-  metrics: TitleMetrics;
+  metrics: TextMetrics;
 };
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
@@ -350,16 +353,23 @@ const headerY = useMotionValue(0);
 // gesture; it only scales (1 - progress), so it is irrelevant once the player is open.
 const sheetTravel = useMotionValue(0);
 const sheetMiniRadius = useMotionValue(12);
-// The song name is shared with the mini bar like the artwork: one floating copy, swapped in for the
-// bar's name in a single frame, travels (and changes colour) to the active layer's slot while the
-// real one waits, and hands over to it at the end.
-const titleLeft = useMotionValue(0);
-const titleTop = useMotionValue(0);
-const titleScale = useMotionValue(1);
-const titleColor = useMotionValue("");
-// 1 while the gesture's frames include the title. A MotionValue because derived values read it.
-const titleMorph = useMotionValue(0);
-const mobileTitleMetrics = ref<TitleMetrics | null>(null);
+// The song name, and the artists line when the bar shows artists rather than a lyric, are shared
+// with the mini bar like the artwork: one floating element each, swapped in for the bar's in a
+// single frame, travelling (and changing colour) to the active layer's slot and staying there as
+// the visible text. The real ones are measuring slots only.
+const createSharedText = () => ({
+  left: useMotionValue(0),
+  top: useMotionValue(0),
+  scale: useMotionValue(1),
+  color: useMotionValue(""),
+  // 1 while the text has a float. A MotionValue because derived values read it.
+  morph: useMotionValue(0),
+  metrics: ref<TextMetrics | null>(null),
+});
+const sharedTexts = { name: createSharedText(), artists: createSharedText() };
+const textKinds = Object.keys(sharedTexts) as TextKind[];
+const mobileTitleMetrics = sharedTexts.name.metrics;
+const mobileArtistsMetrics = sharedTexts.artists.metrics;
 const artworkLeft = useMotionValue(0);
 const artworkTop = useMotionValue(0);
 const artworkWidth = useMotionValue(0);
@@ -373,7 +383,7 @@ let artworkFrameAnimations: ReturnType<typeof animate>[] = [];
 let interactiveFrames: {
   miniArtwork: SharedFrame;
   fullArtwork: SharedFrame;
-  title: TitleFrames | null;
+  texts: Record<TextKind, TextFrames | null>;
 } | null = null;
 let pendingInteractiveProgress = 0;
 let closeDragOrigin = 1;
@@ -476,20 +486,10 @@ const contentOpacity = useTransform(() =>
   rangeProgress(playerProgress.get(), MOBILE_CONTENT_REVEAL_START, MOBILE_CONTENT_REVEAL_END),
 );
 
-// The real title is already fully there, under the float, when the float fades away at the end, so
-// the hand-over has no dip. Without frames for the title the real one is simply always shown.
-const titleFloatOpacity = useTransform(
-  () => 1 - rangeProgress(playerProgress.get(), MOBILE_CONTENT_INTERACTIVE_START, 1),
-);
-const titleRealOpacity = useTransform(() =>
-  titleMorph.get()
-    ? rangeProgress(
-        playerProgress.get(),
-        MOBILE_CONTENT_INTERACTIVE_START - 0.04,
-        MOBILE_CONTENT_INTERACTIVE_START,
-      )
-    : 1,
-);
+// Like the album layer, the floating name is the only visible one for as long as it exists; the
+// real name is a measuring slot and never shows. There is no hand-over at the open end to time.
+// Without a float (nothing to measure) the real one is simply shown.
+const titleRealOpacity = useTransform(() => (sharedTexts.name.morph.get() ? 0 : 1));
 
 const mobileShellMotionStyle: MotionStyleRecord = {
   y: sheetY,
@@ -501,13 +501,14 @@ const mobileScrimStyle: MotionStyleRecord = { opacity: scrimOpacity };
 const mobileFullUiMotionStyle: MotionStyleRecord = { opacity: contentOpacity };
 const mobileHeaderMotionStyle: MotionStyleRecord = { opacity: contentOpacity, y: headerY };
 const mobileHandleMotionStyle: MotionStyleRecord = { opacity: handleOpacity };
-const mobileTitleMotionStyle: MotionStyleRecord = {
-  x: titleLeft,
-  y: titleTop,
-  scale: titleScale,
-  color: titleColor,
-  opacity: titleFloatOpacity,
-};
+const textMotionStyle = (text: ReturnType<typeof createSharedText>): MotionStyleRecord => ({
+  x: text.left,
+  y: text.top,
+  scale: text.scale,
+  color: text.color,
+});
+const mobileTitleMotionStyle = textMotionStyle(sharedTexts.name);
+const mobileArtistsMotionStyle = textMotionStyle(sharedTexts.artists);
 const mobileTitleRealStyle: MotionStyleRecord = { opacity: titleRealOpacity };
 
 // The sheet follows the finger one to one, like the queue drawer; the fallback only covers a bar
@@ -598,7 +599,41 @@ const animateArtworkFrameTo = (frame: SharedFrame) => {
   ];
 };
 
+// Where a text rests: the active layer's slot, at its own size, in the page's own colour. The
+// artists line only follows a float a gesture started: it appears when the bar shows artists, not
+// on its own.
+const syncTextToCurrentLayer = (kind: TextKind) => {
+  const text = sharedTexts[kind];
+  if (kind === "artists" && !text.metrics.value) return;
+  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
+  const slot = contentRect && measureTextSlot(contentRect, kind);
+  if (!slot) return setTextMorph(kind, null);
+  text.left.set(slot.frame.left);
+  text.top.set(slot.frame.top);
+  text.scale.set(1);
+  text.color.set("");
+  setTextMorph(kind, slot.metrics);
+};
+
+// Layer switch: the float takes the new slot's size at once but is drawn at the old glyph size, so
+// nothing jumps, then settles into the slot together with the artwork.
+const animateTextToCurrentLayer = (kind: TextKind) => {
+  const text = sharedTexts[kind];
+  const previous = text.metrics.value;
+  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
+  const slot = contentRect && measureTextSlot(contentRect, kind);
+  if (!previous || !slot || prefersReducedMotion()) return syncTextToCurrentLayer(kind);
+  text.scale.set((previous.size * text.scale.get()) / slot.metrics.size);
+  setTextMorph(kind, slot.metrics);
+  artworkFrameAnimations.push(
+    animate(text.left, slot.frame.left, albumLayoutTransition),
+    animate(text.top, slot.frame.top, albumLayoutTransition),
+    animate(text.scale, 1, albumLayoutTransition),
+  );
+};
+
 const syncArtworkToCurrentLayer = () => {
+  textKinds.forEach(syncTextToCurrentLayer);
   const frame = frameFromCoverLayout(mobileLayer.value === 1 ? 12 : 8);
   if (!frame) return false;
   setArtworkFrame(frame);
@@ -669,56 +704,75 @@ const parseColor = (css: string): Rgba | null => {
   return [Number(match[1]), Number(match[2]), Number(match[3]), alpha];
 };
 
-// The bar's song name (top-left corner, font size, colour) and the active layer's real one, as the
-// name's shared frames. The real one is measured by its wrapper, which never carries a transform.
-const measureTitle = (rootRect: DOMRect): TitleFrames | null => {
-  const miniEl = document.querySelector<HTMLElement>("[data-mobile-player-title]");
-  const miniRect = readRestRect(miniEl);
-  const layout = mobileLayoutRef.value;
-  const slot =
-    (mobileLayer.value === 1 ? layout?.bigSongInfoRef : layout?.smallSongInfoRef) ?? null;
-  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
-  const nameEl = slot?.querySelector<HTMLElement>(".name");
-  if (!miniEl || !miniRect || !slot || !contentRect || !nameEl) return null;
+const textSelectors: Record<TextKind, { real: string; mini: string }> = {
+  name: { real: ".name", mini: "[data-mobile-player-title]" },
+  artists: { real: ".artists", mini: "[data-mobile-player-artists]" },
+};
 
-  const miniStyle = getComputedStyle(miniEl);
-  const nameStyle = getComputedStyle(nameEl);
-  const miniSize = Number.parseFloat(miniStyle.fontSize);
-  const nameSize = Number.parseFloat(nameStyle.fontSize);
-  if (!(miniSize > 0) || !(nameSize > 0)) return null;
-  const slotRect = slot.getBoundingClientRect();
+// The active layer's slot for a text: where its float has to sit, at what size, in what colour.
+// The slot's own box (no transform on it, unlike its wrapper's motion style), and its colour with
+// the element's own opacity folded in, since the float has none.
+const measureTextSlot = (contentRect: DOMRect, kind: TextKind) => {
+  const layout = mobileLayoutRef.value;
+  const info =
+    (mobileLayer.value === 1 ? layout?.bigSongInfoRef : layout?.smallSongInfoRef) ?? null;
+  const el = info?.querySelector<HTMLElement>(textSelectors[kind].real);
+  if (!el) return null;
+  const style = getComputedStyle(el);
+  const size = Number.parseFloat(style.fontSize);
+  if (!(size > 0)) return null;
+  const rect = el.getBoundingClientRect();
+  const color = parseColor(style.color);
+  if (color) color[3] *= Number(style.opacity);
+  return {
+    frame: frameFromRect(rect, contentRect, 0),
+    color,
+    metrics: { width: rect.width, size, height: rect.height },
+  };
+};
+
+// The bar's text (top-left corner, font size, colour) against the active layer's slot, as the
+// text's shared frames. Null when the bar has no such text (a lyric instead of the artists).
+const measureText = (kind: TextKind, rootRect: DOMRect): TextFrames | null => {
+  const miniEl = document.querySelector<HTMLElement>(textSelectors[kind].mini);
+  const miniRect = readRestRect(miniEl);
+  const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
+  const slot = contentRect && measureTextSlot(contentRect, kind);
+  if (!miniEl || !miniRect || !slot) return null;
+
+  // The artists are n-text spans inside the bar's row; their colour is on the span.
+  const miniStyle = getComputedStyle(miniEl.querySelector<HTMLElement>(".name") ?? miniEl);
+  const miniSize = Number.parseFloat(getComputedStyle(miniEl).fontSize);
+  if (!(miniSize > 0)) return null;
   const from = parseColor(miniStyle.color);
-  const to = parseColor(nameStyle.color);
   return {
     mini: frameFromRect(miniRect, rootRect, 0),
-    full: frameFromRect(slotRect, contentRect, 0),
-    scale: miniSize / nameSize,
-    color: from && to ? { from, to } : null,
-    metrics: {
-      width: slotRect.width,
-      nameSize,
-      nameHeight: nameEl.getBoundingClientRect().height,
-    },
+    full: slot.frame,
+    scale: miniSize / slot.metrics.size,
+    color: from && slot.color ? { from, to: slot.color } : null,
+    metrics: slot.metrics,
   };
 };
 
 // The ref changes the layout's props, so only touch it when the numbers really differ.
-const setTitleMorph = (metrics: TitleMetrics | null) => {
-  titleMorph.set(metrics ? 1 : 0);
-  const current = mobileTitleMetrics.value;
+const setTextMorph = (kind: TextKind, metrics: TextMetrics | null) => {
+  const text = sharedTexts[kind];
+  text.morph.set(metrics ? 1 : 0);
+  const current = text.metrics.value;
   const same =
     metrics === current ||
     (metrics &&
       current &&
-      (Object.keys(metrics) as (keyof TitleMetrics)[]).every(
+      (Object.keys(metrics) as (keyof TextMetrics)[]).every(
         (key) => metrics[key] === current[key],
       ));
-  if (!same) mobileTitleMetrics.value = metrics;
+  if (!same) text.metrics.value = metrics;
 };
 
+// The texts are not part of this: their floats stay for as long as the player is open, like the
+// album layer. Only closing (or a slot that cannot be measured) takes them away.
 const releaseInteractiveFrames = () => {
   interactiveFrames = null;
-  setTitleMorph(null);
 };
 
 const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
@@ -729,13 +783,16 @@ const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
   const fullArtwork = frameFromCoverLayout(12);
   if (!mini.artworkRect || !mini.backgroundRect || !fullArtwork) return false;
 
-  const title = measureTitle(rootRect);
+  const texts = {
+    name: measureText("name", rootRect),
+    artists: measureText("artists", rootRect),
+  };
   interactiveFrames = {
     miniArtwork: frameFromRect(mini.artworkRect, rootRect, mini.artworkRadius),
     fullArtwork,
-    title,
+    texts,
   };
-  setTitleMorph(title?.metrics ?? null);
+  textKinds.forEach((kind) => setTextMorph(kind, texts[kind]?.metrics ?? null));
   return true;
 };
 
@@ -773,26 +830,30 @@ const interpolateFrame = (from: SharedFrame, to: SharedFrame, progress: number):
 // edge, so a straight blend keeps it inside without help.
 const applyInteractiveFrame = (progress: number) => {
   if (!interactiveFrames) return;
-  const { miniArtwork, fullArtwork, title } = interactiveFrames;
+  const { miniArtwork, fullArtwork, texts } = interactiveFrames;
   // The blend is the artwork's path on screen; it lives inside the sheet, so subtract the
   // sheet's own offset to place it. The title row beside the small cover follows the same way.
   const artwork = interpolateFrame(miniArtwork, fullArtwork, progress);
   artwork.top -= sheetOffset(progress);
   applyArtworkFrame(artwork);
   headerY.set(artwork.top - fullArtwork.top);
-  if (!title) return;
-  // In the sheet's space, from where the name sits inside the bar to its slot. It starts out
-  // riding the sheet together with the rest of the bar's content (a smoothstep has no slope at 0)
-  // and has caught up with a straight blend by the middle.
+  // In the sheet's space, from where a text sits inside the bar to its slot. It starts out riding
+  // the sheet together with the rest of the bar's content (a smoothstep has no slope at 0) and has
+  // caught up with a straight blend by the middle.
   const weight = progress * progress * (3 - 2 * progress);
-  titleLeft.set(mix(title.mini.left, title.full.left, weight));
-  titleTop.set(mix(title.mini.top - sheetTravel.get(), title.full.top, weight));
-  titleScale.set(mix(title.scale, 1, weight));
   // The colour turns with the sheet's fade-in, so the text and what is behind it change together.
-  if (!title.color) return;
   const turn = easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END));
-  const [r, g, b, a] = title.color.from.map((value, i) => mix(value, title.color!.to[i], turn));
-  titleColor.set(`rgba(${r}, ${g}, ${b}, ${a})`);
+  textKinds.forEach((kind) => {
+    const frames = texts[kind];
+    if (!frames) return;
+    const text = sharedTexts[kind];
+    text.left.set(mix(frames.mini.left, frames.full.left, weight));
+    text.top.set(mix(frames.mini.top - sheetTravel.get(), frames.full.top, weight));
+    text.scale.set(mix(frames.scale, 1, weight));
+    if (!frames.color) return;
+    const [r, g, b, a] = frames.color.from.map((value, i) => mix(value, frames.color!.to[i], turn));
+    text.color.set(`rgba(${r}, ${g}, ${b}, ${a})`);
+  });
 };
 
 // The mini bar is the sheet's top while it lifts: it rides the sheet's edge and fades as it goes,
@@ -827,6 +888,7 @@ const clearMiniUiVars = () => {
   removeMiniUiVar("--mobile-mini-player-ui-y");
   removeMiniUiVar("--mobile-mini-player-text-y");
   removeMiniUiVar("--mobile-mini-player-title-opacity");
+  removeMiniUiVar("--mobile-mini-player-artists-opacity");
   removeMiniUiVar("--mobile-mini-player-artwork-opacity");
   removeMiniUiVar("--mobile-mini-player-bottom-y");
   removeMiniUiVar("--mobile-mini-player-bottom-z-index");
@@ -856,9 +918,11 @@ const applyMiniUiVars = (progress: number) => {
   setMiniUiVar("--mobile-mini-player-detail-opacity", chromeOpacity);
   setMiniUiVar("--mobile-mini-player-ui-y", `${mix(0, -4, chromeExit)}px`);
   setMiniUiVar("--mobile-mini-player-text-y", `${mix(0, -8, chromeExit)}px`);
-  // Only the name line is shared: it hands over to the floating copy in the same frame, like the
-  // artwork, so there is never a second copy on screen. The artists / lyric line fades with the bar.
-  setMiniUiVar("--mobile-mini-player-title-opacity", titleMorph.get() === 1 ? "0" : "1");
+  // The name, and the artists when the bar shows them, are shared: each hands over to its floating
+  // element in the same frame, like the artwork, so there is never a second copy on screen. A lyric
+  // line is not shared and fades with the bar.
+  setMiniUiVar("--mobile-mini-player-title-opacity", sharedTexts.name.morph.get() ? "0" : "1");
+  setMiniUiVar("--mobile-mini-player-artists-opacity", sharedTexts.artists.morph.get() ? "0" : "1");
   // The album layer sits on the exact same rect at progress 0, so this swap is invisible.
   setMiniUiVar("--mobile-mini-player-artwork-opacity", miniTransitioning ? "0" : "1");
   setMiniUiVar("--mobile-mini-player-bottom-y", `${mix(0, 110, tabBarExit)}%`);
@@ -948,6 +1012,7 @@ const resetClosedMobileState = () => {
   mobileAlbumLayerReady.value = false;
   pendingInteractiveProgress = 0;
   releaseInteractiveFrames();
+  textKinds.forEach((kind) => setTextMorph(kind, null));
   playerProgress.set(0);
   headerY.set(0);
   artworkOpacity.set(0);
@@ -963,6 +1028,7 @@ const switchMobileLayer = (targetLayer: number) => {
     requestAnimationFrame(() => {
       const frame = frameFromCoverLayout(targetLayer === 1 ? 12 : 8);
       if (frame) animateArtworkFrameTo(frame);
+      textKinds.forEach(animateTextToCurrentLayer);
     });
   });
 };

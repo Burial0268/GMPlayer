@@ -49,7 +49,10 @@
                       </div>
                     </div>
                   </Motion>
-                  <div class="artists text-hidden" v-if="artistList.length">
+                  <div
+                    :class="['artists', 'text-hidden', { 'is-shared': artistsMetrics }]"
+                    v-if="artistList.length"
+                  >
                     <span v-for="(item, index) in artistList" :key="'s' + index">
                       {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
                     </span>
@@ -141,7 +144,10 @@
                         </div>
                       </div>
                     </Motion>
-                    <div class="artists text-hidden" v-if="artistList.length">
+                    <div
+                      :class="['artists', 'text-hidden', { 'is-shared': artistsMetrics }]"
+                      v-if="artistList.length"
+                    >
                       <span v-for="(item, index) in artistList" :key="'b' + index">
                         {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
                       </span>
@@ -218,15 +224,30 @@
           @touchcancel="handlePlayerTouchCancel"
         />
 
-        <!-- 歌名块的浮动副本：和封面一样不受两层布局的裁剪，从 mini 条的歌名位置缩放到
-             各层的歌名位置，落定后与真实歌名交接。 -->
+        <!-- 唯一可见的歌名：和封面一样不受两层布局的裁剪，从 mini 条的歌名位置缩放到各层的
+             歌名位置并留在那里；两层里真实的歌名只用来量位置，不显示。 -->
         <Motion
           v-if="titleMetrics"
-          class="mobile-title-frame"
+          :class="['mobile-title-frame', { blended: activeMobileLayer === 2 }]"
           aria-hidden="true"
           :style="titleFrameStyle"
         >
-          <div class="title-name">{{ songName || $t("other.noSong") }}</div>
+          <div class="title-name">
+            <OverflowMarquee v-if="isNameOverflow" class="title-marquee" :speed="36">
+              <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
+            </OverflowMarquee>
+            <template v-else>{{ songName || $t("other.noSong") }}</template>
+          </div>
+        </Motion>
+
+        <!-- 歌手行同理，只在 mini 条显示的是歌手（不是歌词）时共享。 -->
+        <Motion
+          v-if="artistsMetrics"
+          :class="['mobile-artists-frame', { blended: activeMobileLayer === 2 }]"
+          aria-hidden="true"
+          :style="artistsFrameStyle"
+        >
+          <div class="artists-line">{{ artistNames }}</div>
         </Motion>
       </Motion>
     </div>
@@ -379,11 +400,12 @@ type QueueSong = {
 };
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
-// Typography and slot of the real song name in the active layer, which the floating copy mirrors.
-type TitleMetrics = {
+// Typography and slot of a real text (the song name, the artists) in the active layer, which its
+// floating copy mirrors.
+type TextMetrics = {
   width: number;
-  nameSize: number;
-  nameHeight: number;
+  size: number;
+  height: number;
 };
 
 const props = defineProps<{
@@ -403,7 +425,9 @@ const props = defineProps<{
   handleMotionStyle: MotionStyleRecord;
   titleMotionStyle: MotionStyleRecord;
   titleRealStyle: MotionStyleRecord;
-  titleMetrics: TitleMetrics | null;
+  titleMetrics: TextMetrics | null;
+  artistsMotionStyle: MotionStyleRecord;
+  artistsMetrics: TextMetrics | null;
   albumLayerStyle: MotionStyleRecord;
   albumLayerVisible: boolean;
 }>();
@@ -527,16 +551,21 @@ const handleUiMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.handleMotionStyle,
 }));
-const titleFrameStyle = computed<MotionStyleRecord>(() => {
-  const metrics = props.titleMetrics;
-  if (!metrics) return props.titleMotionStyle;
-  return {
-    ...props.titleMotionStyle,
-    width: `${metrics.width}px`,
-    "--title-name-size": `${metrics.nameSize}px`,
-    "--title-name-height": `${metrics.nameHeight}px`,
-  };
-});
+const textFrameStyle = (motion: MotionStyleRecord, metrics: TextMetrics | null) =>
+  metrics
+    ? {
+        ...motion,
+        width: `${metrics.width}px`,
+        "--text-size": `${metrics.size}px`,
+        "--text-height": `${metrics.height}px`,
+      }
+    : motion;
+const titleFrameStyle = computed(() => textFrameStyle(props.titleMotionStyle, props.titleMetrics));
+const artistsFrameStyle = computed(() =>
+  textFrameStyle(props.artistsMotionStyle, props.artistsMetrics),
+);
+// Same text the real line renders: names joined by " / ".
+const artistNames = computed(() => props.artistList.map((item) => item.name).join(" / "));
 
 // ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──
 // 0 = 主内容，1 = Playlist。y 用像素数值而非百分比字符串：progress 归零时
@@ -871,10 +900,12 @@ defineExpose({
   transform-origin: center 22%;
 }
 
-// The song name, shared with the mini bar like the artwork: one element, placed by transform only
-// (x, y, scale from the top-left corner), so it moves without layout. Its colour is a motion value
-// too. The sizes mirror the real name of the active layer; see `titleMetrics`.
-.mobile-title-frame {
+// The song name and the artists line, shared with the mini bar like the artwork: the one visible
+// copy of each, placed by transform only (x, y, scale from the top-left corner), so it moves
+// without layout. The colour is a motion value while it travels and the page's own afterwards. The
+// sizes mirror the real text of the active layer; see `titleMetrics` / `artistsMetrics`.
+.mobile-title-frame,
+.mobile-artists-frame {
   position: absolute;
   left: 0;
   top: 0;
@@ -883,16 +914,64 @@ defineExpose({
   white-space: nowrap;
   pointer-events: none;
   transform-origin: 0 0;
-  will-change: transform, opacity;
+  will-change: transform;
+
+  // Layer 2's real text sits in the lyric layout, which blends onto the background canvas.
+  &.blended {
+    mix-blend-mode: plus-lighter;
+  }
+}
+
+.mobile-title-frame {
+  color: var(--main-cover-color);
 
   .title-name {
-    height: var(--title-name-height);
-    font-size: var(--title-name-size);
+    height: var(--text-height);
+    font-size: var(--text-size);
     font-weight: 600;
-    line-height: var(--title-name-height);
+    line-height: var(--text-height);
     overflow: hidden;
     text-overflow: ellipsis;
   }
+
+  .title-marquee {
+    width: 100%;
+    min-width: 0;
+    height: 1.25em;
+    line-height: 1.25;
+    color: inherit;
+
+    :deep(.overflow-marquee__group) {
+      align-items: center;
+      height: 1.25em;
+      line-height: 1.25;
+      min-width: max-content;
+      white-space: nowrap;
+    }
+  }
+
+  .title-marquee-content {
+    display: inline-block;
+    padding-right: 2em;
+    white-space: nowrap;
+  }
+}
+
+// The real line has `opacity: 0.7`; the float has none, so its resting colour carries it.
+.mobile-artists-frame {
+  color: color-mix(in srgb, var(--main-cover-color) 70%, transparent);
+
+  .artists-line {
+    height: var(--text-height);
+    font-size: var(--text-size);
+    line-height: var(--text-height);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
+
+.mobile-song-info .artists.is-shared {
+  visibility: hidden;
 }
 
 // .mobile-player-content / .mobile-full-ui 不得挂常驻 will-change（或其他产生

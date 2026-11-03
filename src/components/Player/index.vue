@@ -76,12 +76,17 @@
                         v-else
                         key="artists"
                         class="text-hidden"
+                        data-mobile-player-artists
                         :artistsData="music.getPlaySongData.artist"
                       />
                     </Transition>
                   </template>
                   <template v-else>
-                    <AllArtists class="text-hidden" :artistsData="music.getPlaySongData.artist" />
+                    <AllArtists
+                      class="text-hidden"
+                      data-mobile-player-artists
+                      :artistsData="music.getPlaySongData.artist"
+                    />
                   </template>
                 </Transition>
               </div>
@@ -1648,6 +1653,11 @@ watch(
           opacity: var(--mobile-mini-player-detail-opacity, 1);
           overflow: hidden;
           will-change: opacity, max-height, margin-top;
+
+          // Like the song name: BigPlayer swaps it for its floating copy in one frame.
+          [data-mobile-player-artists] {
+            opacity: var(--mobile-mini-player-artists-opacity, 1);
+          }
 
           .lrc {
             display: block !important;
