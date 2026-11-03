@@ -320,15 +320,16 @@ type MiniSharedFrames = {
   artwork?: DOMRect;
   background?: DOMRect;
 };
-type TitleMetrics = {
-  width: number;
-  nameSize: number;
-  nameHeight: number;
-  artistsSize: number;
-  artistsHeight: number;
-  gap: number;
+type TitleMetrics = { width: number; nameSize: number; nameHeight: number };
+type Rgba = [number, number, number, number];
+type TitleFrames = {
+  mini: SharedFrame;
+  full: SharedFrame;
+  scale: number;
+  // The name's colour in the bar and in the active layer; null when either could not be read.
+  color: { from: Rgba; to: Rgba } | null;
+  metrics: TitleMetrics;
 };
-type TitleFrames = { mini: SharedFrame; full: SharedFrame; scale: number; metrics: TitleMetrics };
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
@@ -349,11 +350,13 @@ const headerY = useMotionValue(0);
 // gesture; it only scales (1 - progress), so it is irrelevant once the player is open.
 const sheetTravel = useMotionValue(0);
 const sheetMiniRadius = useMotionValue(12);
-// The title block is shared with the mini bar like the artwork: a floating copy travels from the
-// bar's title to the active layer's slot while the real one waits, then hands over to it.
+// The song name is shared with the mini bar like the artwork: one floating copy, swapped in for the
+// bar's name in a single frame, travels (and changes colour) to the active layer's slot while the
+// real one waits, and hands over to it at the end.
 const titleLeft = useMotionValue(0);
 const titleTop = useMotionValue(0);
 const titleScale = useMotionValue(1);
+const titleColor = useMotionValue("");
 // 1 while the gesture's frames include the title. A MotionValue because derived values read it.
 const titleMorph = useMotionValue(0);
 const mobileTitleMetrics = ref<TitleMetrics | null>(null);
@@ -442,11 +445,6 @@ const MOBILE_HANDLE_REVEAL_END = 0.45;
 const MOBILE_CONTENT_REVEAL_START = 0.3;
 const MOBILE_CONTENT_REVEAL_END = 0.55;
 const MOBILE_CONTENT_INTERACTIVE_START = 0.94;
-// The floating title is fully in by the first, then the bar's own text goes by the second. It is
-// the float that arrives on top while the bar's text is still whole beneath it, so the hand-over
-// never shows both at half strength (which reads as a dip).
-const MOBILE_TITLE_FLOAT_IN_END = 0.045;
-const MOBILE_TITLE_MINI_OUT_END = 0.05;
 const MOBILE_DRAG_DAMPING_POWER = 1.05;
 const MOBILE_SCRIM_OPACITY = 0.75;
 
@@ -480,13 +478,9 @@ const contentOpacity = useTransform(() =>
 
 // The real title is already fully there, under the float, when the float fades away at the end, so
 // the hand-over has no dip. Without frames for the title the real one is simply always shown.
-const titleFloatOpacity = useTransform(() => {
-  const progress = playerProgress.get();
-  return (
-    rangeProgress(progress, 0, MOBILE_TITLE_FLOAT_IN_END) *
-    (1 - rangeProgress(progress, MOBILE_CONTENT_INTERACTIVE_START, 1))
-  );
-});
+const titleFloatOpacity = useTransform(
+  () => 1 - rangeProgress(playerProgress.get(), MOBILE_CONTENT_INTERACTIVE_START, 1),
+);
 const titleRealOpacity = useTransform(() =>
   titleMorph.get()
     ? rangeProgress(
@@ -511,6 +505,7 @@ const mobileTitleMotionStyle: MotionStyleRecord = {
   x: titleLeft,
   y: titleTop,
   scale: titleScale,
+  color: titleColor,
   opacity: titleFloatOpacity,
 };
 const mobileTitleRealStyle: MotionStyleRecord = { opacity: titleRealOpacity };
@@ -664,10 +659,20 @@ const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   }
 };
 
-// The bar's title block (top-left corner, font size) and the active layer's real one, as the title's
-// shared frames. The real one is measured by its wrapper, which never carries a transform.
+// Computed colours come back as rgb()/rgba(), in comma or space syntax.
+const parseColor = (css: string): Rgba | null => {
+  const match = css.match(
+    /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)/,
+  );
+  if (!match) return null;
+  const alpha = match[4] === undefined ? 1 : Number(match[4]) / (match[5] ? 100 : 1);
+  return [Number(match[1]), Number(match[2]), Number(match[3]), alpha];
+};
+
+// The bar's song name (top-left corner, font size, colour) and the active layer's real one, as the
+// name's shared frames. The real one is measured by its wrapper, which never carries a transform.
 const measureTitle = (rootRect: DOMRect): TitleFrames | null => {
-  const miniEl = document.querySelector("[data-mobile-player-title]");
+  const miniEl = document.querySelector<HTMLElement>("[data-mobile-player-title]");
   const miniRect = readRestRect(miniEl);
   const layout = mobileLayoutRef.value;
   const slot =
@@ -676,25 +681,23 @@ const measureTitle = (rootRect: DOMRect): TitleFrames | null => {
   const nameEl = slot?.querySelector<HTMLElement>(".name");
   if (!miniEl || !miniRect || !slot || !contentRect || !nameEl) return null;
 
-  const miniSize = Number.parseFloat(
-    getComputedStyle(miniEl.querySelector(".song") ?? miniEl).fontSize,
-  );
+  const miniStyle = getComputedStyle(miniEl);
   const nameStyle = getComputedStyle(nameEl);
+  const miniSize = Number.parseFloat(miniStyle.fontSize);
   const nameSize = Number.parseFloat(nameStyle.fontSize);
   if (!(miniSize > 0) || !(nameSize > 0)) return null;
   const slotRect = slot.getBoundingClientRect();
-  const artistsEl = slot.querySelector<HTMLElement>(".artists");
+  const from = parseColor(miniStyle.color);
+  const to = parseColor(nameStyle.color);
   return {
     mini: frameFromRect(miniRect, rootRect, 0),
     full: frameFromRect(slotRect, contentRect, 0),
     scale: miniSize / nameSize,
+    color: from && to ? { from, to } : null,
     metrics: {
       width: slotRect.width,
       nameSize,
       nameHeight: nameEl.getBoundingClientRect().height,
-      artistsSize: artistsEl ? Number.parseFloat(getComputedStyle(artistsEl).fontSize) : 0,
-      artistsHeight: artistsEl ? artistsEl.getBoundingClientRect().height : 0,
-      gap: Number.parseFloat(nameStyle.marginBottom) || 0,
     },
   };
 };
@@ -778,14 +781,18 @@ const applyInteractiveFrame = (progress: number) => {
   applyArtworkFrame(artwork);
   headerY.set(artwork.top - fullArtwork.top);
   if (!title) return;
-  // In the sheet's space, from where the text sits inside the bar to its slot. It starts out
-  // riding the sheet like the bar's own text (a smoothstep has no slope at 0), so while the two
-  // copies hand over they coincide instead of ghosting; it has caught up with a straight blend
-  // by the middle.
+  // In the sheet's space, from where the name sits inside the bar to its slot. It starts out
+  // riding the sheet together with the rest of the bar's content (a smoothstep has no slope at 0)
+  // and has caught up with a straight blend by the middle.
   const weight = progress * progress * (3 - 2 * progress);
   titleLeft.set(mix(title.mini.left, title.full.left, weight));
   titleTop.set(mix(title.mini.top - sheetTravel.get(), title.full.top, weight));
   titleScale.set(mix(title.scale, 1, weight));
+  // The colour turns with the sheet's fade-in, so the text and what is behind it change together.
+  if (!title.color) return;
+  const turn = easeOutCubic(rangeProgress(progress, 0, MOBILE_SHEET_FADE_END));
+  const [r, g, b, a] = title.color.from.map((value, i) => mix(value, title.color!.to[i], turn));
+  titleColor.set(`rgba(${r}, ${g}, ${b}, ${a})`);
 };
 
 // The mini bar is the sheet's top while it lifts: it rides the sheet's edge and fades as it goes,
@@ -819,6 +826,7 @@ const clearMiniUiVars = () => {
   removeMiniUiVar("--mobile-mini-player-detail-margin");
   removeMiniUiVar("--mobile-mini-player-ui-y");
   removeMiniUiVar("--mobile-mini-player-text-y");
+  removeMiniUiVar("--mobile-mini-player-title-opacity");
   removeMiniUiVar("--mobile-mini-player-artwork-opacity");
   removeMiniUiVar("--mobile-mini-player-bottom-y");
   removeMiniUiVar("--mobile-mini-player-bottom-z-index");
@@ -844,19 +852,13 @@ const applyMiniUiVars = (progress: number) => {
   setMiniUiVar("--mobile-mini-player-surface-opacity", chromeOpacity);
   setMiniUiVar("--mobile-mini-player-ui-opacity", chromeOpacity);
   setMiniUiVar("--mobile-mini-player-chrome-opacity", chromeOpacity);
-  // The title block is handed to the floating copy within the first few percent, in place: it
-  // neither drifts nor fades with the rest of the bar. Without a measured title it fades as before.
-  const titleHandedOver = titleMorph.get() === 1;
-  setMiniUiVar(
-    "--mobile-mini-player-text-opacity",
-    titleHandedOver
-      ? String(1 - rangeProgress(progress, MOBILE_TITLE_FLOAT_IN_END, MOBILE_TITLE_MINI_OUT_END))
-      : chromeOpacity,
-  );
-  // Nested in the text block, which already carries the fade.
-  setMiniUiVar("--mobile-mini-player-detail-opacity", titleHandedOver ? "1" : chromeOpacity);
+  setMiniUiVar("--mobile-mini-player-text-opacity", chromeOpacity);
+  setMiniUiVar("--mobile-mini-player-detail-opacity", chromeOpacity);
   setMiniUiVar("--mobile-mini-player-ui-y", `${mix(0, -4, chromeExit)}px`);
-  setMiniUiVar("--mobile-mini-player-text-y", `${titleHandedOver ? 0 : mix(0, -8, chromeExit)}px`);
+  setMiniUiVar("--mobile-mini-player-text-y", `${mix(0, -8, chromeExit)}px`);
+  // Only the name line is shared: it hands over to the floating copy in the same frame, like the
+  // artwork, so there is never a second copy on screen. The artists / lyric line fades with the bar.
+  setMiniUiVar("--mobile-mini-player-title-opacity", titleMorph.get() === 1 ? "0" : "1");
   // The album layer sits on the exact same rect at progress 0, so this swap is invisible.
   setMiniUiVar("--mobile-mini-player-artwork-opacity", miniTransitioning ? "0" : "1");
   setMiniUiVar("--mobile-mini-player-bottom-y", `${mix(0, 110, tabBarExit)}%`);

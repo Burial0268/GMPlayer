@@ -27,8 +27,13 @@
                 alt="pic"
               />
             </div>
-            <div class="name" data-mobile-player-title>
-              <div v-button class="song text-hidden" @click.stop="openSongDetail">
+            <div class="name">
+              <div
+                v-button
+                class="song text-hidden"
+                data-mobile-player-title
+                @click.stop="openSongDetail"
+              >
                 {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
               </div>
               <!-- 显示歌手或歌词 -->
@@ -1625,7 +1630,10 @@ watch(
           font-size: 16px;
           font-weight: bold;
           cursor: pointer;
-          transition: all var(--duration-300) var(--ease-out);
+          // BigPlayer swaps the name for its floating copy in one frame while the player opens, so
+          // this must not fade: `transition: all` used to cover opacity too.
+          opacity: var(--mobile-mini-player-title-opacity, 1);
+          transition: color var(--duration-300) var(--ease-out);
 
           &:hover {
             color: var(--player-accent-color);

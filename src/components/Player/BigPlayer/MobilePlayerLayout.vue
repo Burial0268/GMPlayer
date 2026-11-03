@@ -30,8 +30,8 @@
             <div class="mobile-phony-small-cover mobile-cover-slot" ref="phonySmallCoverRef"></div>
             <div class="mobile-small-controls">
               <Motion class="mobile-small-controls-inner" :style="smallControlsMotionStyle">
-                <Motion as-child :style="titleRealStyle">
-                  <div ref="smallSongInfoRef" class="mobile-song-info">
+                <div ref="smallSongInfoRef" class="mobile-song-info">
+                  <Motion as-child :style="titleRealStyle">
                     <div class="name-wrapper">
                       <div class="name" :class="{ 'is-marquee': isNameOverflow }">
                         <span class="name-inner name-measure">{{
@@ -48,13 +48,13 @@
                         </OverflowMarquee>
                       </div>
                     </div>
-                    <div class="artists text-hidden" v-if="artistList.length">
-                      <span v-for="(item, index) in artistList" :key="'s' + index">
-                        {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-                      </span>
-                    </div>
+                  </Motion>
+                  <div class="artists text-hidden" v-if="artistList.length">
+                    <span v-for="(item, index) in artistList" :key="'s' + index">
+                      {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                    </span>
                   </div>
-                </Motion>
+                </div>
                 <div class="mobile-header-actions">
                   <n-icon
                     size="24"
@@ -118,8 +118,8 @@
                   :inert="activeMobileLayer === 2"
                   :aria-hidden="activeMobileLayer === 2"
                 >
-                  <Motion as-child :style="titleRealStyle">
-                    <div ref="bigSongInfoRef" class="mobile-song-info">
+                  <div ref="bigSongInfoRef" class="mobile-song-info">
+                    <Motion as-child :style="titleRealStyle">
                       <div class="name-wrapper" ref="nameWrapperRef">
                         <div
                           class="name"
@@ -140,13 +140,13 @@
                           </OverflowMarquee>
                         </div>
                       </div>
-                      <div class="artists text-hidden" v-if="artistList.length">
-                        <span v-for="(item, index) in artistList" :key="'b' + index">
-                          {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
-                        </span>
-                      </div>
+                    </Motion>
+                    <div class="artists text-hidden" v-if="artistList.length">
+                      <span v-for="(item, index) in artistList" :key="'b' + index">
+                        {{ item.name }}<span v-if="index != artistList.length - 1"> / </span>
+                      </span>
                     </div>
-                  </Motion>
+                  </div>
                   <div class="mobile-header-actions">
                     <n-icon
                       size="24"
@@ -227,9 +227,6 @@
           :style="titleFrameStyle"
         >
           <div class="title-name">{{ songName || $t("other.noSong") }}</div>
-          <div class="title-artists" v-if="artistList.length">
-            {{ artistList.map((item) => item.name).join(" / ") }}
-          </div>
         </Motion>
       </Motion>
     </div>
@@ -382,14 +379,11 @@ type QueueSong = {
 };
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
-// Typography and slot of the real title in the active layer, which the floating copy mirrors.
+// Typography and slot of the real song name in the active layer, which the floating copy mirrors.
 type TitleMetrics = {
   width: number;
   nameSize: number;
   nameHeight: number;
-  artistsSize: number;
-  artistsHeight: number;
-  gap: number;
 };
 
 const props = defineProps<{
@@ -541,9 +535,6 @@ const titleFrameStyle = computed<MotionStyleRecord>(() => {
     width: `${metrics.width}px`,
     "--title-name-size": `${metrics.nameSize}px`,
     "--title-name-height": `${metrics.nameHeight}px`,
-    "--title-artists-size": `${metrics.artistsSize}px`,
-    "--title-artists-height": `${metrics.artistsHeight}px`,
-    "--title-gap": `${metrics.gap}px`,
   };
 });
 
@@ -880,8 +871,9 @@ defineExpose({
   transform-origin: center 22%;
 }
 
-// Placed by transform only (x, y, scale from the top-left corner), so it moves without layout.
-// The sizes mirror the real title of the active layer; see `titleMetrics`.
+// The song name, shared with the mini bar like the artwork: one element, placed by transform only
+// (x, y, scale from the top-left corner), so it moves without layout. Its colour is a motion value
+// too. The sizes mirror the real name of the active layer; see `titleMetrics`.
 .mobile-title-frame {
   position: absolute;
   left: 0;
@@ -891,24 +883,13 @@ defineExpose({
   white-space: nowrap;
   pointer-events: none;
   transform-origin: 0 0;
-  color: var(--main-cover-color);
   will-change: transform, opacity;
 
   .title-name {
     height: var(--title-name-height);
-    margin-bottom: var(--title-gap);
     font-size: var(--title-name-size);
     font-weight: 600;
     line-height: var(--title-name-height);
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  .title-artists {
-    height: var(--title-artists-height);
-    font-size: var(--title-artists-size);
-    line-height: var(--title-artists-height);
-    opacity: 0.7;
     overflow: hidden;
     text-overflow: ellipsis;
   }
