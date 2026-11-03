@@ -233,7 +233,11 @@
           :style="titleFrameStyle"
         >
           <div class="title-name">
-            <OverflowMarquee v-if="isNameOverflow" class="title-marquee" :speed="36">
+            <OverflowMarquee
+              v-if="isNameOverflow && !textTravelling"
+              class="title-marquee"
+              :speed="36"
+            >
               <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
             </OverflowMarquee>
             <template v-else>{{ songName || $t("other.noSong") }}</template>
@@ -426,6 +430,8 @@ const props = defineProps<{
   titleMotionStyle: MotionStyleRecord;
   titleRealStyle: MotionStyleRecord;
   titleMetrics: TextMetrics | null;
+  // The floats are on their way between the bar and a slot.
+  textTravelling: boolean;
   artistsMotionStyle: MotionStyleRecord;
   artistsMetrics: TextMetrics | null;
   albumLayerStyle: MotionStyleRecord;
@@ -555,7 +561,6 @@ const textFrameStyle = (motion: MotionStyleRecord, metrics: TextMetrics | null) 
   metrics
     ? {
         ...motion,
-        width: `${metrics.width}px`,
         "--text-size": `${metrics.size}px`,
         "--text-height": `${metrics.height}px`,
       }
