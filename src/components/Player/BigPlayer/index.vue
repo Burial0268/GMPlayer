@@ -1838,13 +1838,22 @@ defineExpose({
         transition: opacity var(--duration-500) var(--ease-out) 0.5s;
       }
 
+      // Hidden controls sit a little low and rise into place, so they read as arriving.
       :deep(.mobile-big-controls) {
         opacity: 0;
+        transform: translate3d(0, 12px, 0);
         pointer-events: none;
       }
 
       :deep(.mobile-big-controls.lyric-controls-visible) {
         opacity: 1;
+        transform: none;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        :deep(.mobile-big-controls) {
+          transform: none;
+        }
       }
     }
 
