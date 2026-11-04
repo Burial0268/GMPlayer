@@ -754,6 +754,24 @@ const textSelectors: Record<TextKind, { real: string; mini: string }> = {
   artists: { real: ".artists", mini: "[data-mobile-player-artists]" },
 };
 
+// A rect carries the translation of every ancestor up to the content root: layer 2's header rides
+// the cover during a gesture (`headerY`), and the controls sit low while hidden and rise as they
+// come back. A slot is where the text is in the page without those, which is what the artwork gets
+// from its static placeholders; measured with them, a text lands as far off as they were at the
+// moment of measuring. Computed styles and rects are read from the same state, so they agree.
+const ancestorShift = (el: HTMLElement, root: HTMLElement | null) => {
+  let x = 0;
+  let y = 0;
+  for (let node = el.parentElement; node && node !== root; node = node.parentElement) {
+    const { transform } = getComputedStyle(node);
+    if (transform === "none") continue;
+    const matrix = new DOMMatrixReadOnly(transform);
+    x += matrix.m41;
+    y += matrix.m42;
+  }
+  return { x, y };
+};
+
 // What the float is laid out at: the larger of the two layers' texts. Both layers' slots are in
 // the page at all times, so it does not depend on which one is active.
 const measureTextMetrics = (kind: TextKind): TextMetrics | null => {
@@ -782,12 +800,13 @@ const measureTextSlot = (contentRect: DOMRect, kind: TextKind) => {
   const metrics = measureTextMetrics(kind);
   if (!metrics) return null;
   const rect = el.getBoundingClientRect();
+  const shift = ancestorShift(el, mobileCoverRootRef.value);
   const color = parseColor(style.color);
   if (color) color[3] *= Number(style.opacity);
   return {
     frame: {
-      left: rect.left - contentRect.left,
-      top: rect.top - contentRect.top,
+      left: rect.left - contentRect.left - shift.x,
+      top: rect.top - contentRect.top - shift.y,
       size,
       width: rect.width,
     } satisfies TextFrame,
