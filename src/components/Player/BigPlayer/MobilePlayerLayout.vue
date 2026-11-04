@@ -233,7 +233,11 @@
           :style="titleFrameStyle"
         >
           <div class="title-name">
-            <OverflowMarquee v-if="isNameOverflow" class="title-marquee" :speed="36">
+            <OverflowMarquee
+              v-if="isNameOverflow && !textTravelling"
+              class="title-marquee"
+              :speed="36"
+            >
               <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
             </OverflowMarquee>
             <template v-else>{{ songName || $t("other.noSong") }}</template>
@@ -402,8 +406,8 @@ type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 // Typography and slot of a real text (the song name, the artists) in the active layer, which its
 // floating copy mirrors.
+// What a float is laid out at; its glyph size and window on screen are motion values.
 type TextMetrics = {
-  width: number;
   size: number;
   height: number;
 };
@@ -426,6 +430,8 @@ const props = defineProps<{
   titleMotionStyle: MotionStyleRecord;
   titleRealStyle: MotionStyleRecord;
   titleMetrics: TextMetrics | null;
+  // The floats are on their way between the bar and a slot.
+  textTravelling: boolean;
   artistsMotionStyle: MotionStyleRecord;
   artistsMetrics: TextMetrics | null;
   albumLayerStyle: MotionStyleRecord;
@@ -555,7 +561,6 @@ const textFrameStyle = (motion: MotionStyleRecord, metrics: TextMetrics | null) 
   metrics
     ? {
         ...motion,
-        width: `${metrics.width}px`,
         "--text-size": `${metrics.size}px`,
         "--text-height": `${metrics.height}px`,
       }
@@ -1045,6 +1050,15 @@ defineExpose({
   }
 }
 
+// Registered so the lyric mask's bottom edge can transition: it used to jump the instant the
+// controls were asked for, while the controls themselves took half a second to fade, so the last
+// lines vanished (or reappeared on top of the fading controls) before anything else moved.
+@property --mobile-lyric-bottom-inset {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 // ── AMLL .lyricLayout — Layer 2: 紧凑封面/信息 + 歌词 ──
 .mobile-lyric-layout {
   grid-row: main-view;
@@ -1056,6 +1070,9 @@ defineExpose({
   grid-template-columns: 16px [cover-side] 56px [info-side] minmax(0, 1fr) 16px;
   mix-blend-mode: plus-lighter;
   pointer-events: none;
+  // Same duration and curve as the controls (`.mobile-big-controls`), so the lyrics make room as
+  // they arrive and give the space back as they leave.
+  transition: --mobile-lyric-bottom-inset var(--duration-500) var(--ease-out);
 
   &.active {
     pointer-events: auto;
@@ -1084,9 +1101,14 @@ defineExpose({
   &.lyric-layer {
     z-index: 3;
 
+    // Fades out before it is hidden; coming back to layer 1 it is visible at once and fades in.
     .mobile-song-info-row {
+      opacity: 0;
       visibility: hidden;
       pointer-events: none;
+      transition:
+        opacity var(--duration-200) var(--ease-out),
+        visibility 0s linear var(--duration-200);
     }
   }
 }
@@ -1309,7 +1331,9 @@ defineExpose({
 .mobile-big-controls {
   grid-row: controls-view;
   grid-column: 2 / 3;
-  transition: opacity var(--duration-500) var(--ease-out);
+  transition:
+    opacity var(--duration-500) var(--ease-out),
+    transform var(--duration-500) var(--ease-out);
   opacity: 0;
   min-width: 0;
   z-index: 2;
@@ -1330,6 +1354,7 @@ defineExpose({
     align-items: center;
     justify-content: space-between;
     margin-bottom: 20px;
+    transition: opacity var(--duration-200) var(--ease-out);
 
     .mobile-song-info {
       flex: 1;
@@ -1421,6 +1446,7 @@ defineExpose({
       justify-content: space-between;
       margin-top: 8px;
       font-size: max(1.2vh, 0.7rem);
+      font-variant-numeric: tabular-nums;
       opacity: 0.5;
       color: var(--main-cover-color);
     }
