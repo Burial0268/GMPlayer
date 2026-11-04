@@ -406,8 +406,8 @@ type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 // Typography and slot of a real text (the song name, the artists) in the active layer, which its
 // floating copy mirrors.
+// What a float is laid out at; its glyph size and window on screen are motion values.
 type TextMetrics = {
-  width: number;
   size: number;
   height: number;
 };

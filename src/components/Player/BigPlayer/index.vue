@@ -324,17 +324,17 @@ type MiniSharedFrames = {
   background?: DOMRect;
 };
 type TextKind = "name" | "artists";
-type TextMetrics = { width: number; size: number; height: number };
+// What the float is laid out at: the larger of the two layers' sizes, fixed for as long as the
+// float lives. The glyph size on screen is a frame value (`TextFrame.size`) and is drawn as a
+// scale of this, so nothing but the frame ever changes, in a gesture or in a layer switch.
+type TextMetrics = { size: number; height: number };
+// A text's frame, like the artwork's: its top-left corner, its glyph size and how wide a window it
+// may run in before it is cut off (all in screen pixels).
+type TextFrame = { left: number; top: number; size: number; width: number };
 type Rgba = [number, number, number, number];
 type TextFrames = {
-  mini: SharedFrame;
-  full: SharedFrame;
-  scale: number;
-  // The scale at `full`: 1 at the slot, but a gesture that cut a layer switch short starts from
-  // where the text actually was.
-  fullScale: number;
-  // How wide the bar lets the text run before it cuts it off, in screen pixels.
-  miniWidth: number;
+  mini: TextFrame;
+  full: TextFrame;
   // The text's colour in the bar and in the active layer; null when either could not be read.
   color: { from: Rgba; to: Rgba } | null;
   metrics: TextMetrics;
@@ -363,18 +363,41 @@ const sheetMiniRadius = useMotionValue(12);
 // with the mini bar like the artwork: one floating element each, swapped in for the bar's in a
 // single frame, travelling (and changing colour) to the active layer's slot and staying there as
 // the visible text. The real ones are measuring slots only.
-const createSharedText = () => ({
-  left: useMotionValue(0),
-  top: useMotionValue(0),
-  scale: useMotionValue(1),
-  // The float's own width in its local units: the window the text is cut off in. It travels
-  // from the bar's width to the slot's, so no frame shows more or less text than its neighbours.
-  width: useMotionValue(0),
-  color: useMotionValue(""),
-  // 1 while the text has a float. A MotionValue because derived values read it.
-  morph: useMotionValue(0),
-  metrics: ref<TextMetrics | null>(null),
+const createSharedText = () => {
+  const size = useMotionValue(0);
+  const span = useMotionValue(0);
+  const base = useMotionValue(0);
+  return {
+    left: useMotionValue(0),
+    top: useMotionValue(0),
+    size,
+    // The window the text is cut off in, on screen. It travels from the bar's width to the slot's,
+    // so no frame shows more or less text than its neighbours.
+    span,
+    base,
+    // What the float is drawn with: its glyphs are `base` px, scaled to `size`, and its own width
+    // is the window before that scale.
+    scale: useTransform(() => (base.get() ? size.get() / base.get() : 1)),
+    width: useTransform(() => (size.get() ? (span.get() * base.get()) / size.get() : span.get())),
+    color: useMotionValue(""),
+    // 1 while the text has a float. A MotionValue because derived values read it.
+    morph: useMotionValue(0),
+    metrics: ref<TextMetrics | null>(null),
+  };
+};
+type SharedText = ReturnType<typeof createSharedText>;
+const readTextFrame = (text: SharedText): TextFrame => ({
+  left: text.left.get(),
+  top: text.top.get(),
+  size: text.size.get(),
+  width: text.span.get(),
 });
+const setTextFrame = (text: SharedText, frame: TextFrame) => {
+  text.left.set(frame.left);
+  text.top.set(frame.top);
+  text.size.set(frame.size);
+  text.span.set(frame.width);
+};
 const sharedTexts = { name: createSharedText(), artists: createSharedText() };
 const textKinds = Object.keys(sharedTexts) as TextKind[];
 const mobileTitleMetrics = sharedTexts.name.metrics;
@@ -396,8 +419,7 @@ let interactiveFrames: {
 } | null = null;
 // Where the texts were when a close began, if a layer switch had not finished: the gesture's
 // "open" end for them, like `fullArtwork` is for the artwork. Kept for the gesture's re-measures.
-let restTextFrames: Partial<Record<TextKind, { left: number; top: number; scale: number }>> | null =
-  null;
+let restTextFrames: Partial<Record<TextKind, TextFrame>> | null = null;
 let pendingInteractiveProgress = 0;
 let closeDragOrigin = 1;
 let progressUnsubscribe: (() => void) | null = null;
@@ -514,7 +536,7 @@ const mobileScrimStyle: MotionStyleRecord = { opacity: scrimOpacity };
 const mobileFullUiMotionStyle: MotionStyleRecord = { opacity: contentOpacity };
 const mobileHeaderMotionStyle: MotionStyleRecord = { opacity: contentOpacity, y: headerY };
 const mobileHandleMotionStyle: MotionStyleRecord = { opacity: handleOpacity };
-const textMotionStyle = (text: ReturnType<typeof createSharedText>): MotionStyleRecord => ({
+const textMotionStyle = (text: SharedText): MotionStyleRecord => ({
   x: text.left,
   y: text.top,
   scale: text.scale,
@@ -622,15 +644,14 @@ const syncTextToCurrentLayer = (kind: TextKind) => {
   const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
   const slot = contentRect && measureTextSlot(contentRect, kind);
   if (!slot) return setTextMorph(kind, null);
-  text.left.set(slot.frame.left);
-  text.top.set(slot.frame.top);
-  text.scale.set(1);
-  text.color.set("");
   setTextMorph(kind, slot.metrics);
+  setTextFrame(text, slot.frame);
+  text.color.set("");
 };
 
-// Layer switch: the float takes the new slot's size at once but is drawn at the old glyph size, so
-// nothing jumps, then settles into the slot together with the artwork.
+// Layer switch: the float's frame goes to the new slot's together with the artwork's, from
+// wherever it is. Like the artwork, nothing else is touched, so any number of interruptions is just
+// a new target.
 const animateTextToCurrentLayer = (kind: TextKind) => {
   const text = sharedTexts[kind];
   const previous = text.metrics.value;
@@ -638,12 +659,12 @@ const animateTextToCurrentLayer = (kind: TextKind) => {
   const slot = contentRect && measureTextSlot(contentRect, kind);
   if (!previous || !slot || prefersReducedMotion()) return syncTextToCurrentLayer(kind);
   text.color.set("");
-  text.scale.set((previous.size * text.scale.get()) / slot.metrics.size);
   setTextMorph(kind, slot.metrics);
   artworkFrameAnimations.push(
     animate(text.left, slot.frame.left, albumLayoutTransition),
     animate(text.top, slot.frame.top, albumLayoutTransition),
-    animate(text.scale, 1, albumLayoutTransition),
+    animate(text.size, slot.frame.size, albumLayoutTransition),
+    animate(text.span, slot.frame.width, albumLayoutTransition),
   );
 };
 
@@ -733,9 +754,22 @@ const textSelectors: Record<TextKind, { real: string; mini: string }> = {
   artists: { real: ".artists", mini: "[data-mobile-player-artists]" },
 };
 
-// The active layer's slot for a text: where its float has to sit, at what size, in what colour.
-// The slot's own box (no transform on it, unlike its wrapper's motion style), and its colour with
-// the element's own opacity folded in, since the float has none.
+// What the float is laid out at: the larger of the two layers' texts. Both layers' slots are in
+// the page at all times, so it does not depend on which one is active.
+const measureTextMetrics = (kind: TextKind): TextMetrics | null => {
+  const layout = mobileLayoutRef.value;
+  let best: TextMetrics | null = null;
+  for (const info of [layout?.bigSongInfoRef, layout?.smallSongInfoRef]) {
+    const el = info?.querySelector<HTMLElement>(textSelectors[kind].real);
+    const size = el ? Number.parseFloat(getComputedStyle(el).fontSize) : 0;
+    if (el && size > (best?.size ?? 0)) best = { size, height: el.getBoundingClientRect().height };
+  }
+  return best;
+};
+
+// The active layer's slot for a text: the frame its float has to take, in what colour. The slot's
+// own box (no transform on it, unlike its wrapper's motion style), and its colour with the
+// element's own opacity folded in, since the float has none.
 const measureTextSlot = (contentRect: DOMRect, kind: TextKind) => {
   const layout = mobileLayoutRef.value;
   const info =
@@ -745,13 +779,20 @@ const measureTextSlot = (contentRect: DOMRect, kind: TextKind) => {
   const style = getComputedStyle(el);
   const size = Number.parseFloat(style.fontSize);
   if (!(size > 0)) return null;
+  const metrics = measureTextMetrics(kind);
+  if (!metrics) return null;
   const rect = el.getBoundingClientRect();
   const color = parseColor(style.color);
   if (color) color[3] *= Number(style.opacity);
   return {
-    frame: frameFromRect(rect, contentRect, 0),
+    frame: {
+      left: rect.left - contentRect.left,
+      top: rect.top - contentRect.top,
+      size,
+      width: rect.width,
+    } satisfies TextFrame,
     color,
-    metrics: { width: rect.width, size, height: rect.height },
+    metrics,
   };
 };
 
@@ -774,14 +815,14 @@ const measureText = (kind: TextKind, rootRect: DOMRect): TextFrames | null => {
   const exitY = Number.parseFloat(
     document.documentElement.style.getPropertyValue("--mobile-mini-player-text-y"),
   );
-  const mini = frameFromRect(miniRect, rootRect, 0);
-  if (exitY) mini.top -= exitY;
   return {
-    mini,
+    mini: {
+      left: miniRect.left - rootRect.left,
+      top: miniRect.top - rootRect.top - (exitY || 0),
+      size: miniSize,
+      width: miniRect.width,
+    },
     full: slot.frame,
-    scale: miniSize / slot.metrics.size,
-    fullScale: 1,
-    miniWidth: miniRect.width,
     color: from && slot.color ? { from, to: slot.color } : null,
     metrics: slot.metrics,
   };
@@ -791,7 +832,7 @@ const measureText = (kind: TextKind, rootRect: DOMRect): TextFrames | null => {
 const setTextMorph = (kind: TextKind, metrics: TextMetrics | null) => {
   const text = sharedTexts[kind];
   text.morph.set(metrics ? 1 : 0);
-  text.width.set(metrics?.width ?? 0);
+  text.base.set(metrics?.size ?? 0);
   const current = text.metrics.value;
   const same =
     metrics === current ||
@@ -825,9 +866,7 @@ const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
   textKinds.forEach((kind) => {
     const rest = restTextFrames?.[kind];
     const frames = texts[kind];
-    if (!rest || !frames) return;
-    frames.full = { ...frames.full, left: rest.left, top: rest.top };
-    frames.fullScale = rest.scale;
+    if (rest && frames) frames.full = rest;
   });
   interactiveFrames = {
     miniArtwork: frameFromRect(mini.artworkRect, rootRect, mini.artworkRadius),
@@ -889,14 +928,13 @@ const applyInteractiveFrame = (progress: number) => {
     const frames = texts[kind];
     if (!frames) return;
     const text = sharedTexts[kind];
+    // The sheet-space path described above, for each part of the frame. The window is the bar's at
+    // the start and the slot's at the end, so the cut-off moves smoothly instead of jumping when
+    // the float takes over from the bar (or hands back to it).
     text.left.set(mix(frames.mini.left, frames.full.left, weight));
     text.top.set(mix(frames.mini.top - sheetTravel.get(), frames.full.top, weight));
-    const scale = mix(frames.scale, frames.fullScale, weight);
-    text.scale.set(scale);
-    // The window is the bar's at the start and the slot's at the end, in between a straight blend
-    // of the two on screen: the cut-off moves smoothly instead of jumping when the float takes
-    // over from the bar (or hands back to it).
-    text.width.set(mix(frames.miniWidth, frames.metrics.width * frames.fullScale, weight) / scale);
+    text.size.set(mix(frames.mini.size, frames.full.size, weight));
+    text.span.set(mix(frames.mini.width, frames.full.width, weight));
     if (!frames.color) return;
     const [r, g, b, a] = frames.color.from.map((value, i) => mix(value, frames.color!.to[i], turn));
     text.color.set(`rgba(${r}, ${g}, ${b}, ${a})`);
@@ -1145,9 +1183,7 @@ const seedInteractiveFromFull = () => {
   const rest: NonNullable<typeof restTextFrames> = {};
   textKinds.forEach((kind) => {
     const text = sharedTexts[kind];
-    if (text.metrics.value) {
-      rest[kind] = { left: text.left.get(), top: text.top.get(), scale: text.scale.get() };
-    }
+    if (text.metrics.value) rest[kind] = readTextFrame(text);
   });
   restTextFrames = rest;
   const captured = captureInteractiveFrames();
