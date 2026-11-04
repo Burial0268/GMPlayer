@@ -330,6 +330,9 @@ type TextFrames = {
   mini: SharedFrame;
   full: SharedFrame;
   scale: number;
+  // The scale at `full`: 1 at the slot, but a gesture that cut a layer switch short starts from
+  // where the text actually was.
+  fullScale: number;
   // How wide the bar lets the text run before it cuts it off, in screen pixels.
   miniWidth: number;
   // The text's colour in the bar and in the active layer; null when either could not be read.
@@ -391,6 +394,10 @@ let interactiveFrames: {
   fullArtwork: SharedFrame;
   texts: Record<TextKind, TextFrames | null>;
 } | null = null;
+// Where the texts were when a close began, if a layer switch had not finished: the gesture's
+// "open" end for them, like `fullArtwork` is for the artwork. Kept for the gesture's re-measures.
+let restTextFrames: Partial<Record<TextKind, { left: number; top: number; scale: number }>> | null =
+  null;
 let pendingInteractiveProgress = 0;
 let closeDragOrigin = 1;
 let progressUnsubscribe: (() => void) | null = null;
@@ -630,6 +637,7 @@ const animateTextToCurrentLayer = (kind: TextKind) => {
   const contentRect = mobileCoverRootRef.value?.getBoundingClientRect();
   const slot = contentRect && measureTextSlot(contentRect, kind);
   if (!previous || !slot || prefersReducedMotion()) return syncTextToCurrentLayer(kind);
+  text.color.set("");
   text.scale.set((previous.size * text.scale.get()) / slot.metrics.size);
   setTextMorph(kind, slot.metrics);
   artworkFrameAnimations.push(
@@ -645,6 +653,15 @@ const syncArtworkToCurrentLayer = () => {
   if (!frame) return false;
   setArtworkFrame(frame);
   return true;
+};
+
+// What a gesture left short of its slot (a layer switch it cut off, then cancelled) glides the
+// rest of the way instead of snapping; already there, it changes nothing.
+const glideToCurrentLayer = () => {
+  const frame = frameFromCoverLayout(mobileLayer.value === 1 ? 12 : 8);
+  if (!frame) return syncArtworkToCurrentLayer();
+  animateArtworkFrameTo(frame);
+  textKinds.forEach(animateTextToCurrentLayer);
 };
 
 const scheduleArtworkLayerSync = () => {
@@ -752,10 +769,18 @@ const measureText = (kind: TextKind, rootRect: DOMRect): TextFrames | null => {
   const miniSize = Number.parseFloat(getComputedStyle(miniEl).fontSize);
   if (!(miniSize > 0)) return null;
   const from = parseColor(miniStyle.color);
+  // The bar's text column rides up a few pixels as the bar sheds its chrome (progress 1 has it
+  // fully shifted); where the text sits at rest is without that.
+  const exitY = Number.parseFloat(
+    document.documentElement.style.getPropertyValue("--mobile-mini-player-text-y"),
+  );
+  const mini = frameFromRect(miniRect, rootRect, 0);
+  if (exitY) mini.top -= exitY;
   return {
-    mini: frameFromRect(miniRect, rootRect, 0),
+    mini,
     full: slot.frame,
     scale: miniSize / slot.metrics.size,
+    fullScale: 1,
     miniWidth: miniRect.width,
     color: from && slot.color ? { from, to: slot.color } : null,
     metrics: slot.metrics,
@@ -782,6 +807,7 @@ const setTextMorph = (kind: TextKind, metrics: TextMetrics | null) => {
 // album layer. Only closing (or a slot that cannot be measured) takes them away.
 const releaseInteractiveFrames = () => {
   interactiveFrames = null;
+  restTextFrames = null;
 };
 
 const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
@@ -796,6 +822,13 @@ const captureInteractiveFrames = (frames?: MiniSharedFrames) => {
     name: measureText("name", rootRect),
     artists: measureText("artists", rootRect),
   };
+  textKinds.forEach((kind) => {
+    const rest = restTextFrames?.[kind];
+    const frames = texts[kind];
+    if (!rest || !frames) return;
+    frames.full = { ...frames.full, left: rest.left, top: rest.top };
+    frames.fullScale = rest.scale;
+  });
   interactiveFrames = {
     miniArtwork: frameFromRect(mini.artworkRect, rootRect, mini.artworkRadius),
     fullArtwork,
@@ -858,12 +891,12 @@ const applyInteractiveFrame = (progress: number) => {
     const text = sharedTexts[kind];
     text.left.set(mix(frames.mini.left, frames.full.left, weight));
     text.top.set(mix(frames.mini.top - sheetTravel.get(), frames.full.top, weight));
-    const scale = mix(frames.scale, 1, weight);
+    const scale = mix(frames.scale, frames.fullScale, weight);
     text.scale.set(scale);
     // The window is the bar's at the start and the slot's at the end, in between a straight blend
     // of the two on screen: the cut-off moves smoothly instead of jumping when the float takes
     // over from the bar (or hands back to it).
-    text.width.set(mix(frames.miniWidth, frames.metrics.width, weight) / scale);
+    text.width.set(mix(frames.miniWidth, frames.metrics.width * frames.fullScale, weight) / scale);
     if (!frames.color) return;
     const [r, g, b, a] = frames.color.from.map((value, i) => mix(value, frames.color!.to[i], turn));
     text.color.set(`rgba(${r}, ${g}, ${b}, ${a})`);
@@ -1107,6 +1140,16 @@ const completeClosedMobileTransition = (updateStore: boolean) => {
 };
 
 const seedInteractiveFromFull = () => {
+  // A layer switch may still be under way: the texts start the close from where they are (as the
+  // artwork does below), not from a slot they have not reached, or they would jump to it.
+  const rest: NonNullable<typeof restTextFrames> = {};
+  textKinds.forEach((kind) => {
+    const text = sharedTexts[kind];
+    if (text.metrics.value) {
+      rest[kind] = { left: text.left.get(), top: text.top.get(), scale: text.scale.get() };
+    }
+  });
+  restTextFrames = rest;
   const captured = captureInteractiveFrames();
   if (!captured) return false;
   if (mobileAlbumLayerReady.value && interactiveFrames) {
@@ -1303,7 +1346,7 @@ const finishMobileInteractive = (forceOpen?: boolean) =>
         mobileTransitionActive.value = false;
         mobileTransitionDirection.value = null;
         releaseInteractiveFrames();
-        syncArtworkToCurrentLayer();
+        glideToCurrentLayer();
         applyProgressState(1);
       }
       if (resolveInteractive === resolve) resolveInteractive = undefined;
