@@ -25,7 +25,8 @@
 
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
-import type { AudioThreadEvent, SessionControls } from "@/utils/tauri/audio/protocol";
+import type { SessionControls } from "@/utils/tauri/audio/protocol";
+import { onBackendEvent } from "@/utils/tauri/audio/backendEvents";
 import { musicStore, userStore, useLocalLibraryStore } from "@/store";
 import { publishNativeManifest } from "./NativeManifestPublisher";
 
@@ -207,22 +208,18 @@ export const installSessionControlsSubscriber = (): (() => void) => {
   if (!isTauri()) return () => {};
   if (unsubscribe) return unsubscribe;
 
-  const transport = getAudioBackendTransport();
-  const drop = transport.subscribe((event: AudioThreadEvent) => {
-    if (event.type === "sessionControlsChanged") {
-      adoptSessionControls(event.data.controls);
-      return;
-    }
+  const drops = [
+    onBackendEvent("sessionControlsChanged", (event) => adoptSessionControls(event.data.controls)),
     // The projection carries them too, and it is what a freshly attached
     // controller sees first — a reload adopts the live values from here rather
     // than waiting for the next change.
-    if (event.type === "nowPlayingChanged" && event.data.info?.controls) {
-      adoptSessionControls(event.data.info.controls);
-    }
-  });
+    onBackendEvent("nowPlayingChanged", (event) => {
+      if (event.data.info?.controls) adoptSessionControls(event.data.info.controls);
+    }),
+  ];
 
   unsubscribe = () => {
-    drop();
+    for (const drop of drops) drop();
     unsubscribe = null;
   };
   return unsubscribe;

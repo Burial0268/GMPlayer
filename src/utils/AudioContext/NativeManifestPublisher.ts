@@ -40,7 +40,6 @@ import type { SongData } from "@/store/musicTypes";
 import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
-import { installQueueOrderSubscriber } from "./NativeQueueOrderSync";
 import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
@@ -278,8 +277,6 @@ const flushNativeManifest = (): void => {
 
   const sound = window.$player;
   if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
-  // Hear the backend's order before we publish anything it could answer.
-  installQueueOrderSubscriber();
 
   const music = useMusicDataStore();
   if (music.persistData.personalFmMode) return;

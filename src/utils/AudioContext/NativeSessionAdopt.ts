@@ -92,6 +92,10 @@ export interface AdoptedBackendSession {
  */
 export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession | null> => {
   if (!isTauri()) return null;
+  // Before the first await: if the snapshot times out below, an order event
+  // arriving later must still be heard. This is the one boot-time install point
+  // (a sound, and so a manifest, cannot exist before this runs).
+  installQueueOrderSubscriber();
 
   const snapshot = await withTimeout(audioGetSession(), SESSION_QUERY_TIMEOUT_MS);
   if (!snapshot) return null;
@@ -101,7 +105,6 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   // backend already holds would be rejected for the rest of the session.
   reconcileNativeManifestRevision(snapshot.manifestRevision);
   if (snapshot.personalFm) adoptNativePersonalFm(snapshot.personalFm);
-  installQueueOrderSubscriber();
   logNative(
     "info",
     `[NativeSessionAdopt] snapshot rev=${snapshot.manifestRevision} hasTrack=${snapshot.hasTrack} ` +

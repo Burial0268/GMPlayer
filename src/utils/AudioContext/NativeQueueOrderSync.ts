@@ -12,8 +12,7 @@
  */
 
 import { isTauri } from "@/utils/tauri/core/runtime";
-import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
-import type { AudioThreadEvent } from "@/utils/tauri/audio/protocol";
+import { onBackendEvent } from "@/utils/tauri/audio/backendEvents";
 // Import the store directly to avoid a cycle through the barrel export.
 import useMusicDataStore from "@/store/musicData";
 import { logNative } from "@/utils/tauri/core/nativeLog";
@@ -24,8 +23,7 @@ let unsubscribe: (() => void) | null = null;
 /** Idempotent. Safe to call from every place that talks to the backend. */
 export const installQueueOrderSubscriber = (): void => {
   if (!isTauri() || unsubscribe) return;
-  unsubscribe = getAudioBackendTransport().subscribe((event: AudioThreadEvent) => {
-    if (event.type !== "nativeQueueOrderChanged") return;
+  unsubscribe = onBackendEvent("nativeQueueOrderChanged", (event) => {
     // An order describes the list of the revision it was computed for. If we have
     // published a newer one since, this event was overtaken in transit: applying
     // it would lay an old permutation over the edited list, and the backend sends
