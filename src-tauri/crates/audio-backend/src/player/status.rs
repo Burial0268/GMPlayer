@@ -120,6 +120,7 @@ impl AudioPlayer {
             session.volume = self.volume;
             session.manifest_revision = self.manifest.revision();
             session.planner_active = self.planner_can_advance();
+            session.play_mode = self.session_controls.play_mode;
         }
 
         // Resolved display metadata for the in-process media-session bridge.

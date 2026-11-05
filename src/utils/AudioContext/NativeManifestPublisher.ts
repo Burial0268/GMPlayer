@@ -13,11 +13,13 @@
  * - JS owns policy: list contents, traversal order, play mode, credentials.
  * - Rust owns execution: when to resolve, what to play next, retry on failure.
  *
- * Traversal order is the *playlist* order, in every mode. Random mode shuffles
- * `persistData.playlists` itself (`musicData.shufflePlaylistOrder`) instead of
- * shipping a separate permutation, so the order is persisted with the queue,
- * survives a killed WebView, and a republish can never reshuffle it under the
- * backend mid-pass.
+ * Traversal order is the *playlist* order in every mode but random. In random
+ * mode the backend owns the permutation (`ManifestStore::set_owning_order`):
+ * `entries` is a set, it carries the permutation over by identity across
+ * republishes, and it reports a different order back as
+ * `nativeQueueOrderChanged`, which `musicData.adoptBackendQueueOrder` mirrors
+ * into the queue. That is one writer instead of two, and it is what stops the
+ * screen naming a song other than the one playing after the WebView was away.
  *
  * Tauri-only. The web backend accepts and ignores these messages (playback is
  * owned by the browser media host and JS is never frozen), so callers do not
@@ -36,8 +38,9 @@ import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
 import type { SongData } from "@/store/musicTypes";
 import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
-
-const IS_DEV = import.meta.env?.DEV ?? false;
+import { trackIdentityKey } from "@/utils/tauri/audio/identity";
+import { logNative } from "@/utils/tauri/core/nativeLog";
+import { installQueueOrderSubscriber } from "./NativeQueueOrderSync";
 
 const REVISION_STORAGE_KEY = "gmplayer:nativeManifestRevision";
 
@@ -73,6 +76,20 @@ const nextRevision = (): number => {
 let lastFingerprint = "";
 let publishScheduled = false;
 let pendingForce = false;
+/**
+ * The next manifest replaces the list (or enters random for the first time the
+ * backend hears of it), so the backend should draw a fresh permutation. Sticky
+ * until a manifest is actually built: a request made before any sound exists
+ * must survive the early returns in `flushNativeManifest`.
+ */
+let pendingReshuffle = false;
+
+/** Ask the backend for a new random permutation with the next manifest. */
+export const requestNativeReshuffle = (): void => {
+  if (!isTauri()) return;
+  pendingReshuffle = true;
+  publishNativeManifest({ force: true });
+};
 
 /**
  * Adopt a revision the backend reports. Covers the case where our persisted
@@ -97,14 +114,8 @@ export const reconcileNativeManifestRevision = (backendRevision: number): void =
 setPlannerRevisionObserver(reconcileNativeManifestRevision);
 
 /**
- * Stable seed for the backend's *own* reshuffle.
- *
- * The traversal order is not seeded from here any more: random mode reorders the
- * store playlist itself (`musicData.shufflePlaylistOrder`), so the manifest ships
- * natural order and both sides just walk positions. What still needs a seed is
- * the one case where the backend has to invent an order — a play-mode press on
- * the OS notification with no WebView alive (`ManifestStore::set_mode`). One seed
- * per session is enough: the backend mixes it with the revision and the pass.
+ * Stable seed for the backend's shuffles. One per session is enough: the backend
+ * mixes it with the revision and the pass.
  */
 const randomSeed = Math.floor(Math.random() * 0xffffffff);
 
@@ -226,7 +237,7 @@ const applyPlannerGate = (sound: NativeRustSound, enabled: boolean): void => {
   if (plannerEnabled === enabled) return;
   plannerEnabled = enabled;
   sound.setNativePlannerEnabled(enabled);
-  if (IS_DEV) console.log(`[NativeManifest] planner ${enabled ? "enabled" : "gated off"}`);
+  logNative("info", `[NativeManifest] planner ${enabled ? "enabled" : "gated off"}`);
 };
 
 /**
@@ -302,6 +313,8 @@ const flushNativeManifest = (): void => {
 
   const sound = window.$player;
   if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
+  // Hear the backend's order before we publish anything it could answer.
+  installQueueOrderSubscriber();
 
   const music = useMusicDataStore();
   if (music.persistData.personalFmMode) return;
@@ -324,7 +337,7 @@ const flushNativeManifest = (): void => {
 
   // Probe before building: bail on the no-op path without allocating entries.
   const signature = playlistSignature(playlists, music.persistData.playSongMode, cursorSongId);
-  if (!force && signature === lastFingerprint) return;
+  if (!force && !pendingReshuffle && signature === lastFingerprint) return;
 
   for (let index = 0; index < playlists.length; index++) {
     const song = playlists[index];
@@ -362,29 +375,35 @@ const flushNativeManifest = (): void => {
 
   lastFingerprint = signature;
 
+  // Consumed here, past every early return, so a request is never lost.
+  const reshuffle = pendingReshuffle;
+  pendingReshuffle = false;
+  const pinSong = reshuffle ? music.getPlaySongData : null;
+  const shufflePin = pinSong ? toIdentity(pinSong) : null;
+
   const manifest: NativePlaybackManifest = {
     schemaVersion: 1,
     revision: nextRevision(),
     entries,
-    // Empty = natural order, for every mode. Random mode's permutation is the
-    // playlist itself, so there is no separate order to ship — and nothing for a
-    // republish to reshuffle, which is what used to restart the pass (and repeat
-    // tracks) every time the Android WebView was killed and came back.
+    // Empty = natural order. In random mode the backend decides the permutation
+    // and ignores this; it tells us when ours is stale rather than us guessing.
     order: [],
     cursorIdentity,
     cursorIndex,
     mode: mode === "single" ? "single" : mode === "random" ? "random" : "normal",
     repeatList: true,
     randomSeed,
+    reshuffle,
+    shufflePin,
   };
 
   sound.setNativeManifest(manifest);
-  if (IS_DEV) {
-    console.log(
-      `[NativeManifest] published rev=${manifest.revision}, ${entries.length} entries, ` +
-        `mode=${manifest.mode}, cursor=${cursorIndex}`,
-    );
-  }
+  logNative(
+    "info",
+    `[NativeManifest] published rev=${manifest.revision} entries=${entries.length} ` +
+      `mode=${manifest.mode} cursor=${cursorIndex}/${trackIdentityKey(cursorIdentity)} ` +
+      `reshuffle=${reshuffle} pin=${trackIdentityKey(shufflePin)}`,
+  );
 };
 
 /**
@@ -404,5 +423,5 @@ export const clearNativeManifest = (): void => {
   plannerEnabled = null;
   const cleared = nextRevision();
   sound.clearNativeManifest(cleared);
-  if (IS_DEV) console.log(`[NativeManifest] cleared at rev=${cleared}`);
+  logNative("info", `[NativeManifest] cleared at rev=${cleared}`);
 };

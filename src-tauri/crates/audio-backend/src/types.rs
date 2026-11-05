@@ -586,6 +586,17 @@ pub enum AudioThreadEvent {
         playlist_index: usize,
         music_id: String,
     },
+    /// The backend's random permutation differs from the order the frontend
+    /// published, so the queue the user sees must be reordered to match.
+    ///
+    /// Emitted only on a difference: a frontend that mirrors the backend never
+    /// hears it. Carries identities, not positions — positions are exactly what
+    /// list edits invalidate.
+    #[serde(rename_all = "camelCase")]
+    NativeQueueOrderChanged {
+        manifest_revision: u64,
+        order: Vec<TrackIdentity>,
+    },
     /// Every candidate in this revision failed to resolve or play. Terminal
     /// until a new manifest arrives; `reason` is already redacted.
     #[serde(rename_all = "camelCase")]
@@ -756,8 +767,11 @@ pub struct NativePlaybackManifest {
     pub revision: u64,
     pub entries: Vec<NativeManifestEntry>,
     /// Explicit traversal order as indices into `entries`. Empty means natural
-    /// order, which is what the frontend ships for every mode: random mode
-    /// shuffles the playlist itself, so the permutation *is* the entry order.
+    /// order, which is what the frontend ships for every mode.
+    ///
+    /// Ignored in random mode while the planner drives: there the backend owns
+    /// the permutation and `entries` is only a set (plus a hint for where new
+    /// tracks go). See `ManifestStore::set_owning_order`.
     #[serde(default)]
     pub order: Vec<usize>,
     #[serde(default)]
@@ -774,6 +788,15 @@ pub struct NativePlaybackManifest {
     /// with no WebView alive to republish one.
     #[serde(default)]
     pub random_seed: Option<u64>,
+    /// The list was replaced wholesale, so the backend should draw a fresh
+    /// random permutation instead of carrying the old one over. Only meaningful
+    /// in random mode.
+    #[serde(default)]
+    pub reshuffle: bool,
+    /// Track to keep at the head of a fresh permutation. Falls back to the
+    /// playing track, then the declared cursor.
+    #[serde(default)]
+    pub shuffle_pin: Option<TrackIdentity>,
 }
 
 fn default_schema_version() -> u32 {
@@ -921,6 +944,16 @@ pub struct NativeSessionSnapshot {
     pub manifest_revision: u64,
     /// Whether the planner is in a position to drive advancement right now.
     pub planner_active: bool,
+    /// Play mode the backend holds. Meaningful only when `manifest_revision`
+    /// is non-zero: a freshly started process has seen nothing from a frontend
+    /// and its default says nothing about what the user chose.
+    #[serde(default)]
+    pub play_mode: NativePlaybackMode,
+    /// The backend's random permutation, by identity. Empty outside random
+    /// mode and whenever the planner is not driving. A frontend that was away
+    /// adopts this to catch its queue up before it locates the playing track.
+    #[serde(default)]
+    pub order: Vec<TrackIdentity>,
 }
 
 /// Resolved "what is playing" for OS media sessions.
@@ -1255,6 +1288,8 @@ mod tests {
             volume: 0.8,
             manifest_revision: 9,
             planner_active: true,
+            play_mode: NativePlaybackMode::Random,
+            order: vec![TrackIdentity::Netease { id: "7".into() }],
         };
         let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
         let object = value.as_object().expect("object");
@@ -1270,6 +1305,8 @@ mod tests {
             "volume",
             "manifestRevision",
             "plannerActive",
+            "playMode",
+            "order",
         ] {
             assert!(object.contains_key(key), "missing wire field `{key}`");
         }
@@ -1302,6 +1339,30 @@ mod tests {
             AudioThreadEvent::SyncStatus { identity, .. } => assert!(identity.is_none()),
             other => panic!("unexpected variant: {other:?}"),
         }
+    }
+
+    /// The frontend and the backend ship separately, so a manifest from a page
+    /// that predates the owned-order fields must still parse, and the new event
+    /// must keep the wire name the frontend listens for.
+    #[test]
+    fn queue_order_wire_shape_is_stable() {
+        let manifest: NativePlaybackManifest = serde_json::from_value(serde_json::json!({
+            "revision": 3,
+            "entries": [],
+            "mode": "random",
+        }))
+        .expect("an older manifest still parses");
+        assert!(!manifest.reshuffle);
+        assert!(manifest.shuffle_pin.is_none());
+
+        let event = AudioThreadEvent::NativeQueueOrderChanged {
+            manifest_revision: 3,
+            order: vec![TrackIdentity::Netease { id: "7".into() }],
+        };
+        let value = serde_json::to_value(event).expect("serialize");
+        assert_eq!(value["type"], "nativeQueueOrderChanged");
+        assert_eq!(value["data"]["manifestRevision"], 3);
+        assert_eq!(value["data"]["order"][0]["id"], "7");
     }
 
     /// Server-driven modes (personal FM, listen-together) publish a manifest but

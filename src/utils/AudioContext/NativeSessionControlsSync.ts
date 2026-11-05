@@ -162,9 +162,9 @@ const adoptSessionControls = (controls: SessionControls): void => {
     if (controls.playMode && ["normal", "random", "single"].includes(controls.playMode)) {
       // `setPlaySongMode` is the interactive path: it toasts and re-publishes the
       // controls, neither of which is right for a value the backend has *already*
-      // applied to its own planner. `adoptPlaySongMode` is the quiet half — but it
-      // still reorders the queue, because in random mode the traversal order *is*
-      // the queue order.
+      // applied to its own planner. `adoptPlaySongMode` is the quiet half. It does
+      // not shuffle either: in random mode the backend owns the permutation and
+      // reports it as `nativeQueueOrderChanged` right behind these controls.
       modeChanged = music.adoptPlaySongMode(controls.playMode);
     }
 
@@ -191,12 +191,10 @@ const adoptSessionControls = (controls: SessionControls): void => {
   lastPublished = "";
 
   if (modeChanged) {
-    // The backend built its own shuffle when it applied the mode (it had to —
-    // there may have been no page alive to ask), and the frontend has just
-    // reordered its queue. Republishing is the convergence point: it hands the
-    // backend the order the UI is actually showing, so "next up" and what plays
-    // next are the same thing. Safe from a loop because a manifest publish never
-    // publishes controls.
+    // Republish so the backend sees the mode change as ours too. It carries its
+    // permutation over by identity, so this cannot reshuffle; if our queue has
+    // not caught up yet it simply answers with the order again. Safe from a loop
+    // because a manifest publish never publishes controls.
     publishNativeManifest({ force: true });
   }
 };

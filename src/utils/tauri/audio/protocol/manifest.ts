@@ -42,9 +42,11 @@ export interface NativePlaybackManifest {
   entries: NativeManifestEntry[];
   /**
    * Explicit traversal order as indices into `entries`. Empty means natural
-   * order, which is what the frontend now ships for *every* mode: random mode
-   * shuffles the playlist itself, so the permutation is the entry order and
-   * there is nothing separate to send.
+   * order, which is what the frontend ships for every mode.
+   *
+   * In random mode the backend owns the permutation and this is ignored:
+   * `entries` is a set, plus a hint for where new tracks go. The backend reports
+   * its order back (`nativeQueueOrderChanged`) and the queue mirrors it.
    */
   order: number[];
   cursorIdentity: TrackIdentity | null;
@@ -52,11 +54,17 @@ export interface NativePlaybackManifest {
   mode: "normal" | "single" | "random";
   repeatList: boolean;
   /**
-   * Seed for the one shuffle the backend builds on its own: a play-mode press on
-   * the OS notification with no WebView alive (`ManifestStore::set_mode`). The
-   * frontend's next publish replaces that order with the playlist's own.
+   * Seed for the backend's shuffles (a fresh permutation, or a play-mode press
+   * on the OS notification with no WebView alive).
    */
   randomSeed?: number | null;
+  /**
+   * The list was replaced wholesale, so the backend should draw a new random
+   * permutation instead of carrying the old one over by identity.
+   */
+  reshuffle?: boolean;
+  /** Track to keep at the head of that fresh permutation. */
+  shufflePin?: TrackIdentity | null;
 }
 
 /**
@@ -149,4 +157,11 @@ export interface NativeSessionSnapshot {
   /** Manifest revision the backend holds, so the frontend can stay ahead of it. */
   manifestRevision: number;
   plannerActive: boolean;
+  /**
+   * Play mode the backend holds. Only meaningful when `manifestRevision` is
+   * non-zero: a process that has seen no frontend holds a default, not a choice.
+   */
+  playMode?: "normal" | "random" | "single";
+  /** The backend's random permutation by identity; empty outside random mode. */
+  order?: TrackIdentity[];
 }
