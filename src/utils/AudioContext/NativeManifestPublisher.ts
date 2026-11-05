@@ -41,36 +41,7 @@ import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { installQueueOrderSubscriber } from "./NativeQueueOrderSync";
-
-const REVISION_STORAGE_KEY = "gmplayer:nativeManifestRevision";
-
-/**
- * Monotonic manifest revision. The backend rejects anything not strictly newer.
- *
- * This MUST survive a WebView reload: the Rust `Player` lives for the whole
- * process, so a module-scoped counter restarting at 1 while the backend holds
- * (say) 12 would make it reject every publish — and every clear — for the rest
- * of the session, with the planner still advancing the pre-reload list.
- * Persisting it keeps the sequence monotonic across reloads and restarts.
- */
-let revision = (() => {
-  try {
-    const stored = Number(localStorage.getItem(REVISION_STORAGE_KEY));
-    return Number.isFinite(stored) && stored > 0 ? stored : 0;
-  } catch {
-    return 0;
-  }
-})();
-
-const nextRevision = (): number => {
-  revision += 1;
-  try {
-    localStorage.setItem(REVISION_STORAGE_KEY, String(revision));
-  } catch {
-    /* quota/unavailable — in-memory monotonicity still holds this session */
-  }
-  return revision;
-};
+import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
 let lastFingerprint = "";
@@ -97,13 +68,7 @@ export const requestNativeReshuffle = (): void => {
  * without this the backend would reject everything we publish.
  */
 export const reconcileNativeManifestRevision = (backendRevision: number): void => {
-  if (!Number.isFinite(backendRevision) || backendRevision <= revision) return;
-  revision = backendRevision;
-  try {
-    localStorage.setItem(REVISION_STORAGE_KEY, String(revision));
-  } catch {
-    /* best effort */
-  }
+  if (!raiseManifestRevision(backendRevision)) return;
   // Our last-published state no longer describes what the backend holds.
   lastFingerprint = "";
   plannerEnabled = null;
@@ -383,7 +348,7 @@ const flushNativeManifest = (): void => {
 
   const manifest: NativePlaybackManifest = {
     schemaVersion: 1,
-    revision: nextRevision(),
+    revision: bumpManifestRevision(),
     entries,
     // Empty = natural order. In random mode the backend decides the permutation
     // and ignores this; it tells us when ours is stale rather than us guessing.
@@ -421,7 +386,7 @@ export const clearNativeManifest = (): void => {
   // `ClearNativeManifest` rebuilds the backend `Planner` from scratch, which
   // re-enables it. Drop our cached gate so the next publish always re-asserts.
   plannerEnabled = null;
-  const cleared = nextRevision();
+  const cleared = bumpManifestRevision();
   sound.clearNativeManifest(cleared);
   logNative("info", `[NativeManifest] cleared at rev=${cleared}`);
 };

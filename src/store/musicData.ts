@@ -1213,7 +1213,8 @@ const useMusicDataStore = defineStore("musicData", {
      *
      * 后端是排列的唯一写者：前端在这里镜像它，而不是自己洗一份。按 identity
      * 对号入座——位置恰恰是列表编辑会让它失效的东西。后端没提到的歌（比如
-     * 还没发布的新加歌曲）按原有相对次序排在末尾。
+     * 还没发布的新加歌曲）和后端的 rebase_order 一个规则：放在它在当前队列里
+     * 前驱的后面，找不到前驱就放队首。
      *
      * 默认只在随机模式下生效：模式事件晚到时，一个迟到的排列不该把已经还原的
      * 自然序队列又打乱。`force` 给启动时的快照采纳用，那时模式刚刚被采纳完。
@@ -1256,7 +1257,19 @@ const useMusicDataStore = defineStore("musicData", {
           taken.add(song);
         }
       }
-      for (const song of list) if (!taken.has(song)) next.push(song);
+      for (let i = 0; i < list.length; i++) {
+        const song = list[i];
+        if (taken.has(song)) continue;
+        let at = 0;
+        for (let j = i - 1; j >= 0; j--) {
+          if (taken.has(list[j])) {
+            at = next.indexOf(list[j]) + 1;
+            break;
+          }
+        }
+        next.splice(at, 0, song);
+        taken.add(song);
+      }
 
       // 没有快照就补上：这是「后端已经持有排列」的标记，ensureShuffledInRandomMode
       // 靠它判断不必再请求重洗；退出随机模式时也有东西可还原。
