@@ -35,8 +35,8 @@ import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import useMusicDataStore from "@/store/musicData";
 import { reconcileNativeManifestRevision } from "./NativeManifestPublisher";
 import { adoptNativePersonalFm } from "./NativePersonalFm";
-
-const IS_DEV = import.meta.env?.DEV ?? false;
+import { logNative } from "@/utils/tauri/core/nativeLog";
+import { installQueueOrderSubscriber } from "./NativeQueueOrderSync";
 
 const MUSIC_ID_PREFIX = "local:";
 
@@ -92,6 +92,10 @@ export interface AdoptedBackendSession {
  */
 export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession | null> => {
   if (!isTauri()) return null;
+  // Before the first await: if the snapshot times out below, an order event
+  // arriving later must still be heard. This is the one boot-time install point
+  // (a sound, and so a manifest, cannot exist before this runs).
+  installQueueOrderSubscriber();
 
   const snapshot = await withTimeout(audioGetSession(), SESSION_QUERY_TIMEOUT_MS);
   if (!snapshot) return null;
@@ -101,6 +105,28 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   // backend already holds would be rejected for the rest of the session.
   reconcileNativeManifestRevision(snapshot.manifestRevision);
   if (snapshot.personalFm) adoptNativePersonalFm(snapshot.personalFm);
+  logNative(
+    "info",
+    `[NativeSessionAdopt] snapshot rev=${snapshot.manifestRevision} hasTrack=${snapshot.hasTrack} ` +
+      `identity=${trackIdentityKey(snapshot.identity)} mode=${snapshot.playMode} ` +
+      `order=${snapshot.order?.length ?? 0} store(mode=${useMusicDataStore().persistData.playSongMode}, ` +
+      `index=${useMusicDataStore().persistData.playSongIndex})`,
+  );
+
+  // Catch the queue up with the backend BEFORE locating the playing track. The
+  // backend owns the random permutation, and a notification press while the page
+  // was away may have changed the mode or the order under the persisted queue.
+  // `manifestRevision === 0` is a process that has seen no frontend: its mode is
+  // a default, not a choice, and adopting it would overwrite the user's.
+  if (!snapshot.personalFm && snapshot.manifestRevision > 0) {
+    const music = useMusicDataStore();
+    if (snapshot.playMode) {
+      music.adoptPlaySongMode(snapshot.playMode, { backendOrdered: true });
+    }
+    if (snapshot.order?.length) {
+      music.adoptBackendQueueOrder(snapshot.order, { force: true });
+    }
+  }
 
   if (!snapshot.hasTrack || !snapshot.identity) return null;
   if (!snapshot.musicId.startsWith(MUSIC_ID_PREFIX)) return null;
@@ -125,11 +151,11 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
     // The backend is on a track this frontend no longer lists (playlist edited
     // in another window, storage rolled back). Let the normal startup path
     // replace it rather than adopting something the UI cannot describe.
-    if (IS_DEV) {
-      console.warn(
-        `[NativeSessionAdopt] backend track ${trackIdentityKey(snapshot.identity)} not in playlist`,
-      );
-    }
+    logNative(
+      "warn",
+      `[NativeSessionAdopt] backend track ${trackIdentityKey(snapshot.identity)} not in the ` +
+        `${playlists.length}-track queue; falling back to a normal start`,
+    );
     return null;
   }
 
@@ -153,12 +179,11 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   music.setPlaySongTime({ currentTime: position, duration });
   music.setPlayState(snapshot.isPlaying);
 
-  if (IS_DEV) {
-    console.log(
-      `[NativeSessionAdopt] adopting ${trackIdentityKey(identity)} @ index ${index}, ` +
-        `${position.toFixed(1)}s / ${duration.toFixed(1)}s, playing=${snapshot.isPlaying}`,
-    );
-  }
+  logNative(
+    "info",
+    `[NativeSessionAdopt] adopting ${trackIdentityKey(identity)} @ index ${index}, ` +
+      `${position.toFixed(1)}s / ${duration.toFixed(1)}s, playing=${snapshot.isPlaying}`,
+  );
 
   return {
     songId,

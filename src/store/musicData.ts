@@ -17,6 +17,7 @@ import {
   cancelNativeQueuePrefill,
   publishNativeManifest,
   clearNativeManifest,
+  requestNativeReshuffle,
   publishSessionControls,
 } from "@/utils/AudioContext";
 import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
@@ -42,7 +43,9 @@ import {
 import { asRawEntries, asRawEntry } from "@/utils/rawEntry";
 import { hintTracks } from "@/utils/ncmPrefetch";
 import { isTauri } from "@/utils/tauri/core/runtime";
-import type { NativeFmSnapshot } from "@/utils/tauri/audio/protocol";
+import type { NativeFmSnapshot, TrackIdentity } from "@/utils/tauri/audio/protocol";
+import { trackIdentityKey } from "@/utils/tauri/audio/identity";
+import { logNative } from "@/utils/tauri/core/nativeLog";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/PersonalFmState";
 import {
   startNativePersonalFm,
@@ -890,9 +893,12 @@ const useMusicDataStore = defineStore("musicData", {
       const incoming = asRawEntries(value);
       // 整表替换视为一次新的随机序。随机模式下队列本身就是随机顺序，所以在
       // 这里一次性打乱，而不是让之后每次切歌各自摇骰子。
+      // Tauri 下排列由后端持有：这里只记下打乱前的次序，并要求后端重新洗一次，
+      // 结果会通过 NativeQueueOrderChanged 回来（见 adoptBackendQueueOrder）。
       if (this.persistData.playSongMode === "random" && incoming.length > 1) {
         this.persistData.preShuffleOrder = incoming.map((song) => song.id);
-        shuffleInPlace(incoming);
+        if (isTauri()) requestNativeReshuffle();
+        else shuffleInPlace(incoming);
       } else {
         this.persistData.preShuffleOrder = [];
       }
@@ -1098,12 +1104,24 @@ const useMusicDataStore = defineStore("musicData", {
      * `ManifestStore::set_mode` 把它钉在 slot 0 的约定一致。
      *
      * 打乱前的次序按 id 记进 preShuffleOrder，退出随机模式时用它还原。
+     *
+     * 只有 Web/WASM 在这里真的洗牌；Tauri 下排列由 Rust 持有（见
+     * `ManifestStore::set_owning_order`），这里只记快照。
      */
     shufflePlaylistOrder(): boolean {
       const list = this.persistData.playlists;
       if (list.length < 2) return false;
       if (!this.persistData.preShuffleOrder.length) {
         this.persistData.preShuffleOrder = list.map((song) => song.id);
+      }
+      // Tauri：排列归后端所有，前端不洗牌，只等 NativeQueueOrderChanged。
+      // 自己再洗一份就是两个写者——后端按它的顺序走，界面按另一个顺序显示。
+      if (isTauri()) {
+        // 还没有 sound 说明后端没见过我们的列表：它的第一份 manifest 会被当作
+        // 「上次的队列」原样信任，所以得明说这次要洗。有 sound 时后端已经收到
+        // 模式切换（或马上会收到 manifest），自己会洗，再请求只会洗两次。
+        if (!(window.$player instanceof NativeRustSound)) requestNativeReshuffle();
+        return false;
       }
       const next = shuffleInPlace<SongData>(list.slice());
       const anchorId = list[this.persistData.playSongIndex]?.id;
@@ -1143,6 +1161,14 @@ const useMusicDataStore = defineStore("musicData", {
       if (this.persistData.personalFmMode) return;
       if (this.persistData.playSongMode !== "random") return;
       if (this.persistData.preShuffleOrder.length) return;
+      if (isTauri()) {
+        // 队列是老版本留下的自然序：快照它，并让后端洗一次。
+        const list = this.persistData.playlists;
+        if (list.length < 2) return;
+        this.persistData.preShuffleOrder = list.map((song) => song.id);
+        requestNativeReshuffle();
+        return;
+      }
       if (this.shufflePlaylistOrder()) publishNativeManifest();
     },
 
@@ -1164,6 +1190,13 @@ const useMusicDataStore = defineStore("musicData", {
             ? this.restorePlaylistOrder()
             : false;
       if (!reordered) return;
+      this.afterQueueReordered();
+    },
+
+    /**
+     * 队列顺序变了之后的善后：已经算好的「下一首」全是按旧顺序算的。
+     */
+    afterQueueReordered() {
       // 已经解析好的「下一首」全是按旧顺序算的，一律作废。
       cancelNativeQueuePrefill();
       getAudioPreloader().cleanup();
@@ -1176,17 +1209,104 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     /**
+     * 按后端上报的随机排列重排队列（只 Tauri）。
+     *
+     * 后端是排列的唯一写者：前端在这里镜像它，而不是自己洗一份。按 identity
+     * 对号入座——位置恰恰是列表编辑会让它失效的东西。后端没提到的歌（比如
+     * 还没发布的新加歌曲）和后端的 rebase_order 一个规则：放在它在当前队列里
+     * 前驱的后面，找不到前驱就放队首。
+     *
+     * 默认只在随机模式下生效：模式事件晚到时，一个迟到的排列不该把已经还原的
+     * 自然序队列又打乱。`force` 给启动时的快照采纳用，那时模式刚刚被采纳完。
+     * 游标跟着歌走（applyQueueOrder 锚定当前这首），这里不动播放。
+     */
+    adoptBackendQueueOrder(order: TrackIdentity[], options: { force?: boolean } = {}): boolean {
+      if (!isTauri() || this.persistData.personalFmMode) return false;
+      if (!options.force && this.persistData.playSongMode !== "random") {
+        // A late order for a mode the user already left: dropped on purpose.
+        logNative(
+          "info",
+          `[queueOrder] ignored ${order.length} tracks, store mode=${this.persistData.playSongMode}`,
+        );
+        return false;
+      }
+      const list = this.persistData.playlists;
+      if (list.length < 2 || !order.length) return false;
+
+      const keyOf = (song: SongData): string | null =>
+        song?.local?.uri
+          ? trackIdentityKey({ provider: "local", path: String(song.local.uri) })
+          : trackIdentityKey({ provider: "netease", id: String(song?.id) });
+
+      // 同一首歌可以在队列里出现多次：每个出现只消费一次。
+      const pending = new Map<string, SongData[]>();
+      for (const song of list) {
+        const key = keyOf(song);
+        if (key === null) continue;
+        const bucket = pending.get(key);
+        if (bucket) bucket.push(song);
+        else pending.set(key, [song]);
+      }
+      const next: SongData[] = [];
+      const taken = new Set<SongData>();
+      for (const identity of order) {
+        const key = trackIdentityKey(identity);
+        const song = key === null ? undefined : pending.get(key)?.shift();
+        if (song) {
+          next.push(song);
+          taken.add(song);
+        }
+      }
+      for (let i = 0; i < list.length; i++) {
+        const song = list[i];
+        if (taken.has(song)) continue;
+        let at = 0;
+        for (let j = i - 1; j >= 0; j--) {
+          if (taken.has(list[j])) {
+            at = next.indexOf(list[j]) + 1;
+            break;
+          }
+        }
+        next.splice(at, 0, song);
+        taken.add(song);
+      }
+
+      // 没有快照就补上：这是「后端已经持有排列」的标记，ensureShuffledInRandomMode
+      // 靠它判断不必再请求重洗；退出随机模式时也有东西可还原。
+      if (!this.persistData.preShuffleOrder.length) {
+        this.persistData.preShuffleOrder = list.map((song) => song.id);
+      }
+      if (next.every((song, index) => song === list[index])) return false;
+      const before = this.getPlaySongData?.id;
+      if (!this.applyQueueOrder(next)) return false;
+      this.afterQueueReordered();
+      logNative(
+        "info",
+        `[queueOrder] mirrored backend order: ${order.length} tracks, ${list.length} in queue, ` +
+          `force=${options.force === true}, playing=${before} now at index ${this.persistData.playSongIndex}`,
+      );
+      return true;
+    },
+
+    /**
      * 采纳后端上报的播放模式。
      *
      * 通知栏按钮按下时后端才是唯一权威，此时可能连 WebView 都没有。与
      * setPlaySongMode 的区别是不吐司、不回推 controls（那会绕回来），但队列顺序
      * 必须照样跟着变——随机模式的顺序就装在 playlists 里。
      */
-    adoptPlaySongMode(mode: "normal" | "random" | "single"): boolean {
+    adoptPlaySongMode(
+      mode: "normal" | "random" | "single",
+      options: { backendOrdered?: boolean } = {},
+    ): boolean {
       if (this.persistData.personalFmMode) return false;
       const previousMode = this.persistData.playSongMode;
       if (mode === previousMode) return false;
       this.persistData.playSongMode = mode;
+      // 启动采纳：后端已经有排列，马上会通过快照交过来。这里若走
+      // syncQueueOrderToMode，没有 sound 的冷启动会被当成「要后端重洗」，
+      // 把它手里的排列扔掉。
+      if (options.backendOrdered && mode === "random") return true;
       this.syncQueueOrderToMode(previousMode);
       return true;
     },

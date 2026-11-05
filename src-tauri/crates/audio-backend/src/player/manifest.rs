@@ -9,14 +9,23 @@
 //! stored one is rejected, which is what makes stale in-flight frontend state
 //! (a wake-up replay, a racing list edit) unable to overwrite newer state.
 //!
-//! Traversal order is explicit (`order`), not derived — but the frontend now
-//! ships natural order for every mode, because random mode shuffles the
-//! *playlist* rather than sending a separate permutation. The order the backend
-//! builds itself (`random_seed`, `reshuffle_random`) is therefore reserved for
-//! the one case with no frontend to ask: a play-mode press on the OS
-//! notification while the WebView is dead.
+//! Traversal order is explicit (`order`), and in random mode it is the
+//! backend's: the permutation lives here, survives republishes by identity, and
+//! is reported to the frontend, which mirrors it into its queue.
+//!
+//! The frontend used to shuffle its own playlist and ship that as the order,
+//! while `set_mode` shuffled a second copy for a notification press. Two
+//! writers meant the queue the user saw and the order the planner walked could
+//! differ for as long as a page was away — which is how the screen came to name
+//! a different song from the one playing. In random mode `entries` is now a
+//! set (plus a hint for where new tracks go); `set_owning_order` is the only
+//! place the permutation is decided. Every other mode keeps the wire order.
 
-use crate::types::{NativeManifestEntry, NativePlaybackManifest, NativePlaybackMode};
+use std::collections::{HashMap, VecDeque};
+
+use crate::types::{
+    NativeManifestEntry, NativePlaybackManifest, NativePlaybackMode, TrackIdentity,
+};
 
 #[derive(Debug, Default)]
 pub struct ManifestStore {
@@ -59,6 +68,87 @@ impl ManifestStore {
         self.shuffle_pass = 0;
         self.manifest = Some(manifest);
         true
+    }
+
+    /// Install a manifest and, in random mode, decide the permutation.
+    ///
+    /// `None` means the revision was stale and nothing changed. Otherwise the
+    /// bool says whether the resulting order differs from the order the frontend
+    /// published — i.e. whether its queue is out of date and must be told.
+    ///
+    /// - fresh permutation when the frontend replaced the list (`reshuffle`) or
+    ///   the mode just became random, with `pin` kept at the head so the change
+    ///   alone never moves what is audible;
+    /// - otherwise the previous permutation carried over by identity, so a
+    ///   republish — which follows every track change — cannot restart the pass;
+    /// - the very first manifest is trusted as it is: it is the queue the user
+    ///   saw last session, which is the permutation to resume.
+    pub fn set_owning_order(
+        &mut self,
+        manifest: NativePlaybackManifest,
+        pin: Option<&str>,
+    ) -> Option<bool> {
+        if manifest.revision <= self.revision() {
+            return None;
+        }
+        let previous_mode = self.manifest.as_ref().map(|m| m.mode);
+        let previous_keys = self.order_keys();
+        let random = manifest.mode == NativePlaybackMode::Random;
+        let reshuffle = manifest.reshuffle;
+        self.set(manifest);
+        if !random {
+            return Some(false);
+        }
+
+        let switched = matches!(previous_mode, Some(mode) if mode != NativePlaybackMode::Random);
+        if reshuffle || switched {
+            self.reshuffle_random();
+            self.pin_to_head(pin);
+        } else if previous_mode.is_some() {
+            self.order = rebase_order(&previous_keys, self.entries());
+        }
+        Some(!self.is_natural_order())
+    }
+
+    /// Keys of the traversal, in order. The identity-keyed form of `order`, which
+    /// is what survives a manifest replacement.
+    #[cfg(test)]
+    pub fn order_keys_for_test(&self) -> Vec<String> {
+        self.order_keys()
+    }
+
+    fn order_keys(&self) -> Vec<String> {
+        self.order
+            .iter()
+            .filter_map(|position| self.entry_at(*position))
+            .map(|entry| entry.identity.key())
+            .collect()
+    }
+
+    /// The traversal by identity, for reporting to a frontend.
+    pub fn order_identities(&self) -> Vec<TrackIdentity> {
+        self.order
+            .iter()
+            .filter_map(|position| self.entry_at(*position))
+            .map(|entry| entry.identity.clone())
+            .collect()
+    }
+
+    fn is_natural_order(&self) -> bool {
+        self.order
+            .iter()
+            .enumerate()
+            .all(|(slot, position)| slot == *position)
+    }
+
+    /// Swap the track named by `key` into slot 0. Unknown keys change nothing.
+    fn pin_to_head(&mut self, key: Option<&str>) {
+        let Some(position) = key.and_then(|key| self.position_of_key(key)) else {
+            return;
+        };
+        if let Some(slot) = self.slot_of_position(position) {
+            self.order.swap(0, slot);
+        }
     }
 
     /// Drop the manifest. Returns `false` for a stale clear so a late clear
@@ -122,16 +212,14 @@ impl ManifestStore {
 
     /// Switch the traversal mode in place, without a republish.
     ///
-    /// The frontend normally owns the order — random mode ships the shuffled
-    /// playlist itself — but a mode change can arrive from a notification button
-    /// while the WebView is dead, and the next hop has to honour it immediately,
-    /// not whenever the page comes back. So this is the one place the backend
-    /// builds an order of its own: a shuffle pinned so the playing track stays
-    /// put (`keep_position`), and natural order on the way out of random.
+    /// A mode change can arrive from a notification button while the WebView is
+    /// dead, and the next hop has to honour it immediately, not whenever the page
+    /// comes back. Into random this builds a shuffle pinned so the playing track
+    /// stays put (`keep_position`); out of random it restores natural order.
     /// Returns `false` when nothing changed.
     ///
-    /// The frontend republishes at a higher revision when it wakes, which
-    /// replaces this order with its own — that is the convergence point, and it
+    /// The frontend mirrors this order when it is told (`NativeQueueOrderChanged`),
+    /// and a republish at a higher revision carries it forward by identity — which
     /// is why this deliberately does not touch `revision`.
     pub fn set_mode(&mut self, mode: NativePlaybackMode, keep_position: Option<usize>) -> bool {
         let Some(manifest) = self.manifest.as_mut() else {
@@ -239,6 +327,55 @@ fn sanitize_order(order: &[usize], len: usize) -> Vec<usize> {
     out
 }
 
+/// Carry a previous permutation over to a new entry list, by identity.
+///
+/// Tracks that were already ordered keep their relative order; removed ones
+/// drop out; a new one is placed right after the nearest earlier entry of the
+/// frontend's list, so "play next" (inserted after the cursor) and "add to
+/// queue" (appended) land where the user put them. A frontend that mirrors the
+/// permutation therefore gets it back unchanged.
+///
+/// shortcut: a new entry's slot is found by a linear scan, so a list that shares
+/// nothing with the old one is handled by the natural-order early return below
+/// rather than by n inserts; upgrade if bulk partial overlaps ever get large.
+fn rebase_order(previous: &[String], entries: &[NativeManifestEntry]) -> Vec<usize> {
+    let len = entries.len();
+    // Duplicate identities are legal in a playlist; each occurrence is consumed once.
+    let mut available: HashMap<String, VecDeque<usize>> = HashMap::new();
+    for (position, entry) in entries.iter().enumerate() {
+        available
+            .entry(entry.identity.key())
+            .or_default()
+            .push_back(position);
+    }
+
+    let mut placed = vec![false; len];
+    let mut order = Vec::with_capacity(len);
+    for key in previous {
+        if let Some(position) = available.get_mut(key).and_then(VecDeque::pop_front) {
+            placed[position] = true;
+            order.push(position);
+        }
+    }
+    if order.is_empty() {
+        return (0..len).collect();
+    }
+
+    for position in 0..len {
+        if placed[position] {
+            continue;
+        }
+        let at = (0..position)
+            .rev()
+            .find(|earlier| placed[*earlier])
+            .and_then(|earlier| order.iter().position(|slot| *slot == earlier))
+            .map_or(0, |slot| slot + 1);
+        order.insert(at, position);
+        placed[position] = true;
+    }
+    order
+}
+
 fn splitmix64(state: u64) -> u64 {
     let mut z = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
@@ -285,6 +422,8 @@ mod tests {
             mode: NativePlaybackMode::Normal,
             repeat_list: true,
             random_seed: None,
+            reshuffle: false,
+            shuffle_pin: None,
         }
     }
 
@@ -317,7 +456,11 @@ mod tests {
             );
             let mut sorted = store.order().to_vec();
             sorted.sort_unstable();
-            assert_eq!(sorted, vec![0, 1, 2, 3, 4], "seed {seed} is not a permutation");
+            assert_eq!(
+                sorted,
+                vec![0, 1, 2, 3, 4],
+                "seed {seed} is not a permutation"
+            );
         }
     }
 
@@ -338,7 +481,11 @@ mod tests {
 
             store.set_mode(NativePlaybackMode::Random, Some(1));
             assert!(store.set_mode(target, Some(1)));
-            assert_eq!(store.order(), &[0, 1, 2, 3], "leaving random for {target:?}");
+            assert_eq!(
+                store.order(),
+                &[0, 1, 2, 3],
+                "leaving random for {target:?}"
+            );
         }
     }
 
@@ -501,5 +648,166 @@ mod tests {
         store.set(manifest(1, &["only"]));
         store.reshuffle_random();
         assert_eq!(store.order(), &[0]);
+    }
+
+    // ── the backend owns the random permutation ──────────────────────────
+
+    fn random_manifest(revision: u64, ids: &[&str]) -> NativePlaybackManifest {
+        NativePlaybackManifest {
+            mode: NativePlaybackMode::Random,
+            random_seed: Some(11),
+            ..manifest(revision, ids)
+        }
+    }
+
+    fn keys(store: &ManifestStore) -> Vec<String> {
+        store.order_keys()
+    }
+
+    /// The first manifest after a process start is the queue the user saw last
+    /// session. Reshuffling it would throw away the permutation they were in.
+    #[test]
+    fn the_first_random_manifest_is_trusted() {
+        let mut store = ManifestStore::new();
+        let outcome = store.set_owning_order(random_manifest(1, &["a", "b", "c", "d"]), None);
+        assert_eq!(
+            outcome,
+            Some(false),
+            "nothing differs from what was published"
+        );
+        assert_eq!(store.order(), &[0, 1, 2, 3]);
+    }
+
+    /// A frontend that mirrors the permutation must be able to republish it —
+    /// after every track change — without the backend finding a difference.
+    #[test]
+    fn a_mirrored_republish_changes_nothing() {
+        let mut store = ManifestStore::new();
+        store.set_owning_order(random_manifest(1, &["a", "b", "c", "d"]), None);
+        store.set_owning_order(
+            NativePlaybackManifest {
+                reshuffle: true,
+                ..random_manifest(2, &["a", "b", "c", "d"])
+            },
+            Some("netease:b"),
+        );
+        let permutation = keys(&store);
+
+        // The frontend applied that order and publishes its queue as it now is.
+        let mirrored: Vec<&str> = permutation.iter().map(|k| &k["netease:".len()..]).collect();
+        let outcome = store.set_owning_order(random_manifest(3, &mirrored), None);
+        assert_eq!(outcome, Some(false));
+        assert_eq!(keys(&store), permutation);
+    }
+
+    /// The bug itself: a page that was away publishes its stale queue order. The
+    /// backend keeps the permutation it has been walking and says it differs.
+    #[test]
+    fn a_stale_queue_does_not_overwrite_the_permutation() {
+        let mut store = ManifestStore::new();
+        store.set_owning_order(random_manifest(1, &["a", "b", "c", "d", "e"]), None);
+        store.set_owning_order(
+            NativePlaybackManifest {
+                reshuffle: true,
+                ..random_manifest(2, &["a", "b", "c", "d", "e"])
+            },
+            Some("netease:c"),
+        );
+        let held = keys(&store);
+        assert_eq!(held[0], "netease:c", "the pinned track leads the pass");
+
+        let outcome = store.set_owning_order(random_manifest(3, &["a", "b", "c", "d", "e"]), None);
+        assert_eq!(outcome, Some(true), "the frontend's queue is out of date");
+        assert_eq!(keys(&store), held);
+    }
+
+    /// Entering random on a republish (the notification press and the in-app
+    /// button race) shuffles once, with the playing track still first.
+    #[test]
+    fn becoming_random_shuffles_with_the_pin_first() {
+        for seed in 0..16u64 {
+            let mut store = ManifestStore::new();
+            store.set_owning_order(manifest(1, &["a", "b", "c", "d", "e"]), None);
+            let outcome = store.set_owning_order(
+                NativePlaybackManifest {
+                    random_seed: Some(seed),
+                    ..random_manifest(2, &["a", "b", "c", "d", "e"])
+                },
+                Some("netease:d"),
+            );
+            assert!(outcome.is_some());
+            assert_eq!(keys(&store)[0], "netease:d", "seed {seed}");
+            let mut sorted = store.order().to_vec();
+            sorted.sort_unstable();
+            assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
+        }
+    }
+
+    /// Other modes never get a backend order.
+    #[test]
+    fn non_random_manifests_keep_the_wire_order() {
+        let mut store = ManifestStore::new();
+        let mut m = manifest(1, &["a", "b", "c"]);
+        m.order = vec![2, 0, 1];
+        assert_eq!(store.set_owning_order(m, None), Some(false));
+        assert_eq!(store.order(), &[2, 0, 1]);
+    }
+
+    #[test]
+    fn a_stale_revision_is_refused_without_touching_the_order() {
+        let mut store = ManifestStore::new();
+        store.set_owning_order(random_manifest(5, &["a", "b", "c"]), None);
+        assert_eq!(
+            store.set_owning_order(random_manifest(5, &["c"]), None),
+            None
+        );
+        assert_eq!(store.len(), 3);
+    }
+
+    fn entries(ids: &[&str]) -> Vec<NativeManifestEntry> {
+        ids.iter().enumerate().map(|(i, id)| entry(id, i)).collect()
+    }
+
+    fn keyed(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| format!("netease:{id}")).collect()
+    }
+
+    #[test]
+    fn rebase_keeps_relative_order_and_drops_removed_tracks() {
+        // previous permutation: c a d b
+        let order = rebase_order(&keyed(&["c", "a", "d", "b"]), &entries(&["a", "b", "c"]));
+        let ids: Vec<&str> = order.iter().map(|p| ["a", "b", "c"][*p]).collect();
+        assert_eq!(ids, ["c", "a", "b"]);
+    }
+
+    /// "Play next" inserts after the cursor in the frontend's list, "add to
+    /// queue" appends. Both must land where the user put them.
+    #[test]
+    fn rebase_places_a_new_track_after_its_predecessor() {
+        // previous permutation: c a d b; the frontend mirrors it and inserts x
+        // right after `a`, and appends y.
+        let incoming = entries(&["c", "a", "x", "d", "b", "y"]);
+        let order = rebase_order(&keyed(&["c", "a", "d", "b"]), &incoming);
+        let ids: Vec<String> = order.iter().map(|p| incoming[*p].identity.key()).collect();
+        assert_eq!(ids, keyed(&["c", "a", "x", "d", "b", "y"]));
+    }
+
+    #[test]
+    fn rebase_with_nothing_in_common_is_the_new_list_as_given() {
+        let order = rebase_order(&keyed(&["x", "y"]), &entries(&["a", "b", "c"]));
+        assert_eq!(order, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn rebase_survives_duplicate_identities() {
+        let incoming = entries(&["a", "b", "a"]);
+        let order = rebase_order(&keyed(&["a", "b", "a"]), &incoming);
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted,
+            vec![0, 1, 2],
+            "every occurrence is visited exactly once"
+        );
     }
 }

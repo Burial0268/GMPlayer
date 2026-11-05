@@ -190,6 +190,10 @@ export type AudioThreadEvent =
       };
     }
   | {
+      type: "nativeQueueOrderChanged";
+      data: { manifestRevision: number; order: TrackIdentity[] };
+    }
+  | {
       type: "nativePlannerExhausted";
       data: { manifestRevision: number; attempted: number; reason: string };
     }

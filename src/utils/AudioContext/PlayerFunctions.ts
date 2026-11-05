@@ -44,6 +44,7 @@ import {
 import { getAudioBackendTransport } from "../tauri/audio/transport";
 import { armLyricSeekPresentationHold } from "../tauri/audio/uiDelay";
 import type { TrackIdentity } from "../tauri/audio/protocol";
+import { logNative } from "../tauri/core/nativeLog";
 import {
   buildNeteaseDesktopCookie,
   buildNeteaseDesktopUserAgent,
@@ -376,11 +377,14 @@ const applyNativeAutoMixCompletion = (
     if (Number.isFinite(advancedSongId) && playlists[resolvedIndex]?.id !== advancedSongId) {
       const indexByIdentity = playlists.findIndex((song) => song.id === advancedSongId);
       if (indexByIdentity >= 0) {
-        if (IS_DEV) {
-          console.warn(
-            `[nativeAdvance] index ${resolvedIndex} disagreed with backend identity ${advancedSongId}; corrected to ${indexByIdentity}`,
-          );
-        }
+        // Rare, and exactly the symptom being hunted: the store and the backend
+        // named different tracks. Worth a line in the log of a release build.
+        logNative(
+          "warn",
+          `[nativeAdvance] index ${resolvedIndex} disagreed with backend identity ${advancedSongId}; ` +
+            `corrected to ${indexByIdentity} (store index ${music.persistData.playSongIndex}, ` +
+            `reported index ${currentIndex}, mode ${music.persistData.playSongMode})`,
+        );
         resolvedIndex = indexByIdentity;
       }
     }
@@ -401,6 +405,12 @@ const applyNativeAutoMixCompletion = (
 
   // Shield the adopted song from the debounced watcher's teardown/recreate.
   beginNativeAdvanceHold(playlists[resolvedIndex]?.id);
+  logNative(
+    "info",
+    `[nativeAdvance] adopting index ${resolvedIndex} (song ${playlists[resolvedIndex]?.id}), ` +
+      `store was at ${music.persistData.playSongIndex}, reported ${currentIndex}, ` +
+      `identity ${backendIdentity ? `netease:${backendIdentity.id}` : "none"}`,
+  );
 
   const changed = music.persistData.playSongIndex !== resolvedIndex;
   const position = playback?.position;
