@@ -447,6 +447,19 @@ export function useSettingsSections() {
           control: "switch",
         },
         {
+          key: "lyricCreditsMode",
+          label: "setting.lyricCreditsMode",
+          tip: "setting.lyricCreditsModeTip",
+          control: "select",
+          options: [
+            { label: "setting.lyricCreditsNone", value: "none" },
+            { label: "setting.lyricCreditsAuthors", value: "authors" },
+            { label: "setting.lyricCreditsSongwriters", value: "songwriters" },
+            { label: "setting.lyricCreditsPreferAuthors", value: "preferAuthors" },
+            { label: "setting.lyricCreditsPreferSongwriters", value: "preferSongwriters" },
+          ],
+        },
+        {
           key: "lyricTimeOffset",
           label: "setting.lyricOffset",
           tip: "setting.lyricOffsetTip",

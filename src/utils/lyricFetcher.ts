@@ -1,6 +1,6 @@
 import { getUnifiedLyric } from "@/api/song";
 import { parseLyricData } from "@/utils/LyricsProcessor";
-import type { ParsedLyricResult } from "@/utils/LyricsProcessor";
+import type { LyricSongInfo, ParsedLyricResult } from "@/utils/LyricsProcessor";
 import useSettingDataStore from "@/store/settingData";
 
 // Cached entries are handed to the store by reference, and the processing layer
@@ -39,8 +39,13 @@ class LyricFetcher {
    * Returns `{ result, stale }`:
    *   - `result`: the parsed lyric data (from cache or network)
    *   - `stale`: true if a newer fetchLyric() call was made while this one was in-flight
+   * `song` only feeds title-line removal; an id always names the same song, so it
+   * is not part of the cache key.
    */
-  async fetchLyric(id: number): Promise<{ result: ParsedLyricResult; stale: boolean }> {
+  async fetchLyric(
+    id: number,
+    song?: LyricSongInfo,
+  ): Promise<{ result: ParsedLyricResult; stale: boolean }> {
     const generation = ++this._generation;
     const settingStore = useSettingDataStore();
     const useTTMLRepo = settingStore.useTTMLRepo;
@@ -70,7 +75,7 @@ class LyricFetcher {
     }
 
     // 3. Network fetch + parse
-    const promise = this._doFetch(id, useTTMLRepo);
+    const promise = this._doFetch(id, useTTMLRepo, song);
     this._pending.set(id, promise);
 
     try {
@@ -122,9 +127,13 @@ class LyricFetcher {
     this._releaseDerived(null);
   }
 
-  private async _doFetch(id: number, useTTMLRepo: boolean): Promise<ParsedLyricResult> {
+  private async _doFetch(
+    id: number,
+    useTTMLRepo: boolean,
+    song?: LyricSongInfo,
+  ): Promise<ParsedLyricResult> {
     const lyricData = await getUnifiedLyric(id, useTTMLRepo);
-    return parseLyricData(lyricData);
+    return parseLyricData(lyricData, song);
   }
 
   /** Invalidate a specific song's cached lyrics */

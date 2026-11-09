@@ -51,6 +51,8 @@ interface SettingDataState {
   lyricFontWeight: string;
   lyricLetterSpacing: string;
   hidePassedLines: boolean;
+  /** 歌词尾栏署名：歌词作者（TTML 的 GitHub 用户名）还是歌曲创作者 */
+  lyricCreditsMode: "none" | "authors" | "songwriters" | "preferAuthors" | "preferSongwriters";
   lyricLineHeight: number;
   lyricsBlur: boolean;
   musicFrequency: boolean;
@@ -254,6 +256,7 @@ const useSettingDataStore = defineStore("settingData", {
       lyricFontWeight: "normal",
       lyricLetterSpacing: "normal",
       hidePassedLines: false,
+      lyricCreditsMode: "preferSongwriters",
       lyricLineHeight: 1.8,
       lyricsBlur: true,
       musicFrequency: false,

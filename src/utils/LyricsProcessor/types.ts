@@ -80,11 +80,25 @@ export interface RawLyricData {
   // TTML fields
   hasTTML?: boolean;
   ttml?: any;
+  credits?: LyricCredits;
   meta?: LyricMeta;
 }
 
 // Backward compatibility alias
 export type LyricData = RawLyricData;
+
+/** 歌词尾栏的署名，取自 TTML 元数据 */
+export interface LyricCredits {
+  /** ttmlAuthorGithubLogin：歌词作者的 GitHub 用户名 */
+  authors: string[];
+  songwriters: string[];
+}
+
+/** 歌词所属的歌，用来认出歌词里重复写的标题行 */
+export interface LyricSongInfo {
+  name?: string;
+  artists?: string[];
+}
 
 /** Lyric metadata */
 export interface LyricMeta {
@@ -117,6 +131,7 @@ export interface ParsedLyricResult {
   ttml: any[];
   lrcAMData: AMLLLine[];
   yrcAMData: AMLLLine[];
+  credits?: LyricCredits;
 }
 
 // ============== Store Types ==============
@@ -147,6 +162,7 @@ export interface SongLyric {
   romalrc?: { lyric: string };
   translation?: string | { lyric: string };
   romaji?: string | { lyric: string };
+  credits?: LyricCredits;
   meta?: LyricMeta;
 }
 

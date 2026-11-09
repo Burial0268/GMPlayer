@@ -17,8 +17,9 @@ import {
   buildAMLLData,
 } from "./parser/formatParser";
 import { alignByIndex } from "./alignment";
+import { stripNonLyricLines } from "./parser/nonLyricLines";
 import { normalizeLrcTimestampText, detectWordTimedLyricFormat } from "./timeUtils";
-import type { RawLyricData, ParsedLyricResult } from "./types";
+import type { RawLyricData, ParsedLyricResult, LyricSongInfo } from "./types";
 
 type ParsedSourceLine = AMLLParsedLyricLine;
 
@@ -129,9 +130,13 @@ export const resetSongLyric = (): void => {
 /**
  * Parse lyric data from API response (优化版)
  * @param data API response data or null on fetch error
+ * @param song 歌词所属的歌，用来去掉歌词里重复写的标题行；不给就不认标题
  * @returns Parsed lyric data (always returns a valid object)
  */
-export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => {
+export const parseLyricData = (
+  data: RawLyricData | null,
+  song?: LyricSongInfo,
+): ParsedLyricResult => {
   if (!data || data.code !== 200) {
     return createEmptyLyricResult();
   }
@@ -153,6 +158,8 @@ export const parseLyricData = (data: RawLyricData | null): ParsedLyricResult => 
         ? normalizeTTMLLines(data.ttml as ParsedSourceLine[])
         : [];
 
+    // TTML 的署名来自它的元数据；其余来源的署名、声明、标题行混在歌词文本里，先拿出来
+    result.credits = directTTMLLines.length > 0 ? data.credits : stripNonLyricLines(lrcData, song);
     result.translationLanguages = data.meta?.translationLanguages ?? [];
     result.translationLanguage = data.meta?.translationLanguage ?? "";
 

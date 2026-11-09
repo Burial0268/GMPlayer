@@ -10,7 +10,12 @@
     @pointerdown="pressLine"
     @pointerup="dropLine"
     @pointercancel="dropLine"
-  />
+  >
+    <!-- AMLL 拿 innerHTML 判断底栏有没有内容，连空插槽留下的注释也算，所以没内容就不挂 -->
+    <Teleport v-if="bottomLineEl && $slots.bottomLine" :to="bottomLineEl">
+      <slot name="bottomLine" />
+    </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -35,6 +40,8 @@ const setting = settingStore();
 
 const playerEl = ref<HTMLElement | null>(null);
 const lyricPlayerRef = shallowRef<DomLyricPlayer>();
+// 歌词末尾随歌词滚动的那一行，歌曲放完时 AMLL 会聚焦到它
+const bottomLineEl = shallowRef<HTMLElement>();
 const amllLyricLines = shallowRef<AMLLLine[]>([]);
 
 const playState = computed(() => music.playState);
@@ -70,6 +77,8 @@ const emit = defineEmits<{
   lrcTextClick: [time: number];
   lineShare: [lines: AMLLLine[], lineIndex: number, origin: LyricShareOrigin];
 }>();
+
+defineSlots<{ bottomLine?: () => unknown }>();
 
 function getDomPlayer(): DomLyricPlayer | undefined {
   return lyricPlayerRef.value;
@@ -329,6 +338,7 @@ onMounted(() => {
     playerElement.style.height = "100%";
     host.appendChild(playerElement);
     lyricPlayerRef.value = lyricPlayer;
+    bottomLineEl.value = lyricPlayer.getBottomLineElement();
     applyPlayerSettings(lyricPlayer);
     applyPlayback(playState.value);
     applyLyricLines(amllLyricLines.value);

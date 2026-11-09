@@ -430,6 +430,10 @@ const messages: Record<string, unknown> = {
       rendering: "Rendering image…",
       failed: "Something went wrong",
     },
+    credits: {
+      authors: "Lyrics by: ",
+      songwriters: "Written by: ",
+    },
     loading: {
       resolving: "Fetching audio",
       buffering: "Buffering",
@@ -619,6 +623,14 @@ const messages: Record<string, unknown> = {
     lyricsBlurTip: "Blur lyrics other than the currently playing ones, experimental feature",
     hidePassedLines: "Hide Played Lyrics",
     hidePassedLinesTip: "Hide lyric lines before the current line during playback",
+    lyricCreditsMode: "Lyric Credits",
+    lyricCreditsModeTip:
+      "What to show at the end of the lyrics. Lyric authors come only with TTML lyrics; songwriters are taken from the credit lines",
+    lyricCreditsNone: "Hidden",
+    lyricCreditsAuthors: "Lyric authors only",
+    lyricCreditsSongwriters: "Songwriters only",
+    lyricCreditsPreferAuthors: "Prefer lyric authors",
+    lyricCreditsPreferSongwriters: "Prefer songwriters",
     lyricOffset: "Lyric Offset",
     lyricOffsetAdvance: "Advance lyrics",
     lyricOffsetDelay: "Delay lyrics",

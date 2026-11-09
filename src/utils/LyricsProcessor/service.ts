@@ -7,6 +7,8 @@ import request from "@/utils/request";
 import { parseEslrc, parseQrc, parseYrc } from "@applemusic-like-lyrics/lyric";
 import useSettingDataStore from "@/store/settingData";
 import { parseTTMLForLanguage } from "./parser/ttmlLanguage";
+import { ttmlCreditsOf } from "./parser/ttmlCredits";
+import type { LyricCredits } from "./types";
 import { getCachedTTML, setCachedTTML } from "@/utils/ttmlCache";
 import {
   detectWordTimedLyricFormat,
@@ -30,6 +32,7 @@ interface LyricData {
   // 添加TTML相关字段，用于传递TTML数据
   hasTTML?: boolean;
   ttml?: any;
+  credits?: LyricCredits;
   // 添加处理后的缓存字段
   processedLyrics?: any;
   // 添加歌词元数据字段
@@ -225,6 +228,7 @@ class TTMLRepoProvider implements LyricProvider {
         yromalrc: null,
         hasTTML: true,
         ttml: ttmlLyric.lines,
+        credits: ttmlCreditsOf(ttmlLyric.metadata),
         romaji: "",
         translation: "",
         meta: {

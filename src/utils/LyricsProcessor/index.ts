@@ -12,6 +12,8 @@ export type {
   StoredLyricLine,
   LyricData,
   LyricMeta,
+  LyricCredits,
+  LyricSongInfo,
   SongLyric,
   SettingState,
   ProcessingSettings,

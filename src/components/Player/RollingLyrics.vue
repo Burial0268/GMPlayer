@@ -4,12 +4,29 @@
       class="am-lyric"
       @lrcTextClick="handleLrcTextClick"
       @lineShare="(lines, lineIndex, origin) => lyricShare.open({ lines, lineIndex, origin })"
-    />
+    >
+      <template v-if="credit" #bottomLine>
+        <strong>{{ t(`player.credits.${credit.kind}`) }}</strong>
+        <template v-for="(name, index) in credit.names" :key="name">
+          <a
+            v-if="credit.kind === 'authors'"
+            class="credit-author"
+            :href="`https://github.com/${name}`"
+            target="_blank"
+            rel="noreferrer noopener"
+            >{{ name }}</a
+          >
+          <span v-else>{{ name }}</span>
+          <span v-if="index < credit.names.length - 1">, </span>
+        </template>
+      </template>
+    </LyricPlayer>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
+import { useI18n } from "vue-i18n";
 import { musicStore, settingStore } from "../../store";
 import LyricPlayer from "../../libs/apple-music-like/LyricPlayer.vue";
 import { useLyricShare } from "@/composables/useLyricShare";
@@ -21,11 +38,29 @@ const emit = defineEmits<{
 const music = musicStore();
 const lyricShare = useLyricShare();
 const setting = settingStore();
+const { t } = useI18n();
 
 // 直接处理从 LyricPlayer 传递的 lrcTextClick 事件
 const handleLrcTextClick = (time: number) => {
   emit("lrcTextClick", time);
 };
+
+type CreditKind = "authors" | "songwriters";
+
+// 尾栏署名，取舍规则同 AMLL Player 的 BottomLyricInfo
+const credit = computed(() => {
+  const credits = music.songLyric?.credits;
+  const mode = setting.lyricCreditsMode;
+  if (!credits || mode === "none") return null;
+  const order: CreditKind[] =
+    mode === "preferAuthors"
+      ? ["authors", "songwriters"]
+      : mode === "preferSongwriters"
+        ? ["songwriters", "authors"]
+        : [mode];
+  const kind = order.find((k) => credits[k].length > 0);
+  return kind ? { kind, names: credits[kind] } : null;
+});
 
 // 计算歌词容器的类名
 const lyricClasses = computed(() => ({
@@ -88,6 +123,22 @@ const lyricClasses = computed(() => ({
 
     :deep([class*="_lyricLine"]) {
       transform-origin: center;
+    }
+  }
+
+  .credit-author {
+    padding: 0.1em 0.3em;
+    border-radius: 0.25em;
+    color: inherit;
+    text-decoration: none;
+    transition: background-color 0.25s;
+
+    &:hover {
+      background-color: var(--amll-lp-hover-bg-color, #fff1);
+    }
+
+    &:active {
+      background-color: var(--amll-lp-hover-bg-color, #ffffff05);
     }
   }
 

@@ -351,6 +351,7 @@ import { lyricFetcher } from "@/utils/lyricFetcher";
 import { localLyricFor } from "@/utils/localLibrary";
 import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
 import { detectWordTimedLyricFormat } from "@/utils/LyricsProcessor/timeUtils";
+import { ttmlCreditsOf } from "@/utils/LyricsProcessor/parser/ttmlCredits";
 import { coverUrl } from "@/utils/coverUrl";
 import { setupNativePersonalFm, sendNativeFmPlaying } from "@/utils/AudioContext/NativePersonalFm";
 
@@ -711,7 +712,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       // so clear loading state immediately to avoid stuck spinner.
       music.isLoadingSong = false;
       music.loadingStage = "idle";
-      fetchAndParseLyric(id);
+      fetchAndParseLyric(id, data);
       return;
     }
 
@@ -759,7 +760,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
     }
 
     // 获取歌词
-    if (isCurrentRequest()) fetchAndParseLyric(id);
+    if (isCurrentRequest()) fetchAndParseLyric(id, data);
   } catch (err) {
     if (
       generation !== _songLoadGeneration ||
@@ -1237,13 +1238,19 @@ watch(
   () => {
     const data = music.getPlaySongData;
     if (!data || data.local?.uri || music.songLyric.translationLanguages.length < 2) return;
-    void fetchAndParseLyric(data.id);
+    void fetchAndParseLyric(data.id, data);
   },
 );
 
-const fetchAndParseLyric = async (id) => {
+/** 解析歌词时用来认出标题行的那首歌 */
+const lyricSongInfo = (data) => ({
+  name: data?.name,
+  artists: (data?.artist ?? []).map((artist) => artist?.name).filter(Boolean),
+});
+
+const fetchAndParseLyric = async (id, data) => {
   try {
-    const { result, stale } = await lyricFetcher.fetchLyric(id);
+    const { result, stale } = await lyricFetcher.fetchLyric(id, lyricSongInfo(data));
     if (stale) {
       console.log(`[Player] Lyric fetch for ${id} is stale, discarding`);
       return;
@@ -1289,7 +1296,7 @@ const loadLyricFor = (data, id) => {
     void loadLocalLyric(data);
     return;
   }
-  fetchAndParseLyric(id);
+  fetchAndParseLyric(id, data);
 };
 
 /**
@@ -1309,7 +1316,7 @@ const loadLocalLyric = async (data) => {
     const lyric = key ? await localLyricFor(String(key)) : null;
     // The user may have skipped on while the file was being read.
     if (Number(music.getPlaySongData?.id) !== requestedId) return;
-    music.setPlaySongLyric(parseLyric(await localLyricPayload(lyric)));
+    music.setPlaySongLyric(parseLyric(await localLyricPayload(lyric), lyricSongInfo(data)));
   } catch (err) {
     console.error("[Player] Failed to read local lyrics:", err);
     if (Number(music.getPlaySongData?.id) !== requestedId) return;
@@ -1350,13 +1357,15 @@ const localLyricPayload = async (lyric) => {
   if (looksTtml) {
     try {
       const { parseTTML } = await import("@applemusic-like-lyrics/lyric");
-      const lines = parseTTML(raw)?.lines ?? [];
+      const parsed = parseTTML(raw);
+      const lines = parsed?.lines ?? [];
       if (!lines.length) return null;
       return {
         code: 200,
         lrc: { lyric: linesToLrc(lines) },
         hasTTML: true,
         ttml: lines,
+        credits: ttmlCreditsOf(parsed.metadata),
         ...companions,
       };
     } catch (err) {
