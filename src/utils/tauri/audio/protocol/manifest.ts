@@ -61,6 +61,9 @@ export interface NativePlaybackManifest {
   /**
    * The list was replaced wholesale, so the backend should draw a new random
    * permutation instead of carrying the old one over by identity.
+   *
+   * Repeated on every manifest until a `nativeQueueOrderChanged` for one of them
+   * answers it; the backend sends that for every fresh draw, matching or not.
    */
   reshuffle?: boolean;
   /** Track to keep at the head of that fresh permutation. */

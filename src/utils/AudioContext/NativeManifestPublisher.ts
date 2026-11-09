@@ -40,24 +40,28 @@ import type { SongData } from "@/store/musicTypes";
 import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
-import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
+import {
+  bumpManifestRevision,
+  getManifestRevision,
+  raiseManifestRevision,
+} from "./NativeManifestRevision";
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
 let lastFingerprint = "";
 let publishScheduled = false;
 let pendingForce = false;
-/**
- * The next manifest replaces the list (or enters random for the first time the
- * backend hears of it), so the backend should draw a fresh permutation. Sticky
- * until a manifest is actually built: a request made before any sound exists
- * must survive the early returns in `flushNativeManifest`.
- */
-let pendingReshuffle = false;
 
-/** Ask the backend for a new random permutation with the next manifest. */
+/**
+ * Ask the backend for a new random permutation.
+ *
+ * Every manifest from the next one on carries the request until an order for one
+ * of them comes back (`musicData.adoptBackendQueueOrder`). Kept in `persistData`,
+ * so a request made before any sound exists, or lost with the page or the
+ * process, is made again instead of forgotten.
+ */
 export const requestNativeReshuffle = (): void => {
   if (!isTauri()) return;
-  pendingReshuffle = true;
+  useMusicDataStore().persistData.pendingReshuffleRevision = getManifestRevision() + 1;
   publishNativeManifest({ force: true });
 };
 
@@ -299,7 +303,8 @@ const flushNativeManifest = (): void => {
 
   // Probe before building: bail on the no-op path without allocating entries.
   const signature = playlistSignature(playlists, music.persistData.playSongMode, cursorSongId);
-  if (!force && !pendingReshuffle && signature === lastFingerprint) return;
+  const reshuffle = music.persistData.pendingReshuffleRevision !== null;
+  if (!force && !reshuffle && signature === lastFingerprint) return;
 
   for (let index = 0; index < playlists.length; index++) {
     const song = playlists[index];
@@ -337,9 +342,6 @@ const flushNativeManifest = (): void => {
 
   lastFingerprint = signature;
 
-  // Consumed here, past every early return, so a request is never lost.
-  const reshuffle = pendingReshuffle;
-  pendingReshuffle = false;
   const pinSong = reshuffle ? music.getPlaySongData : null;
   const shufflePin = pinSong ? toIdentity(pinSong) : null;
 

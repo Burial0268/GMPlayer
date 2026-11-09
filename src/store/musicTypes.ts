@@ -92,6 +92,17 @@ export interface PersistData {
    * invalidates.
    */
   preShuffleOrder: number[];
+  /**
+   * Tauri only. A reshuffle asked of the backend that no order has answered yet,
+   * as the first manifest revision that carries it; `null` when none is pending.
+   *
+   * Persisted next to the queue on purpose: while the request lived only in
+   * memory, a page or process that died before the order came back left an
+   * unshuffled queue looking shuffled (`preShuffleOrder` set), and the next
+   * process trusted it as last session's permutation. Dropped wherever
+   * `preShuffleOrder` is — a request is about the list it was made for.
+   */
+  pendingReshuffleRevision: number | null;
   playSongTime: PlaySongTime;
   playbackSnapshot: PlaybackSessionSnapshot;
   playVolume: number;
@@ -128,6 +139,7 @@ export const createDefaultPersistData = (): PersistData => ({
   playSongIndex: 0,
   playSongMode: "normal",
   preShuffleOrder: [],
+  pendingReshuffleRevision: null,
   playSongTime: createDefaultPlaySongTime(),
   playbackSnapshot: createDefaultPlaybackSnapshot(),
   playVolume: 0.7,

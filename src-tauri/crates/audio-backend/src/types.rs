@@ -589,9 +589,10 @@ pub enum AudioThreadEvent {
     /// The backend's random permutation differs from the order the frontend
     /// published, so the queue the user sees must be reordered to match.
     ///
-    /// Emitted only on a difference: a frontend that mirrors the backend never
-    /// hears it. Carries identities, not positions — positions are exactly what
-    /// list edits invalidate.
+    /// Emitted on a difference, and on every freshly drawn permutation — the
+    /// latter answers a reshuffle request, which the frontend repeats until it
+    /// is answered. A mirrored republish never triggers it. Carries identities,
+    /// not positions — positions are exactly what list edits invalidate.
     #[serde(rename_all = "camelCase")]
     NativeQueueOrderChanged {
         manifest_revision: u64,
@@ -790,7 +791,8 @@ pub struct NativePlaybackManifest {
     pub random_seed: Option<u64>,
     /// The list was replaced wholesale, so the backend should draw a fresh
     /// random permutation instead of carrying the old one over. Only meaningful
-    /// in random mode.
+    /// in random mode. The frontend repeats it until an order answers it, so a
+    /// manifest that carries it is always answered (`NativeQueueOrderChanged`).
     #[serde(default)]
     pub reshuffle: bool,
     /// Track to keep at the head of a fresh permutation. Falls back to the

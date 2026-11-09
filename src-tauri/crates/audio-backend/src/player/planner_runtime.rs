@@ -72,7 +72,7 @@ impl AudioPlayer {
         } else {
             self.manifest.set(manifest).then_some(false)
         };
-        let Some(order_differs) = installed else {
+        let Some(report_order) = installed else {
             info!(
                 "ignoring stale native manifest: incoming={} stored={}",
                 revision,
@@ -116,12 +116,12 @@ impl AudioPlayer {
         }
 
         info!(
-            "native manifest applied: revision={} entries={} mode={:?} order_differs={} \
+            "native manifest applied: revision={} entries={} mode={:?} report_order={} \
              playing={:?} cursor={:?}",
             self.manifest.revision(),
             self.manifest.len(),
             self.manifest.mode(),
-            order_differs,
+            report_order,
             self.current_planner_key(),
             self.planner
                 .cursor(&self.manifest)
@@ -129,7 +129,7 @@ impl AudioPlayer {
         );
 
         self.emit_planner_status().await;
-        self.publish_queue_order(order_differs).await;
+        self.publish_queue_order(report_order).await;
         // The manifest is the media session's metadata source, so a republish
         // can change what the notification should say about the *current* track
         // — a title that arrived late, cover art the frontend only just had.
@@ -155,7 +155,8 @@ impl AudioPlayer {
     }
 
     /// Record the backend's random permutation in the session snapshot and, when
-    /// it differs from what the frontend published, tell the frontend.
+    /// the frontend has to hear it (see `ManifestStore::set_owning_order`), tell
+    /// the frontend.
     ///
     /// The snapshot is how a page that was away catches up before it locates the
     /// playing track; the event is how a page that is alive does. Both carry

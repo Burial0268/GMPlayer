@@ -901,6 +901,7 @@ const useMusicDataStore = defineStore("musicData", {
         else shuffleInPlace(incoming);
       } else {
         this.persistData.preShuffleOrder = [];
+        this.persistData.pendingReshuffleRevision = null;
       }
       this.persistData.playlists = incoming;
       this.persistData.playSongIndex = Math.min(
@@ -938,6 +939,7 @@ const useMusicDataStore = defineStore("musicData", {
       this.persistData.playlists = asRawEntries(value);
       // 房间的顺序就是现在的顺序，本地那份「打乱前的次序」已经不描述这张表了。
       this.persistData.preShuffleOrder = [];
+      this.persistData.pendingReshuffleRevision = null;
 
       const nextIndex =
         activeSongId === null
@@ -1147,6 +1149,7 @@ const useMusicDataStore = defineStore("musicData", {
       }
       known.sort((a, b) => (rank.get(a.id) as number) - (rank.get(b.id) as number));
       this.persistData.preShuffleOrder = [];
+      this.persistData.pendingReshuffleRevision = null;
       return this.applyQueueOrder(known.concat(added));
     },
 
@@ -1219,9 +1222,26 @@ const useMusicDataStore = defineStore("musicData", {
      * 默认只在随机模式下生效：模式事件晚到时，一个迟到的排列不该把已经还原的
      * 自然序队列又打乱。`force` 给启动时的快照采纳用，那时模式刚刚被采纳完。
      * 游标跟着歌走（applyQueueOrder 锚定当前这首），这里不动播放。
+     *
+     * `revision` 是这份排列所属的 manifest 修订号，用来判断它是否回答了
+     * 待处理的重洗请求（persistData.pendingReshuffleRevision）。
      */
-    adoptBackendQueueOrder(order: TrackIdentity[], options: { force?: boolean } = {}): boolean {
+    adoptBackendQueueOrder(
+      order: TrackIdentity[],
+      revision: number,
+      options: { force?: boolean } = {},
+    ): boolean {
       if (!isTauri() || this.persistData.personalFmMode) return false;
+      // 属于带着请求的那份 manifest（或更新的）的排列就是回答，不管它在这里动不动
+      // 队列。要在下面的重发之前撤掉，否则重发会再请求一次。
+      const asked = this.persistData.pendingReshuffleRevision;
+      if (asked !== null && revision >= asked) {
+        this.persistData.pendingReshuffleRevision = null;
+        logNative(
+          "info",
+          `[queueOrder] reshuffle asked at rev ${asked} answered by rev ${revision}`,
+        );
+      }
       if (!options.force && this.persistData.playSongMode !== "random") {
         // A late order for a mode the user already left: dropped on purpose.
         logNative(
@@ -1280,6 +1300,10 @@ const useMusicDataStore = defineStore("musicData", {
       const before = this.getPlaySongData?.id;
       if (!this.applyQueueOrder(next)) return false;
       this.afterQueueReordered();
+      // 后端报告前进用的是条目里的 playlistIndex，收到这份队列之前那还是镜像前的
+      // 位置（按 identity 纠正只覆盖网易曲目）。它 rebase 出的是同一个排列，不会
+      // 再回事件。
+      publishNativeManifest();
       logNative(
         "info",
         `[queueOrder] mirrored backend order: ${order.length} tracks, ${list.length} in queue, ` +
@@ -1620,6 +1644,7 @@ const useMusicDataStore = defineStore("musicData", {
       this.persistData.playlists = [];
       this.persistData.playSongIndex = 0;
       this.persistData.preShuffleOrder = [];
+      this.persistData.pendingReshuffleRevision = null;
       this.playingSongId = null;
       this.playState = false;
       this.isLoadingSong = false;

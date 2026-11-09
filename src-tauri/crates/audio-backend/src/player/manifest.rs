@@ -73,8 +73,10 @@ impl ManifestStore {
     /// Install a manifest and, in random mode, decide the permutation.
     ///
     /// `None` means the revision was stale and nothing changed. Otherwise the
-    /// bool says whether the resulting order differs from the order the frontend
-    /// published — i.e. whether its queue is out of date and must be told.
+    /// bool says whether the frontend must be told the order: it differs from
+    /// what was published, or a fresh permutation was drawn at all. The second
+    /// case matters even when the draw happens to equal the published order —
+    /// the frontend keeps asking for a reshuffle until an order answers it.
     ///
     /// - fresh permutation when the frontend replaced the list (`reshuffle`) or
     ///   the mode just became random, with `pin` kept at the head so the change
@@ -101,13 +103,14 @@ impl ManifestStore {
         }
 
         let switched = matches!(previous_mode, Some(mode) if mode != NativePlaybackMode::Random);
-        if reshuffle || switched {
+        let fresh = reshuffle || switched;
+        if fresh {
             self.reshuffle_random();
             self.pin_to_head(pin);
         } else if previous_mode.is_some() {
             self.order = rebase_order(&previous_keys, self.entries());
         }
-        Some(!self.is_natural_order())
+        Some(fresh || !self.is_natural_order())
     }
 
     /// Keys of the traversal, in order. The identity-keyed form of `order`, which
@@ -741,6 +744,30 @@ mod tests {
             sorted.sort_unstable();
             assert_eq!(sorted, vec![0, 1, 2, 3, 4]);
         }
+    }
+
+    /// The frontend keeps asking for a reshuffle until an order answers it, so a
+    /// draw that lands on the published order must still be reported. Two tracks
+    /// with the first pinned can only ever land there.
+    #[test]
+    fn a_fresh_draw_is_reported_even_when_it_matches() {
+        let mut store = ManifestStore::new();
+        store.set_owning_order(random_manifest(1, &["a", "b"]), None);
+        let outcome = store.set_owning_order(
+            NativePlaybackManifest {
+                reshuffle: true,
+                ..random_manifest(2, &["a", "b"])
+            },
+            Some("netease:a"),
+        );
+        assert_eq!(store.order(), &[0, 1], "the pin leaves only one order");
+        assert_eq!(outcome, Some(true), "the request is answered anyway");
+
+        // Carried over rather than drawn, the same order is not news.
+        assert_eq!(
+            store.set_owning_order(random_manifest(3, &["a", "b"]), None),
+            Some(false)
+        );
     }
 
     /// Other modes never get a backend order.
