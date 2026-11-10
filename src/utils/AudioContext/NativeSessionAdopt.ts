@@ -123,11 +123,11 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
     if (snapshot.playMode) {
       music.adoptPlaySongMode(snapshot.playMode, { backendOrdered: true });
     }
-    // The snapshot's order is also the answer to a reshuffle we asked for before
-    // the page went away, if the backend got that far (`manifestRevision` at or
-    // past the request); otherwise the request rides the next manifest again.
     if (snapshot.order?.length) {
-      music.adoptBackendQueueOrder(snapshot.order, snapshot.manifestRevision, { force: true });
+      music.adoptBackendQueueOrder(snapshot.order, snapshot.manifestRevision, {
+        force: true,
+        shuffleId: snapshot.shuffleId,
+      });
     }
   }
 

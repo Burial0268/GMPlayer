@@ -36,15 +36,11 @@ import { NativeRustSound, setPlannerRevisionObserver } from "@/utils/tauri/audio
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
-import type { SongData } from "@/store/musicTypes";
+import { createQueueShuffleState, type SongData } from "@/store/musicTypes";
 import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
-import {
-  bumpManifestRevision,
-  getManifestRevision,
-  raiseManifestRevision,
-} from "./NativeManifestRevision";
+import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
 let lastFingerprint = "";
@@ -54,14 +50,12 @@ let pendingForce = false;
 /**
  * Ask the backend for a new random permutation.
  *
- * Every manifest from the next one on carries the request until an order for one
- * of them comes back (`musicData.adoptBackendQueueOrder`). Kept in `persistData`,
- * so a request made before any sound exists, or lost with the page or the
- * process, is made again instead of forgotten.
+ * Retries carry the same id until its permutation is applied to the queue.
+ * The state and the queue share one persisted snapshot.
  */
 export const requestNativeReshuffle = (): void => {
   if (!isTauri()) return;
-  useMusicDataStore().persistData.pendingReshuffleRevision = getManifestRevision() + 1;
+  useMusicDataStore().persistData.shuffleState = createQueueShuffleState();
   publishNativeManifest({ force: true });
 };
 
@@ -110,6 +104,20 @@ const toIdentity = (song: SongData): TrackIdentity | null => {
   const id = Number(song.id);
   if (!Number.isFinite(id) || id <= 0) return null;
   return { provider: "netease", id: String(id) };
+};
+
+/** Match restorePlaylistOrder: known tracks first, additions in current order. */
+const naturalQueueOrder = (songs: SongData[], snapshot: number[]): TrackIdentity[] => {
+  if (!snapshot.length) return [];
+  const rank = new Map<number, number>();
+  for (const id of snapshot) {
+    if (!rank.has(id)) rank.set(id, rank.size);
+  }
+  return songs
+    .slice()
+    .sort((a, b) => (rank.get(a.id) ?? snapshot.length) - (rank.get(b.id) ?? snapshot.length))
+    .map(toIdentity)
+    .filter((identity): identity is TrackIdentity => identity !== null);
 };
 
 /**
@@ -303,7 +311,8 @@ const flushNativeManifest = (): void => {
 
   // Probe before building: bail on the no-op path without allocating entries.
   const signature = playlistSignature(playlists, music.persistData.playSongMode, cursorSongId);
-  const reshuffle = music.persistData.pendingReshuffleRevision !== null;
+  const shuffle = music.persistData.shuffleState;
+  const reshuffle = shuffle !== null && !shuffle.applied;
   if (!force && !reshuffle && signature === lastFingerprint) return;
 
   for (let index = 0; index < playlists.length; index++) {
@@ -357,6 +366,10 @@ const flushNativeManifest = (): void => {
     mode: mode === "single" ? "single" : mode === "random" ? "random" : "normal",
     repeatList: true,
     randomSeed,
+    shuffle,
+    // The backend needs the original order while the page is away, even after
+    // entries have been replaced by a mirror of its random permutation.
+    naturalOrder: naturalQueueOrder(playlists, music.persistData.preShuffleOrder),
     reshuffle,
     shufflePin,
   };
@@ -366,7 +379,7 @@ const flushNativeManifest = (): void => {
     "info",
     `[NativeManifest] published rev=${manifest.revision} entries=${entries.length} ` +
       `mode=${manifest.mode} cursor=${cursorIndex}/${trackIdentityKey(cursorIdentity)} ` +
-      `reshuffle=${reshuffle} pin=${trackIdentityKey(shufflePin)}`,
+      `reshuffle=${reshuffle} shuffle=${shuffle?.id ?? "none"} pin=${trackIdentityKey(shufflePin)}`,
   );
 };
 

@@ -491,6 +491,8 @@ fn rebuild_manifest(
         repeat_list: false,
         random_seed: None,
         reshuffle: false,
+        shuffle: None,
+        natural_order: Vec::new(),
         shuffle_pin: None,
     });
     if !prefix_unchanged {

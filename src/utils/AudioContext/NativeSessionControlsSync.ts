@@ -166,7 +166,7 @@ const adoptSessionControls = (controls: SessionControls): void => {
       // applied to its own planner. `adoptPlaySongMode` is the quiet half. It does
       // not shuffle either: in random mode the backend owns the permutation and
       // reports it as `nativeQueueOrderChanged` right behind these controls.
-      modeChanged = music.adoptPlaySongMode(controls.playMode);
+      modeChanged = music.adoptPlaySongMode(controls.playMode, { backendOrdered: true });
     }
 
     const songId = Number(music.playingSongId ?? music.getPlaySongData?.id);

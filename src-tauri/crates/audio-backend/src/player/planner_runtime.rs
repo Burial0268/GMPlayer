@@ -150,7 +150,10 @@ impl AudioPlayer {
         }
         self.source_cache.invalidate();
         self.planner = super::planner::Planner::new();
-        self.session.lock().order.clear();
+        let mut session = self.session.lock();
+        session.order.clear();
+        session.shuffle_id = None;
+        drop(session);
         self.emit_planner_status().await;
     }
 
@@ -169,10 +172,15 @@ impl AudioPlayer {
         } else {
             Vec::new()
         };
+        let shuffle_id = random
+            .then(|| self.manifest.shuffle_id().map(str::to_owned))
+            .flatten();
         {
             let mut session = self.session.lock();
+            session.manifest_revision = self.manifest.revision();
             session.play_mode = self.session_controls.play_mode;
             session.order = order.clone();
+            session.shuffle_id = shuffle_id.clone();
         }
         if emit && random {
             info!(
@@ -186,6 +194,7 @@ impl AudioPlayer {
                 .emit(AudioThreadEvent::NativeQueueOrderChanged {
                     manifest_revision: self.manifest.revision(),
                     order,
+                    shuffle_id,
                 })
                 .await;
         }

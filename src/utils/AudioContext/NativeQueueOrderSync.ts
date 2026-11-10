@@ -37,6 +37,8 @@ export const installQueueOrderSubscriber = (): void => {
       );
       return;
     }
-    useMusicDataStore().adoptBackendQueueOrder(event.data.order, event.data.manifestRevision);
+    useMusicDataStore().adoptBackendQueueOrder(event.data.order, event.data.manifestRevision, {
+      shuffleId: event.data.shuffleId,
+    });
   });
 };

@@ -37,6 +37,10 @@ pub struct ManifestStore {
     /// reshuffle so two presses of the notification's mode button do not produce
     /// the same permutation.
     shuffle_pass: u64,
+    /// Identity order before shuffling, independent of the UI's mirrored rows.
+    natural_order: Vec<String>,
+    /// Last completed transaction; retries must reuse its permutation.
+    shuffle_id: Option<String>,
 }
 
 impl ManifestStore {
@@ -45,6 +49,8 @@ impl ManifestStore {
             manifest: None,
             order: Vec::new(),
             shuffle_pass: 0,
+            natural_order: Vec::new(),
+            shuffle_id: None,
         }
     }
 
@@ -64,8 +70,24 @@ impl ManifestStore {
         if manifest.revision <= self.revision() {
             return false;
         }
+        let natural_keys = if !manifest.natural_order.is_empty() {
+            manifest
+                .natural_order
+                .iter()
+                .map(TrackIdentity::key)
+                .collect()
+        } else if self.mode() == NativePlaybackMode::Random
+            && manifest.mode == NativePlaybackMode::Random
+        {
+            self.natural_order.clone()
+        } else {
+            Vec::new()
+        };
+        self.natural_order = rebase_order(&natural_keys, &manifest.entries)
+            .iter()
+            .map(|&position| manifest.entries[position].identity.key())
+            .collect();
         self.order = sanitize_order(&manifest.order, manifest.entries.len());
-        self.shuffle_pass = 0;
         self.manifest = Some(manifest);
         true
     }
@@ -96,21 +118,33 @@ impl ManifestStore {
         let previous_mode = self.manifest.as_ref().map(|m| m.mode);
         let previous_keys = self.order_keys();
         let random = manifest.mode == NativePlaybackMode::Random;
-        let reshuffle = manifest.reshuffle;
+        let legacy_reshuffle = manifest.reshuffle;
+        let shuffle = manifest.shuffle.clone();
         self.set(manifest);
         if !random {
             return Some(false);
         }
 
         let switched = matches!(previous_mode, Some(mode) if mode != NativePlaybackMode::Random);
-        let fresh = reshuffle || switched;
+        let pending = shuffle.as_ref().filter(|state| !state.applied);
+        let fresh = match shuffle.as_ref() {
+            Some(state) => !state.applied && self.shuffle_id.as_ref() != Some(&state.id),
+            None => legacy_reshuffle || switched,
+        };
         if fresh {
             self.reshuffle_random();
+            if let Some(state) = pending {
+                self.shuffle_id = Some(state.id.clone());
+            }
             self.pin_to_head(pin);
         } else if previous_mode.is_some() {
             self.order = rebase_order(&previous_keys, self.entries());
+        } else {
+            // An applied token proves that the first entries already contain
+            // the saved permutation. A new process must not draw it again.
+            self.shuffle_id = shuffle.as_ref().map(|state| state.id.clone());
         }
-        Some(fresh || !self.is_natural_order())
+        Some(pending.is_some() || fresh || !self.is_natural_order())
     }
 
     /// Keys of the traversal, in order. The identity-keyed form of `order`, which
@@ -135,6 +169,10 @@ impl ManifestStore {
             .filter_map(|position| self.entry_at(*position))
             .map(|entry| entry.identity.clone())
             .collect()
+    }
+
+    pub fn shuffle_id(&self) -> Option<&str> {
+        self.shuffle_id.as_deref()
     }
 
     fn is_natural_order(&self) -> bool {
@@ -162,6 +200,8 @@ impl ManifestStore {
         }
         self.manifest = None;
         self.order.clear();
+        self.natural_order.clear();
+        self.shuffle_id = None;
         self.shuffle_pass = 0;
         true
     }
@@ -245,9 +285,9 @@ impl ManifestStore {
                     }
                 }
             }
-            // Out of random: back to the list the user sees.
+            // Entries may themselves be the mirrored random permutation.
             (NativePlaybackMode::Random, _) => {
-                self.order = sanitize_order(&[], self.len());
+                self.order = rebase_order(&self.natural_order, self.entries());
             }
             // Normal ↔ single is a repeat decision, not a traversal one.
             _ => {}
@@ -275,6 +315,11 @@ impl ManifestStore {
         let mut order: Vec<usize> = (0..len).collect();
         fisher_yates(&mut order, seed);
         self.order = order;
+        // Keep an explicit request's proof through notification mode changes:
+        // a page still awaiting its answer must not replay that completed draw.
+        if self.shuffle_id.is_none() {
+            self.shuffle_id = Some(format!("native:{}:{}", self.revision(), self.shuffle_pass));
+        }
     }
 
     /// Position within `entries` of the identity `key`. Identity — never the
@@ -426,6 +471,8 @@ mod tests {
             repeat_list: true,
             random_seed: None,
             reshuffle: false,
+            shuffle: None,
+            natural_order: Vec::new(),
             shuffle_pin: None,
         }
     }
@@ -789,6 +836,170 @@ mod tests {
             None
         );
         assert_eq!(store.len(), 3);
+    }
+
+    #[test]
+    fn retries_of_one_shuffle_request_keep_the_same_pass() {
+        let mut store = ManifestStore::new();
+        let request = |revision, id: &str| NativePlaybackManifest {
+            shuffle: Some(crate::types::QueueShuffleState {
+                id: id.into(),
+                applied: false,
+            }),
+            reshuffle: true,
+            ..random_manifest(revision, &["a", "b", "c", "d", "e", "f"])
+        };
+        assert_eq!(
+            store.set_owning_order(request(1, "first"), Some("netease:a")),
+            Some(true)
+        );
+        let held = keys(&store);
+        let pass = store.shuffle_pass;
+        for revision in 2..5 {
+            assert_eq!(
+                store.set_owning_order(request(revision, "first"), Some("netease:c")),
+                Some(true)
+            );
+            assert_eq!(keys(&store), held, "a retry must not restart the pass");
+            assert_eq!(store.shuffle_pass, pass);
+            assert_eq!(store.shuffle_id(), Some("first"));
+        }
+        store.set_owning_order(request(5, "second"), Some("netease:c"));
+        assert_eq!(store.shuffle_pass, pass + 1);
+        assert_eq!(store.shuffle_id(), Some("second"));
+        assert_eq!(keys(&store)[0], "netease:c");
+    }
+
+    #[test]
+    fn applied_shuffle_token_survives_a_cold_start() {
+        let saved = ["c", "a", "d", "b"];
+        for revision in [1, 20, 99] {
+            let mut store = ManifestStore::new();
+            let manifest = NativePlaybackManifest {
+                shuffle: Some(crate::types::QueueShuffleState {
+                    id: "saved".into(),
+                    applied: true,
+                }),
+                ..random_manifest(revision, &saved)
+            };
+            assert_eq!(
+                store.set_owning_order(manifest, Some("netease:d")),
+                Some(false)
+            );
+            assert_eq!(keys(&store), keyed(&saved));
+            assert_eq!(store.shuffle_id(), Some("saved"));
+            assert_eq!(store.shuffle_pass, 0);
+        }
+    }
+
+    #[test]
+    fn leaving_random_after_cold_restore_uses_the_original_order() {
+        for mode in [NativePlaybackMode::Normal, NativePlaybackMode::Single] {
+            let mut store = ManifestStore::new();
+            let natural: Vec<_> = ["a", "b", "c", "d"]
+                .iter()
+                .map(|id| TrackIdentity::Netease { id: (*id).into() })
+                .collect();
+            store.set_owning_order(
+                NativePlaybackManifest {
+                    natural_order: natural.clone(),
+                    shuffle: Some(crate::types::QueueShuffleState {
+                        id: "saved".into(),
+                        applied: true,
+                    }),
+                    ..random_manifest(1, &["c", "a", "d", "b"])
+                },
+                None,
+            );
+            // A mirrored republish replaces the entry positions, not their origin.
+            store.set_owning_order(
+                NativePlaybackManifest {
+                    natural_order: natural,
+                    ..random_manifest(2, &["c", "a", "d", "b"])
+                },
+                None,
+            );
+            assert!(store.set_mode(mode, Some(0)));
+            assert_eq!(keys(&store), keyed(&["a", "b", "c", "d"]));
+        }
+    }
+
+    #[test]
+    fn natural_order_retains_local_duplicates_and_tracks_list_edits() {
+        let local = |path: &str| TrackIdentity::Local { path: path.into() };
+        let mut initial = random_manifest(1, &["c", "a", "b", "a"]);
+        for entry in &mut initial.entries {
+            entry.identity = local(entry.identity.netease_id().unwrap());
+        }
+        initial.natural_order = ["a", "b", "a", "c"]
+            .iter()
+            .map(|path| local(path))
+            .collect();
+        let mut store = ManifestStore::new();
+        store.set_owning_order(initial, None);
+        let mut edited = random_manifest(2, &["c", "a", "x", "a"]);
+        for entry in &mut edited.entries {
+            entry.identity = local(entry.identity.netease_id().unwrap());
+        }
+        edited.natural_order = ["a", "a", "c", "x"]
+            .iter()
+            .map(|path| local(path))
+            .collect();
+        store.set_owning_order(edited, None);
+        store.set_mode(NativePlaybackMode::Normal, None);
+        assert_eq!(
+            store.order_identities(),
+            ["a", "a", "c", "x"]
+                .iter()
+                .map(|path| local(path))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn notification_shuffle_ids_survive_republishes() {
+        let mut store = ManifestStore::new();
+        store.set_owning_order(manifest(1, &["a", "b", "c", "d"]), None);
+        store.set_mode(NativePlaybackMode::Random, Some(0));
+        let first = store.shuffle_id().unwrap().to_string();
+        let order: Vec<_> = store
+            .order_identities()
+            .iter()
+            .map(|id| id.netease_id().unwrap().to_string())
+            .collect();
+        let refs: Vec<_> = order.iter().map(String::as_str).collect();
+        store.set_owning_order(random_manifest(2, &refs), None);
+        assert_eq!(store.shuffle_id(), Some(first.as_str()));
+        let pass = store.shuffle_pass;
+        store.set_mode(NativePlaybackMode::Single, Some(0));
+        store.set_mode(NativePlaybackMode::Random, Some(0));
+        assert_eq!(store.shuffle_pass, pass + 1);
+        assert_eq!(store.shuffle_id(), Some(first.as_str()));
+    }
+
+    #[test]
+    fn a_completed_request_stays_completed_after_notification_mode_changes() {
+        let mut store = ManifestStore::new();
+        let request = |revision| NativePlaybackManifest {
+            shuffle: Some(crate::types::QueueShuffleState {
+                id: "request".into(),
+                applied: false,
+            }),
+            ..random_manifest(revision, &["a", "b", "c", "d", "e", "f"])
+        };
+        store.set_owning_order(request(1), Some("netease:a"));
+        store.set_mode(NativePlaybackMode::Normal, Some(0));
+        store.set_mode(NativePlaybackMode::Random, Some(0));
+        let pass = store.shuffle_pass;
+        let order = keys(&store);
+        // The page died before the answer and still has the pending request.
+        assert_eq!(
+            store.set_owning_order(request(2), Some("netease:a")),
+            Some(true)
+        );
+        assert_eq!(store.shuffle_pass, pass);
+        assert_eq!(keys(&store), order);
+        assert_eq!(store.shuffle_id(), Some("request"));
     }
 
     fn entries(ids: &[&str]) -> Vec<NativeManifestEntry> {

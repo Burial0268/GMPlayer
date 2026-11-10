@@ -6,6 +6,13 @@
  * See `src-tauri/crates/audio-backend/src/player/{manifest,planner}.rs`.
  */
 
+export interface QueueShuffleState {
+  /** Stable across manifest retries and WebView reloads. */
+  id: string;
+  /** True once this permutation has been applied to the persisted queue. */
+  applied: boolean;
+}
+
 /**
  * Stable track identity — deliberately independent of any resolved CDN URL,
  * which expires and gets re-resolved. All frontend/backend reconciliation
@@ -58,13 +65,11 @@ export interface NativePlaybackManifest {
    * on the OS notification with no WebView alive).
    */
   randomSeed?: number | null;
-  /**
-   * The list was replaced wholesale, so the backend should draw a new random
-   * permutation instead of carrying the old one over by identity.
-   *
-   * Repeated on every manifest until a `nativeQueueOrderChanged` for one of them
-   * answers it; the backend sends that for every fresh draw, matching or not.
-   */
+  /** Request/completion token saved atomically with the frontend queue. */
+  shuffle?: QueueShuffleState | null;
+  /** Original order by identity, independent of the mirrored entries. */
+  naturalOrder?: TrackIdentity[];
+  /** Legacy request flag; shuffle.id makes retries idempotent. */
   reshuffle?: boolean;
   /** Track to keep at the head of that fresh permutation. */
   shufflePin?: TrackIdentity | null;
@@ -167,4 +172,6 @@ export interface NativeSessionSnapshot {
   playMode?: "normal" | "random" | "single";
   /** The backend's random permutation by identity; empty outside random mode. */
   order?: TrackIdentity[];
+  /** Proof that the backend completed this queue's shuffle transaction. */
+  shuffleId?: string | null;
 }

@@ -473,7 +473,10 @@ pub enum AudioThreadEvent {
     /// and the clock frozen until it catches up. Not a pause — `PlayStatus` is
     /// unchanged, and the user's intent to play survives it.
     #[serde(rename_all = "camelCase")]
-    Buffering { music_id: String, is_buffering: bool },
+    Buffering {
+        music_id: String,
+        is_buffering: bool,
+    },
     #[serde(rename_all = "camelCase")]
     AudioPlayFinished { music_id: String },
     #[serde(rename_all = "camelCase")]
@@ -597,6 +600,8 @@ pub enum AudioThreadEvent {
     NativeQueueOrderChanged {
         manifest_revision: u64,
         order: Vec<TrackIdentity>,
+        #[serde(default)]
+        shuffle_id: Option<String>,
     },
     /// Every candidate in this revision failed to resolve or play. Terminal
     /// until a new manifest arrives; `reason` is already redacted.
@@ -758,6 +763,14 @@ impl Default for NativePlaybackMode {
     }
 }
 
+/// One shuffle transaction. The queue and its applied token are persisted together.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueShuffleState {
+    pub id: String,
+    pub applied: bool,
+}
+
 /// Full lightweight playback manifest. `revision` is monotonic per frontend
 /// session; the backend rejects anything not strictly newer.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -789,10 +802,13 @@ pub struct NativePlaybackManifest {
     /// with no WebView alive to republish one.
     #[serde(default)]
     pub random_seed: Option<u64>,
-    /// The list was replaced wholesale, so the backend should draw a fresh
-    /// random permutation instead of carrying the old one over. Only meaningful
-    /// in random mode. The frontend repeats it until an order answers it, so a
-    /// manifest that carries it is always answered (`NativeQueueOrderChanged`).
+    /// Stable shuffle transaction, independent of manifest revisions.
+    #[serde(default)]
+    pub shuffle: Option<QueueShuffleState>,
+    /// Original order, which must survive mirrors of the random permutation.
+    #[serde(default)]
+    pub natural_order: Vec<TrackIdentity>,
+    /// Legacy request flag for pages without a shuffle transaction id.
     #[serde(default)]
     pub reshuffle: bool,
     /// Track to keep at the head of a fresh permutation. Falls back to the
@@ -956,6 +972,8 @@ pub struct NativeSessionSnapshot {
     /// adopts this to catch its queue up before it locates the playing track.
     #[serde(default)]
     pub order: Vec<TrackIdentity>,
+    #[serde(default)]
+    pub shuffle_id: Option<String>,
 }
 
 /// Resolved "what is playing" for OS media sessions.
@@ -1292,6 +1310,7 @@ mod tests {
             planner_active: true,
             play_mode: NativePlaybackMode::Random,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
+            shuffle_id: Some("saved-pass".into()),
         };
         let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
         let object = value.as_object().expect("object");
@@ -1309,6 +1328,7 @@ mod tests {
             "plannerActive",
             "playMode",
             "order",
+            "shuffleId",
         ] {
             assert!(object.contains_key(key), "missing wire field `{key}`");
         }
@@ -1360,11 +1380,15 @@ mod tests {
         let event = AudioThreadEvent::NativeQueueOrderChanged {
             manifest_revision: 3,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
+            shuffle_id: Some("shuffle-7".into()),
         };
         let value = serde_json::to_value(event).expect("serialize");
         assert_eq!(value["type"], "nativeQueueOrderChanged");
         assert_eq!(value["data"]["manifestRevision"], 3);
         assert_eq!(value["data"]["order"][0]["id"], "7");
+        assert_eq!(value["data"]["shuffleId"], "shuffle-7");
+        assert!(manifest.shuffle.is_none());
+        assert!(manifest.natural_order.is_empty());
     }
 
     /// Server-driven modes (personal FM, listen-together) publish a manifest but

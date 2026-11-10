@@ -1,3 +1,5 @@
+import type { QueueShuffleState } from "@/utils/tauri/audio/protocol/manifest";
+
 export interface Artist {
   id: number;
   name: string;
@@ -72,6 +74,14 @@ export interface PlaybackSessionSnapshot {
   updatedAt: number;
 }
 
+export const createQueueShuffleState = (applied = false): QueueShuffleState => ({
+  id:
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  applied,
+});
+
 export interface PersistData {
   searchHistory: string[];
   personalFmMode: boolean;
@@ -92,17 +102,8 @@ export interface PersistData {
    * invalidates.
    */
   preShuffleOrder: number[];
-  /**
-   * Tauri only. A reshuffle asked of the backend that no order has answered yet,
-   * as the first manifest revision that carries it; `null` when none is pending.
-   *
-   * Persisted next to the queue on purpose: while the request lived only in
-   * memory, a page or process that died before the order came back left an
-   * unshuffled queue looking shuffled (`preShuffleOrder` set), and the next
-   * process trusted it as last session's permutation. Dropped wherever
-   * `preShuffleOrder` is — a request is about the list it was made for.
-   */
-  pendingReshuffleRevision: number | null;
+  /** Saved with the queue; preShuffleOrder is only the way back to natural order. */
+  shuffleState: QueueShuffleState | null;
   playSongTime: PlaySongTime;
   playbackSnapshot: PlaybackSessionSnapshot;
   playVolume: number;
@@ -139,7 +140,7 @@ export const createDefaultPersistData = (): PersistData => ({
   playSongIndex: 0,
   playSongMode: "normal",
   preShuffleOrder: [],
-  pendingReshuffleRevision: null,
+  shuffleState: null,
   playSongTime: createDefaultPlaySongTime(),
   playbackSnapshot: createDefaultPlaybackSnapshot(),
   playVolume: 0.7,
