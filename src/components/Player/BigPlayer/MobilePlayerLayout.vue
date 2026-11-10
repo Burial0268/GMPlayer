@@ -573,9 +573,10 @@ const artistsFrameStyle = computed(() =>
 const artistNames = computed(() => props.artistList.map((item) => item.name).join(" / "));
 
 // ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──
-// 0 = 主内容，1 = Playlist。y 用像素数值而非百分比字符串：progress 归零时
-// motion 才会输出 transform: none，主内容不残留 stacking context，
-// 保住歌词层 plus-lighter 到背景画布的混合链。
+// 0 = 主内容，1 = Playlist。主内容静止时必须是 transform: none，不留 stacking context，
+// 保住歌词层 plus-lighter 到背景画布的混合链。不能交给 motion-v 的 y：Vue 渲染时它把
+// y=0 写成 translateY(0px)，只有值变化驱动的帧才写 none——队列没开过之前，
+// 取色模式下的歌词一直是没加亮的暗色。
 const pagesRef = ref<HTMLElement | null>(null);
 const pagerProgress = useMotionValue(props.queueOpen ? 1 : 0);
 const pagerHeightValue = useMotionValue(0);
@@ -587,9 +588,14 @@ const measurePagerHeight = () => {
   pagerHeightValue.set(pagesRef.value?.clientHeight || window.innerHeight || 1);
 };
 
-const playerPageY = useTransform(() => -clamp01(pagerProgress.get()) * pagerHeight());
+const playerPageTransform = useTransform(() => {
+  const y = clamp01(pagerProgress.get()) * pagerHeight();
+  return y ? `translateY(${-y}px)` : "none";
+});
 const queuePageY = useTransform(() => (1 - clamp01(pagerProgress.get())) * pagerHeight());
-const playerPageMotionStyle = computed<MotionStyleRecord>(() => ({ y: playerPageY }));
+const playerPageMotionStyle = computed<MotionStyleRecord>(() => ({
+  transform: playerPageTransform,
+}));
 const queuePageMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   y: queuePageY,
