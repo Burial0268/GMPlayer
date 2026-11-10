@@ -26,6 +26,7 @@
  * need to branch — but we still gate here to avoid pointless IPC.
  */
 
+import { toRaw } from "vue";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import type {
   NativeManifestEntry,
@@ -104,20 +105,6 @@ const toIdentity = (song: SongData): TrackIdentity | null => {
   const id = Number(song.id);
   if (!Number.isFinite(id) || id <= 0) return null;
   return { provider: "netease", id: String(id) };
-};
-
-/** Match restorePlaylistOrder: known tracks first, additions in current order. */
-const naturalQueueOrder = (songs: SongData[], snapshot: number[]): TrackIdentity[] => {
-  if (!snapshot.length) return [];
-  const rank = new Map<number, number>();
-  for (const id of snapshot) {
-    if (!rank.has(id)) rank.set(id, rank.size);
-  }
-  return songs
-    .slice()
-    .sort((a, b) => (rank.get(a.id) ?? snapshot.length) - (rank.get(b.id) ?? snapshot.length))
-    .map(toIdentity)
-    .filter((identity): identity is TrackIdentity => identity !== null);
 };
 
 /**
@@ -294,7 +281,8 @@ const flushNativeManifest = (): void => {
   if (music.persistData.personalFmMode) return;
   const listenTogether = useListenTogetherStore();
 
-  const playlists = music.persistData.playlists;
+  // This synchronous snapshot is read-only; per-index Proxy reads add no tracking value.
+  const playlists = toRaw(music.persistData.playlists);
   if (!playlists?.length) {
     clearNativeManifest();
     return;
@@ -369,7 +357,11 @@ const flushNativeManifest = (): void => {
     shuffle,
     // The backend needs the original order while the page is away, even after
     // entries have been replaced by a mirror of its random permutation.
-    naturalOrder: naturalQueueOrder(playlists, music.persistData.preShuffleOrder),
+    naturalOrder: music.persistData.preShuffleOrder.length
+      ? music.getNaturalPlaylistOrder
+          .map((index) => toIdentity(playlists[index]))
+          .filter((identity): identity is TrackIdentity => identity !== null)
+      : [],
     reshuffle,
     shufflePin,
   };

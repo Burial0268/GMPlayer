@@ -5,7 +5,8 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { transformSync } from "esbuild";
-import { effectScope, nextTick, reactive, ref, watch } from "vue";
+import { effectScope, nextTick, reactive, ref, toRaw, watch } from "vue";
+import { createPinia, defineStore } from "pinia";
 
 const require = createRequire(resolve("package.json"));
 
@@ -34,6 +35,7 @@ function sourceModule(path: string, imports: Record<string, unknown>, globals = 
 }
 
 const musicTypes = sourceModule("src/store/musicTypes.ts", {});
+const playlistOrder = sourceModule("src/utils/playlistOrder.ts", {});
 const keyOf = (identity: any) =>
   identity ? `${identity.provider}:${identity.id ?? identity.path}` : null;
 const identities = (ids: number[]) => ids.map((id) => ({ provider: "netease", id: String(id) }));
@@ -57,7 +59,7 @@ function queueEnvironment(native = true) {
       this.manifests.push(manifest);
     }
   }
-  const actions = sourceModule(
+  const storeOptions = sourceModule(
     "src/store/musicData.ts",
     {
       pinia: { defineStore: (_id: string, options: any) => options },
@@ -66,6 +68,7 @@ function queueEnvironment(native = true) {
       "@/utils/tauri/audio/nativeRustSound": { NativeRustSound },
       "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
       "@/utils/tauri/core/nativeLog": { logNative() {} },
+      "@/utils/playlistOrder": playlistOrder,
       "@/utils/rawEntry": { asRawEntries: (songs: any[]) => songs.slice() },
       "@/utils/AudioContext": {
         requestNativeReshuffle: () => publisher.requestNativeReshuffle(),
@@ -76,19 +79,18 @@ function queueEnvironment(native = true) {
       },
     },
     { window },
-  ).default.actions;
+  ).default;
   function restore(saved?: any) {
-    music = {
-      persistData: reactive(saved ?? musicTypes.createDefaultPersistData()),
-      playingSongId: saved?.playlists?.[saved.playSongIndex]?.id ?? 1,
-      preloadedSongIds: new Set(),
-    };
-    for (const [name, action] of Object.entries(actions)) {
-      music[name] = (action as Function).bind(music);
-    }
-    Object.defineProperty(music, "getPlaySongData", {
-      get: () => music.persistData.playlists[music.persistData.playSongIndex],
+    music?.$dispose();
+    const useStore = defineStore("musicData-lifecycle", {
+      ...storeOptions,
+      state: () => ({
+        persistData: reactive(saved ?? musicTypes.createDefaultPersistData()),
+        playingSongId: saved?.playlists?.[saved.playSongIndex]?.id ?? 1,
+        preloadedSongIds: new Set(),
+      }),
     });
+    music = useStore(createPinia());
     music.afterQueueReordered = () => {};
     music.resetPlaySongTime = () => {};
     music.resetSongLyricState = () => {};
@@ -100,6 +102,7 @@ function queueEnvironment(native = true) {
     publisher = sourceModule(
       "src/utils/AudioContext/NativeManifestPublisher.ts",
       {
+        vue: { toRaw },
         "@/utils/tauri/core/runtime": { isTauri: () => native },
         "@/store/musicTypes": musicTypes,
         "@/utils/tauri/audio/nativeRustSound": { NativeRustSound, setPlannerRevisionObserver() {} },
@@ -138,6 +141,56 @@ function randomQueue() {
     shuffleState: { id: "saved-pass", applied: true },
   };
 }
+
+test("natural order preserves stable ranks, duplicate occurrences and additions", () => {
+  let random = 17;
+  const next = () => (random = (Math.imul(random, 1664525) + 1013904223) >>> 0);
+  for (let scenario = 0; scenario < 250; scenario++) {
+    const snapshot = Array.from({ length: next() % 50 }, () => next() % 25);
+    const list = Array.from({ length: next() % 80 }, (_, occurrence) => ({
+      id: next() % 30,
+      occurrence,
+    }));
+    const original = list.slice();
+    const rank = new Map<number, number>();
+    snapshot.forEach((id, index) => {
+      if (!rank.has(id)) rank.set(id, index);
+    });
+    const expected = list
+      .slice()
+      .sort((a, b) => (rank.get(a.id) ?? snapshot.length) - (rank.get(b.id) ?? snapshot.length));
+    const actual = playlistOrder.naturalQueueOrder(list, snapshot);
+    assert.deepEqual(
+      Array.from(actual, (index: number) => list[index]),
+      expected,
+    );
+    assert.deepEqual(list, original, "restoring the order must not mutate the live queue");
+  }
+});
+
+test("natural order is cached across cursor changes and invalidated by list or origin edits", () => {
+  const env = queueEnvironment();
+  env.restore(randomQueue());
+  const first = env.music.getNaturalPlaylistOrder;
+  const ids = (order: number[]) =>
+    Array.from(order, (index) => env.music.persistData.playlists[index].id);
+  assert.deepEqual(ids(first), [1, 2, 3, 4]);
+  env.music.persistData.playSongIndex = 2;
+  assert.equal(env.music.getNaturalPlaylistOrder, first);
+  env.music.persistData.shuffleState = { id: "another-pass", applied: true };
+  assert.equal(env.music.getNaturalPlaylistOrder, first);
+  env.music.persistData.playlists.push({ id: 5, name: "5" });
+  const added = env.music.getNaturalPlaylistOrder;
+  assert.notEqual(added, first);
+  assert.deepEqual(ids(added), [1, 2, 3, 4, 5]);
+  env.music.persistData.preShuffleOrder = [4, 3, 2, 1];
+  assert.notEqual(env.music.getNaturalPlaylistOrder, added);
+  assert.deepEqual(ids(env.music.getNaturalPlaylistOrder), [4, 3, 2, 1, 5]);
+  const beforeMirror = env.music.getNaturalPlaylistOrder;
+  env.music.persistData.playlists.reverse();
+  assert.notEqual(env.music.getNaturalPlaylistOrder, beforeMirror);
+  assert.deepEqual(ids(env.music.getNaturalPlaylistOrder), [4, 3, 2, 1, 5]);
+});
 
 test("an applied shuffle survives repeated hydrate and startup without reshuffling", async () => {
   const env = queueEnvironment();
@@ -301,6 +354,17 @@ test("persistence writes the applied token and its permutation in the same snaps
     [1, 2, 3, 4],
   );
   assert.deepEqual(snapshot.shuffleState, { id: "landing", applied: true });
+  const marker = env.music.persistData.shuffleState;
+  let mutations = 0;
+  const stop = watch(env.music.persistData, () => mutations++);
+  for (let revision = 11; revision < 14; revision++) {
+    env.music.adoptBackendQueueOrder(identities([1, 2, 3, 4]), revision, { shuffleId: "landing" });
+    await nextTick();
+    assert.equal(env.music.persistData.shuffleState, marker);
+    assert.equal(mutations, 0, "a duplicate confirmation must not dirty persistence");
+    assert.equal(writes.length, 1);
+  }
+  stop();
   scope.stop();
 });
 

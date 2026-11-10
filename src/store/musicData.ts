@@ -47,6 +47,7 @@ import { isTauri } from "@/utils/tauri/core/runtime";
 import type { NativeFmSnapshot, TrackIdentity } from "@/utils/tauri/audio/protocol";
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
+import { naturalQueueOrder } from "@/utils/playlistOrder";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/PersonalFmState";
 import {
   startNativePersonalFm,
@@ -230,6 +231,10 @@ const useMusicDataStore = defineStore("musicData", {
     },
     getPlaylists(state): SongData[] {
       return state.persistData.playlists;
+    },
+    getNaturalPlaylistOrder(state): number[] {
+      // Cache positions so an invalidated getter cannot retain a replaced playlist.
+      return naturalQueueOrder(state.persistData.playlists, state.persistData.preShuffleOrder);
     },
     getPlaySongMode(state): "normal" | "random" | "single" {
       return state.persistData.playSongMode;
@@ -1145,18 +1150,9 @@ const useMusicDataStore = defineStore("musicData", {
       const snapshot = this.persistData.preShuffleOrder;
       this.persistData.shuffleState = null;
       if (!snapshot.length) return false;
-      const rank = new Map<number, number>();
-      for (let i = 0; i < snapshot.length; i++) {
-        if (!rank.has(snapshot[i])) rank.set(snapshot[i], i);
-      }
-      const known: SongData[] = [];
-      const added: SongData[] = [];
-      for (const song of this.persistData.playlists) {
-        (rank.has(song.id) ? known : added).push(song);
-      }
-      known.sort((a, b) => (rank.get(a.id) as number) - (rank.get(b.id) as number));
+      const next = this.getNaturalPlaylistOrder.map((index) => this.persistData.playlists[index]);
       this.persistData.preShuffleOrder = [];
-      return this.applyQueueOrder(known.concat(added));
+      return this.applyQueueOrder(next);
     },
 
     /**
@@ -1303,10 +1299,10 @@ const useMusicDataStore = defineStore("musicData", {
       const unchanged = next.every((song, index) => song === list[index]);
       const before = this.getPlaySongData?.id;
       if (!unchanged && !this.applyQueueOrder(next)) return false;
-      this.persistData.shuffleState = {
-        id: options.shuffleId ?? shuffle?.id ?? "legacy:applied",
-        applied: true,
-      };
+      const shuffleId = options.shuffleId ?? shuffle?.id ?? "legacy:applied";
+      if (shuffle?.id !== shuffleId || !shuffle.applied) {
+        this.persistData.shuffleState = { id: shuffleId, applied: true };
+      }
       if (unchanged) return false;
       this.afterQueueReordered();
       // 后端报告前进用的是条目里的 playlistIndex，收到这份队列之前那还是镜像前的
