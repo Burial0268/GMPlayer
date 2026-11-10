@@ -810,6 +810,23 @@ function ignoreAbort(error: unknown) {
   inset: 0;
   z-index: 20;
   color: #fff;
+
+  // 桌面的歌词列与右侧歌词同款：主色 plus-lighter 混到背景画布上。根节点因此不能是 stacking
+  // context（z-index 会把混合关在里面），层级下放给三块子元素，仍压过淡出的顶栏和开关。
+  &.desktop {
+    z-index: auto;
+
+    > .stage,
+    > .dismiss,
+    > .column {
+      z-index: 20;
+    }
+
+    > .column {
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      mix-blend-mode: plus-lighter;
+    }
+  }
 }
 
 .dismiss {
@@ -1222,6 +1239,15 @@ function ignoreAbort(error: unknown) {
 .lyric-share-leave-active {
   transition: opacity 0.25s ease-in;
 
+  // 桌面淡出落在子元素上：根节点一带 opacity 就成了 stacking context，歌词列会先失去混合变暗再淡出。
+  &.desktop {
+    transition: none;
+
+    > * {
+      transition: opacity 0.25s ease-in;
+    }
+  }
+
   // A phone's card sinks back as it fades, the actions drop away under it.
   &:not(.desktop) {
     .column,
@@ -1235,6 +1261,14 @@ function ignoreAbort(error: unknown) {
 
 .lyric-share-leave-to {
   opacity: 0;
+
+  &.desktop {
+    opacity: 1;
+
+    > * {
+      opacity: 0;
+    }
+  }
 
   &:not(.desktop) {
     .column {

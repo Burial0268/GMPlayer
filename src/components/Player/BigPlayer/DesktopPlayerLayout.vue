@@ -26,9 +26,9 @@
               key="comments"
               class="left-stage comment-stage"
               :layout="true"
-              :initial="{ opacity: 0, x: -22, y: 8, scale: 0.99 }"
-              :animate="{ opacity: 1, x: 0, y: 0, scale: 1 }"
-              :exit="{ opacity: 0, x: -14, y: 5, scale: 0.995 }"
+              :initial="stageVars(0, -22, 8, 0.99)"
+              :animate="stageVars(1, 0, 0, 1)"
+              :exit="stageVars(0, -14, 5, 0.995)"
               :transition="commentStageTransition"
             >
               <DesktopCommentPanel @close="$emit('closeComments')" />
@@ -38,9 +38,9 @@
               key="artwork"
               class="left-stage artwork-stage"
               :layout="true"
-              :initial="{ opacity: 0, x: 22, y: 8, scale: 0.99 }"
-              :animate="{ opacity: 1, x: 0, y: 0, scale: 1 }"
-              :exit="{ opacity: 0, x: 14, y: 5, scale: 0.995 }"
+              :initial="stageVars(0, 22, 8, 0.99)"
+              :animate="stageVars(1, 0, 0, 1)"
+              :exit="stageVars(0, 14, 5, 0.995)"
               :transition="artworkStageTransition"
             >
               <PlayerCover
@@ -133,17 +133,27 @@ const stageOpacity = {
   duration: 0.62,
   ease: [0.16, 1, 0.3, 1],
 } as const;
+// 舞台本身只动 CSS 变量，由里面的封面、metadata、评论面板各自套用（见样式）。舞台若自己带
+// transform/opacity 就是 stacking context，里面的 plus-lighter 只能混进空组：切换时偏暗、
+// 落定才突然加亮。metadata 和评论面板自身带混合，自己动不隔断混合。
+// 也不能用 x/y/scale：motion-v 静止时把它们写成恒等的 translateX(0px)…，同样隔断。
+const stageVars = (opacity: number, x: number, y: number, scale: number) => ({
+  "--stage-opacity": opacity,
+  "--stage-x": x,
+  "--stage-y": y,
+  "--stage-scale": scale,
+});
 const commentStageTransition = {
   ...stageSpring,
   default: stageSpring,
   layout: stageSpring,
-  opacity: { ...stageOpacity, delay: 0.1 },
+  "--stage-opacity": { ...stageOpacity, delay: 0.1 },
 } as const;
 const artworkStageTransition = {
   ...stageSpring,
   default: stageSpring,
   layout: stageSpring,
-  opacity: { ...stageOpacity, delay: 0.04 },
+  "--stage-opacity": { ...stageOpacity, delay: 0.04 },
 } as const;
 
 // 关闭手柄跟随封面/唱片舞台：测量舞台在 .left 内的位置，取「舞台顶部上方 1.5rem」
@@ -267,7 +277,6 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
     .left {
       flex-basis: 100%;
       width: 100%;
-      transform: translateX(0) scale(1);
     }
 
     .artwork-stage {
@@ -310,11 +319,9 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
     box-sizing: border-box;
     transition:
       flex-basis 0.34s cubic-bezier(0.25, 1, 0.5, 1),
-      width 0.34s cubic-bezier(0.25, 1, 0.5, 1),
-      transform 0.34s cubic-bezier(0.25, 1, 0.5, 1),
-      opacity 0.24s ease;
-    // width 走布局，合成器接不了；留在 will-change 里只是白占一个常驻图层。
-    will-change: transform, opacity;
+      width 0.34s cubic-bezier(0.25, 1, 0.5, 1);
+    // .left 和舞台都在 metadata、评论面板 plus-lighter 到背景画布的路上，不能成为 stacking
+    // context：不挂 will-change，入场（index.vue 的 GSAP）和舞台切换都只改下面这些变量。
   }
 
   .left-stage {
@@ -325,7 +332,32 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
     display: flex;
     flex-direction: column;
     box-sizing: border-box;
-    will-change: transform, opacity;
+  }
+
+  // 入场与舞台切换的淡入和位移由内容各自套用。封面/唱片朝下、metadata 朝上收缩，
+  // 合起来近似整列围绕两者之间缩放。
+  .artwork-stage :deep(.cover-stage),
+  .artwork-stage :deep(.record-stage),
+  .artwork-stage :deep(.player-cover-container > .controls),
+  .artwork-stage :deep(.record > .controls),
+  .comment-stage :deep(.desktop-comment-panel) {
+    opacity: calc(var(--left-enter-opacity, 1) * var(--stage-opacity, 1));
+    transform: translate(calc(var(--stage-x, 0) * 1px), calc(var(--stage-y, 0) * 1px))
+      scale(calc(var(--left-enter-scale, 1) * var(--stage-scale, 1)));
+  }
+
+  .artwork-stage :deep(.cover-stage),
+  .artwork-stage :deep(.record-stage) {
+    transform-origin: 50% 100%;
+  }
+
+  .artwork-stage :deep(.player-cover-container > .controls),
+  .artwork-stage :deep(.record > .controls) {
+    transform-origin: 50% 0;
+  }
+
+  :deep(.player-close-handle) {
+    opacity: var(--left-enter-opacity, 1);
   }
 
   .artwork-stage {

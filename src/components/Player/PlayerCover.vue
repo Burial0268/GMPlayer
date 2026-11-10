@@ -30,7 +30,7 @@
         </div>
       </Transition>
     </div>
-    <div class="controls">
+    <div :class="['controls', { tinted: setting.immersivePlayer }]">
       <div class="song-info">
         <div class="text">
           <Motion
@@ -483,6 +483,8 @@ onUnmounted(() => {
     flex-direction: column;
     gap: 1.25rem;
     color: var(--main-cover-mix-color, rgb(239, 239, 239));
+    // 整块自己混到背景上（同右侧歌词的 .right）：入场、切换时它自己淡入位移，混合不断。
+    mix-blend-mode: plus-lighter;
 
     :deep(.n-icon),
     :deep(svg),
@@ -643,6 +645,22 @@ onUnmounted(() => {
       :deep(.n-icon) {
         color: var(--main-cover-mix-color, rgb(239, 239, 239));
         opacity: 1;
+      }
+    }
+
+    // 封面取色时与右侧歌词行同一套观感：主色 plus-lighter 叠到背景上，再留一点透明让底色透上来。
+    // 透明度同时是高光抑制——加色混合遇到亮封面会直接冲成纯白。
+    &.tinted {
+      .song-info .text {
+        .name {
+          opacity: 0.85;
+        }
+        .artists {
+          opacity: 0.6;
+        }
+      }
+      .time-info .time-text {
+        opacity: 0.6;
       }
     }
   }

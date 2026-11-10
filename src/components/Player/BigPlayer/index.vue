@@ -1506,6 +1506,8 @@ useMotionInterruption(() => {
       gsap.set(element, { clearProps: "opacity,transform,transition" });
     },
   );
+  const leftEl = desktopLayoutRef.value?.leftContentRef;
+  if (leftEl) clearLeftEnter(leftEl);
 });
 
 const initMobileElements = () => {
@@ -1539,32 +1541,36 @@ const animateTip = (isVisible: boolean) => {
 };
 
 // GSAP 入场动画 (desktop)
-// .left/.right 自带 opacity/transform 的 CSS transition（供 noLrc / lyrics-hidden 切换用），
+// .right 自带 opacity/transform 的 CSS transition（供 lyrics-hidden 切换用），
 // 会把 GSAP 立即写入的 from 状态再做一次过渡，造成 亮->暗->亮 闪烁；
 // 入场期间必须先禁用元素自身 transition，结束后 clearProps 恢复。
+// .left 不能直接动：它在 metadata plus-lighter 到背景的路上，动 opacity/transform 会让
+// metadata 在动画期间失去加亮、落定才突然亮起。只补间变量，由内容各自套用（DesktopPlayerLayout）。
+const LEFT_ENTER_VARS = ["--left-enter-opacity", "--left-enter-scale"];
+const clearLeftEnter = (el: HTMLElement) =>
+  LEFT_ENTER_VARS.forEach((name) => el.style.removeProperty(name));
+
 const animatePlayerIn = () => {
   if (!bigPlayerRef.value || isMobile.value) return;
   const leftEl = desktopLayoutRef.value?.leftContentRef;
   const rightEl = desktopLayoutRef.value?.rightContentRef;
   // 同上：减弱动态效果时直接呈现终态，不做缩放淡入
   if (prefersReducedMotion()) {
-    [leftEl, rightEl].forEach((el) => {
-      if (el) gsap.set(el, { clearProps: "opacity,transform,transition" });
-    });
+    if (leftEl) clearLeftEnter(leftEl);
+    if (rightEl) gsap.set(rightEl, { clearProps: "opacity,transform,transition" });
     return;
   }
   if (leftEl) {
-    gsap.set(leftEl, { transition: "none" });
     gsap.fromTo(
       leftEl,
-      { opacity: 0, scale: 0.96 },
+      { "--left-enter-opacity": 0, "--left-enter-scale": 0.96 },
       {
-        opacity: 1,
-        scale: 1,
+        "--left-enter-opacity": 1,
+        "--left-enter-scale": 1,
         duration: 0.5,
         delay: 0.15,
         ease: "power2.out",
-        onComplete: () => gsap.set(leftEl, { clearProps: "opacity,transform,transition" }),
+        onComplete: () => clearLeftEnter(leftEl),
       },
     );
   }
