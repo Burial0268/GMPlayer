@@ -43,6 +43,13 @@ const identities = (ids: number[]) => ids.map((id) => ({ provider: "netease", id
 function queueEnvironment(native = true) {
   let music: any;
   let publisher: any;
+  let shuffleDraws = 0;
+  const math = Object.assign(Object.create(Math), {
+    random: () => {
+      shuffleDraws++;
+      return 0.25;
+    },
+  });
   const window: any = {};
   const storage = new Map<string, string>();
   const localStorage = {
@@ -63,7 +70,9 @@ function queueEnvironment(native = true) {
     "src/store/musicData.ts",
     {
       pinia: { defineStore: (_id: string, options: any) => options },
+      vue: { nextTick },
       "./musicTypes": musicTypes,
+      "@/utils/getLanguageData": { __esModule: true, default: (key: string) => key },
       "@/utils/tauri/core/runtime": { isTauri: () => native },
       "@/utils/tauri/audio/nativeRustSound": { NativeRustSound },
       "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
@@ -73,12 +82,13 @@ function queueEnvironment(native = true) {
       "@/utils/AudioContext": {
         requestNativeReshuffle: () => publisher.requestNativeReshuffle(),
         publishNativeManifest: (...args: any[]) => publisher.publishNativeManifest(...args),
+        publishSessionControls() {},
         cancelNativeQueuePrefill() {},
         getAudioPreloader: () => ({ cleanup() {} }),
         getAutoMixEngine: () => ({ isHandoffActive: () => false }),
       },
     },
-    { window },
+    { window, Math: math, $message: { info() {} } },
   ).default;
   function restore(saved?: any) {
     music?.$dispose();
@@ -125,11 +135,38 @@ function queueEnvironment(native = true) {
     get publisher() {
       return publisher;
     },
+    get shuffleDraws() {
+      return shuffleDraws;
+    },
     attach() {
       window.$player = new NativeRustSound();
       return window.$player;
     },
   };
+}
+
+function hydrateQueue(saved: any) {
+  const scope = effectScope();
+  const useStore = sourceModule(
+    "src/store/musicPersistedData.ts",
+    {
+      pinia: { defineStore: (_id: string, setup: any) => setup },
+      vue: { reactive, watch, toRaw },
+      "throttle-debounce": require("throttle-debounce"),
+      "./musicTypes": musicTypes,
+      "@/utils/rawEntry": { asRawEntry: (song: any) => song },
+    },
+    {
+      window: {
+        localStorage: { getItem: () => JSON.stringify({ persistData: saved }) },
+        addEventListener() {},
+      },
+      document: { addEventListener() {} },
+    },
+  ).default;
+  const store = scope.run(() => useStore());
+  scope.stop();
+  return store.persistData;
 }
 
 function randomQueue() {
@@ -290,28 +327,9 @@ test("legacy persisted queues migrate to an explicit completion or pending token
     const saved: any = randomQueue();
     delete saved.shuffleState;
     saved.pendingReshuffleRevision = pending;
-    const scope = effectScope();
-    const useStore = sourceModule(
-      "src/store/musicPersistedData.ts",
-      {
-        pinia: { defineStore: (_id: string, setup: any) => setup },
-        vue: { reactive, watch, toRaw: require("vue").toRaw },
-        "throttle-debounce": require("throttle-debounce"),
-        "./musicTypes": musicTypes,
-        "@/utils/rawEntry": { asRawEntry: (song: any) => song },
-      },
-      {
-        window: {
-          localStorage: { getItem: () => JSON.stringify({ persistData: saved }) },
-          addEventListener() {},
-        },
-        document: { addEventListener() {} },
-      },
-    ).default;
-    const store = scope.run(() => useStore());
-    assert.equal(store.persistData.shuffleState.applied, pending === null);
-    assert.equal("pendingReshuffleRevision" in store.persistData, false);
-    scope.stop();
+    const persistData = hydrateQueue(saved);
+    assert.equal(persistData.shuffleState.applied, pending === null);
+    assert.equal("pendingReshuffleRevision" in persistData, false);
   }
 });
 
@@ -382,6 +400,161 @@ test("web shuffle also records completion and clears it when restoring order", (
     Array.from(env.music.persistData.playlists, (s: any) => s.id),
     [1, 2, 3, 4],
   );
+});
+
+test("web mode changes pin the playing track and restore natural order without native IPC", async () => {
+  const env = queueEnvironment(false);
+  const saved = randomQueue();
+  saved.playSongMode = "normal";
+  saved.playlists = [1, 2, 3, 4].map((id) => ({ id, name: String(id) }));
+  saved.playSongIndex = 2;
+  saved.preShuffleOrder = [];
+  saved.shuffleState = null;
+  env.restore(saved);
+  const sound = env.attach();
+  const changedTracks: number[] = [];
+  const stop = watch(
+    () => env.music.getPlaySongData.id,
+    (id) => changedTracks.push(id),
+    { flush: "sync" },
+  );
+  env.music.setPlaySongMode("random");
+  assert.equal(env.music.getPlaySongData.id, 3);
+  assert.equal(env.music.persistData.playSongIndex, 0);
+  assert.equal(env.music.persistData.shuffleState.applied, true);
+  assert.equal(env.shuffleDraws, 3);
+  const marker = env.music.persistData.shuffleState;
+  env.music.setPlaySongMode("random");
+  assert.equal(env.shuffleDraws, 3);
+  assert.equal(env.music.persistData.shuffleState, marker);
+  env.music.setPlaySongMode("single");
+  assert.equal(env.music.persistData.shuffleState, null);
+  assert.deepEqual(
+    Array.from(env.music.persistData.playlists, (song: any) => song.id),
+    [1, 2, 3, 4],
+  );
+  assert.equal(env.music.getPlaySongData.id, 3);
+  env.music.setPlaySongMode("normal");
+  assert.equal(env.shuffleDraws, 3);
+  assert.deepEqual(changedTracks, []);
+  await Promise.resolve();
+  assert.equal(sound.manifests.length, 0);
+  stop();
+});
+
+test("web refresh keeps a completed permutation, cursor and token across repeated hydrates", () => {
+  const env = queueEnvironment(false);
+  const saved = randomQueue();
+  saved.playSongIndex = 2;
+  for (let boot = 0; boot < 3; boot++) {
+    env.restore(hydrateQueue(JSON.parse(JSON.stringify(saved))));
+    env.music.ensureShuffledInRandomMode();
+    assert.equal(env.shuffleDraws, 0);
+    assert.equal(env.music.getPlaySongData.id, 4);
+    assert.equal(env.music.persistData.playSongIndex, 2);
+    assert.equal(env.music.persistData.shuffleState.id, "saved-pass");
+    assert.deepEqual(
+      Array.from(env.music.persistData.playlists, (song: any) => song.id),
+      [3, 1, 4, 2],
+    );
+  }
+});
+
+test("web migration preserves an already shuffled legacy queue without drawing again", () => {
+  const env = queueEnvironment(false);
+  const saved: any = randomQueue();
+  delete saved.shuffleState;
+  env.restore(hydrateQueue(saved));
+  env.music.ensureShuffledInRandomMode();
+  assert.equal(env.shuffleDraws, 0);
+  assert.equal(env.music.persistData.shuffleState.applied, true);
+  assert.deepEqual(
+    Array.from(env.music.persistData.playlists, (song: any) => song.id),
+    [3, 1, 4, 2],
+  );
+  env.music.setPlaySongMode("normal");
+  assert.deepEqual(
+    Array.from(env.music.persistData.playlists, (song: any) => song.id),
+    [1, 2, 3, 4],
+  );
+});
+
+test("web startup upgrades an unshuffled legacy queue once and pins the playing track", () => {
+  const env = queueEnvironment(false);
+  const saved: any = randomQueue();
+  delete saved.shuffleState;
+  saved.playlists = [1, 2, 3, 4].map((id) => ({ id, name: String(id) }));
+  saved.playSongIndex = 2;
+  saved.preShuffleOrder = [];
+  env.restore(hydrateQueue(saved));
+  env.music.ensureShuffledInRandomMode();
+  assert.equal(env.shuffleDraws, 3);
+  assert.equal(env.music.getPlaySongData.id, 3);
+  assert.equal(env.music.persistData.shuffleState.applied, true);
+  const completed = JSON.parse(JSON.stringify(env.music.persistData));
+  env.restore(hydrateQueue(completed));
+  env.music.ensureShuffledInRandomMode();
+  assert.equal(env.shuffleDraws, 3);
+  assert.equal(env.music.persistData.shuffleState.id, completed.shuffleState.id);
+  assert.deepEqual(
+    Array.from(env.music.persistData.playlists, (song: any) => song.id),
+    completed.playlists.map((song: any) => song.id),
+  );
+});
+
+test("web completes a persisted pending shuffle locally and retains its original order", () => {
+  for (const legacy of [false, true]) {
+    const env = queueEnvironment(false);
+    const saved: any = randomQueue();
+    if (legacy) {
+      delete saved.shuffleState;
+      saved.pendingReshuffleRevision = 42;
+    } else saved.shuffleState = { id: "native-pending", applied: false };
+    env.restore(hydrateQueue(saved));
+    const playing = env.music.getPlaySongData.id;
+    env.music.ensureShuffledInRandomMode();
+    assert.equal(env.shuffleDraws, 3);
+    assert.equal(env.music.getPlaySongData.id, playing);
+    assert.equal(env.music.persistData.shuffleState.applied, true);
+    env.music.ensureShuffledInRandomMode();
+    assert.equal(env.shuffleDraws, 3);
+    env.music.setPlaySongMode("normal");
+    assert.deepEqual(
+      Array.from(env.music.persistData.playlists, (song: any) => song.id),
+      [1, 2, 3, 4],
+    );
+  }
+});
+
+test("web replacing a random playlist starts a new completed shuffle", () => {
+  const env = queueEnvironment(false);
+  env.restore(randomQueue());
+  env.music.setPlaylists([5, 6, 7, 8].map((id) => ({ id, name: String(id) })));
+  assert.equal(env.shuffleDraws, 3);
+  assert.equal(env.music.persistData.shuffleState.applied, true);
+  assert.notEqual(env.music.persistData.shuffleState.id, "saved-pass");
+  assert.deepEqual(Array.from(env.music.persistData.preShuffleOrder), [5, 6, 7, 8]);
+  env.music.setPlaySongMode("normal");
+  assert.deepEqual(
+    Array.from(env.music.persistData.playlists, (song: any) => song.id),
+    [5, 6, 7, 8],
+  );
+});
+
+test("web empty and single-track queues do not start unnecessary shuffles", () => {
+  for (const ids of [[], [1]]) {
+    const env = queueEnvironment(false);
+    env.music.persistData.playlists = ids.map((id) => ({ id, name: String(id) }));
+    env.music.setPlaySongMode("random");
+    env.music.ensureShuffledInRandomMode();
+    assert.equal(env.shuffleDraws, 0);
+    assert.equal(env.music.persistData.shuffleState, null);
+    env.music.setPlaySongMode("normal");
+    assert.deepEqual(
+      Array.from(env.music.persistData.playlists, (song: any) => song.id),
+      ids,
+    );
+  }
 });
 
 function deferred() {
