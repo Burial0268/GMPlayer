@@ -1,4 +1,4 @@
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { onMounted, onUnmounted, ref, watch, type Ref } from "vue";
 import { storeToRefs } from "pinia";
 import { musicStore } from "@/store";
 import { isMobile, isTauri } from "@/utils/tauri";
@@ -65,7 +65,7 @@ const desktopNowPlayingAdapter: NativeMediaAdapter = {
 
 let instanceCount = 0;
 
-export function useNativeMediaControls() {
+export function useNativeMediaControls(ready: Readonly<Ref<boolean>>) {
   const music = musicStore();
   const { persistData } = storeToRefs(music);
   const active = ref(false);
@@ -87,7 +87,7 @@ export function useNativeMediaControls() {
    * from the same store, so the two cannot disagree.
    */
   async function syncPlayMode(): Promise<void> {
-    if (!active.value || !adapter) return;
+    if (!ready.value || !active.value || !adapter) return;
     await adapter.updatePlayMode(persistData.value.playSongMode || "normal");
   }
 
@@ -116,16 +116,15 @@ export function useNativeMediaControls() {
     // subscriber uninstalled and the app deaf to every notification button.
     unlistenSessionControls = installSessionControlsSubscriber();
 
-    adapter = (await isMobile()) ? mobileMediaSessionAdapter : desktopNowPlayingAdapter;
-    adapterName.value = adapter.name;
-    active.value = true;
-
-    // Still worth calling: on Android this is what prompts for the
-    // notification permission. The session itself is created lazily by the
-    // first push from Rust.
-    await adapter.initialize();
-    publishSessionControls({ force: true });
-    void syncPlayMode();
+    try {
+      adapter = (await isMobile()) ? mobileMediaSessionAdapter : desktopNowPlayingAdapter;
+      if (!claimedMediaControls) return;
+      adapterName.value = adapter.name;
+      await adapter.initialize();
+    } catch (err) {
+      console.warn("[NativeMediaControls] initialization failed", err);
+    }
+    active.value = claimedMediaControls && adapter !== null;
   });
 
   onUnmounted(() => {
@@ -143,10 +142,25 @@ export function useNativeMediaControls() {
     adapter = null;
   });
 
+  // Hydrated mode describes the past until the live session has been adopted.
+  watch(
+    [active, ready],
+    ([initialized, adopted]) => {
+      if (!initialized || !adopted) return;
+      publishSessionControls({ force: true });
+      void syncPlayMode().catch((err) =>
+        console.warn("[NativeMediaControls] mode sync failed", err),
+      );
+    },
+    { immediate: true },
+  );
+
   watch(
     () => persistData.value.playSongMode,
     () => {
-      void syncPlayMode();
+      void syncPlayMode().catch((err) =>
+        console.warn("[NativeMediaControls] mode sync failed", err),
+      );
     },
   );
 

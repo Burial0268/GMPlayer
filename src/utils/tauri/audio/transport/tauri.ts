@@ -201,50 +201,86 @@ class TauriChannelAudioIpc implements AudioBackendTransport {
 
 class TauriHybridAudioIpc implements AudioBackendTransport {
   private _active: AudioBackendTransport | null = null;
-  private _fallback: TauriInvokeAudioIpc | null = null;
+  private _connectPromise: Promise<void> | null = null;
+  private _listeners: Set<AudioThreadEventCallback> = new Set();
+  private _generation = 0;
 
-  async connect(): Promise<void> {
-    if (this._active) {
-      await this._active.connect();
-      return;
-    }
+  connect(): Promise<void> {
+    if (this._active) return Promise.resolve();
+    if (this._connectPromise) return this._connectPromise;
+    const generation = this._generation;
+    this._connectPromise = this._connect(generation).finally(() => {
+      if (generation === this._generation) this._connectPromise = null;
+    });
+    return this._connectPromise;
+  }
 
+  private async _connect(generation: number): Promise<void> {
     const channel = new TauriChannelAudioIpc();
+    // Bind before the handshake: Rust can emit while invoke is still pending.
+    channel.subscribe((event, seq) => {
+      if (generation === this._generation) this._dispatch(event, seq);
+    });
+    let connected: AudioBackendTransport = channel;
     try {
       await channel.connect();
-      this._active = channel;
-      return;
     } catch (err) {
+      channel.shutdown();
+      if (generation !== this._generation) return;
       console.warn(
         "[audioIpc] Tauri Channel transport unavailable, falling back to global events",
         err,
       );
+      const fallback = new TauriInvokeAudioIpc();
+      connected = fallback;
+      fallback.subscribe((event, seq) => {
+        if (generation === this._generation) this._dispatch(event, seq);
+      });
+      await fallback.connect();
     }
-
-    this._fallback = new TauriInvokeAudioIpc();
-    await this._fallback.connect();
-    this._active = this._fallback;
+    if (generation !== this._generation) {
+      connected.shutdown?.();
+      return;
+    }
+    this._active = connected;
   }
 
   subscribe(listener: AudioThreadEventCallback): () => void {
-    if (!this._active) {
-      throw new Error("Audio backend transport is not connected");
-    }
-    return this._active.subscribe(listener);
+    this._listeners.add(listener);
+    return () => {
+      this._listeners.delete(listener);
+    };
   }
 
   sendOrQueue(msg: AudioThreadMessage): boolean {
     if (!this._active) {
-      void this.connect().then(() => this._active?.sendOrQueue(msg));
+      const generation = this._generation;
+      void this.connect()
+        .then(() => {
+          if (generation === this._generation) this._active?.sendOrQueue(msg);
+        })
+        .catch((err) => console.error("[audioIpc] could not connect to send", msg.type, err));
       return false;
     }
     return this._active.sendOrQueue(msg);
   }
 
   shutdown(): void {
+    this._generation++;
     this._active?.shutdown?.();
     this._active = null;
-    this._fallback = null;
+    this._connectPromise = null;
+    this._listeners.clear();
+  }
+
+  private _dispatch(event: AudioThreadEvent, seq?: number): void {
+    for (const listener of this._listeners) {
+      try {
+        listener(event, seq);
+      } catch (err) {
+        console.error("[audioIpc] event listener failed", event.type, err);
+      }
+    }
   }
 }
 

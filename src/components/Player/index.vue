@@ -363,7 +363,8 @@ const music = musicStore();
 const site = siteStore();
 const listenTogether = listenTogetherStore();
 const { persistData } = storeToRefs(music);
-useNativeMediaControls();
+const bootAdopting = ref(isTauri());
+useNativeMediaControls(computed(() => !bootAdopting.value));
 const addPlayListRef = ref(null);
 const PlayListDrawerRef = ref(null);
 const lrcMeasureRef = ref(null);
@@ -571,10 +572,9 @@ let pendingBackendAttach = null;
 /** Unsubscribe for the local-library edit signal; see `applyLocalTrackChange`. */
 let unsubscribeLocalChanges = null;
 let unsubscribeNativeFm = null;
-let bootAdopting = isTauri();
 
 const attachNativeFmPlayback = (event) => {
-  if (bootAdopting || !music.nativeFmSession || !music.persistData.personalFmMode) return;
+  if (bootAdopting.value || !music.nativeFmSession || !music.persistData.personalFmMode) return;
   const data = event.data;
   const identity = data.identity;
   if (identity?.provider !== "netease" || !data.musicId?.startsWith("local:")) return;
@@ -870,9 +870,11 @@ onMounted(() => {
   // 挂载方法
   window.$getPlaySongData = getPlaySongData;
 
-  // 随机模式的顺序装在队列里，所以在读索引的人（下面的恢复播放、后端会话采纳）
-  // 之前先把队列摆正。老版本升级上来时才真的会动，之后都是空转。
-  music.ensureShuffledInRandomMode();
+  // 随机模式的顺序装在队列里，所以在读索引的人（下面的恢复播放）之前先把队列
+  // 摆正。老版本升级上来时才真的会动，之后都是空转。
+  // Tauri 下排列归后端：要先采纳它手里已有的那份（下面的会话采纳），采纳不到才
+  // 轮到我们请求重洗，否则会把它正在走的排列扔掉。
+  if (!isTauri()) music.ensureShuffledInRandomMode();
 
   const startRestoredPlayback = () => {
     if (music.getPlaylists[0] && music.getPlaySongData) {
@@ -904,7 +906,8 @@ onMounted(() => {
         // schedules its own debounced load. Drop that one and drive the load
         // from here so the attach descriptor is consumed exactly once.
         songChange.cancel({ upcomingOnly: true });
-        bootAdopting = false;
+        music.ensureShuffledInRandomMode();
+        bootAdopting.value = false;
         if (pendingBackendAttach || !music.nativeFmSession) {
           if (!pendingBackendAttach && music.persistData.personalFmMode) {
             music.setPersonalFmMode(true);
@@ -969,8 +972,8 @@ watch(
     if (val?.id !== oldVal?.id) {
       const generation = ++_songLoadGeneration;
       songChange.cancel({ upcomingOnly: true });
-      if (bootAdopting || (isTauri() && music.persistData.personalFmMode)) {
-        if (!bootAdopting && val?.id) loadLyricFor(val, val.id);
+      if (bootAdopting.value || (isTauri() && music.persistData.personalFmMode)) {
+        if (!bootAdopting.value && val?.id) loadLyricFor(val, val.id);
         broadcastPlayerState();
         return;
       }
@@ -1041,7 +1044,7 @@ watch(
   () => music.getPlayState,
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
-    if (bootAdopting) return;
+    if (bootAdopting.value) return;
     if (isTauri() && music.persistData.personalFmMode) {
       if (!music.nativeFmSession || music.nativeFmSession.desiredPlaying !== val) {
         sendNativeFmPlaying(val);

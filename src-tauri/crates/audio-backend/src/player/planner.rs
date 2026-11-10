@@ -138,7 +138,11 @@ impl Planner {
         self.exhausted = false;
         self.pending_next = None;
 
-        let resolve = |key: String| manifest.position_of_key(&key).map(|position| (key, position));
+        let resolve = |key: String| {
+            manifest
+                .position_of_key(&key)
+                .map(|position| (key, position))
+        };
         let anchor = playing_key
             .map(str::to_string)
             .and_then(resolve)
@@ -442,6 +446,10 @@ mod tests {
             mode,
             repeat_list,
             random_seed: Some(1234),
+            reshuffle: false,
+            shuffle: None,
+            natural_order: Vec::new(),
+            shuffle_pin: None,
         });
         store
     }
@@ -478,6 +486,10 @@ mod tests {
             mode,
             repeat_list,
             random_seed: Some(1234),
+            reshuffle: false,
+            shuffle: None,
+            natural_order: Vec::new(),
+            shuffle_pin: None,
         });
         store
     }
@@ -645,7 +657,10 @@ mod tests {
 
         let back = planner.peek_prev(&reordered).expect("go back");
         assert_eq!(back.identity.key(), "netease:a");
-        assert_eq!(back.position, 2, "position follows the new list, not the old");
+        assert_eq!(
+            back.position, 2,
+            "position follows the new list, not the old"
+        );
     }
 
     /// A track the user removed while it sat in history must be skipped, not
@@ -705,7 +720,10 @@ mod tests {
             "the loaded track keeps the cursor"
         );
         assert_eq!(
-            planner.peek_next(&mut republished).map(|t| t.identity.key()).as_deref(),
+            planner
+                .peek_next(&mut republished)
+                .map(|t| t.identity.key())
+                .as_deref(),
             Some("netease:d"),
             "and the next hop moves forward, not back to b"
         );
@@ -968,6 +986,77 @@ mod tests {
         assert!(
             planner.peek_next(&mut store).is_none(),
             "no-repeat random must stop at the end of the pass"
+        );
+    }
+
+    /// The reported bug, end to end: random mode, the WebView is away while the
+    /// backend plays on, then a page that still holds the old queue and the old
+    /// cursor republishes. The backend must keep walking its own permutation from
+    /// the track that is actually playing, and must say that the page's queue is
+    /// out of date instead of adopting it.
+    #[test]
+    fn a_stale_page_cannot_redirect_a_random_pass() {
+        let ids: Vec<String> = (0..8).map(|i| i.to_string()).collect();
+        let refs: Vec<&str> = ids.iter().map(|s| s.as_str()).collect();
+        let publish = |revision: u64, reshuffle: bool, cursor: &str| NativePlaybackManifest {
+            schema_version: 1,
+            revision,
+            entries: refs
+                .iter()
+                .enumerate()
+                .map(|(i, id)| entry(id, i))
+                .collect(),
+            order: Vec::new(),
+            cursor_identity: Some(TrackIdentity::Netease {
+                id: cursor.to_string(),
+            }),
+            cursor_index: 0,
+            mode: NativePlaybackMode::Random,
+            repeat_list: true,
+            random_seed: Some(5),
+            reshuffle,
+            shuffle: None,
+            natural_order: Vec::new(),
+            shuffle_pin: None,
+        };
+
+        let mut store = ManifestStore::new();
+        store.set_owning_order(publish(1, true, "0"), Some("netease:0"));
+        let walked = store.order_keys_for_test();
+
+        // The backend plays three tracks on its own while no page is around.
+        let mut planner = planner_at(&store, &walked[0]);
+        for _ in 0..3 {
+            let next = planner.peek_next(&mut store).expect("advance");
+            planner.commit(&next);
+        }
+        let playing = walked[3].clone();
+        let after = walked[4].clone();
+
+        // The page wakes with the queue it persisted and a cursor three hops old.
+        let differs = store.set_owning_order(publish(2, false, "0"), Some(&playing));
+        assert_eq!(
+            differs,
+            Some(true),
+            "the page must be told its queue is stale"
+        );
+        planner.reset_for_new_manifest(&store, Some(&playing));
+
+        assert_eq!(
+            planner.cursor(&store).map(|t| t.identity.key()),
+            Some(playing.clone()),
+            "the planner stays on the playing track"
+        );
+        let next = planner.peek_next(&mut store).expect("advance");
+        assert_eq!(
+            next.identity.key(),
+            after,
+            "and keeps walking the same pass"
+        );
+        assert_eq!(
+            store.order_keys_for_test(),
+            walked,
+            "the pass was not reshuffled"
         );
     }
 

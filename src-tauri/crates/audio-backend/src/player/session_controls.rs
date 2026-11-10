@@ -179,10 +179,12 @@ impl AudioPlayer {
         if !self.session_controls.apply(patch) {
             return;
         }
-        if self.session_controls.play_mode != previous_mode {
-            self.adopt_play_mode(self.session_controls.play_mode);
-        }
+        let reordered = self.session_controls.play_mode != previous_mode
+            && self.adopt_play_mode(self.session_controls.play_mode);
         self.publish_session_controls().await;
+        // After the controls, not before: a frontend whose mode is not yet
+        // random drops an order it was not expecting.
+        self.publish_queue_order(reordered).await;
     }
 
     /// Advance the play mode one step. The OS button sends an intent rather than
@@ -193,20 +195,25 @@ impl AudioPlayer {
         }
         let next = self.session_controls.play_mode.cycled();
         self.session_controls.play_mode = next;
-        self.adopt_play_mode(next);
+        let reordered = self.adopt_play_mode(next);
         self.publish_session_controls().await;
+        self.publish_queue_order(reordered).await;
     }
 
     /// Teach the planner the new traversal, so the *next* hop honours it even
     /// with no frontend alive to republish a manifest.
     ///
-    /// The frontend's later republish (at a higher revision) replaces this order
-    /// with its own; both sides converge there. Without this the mode change
-    /// would only take effect after the page woke up, which on Android can be
-    /// several tracks later.
-    fn adopt_play_mode(&mut self, mode: crate::types::NativePlaybackMode) {
+    /// This is the permutation: the frontend does not build one of its own, it
+    /// mirrors what `publish_queue_order` reports, and a later republish at a
+    /// higher revision carries this order forward by identity. Without it the
+    /// mode change would only take effect after the page woke up, which on
+    /// Android can be several tracks later.
+    ///
+    /// Returns whether the traversal changed, so the caller can report the new
+    /// order once the controls have been published.
+    fn adopt_play_mode(&mut self, mode: crate::types::NativePlaybackMode) -> bool {
         if self.personal_fm.is_some() {
-            return;
+            return false;
         }
         let playing = self
             .current_identity
@@ -214,13 +221,21 @@ impl AudioPlayer {
             .map(|identity| identity.key())
             .and_then(|key| self.manifest.position_of_key(&key));
         if self.manifest.set_mode(mode, playing) {
+            info!(
+                "play mode -> {mode:?}: traversal rebuilt, playing={:?}",
+                self.current_identity
+                    .as_ref()
+                    .map(|identity| identity.key()),
+            );
             // The memoized next pick and the source prepared for it were both
             // chosen under the old traversal. The cursor itself is still right —
             // the playing track has not moved — so only the lookahead goes.
             self.planner.invalidate_plan();
             self.source_cache.invalidate();
             self.prefetch_next_source();
+            return true;
         }
+        false
     }
 
     /// Publish the controls to every subscriber: the frontend, and the OS

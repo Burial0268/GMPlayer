@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use crate::error::AudioError;
 use crate::types::{
     AudioThreadEvent, NativeManifestEntry, NativePlannerPlaybackState, NativePlannerStatus,
-    NativePlaybackManifest, NativeResolverConfig, SongData,
+    NativePlaybackManifest, NativeResolverConfig, SongData, TrackIdentity,
 };
 
 use super::planner::PlannedTrack;
@@ -57,7 +57,22 @@ impl AudioPlayer {
             return;
         }
         let revision = manifest.revision;
-        if !self.manifest.set(manifest) {
+        // Who is kept at the head if this publish asks for a fresh random order:
+        // the track the frontend names, else what is playing, else its cursor.
+        let pin = manifest
+            .shuffle_pin
+            .as_ref()
+            .map(TrackIdentity::key)
+            .or_else(|| self.current_planner_key())
+            .or_else(|| manifest.cursor_identity.as_ref().map(TrackIdentity::key));
+        // Random order belongs to the backend only while the planner drives. A
+        // room-driven list (listen-together) has its order decided elsewhere.
+        let installed = if self.planner.is_enabled() {
+            self.manifest.set_owning_order(manifest, pin.as_deref())
+        } else {
+            self.manifest.set(manifest).then_some(false)
+        };
+        let Some(report_order) = installed else {
             info!(
                 "ignoring stale native manifest: incoming={} stored={}",
                 revision,
@@ -69,7 +84,7 @@ impl AudioPlayer {
             // signal that anything was wrong.
             self.emit_planner_status().await;
             return;
-        }
+        };
 
         self.source_cache.invalidate();
         // What is *loaded* outranks what the manifest declares, in both the
@@ -101,13 +116,20 @@ impl AudioPlayer {
         }
 
         info!(
-            "native manifest applied: revision={} entries={} mode={:?}",
+            "native manifest applied: revision={} entries={} mode={:?} report_order={} \
+             playing={:?} cursor={:?}",
             self.manifest.revision(),
             self.manifest.len(),
-            self.manifest.mode()
+            self.manifest.mode(),
+            report_order,
+            self.current_planner_key(),
+            self.planner
+                .cursor(&self.manifest)
+                .map(|t| t.identity.key()),
         );
 
         self.emit_planner_status().await;
+        self.publish_queue_order(report_order).await;
         // The manifest is the media session's metadata source, so a republish
         // can change what the notification should say about the *current* track
         // — a title that arrived late, cover art the frontend only just had.
@@ -128,7 +150,54 @@ impl AudioPlayer {
         }
         self.source_cache.invalidate();
         self.planner = super::planner::Planner::new();
+        let mut session = self.session.lock();
+        session.order.clear();
+        session.shuffle_id = None;
+        drop(session);
         self.emit_planner_status().await;
+    }
+
+    /// Record the backend's random permutation in the session snapshot and, when
+    /// the frontend has to hear it (see `ManifestStore::set_owning_order`), tell
+    /// the frontend.
+    ///
+    /// The snapshot is how a page that was away catches up before it locates the
+    /// playing track; the event is how a page that is alive does. Both carry
+    /// identities, never positions.
+    pub(super) async fn publish_queue_order(&mut self, emit: bool) {
+        let random = self.planner.is_enabled()
+            && self.manifest.mode() == crate::types::NativePlaybackMode::Random;
+        let order = if random {
+            self.manifest.order_identities()
+        } else {
+            Vec::new()
+        };
+        let shuffle_id = random
+            .then(|| self.manifest.shuffle_id().map(str::to_owned))
+            .flatten();
+        {
+            let mut session = self.session.lock();
+            session.manifest_revision = self.manifest.revision();
+            session.play_mode = self.session_controls.play_mode;
+            session.order = order.clone();
+            session.shuffle_id = shuffle_id.clone();
+        }
+        if emit && random {
+            info!(
+                "reporting random order to the frontend: {} tracks, revision={}, playing={:?}",
+                order.len(),
+                self.manifest.revision(),
+                self.current_planner_key(),
+            );
+            let _ = self
+                .emitter()
+                .emit(AudioThreadEvent::NativeQueueOrderChanged {
+                    manifest_revision: self.manifest.revision(),
+                    order,
+                    shuffle_id,
+                })
+                .await;
+        }
     }
 
     pub(super) fn set_native_resolver_config(&mut self, config: NativeResolverConfig) {
@@ -489,6 +558,13 @@ impl AudioPlayer {
 
         match self.start_playing_song(true, None, None).await {
             Ok(()) => {
+                info!(
+                    "planner advanced ({direction:?}): {} position={} slot={:?} mode={:?}",
+                    track.identity.key(),
+                    track.position,
+                    self.manifest.slot_of_position(track.position),
+                    self.manifest.mode(),
+                );
                 let position = if self.personal_fm.is_some() {
                     0
                 } else {

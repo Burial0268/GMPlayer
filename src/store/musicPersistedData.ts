@@ -63,8 +63,22 @@ const hydrate = (persistData: PersistData): void => {
     if (!raw) return;
     const parsed = JSON.parse(raw);
     if (isPlainObject(parsed) && isPlainObject(parsed.persistData)) {
-      markStoredSongsRaw(parsed.persistData);
-      mergeStored(persistData, parsed.persistData);
+      const stored = parsed.persistData;
+      // Older queues used the restore snapshot as their completion marker.
+      if (stored.shuffleState === undefined) {
+        stored.shuffleState =
+          stored.playSongMode === "random" && stored.preShuffleOrder?.length
+            ? {
+                id: `legacy:${stored.pendingReshuffleRevision ?? "applied"}`,
+                applied:
+                  stored.pendingReshuffleRevision === null ||
+                  stored.pendingReshuffleRevision === undefined,
+              }
+            : null;
+      }
+      delete stored.pendingReshuffleRevision;
+      markStoredSongsRaw(stored);
+      mergeStored(persistData, stored);
     }
   } catch (error) {
     console.error("[musicPersistedData] 读取本地数据失败", error);

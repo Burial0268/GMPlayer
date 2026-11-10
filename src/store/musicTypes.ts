@@ -1,3 +1,5 @@
+import type { QueueShuffleState } from "@/utils/tauri/audio/protocol/manifest";
+
 export interface Artist {
   id: number;
   name: string;
@@ -72,6 +74,14 @@ export interface PlaybackSessionSnapshot {
   updatedAt: number;
 }
 
+export const createQueueShuffleState = (applied = false): QueueShuffleState => ({
+  id:
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+  applied,
+});
+
 export interface PersistData {
   searchHistory: string[];
   personalFmMode: boolean;
@@ -92,6 +102,8 @@ export interface PersistData {
    * invalidates.
    */
   preShuffleOrder: number[];
+  /** Saved with the queue; preShuffleOrder is only the way back to natural order. */
+  shuffleState: QueueShuffleState | null;
   playSongTime: PlaySongTime;
   playbackSnapshot: PlaybackSessionSnapshot;
   playVolume: number;
@@ -128,6 +140,7 @@ export const createDefaultPersistData = (): PersistData => ({
   playSongIndex: 0,
   playSongMode: "normal",
   preShuffleOrder: [],
+  shuffleState: null,
   playSongTime: createDefaultPlaySongTime(),
   playbackSnapshot: createDefaultPlaybackSnapshot(),
   playVolume: 0.7,
