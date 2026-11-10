@@ -69,11 +69,24 @@ pub struct EnergyAnalysis {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct BeatRegion {
+    /// Absolute song seconds, fitted only inside an observed stable run.
+    pub beats: Vec<f32>,
+    pub period: f32,
+    pub stability: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BPMResult {
     pub bpm: f32,
     pub confidence: f32,
     pub beat_grid: Vec<f32>,
     pub analysis_offset: f32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<BeatRegion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tail: Option<BeatRegion>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -236,6 +249,7 @@ const MAX_SONG_SECTIONS: usize = 48;
 const VOCAL_WINDOW_SECONDS: f32 = OUTRO_WINDOW_MS / 1000.0;
 
 mod analysis;
+mod beats;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) mod emotion;
 pub(crate) mod sections;
@@ -369,7 +383,15 @@ fn decode_source_to_mono_until<R>(
 where
     R: std::io::Read + std::io::Seek + Send + Sync + 'static,
 {
-    let decoder = Decoder::new(input).map_err(|e| format!("decode audio: {e}"))?;
+    let mut decoder = Decoder::new(input).map_err(|e| format!("decode audio: {e}"))?;
+    collect_mono_until(&mut decoder, cancelled)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn collect_mono_until<D: Source<Item = f32>>(
+    decoder: &mut D,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(Vec<f32>, u32, f32), String> {
     let channels = decoder.channels().get() as usize;
     let sample_rate = decoder.sample_rate().get();
     let duration_hint = decoder.total_duration().map(|d| d.as_secs_f32());
@@ -592,7 +614,19 @@ pub fn analyze_audio_file_until(
     if let Some(err) = io_error.lock().ok().and_then(|mut latch| latch.take()) {
         return Err(format!("read audio source: {err}"));
     }
-    let (samples, sample_rate, duration) = decoded?;
+    let (samples, sample_rate, duration) = match decoded {
+        Ok(decoded) => decoded,
+        Err(_) if cancelled() => return Err("analysis cancelled".into()),
+        Err(error) => {
+            let mut source = crate::decoder::ffmpeg::FfmpegSource::open(path.as_ref())
+                .map_err(|fallback| format!("{error}; fallback failed: {fallback}"))?;
+            let decoded = collect_mono_until(&mut source, cancelled);
+            if let Some(error) = source.take_error() {
+                return Err(format!("decode audio: FFmpeg: {error}"));
+            }
+            decoded?
+        }
+    };
     if cancelled() {
         return Err("analysis cancelled".into());
     }

@@ -11,6 +11,7 @@ pub(super) struct OutputBlock {
     pub(super) samples: Vec<f32>,
     pub(super) generation: u64,
     pub(super) flush_epoch: u64,
+    pub(super) anchor: Option<super::OutputAnchor>,
 }
 
 pub(super) struct CallbackState {
@@ -37,6 +38,7 @@ pub(super) struct CallbackState {
     // the underrun hot path.
     underrun_fade_frames_remaining: usize,
     flush_fade_frames_remaining: usize,
+    render_counter: Option<Arc<super::RenderCounter>>,
 }
 
 impl CallbackState {
@@ -63,7 +65,12 @@ impl CallbackState {
             last_values: vec![0.0; output_channels],
             underrun_fade_frames_remaining: 0,
             flush_fade_frames_remaining: 0,
+            render_counter: None,
         }
+    }
+
+    pub(super) fn set_render_counter(&mut self, counter: Arc<super::RenderCounter>) {
+        self.render_counter = Some(counter);
     }
 }
 
@@ -119,9 +126,15 @@ pub(super) fn fill_output<T>(
         if state.current_index >= state.current_block.len() {
             match next_current_block(state, generation, flush_epoch) {
                 Some(block) => {
+                    if let (Some(counter), Some(anchor)) = (&state.render_counter, block.anchor) {
+                        counter.publish(
+                            anchor,
+                            rendered_samples.load(Ordering::Relaxed) + queued_written as u64,
+                        );
+                    }
                     // Return the spent block to the mixer's pool instead of
                     // dropping (freeing) it inside the real-time callback.
-                    let spent = std::mem::replace(&mut state.current_block, block);
+                    let spent = std::mem::replace(&mut state.current_block, block.samples);
                     retain_or_recycle_buffer(state, spent);
                     state.current_index = 0;
                 }
@@ -181,7 +194,7 @@ fn next_current_block(
     state: &mut CallbackState,
     generation: &AtomicU64,
     flush_epoch: &AtomicU64,
-) -> Option<Vec<f32>> {
+) -> Option<OutputBlock> {
     flush_pending_recycles(state);
     // Replacing the current block may need to retain its allocation. Leave
     // one preallocated slot available before taking ownership of another PCM
@@ -215,7 +228,7 @@ fn next_current_block(
                 }
                 state.accepted_generation = block.generation;
                 state.accepted_flush_epoch = block.flush_epoch;
-                return Some(block.samples);
+                return Some(block);
             }
             Err(_) => return None,
         }
@@ -415,6 +428,7 @@ mod tests {
                 samples: vec![0.9, 0.9, 0.9, 0.9],
                 generation: 0,
                 flush_epoch: 0,
+                anchor: None,
             })
             .is_ok());
         assert!(data_tx
@@ -422,6 +436,7 @@ mod tests {
                 samples: vec![0.25, -0.25, 0.5, -0.5],
                 generation: 0,
                 flush_epoch: 1,
+                anchor: None,
             })
             .is_ok());
         let mut data = vec![0.0f32; 4];
@@ -476,6 +491,7 @@ mod tests {
                     samples: vec![value, -value, value, -value],
                     generation: 0,
                     flush_epoch: 0,
+                    anchor: None,
                 })
                 .is_ok());
         }
@@ -557,6 +573,7 @@ mod tests {
                 samples: vec![0.8, -0.8, 0.8, -0.8],
                 generation: 0,
                 flush_epoch: 0,
+                anchor: None,
             })
             .is_ok());
         let mut data = vec![0.0f32; 16];

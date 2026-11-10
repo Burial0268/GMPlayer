@@ -377,6 +377,8 @@ pub(super) fn run_bpm_detection(
         confidence,
         beat_grid,
         analysis_offset: offset_sec,
+        head: super::beats::region(data, sample_rate, false),
+        tail: super::beats::region(data, sample_rate, true),
     })
 }
 

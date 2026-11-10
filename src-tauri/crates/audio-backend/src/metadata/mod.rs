@@ -10,7 +10,25 @@ use crate::error::{AudioError, AudioResult};
 use crate::source::{self, SourceLocator};
 use crate::types::AudioInfo;
 
+mod ffmpeg;
+
 pub fn extract_metadata_only(path: &Path) -> AudioResult<AudioInfo> {
+    match extract_symphonia_metadata(path) {
+        Ok(info) => Ok(info),
+        Err(
+            error @ (AudioError::Decode(_)
+            | AudioError::UnsupportedFormat(_)
+            | AudioError::NoAudioTrack),
+        ) => ffmpeg::extract_track_tags(path, false)
+            .map(|(info, _, _)| info)
+            .map_err(|fallback| {
+                AudioError::Decode(format!("{error}; fallback failed: {fallback}"))
+            }),
+        Err(error) => Err(error),
+    }
+}
+
+fn extract_symphonia_metadata(path: &Path) -> AudioResult<AudioInfo> {
     let opened = source::open(SourceLocator::from_path(path))?;
     // Not `std::fs::metadata`: a `content://` URI has no path to stat, and the
     // opened source can answer for itself.
@@ -49,6 +67,15 @@ fn audio_info_from_reader(
 ) -> AudioResult<AudioInfo> {
     let track = format.default_track().ok_or(AudioError::NoAudioTrack)?;
     let codec_params = &track.codec_params;
+    if symphonia::default::get_codecs()
+        .get_codec(codec_params.codec)
+        .is_none()
+    {
+        return Err(AudioError::UnsupportedFormat(codec_name(
+            codec_params.codec,
+            extension.as_deref(),
+        )));
+    }
 
     let sample_rate = codec_params.sample_rate.unwrap_or(44_100).max(1);
     let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
@@ -106,9 +133,7 @@ fn codec_name(codec: CodecType, extension: Option<&str>) -> String {
             // upper-cases it for display and expects one convention here.
             return descriptor.short_name.to_ascii_lowercase();
         }
-        tracing::debug!(
-            "no registered decoder names {codec:?}; falling back to the container"
-        );
+        tracing::debug!("no registered decoder names {codec:?}; falling back to the container");
     }
     extension
         .map(str::to_ascii_lowercase)
@@ -169,6 +194,23 @@ pub struct TrackTags {
 /// descriptor like any other file — which is the only reason an Android SAF
 /// track can show a title instead of its filename.
 pub fn extract_track_tags(
+    path: &Path,
+    want_cover: bool,
+) -> AudioResult<(AudioInfo, TrackTags, bool)> {
+    match extract_symphonia_tags(path, want_cover) {
+        Ok(tags) => Ok(tags),
+        Err(
+            error @ (AudioError::Decode(_)
+            | AudioError::UnsupportedFormat(_)
+            | AudioError::NoAudioTrack),
+        ) => ffmpeg::extract_track_tags(path, want_cover).map_err(|fallback| {
+            AudioError::Decode(format!("{error}; fallback failed: {fallback}"))
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+fn extract_symphonia_tags(
     path: &Path,
     want_cover: bool,
 ) -> AudioResult<(AudioInfo, TrackTags, bool)> {
@@ -274,11 +316,12 @@ fn parse_year(value: &str) -> Option<i32> {
             return Some(year);
         }
     }
-    trimmed
-        .split(['-', '/', '.', ' ', 'T'])
-        .find_map(|part| part.parse::<i32>().ok().filter(|y| (1000..=9999).contains(y)))
+    trimmed.split(['-', '/', '.', ' ', 'T']).find_map(|part| {
+        part.parse::<i32>()
+            .ok()
+            .filter(|y| (1000..=9999).contains(y))
+    })
 }
-
 
 #[cfg(test)]
 mod tests {

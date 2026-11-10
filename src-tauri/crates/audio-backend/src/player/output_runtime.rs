@@ -81,6 +81,20 @@ impl OutputRefreshEvent {
 }
 
 impl AudioPlayer {
+    pub(super) fn check_output_health(&mut self) {
+        // Consume hints even for a named device, so switching back to default
+        // cannot replay an old edge. A hint only probes; identity decides replacement.
+        let changes = self.output_watcher.take_changes();
+        let output_failed = self.output.has_failed();
+        let output_stalled = self.output_render_stalled();
+        if output_failed || output_stalled {
+            self.request_output_refresh(true, output_stalled);
+        } else if changes.requires_refresh(self.output_selector.is_default()) {
+            self.reset_output_poll_stride();
+            self.request_output_refresh(false, false);
+        }
+    }
+
     pub(super) fn ensure_output_for_source(
         &mut self,
         audio_info: &AudioInfo,
@@ -397,6 +411,7 @@ impl AudioPlayer {
     }
 
     pub(super) async fn handle_output_refresh_event(&mut self, event: OutputRefreshEvent) {
+        self.tick_native_mix().await;
         if event.generation() != self.output_refresh_generation
             || event.output_epoch() != self.output_epoch
         {
@@ -467,6 +482,7 @@ impl AudioPlayer {
                         Err(output) => {
                             warn!("替换音频输出 writer 超时，将丢弃当前 mixer 并重建播放链路");
                             self.abandon_current_mixer_for_output_rebuild().await;
+                            let position = self.output_rebuild_position().await;
                             if self.current_song.is_some() {
                                 self.spawn_reconfigured_decoder(
                                     generation,
@@ -501,6 +517,7 @@ impl AudioPlayer {
 
                 if self.current_song.is_some() {
                     self.cancel_native_automix_runtime().await;
+                    let position = self.output_rebuild_position().await;
                     self.bump_automix_prepare_gen();
                     let events = self.automix.cancel(self.current_play_index);
                     self.emit_many(events).await;
@@ -568,6 +585,7 @@ impl AudioPlayer {
                         handle.stop();
                     }
                     self.decoder_playback_id = playback_id;
+                    self.clock.lock().set_playback_id(playback_id);
                     // The old decoder's "has enough again" is now ignored (other
                     // playback_id) and the new gate reports only a fresh starve, so a
                     // flag left set would keep the output paused on a playable file.
@@ -575,7 +593,10 @@ impl AudioPlayer {
                         let music_id = self.session.lock().music_id.clone();
                         let _ = self
                             .emitter()
-                            .emit(AudioThreadEvent::Buffering { music_id, is_buffering: false })
+                            .emit(AudioThreadEvent::Buffering {
+                                music_id,
+                                is_buffering: false,
+                            })
                             .await;
                     }
                     let writer = output.writer();

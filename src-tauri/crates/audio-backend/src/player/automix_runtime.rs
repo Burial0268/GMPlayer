@@ -10,13 +10,23 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::decoder::{self, PlaybackSink};
-use crate::types::{
-    AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, AutoMixNativeState, SongData,
-};
+use crate::types::{AudioThreadEvent, AutoMixNativeState, SongData, TrackIdentity};
 
 use super::automix;
 use super::mixer::{CrossfadeParams, DeckId};
 use super::{AudioPlayer, PlaybackIntent};
+
+pub(super) struct NativeMix {
+    generation: u64,
+    next_index: usize,
+    from_id: String,
+    to_id: String,
+    duration: f64,
+    pub(super) started: bool,
+    pub(super) outgoing_finished: bool,
+    playback_id: u64,
+    incoming_identity: Option<TrackIdentity>,
+}
 
 impl AudioPlayer {
     pub(super) fn spawn_automix_prepare_task(&self, request: automix::AutoMixPrepareRequest) {
@@ -84,7 +94,11 @@ impl AudioPlayer {
                 "AutoMix prepared: next_index={:?}, start_time={:.3}, duration={:?}",
                 status.next_index, start_time, status.crossfade_duration
             );
-            self.schedule_native_automix_trigger(start_time);
+            if let Err(error) = self.start_native_automix_crossfade(true).await {
+                self.cancel_native_automix_runtime().await;
+                let events = self.automix.mark_failed(error.to_string(), status_index);
+                self.emit_many(events).await;
+            }
         } else {
             warn!(
                 "AutoMix prepared without crossfade_start; frontend force-start fallback is required"
@@ -100,8 +114,21 @@ impl AudioPlayer {
     }
 
     pub(super) async fn cancel_native_automix_runtime(&mut self) {
+        if let Some((index, position)) = self.rendered_native_mix_completion() {
+            let identity = self.native_mix.take().and_then(|mix| mix.incoming_identity);
+            self.complete_native_automix(index, position, identity)
+                .await;
+        }
+        let outgoing_finished = self
+            .native_mix
+            .take()
+            .is_some_and(|mix| mix.outgoing_finished);
         self.bump_native_crossfade_gen();
         self.native_crossfade_active = false;
+        self.native_mix = None;
+        if let Some(handle) = &self.current_decoder_handle {
+            handle.cancel_tempo();
+        }
         self.native_crossfade_transition_id = None;
         self.secondary_playback_id = None;
 
@@ -123,55 +150,139 @@ impl AudioPlayer {
             .set_deck_gain(self.active_deck, self.active_norm_gain);
         self.deck_mixer.set_deck_gain(self.inactive_deck(), 0.0);
         self.secondary_norm_gain = 1.0;
+        if outgoing_finished {
+            let _ = self.decoder_event_tx.send(decoder::DecoderEvent::Finished {
+                playback_id: self.decoder_playback_id,
+            });
+        }
     }
 
-    fn schedule_native_automix_trigger(&mut self, start_time: f64) {
-        let generation = self.bump_native_crossfade_gen();
-        let generation_watch = Arc::clone(&self.native_crossfade_generation);
-        let clock = Arc::clone(&self.clock);
-        let tx = self.self_msg_tx.clone();
-        tokio::spawn(async move {
-            loop {
-                // Exit as soon as this transition is cancelled or superseded —
-                // otherwise a paused player leaves this poll running forever and
-                // repeated prepares accumulate live 20 Hz pollers.
-                if generation_watch.load(std::sync::atomic::Ordering::Acquire) != generation {
-                    break;
-                }
-                let position = clock.lock().position();
-                if position + 0.025 >= start_time {
-                    let _ = tx.send(AudioThreadEventMessage::new(
-                        String::new(),
-                        Some(AudioThreadMessage::AutomixForceStart {
-                            generation: Some(generation),
-                        }),
-                    ));
-                    break;
-                }
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        });
+    pub(super) fn native_prepare_matches_current(&self, expected: Option<&TrackIdentity>) -> bool {
+        let actual = self
+            .current_identity
+            .clone()
+            .or_else(|| self.current_song.as_ref().and_then(local_identity));
+        match (expected, actual.as_ref()) {
+            (Some(expected), Some(actual)) => expected == actual,
+            _ => true,
+        }
     }
 
-    fn schedule_native_automix_complete(
-        &self,
-        generation: u64,
-        current_index: usize,
-        position: f64,
-    ) {
-        let tx = self.self_msg_tx.clone();
-        let delay = Duration::from_secs_f64(position.max(0.05));
-        tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
-            let _ = tx.send(AudioThreadEventMessage::new(
-                String::new(),
-                Some(AudioThreadMessage::AutomixCompleteNative {
-                    generation,
-                    current_index,
-                    position,
-                }),
-            ));
-        });
+    pub(super) async fn resume_native_mix(
+        &mut self,
+        next_index: usize,
+        identity: Option<&TrackIdentity>,
+        transition_id: Option<u64>,
+    ) -> bool {
+        let generation = self.native_crossfade_gen();
+        let Some(identity) = identity else {
+            return false;
+        };
+        let Some(mix) = self.native_mix.as_mut() else {
+            return false;
+        };
+        if mix.generation != generation
+            || mix.playback_id != self.decoder_playback_id
+            || mix.incoming_identity.as_ref() != Some(identity)
+        {
+            return false;
+        }
+        mix.next_index = next_index;
+        let started = mix
+            .started
+            .then(|| AudioThreadEvent::AutomixCrossfadeStarted {
+                from_id: mix.from_id.clone(),
+                to_id: mix.to_id.clone(),
+                duration: mix.duration,
+                transition_id,
+            });
+        self.native_crossfade_transition_id = transition_id;
+        self.automix.rebind_prepared(next_index, transition_id);
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::AutomixStatus {
+                status: self.automix.status(self.current_play_index),
+            })
+            .await;
+        if let Some(event) = started {
+            let _ = self.emitter().emit(event).await;
+        }
+        info!("AutoMix attached to active native pair: next_index={next_index}, transition_id={transition_id:?}");
+        true
+    }
+
+    fn rendered_native_mix_completion(&self) -> Option<(usize, f64)> {
+        let mix = self.native_mix.as_ref()?;
+        if mix.generation != self.native_crossfade_gen() {
+            return None;
+        }
+        let clock = self.output.writer().render_clock();
+        let anchor = clock.anchor()?;
+        let rendered = clock.rendered_samples();
+        if anchor.anchor.transition != mix.generation
+            || anchor.anchor.phase != 2
+            || rendered < anchor.rendered_at
+        {
+            return None;
+        }
+        let config = self.output.config();
+        let position = anchor.anchor.source.seconds
+            + (rendered - anchor.rendered_at) as f64
+                / (config.sample_rate as f64 * config.channels as f64)
+                * anchor.anchor.source.rate;
+        let next_index = mix
+            .incoming_identity
+            .as_ref()
+            .and_then(|identity| self.manifest.position_of_key(&identity.key()))
+            .and_then(|position| self.manifest.entry_at(position))
+            .map_or(mix.next_index, |entry| entry.playlist_index);
+        Some((next_index, position))
+    }
+
+    pub(super) async fn tick_native_mix(&mut self) {
+        let Some(mix) = self.native_mix.as_ref() else {
+            return;
+        };
+        if mix.generation != self.native_crossfade_gen() {
+            self.native_mix = None;
+            return;
+        }
+        let render_clock = self.output.writer().render_clock();
+        let Some(anchor) = render_clock.anchor() else {
+            return;
+        };
+        if anchor.rendered_at > render_clock.rendered_samples()
+            || anchor.anchor.transition != mix.generation
+            || anchor.anchor.phase == 0
+        {
+            return;
+        }
+        if anchor.anchor.phase == 3 {
+            self.cancel_native_automix_runtime().await;
+            let events = self.automix.mark_failed(
+                "AutoMix incoming audio missed its scheduled beat".into(),
+                self.current_play_index,
+            );
+            self.emit_many(events).await;
+            return;
+        }
+        let mix = self.native_mix.as_mut().unwrap();
+        if !mix.started {
+            mix.started = true;
+            let event = AudioThreadEvent::AutomixCrossfadeStarted {
+                from_id: mix.from_id.clone(),
+                to_id: mix.to_id.clone(),
+                duration: mix.duration,
+                transition_id: self.native_crossfade_transition_id,
+            };
+            self.automix.mark_started();
+            let _ = self.emitter().emit(event).await;
+        }
+        if let Some((index, position)) = self.rendered_native_mix_completion() {
+            let identity = self.native_mix.take().and_then(|mix| mix.incoming_identity);
+            self.complete_native_automix(index, position, identity)
+                .await;
+        }
     }
 
     fn secondary_matches_prepared_automix(&self, song: &SongData, local_path: &Path) -> bool {
@@ -261,11 +372,17 @@ impl AudioPlayer {
         Ok(())
     }
 
-    pub(super) async fn start_native_automix_crossfade(&mut self) -> anyhow::Result<()> {
-        let prepared = self
+    pub(super) async fn start_native_automix_crossfade(
+        &mut self,
+        scheduled: bool,
+    ) -> anyhow::Result<()> {
+        let mut prepared = self
             .automix
             .take_prepared_for_start()
             .ok_or_else(|| anyhow::anyhow!("AutoMix has no prepared next track"))?;
+        if prepared.analysis_duration > 0.0 && prepared.analysis_duration <= 0.1 {
+            anyhow::bail!("AutoMix incoming track is too short for an overlap");
+        }
 
         let incoming_deck = self.inactive_deck();
         let incoming_writer = match incoming_deck {
@@ -324,6 +441,48 @@ impl AudioPlayer {
             self.secondary_temp_file = prepared._temp_file;
             playback_id
         };
+        let now = self.clock_position();
+        let start_position = prepared
+            .plan
+            .as_ref()
+            .filter(|plan| scheduled && plan.start_time > now)
+            .map(|plan| plan.start_time);
+        if let Some(plan) = prepared.plan.as_mut() {
+            if prepared.analysis_duration > 0.0 && plan.duration + 0.1 >= prepared.analysis_duration
+            {
+                plan.duration = (prepared.analysis_duration - 0.1).max(0.05);
+                plan.outgoing_rate = 1.0;
+                plan.beat_synced = false;
+            }
+            if start_position.is_none() || plan.start_time <= now + 2.0 || start_paused {
+                plan.outgoing_rate = 1.0;
+                plan.beat_synced = false;
+            }
+            if (plan.outgoing_rate - 1.0).abs() > 1e-6 {
+                let channels = output_config.channels;
+                let sample_rate = output_config.sample_rate;
+                let rate = plan.outgoing_rate.clamp(0.96, 1.04);
+                let processor = tokio::task::spawn_blocking(move || {
+                    decoder::tempo::AutoMixStretch::new(channels, sample_rate, rate)
+                })
+                .await?;
+                let result = match self.current_decoder_handle.as_ref() {
+                    Some(handle) => match handle.arm_tempo(plan.start_time, processor) {
+                        Ok(ack) => ack.wait().await,
+                        Err(error) => Err(error),
+                    },
+                    None => Err(crate::error::AudioError::NotInitialized),
+                };
+                if let Err(error) = result {
+                    warn!("AutoMix tempo preparation missed its lead time, using ordinary crossfade: {error}");
+                    if let Some(handle) = &self.current_decoder_handle {
+                        handle.cancel_tempo();
+                    }
+                    plan.outgoing_rate = 1.0;
+                    plan.beat_synced = false;
+                }
+            }
+        }
         let duration = prepared.plan.as_ref().map(|p| p.duration).unwrap_or(2.0);
 
         self.secondary_local_path = Some(prepared.local_path.clone());
@@ -335,8 +494,10 @@ impl AudioPlayer {
         self.native_crossfade_active = true;
         self.native_crossfade_transition_id = prepared.transition_id;
         info!(
-            "AutoMix crossfade starting: next_index={}, preloaded={}, duration={:.3}",
-            prepared.next_index, preloaded, duration
+            "AutoMix crossfade armed: next_index={}, preloaded={}, cue={:?}, duration={:.3}, rate={:.5}, beat_synced={}",
+            prepared.next_index, preloaded, start_position, duration,
+            prepared.plan.as_ref().map_or(1.0, |plan| plan.outgoing_rate),
+            prepared.plan.as_ref().is_some_and(|plan| plan.beat_synced),
         );
 
         let crossfade_params = prepared
@@ -363,36 +524,45 @@ impl AudioPlayer {
         // steady-state playback and the next crossfade's outgoing side.
         self.secondary_norm_gain = crossfade_params.incoming_gain;
 
-        self.deck_mixer.start_crossfade(
+        let generation = self.bump_native_crossfade_gen();
+        self.native_mix = Some(NativeMix {
+            generation,
+            next_index: prepared.next_index,
+            from_id: self
+                .current_song
+                .as_ref()
+                .map(SongData::get_id)
+                .unwrap_or_default(),
+            to_id: prepared.song.get_id(),
+            duration,
+            started: false,
+            outgoing_finished: false,
+            playback_id: self.decoder_playback_id,
+            incoming_identity: prepared
+                .next_identity
+                .clone()
+                .or_else(|| local_identity(&prepared.song)),
+        });
+        self.deck_mixer.schedule_crossfade(
             self.active_deck,
             incoming_deck,
             duration,
             output_config.sample_rate,
             output_config.channels,
             crossfade_params,
+            start_position,
+            generation,
         );
-
-        let _ = self
-            .emitter()
-            .emit(AudioThreadEvent::AutomixCrossfadeStarted {
-                from_id: self
-                    .current_song
-                    .as_ref()
-                    .map(SongData::get_id)
-                    .unwrap_or_default(),
-                to_id: prepared.song.get_id(),
-                duration,
-                transition_id: prepared.transition_id,
-            })
-            .await;
-
-        let finish_index = prepared.next_index;
-        self.schedule_native_automix_complete(self.native_crossfade_gen(), finish_index, duration);
 
         Ok(())
     }
 
-    pub(super) async fn complete_native_automix(&mut self, current_index: usize, position: f64) {
+    pub(super) async fn complete_native_automix(
+        &mut self,
+        current_index: usize,
+        position: f64,
+        incoming_identity: Option<TrackIdentity>,
+    ) {
         if !self.native_crossfade_active || self.secondary_decoder_handle.is_none() {
             return;
         }
@@ -406,11 +576,25 @@ impl AudioPlayer {
         self.current_temp_file = self.secondary_temp_file.take();
         let promoted_song = self.secondary_song.take();
         self.current_song = promoted_song.clone();
+        self.current_file_path = self
+            .current_song
+            .as_ref()
+            .and_then(SongData::file_path)
+            .map(str::to_string);
+        self.current_identity =
+            incoming_identity.or_else(|| self.current_song.as_ref().and_then(local_identity));
         if let Some(playback_id) = self.secondary_playback_id.take() {
             self.decoder_playback_id = playback_id;
+            self.clock.lock().set_playback_id(playback_id);
         }
         self.current_play_index = current_index;
-        if let Some(song) = promoted_song {
+        if let Some(mut song) = promoted_song {
+            // A queue edit can move B after its decoder was prepared.
+            match &mut song {
+                SongData::Local { orig_order, .. } | SongData::Custom { orig_order, .. } => {
+                    *orig_order = current_index
+                }
+            }
             self.playback_queue
                 .replace_or_set_current(current_index, song);
             self.playlist = self.playback_queue.playlist_cloned();
@@ -419,7 +603,20 @@ impl AudioPlayer {
         // AutoMix advanced the track without going through the planner. Move
         // the planner cursor with it, otherwise the next natural advance would
         // plan from the track that just finished and replay the incoming one.
-        self.advance_planner_cursor_to_playlist_index(current_index);
+        if let Some(identity) = self.current_identity.as_ref() {
+            if let Some(entry) = self
+                .manifest
+                .position_of_key(&identity.key())
+                .and_then(|position| self.manifest.entry_at(position))
+            {
+                self.advance_planner_cursor_to_playlist_index(entry.playlist_index);
+            } else {
+                self.planner.invalidate_plan();
+            }
+        } else {
+            self.advance_planner_cursor_to_playlist_index(current_index);
+        }
+        self.refresh_favourite_for_current_track();
         let incoming_duration = self.secondary_duration;
         self.secondary_duration = 0.0;
         self.native_crossfade_active = false;
@@ -486,3 +683,15 @@ impl AudioPlayer {
         self.sync_ui().await;
     }
 }
+
+pub(super) fn local_identity(song: &SongData) -> Option<TrackIdentity> {
+    song.file_path()
+        .filter(|path| !decoder::is_http_url(path))
+        .map(|path| TrackIdentity::Local {
+            path: path.to_string(),
+        })
+}
+
+#[cfg(all(test, target_os = "linux"))]
+#[path = "automix_runtime/tests.rs"]
+mod tests;

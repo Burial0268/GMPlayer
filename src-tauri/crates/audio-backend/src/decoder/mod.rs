@@ -1,6 +1,9 @@
 mod convert;
+pub(crate) mod ffmpeg;
+mod pcm;
 mod resample;
 pub mod symphonia;
+pub(crate) mod tempo;
 
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::Path;
@@ -27,9 +30,18 @@ use crate::error::{AudioError, AudioResult};
 use crate::output::{OutputWriter, PushCancel};
 
 use convert::FrameConverter;
+use pcm::PcmSource;
 
 pub(crate) trait PlaybackSink: Clone + Send + 'static {
     fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool;
+    fn push_timed_block(
+        &self,
+        block: Vec<f32>,
+        _position: crate::output::PcmPosition,
+        cancel: PushCancel<'_>,
+    ) -> bool {
+        self.push_block(block, cancel)
+    }
     fn flush_for_seek(&self);
     fn set_paused(&self, paused: bool);
     fn queued_samples(&self) -> usize;
@@ -45,6 +57,23 @@ pub(crate) trait PlaybackSink: Clone + Send + 'static {
 impl PlaybackSink for OutputWriter {
     fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool {
         OutputWriter::push_block(self, block, cancel)
+    }
+
+    fn push_timed_block(
+        &self,
+        block: Vec<f32>,
+        position: crate::output::PcmPosition,
+        cancel: PushCancel<'_>,
+    ) -> bool {
+        self.push_block_with_anchor(
+            block,
+            Some(crate::output::OutputAnchor {
+                source: position,
+                transition: 0,
+                phase: 0,
+            }),
+            cancel,
+        )
     }
 
     fn flush_for_seek(&self) {
@@ -142,16 +171,18 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard>
     progress.set_jumper(Box::new(move |progress, id, start| {
         let (url, path) = (jump_url.clone(), jump_path.clone());
         let worker = Arc::clone(&progress);
-        let spawned = std::thread::Builder::new().name("audio-download-range".into()).spawn(move || {
-            let outcome = open_range(&url, start, worker.total()).and_then(|body| {
-                let file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .open(&path)
-                    .map_err(|e| format!("Open temp file: {e}"))?;
-                growing::pump(&worker, id, file, body)
+        let spawned = std::thread::Builder::new()
+            .name("audio-download-range".into())
+            .spawn(move || {
+                let outcome = open_range(&url, start, worker.total()).and_then(|body| {
+                    let file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&path)
+                        .map_err(|e| format!("Open temp file: {e}"))?;
+                    growing::pump(&worker, id, file, body)
+                });
+                worker.end_writer(id, outcome);
             });
-            worker.end_writer(id, outcome);
-        });
         if let Err(e) = spawned {
             progress.end_writer(id, Err(format!("Start range thread: {e}")));
         }
@@ -160,10 +191,12 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard>
     let guard = crate::source::TempGuard::streaming(path, progress.clone());
     let head = progress.begin_writer(0);
     let writer = progress.clone();
-    let spawned = std::thread::Builder::new().name("audio-download".into()).spawn(move || {
-        let outcome = growing::pump(&writer, head, file, reader.take(total));
-        writer.end_writer(head, outcome);
-    });
+    let spawned = std::thread::Builder::new()
+        .name("audio-download".into())
+        .spawn(move || {
+            let outcome = growing::pump(&writer, head, file, reader.take(total));
+            writer.end_writer(head, outcome);
+        });
     spawned.map_err(|e| AudioError::Download(format!("Start download thread: {e}")))?;
 
     Ok(guard)
@@ -187,17 +220,27 @@ fn open_range(url: &str, start: u64, total: u64) -> Result<Box<dyn std::io::Read
         .call()
         .map_err(|e| format!("Range request failed: {e}"))?;
     if response.status() != 206 {
-        return Err(format!("server answered {} to a Range request", response.status()));
+        return Err(format!(
+            "server answered {} to a Range request",
+            response.status()
+        ));
     }
     // "bytes <start>-<end>/<total>"
     let range = response.header("Content-Range").unwrap_or_default();
     let matches = range
         .strip_prefix("bytes ")
         .and_then(|r| r.split_once('/'))
-        .and_then(|(span, t)| Some((span.split_once('-')?.0.parse::<u64>().ok()?, t.parse::<u64>().ok()?)))
+        .and_then(|(span, t)| {
+            Some((
+                span.split_once('-')?.0.parse::<u64>().ok()?,
+                t.parse::<u64>().ok()?,
+            ))
+        })
         .is_some_and(|(s, t)| s == start && t == total);
     if !matches {
-        return Err(format!("Content-Range {range:?} does not start at {start} of {total}"));
+        return Err(format!(
+            "Content-Range {range:?} does not start at {start} of {total}"
+        ));
     }
     Ok(Box::new(response.into_reader().take(total - start)))
 }
@@ -210,6 +253,12 @@ enum DecoderControl {
         epoch: u64,
         ack: oneshot::Sender<Result<(), String>>,
     },
+    ArmTempo {
+        start: f64,
+        processor: Box<tempo::AutoMixStretch>,
+        ack: oneshot::Sender<Result<(), String>>,
+    },
+    CancelTempo,
     SetPaused(bool),
     Stop,
 }
@@ -252,6 +301,28 @@ impl DecoderHandle {
         self.wake();
 
         Ok(DecoderSeekAck { ack_rx })
+    }
+
+    pub(crate) fn arm_tempo(
+        &self,
+        start: f64,
+        processor: tempo::AutoMixStretch,
+    ) -> AudioResult<DecoderSeekAck> {
+        let (ack, ack_rx) = oneshot::channel();
+        self.control_tx
+            .send(DecoderControl::ArmTempo {
+                start,
+                processor: Box::new(processor),
+                ack,
+            })
+            .map_err(|_| AudioError::ThreadError("decoder control channel closed".into()))?;
+        self.wake();
+        Ok(DecoderSeekAck { ack_rx })
+    }
+
+    pub(crate) fn cancel_tempo(&self) {
+        let _ = self.control_tx.send(DecoderControl::CancelTempo);
+        self.wake();
     }
 
     pub fn set_paused(&self, paused: bool) -> AudioResult<()> {
@@ -306,10 +377,15 @@ fn join_decoder_thread_async(handle: std::thread::JoinHandle<()>) {
 
 #[derive(Debug, Clone, Copy)]
 pub enum DecoderEvent {
-    Finished { playback_id: u64 },
+    Finished {
+        playback_id: u64,
+    },
     /// The decoder ran ahead of a download still landing and is holding for it
     /// (`starved`), or has enough again. Only streamed sources emit it.
-    Starved { playback_id: u64, starved: bool },
+    Starved {
+        playback_id: u64,
+        starved: bool,
+    },
 }
 
 const DECODE_BLOCK_FRAMES: usize = 512;
@@ -323,7 +399,7 @@ const MAX_DECODE_RETRIES: usize = 3;
 // being set without a message, so it costs nothing to keep it low-frequency.
 const PAUSED_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
-struct SeekableSymphoniaSource {
+pub(crate) struct SeekableSymphoniaSource {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn ::symphonia::core::codecs::Decoder>,
     track_id: u32,
@@ -334,7 +410,7 @@ struct SeekableSymphoniaSource {
 }
 
 impl SeekableSymphoniaSource {
-    fn open(path: &Path) -> AudioResult<Self> {
+    pub(crate) fn open(path: &Path) -> AudioResult<Self> {
         let opened = crate::source::open_playback(crate::source::SourceLocator::from_path(path))?;
         let mut hint = Hint::new();
         // symphonia 0.5's `Probe::format` takes the hint as `_hint` and never
@@ -496,44 +572,16 @@ impl SeekableSymphoniaSource {
             }
         }
     }
+}
 
-    /// Append up to `max_frames` complete interleaved frames from the decoded
-    /// sample buffer. This is the steady-state passthrough hot path: copying a
-    /// contiguous slice avoids one Iterator call and bounds check per sample.
-    ///
-    /// `channels` is fixed for the life of the source — `refill` ends the track
-    /// rather than let a mid-stream spec change reach this stride.
-    fn append_interleaved_frames(
-        &mut self,
-        dst: &mut Vec<f32>,
-        channels: usize,
-        max_frames: usize,
-    ) -> usize {
-        debug_assert_eq!(channels, self.channels().get() as usize);
-        let mut copied_frames = 0;
+impl PcmSource for SeekableSymphoniaSource {
+    #[inline]
+    fn samples_and_offset(&mut self) -> (&[f32], &mut usize) {
+        (self.buffer.samples(), &mut self.buffer_offset)
+    }
 
-        while copied_frames < max_frames {
-            if self.buffer_offset >= self.buffer.len() && self.refill().is_none() {
-                break;
-            }
-
-            let copied = append_available_interleaved_frames(
-                self.buffer.samples(),
-                &mut self.buffer_offset,
-                dst,
-                channels,
-                max_frames - copied_frames,
-            );
-            if copied == 0 {
-                // Symphonia buffers should be frame-aligned. If a malformed
-                // packet leaves a partial frame, discard it before refilling.
-                self.buffer_offset = self.buffer.len();
-                continue;
-            }
-            copied_frames += copied;
-        }
-
-        copied_frames
+    fn refill_buffer(&mut self) -> bool {
+        self.refill().is_some()
     }
 }
 
@@ -713,7 +761,61 @@ pub fn spawn_playback_decoder<S>(
 where
     S: PlaybackSink,
 {
-    let mut source = SeekableSymphoniaSource::open(path)?;
+    match SeekableSymphoniaSource::open(path) {
+        Ok(source) => spawn_decoder_for_source(
+            source,
+            path,
+            initial_position,
+            output,
+            output_channels,
+            output_sample_rate,
+            analysis_tx,
+            analysis_enabled,
+            event_tx,
+            playback_id,
+            start_paused,
+        ),
+        Err(
+            error @ (AudioError::Decode(_)
+            | AudioError::UnsupportedFormat(_)
+            | AudioError::NoAudioTrack),
+        ) => {
+            let source = ffmpeg::FfmpegSource::open(path).map_err(|fallback| {
+                AudioError::Decode(format!("{error}; fallback failed: {fallback}"))
+            })?;
+            tracing::debug!("Symphonia 无法解码，使用 FFmpeg：{error}");
+            spawn_decoder_for_source(
+                source,
+                path,
+                initial_position,
+                output,
+                output_channels,
+                output_sample_rate,
+                analysis_tx,
+                analysis_enabled,
+                event_tx,
+                playback_id,
+                start_paused,
+            )
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn spawn_decoder_for_source<S: PlaybackSink, D: PcmSource>(
+    mut source: D,
+    path: &Path,
+    initial_position: Option<f64>,
+    output: S,
+    output_channels: u16,
+    output_sample_rate: u32,
+    analysis_tx: AnalysisSender,
+    analysis_enabled: Arc<AtomicBool>,
+    event_tx: tokio_mpsc::UnboundedSender<DecoderEvent>,
+    playback_id: u64,
+    start_paused: bool,
+) -> AudioResult<DecoderHandle> {
     let input_channels = source.channels().get();
     let input_sample_rate = source.sample_rate().get();
 
@@ -762,6 +864,7 @@ where
                 worker_seek_epoch,
                 start_paused,
                 gate,
+                initial_position.unwrap_or(0.0),
             );
             worker.run();
         })
@@ -775,8 +878,8 @@ where
     })
 }
 
-struct DecodeWorker<S: PlaybackSink> {
-    frames: FrameConverter,
+struct DecodeWorker<S: PlaybackSink, D: PcmSource> {
+    frames: FrameConverter<D>,
     output: S,
     output_channels: u16,
     output_sample_rate: u32,
@@ -796,6 +899,11 @@ struct DecodeWorker<S: PlaybackSink> {
     applied_seek_epoch: u64,
     pending_seek_flush_epoch: Option<u64>,
     gate: Option<StreamGate>,
+    tempo: Option<(f64, Box<tempo::AutoMixStretch>)>,
+    cancel_tempo: bool,
+    source_position: f64,
+    emitted_position: f64,
+    raw_spare: Option<Vec<f32>>,
 }
 
 /// Watermarks for a source that is still downloading. The decoder stops
@@ -823,7 +931,12 @@ impl StreamGate {
             .map_or(GATE_FALLBACK_BYTES_PER_SEC, |d| progress.total() as f64 / d);
         let low = ((rate * GATE_LOW_SECONDS) as u64).max(16 * 1024);
         let high = ((rate * GATE_HIGH_SECONDS) as u64).max(low * 2);
-        Self { progress, low, high, starved: false }
+        Self {
+            progress,
+            low,
+            high,
+            starved: false,
+        }
     }
 
     /// Whether the decoder must hold now. A finished download never holds, which
@@ -853,9 +966,9 @@ fn pre_roll_run_frames(remaining: usize, frame_index: usize) -> usize {
 }
 
 #[allow(clippy::too_many_arguments)]
-impl<S: PlaybackSink> DecodeWorker<S> {
+impl<S: PlaybackSink, D: PcmSource> DecodeWorker<S, D> {
     fn new(
-        source: SeekableSymphoniaSource,
+        source: D,
         input_channels: u16,
         input_sample_rate: u32,
         output: S,
@@ -870,6 +983,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
         seek_epoch: Arc<AtomicU64>,
         paused: bool,
         gate: Option<StreamGate>,
+        initial_position: f64,
     ) -> Self {
         let (analysis_recycle_tx, analysis_recycle_rx) = mpsc::channel();
         Self {
@@ -899,6 +1013,11 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             applied_seek_epoch: 0,
             pending_seek_flush_epoch: None,
             gate,
+            tempo: None,
+            cancel_tempo: false,
+            source_position: initial_position,
+            emitted_position: initial_position,
+            raw_spare: None,
         }
     }
 
@@ -929,10 +1048,29 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                 continue;
             }
 
+            if self.cancel_tempo {
+                self.flush_tempo();
+                self.cancel_tempo = false;
+            }
             let block_seek_epoch = self.applied_seek_epoch;
+            let source_start = self.source_position;
+            let mut block_frames = DECODE_BLOCK_FRAMES;
+            if let Some((start, _)) = &self.tempo {
+                if *start > source_start + 0.5 / self.output_sample_rate as f64 {
+                    block_frames = block_frames
+                        .min(
+                            ((*start - source_start) * self.output_sample_rate as f64).round()
+                                as usize,
+                        )
+                        .max(1);
+                }
+            }
             let generation = self.output.generation();
             let block_capacity = DECODE_BLOCK_FRAMES * self.output_channels as usize;
-            let mut block = self.output.take_recycled_buffer(block_capacity);
+            let mut block = self
+                .raw_spare
+                .take()
+                .unwrap_or_else(|| self.output.take_recycled_buffer(block_capacity));
             block.clear();
             if block.capacity() < block_capacity {
                 block.reserve(block_capacity - block.capacity());
@@ -953,7 +1091,8 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             let mut superseded = false;
 
             let mut frame_index = 0;
-            while frame_index < DECODE_BLOCK_FRAMES {
+            let mut audio_frames = 0;
+            while frame_index < block_frames {
                 if frame_index % SEEK_CONTROL_CHECK_FRAMES == 0
                     && self.seek_epoch.load(Ordering::Acquire) != block_seek_epoch
                 {
@@ -970,8 +1109,8 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                 // Clamped to the next control-check boundary so seek latency is
                 // unchanged.
                 if self.pre_roll_frames_remaining > 0 {
-                    let frames =
-                        pre_roll_run_frames(self.pre_roll_frames_remaining, frame_index);
+                    let frames = pre_roll_run_frames(self.pre_roll_frames_remaining, frame_index)
+                        .min(block_frames - frame_index);
                     block.resize(block.len() + frames * self.output_channels as usize, 0.0);
                     self.pre_roll_frames_remaining -= frames;
                     frame_index += frames;
@@ -988,7 +1127,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                 if self.start_ramp_frames_remaining == 0 && self.frames.can_bulk_append() {
                     let until_control_check =
                         SEEK_CONTROL_CHECK_FRAMES - (frame_index % SEEK_CONTROL_CHECK_FRAMES);
-                    let requested = until_control_check.min(DECODE_BLOCK_FRAMES - frame_index);
+                    let requested = until_control_check.min(block_frames - frame_index);
                     let block_start = block.len();
                     let copied = self.frames.append_frames(&mut block, requested);
                     if copied == 0 {
@@ -999,6 +1138,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                         analysis_block.extend_from_slice(&block[block_start..]);
                     }
                     frame_index += copied;
+                    audio_frames += copied;
                     if copied < requested {
                         ended = true;
                         break;
@@ -1026,10 +1166,50 @@ impl<S: PlaybackSink> DecodeWorker<S> {
                     block.extend_from_slice(&frame);
                 }
                 frame_index += 1;
+                audio_frames += 1;
             }
 
             if superseded || self.seek_epoch.load(Ordering::Acquire) != block_seek_epoch {
                 continue;
+            }
+
+            self.source_position += audio_frames as f64 / self.output_sample_rate as f64;
+            let mut position = crate::output::PcmPosition {
+                playback_id: self.playback_id,
+                seconds: source_start,
+                rate: if audio_frames == 0 { 0.0 } else { 1.0 },
+            };
+            if let Some((start, processor)) = self.tempo.as_mut() {
+                if source_start + 0.5 / self.output_sample_rate as f64 >= *start
+                    && (audio_frames > 0 || ended)
+                {
+                    let mut stretched = self
+                        .output
+                        .take_recycled_buffer(processor.output_capacity(ended));
+                    stretched.clear();
+                    let mut consumed = processor.process(&block, &mut stretched);
+                    if ended {
+                        consumed += processor.flush(&mut stretched);
+                    }
+                    position.seconds = self.emitted_position;
+                    position.rate = if ended && !stretched.is_empty() {
+                        consumed as f64 / stretched.len() as f64
+                    } else {
+                        processor.rate
+                    };
+                    self.emitted_position += consumed as f64
+                        / (self.output_sample_rate as f64 * self.output_channels as f64);
+                    self.raw_spare = Some(block);
+                    block = stretched;
+                    if let Some(analysis) = analysis_block.as_mut() {
+                        analysis.clear();
+                        analysis.extend_from_slice(&block);
+                    }
+                } else {
+                    self.emitted_position = self.source_position;
+                }
+            } else {
+                self.emitted_position = self.source_position;
             }
 
             if self.pending_seek_flush_epoch == Some(block_seek_epoch)
@@ -1040,8 +1220,9 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             }
 
             let pushed = block.is_empty()
-                || self.output.push_block(
+                || self.output.push_timed_block(
                     block,
+                    position,
                     PushCancel::with_interrupt_epoch(
                         self.stop_flag.as_ref(),
                         self.seek_epoch.as_ref(),
@@ -1130,9 +1311,7 @@ impl<S: PlaybackSink> DecodeWorker<S> {
             if self.stop_flag.load(Ordering::Acquire) || !self.drain_controls() {
                 return false;
             }
-            if self.paused
-                || self.seek_epoch.load(Ordering::Acquire) != self.applied_seek_epoch
-            {
+            if self.paused || self.seek_epoch.load(Ordering::Acquire) != self.applied_seek_epoch {
                 // Let the main loop serve it; the gate re-evaluates on return.
                 return true;
             }
@@ -1201,9 +1380,59 @@ impl<S: PlaybackSink> DecodeWorker<S> {
         true
     }
 
+    fn flush_tempo(&mut self) {
+        if let Some((_, mut processor)) = self.tempo.take() {
+            let mut block = self
+                .output
+                .take_recycled_buffer(processor.output_capacity(true));
+            block.clear();
+            let consumed = processor.flush(&mut block);
+            if !block.is_empty() {
+                let position = crate::output::PcmPosition {
+                    playback_id: self.playback_id,
+                    seconds: self.emitted_position,
+                    rate: consumed as f64 / block.len() as f64,
+                };
+                let _ = self.output.push_timed_block(
+                    block,
+                    position,
+                    PushCancel::with_interrupt_epoch(
+                        self.stop_flag.as_ref(),
+                        self.seek_epoch.as_ref(),
+                        self.applied_seek_epoch,
+                    ),
+                );
+            }
+            self.emitted_position = self.source_position;
+        }
+    }
+
     fn apply_control(&mut self, control: DecoderControl) -> bool {
         match control {
+            DecoderControl::ArmTempo {
+                start,
+                processor,
+                ack,
+            } => {
+                let result = if start <= self.source_position + 1.0 / self.output_sample_rate as f64
+                {
+                    Err("AutoMix tempo start is already decoded".into())
+                } else {
+                    self.tempo = Some((start, processor));
+                    Ok(())
+                };
+                let _ = ack.send(result);
+                true
+            }
+            DecoderControl::CancelTempo => {
+                self.cancel_tempo = true;
+                true
+            }
             DecoderControl::Seek { pos, epoch, ack } => {
+                self.tempo = None;
+                self.cancel_tempo = false;
+                self.source_position = pos.as_secs_f64();
+                self.emitted_position = self.source_position;
                 let result = match self.frames.seek(pos) {
                     Ok(()) => {
                         self.applied_seek_epoch = epoch;
@@ -1258,7 +1487,10 @@ mod tests {
             }
             let frames = pre_roll_run_frames(remaining, frame_index);
             assert!(frames > 0, "pre-roll run of 0 frames would spin forever");
-            assert!(frame_index + frames <= DECODE_BLOCK_FRAMES, "ran past the block");
+            assert!(
+                frame_index + frames <= DECODE_BLOCK_FRAMES,
+                "ran past the block"
+            );
             frame_index += frames;
             assert_eq!(
                 frame_index % SEEK_CONTROL_CHECK_FRAMES,
@@ -1453,7 +1685,11 @@ mod range_tests {
                     let req = String::from_utf8_lossy(&req[..n]).to_string();
                     let start = req
                         .lines()
-                        .find_map(|l| l.to_ascii_lowercase().strip_prefix("range: bytes=").map(str::to_string))
+                        .find_map(|l| {
+                            l.to_ascii_lowercase()
+                                .strip_prefix("range: bytes=")
+                                .map(str::to_string)
+                        })
                         .and_then(|r| r.trim_end_matches('-').parse::<usize>().ok())
                         .filter(|_| honor_range)
                         .unwrap_or(0);
@@ -1497,7 +1733,11 @@ mod range_tests {
         src.seek(SeekFrom::Start(at as u64)).unwrap();
         let mut got = vec![0u8; 1000];
         src.read_exact(&mut got).unwrap();
-        assert!(t0.elapsed() < Duration::from_millis(1500), "took {:?}", t0.elapsed());
+        assert!(
+            t0.elapsed() < Duration::from_millis(1500),
+            "took {:?}",
+            t0.elapsed()
+        );
         assert!(got.iter().enumerate().all(|(i, b)| *b == byte(at + i)));
         assert_eq!(connections.load(Ordering::SeqCst), 2);
 

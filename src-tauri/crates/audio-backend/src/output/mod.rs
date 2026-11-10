@@ -19,11 +19,18 @@ use rtrb::{Consumer, Producer, PushError, RingBuffer};
 use tracing::{info, warn};
 
 mod config;
+mod device_watcher;
 mod latency;
 mod platform;
 mod render;
+#[cfg(test)]
+pub(crate) mod test_support;
+mod timeline;
+
+pub(crate) use timeline::{OutputAnchor, PcmPosition, RenderCounter, RenderedAnchor};
 
 use config::{select_any_output_config, select_output_config, stable_stream_config};
+pub(crate) use device_watcher::DeviceWatcher;
 use latency::{sample_us, LatencyMeter};
 use platform::DEFAULT_QUEUE_BLOCKS;
 use render::{fill_output, CallbackState, OutputBlock};
@@ -186,7 +193,7 @@ pub struct OutputWriter {
     generation: Arc<AtomicU64>,
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
-    rendered_samples: Arc<AtomicU64>,
+    rendered_samples: Arc<RenderCounter>,
     /// Delay between a sample being counted in `rendered_samples` and it
     /// leaving the device.
     latency: Arc<LatencyMeter>,
@@ -203,11 +210,15 @@ pub struct OutputWriter {
 
 #[derive(Clone, Debug)]
 pub struct OutputRenderClock {
-    rendered_samples: Arc<AtomicU64>,
+    rendered_samples: Arc<RenderCounter>,
     latency: Arc<LatencyMeter>,
 }
 
 impl OutputRenderClock {
+    pub(crate) fn anchor(&self) -> Option<RenderedAnchor> {
+        self.rendered_samples.anchor()
+    }
+
     pub fn rendered_samples(&self) -> u64 {
         // Monotonic telemetry only. PCM visibility is synchronized by the
         // channel plus generation/flush barriers, not by this counter.
@@ -222,7 +233,16 @@ impl OutputRenderClock {
 }
 
 impl OutputWriter {
-    pub fn push_block(&self, mut block: Vec<f32>, cancel: PushCancel<'_>) -> bool {
+    pub fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool {
+        self.push_block_with_anchor(block, None, cancel)
+    }
+
+    pub(crate) fn push_block_with_anchor(
+        &self,
+        mut block: Vec<f32>,
+        anchor: Option<OutputAnchor>,
+        cancel: PushCancel<'_>,
+    ) -> bool {
         if block.is_empty() {
             return true;
         }
@@ -245,6 +265,7 @@ impl OutputWriter {
                 samples: block,
                 generation,
                 flush_epoch,
+                anchor,
             };
             self.queued_samples.fetch_add(block_len, Ordering::Release);
             let push_result = self.data_tx.lock().push(output_block);
@@ -391,7 +412,7 @@ pub fn open_output(
     let generation = Arc::new(AtomicU64::new(0));
     let flush_epoch = Arc::new(AtomicU64::new(0));
     let queued_samples = Arc::new(AtomicUsize::new(0));
-    let rendered_samples = Arc::new(AtomicU64::new(0));
+    let rendered_samples = Arc::new(RenderCounter::default());
     let latency = Arc::new(LatencyMeter::new());
     let stream_selector = selector.clone();
 
@@ -564,13 +585,8 @@ pub fn refreshed_output_device_key(
     selected_output_device_key(selector)
 }
 
-/// True at most once per observed move of the system default output.
-///
-/// Where the platform can say so (Windows, see
-/// `platform::take_default_output_changed`) this is the prompt signal that the
-/// default moved out from under a stream bound to a concrete device — nothing
-/// invalidates such a stream, so without it the periodic probe would be the only
-/// notice. Everywhere else it is always `false` and the probe is the whole story.
+/// Consume Windows' process-wide default-output hint. macOS and Linux keep
+/// their registrations in the player-owned `DeviceWatcher` instead.
 pub fn take_default_output_changed() -> bool {
     platform::take_default_output_changed()
 }
@@ -747,7 +763,7 @@ fn open_output_stream(
     generation: Arc<AtomicU64>,
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
-    rendered_samples: Arc<AtomicU64>,
+    rendered_samples: Arc<RenderCounter>,
     latency: Arc<LatencyMeter>,
 ) -> Result<(Stream, OutputDeviceKey, OutputConfigKey), String> {
     let host = cpal::default_host();
@@ -932,7 +948,7 @@ fn build_stream<T>(
     generation: Arc<AtomicU64>,
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
-    rendered_samples: Arc<AtomicU64>,
+    rendered_samples: Arc<RenderCounter>,
     latency: Arc<LatencyMeter>,
 ) -> Result<Stream, String>
 where
@@ -947,6 +963,7 @@ where
         config.channels.max(1) as usize,
         PENDING_RECYCLE_BLOCKS,
     );
+    state.set_render_counter(Arc::clone(&rendered_samples));
     let mut reported_recoverable_errors = 0u8;
     let err_fn = move |err| {
         if let Some(error_bit) = recoverable_stream_error_bit(&err) {
@@ -1133,7 +1150,7 @@ mod tests {
             generation: Arc::clone(&generation),
             flush_epoch: Arc::clone(&flush_epoch),
             queued_samples: Arc::clone(&queued_samples),
-            rendered_samples: Arc::new(AtomicU64::new(0)),
+            rendered_samples: Arc::new(RenderCounter::default()),
             latency: Arc::new(LatencyMeter::new()),
             samples_per_sec: DEFAULT_PRODUCER_SAMPLES_PER_SEC,
             recycle_rx: Arc::new(Mutex::new(recycle_rx)),

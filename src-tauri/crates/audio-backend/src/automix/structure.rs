@@ -1182,6 +1182,8 @@ mod tests {
             confidence: 0.9,
             beat_grid: Vec::new(),
             analysis_offset: 0.0,
+            head: None,
+            tail: None,
         };
         let intro = IntroAnalysis {
             quiet_intro_duration: 4.0,

@@ -754,7 +754,8 @@ const messages: Record<string, unknown> = {
     autoMixCrossfadeDuration: "Crossfade Duration",
     autoMixCrossfadeDurationTip: "Duration of the crossfade between songs (seconds)",
     autoMixBpmMatch: "BPM Analysis",
-    autoMixBpmMatchTip: "Analyze song tempo for beat-aware transition planning",
+    autoMixBpmMatchTip:
+      "Analyze tempo for transition planning. With Beat Alignment, native playback can gently adjust the outgoing track's tempo while preserving pitch",
     autoMixBeatAlign: "Beat Alignment",
     autoMixBeatAlignTip: "Align transition point to the beat of the song",
     autoMixVolumeNorm: "Volume Normalization",

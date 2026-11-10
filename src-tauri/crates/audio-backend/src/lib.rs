@@ -20,6 +20,8 @@ mod decoder;
 mod effects;
 mod error;
 #[cfg(not(target_arch = "wasm32"))]
+mod formats;
+#[cfg(not(target_arch = "wasm32"))]
 mod metadata;
 #[cfg(not(target_arch = "wasm32"))]
 mod output;
@@ -36,6 +38,8 @@ mod types;
 mod wasm;
 
 pub use error::{AudioError, AudioResult};
+#[cfg(not(target_arch = "wasm32"))]
+pub use formats::AUDIO_EXTENSIONS;
 #[cfg(not(target_arch = "wasm32"))]
 pub use player::{Player, PlayerEventSubscriber, SubscriberId};
 // The in-process NCM protocol layer lives in the host app (this crate also

@@ -79,6 +79,8 @@ enum MixerControl {
         outgoing: DeckId,
         incoming: DeckId,
         duration_samples: usize,
+        start_position: Option<f64>,
+        transition: u64,
         params: CrossfadeParams,
     },
     ReplaceOutput {
@@ -122,6 +124,7 @@ struct DeckBlock {
     samples: Vec<f32>,
     generation: u64,
     flush_epoch: u64,
+    position: Option<crate::output::PcmPosition>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -149,8 +152,13 @@ impl Default for CrossfadeParams {
     }
 }
 
-impl PlaybackSink for DeckWriter {
-    fn push_block(&self, mut block: Vec<f32>, cancel: PushCancel<'_>) -> bool {
+impl DeckWriter {
+    fn push_with_position(
+        &self,
+        mut block: Vec<f32>,
+        position: Option<crate::output::PcmPosition>,
+        cancel: PushCancel<'_>,
+    ) -> bool {
         if block.is_empty() {
             return true;
         }
@@ -171,6 +179,7 @@ impl PlaybackSink for DeckWriter {
                 samples: block,
                 generation,
                 flush_epoch,
+                position,
             };
             let queued_before = self.queued_samples.fetch_add(block_len, Ordering::Release);
             match self.data_tx.try_send(deck_block) {
@@ -202,6 +211,21 @@ impl PlaybackSink for DeckWriter {
                 }
             }
         }
+    }
+}
+
+impl PlaybackSink for DeckWriter {
+    fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool {
+        self.push_with_position(block, None, cancel)
+    }
+
+    fn push_timed_block(
+        &self,
+        block: Vec<f32>,
+        position: crate::output::PcmPosition,
+        cancel: PushCancel<'_>,
+    ) -> bool {
+        self.push_with_position(block, Some(position), cancel)
     }
 
     fn flush_for_seek(&self) {
@@ -366,6 +390,14 @@ impl DeckMixer {
                         0.0,
                     ),
                     crossfade: None,
+                    scheduled: None,
+                    transition: 0,
+                    phase: 0,
+                    expected_timeline: None,
+                    last_phase: (0, 0),
+                    block_anchor: None,
+                    block_target: MIX_BLOCK_FRAMES * output_channels.max(1) as usize,
+                    sample_rate: output_sample_rate,
                     dsp,
                     control_rx,
                     control_epoch,
@@ -426,7 +458,8 @@ impl DeckMixer {
         let _ = ack_rx.recv_timeout(Duration::from_millis(200));
     }
 
-    pub fn start_crossfade(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn schedule_crossfade(
         &self,
         outgoing: DeckId,
         incoming: DeckId,
@@ -434,6 +467,8 @@ impl DeckMixer {
         sample_rate: u32,
         channels: u16,
         params: CrossfadeParams,
+        start_position: Option<f64>,
+        transition: u64,
     ) {
         let frames = (duration_secs.max(0.05) * sample_rate.max(1) as f64).ceil() as usize;
         let duration_samples = frames.saturating_mul(channels.max(1) as usize).max(1);
@@ -441,6 +476,8 @@ impl DeckMixer {
             outgoing,
             incoming,
             duration_samples,
+            start_position,
+            transition,
             params,
         });
         wake_worker(&self.worker);
@@ -530,6 +567,7 @@ struct DeckRuntime {
     paused: Arc<AtomicBool>,
     recycle_tx: mpsc::SyncSender<Vec<f32>>,
     gain: f32,
+    position: Option<crate::output::PcmPosition>,
 }
 
 impl DeckRuntime {
@@ -550,6 +588,7 @@ impl DeckRuntime {
             paused,
             recycle_tx,
             gain,
+            position: None,
         }
     }
 
@@ -557,6 +596,7 @@ impl DeckRuntime {
         let spent = std::mem::take(&mut self.current_block);
         recycle_deck_buffer(&self.recycle_tx, spent);
         self.current_index = 0;
+        self.position = None;
         self.accepted_generation = generation;
         self.accepted_flush_epoch = flush_epoch;
         self.queued_samples.store(0, Ordering::Release);
@@ -573,11 +613,35 @@ impl DeckRuntime {
                 recycle_deck_buffer(&self.recycle_tx, block.samples);
                 continue;
             }
+            self.position = block.position;
             let spent = std::mem::replace(&mut self.current_block, block.samples);
             recycle_deck_buffer(&self.recycle_tx, spent);
             self.current_index = 0;
         }
         &self.current_block[self.current_index..]
+    }
+
+    fn source_position(&mut self, samples_per_second: f64) -> Option<crate::output::PcmPosition> {
+        if self.current_samples().is_empty() {
+            return None;
+        }
+        self.position.map(|mut position| {
+            position.seconds += self.current_index as f64 / samples_per_second * position.rate;
+            position
+        })
+    }
+
+    fn skip_preroll(&mut self) {
+        loop {
+            if self.current_samples().is_empty()
+                || self.position.is_none_or(|position| position.rate != 0.0)
+            {
+                break;
+            }
+            let count = self.current_block.len() - self.current_index;
+            self.current_index += count;
+            self.commit_consumed(count);
+        }
     }
 
     #[cfg(test)]
@@ -657,6 +721,16 @@ impl DeckRuntime {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ScheduledCrossfade {
+    outgoing: DeckId,
+    incoming: DeckId,
+    start: f64,
+    duration_samples: usize,
+    params: CrossfadeParams,
+    transition: u64,
+}
+
 struct CrossfadeRuntime {
     outgoing: DeckId,
     incoming: DeckId,
@@ -698,6 +772,14 @@ struct MixerWorker {
     primary: DeckRuntime,
     secondary: DeckRuntime,
     crossfade: Option<CrossfadeRuntime>,
+    scheduled: Option<ScheduledCrossfade>,
+    transition: u64,
+    phase: u64,
+    expected_timeline: Option<crate::output::PcmPosition>,
+    last_phase: (u64, u64),
+    block_anchor: Option<crate::output::OutputAnchor>,
+    block_target: usize,
+    sample_rate: u32,
     dsp: DspChain,
     control_rx: mpsc::Receiver<MixerControl>,
     control_epoch: Arc<AtomicU64>,
@@ -769,15 +851,16 @@ impl MixerWorker {
                 // render: the output callback fades the gap, which is the
                 // audible dropout. One of these per track is just the final
                 // partial block, so only a sustained rate is worth reporting.
-                if block.len() < frame_capacity {
+                if block.len() < self.block_target {
                     self.note_underrun();
                 }
                 let control_epoch = self.control_epoch.load(Ordering::Acquire);
                 if !self.dsp.is_bypassed() {
                     self.dsp.process_interleaved(&mut block);
                 }
-                if !self.output.push_block(
+                if !self.output.push_block_with_anchor(
                     block,
+                    self.block_anchor,
                     PushCancel::with_interrupt_epoch(
                         self.stop_flag.as_ref(),
                         self.control_epoch.as_ref(),
@@ -865,7 +948,11 @@ impl MixerWorker {
         primary_paused: bool,
         secondary_paused: bool,
     ) -> bool {
-        let want = MIX_BLOCK_FRAMES * channels;
+        let (block_frames, position) = self.prepare_block(channels);
+        let phase = (self.transition, self.phase);
+        let want = block_frames * channels;
+        self.block_target = want;
+        self.block_anchor = None;
 
         if self.crossfade.is_none() {
             let primary_active = !primary_paused && self.primary.gain != 0.0;
@@ -894,6 +981,7 @@ impl MixerWorker {
                 // we actually have, and lets `render.rs` own the fade.
                 let frame_aligned = written - (written % channels);
                 block.truncate(frame_aligned);
+                self.record_timeline(position, frame_aligned, phase);
                 return frame_aligned > 0;
             }
 
@@ -915,8 +1003,8 @@ impl MixerWorker {
         // without allocations, while a 64-frame segment keeps even the minimum
         // 50 ms fade closely aligned with its requested curve.
         let mut mixed_frames = 0;
-        while mixed_frames < MIX_BLOCK_FRAMES {
-            let segment_frames = (MIX_BLOCK_FRAMES - mixed_frames).min(CROSSFADE_RAMP_FRAMES);
+        while mixed_frames < block_frames {
+            let segment_frames = (block_frames - mixed_frames).min(CROSSFADE_RAMP_FRAMES);
             let crossfade_ramp = self.crossfade_block_ramp(segment_frames);
 
             let (primary, secondary) = mix_segment(
@@ -940,7 +1028,103 @@ impl MixerWorker {
 
         self.primary.commit_consumed(consumed_primary);
         self.secondary.commit_consumed(consumed_secondary);
+        self.record_timeline(position, block.len(), phase);
         has_audio
+    }
+
+    fn prepare_block(&mut self, channels: usize) -> (usize, Option<crate::output::PcmPosition>) {
+        let samples_per_second = self.sample_rate as f64 * channels as f64;
+        let mut frames = MIX_BLOCK_FRAMES;
+        if let Some(schedule) = self.scheduled {
+            if let Some(position) = self
+                .deck_mut(schedule.outgoing)
+                .source_position(samples_per_second)
+            {
+                if position.rate > 0.0 {
+                    let remaining = (schedule.start - position.seconds) * self.sample_rate as f64
+                        / position.rate;
+                    if remaining < 0.5 {
+                        self.scheduled = None;
+                        self.deck_mut(schedule.incoming).skip_preroll();
+                        if self
+                            .deck_mut(schedule.incoming)
+                            .current_samples()
+                            .is_empty()
+                        {
+                            self.transition = schedule.transition;
+                            self.phase = 3;
+                        } else {
+                            self.begin_crossfade(schedule);
+                        }
+                    } else {
+                        frames = frames.min(remaining.round() as usize).max(1);
+                    }
+                }
+            }
+        }
+        let active = if let Some(fade) = &self.crossfade {
+            frames = frames
+                .min((fade.duration_samples - fade.elapsed_samples).div_ceil(channels))
+                .max(1);
+            let outgoing = fade.outgoing;
+            let incoming = fade.incoming;
+            self.deck_mut(incoming).skip_preroll();
+            outgoing
+        } else if self.primary.gain != 0.0 {
+            DeckId::Primary
+        } else {
+            DeckId::Secondary
+        };
+        let position = self.deck_mut(active).source_position(samples_per_second);
+        if position.is_some_and(|position| position.rate != 1.0) {
+            let available = self.deck_mut(active).current_samples().len() / channels;
+            frames = frames.min(available).max(1);
+        }
+        (frames, position)
+    }
+
+    fn begin_crossfade(&mut self, schedule: ScheduledCrossfade) {
+        self.set_deck_gain_direct(schedule.outgoing, schedule.params.outgoing_gain);
+        self.set_deck_gain_direct(schedule.incoming, 0.0);
+        self.transition = schedule.transition;
+        self.phase = 1;
+        self.crossfade = Some(CrossfadeRuntime {
+            outgoing: schedule.outgoing,
+            incoming: schedule.incoming,
+            duration_samples: schedule.duration_samples.max(1),
+            elapsed_samples: 0,
+            params: schedule.params,
+        });
+    }
+
+    fn record_timeline(
+        &mut self,
+        position: Option<crate::output::PcmPosition>,
+        samples: usize,
+        phase: (u64, u64),
+    ) {
+        let Some(position) = position.filter(|_| samples > 0) else {
+            return;
+        };
+        let changed = self.expected_timeline.is_none_or(|expected| {
+            expected.playback_id != position.playback_id
+                || (expected.rate - position.rate).abs() > 1e-9
+                || (expected.seconds - position.seconds).abs() > 2.0 / self.sample_rate as f64
+        });
+        if changed || self.last_phase != phase {
+            self.block_anchor = Some(crate::output::OutputAnchor {
+                source: position,
+                transition: phase.0,
+                phase: phase.1,
+            });
+        }
+        self.last_phase = phase;
+        self.expected_timeline = Some(crate::output::PcmPosition {
+            seconds: position.seconds
+                + samples as f64 / (self.sample_rate as f64 * self.output_channels as f64)
+                    * position.rate,
+            ..position
+        });
     }
 
     fn drain_controls(&mut self) -> bool {
@@ -964,6 +1148,17 @@ impl MixerWorker {
     }
 
     fn apply_control(&mut self, control: MixerControl) -> bool {
+        if matches!(
+            &control,
+            MixerControl::FlushDeck { .. }
+                | MixerControl::ClearDeck { .. }
+                | MixerControl::ClearAll { .. }
+        ) {
+            self.scheduled = None;
+            self.expected_timeline = None;
+            self.transition = 0;
+            self.phase = 0;
+        }
         match control {
             MixerControl::FlushDeck {
                 deck,
@@ -1027,20 +1222,28 @@ impl MixerWorker {
                 incoming,
                 duration_samples,
                 params,
+                start_position,
+                transition,
             } => {
-                self.set_deck_gain_direct(outgoing, params.outgoing_gain);
-                self.set_deck_gain_direct(incoming, 0.0);
-                self.crossfade = Some(CrossfadeRuntime {
+                let schedule = ScheduledCrossfade {
                     outgoing,
                     incoming,
-                    duration_samples: duration_samples.max(1),
-                    elapsed_samples: 0,
+                    duration_samples,
                     params,
-                });
+                    start: start_position.unwrap_or(0.0),
+                    transition,
+                };
+                if start_position.is_some() {
+                    self.scheduled = Some(schedule);
+                } else {
+                    self.deck_mut(incoming).skip_preroll();
+                    self.begin_crossfade(schedule);
+                }
             }
             MixerControl::ReplaceOutput { output, ack } => {
                 self.output.retire();
                 self.output = output;
+                self.expected_timeline = None;
                 let _ = ack.send(());
             }
             MixerControl::SetDsp(config) => {
@@ -1119,6 +1322,7 @@ impl MixerWorker {
             self.set_deck_gain_direct(outgoing, 0.0);
             self.set_deck_gain_direct(incoming, final_in_gain);
             self.crossfade = None;
+            self.phase = 2;
         } else {
             fade.elapsed_samples = elapsed_samples;
         }
@@ -1345,6 +1549,10 @@ fn crossfade_values(progress: f32, params: &CrossfadeParams) -> (f32, f32) {
 }
 
 #[cfg(test)]
+#[path = "mixer/timing_tests.rs"]
+mod timing_tests;
+
+#[cfg(test)]
 #[path = "mixer/perf_tests.rs"]
 mod perf_tests;
 
@@ -1360,6 +1568,7 @@ mod tests {
                 samples,
                 generation: 0,
                 flush_epoch: 0,
+                position: None,
             })
             .unwrap();
         }
@@ -1405,12 +1614,14 @@ mod tests {
             samples: vec![9.0, 9.0],
             generation: 0,
             flush_epoch: 0,
+            position: None,
         })
         .unwrap();
         tx.send(DeckBlock {
             samples: vec![0.3, 0.4],
             generation: 1,
             flush_epoch: 0,
+            position: None,
         })
         .unwrap();
         let mut deck = DeckRuntime::new(

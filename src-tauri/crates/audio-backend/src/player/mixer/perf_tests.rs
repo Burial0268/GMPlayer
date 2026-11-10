@@ -52,6 +52,7 @@ fn deck(samples: &[f32], block_samples: usize) -> DeckRuntime {
             samples: chunk.to_vec(),
             generation: 0,
             flush_epoch: 0,
+            position: None,
         })
         .unwrap();
     }
@@ -182,6 +183,7 @@ fn segmented_mixing_recycles_stale_and_empty_blocks() {
             samples,
             generation,
             flush_epoch,
+            position: None,
         })
         .unwrap();
     }
@@ -216,6 +218,7 @@ fn segmented_mixing_recycles_stale_and_empty_blocks() {
         samples: vec![0.75, -0.75],
         generation: 1,
         flush_epoch: 2,
+        position: None,
     })
     .unwrap();
     output.clear();

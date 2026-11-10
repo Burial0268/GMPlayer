@@ -18,6 +18,7 @@
     "test:audio-ui": "node scripts/test-audio-ui.mjs",
     "test:native-sound-attach": "node scripts/test-native-sound-attach.mjs",
     "test:audio-lifecycle": "node scripts/test-audio-lifecycle.mjs",
+    "test:automix-native": "node scripts/test-automix-native.mjs",
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",
     "fmt": "oxfmt src/",

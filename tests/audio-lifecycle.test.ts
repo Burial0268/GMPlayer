@@ -7,6 +7,7 @@ import { runInNewContext } from "node:vm";
 import { transformSync } from "esbuild";
 import { effectScope, nextTick, reactive, ref, toRaw, watch } from "vue";
 import { createPinia, defineStore } from "pinia";
+import { identityForSong } from "../src/utils/tauri/audio/identity";
 
 const require = createRequire(resolve("package.json"));
 
@@ -118,7 +119,7 @@ function queueEnvironment(native = true) {
         "@/utils/tauri/audio/nativeRustSound": { NativeRustSound, setPlannerRevisionObserver() {} },
         "@/store/musicData": { __esModule: true, default: () => music },
         "@/store/listenTogether": { __esModule: true, default: () => ({ isInRoom: false }) },
-        "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
+        "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf, identityForSong },
         "@/utils/tauri/core/nativeLog": { logNative() {} },
         "./NativeManifestRevision": revision,
       },

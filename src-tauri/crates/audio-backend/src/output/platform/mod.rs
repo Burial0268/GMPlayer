@@ -53,9 +53,8 @@ pub(super) fn default_output_device(host: &cpal::Host) -> Option<cpal::Device> {
     host.default_output_device()
 }
 
-/// Only Windows pushes default-device changes to this crate (see
-/// `windows::take_default_output_changed`); everywhere else the periodic device
-/// probe is the signal, and `poll_output_device_tick` already owns it.
+/// Windows keeps its process-wide registration here; macOS and Linux use the
+/// player-owned `output::device_watcher`. Other hosts retain periodic probing.
 #[cfg(not(target_os = "windows"))]
 pub(super) fn take_default_output_changed() -> bool {
     false

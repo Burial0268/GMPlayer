@@ -9,11 +9,13 @@ use crate::automix::emotion::{self, EmotionalArc};
 use crate::decoder;
 use crate::types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AutoMixConfig, AutoMixNativeState, AutoMixStatus,
-    CrossfadeCurve, DisplayAudioInfo, SongData,
+    CrossfadeCurve, DisplayAudioInfo, SongData, TrackIdentity,
 };
 
 const MIN_CROSSFADE_DURATION: f64 = 2.0;
 const DEFAULT_OVERLAP_HEADROOM_DB: f64 = -1.2;
+
+mod beat_plan;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -28,6 +30,8 @@ pub struct CrossfadePlan {
     pub arc: EmotionalArc,
     /// Section boundary the fade was moved to, when emotional transitions chose one.
     pub section_cue: Option<f64>,
+    pub outgoing_rate: f64,
+    pub beat_synced: bool,
 }
 
 pub(super) struct PreparedTrack {
@@ -42,6 +46,7 @@ pub(super) struct PreparedTrack {
     display_info: DisplayAudioInfo,
     quality: AudioQuality,
     next_index: usize,
+    next_identity: Option<TrackIdentity>,
 }
 
 pub struct PreparedAutoMixStart {
@@ -54,6 +59,7 @@ pub struct PreparedAutoMixStart {
     pub display_info: DisplayAudioInfo,
     pub quality: AudioQuality,
     pub next_index: usize,
+    pub next_identity: Option<TrackIdentity>,
 }
 
 pub struct AutoMixManager {
@@ -74,6 +80,7 @@ pub(super) struct AutoMixPrepareRequest {
     pub current_duration: Option<f64>,
     pub current_source_path: Option<PathBuf>,
     pub next_song: SongData,
+    pub next_identity: Option<TrackIdentity>,
     pub config: AutoMixConfig,
 }
 
@@ -122,9 +129,7 @@ impl AutoMixManager {
         self.enabled = enabled;
         self.config.enabled = enabled;
         if !enabled {
-            self.prepared = None;
-            self.active_transition_id = None;
-            self.state = AutoMixNativeState::Idle;
+            self.clear_plan();
         }
         vec![AudioThreadEvent::AutomixStatus {
             status: self.status(current_index),
@@ -138,21 +143,23 @@ impl AutoMixManager {
     ) -> Vec<AudioThreadEvent> {
         self.enabled = config.enabled;
         self.config = config;
-        if !self.enabled {
-            self.prepared = None;
-            self.active_transition_id = None;
-            self.state = AutoMixNativeState::Idle;
+        if !self.enabled || self.state == AutoMixNativeState::Failed {
+            self.clear_plan();
         }
         vec![AudioThreadEvent::AutomixStatus {
             status: self.status(current_index),
         }]
     }
 
-    pub fn cancel(&mut self, current_index: usize) -> Vec<AudioThreadEvent> {
+    pub(super) fn clear_plan(&mut self) {
         self.prepared = None;
         self.active_transition_id = None;
         self.state = AutoMixNativeState::Idle;
         self.last_error = None;
+    }
+
+    pub fn cancel(&mut self, current_index: usize) -> Vec<AudioThreadEvent> {
+        self.clear_plan();
         vec![AudioThreadEvent::AutomixStatus {
             status: self.status(current_index),
         }]
@@ -190,19 +197,20 @@ impl AutoMixManager {
     }
 
     pub fn take_prepared_for_start(&mut self) -> Option<PreparedAutoMixStart> {
-        let prepared = self.prepared.take()?;
+        // The mixer is armed before playback reaches the cue; keep Waiting metadata.
+        self.take_prepared_for_preload()
+    }
+
+    pub(super) fn mark_started(&mut self) {
         self.state = AutoMixNativeState::Crossfading;
-        Some(PreparedAutoMixStart {
-            song: prepared.song,
-            transition_id: prepared.transition_id,
-            local_path: prepared.local_path,
-            _temp_file: prepared._temp_file,
-            plan: prepared.plan,
-            analysis_duration: prepared.duration,
-            display_info: prepared.display_info,
-            quality: prepared.quality,
-            next_index: prepared.next_index,
-        })
+    }
+
+    pub(super) fn rebind_prepared(&mut self, next_index: usize, transition_id: Option<u64>) {
+        self.active_transition_id = transition_id;
+        if let Some(prepared) = self.prepared.as_mut() {
+            prepared.next_index = next_index;
+            prepared.transition_id = transition_id;
+        }
     }
 
     pub fn take_prepared_for_preload(&mut self) -> Option<PreparedAutoMixStart> {
@@ -217,6 +225,7 @@ impl AutoMixManager {
             display_info: prepared.display_info.clone(),
             quality: prepared.quality.clone(),
             next_index: prepared.next_index,
+            next_identity: prepared.next_identity.clone(),
         })
     }
 
@@ -256,6 +265,7 @@ impl AutoMixManager {
         current_duration: Option<f64>,
         current_source_path: Option<PathBuf>,
         next_song: SongData,
+        next_identity: Option<TrackIdentity>,
     ) -> (Vec<AudioThreadEvent>, Option<AutoMixPrepareRequest>) {
         if !self.enabled {
             self.state = AutoMixNativeState::Idle;
@@ -284,6 +294,7 @@ impl AutoMixManager {
             current_duration,
             current_source_path,
             next_song,
+            next_identity,
             config: self.config.clone(),
         };
 
@@ -379,6 +390,7 @@ pub(super) fn run_prepare_request_blocking(
         current_duration,
         current_source_path,
         next_song,
+        next_identity,
         config,
     } = request;
 
@@ -392,6 +404,7 @@ pub(super) fn run_prepare_request_blocking(
     .map(|mut prepared| {
         prepared.next_index = next_index;
         prepared.transition_id = transition_id;
+        prepared.next_identity = next_identity;
         prepared
     });
 
@@ -437,14 +450,18 @@ fn prepare_track_blocking(
     // timeout, and prepare is triggered with a large lead time before the
     // crossfade window. Two full-track analyses complete well within that budget.
     // Any analysis failure degrades gracefully back to the time-based plan.
-    let analyze_current_bpm = config.beat_align;
+    let analyze_current_bpm = config.bpm_match && config.beat_align;
     let current_analysis = current_source_path
         .as_deref()
         .and_then(|path| analyze_cached("current", path, analyze_current_bpm, cancel));
     // Analyze with the same BPM policy as a "current" track so this result can be
     // reused straight from the cache when the next track later becomes current,
     // avoiding a second full decode of the same file.
-    let next_analysis = if config.volume_norm || config.smart_curve || config.emotional_transition {
+    let next_analysis = if config.beat_align
+        || config.volume_norm
+        || config.smart_curve
+        || config.emotional_transition
+    {
         analyze_cached("next", &local_path, analyze_current_bpm, cancel)
     } else {
         None
@@ -471,7 +488,11 @@ fn prepare_track_blocking(
     let duration = if audio_info.duration_secs > 0.0 {
         audio_info.duration_secs
     } else {
-        display_info.duration
+        next_analysis
+            .as_ref()
+            .map(|analysis| analysis.duration as f64)
+            .filter(|duration| *duration > 0.0)
+            .unwrap_or(display_info.duration)
     };
 
     Ok(PreparedTrack {
@@ -485,6 +506,7 @@ fn prepare_track_blocking(
         quality,
         next_index: 0,
         transition_id: None,
+        next_identity: None,
     })
 }
 
@@ -505,6 +527,8 @@ fn build_time_based_plan(config: &AutoMixConfig, current_duration: f64) -> Cross
         out_shape: 1.0,
         arc: EmotionalArc::Neutral,
         section_cue: None,
+        outgoing_rate: 1.0,
+        beat_synced: false,
     }
 }
 
@@ -526,8 +550,7 @@ fn analyze_optional(
     if cancel.is_cancelled() {
         return None;
     }
-    match automix_analysis::analyze_audio_file_until(path, analyze_bpm, &|| cancel.is_cancelled())
-    {
+    match automix_analysis::analyze_audio_file_until(path, analyze_bpm, &|| cancel.is_cancelled()) {
         Ok(analysis) => Some(analysis),
         Err(_) if cancel.is_cancelled() => None,
         Err(err) => {
@@ -567,7 +590,9 @@ fn analysis_cache_key(path: &Path) -> String {
     // its declared size stands in for both.
     let streamed = crate::source::expected_len(path);
     let meta = std::fs::metadata(path).ok();
-    let len = streamed.or_else(|| meta.as_ref().map(|m| m.len())).unwrap_or(0);
+    let len = streamed
+        .or_else(|| meta.as_ref().map(|m| m.len()))
+        .unwrap_or(0);
     let mtime = meta
         .filter(|_| streamed.is_none())
         .and_then(|m| m.modified().ok())
@@ -662,7 +687,7 @@ fn build_analysis_backed_plan(
     if config.emotional_transition {
         apply_section_cue(&mut plan, config, current, baseline_start, effective_end);
     }
-    if config.beat_align && !skip_native_beat_align(current) {
+    if config.bpm_match && config.beat_align && !skip_native_beat_align(current) {
         if let Some(bpm) = current.bpm.as_ref() {
             plan.start_time = align_to_nearest_beat(plan.start_time, bpm);
         }
@@ -673,6 +698,17 @@ fn build_analysis_backed_plan(
         }
     }
 
+    // Fit the pair before the legacy clamp shortens a late candidate: a real
+    // pulse may move it earlier and recover the configured overlap budget.
+    if config.bpm_match && config.beat_align && !skip_native_beat_align(current) {
+        if let Some(next) = next_analysis {
+            if let Some(aligned) =
+                beat_plan::align(&plan, current, next, effective_end, config.bpm_match)
+            {
+                return aligned;
+            }
+        }
+    }
     clamp_plan_to_content(plan, effective_end)
 }
 
@@ -1058,6 +1094,17 @@ mod tests {
             emotional_transition,
             ..AutoMixConfig::default()
         }
+    }
+
+    #[test]
+    fn reconfiguring_for_a_new_attempt_does_not_replay_the_previous_failure() {
+        let mut manager = AutoMixManager::new();
+        manager.configure(config(false), 0);
+        manager.mark_failed("previous track's preparation failed".into(), 0);
+        assert_eq!(manager.status(0).state, AutoMixNativeState::Failed);
+        manager.configure(config(false), 1);
+        assert_eq!(manager.status(1).state, AutoMixNativeState::Idle);
+        assert!(manager.status(1).error.is_none());
     }
 
     #[test]

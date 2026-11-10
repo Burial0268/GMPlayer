@@ -45,7 +45,7 @@ function close(actual: number, expected: number) {
 test("native Android lyrics share the progress display delay", () => {
   const time = environment(true, true);
   close(time.getLyricPresentationTimeSeconds(12), 11.55);
-  assert.equal(time.getLyricPresentationTimeSeconds(12), time.applyMobileTauriAudioUiDelay(12));
+  assert.equal(time.getLyricPresentationTimeSeconds(12), time.applyAudioUiDelay(12));
 });
 
 test("browser and desktop playback do not gain a mobile output delay", async () => {

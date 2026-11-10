@@ -25,11 +25,39 @@ use super::{AudioPlayer, PlaybackIntent};
 
 impl AudioPlayer {
     pub(super) async fn handle_decoder_finished(&mut self, playback_id: u64) {
-        if self.native_crossfade_active
-            && (playback_id == self.decoder_playback_id
-                || Some(playback_id) == self.secondary_playback_id)
-        {
+        if self.native_crossfade_active {
+            self.tick_native_mix().await;
+        }
+        if self.native_crossfade_active && playback_id == self.decoder_playback_id {
+            if let Some(mix) = self.native_mix.as_mut() {
+                if mix.started {
+                    mix.outgoing_finished = true;
+                    return;
+                }
+            }
+            self.cancel_native_automix_runtime().await;
+            if playback_id == self.decoder_playback_id {
+                let events = self.automix.mark_failed(
+                    "AutoMix outgoing audio ended before its scheduled cue".into(),
+                    self.current_play_index,
+                );
+                self.emit_many(events).await;
+                let _ = self
+                    .decoder_event_tx
+                    .send(decoder::DecoderEvent::Finished { playback_id });
+            }
             return;
+        }
+        if self.native_crossfade_active && Some(playback_id) == self.secondary_playback_id {
+            self.cancel_native_automix_runtime().await;
+            if playback_id != self.decoder_playback_id {
+                let events = self.automix.mark_failed(
+                    "AutoMix incoming audio ended during the overlap".into(),
+                    self.current_play_index,
+                );
+                self.emit_many(events).await;
+                return;
+            }
         }
 
         if playback_id != self.decoder_playback_id || self.current_song.is_none() {
@@ -267,6 +295,8 @@ impl AudioPlayer {
             self.secondary_norm_gain = 1.0;
             self.bump_native_crossfade_gen();
             self.native_crossfade_active = false;
+            self.native_mix = None;
+            self.automix.clear_plan();
         }
         self.current_file_path = Some(file_path.clone());
 
@@ -369,6 +399,7 @@ impl AudioPlayer {
         let output_config = self.output.config();
         self.decoder_playback_id = self.decoder_playback_id.wrapping_add(1);
         let playback_id = self.decoder_playback_id;
+        self.clock.lock().set_playback_id(playback_id);
         let decoder_event_tx = self.decoder_event_tx.clone();
         let start_paused = self.playback_intent == PlaybackIntent::Paused;
         // Analysis keeps the pause it was last told; a new chain started after a

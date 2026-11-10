@@ -2,7 +2,8 @@
 name = "gmplayer-audio-backend"
 version = "0.1.0"
 edition = "2021"
-description = "Audio player backend using Symphonia + rodio, inspired by AMLL player-core"
+rust-version = "1.88"
+description = "Audio player backend using Symphonia + FFmpeg and CPAL, inspired by AMLL player-core"
 authors = ["GBCLStudio"]
 
 [lib]
@@ -55,6 +56,12 @@ tempfile = "3"
 # which notably leaves the Linux RealtimeKit backend (and its libdbus build
 # dependency) off. See `src/rt_priority.rs` for what that costs on Linux.
 audio_thread_priority = { version = "0.35", default-features = false }
+# Constructed off the playback workers; bypassed outside a matched AutoMix span.
+signalsmith-stretch = "0.1.3"
+# Audio-only FFmpeg is built and linked statically by the pinned sys crate.
+# Source access stays with source::open (growing downloads and Android SAF);
+# do not enable the wrapper's separate HTTP transport.
+ffmpeg_audio = { package = "gmplayer-ffmpeg-audio", path = "../ffmpeg-audio", default-features = false, features = ["tracing"] }
 
 # Desktop CPAL. On Linux, prefer the shared PulseAudio protocol backend (also
 # served by pipewire-pulse) and let CPAL fall back to ALSA when no sound server
@@ -64,6 +71,11 @@ audio_thread_priority = { version = "0.35", default-features = false }
 # threads. CoreAudio already owns callback scheduling.
 [target.'cfg(all(not(target_arch = "wasm32"), not(target_os = "android")))'.dependencies]
 cpal = { version = "0.18", features = ["pulseaudio", "realtime"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Already used by CPAL. Subscribe through its protocol API so both PulseAudio
+# and pipewire-pulse work without libpulse/libpipewire development packages.
+pulseaudio = "0.3.1"
 
 # Android CPAL, deliberately without `realtime`. In CPAL's AAudio backend that
 # feature is not a thread-priority knob at all — the only thing it changes is

@@ -38,3 +38,13 @@ export const identityForSongId = (songId: unknown): TrackIdentity | null => {
   if (!Number.isFinite(id) || id <= 0) return null;
   return { provider: "netease", id: String(id) };
 };
+
+/** Same source identity for manifests and native AutoMix; signed URLs are locators. */
+export const identityForSong = (
+  song: { id?: unknown; local?: { uri?: unknown } } | null | undefined,
+): TrackIdentity | null => {
+  if (!song) return null;
+  const uri = song.local?.uri;
+  if (typeof uri === "string" && uri) return { provider: "local", path: uri };
+  return identityForSongId(song.id);
+};

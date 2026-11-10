@@ -39,6 +39,7 @@ import { resolveSongUrl } from "../resolveSongUrl";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
 import { audioSendMsg } from "../../tauri/audio/bridge";
 import { isNativeAudioBackendAvailable } from "../../tauri/audio/backendRuntime";
+import { identityForSong } from "../../tauri/audio/identity";
 import type { AudioThreadEvent } from "../../tauri/audio/protocol";
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
@@ -171,8 +172,6 @@ export class TransitionStateMachine {
 
   // Delayed finishing→idle transition timer.
   private _finishingTimerId: ReturnType<typeof setTimeout> | null = null;
-  private _nativeFinishTimerId: ReturnType<typeof setTimeout> | null = null;
-
   // Native AutoMix handoff state (Tauri backend owns the actual crossfade).
   private _nativeAutoMixPreparing: boolean = false;
   private _nativeAutoMixReady: boolean = false;
@@ -392,6 +391,8 @@ export class TransitionStateMachine {
     }
 
     if (!currentSound || !currentSound.playing()) {
+      // Native pause preserves preparation; Rust owns end and cancellation events.
+      if (this._isNativeAutoMixSound(currentSound)) return;
       if (this._state === "waiting" || this._state === "analyzing") {
         if (IS_DEV) {
           console.log(
@@ -541,6 +542,7 @@ export class TransitionStateMachine {
       })
       .catch((err) => {
         if (!this._isTransitionActive(transitionId, "native")) return;
+        this._nativeAutoMixPreparing = false;
         // Back off exactly as a backend-reported failure does. Without this the
         // state goes straight back to `idle`, and `_handleIdle` runs per frame —
         // so a prepare that cannot get off the ground (an unresolvable URL, a
@@ -558,7 +560,9 @@ export class TransitionStateMachine {
         }
       })
       .finally(() => {
-        this._nativeAutoMixPreparing = false;
+        if (this._isTransitionActive(transitionId, "native")) {
+          this._nativeAutoMixPreparing = false;
+        }
       });
   }
 
@@ -581,11 +585,17 @@ export class TransitionStateMachine {
     nextIndex: number,
     nextSong: any,
   ): Promise<void> {
+    const currentIdentity = identityForSong(
+      this._musicStoreRef?.persistData?.playlists?.[currentIndex],
+    );
+    const nextIdentity = identityForSong(nextSong);
     const resolved = await resolveSongUrl(nextSong);
+    if (!this._isTransitionActive(transitionId, "native")) return;
     if (!resolved?.url) throw new Error("Failed to resolve next song URL for native AutoMix");
 
     const transport = getAudioBackendTransport();
     await transport.connect();
+    if (!this._isTransitionActive(transitionId, "native")) return;
     this._ensureNativeAutoMixSubscription();
     if (IS_DEV) {
       console.debug("TransitionStateMachine: Sending native AutoMix prepare", {
@@ -610,10 +620,13 @@ export class TransitionStateMachine {
         emotionalTransition: this._settingsEmotionalTransition,
       },
     });
+    if (!this._isTransitionActive(transitionId, "native")) return;
     await audioSendMsg({
       type: "automixPrepareNext",
       currentIndex,
       nextIndex,
+      currentIdentity,
+      nextIdentity,
       transitionId,
       nextSong: {
         type: "local",
@@ -705,7 +718,6 @@ export class TransitionStateMachine {
         this._crossfadeDuration = event.data.duration || this._crossfadeDuration;
         this._state = "crossfading";
         this._updateStoreState();
-        this._armNativeAutoMixWatchdog();
         break;
       case "automixCrossfadeComplete":
         if (!this._acceptNativeTransitionEvent(event.data.transitionId)) return;
@@ -730,35 +742,14 @@ export class TransitionStateMachine {
     this._nativeForceStartSent = false;
     this._nativeNextIndex = -1;
     this._clearTransition();
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-      this._nativeFinishTimerId = null;
-    }
     if (this._state === "analyzing" || this._state === "waiting" || this._state === "crossfading") {
       this._state = "idle";
       this._updateStoreState();
     }
   }
 
-  private _armNativeAutoMixWatchdog(): void {
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-    }
-    const timeoutMs = Math.max(5000, this._crossfadeDuration * 3000 + 5000);
-    this._nativeFinishTimerId = setTimeout(() => {
-      this._nativeFinishTimerId = null;
-      if (this._state === "crossfading" && this._nativeNextIndex >= 0) {
-        this._handleNativeAutoMixFailure("Native AutoMix completion timeout");
-      }
-    }, timeoutMs);
-  }
-
   private _completeNativeAutoMix(currentIndex: number): void {
     const transitionId = this._activeTransition?.mode === "native" ? this._activeTransition.id : 0;
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-      this._nativeFinishTimerId = null;
-    }
 
     const nextIndex = this.resolveActiveTransitionTargetIndex(
       currentIndex >= 0 ? currentIndex : this._nativeNextIndex,
@@ -2069,10 +2060,6 @@ export class TransitionStateMachine {
       clearTimeout(this._finishingTimerId);
       this._finishingTimerId = null;
     }
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-      this._nativeFinishTimerId = null;
-    }
 
     this._preBufferManager.cleanup();
     this._nativeAutoMixPreparing = false;
@@ -2235,6 +2222,15 @@ export class TransitionStateMachine {
     }
     this._refreshSettings();
 
+    if (this._isNativeAutoMixSound(sound)) {
+      // A backend advance reuses its sound object. Retire only local bookkeeping;
+      // cancelling here would tear down the track Rust has already adopted.
+      this._nativeAutoMixPreparing = false;
+      this._nativeAutoMixReady = false;
+      this._nativeForceStartSent = false;
+      this._nativeNextIndex = -1;
+      if (this._isNativeTransitionActive()) this._clearTransition();
+    }
     this._activeGainAdjustment = 1;
     this._preBufferManager.cleanup();
 

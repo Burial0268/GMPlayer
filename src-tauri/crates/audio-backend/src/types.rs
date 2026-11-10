@@ -323,6 +323,10 @@ pub enum AudioThreadMessage {
         next_index: usize,
         next_song: SongData,
         #[serde(default)]
+        current_identity: Option<TrackIdentity>,
+        #[serde(default)]
+        next_identity: Option<TrackIdentity>,
+        #[serde(default)]
         transition_id: Option<u64>,
     },
     #[serde(rename_all = "camelCase")]

@@ -39,7 +39,7 @@ import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
 import { createQueueShuffleState, type SongData } from "@/store/musicTypes";
 import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
-import { trackIdentityKey } from "@/utils/tauri/audio/identity";
+import { identityForSong as toIdentity, trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
 
@@ -81,31 +81,6 @@ setPlannerRevisionObserver(reconcileNativeManifestRevision);
  * mixes it with the revision and the pass.
  */
 const randomSeed = Math.floor(Math.random() * 0xffffffff);
-
-/**
- * Derive a backend identity from a store song.
- *
- * Two providers. A song carrying `local` is an imported file and its identity is
- * the source locator (an absolute path, or an Android `content://` document
- * URI); everything else is Netease and its identity is the numeric id.
- *
- * The local branch is load-bearing rather than cosmetic: without it a local
- * track is dropped from the manifest, the planner never learns about it, and
- * playback simply stops at the end of the current song whenever the WebView is
- * not alive to drive the JS advance path — which on Android is most of the time.
- * In the foreground the JS fallback hides it completely.
- *
- * Returning `null` means "not plannable" — the manifest omits it rather than
- * shipping an entry the resolver would always fail on.
- */
-const toIdentity = (song: SongData): TrackIdentity | null => {
-  if (!song) return null;
-  const localUri = song.local?.uri;
-  if (typeof localUri === "string" && localUri) return { provider: "local", path: localUri };
-  const id = Number(song.id);
-  if (!Number.isFinite(id) || id <= 0) return null;
-  return { provider: "netease", id: String(id) };
-};
 
 /**
  * Best-effort track length in milliseconds.

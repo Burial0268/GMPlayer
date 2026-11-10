@@ -727,7 +727,7 @@ const messages: Record<string, unknown> = {
     autoMixCrossfadeDuration: "混播过渡时长",
     autoMixCrossfadeDurationTip: "两首歌曲之间交叉淡化的持续时间（秒）",
     autoMixBpmMatch: "BPM 分析",
-    autoMixBpmMatchTip: "分析歌曲节奏，用于节拍感知的过渡规划",
+    autoMixBpmMatchTip: "分析歌曲节奏用于过渡规划；配合节拍对齐，原生播放可对前曲做小幅保音调变速",
     autoMixBeatAlign: "节拍对齐",
     autoMixBeatAlignTip: "将过渡时间点对齐到歌曲节拍",
     autoMixVolumeNorm: "音量标准化",

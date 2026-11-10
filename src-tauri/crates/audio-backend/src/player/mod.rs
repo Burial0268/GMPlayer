@@ -92,6 +92,7 @@ struct AudioPlayer {
     // into the deck mixer; the mixer pushes mixed PCM blocks to this output queue.
     output: LowLatencyOutput,
     output_selector: output::OutputDeviceSelector,
+    output_watcher: output::DeviceWatcher,
     deck_mixer: DeckMixer,
     active_deck: DeckId,
     /// Persistent per-track loudness-normalization gain currently applied to the
@@ -159,6 +160,7 @@ struct AudioPlayer {
     /// paused. Bump only through `bump_native_crossfade_gen`.
     native_crossfade_generation: Arc<AtomicU64>,
     native_crossfade_active: bool,
+    native_mix: Option<automix_runtime::NativeMix>,
     native_crossfade_transition_id: Option<u64>,
     /// Shared so a blocking AutoMix prepare can see that it was superseded and
     /// stop decoding. Bump only through `bump_automix_prepare_gen`.
@@ -401,6 +403,7 @@ impl AudioPlayer {
             self_msg_rx,
             output,
             output_selector,
+            output_watcher: output::DeviceWatcher::new(),
             deck_mixer,
             active_deck: DeckId::Primary,
             active_norm_gain: 1.0,
@@ -445,6 +448,7 @@ impl AudioPlayer {
             decoder_playback_id: 0,
             native_crossfade_generation: Arc::new(AtomicU64::new(0)),
             native_crossfade_active: false,
+            native_mix: None,
             native_crossfade_transition_id: None,
             automix_prepare_generation: Arc::new(AtomicU64::new(0)),
             playback_queue: PlaybackQueue::new(),
@@ -589,22 +593,8 @@ impl AudioPlayer {
               }
 
               _ = output_health_check.tick() => {
-                // Taken unconditionally: the flag is a one-shot edge, and leaving
-                // it set while a named device is selected would fire a stale
-                // refresh the moment the user switches back to "system default".
-                let default_output_changed = output::take_default_output_changed();
-                let output_failed = self.output.has_failed();
-                let output_stalled = self.output_render_stalled();
-                if output_failed || output_stalled {
-                  self.request_output_refresh(true, output_stalled);
-                } else if default_output_changed && self.output_selector.is_default() {
-                  // The stream is bound to a concrete endpoint (see
-                  // `output::platform::default_output_device`), so the OS moving
-                  // the default does not disturb it — this is the only prompt
-                  // notice, and the 1-3s device poll is the backstop.
-                  self.reset_output_poll_stride();
-                  self.request_output_refresh(false, false);
-                }
+                self.tick_native_mix().await;
+                self.check_output_health();
               }
 
               event = self.output_refresh_rx.recv() => {
