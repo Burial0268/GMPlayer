@@ -18,6 +18,8 @@ use super::automix;
 use super::mixer::{CrossfadeParams, DeckId};
 use super::{AudioPlayer, PlaybackIntent};
 
+const AUTOMIX_MIN_INCOMING_BUFFER_SECS: f64 = 0.25;
+
 impl AudioPlayer {
     pub(super) fn spawn_automix_prepare_task(&self, request: automix::AutoMixPrepareRequest) {
         let tx = self.automix_prepare_tx.clone();
@@ -151,6 +153,34 @@ impl AudioPlayer {
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         });
+    }
+
+    pub(super) fn schedule_native_automix_ready_retry(&self, generation: u64) {
+        let tx = self.self_msg_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = tx.send(AudioThreadEventMessage::new(
+                String::new(),
+                Some(AudioThreadMessage::AutomixForceStart {
+                    generation: Some(generation),
+                }),
+            ));
+        });
+    }
+
+    pub(super) fn native_automix_incoming_ready(&self) -> bool {
+        if self.secondary_decoder_handle.is_none() {
+            return false;
+        }
+        let incoming_deck = self.inactive_deck();
+        let incoming_writer = match incoming_deck {
+            DeckId::Primary => self.deck_mixer.primary_writer(),
+            DeckId::Secondary => self.deck_mixer.secondary_writer(),
+        };
+        let samples_per_second =
+            self.output.config().sample_rate as f64 * self.output.config().channels as f64;
+        let minimum = (samples_per_second * AUTOMIX_MIN_INCOMING_BUFFER_SECS) as usize;
+        incoming_writer.deck_queued_samples() >= minimum
     }
 
     fn schedule_native_automix_complete(

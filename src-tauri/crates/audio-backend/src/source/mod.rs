@@ -23,7 +23,7 @@ use symphonia::core::io::MediaSource;
 use crate::error::{AudioError, AudioResult};
 
 pub(crate) mod growing;
-pub use growing::{expected_len, TempGuard};
+pub use growing::{expected_len, is_complete, TempGuard};
 
 // ── Locator ──────────────────────────────────────────────────────
 

@@ -452,7 +452,16 @@ fn prepare_track_blocking(
     if cancel.is_cancelled() {
         return Err(SUPERSEDED.into());
     }
-    let plan = current_duration.map(|duration| {
+    // Prefer the duration measured from the complete current-track decode.
+    // Metadata duration can be short or absent while a streamed source is
+    // still being probed; using it here schedules AutoMix before playback has
+    // reached the song's real end.
+    let planning_duration = current_analysis
+        .as_ref()
+        .map(|analysis| analysis.duration as f64)
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+        .or(current_duration);
+    let plan = planning_duration.map(|duration| {
         build_analysis_backed_plan(
             &config,
             duration,
@@ -526,8 +535,7 @@ fn analyze_optional(
     if cancel.is_cancelled() {
         return None;
     }
-    match automix_analysis::analyze_audio_file_until(path, analyze_bpm, &|| cancel.is_cancelled())
-    {
+    match automix_analysis::analyze_audio_file_until(path, analyze_bpm, &|| cancel.is_cancelled()) {
         Ok(analysis) => Some(analysis),
         Err(_) if cancel.is_cancelled() => None,
         Err(err) => {
@@ -567,7 +575,9 @@ fn analysis_cache_key(path: &Path) -> String {
     // its declared size stands in for both.
     let streamed = crate::source::expected_len(path);
     let meta = std::fs::metadata(path).ok();
-    let len = streamed.or_else(|| meta.as_ref().map(|m| m.len())).unwrap_or(0);
+    let len = streamed
+        .or_else(|| meta.as_ref().map(|m| m.len()))
+        .unwrap_or(0);
     let mtime = meta
         .filter(|_| streamed.is_none())
         .and_then(|m| m.modified().ok())
@@ -594,6 +604,15 @@ fn analyze_cached(
                 return Some(entry.analysis.clone());
             }
         }
+    }
+
+    // A growing source is already being consumed by the playback decoder. A
+    // full-track analysis would open another reader and wait for the network
+    // to land the rest of the file, competing with the only reader that keeps
+    // audio audible. Streaming playback uses the time-based plan until the
+    // source is complete; a later prepare can then populate the full cache.
+    if crate::source::is_complete(path) == Some(false) {
+        return None;
     }
 
     let analysis = analyze_optional(label, path, analyze_bpm, cancel)?;

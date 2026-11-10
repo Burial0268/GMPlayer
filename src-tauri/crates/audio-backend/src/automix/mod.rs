@@ -408,12 +408,14 @@ where
         return Err("decode audio: no samples".into());
     }
 
+    // The decoder has consumed the complete source by this point. For a
+    // growing download, the container's duration hint can describe only the
+    // bytes available when it was probed (or be a bad estimate for a headerless
+    // stream), which would make AutoMix schedule the handoff early. The decoded
+    // PCM length is the authoritative duration for analysis and planning.
     let decoded_duration = mono.len() as f32 / sample_rate as f32;
-    let duration = duration_hint
-        .filter(|duration| *duration > 0.0)
-        .unwrap_or(decoded_duration);
 
-    Ok((mono, sample_rate, duration))
+    Ok((mono, sample_rate, decoded_duration))
 }
 
 pub fn analyze_mono_samples(

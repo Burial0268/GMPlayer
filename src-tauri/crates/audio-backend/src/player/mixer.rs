@@ -244,6 +244,10 @@ impl PlaybackSink for DeckWriter {
 }
 
 impl DeckWriter {
+    pub fn deck_queued_samples(&self) -> usize {
+        self.queued_samples.load(Ordering::Acquire)
+    }
+
     fn flush_deck_for_seek(&self) {
         let generation = self.generation.load(Ordering::Acquire);
         let flush_epoch = self.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
