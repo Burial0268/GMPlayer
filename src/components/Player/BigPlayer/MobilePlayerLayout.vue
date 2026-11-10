@@ -1,7 +1,7 @@
 <template>
   <div
     ref="pagesRef"
-    :class="['mobile-pages', { 'queue-open': queueOpen }]"
+    :class="['mobile-pages', { 'queue-open': queueOpen, tinted }]"
     :style="{ '--mobile-lyric-controls-height': `${lyricControlsHeight}px` }"
   >
     <div class="mobile-player-page">
@@ -228,7 +228,7 @@
              歌名位置并留在那里；两层里真实的歌名只用来量位置，不显示。 -->
         <Motion
           v-if="titleMetrics"
-          :class="['mobile-title-frame', { blended: activeMobileLayer === 2 }]"
+          class="mobile-title-frame"
           aria-hidden="true"
           :style="titleFrameStyle"
         >
@@ -247,7 +247,7 @@
         <!-- 歌手行同理，只在 mini 条显示的是歌手（不是歌词）时共享。 -->
         <Motion
           v-if="artistsMetrics"
-          :class="['mobile-artists-frame', { blended: activeMobileLayer === 2 }]"
+          class="mobile-artists-frame"
           aria-hidden="true"
           :style="artistsFrameStyle"
         >
@@ -436,6 +436,7 @@ const props = defineProps<{
   artistsMetrics: TextMetrics | null;
   albumLayerStyle: MotionStyleRecord;
   albumLayerVisible: boolean;
+  tinted: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -889,7 +890,16 @@ defineExpose({
 
 <style lang="scss" scoped>
 .mobile-pages {
+  --mobile-title-opacity: 1;
+  --mobile-artists-opacity: 0.7;
+  --mobile-time-opacity: 0.5;
   --mobile-controls-bottom-padding: calc(var(--app-safe-area-bottom, 0px) + 4rem);
+
+  &.tinted {
+    --mobile-title-opacity: 0.85;
+    --mobile-artists-opacity: 0.6;
+    --mobile-time-opacity: 0.6;
+  }
   grid-row: 1 / -1;
   grid-column: 1 / 2;
   position: relative;
@@ -927,14 +937,15 @@ defineExpose({
   transform-origin: 0 0;
   will-change: transform;
 
-  // Layer 2's real text sits in the lyric layout, which blends onto the background canvas.
-  &.blended {
-    mix-blend-mode: plus-lighter;
-  }
+  mix-blend-mode: plus-lighter;
 }
 
 .mobile-title-frame {
-  color: var(--main-cover-color);
+  color: color-mix(
+    in srgb,
+    var(--main-cover-mix-color, rgb(239, 239, 239)) calc(var(--mobile-title-opacity) * 100%),
+    transparent
+  );
 
   .title-name {
     height: var(--text-height);
@@ -968,9 +979,13 @@ defineExpose({
   }
 }
 
-// The real line has `opacity: 0.7`; the float has none, so its resting colour carries it.
+// Mirror the real line's opacity in the fallback colour; motion carries it while travelling.
 .mobile-artists-frame {
-  color: color-mix(in srgb, var(--main-cover-color) 70%, transparent);
+  color: color-mix(
+    in srgb,
+    var(--main-cover-mix-color, rgb(239, 239, 239)) calc(var(--mobile-artists-opacity) * 100%),
+    transparent
+  );
 
   .artists-line {
     height: var(--text-height);
@@ -1097,6 +1112,8 @@ defineExpose({
   grid-column: 1 / 2;
   position: relative;
   z-index: 1;
+  // The actual artwork is a sibling; this group contains only slots and controls.
+  mix-blend-mode: plus-lighter;
   overflow-y: hidden;
   display: grid;
   // 独立留出封面与 metadata 的间距，矮视口缩小封面而不挤掉留白。
@@ -1176,7 +1193,9 @@ defineExpose({
         position: relative;
         font-weight: 600;
         font-size: 0.95rem;
-        color: var(--main-cover-color);
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        opacity: var(--mobile-title-opacity);
+        mix-blend-mode: plus-lighter;
         margin-bottom: 2px;
         white-space: nowrap;
         overflow: hidden;
@@ -1219,8 +1238,9 @@ defineExpose({
 
     .artists {
       font-size: 0.75rem;
-      opacity: 0.7;
-      color: var(--main-cover-color);
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      opacity: var(--mobile-artists-opacity);
+      mix-blend-mode: plus-lighter;
     }
   }
 
@@ -1232,7 +1252,8 @@ defineExpose({
     flex-shrink: 0;
 
     .n-icon {
-      color: var(--main-cover-color);
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      mix-blend-mode: plus-lighter;
       opacity: 0.8;
       cursor: pointer;
 
@@ -1343,6 +1364,8 @@ defineExpose({
   opacity: 0;
   min-width: 0;
   z-index: 2;
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
+  mix-blend-mode: plus-lighter;
   text-shadow: 0 0 0.3em color-mix(in srgb, currentColor 15%, transparent);
   // --app-safe-area-bottom is env(safe-area-inset-bottom) on Tauri mobile,
   // 0px everywhere else — so this is a no-op on desktop / browser.
@@ -1376,7 +1399,9 @@ defineExpose({
           position: relative;
           font-weight: 600;
           font-size: 1.2rem;
-          color: var(--main-cover-color);
+          color: var(--main-cover-mix-color, rgb(239, 239, 239));
+          opacity: var(--mobile-title-opacity);
+          mix-blend-mode: plus-lighter;
           margin-bottom: 4px;
           white-space: nowrap;
           overflow: hidden;
@@ -1419,8 +1444,9 @@ defineExpose({
 
       .artists {
         font-size: 0.9rem;
-        opacity: 0.7;
-        color: var(--main-cover-color);
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        opacity: var(--mobile-artists-opacity);
+        mix-blend-mode: plus-lighter;
       }
     }
 
@@ -1432,7 +1458,8 @@ defineExpose({
       flex-shrink: 0;
 
       .n-icon {
-        color: var(--main-cover-color);
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        mix-blend-mode: plus-lighter;
         opacity: 0.8;
         cursor: pointer;
 
@@ -1447,14 +1474,19 @@ defineExpose({
     width: 100%;
     margin-bottom: 16px;
 
+    :deep(.bouncing-slider) {
+      mix-blend-mode: plus-lighter;
+    }
+
     .time-display {
       display: flex;
       justify-content: space-between;
       margin-top: 8px;
       font-size: max(1.2vh, 0.7rem);
       font-variant-numeric: tabular-nums;
-      opacity: 0.5;
-      color: var(--main-cover-color);
+      opacity: var(--mobile-time-opacity);
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      mix-blend-mode: plus-lighter;
     }
   }
 }

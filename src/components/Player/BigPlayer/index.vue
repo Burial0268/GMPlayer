@@ -85,6 +85,7 @@
               :artistsMetrics="mobileArtistsMetrics"
               :albumLayerStyle="mobileArtworkMotionStyle"
               :albumLayerVisible="mobileAlbumLayerVisible"
+              :tinted="setting.immersivePlayer"
               @close="handleMobileClose"
               @openQueue="openMobileQueue"
               @closeQueue="closeMobileQueue"
@@ -739,8 +740,17 @@ const seedInteractiveFromMini = (frames?: MiniSharedFrames) => {
   }
 };
 
-// Computed colours come back as rgb()/rgba(), in comma or space syntax.
+// color-mix() computes to color(srgb …); shared text also reads the mini bar's rgb()/rgba().
 const parseColor = (css: string): Rgba | null => {
+  const srgb = css.match(/color\(srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)(?:\s*\/\s*([\d.]+))?\s*\)/);
+  if (srgb) {
+    return [
+      Number(srgb[1]) * 255,
+      Number(srgb[2]) * 255,
+      Number(srgb[3]) * 255,
+      srgb[4] === undefined ? 1 : Number(srgb[4]),
+    ];
+  }
   const match = css.match(
     /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:\s*[,/]\s*([\d.]+)(%?))?\s*\)/,
   );

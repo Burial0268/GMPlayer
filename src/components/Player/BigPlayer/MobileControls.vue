@@ -125,9 +125,16 @@ const isLocalTrack = computed(() => Boolean(music.getPlaySongData?.local?.uri));
   align-items: center;
   justify-content: space-evenly;
   width: 100%;
+  mix-blend-mode: plus-lighter;
+
+  :deep(.n-icon),
+  :deep(svg),
+  :deep(path) {
+    mix-blend-mode: plus-lighter;
+  }
 
   > .n-icon {
-    color: var(--main-cover-color);
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
     cursor: pointer;
     transition:
       transform var(--duration-150) var(--ease-out),
@@ -162,16 +169,17 @@ const isLocalTrack = computed(() => Boolean(music.getPlaySongData?.local?.uri));
       --n-color: transparent;
       --n-color-hover: rgba(255, 255, 255, 0.1);
       --n-color-pressed: rgba(255, 255, 255, 0.15);
-      --n-text-color: var(--main-cover-color);
-      --n-text-color-hover: var(--main-cover-color);
-      --n-text-color-pressed: var(--main-cover-color);
+      --n-text-color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      --n-text-color-hover: var(--main-cover-mix-color, rgb(239, 239, 239));
+      --n-text-color-pressed: var(--main-cover-mix-color, rgb(239, 239, 239));
       --n-border: none;
       border: none;
     }
 
     .n-icon {
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      mix-blend-mode: plus-lighter;
       opacity: 0.9;
-      color: var(--main-cover-color);
     }
   }
 
@@ -186,16 +194,16 @@ const isLocalTrack = computed(() => Boolean(music.getPlaySongData?.local?.uri));
       --n-color: transparent;
       --n-color-hover: rgba(255, 255, 255, 0.1);
       --n-color-pressed: rgba(255, 255, 255, 0.15);
-      --n-text-color: var(--main-cover-color);
-      --n-text-color-hover: var(--main-cover-color);
-      --n-text-color-pressed: var(--main-cover-color);
+      --n-text-color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      --n-text-color-hover: var(--main-cover-mix-color, rgb(239, 239, 239));
+      --n-text-color-pressed: var(--main-cover-mix-color, rgb(239, 239, 239));
       --n-border: none;
       border: none;
     }
 
     .n-icon {
-      opacity: 1;
-      color: var(--main-cover-color);
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
+      mix-blend-mode: plus-lighter;
     }
   }
 }
@@ -205,9 +213,17 @@ const isLocalTrack = computed(() => Boolean(music.getPlaySongData?.local?.uri));
   align-items: center;
   width: 100%;
   margin-top: 16px;
+  mix-blend-mode: plus-lighter;
+
+  :deep(.bouncing-slider),
+  :deep(.n-icon),
+  :deep(svg),
+  :deep(path) {
+    mix-blend-mode: plus-lighter;
+  }
 
   :deep(.n-icon) {
-    color: var(--main-cover-color);
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
     opacity: 0.4;
     flex-shrink: 0;
   }
