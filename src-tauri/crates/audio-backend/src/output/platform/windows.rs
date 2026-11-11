@@ -1,34 +1,15 @@
-//! Windows output-device policy: the COM apartment device work runs in, the
-//! identity of the system default endpoint, and the watch that reports when the
-//! system moves it.
+//! Windows output policy: COM apartment selection and concrete default endpoints.
 //!
-//! Three rules hold this file together, and all three were learned from one
-//! failure: `RPC_E_CHANGED_MODE` ("无法在设置线程模式后对其加以更改",
-//! 0x80010106) coming back out of WASAPI device probing after an output-device
-//! switch, which turned every later probe *and* every stream open into "no
-//! supported output config" — so playback could not follow the switch, the next
-//! track never started, and only a restart cleared it.
-//!
-//! 1. Device work runs in the apartment this crate chose, never CPAL's —
-//!    [`ensure_audio_apartment`].
-//! 2. Nothing here drives `ActivateAudioInterfaceAsync`, which is where that
-//!    HRESULT came from — [`default_output_device`].
-//! 3. Nothing this crate registers with MMDevAPI touches COM from a callback,
-//!    which is the most plausible source of the STA it collided with —
-//!    [`ensure_default_output_watch`].
+//! Device notifications live in `output::device_watcher::windows`; keeping that
+//! lifecycle separate prevents endpoint probing from registering listeners.
 
 use std::cell::Cell;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
 
 use cpal::traits::HostTrait;
 use tracing::warn;
-use windows::core::{PCWSTR, PWSTR};
-use windows::Win32::Foundation::{PROPERTYKEY, RPC_E_CHANGED_MODE};
-use windows::Win32::Media::Audio::{
-    eConsole, eRender, EDataFlow, ERole, IMMDeviceEnumerator, IMMNotificationClient,
-    IMMNotificationClient_Impl, MMDeviceEnumerator, DEVICE_STATE,
-};
+use windows::core::PWSTR;
+use windows::Win32::Foundation::RPC_E_CHANGED_MODE;
+use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoGetApartmentType, CoInitializeEx, CoTaskMemFree, APTTYPE, APTTYPEQUALIFIER,
     APTTYPEQUALIFIER_IMPLICIT_MTA, APTTYPE_MAINSTA, APTTYPE_MTA, APTTYPE_NA, APTTYPE_STA,
@@ -171,12 +152,11 @@ pub(in crate::output) fn default_output_id(_device: &cpal::Device) -> Option<Str
 /// default-device stream either — `stream.rs::default_device_change_error` says
 /// so in as many words ("WASAPI never rebinds the IAudioClient") and reports
 /// `StreamInvalidated` for the caller to act on. Following the default is
-/// `player::output_runtime`'s job, off its own device poll and the watch below;
-/// `OutputDeviceKey::platform_id` is still this endpoint's id, so a moved
-/// default still reads as a changed key.
+/// `player::output_runtime`'s job, off its own device poll and device_watcher's
+/// notifications. `OutputDeviceKey::platform_id` is still this endpoint's id,
+/// so moving the default reads as a changed key.
 pub(in crate::output) fn default_output_device(host: &cpal::Host) -> Option<cpal::Device> {
     ensure_audio_apartment();
-    ensure_default_output_watch();
 
     let Some(endpoint_id) = default_output_endpoint_id() else {
         return host.default_output_device();
@@ -191,117 +171,6 @@ pub(in crate::output) fn default_output_device(host: &cpal::Host) -> Option<cpal
             warn!("默认输出端点未出现在设备枚举中（{endpoint_id}），回退到 CPAL 默认设备");
             host.default_output_device()
         }
-    }
-}
-
-/// Raised by [`DefaultOutputNotifier`], consumed by the player's health tick.
-static DEFAULT_OUTPUT_CHANGED: AtomicBool = AtomicBool::new(false);
-
-/// True at most once per observed move of the system default render endpoint.
-///
-/// A stream bound to a concrete endpoint keeps playing there when the user
-/// switches the system default, so nothing invalidates it and the periodic
-/// device poll would be the only signal — up to `OUTPUT_POLL_MAX_STRIDE`
-/// seconds of audio still coming out of the device the user just switched away
-/// from. This is the prompt half; the poll stays as the backstop.
-pub(in crate::output) fn take_default_output_changed() -> bool {
-    DEFAULT_OUTPUT_CHANGED.swap(false, Ordering::AcqRel)
-}
-
-/// Registration held for the life of the process.
-///
-/// Unregistering is deliberately never attempted. There is nothing to tear down
-/// *for* — the flag outlives every output — and a teardown would have to reach
-/// MMDevAPI from whatever thread happened to run it, at exactly the shutdown
-/// moment when the apartment guarantees this file rests on are least certain.
-struct DefaultOutputWatch {
-    _enumerator: IMMDeviceEnumerator,
-    _client: IMMNotificationClient,
-}
-
-// SAFETY: both interfaces are only ever *stored* after registration. They are
-// created and used on one thread, no method is called on either again, and the
-// only thing MMDevAPI drives from here is the callback below.
-unsafe impl Send for DefaultOutputWatch {}
-unsafe impl Sync for DefaultOutputWatch {}
-
-/// Register the default-device notification once per process.
-fn ensure_default_output_watch() {
-    static WATCH: OnceLock<Option<DefaultOutputWatch>> = OnceLock::new();
-
-    WATCH.get_or_init(|| {
-        let enumerator: IMMDeviceEnumerator =
-            match unsafe { CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) } {
-                Ok(enumerator) => enumerator,
-                Err(e) => {
-                    warn!("默认输出设备监听不可用（枚举器创建失败）：{e:?}");
-                    return None;
-                }
-            };
-        let client: IMMNotificationClient = DefaultOutputNotifier.into();
-        if let Err(e) = unsafe { enumerator.RegisterEndpointNotificationCallback(&client) } {
-            warn!("默认输出设备监听注册失败，改由设备轮询兜底：{e:?}");
-            return None;
-        }
-        Some(DefaultOutputWatch {
-            _enumerator: enumerator,
-            _client: client,
-        })
-    });
-}
-
-/// Flips an atomic and returns. That is the whole contract, and it is the
-/// lesson of this module: MMDevAPI runs these callbacks on threads Windows owns
-/// and shares, so anything that initialises COM, or calls a COM method that
-/// might, changes an apartment out from under whatever the audio stack schedules
-/// there next. Nothing here is worth a device query — the poll that reads the
-/// flag can afford to ask.
-#[windows::core::implement(IMMNotificationClient)]
-struct DefaultOutputNotifier;
-
-impl IMMNotificationClient_Impl for DefaultOutputNotifier_Impl {
-    fn OnDefaultDeviceChanged(
-        &self,
-        flow: EDataFlow,
-        role: ERole,
-        _pwstrdefaultdeviceid: &PCWSTR,
-    ) -> windows::core::Result<()> {
-        // `eConsole` only: the role fires once each, and it is the role
-        // `default_output_endpoint_id` resolves, so anything else would raise
-        // the flag for a default this crate does not follow.
-        if flow == eRender && role == eConsole {
-            DEFAULT_OUTPUT_CHANGED.store(true, Ordering::Release);
-        }
-        Ok(())
-    }
-
-    // The rest are deliberately inert. A device appearing, vanishing or changing
-    // state only matters here through the default it produces — which arrives as
-    // `OnDefaultDeviceChanged` — or through the live stream, which WASAPI
-    // invalidates on its own and `output_render_stalled`/`has_failed` already
-    // catch inside 100 ms.
-    fn OnDeviceStateChanged(
-        &self,
-        _pwstrdeviceid: &PCWSTR,
-        _dwnewstate: DEVICE_STATE,
-    ) -> windows::core::Result<()> {
-        Ok(())
-    }
-
-    fn OnDeviceAdded(&self, _pwstrdeviceid: &PCWSTR) -> windows::core::Result<()> {
-        Ok(())
-    }
-
-    fn OnDeviceRemoved(&self, _pwstrdeviceid: &PCWSTR) -> windows::core::Result<()> {
-        Ok(())
-    }
-
-    fn OnPropertyValueChanged(
-        &self,
-        _pwstrdeviceid: &PCWSTR,
-        _key: &PROPERTYKEY,
-    ) -> windows::core::Result<()> {
-        Ok(())
     }
 }
 
@@ -342,46 +211,5 @@ mod tests {
         })
         .join()
         .expect("apartment test thread");
-    }
-
-    /// One edge, filtered to the default this crate actually follows. Driven
-    /// through the real vtable rather than the Rust type: a signature that does
-    /// not match the interface dispatches to the wrong slot, and an `impl` block
-    /// cannot be checked for that by reading it.
-    #[test]
-    fn the_default_output_notification_reports_one_edge_for_the_console_render_default() {
-        use windows::Win32::Media::Audio::{eCapture, eCommunications};
-
-        let client: IMMNotificationClient = DefaultOutputNotifier.into();
-        // The flag is process-wide; start from a known state.
-        let _ = take_default_output_changed();
-
-        unsafe {
-            client.OnDeviceAdded(PCWSTR::null()).expect("device added");
-            client
-                .OnDeviceRemoved(PCWSTR::null())
-                .expect("device removed");
-            client
-                .OnDefaultDeviceChanged(eCapture, eConsole, PCWSTR::null())
-                .expect("capture default changed");
-            client
-                .OnDefaultDeviceChanged(eRender, eCommunications, PCWSTR::null())
-                .expect("communications default changed");
-        }
-        assert!(
-            !take_default_output_changed(),
-            "only the console render default is the one this crate resolves"
-        );
-
-        unsafe {
-            client
-                .OnDefaultDeviceChanged(eRender, eConsole, PCWSTR::null())
-                .expect("render console default changed");
-        }
-        assert!(take_default_output_changed(), "the switch must be reported");
-        assert!(
-            !take_default_output_changed(),
-            "an edge taken twice would refresh the output for nothing"
-        );
     }
 }

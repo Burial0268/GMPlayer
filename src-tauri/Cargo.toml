@@ -2,6 +2,7 @@
 members = [
   "crates/audio-analysis",
   "crates/orientation",
+  "crates/automix-analysis",
   "crates/audio-backend",
   "crates/ffmpeg-audio",
   "crates/taskbar-lyric",

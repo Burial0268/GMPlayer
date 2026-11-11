@@ -64,12 +64,12 @@ struct FrameFeature {
     flux: f32,
 }
 
-pub(crate) struct StructureFeatures {
+pub struct StructureFeatures {
     frame_seconds: f32,
     frames: Vec<FrameFeature>,
 }
 
-pub(crate) struct StructureFeatureExtractor {
+pub struct StructureFeatureExtractor {
     fft: Arc<dyn Fft<f32>>,
     frame_seconds: f32,
     window: Vec<f32>,
@@ -83,7 +83,7 @@ pub(crate) struct StructureFeatureExtractor {
 }
 
 impl StructureFeatureExtractor {
-    pub(crate) fn new(sample_rate: u32) -> Self {
+    pub fn new(sample_rate: u32) -> Self {
         let sample_rate = sample_rate.max(1);
         let fft_size = fft_size_for(sample_rate);
         let fft = FftPlanner::new().plan_fft_forward(fft_size);
@@ -125,7 +125,7 @@ impl StructureFeatureExtractor {
         }
     }
 
-    pub(crate) fn push(&mut self, mut samples: &[f32]) {
+    pub fn push(&mut self, mut samples: &[f32]) {
         let fft_size = self.window.len();
         while !samples.is_empty() {
             let take = (fft_size - self.pending.len()).min(samples.len());
@@ -137,7 +137,7 @@ impl StructureFeatureExtractor {
         }
     }
 
-    pub(crate) fn finish(mut self) -> StructureFeatures {
+    pub fn finish(mut self) -> StructureFeatures {
         // A tail under half a frame is below block resolution anyway.
         if self.pending.len() * 2 >= self.window.len() {
             self.process_pending();
@@ -204,7 +204,7 @@ fn fft_size_for(sample_rate: u32) -> usize {
 
 // ─── Segmentation ──────────────────────────────────────────────────
 
-pub(crate) struct SectionHints<'a> {
+pub struct SectionHints<'a> {
     pub duration: f32,
     /// End of audible content: `duration` minus trailing silence.
     pub content_end: f32,
@@ -215,7 +215,7 @@ pub(crate) struct SectionHints<'a> {
 
 /// A tempo worth sizing sections by. The detector's beat grid carries no
 /// phase, so tempo only scales the search — it never places a boundary.
-pub(crate) fn confident_tempo(bpm: f32, confidence: f32) -> Option<f32> {
+pub fn confident_tempo(bpm: f32, confidence: f32) -> Option<f32> {
     (confidence >= 0.3 && bpm.is_finite() && (60.0..=200.0).contains(&bpm)).then_some(bpm)
 }
 
@@ -233,10 +233,7 @@ pub(super) fn analyze_song_sections(
     segment_song(&extractor.finish(), hints)
 }
 
-pub(crate) fn segment_song(
-    features: &StructureFeatures,
-    hints: &SectionHints,
-) -> Option<SectionAnalysis> {
+pub fn segment_song(features: &StructureFeatures, hints: &SectionHints) -> Option<SectionAnalysis> {
     let duration = hints.duration.max(0.0);
     let content_end = hints.content_end.clamp(0.0, duration);
     if content_end < MIN_STRUCTURE_SECONDS || features.frame_seconds <= 0.0 {

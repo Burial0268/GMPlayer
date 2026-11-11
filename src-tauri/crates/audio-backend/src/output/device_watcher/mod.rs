@@ -1,12 +1,24 @@
 //! Native device notifications are hints; output_runtime owns probing and recovery.
 
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
 
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+mod unsupported;
+#[cfg(target_os = "windows")]
+mod windows;
+
+#[cfg(target_os = "linux")]
+use linux::Backend as SelectedBackend;
+#[cfg(target_os = "macos")]
+use macos::Backend as SelectedBackend;
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+use unsupported::Backend as SelectedBackend;
+#[cfg(target_os = "windows")]
+use windows::Backend as SelectedBackend;
 
 const DEFAULT_CHANGED: u8 = 1;
 const DEVICES_CHANGED: u8 = 2;
@@ -15,6 +27,10 @@ const DEVICES_CHANGED: u8 = 2;
 struct PendingChanges(AtomicU8);
 
 impl PendingChanges {
+    #[cfg_attr(
+        not(any(target_os = "linux", target_os = "macos", target_os = "windows")),
+        allow(dead_code)
+    )]
     fn record(&self, changes: u8) {
         // A burst must retain the default-change bit even if a list change arrived first.
         self.0.fetch_or(changes, Ordering::Release);
@@ -25,6 +41,12 @@ impl PendingChanges {
     }
 }
 
+/// Statically selected platform contract; registration lifetime stays with the backend.
+trait PlatformBackend: Sized {
+    fn start() -> Option<Self>;
+    fn events(&self) -> &PendingChanges;
+}
+
 pub(crate) struct DeviceChanges(u8);
 
 impl DeviceChanges {
@@ -33,39 +55,29 @@ impl DeviceChanges {
     }
 }
 
-/// Owned by the player, independently of any output stream or WebView.
+/// Independent of output streams and WebViews. Unsupported hosts only use the probe.
 pub(crate) struct DeviceWatcher {
-    pending: Arc<PendingChanges>,
-    #[cfg(target_os = "linux")]
-    _backend: Option<linux::Backend>,
-    #[cfg(target_os = "macos")]
-    _backend: Option<macos::Backend>,
+    _backend: Option<SelectedBackend>,
 }
 
 impl DeviceWatcher {
     pub(crate) fn new() -> Self {
-        let pending = Arc::new(PendingChanges::default());
         Self {
-            #[cfg(target_os = "linux")]
-            _backend: linux::Backend::start(Arc::clone(&pending)),
-            #[cfg(target_os = "macos")]
-            _backend: macos::Backend::start(Arc::clone(&pending)),
-            pending,
+            _backend: SelectedBackend::start(),
         }
     }
 
     pub(crate) fn take_changes(&self) -> DeviceChanges {
-        // Windows already owns a process-wide MMDevAPI registration and COM policy.
-        if super::take_default_output_changed() {
-            self.pending.record(DEFAULT_CHANGED);
-        }
-        self.pending.take()
+        self._backend
+            .as_ref()
+            .map_or(DeviceChanges(0), |backend| backend.events().take())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn a_burst_preserves_both_changes_and_consumes_them_once() {

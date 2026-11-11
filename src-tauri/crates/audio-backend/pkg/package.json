@@ -4,7 +4,7 @@
   "collaborators": [
     "GBCLStudio"
   ],
-  "description": "Audio player backend using Symphonia + rodio, inspired by AMLL player-core",
+  "description": "Audio player backend using Symphonia + FFmpeg and CPAL, inspired by AMLL player-core",
   "version": "0.1.0",
   "files": [
     "gmplayer_audio_backend_bg.wasm",

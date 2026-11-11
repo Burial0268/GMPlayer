@@ -15,8 +15,8 @@ thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 audio-analysis = { path = "../audio-analysis" }
-# Shared by native playback and the AutoMix section analysis, which the WASM
-# build also runs. `audio-analysis` already compiles it for wasm32.
+gmplayer-automix-analysis = { path = "../automix-analysis" }
+# Real-time spectrum processing; AutoMix owns its FFT dependency separately.
 rustfft = "6"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
@@ -93,8 +93,8 @@ pulseaudio = "0.3.1"
 [target.'cfg(target_os = "android")'.dependencies]
 cpal = "0.18"
 
-# COM/WASAPI for `output/platform/windows.rs`: the output-device identity, the
-# apartment policy, and the default-device watch. Deliberately the same major
+# COM/WASAPI for output/platform/windows.rs and device_watcher/windows.rs:
+# endpoint identity, apartment policy and device notifications. The same major
 # CPAL 0.18 builds, so both halves of the WASAPI code in this process speak one
 # set of generated bindings and this declaration unifies into a copy that is
 # already compiled. `PROPERTYKEY` moved into `Win32_Foundation`, so no extra

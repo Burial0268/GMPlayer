@@ -1156,7 +1156,7 @@ fn classify_outro_simple(
 #[cfg(test)]
 mod tests {
     use super::analyze_legacy_grid_sections;
-    use crate::automix::{BPMResult, EnergyAnalysis, IntroAnalysis, SongSectionKind};
+    use crate::{BPMResult, EnergyAnalysis, IntroAnalysis, SongSectionKind};
 
     #[test]
     fn legacy_grid_sections_detect_basic_pop_structure() {

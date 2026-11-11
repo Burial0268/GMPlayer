@@ -40,7 +40,7 @@ pub(crate) trait PcmSource: Source<Item = f32> + Send + Sized + 'static {
                 }
                 continue;
             }
-            let copied = super::append_available_interleaved_frames(
+            let copied = append_available_interleaved_frames(
                 samples,
                 offset,
                 dst,
@@ -54,4 +54,21 @@ pub(crate) trait PcmSource: Source<Item = f32> + Send + Sized + 'static {
         }
         copied_frames
     }
+}
+
+pub(super) fn append_available_interleaved_frames(
+    samples: &[f32],
+    offset: &mut usize,
+    dst: &mut Vec<f32>,
+    channels: usize,
+    max_frames: usize,
+) -> usize {
+    debug_assert!(channels > 0);
+    let available_samples = samples.len().saturating_sub(*offset);
+    let frames = (available_samples / channels).min(max_frames);
+    let sample_count = frames * channels;
+    let end = *offset + sample_count;
+    dst.extend_from_slice(&samples[*offset..end]);
+    *offset = end;
+    frames
 }

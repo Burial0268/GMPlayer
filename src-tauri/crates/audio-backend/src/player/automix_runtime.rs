@@ -686,7 +686,7 @@ impl AudioPlayer {
 
 pub(super) fn local_identity(song: &SongData) -> Option<TrackIdentity> {
     song.file_path()
-        .filter(|path| !decoder::is_http_url(path))
+        .filter(|path| !crate::source::is_http_url(path))
         .map(|path| TrackIdentity::Local {
             path: path.to_string(),
         })

@@ -12,7 +12,7 @@ use anyhow::{bail, Context, Result};
 use pulseaudio::protocol::{self, Command, SubscriptionEventFacility, SubscriptionMask};
 use tracing::{info, warn};
 
-use super::{PendingChanges, DEFAULT_CHANGED, DEVICES_CHANGED};
+use super::{PendingChanges, PlatformBackend, DEFAULT_CHANGED, DEVICES_CHANGED};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(2);
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
@@ -25,21 +25,25 @@ struct Control {
 
 pub(super) struct Backend {
     control: Arc<Control>,
+    events: Arc<PendingChanges>,
     thread: Option<JoinHandle<()>>,
 }
 
-impl Backend {
-    pub(super) fn start(pending: Arc<PendingChanges>) -> Option<Self> {
+impl PlatformBackend for Backend {
+    fn start() -> Option<Self> {
+        let pending = Arc::new(PendingChanges::default());
         // ALSA-only hosts keep the existing identity-only polling fallback.
         pulseaudio::socket_path_from_env()?;
         let control = Arc::new(Control::default());
         let worker_control = Arc::clone(&control);
+        let events = Arc::clone(&pending);
         match thread::Builder::new()
             .name("audio-device-watch".into())
             .spawn(move || watch(worker_control, pending))
         {
             Ok(thread) => Some(Self {
                 control,
+                events,
                 thread: Some(thread),
             }),
             Err(error) => {
@@ -47,6 +51,10 @@ impl Backend {
                 None
             }
         }
+    }
+
+    fn events(&self) -> &PendingChanges {
+        &self.events
     }
 }
 

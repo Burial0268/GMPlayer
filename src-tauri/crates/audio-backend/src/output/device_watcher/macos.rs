@@ -20,7 +20,7 @@ use coreaudio::sys::{
 };
 use tracing::{debug, warn};
 
-use super::{PendingChanges, DEFAULT_CHANGED, DEVICES_CHANGED};
+use super::{PendingChanges, PlatformBackend, DEFAULT_CHANGED, DEVICES_CHANGED};
 
 struct WatchState {
     pending: Arc<PendingChanges>,
@@ -34,8 +34,9 @@ pub(super) struct Backend {
     thread: Option<JoinHandle<()>>,
 }
 
-impl Backend {
-    pub(super) fn start(pending: Arc<PendingChanges>) -> Option<Self> {
+impl PlatformBackend for Backend {
+    fn start() -> Option<Self> {
+        let pending = Arc::new(PendingChanges::default());
         let state = Arc::new(WatchState {
             pending,
             refresh_devices: AtomicBool::new(true),
@@ -56,6 +57,10 @@ impl Backend {
                 None
             }
         }
+    }
+
+    fn events(&self) -> &PendingChanges {
+        &self.state.pending
     }
 }
 

@@ -72,6 +72,9 @@ jobs:
           pnpm test:audio-ui
           pnpm test:native-sound-attach
 
+      - name: 校验共享 AutoMix 分析
+        run: cargo test --locked -p gmplayer-automix-analysis --manifest-path src-tauri/Cargo.toml
+
       # js/ncm-protocol.js 是入库产物（让 `cargo build` 不依赖 Node）。这一步
       # 保证它和 scripts/build-ncm-protocol.mjs 的输出逐字节一致——否则改了打包
       # 脚本却忘了重新生成，构建照样通过但发出去的是旧协议层。

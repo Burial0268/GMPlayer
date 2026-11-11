@@ -92,11 +92,13 @@ fn dropping_the_watcher_wakes_an_idle_subscription_and_closes_its_socket() {
     });
     let pending = Arc::new(PendingChanges::default());
     let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+    let events = Arc::clone(&pending);
     let worker = thread::spawn(move || {
         let _ = subscribe(client, &pending, || ready_tx.send(()).unwrap());
     });
     let backend = Backend {
         control,
+        events,
         thread: Some(worker),
     };
     let mut server = BufReader::new(server);

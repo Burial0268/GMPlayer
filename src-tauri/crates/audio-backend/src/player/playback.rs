@@ -308,8 +308,8 @@ impl AudioPlayer {
             let resolve_path = file_path.clone();
             let resolve_result = tokio::task::spawn_blocking(
                 move || -> AudioResult<(PathBuf, Option<crate::source::TempGuard>)> {
-                    if decoder::is_http_url(&resolve_path) {
-                        let temp = decoder::download_to_temp_path(&resolve_path)?;
+                    if crate::source::is_http_url(&resolve_path) {
+                        let temp = crate::source::download_to_temp_path(&resolve_path)?;
                         let path = temp.to_path_buf();
                         Ok((path, Some(temp)))
                     } else {
@@ -343,7 +343,7 @@ impl AudioPlayer {
         // source's channel count and sample rate where the device supports it.
         let path_for_info = local_path.clone();
         let info_result = tokio::task::spawn_blocking(move || {
-            decoder::symphonia::extract_metadata_only(&path_for_info)
+            crate::metadata::extract_metadata_only(&path_for_info)
         })
         .await?;
 

@@ -1,6 +1,7 @@
 //! Native fallback for codecs missing from Symphonia. See ../../UPSTREAM.md.
 
 use std::num::{NonZeroU16, NonZeroU32};
+#[cfg(test)]
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,12 +11,15 @@ use rodio::{source::SeekError, Source};
 use tracing::warn;
 
 use crate::error::{AudioError, AudioResult};
-use crate::source::{self, OpenedSource, SourceLocator};
+#[cfg(test)]
+use crate::source::{self, SourceLocator};
 
 use super::pcm::PcmSource;
 
-pub(crate) fn reader(opened: OpenedSource) -> AudioResult<AudioReader> {
-    AudioReader::new(opened).map_err(decode_error)
+pub(crate) fn reader(
+    input: impl std::io::Read + std::io::Seek + Send + 'static,
+) -> AudioResult<AudioReader> {
+    AudioReader::new(input).map_err(decode_error)
 }
 
 pub(crate) fn pcm_format(reader: &AudioReader) -> AudioResult<(NonZeroU16, NonZeroU32)> {
@@ -47,9 +51,16 @@ pub(crate) struct FfmpegSource {
 }
 
 impl FfmpegSource {
+    #[cfg(test)]
     pub(crate) fn open(path: &Path) -> AudioResult<Self> {
         let opened = source::open_playback(SourceLocator::from_path(path))?;
-        let reader = reader(opened)?;
+        Self::from_input(opened)
+    }
+
+    pub(crate) fn from_input(
+        input: impl std::io::Read + std::io::Seek + Send + 'static,
+    ) -> AudioResult<Self> {
+        let reader = reader(input)?;
         let (channels, sample_rate) = pcm_format(&reader)?;
         let duration = reader.duration();
         let converter = reader

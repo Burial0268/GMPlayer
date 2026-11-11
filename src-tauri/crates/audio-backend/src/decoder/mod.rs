@@ -1,27 +1,17 @@
 mod convert;
 pub(crate) mod ffmpeg;
+mod input;
 mod pcm;
 mod resample;
-pub mod symphonia;
+mod symphonia;
 pub(crate) mod tempo;
 
-use std::num::{NonZeroU16, NonZeroU32};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use ::symphonia::core::audio::{AudioBufferRef, SampleBuffer, SignalSpec};
-use ::symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
-use ::symphonia::core::errors::Error as SymphoniaError;
-use ::symphonia::core::formats::{FormatOptions, FormatReader, Packet, SeekMode, SeekTo, SeekedTo};
-use ::symphonia::core::io::MediaSourceStream;
-use ::symphonia::core::meta::MetadataOptions;
-use ::symphonia::core::probe::Hint;
-use ::symphonia::core::units::Time;
-use rodio::source::SeekError;
-use rodio::Source;
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use tracing::warn;
 
@@ -30,7 +20,12 @@ use crate::error::{AudioError, AudioResult};
 use crate::output::{OutputWriter, PushCancel};
 
 use convert::FrameConverter;
+pub(crate) use input::OpenedDecoder;
+#[cfg(test)]
+use pcm::append_available_interleaved_frames;
 use pcm::PcmSource;
+#[cfg(test)]
+use symphonia::SeekableSymphoniaSource;
 
 pub(crate) trait PlaybackSink: Clone + Send + 'static {
     fn push_block(&self, block: Vec<f32>, cancel: PushCancel<'_>) -> bool;
@@ -99,150 +94,6 @@ impl PlaybackSink for OutputWriter {
     fn take_recycled_buffer(&self, capacity: usize) -> Vec<f32> {
         OutputWriter::take_recycled_buffer(self, capacity)
     }
-}
-
-// ── URL / remote source helpers ──────────────────────────────────
-
-/// Whether this path looks like an HTTP(S) URL that needs to be
-/// downloaded before rodio can decode it.
-pub fn is_http_url(s: &str) -> bool {
-    s.starts_with("http://") || s.starts_with("https://")
-}
-
-/// Bodies under this are downloaded whole before returning: the handshake for a
-/// background writer costs more than it saves on a file that lands in a moment.
-const STREAM_MIN_BYTES: u64 = 2 * 1024 * 1024;
-
-/// Download `url` to a temporary file. The returned guard deletes the file when
-/// dropped — keep it alive for the lifetime of playback.
-///
-/// When the server declares a `Content-Length` of at least `STREAM_MIN_BYTES`
-/// this returns as soon as the response headers are in, with the body still
-/// landing on a writer thread. The path is registered with `source`, so every
-/// `source::open` of it waits for bytes rather than seeing EOF; dropping the
-/// guard stops the writer. Anything else is downloaded whole, as it always was.
-///
-/// The agent is built per call, and must stay that way. Sharing one — i.e.
-/// pooling the connection between track downloads — saves a TLS handshake per
-/// track and was tried; the next track then decoded as the *previous* track's
-/// length plus its own, which is what a reused connection handing over an
-/// undrained body looks like. A whole audio body is the one response here, so
-/// any framing slip corrupts the file rather than erroring, and the file is the
-/// thing playback is built on. One handshake per track, on a path the planner
-/// already runs a track ahead, is not worth that. Streaming keeps that
-/// guarantee by reading exactly `Content-Length` bytes and failing on a short
-/// body, never by trusting the connection to be at a boundary.
-pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard> {
-    use crate::source::growing::{self, Progress};
-    use std::io::Read;
-
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(15))
-        .timeout_read(Duration::from_secs(60))
-        .build();
-    let response = agent
-        .get(url)
-        .call()
-        .map_err(|e| AudioError::Download(format!("Request failed: {e}")))?;
-    let total = response
-        .header("Content-Length")
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .filter(|n| *n >= STREAM_MIN_BYTES);
-
-    let mut temp = tempfile::Builder::new()
-        .prefix("gmplayer-audio-")
-        .suffix(".tmp")
-        .tempfile()
-        .map_err(|e| AudioError::Download(format!("Create temp file: {e}")))?;
-
-    let mut reader = response.into_reader();
-    let Some(total) = total else {
-        std::io::copy(&mut reader, &mut temp)
-            .map_err(|e| AudioError::Download(format!("Write temp file: {e}")))?;
-        return Ok(temp.into_temp_path().into());
-    };
-
-    let (file, path) = temp.into_parts();
-    let progress = Progress::new(total);
-    growing::register(&path, progress.clone());
-
-    // A forward seek far past the head writer starts a second one at the target.
-    let (jump_url, jump_path) = (url.to_string(), path.to_path_buf());
-    progress.set_jumper(Box::new(move |progress, id, start| {
-        let (url, path) = (jump_url.clone(), jump_path.clone());
-        let worker = Arc::clone(&progress);
-        let spawned = std::thread::Builder::new()
-            .name("audio-download-range".into())
-            .spawn(move || {
-                let outcome = open_range(&url, start, worker.total()).and_then(|body| {
-                    let file = std::fs::OpenOptions::new()
-                        .write(true)
-                        .open(&path)
-                        .map_err(|e| format!("Open temp file: {e}"))?;
-                    growing::pump(&worker, id, file, body)
-                });
-                worker.end_writer(id, outcome);
-            });
-        if let Err(e) = spawned {
-            progress.end_writer(id, Err(format!("Start range thread: {e}")));
-        }
-    }));
-
-    let guard = crate::source::TempGuard::streaming(path, progress.clone());
-    let head = progress.begin_writer(0);
-    let writer = progress.clone();
-    let spawned = std::thread::Builder::new()
-        .name("audio-download".into())
-        .spawn(move || {
-            let outcome = growing::pump(&writer, head, file, reader.take(total));
-            writer.end_writer(head, outcome);
-        });
-    spawned.map_err(|e| AudioError::Download(format!("Start download thread: {e}")))?;
-
-    Ok(guard)
-}
-
-/// Open `bytes=start-` of `url`. A server that answers anything but a matching
-/// `206` is refused outright: the bytes would be appended at the offset we
-/// asked for regardless of where they came from, which is a corrupt track
-/// rather than a failed request. Per call, like the main download, for the same
-/// reason.
-fn open_range(url: &str, start: u64, total: u64) -> Result<Box<dyn std::io::Read + Send>, String> {
-    use std::io::Read;
-
-    let agent = ureq::AgentBuilder::new()
-        .timeout_connect(Duration::from_secs(15))
-        .timeout_read(Duration::from_secs(60))
-        .build();
-    let response = agent
-        .get(url)
-        .set("Range", &format!("bytes={start}-"))
-        .call()
-        .map_err(|e| format!("Range request failed: {e}"))?;
-    if response.status() != 206 {
-        return Err(format!(
-            "server answered {} to a Range request",
-            response.status()
-        ));
-    }
-    // "bytes <start>-<end>/<total>"
-    let range = response.header("Content-Range").unwrap_or_default();
-    let matches = range
-        .strip_prefix("bytes ")
-        .and_then(|r| r.split_once('/'))
-        .and_then(|(span, t)| {
-            Some((
-                span.split_once('-')?.0.parse::<u64>().ok()?,
-                t.parse::<u64>().ok()?,
-            ))
-        })
-        .is_some_and(|(s, t)| s == start && t == total);
-    if !matches {
-        return Err(format!(
-            "Content-Range {range:?} does not start at {start} of {total}"
-        ));
-    }
-    Ok(Box::new(response.into_reader().take(total - start)))
 }
 
 // ── DecoderHandle ────────────────────────────────────────────────
@@ -393,357 +244,10 @@ const PRE_ROLL_SILENCE_FRAMES: usize = 1024;
 const START_RAMP_FRAMES: usize = 2048;
 const SEEK_RAMP_FRAMES: usize = 512;
 const SEEK_CONTROL_CHECK_FRAMES: usize = 64;
-const MAX_DECODE_RETRIES: usize = 3;
 // A paused decoder resumes, seeks and stops through the control channel, which
 // wakes this wait immediately. The timeout is only a backstop for `stop_flag`
 // being set without a message, so it costs nothing to keep it low-frequency.
 const PAUSED_POLL_INTERVAL: Duration = Duration::from_millis(200);
-
-pub(crate) struct SeekableSymphoniaSource {
-    format: Box<dyn FormatReader>,
-    decoder: Box<dyn ::symphonia::core::codecs::Decoder>,
-    track_id: u32,
-    spec: SignalSpec,
-    total_duration: Option<Time>,
-    buffer: SampleBuffer<f32>,
-    buffer_offset: usize,
-}
-
-impl SeekableSymphoniaSource {
-    pub(crate) fn open(path: &Path) -> AudioResult<Self> {
-        let opened = crate::source::open_playback(crate::source::SourceLocator::from_path(path))?;
-        let mut hint = Hint::new();
-        // symphonia 0.5's `Probe::format` takes the hint as `_hint` and never
-        // reads it — format detection is a pure magic-byte scan, so a container
-        // is identified correctly no matter what the file is named (or that
-        // downloaded sources land on a `.tmp` path). Kept because it costs
-        // nothing and later symphonia releases do consult it.
-        if let Some(ext) = opened.extension() {
-            hint.with_extension(ext);
-        }
-        let mss = MediaSourceStream::new(Box::new(opened), Default::default());
-
-        let format_opts = FormatOptions {
-            enable_gapless: true,
-            ..Default::default()
-        };
-        let probed = ::symphonia::default::get_probe()
-            .format(&hint, mss, &format_opts, &MetadataOptions::default())
-            .map_err(|e| AudioError::Decode(e.to_string()))?;
-        let mut format = probed.format;
-
-        let track = format
-            .default_track()
-            .or_else(|| {
-                format
-                    .tracks()
-                    .iter()
-                    .find(|track| track.codec_params.codec != CODEC_TYPE_NULL)
-            })
-            .ok_or_else(|| AudioError::Decode("no supported audio track".into()))?
-            .clone();
-        let track_id = track.id;
-        let total_duration = track
-            .codec_params
-            .time_base
-            .zip(track.codec_params.n_frames)
-            .map(|(base, frames)| base.calc_time(frames));
-        let mut decoder = ::symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
-            .map_err(|e| AudioError::Decode(e.to_string()))?;
-
-        let (spec, buffer) = decode_next_audio_buffer(
-            format.as_mut(),
-            decoder.as_mut(),
-            track_id,
-            sample_buffer_from_decoded,
-        )
-        .map_err(|e| AudioError::Decode(e.to_string()))?
-        .ok_or_else(|| AudioError::Decode("no decodable audio samples".into()))?;
-
-        Ok(Self {
-            format,
-            decoder,
-            track_id,
-            spec,
-            total_duration,
-            buffer,
-            buffer_offset: 0,
-        })
-    }
-
-    fn refill(&mut self) -> Option<()> {
-        let buffer = &mut self.buffer;
-        let spec = match decode_next_audio_buffer(
-            self.format.as_mut(),
-            self.decoder.as_mut(),
-            self.track_id,
-            |decoded| copy_decoded_into_sample_buffer(decoded, buffer),
-        ) {
-            Ok(Some(spec)) => spec,
-            Ok(None) => return None,
-            Err(err) => {
-                warn!("decode failed while refilling playback buffer: {err}");
-                return None;
-            }
-        };
-
-        // The channel count and sample rate were sampled once, when the decoder
-        // was opened, and are baked into `FrameConverter`'s mix matrix, its
-        // resampler and the bulk-passthrough stride. A mid-stream change would
-        // therefore be reinterpreted at the wrong stride and come out as noise,
-        // so end the track instead. Symphonia's MP3 and FLAC decoders reject
-        // such a change themselves, but container-level readers do not all.
-        if spec.channels.count() != self.spec.channels.count() || spec.rate != self.spec.rate {
-            warn!(
-                "音轨中途改变音频规格 ({} ch @ {} Hz -> {} ch @ {} Hz)，停止解码",
-                self.spec.channels.count(),
-                self.spec.rate,
-                spec.channels.count(),
-                spec.rate
-            );
-            return None;
-        }
-
-        self.spec = spec;
-        self.buffer_offset = 0;
-        Some(())
-    }
-
-    /// Decode forward from the seek landing point to the exact requested
-    /// position, discarding the output produced along the way.
-    ///
-    /// `format.seek()` deliberately lands *before* the requested timestamp.
-    /// MPEG Layer III granules reference up to 511 bytes of "main data" carried
-    /// by earlier frames — the bit reservoir — so symphonia's demuxer walks back
-    /// far enough that those references resolve and reports the rewound position
-    /// as `actual_ts`. Those run-up packets have to be fed through the decoder:
-    /// skipping them undoes the rewind and leaves the first audible frame
-    /// pointing at a reservoir that was never filled, which symphonia reports as
-    /// `invalid main_data_begin, underflow by N bytes` and renders as a dropped,
-    /// silent granule. Only the run-up's *samples* are thrown away.
-    fn refine_position(&mut self, seeked: SeekedTo) -> Result<(), SymphoniaError> {
-        let mut frames_to_skip = seeked.required_ts.saturating_sub(seeked.actual_ts);
-        loop {
-            let packet = self.next_track_packet()?;
-            let duration = packet.dur();
-
-            let decoded = match self.decoder.decode(&packet) {
-                Ok(decoded) => decoded,
-                // A run-up packet that will not decode leaves the reservoir cold
-                // for one more frame, but it must not abort the seek. Note the
-                // variant: Layer III reports a granule whose `main_data_begin`
-                // points past what the reservoir actually holds as an `IoError`
-                // from the bit reader running off the end of the packet buffer,
-                // *not* as a `DecodeError` — and that is exactly the packet a
-                // run-up is most likely to land on, since the run-up exists
-                // because the reservoir starts cold. Both are therefore
-                // tolerated here; `ResetRequired` and the fatal variants still
-                // propagate. `decode()` reads only from the already-demuxed
-                // packet, so this cannot swallow a failure of the file itself —
-                // that surfaces from `next_track_packet` above.
-                Err(SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_))
-                    if duration <= frames_to_skip =>
-                {
-                    frames_to_skip -= duration;
-                    continue;
-                }
-                Err(err) => return Err(err),
-            };
-
-            if duration <= frames_to_skip {
-                frames_to_skip -= duration;
-                continue;
-            }
-
-            self.spec = copy_decoded_into_sample_buffer(decoded, &mut self.buffer);
-            self.buffer_offset = (frames_to_skip as usize)
-                .saturating_mul(self.channels().get() as usize)
-                .min(self.buffer.len());
-            return Ok(());
-        }
-    }
-
-    fn next_track_packet(&mut self) -> Result<Packet, SymphoniaError> {
-        loop {
-            let packet = self.format.next_packet()?;
-            if packet.track_id() == self.track_id {
-                return Ok(packet);
-            }
-        }
-    }
-}
-
-impl PcmSource for SeekableSymphoniaSource {
-    #[inline]
-    fn samples_and_offset(&mut self) -> (&[f32], &mut usize) {
-        (self.buffer.samples(), &mut self.buffer_offset)
-    }
-
-    fn refill_buffer(&mut self) -> bool {
-        self.refill().is_some()
-    }
-}
-
-fn append_available_interleaved_frames(
-    samples: &[f32],
-    offset: &mut usize,
-    dst: &mut Vec<f32>,
-    channels: usize,
-    max_frames: usize,
-) -> usize {
-    debug_assert!(channels > 0);
-    let available_samples = samples.len().saturating_sub(*offset);
-    let frames = (available_samples / channels).min(max_frames);
-    let sample_count = frames * channels;
-    let end = *offset + sample_count;
-    dst.extend_from_slice(&samples[*offset..end]);
-    *offset = end;
-    frames
-}
-
-impl Iterator for SeekableSymphoniaSource {
-    type Item = f32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.buffer_offset >= self.buffer.len() {
-            self.refill()?;
-        }
-        let sample = *self.buffer.samples().get(self.buffer_offset)?;
-        self.buffer_offset += 1;
-        Some(sample)
-    }
-}
-
-impl Source for SeekableSymphoniaSource {
-    fn current_span_len(&self) -> Option<usize> {
-        Some(self.buffer.len().saturating_sub(self.buffer_offset))
-    }
-
-    fn channels(&self) -> NonZeroU16 {
-        NonZeroU16::new(self.spec.channels.count().max(1) as u16).unwrap()
-    }
-
-    fn sample_rate(&self) -> NonZeroU32 {
-        NonZeroU32::new(self.spec.rate.max(1)).unwrap()
-    }
-
-    fn total_duration(&self) -> Option<Duration> {
-        self.total_duration.map(|Time { seconds, frac }| {
-            Duration::new(
-                seconds,
-                (frac.clamp(0.0, 0.999_999_999) * 1_000_000_000.0) as u32,
-            )
-        })
-    }
-
-    fn try_seek(&mut self, pos: Duration) -> Result<(), SeekError> {
-        let target = if self
-            .total_duration()
-            .is_some_and(|duration| duration.saturating_sub(pos).as_millis() < 1)
-        {
-            self.total_duration
-                .map(skip_back_a_tiny_bit)
-                .unwrap_or_else(|| pos.as_secs_f64().into())
-        } else {
-            pos.as_secs_f64().into()
-        };
-
-        let seeked = self
-            .format
-            .seek(
-                SeekMode::Accurate,
-                SeekTo::Time {
-                    time: target,
-                    track_id: Some(self.track_id),
-                },
-            )
-            .map_err(to_seek_error)?;
-
-        self.decoder.reset();
-        self.refine_position(seeked).map_err(to_seek_error)?;
-        Ok(())
-    }
-}
-
-fn decode_next_audio_buffer<T>(
-    format: &mut dyn FormatReader,
-    decoder: &mut dyn ::symphonia::core::codecs::Decoder,
-    track_id: u32,
-    mut consume: impl FnMut(AudioBufferRef<'_>) -> T,
-) -> Result<Option<T>, SymphoniaError> {
-    let mut decode_errors = 0;
-    loop {
-        let packet = match format.next_packet() {
-            Ok(packet) => packet,
-            // Symphonia signals a clean end of stream as an `UnexpectedEof` IO
-            // error. Anything else is a genuine read failure — a vanished file,
-            // a truncated download — and must not be reported to the caller as
-            // a track that simply finished.
-            Err(SymphoniaError::IoError(err))
-                if err.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                return Ok(None)
-            }
-            Err(err) => return Err(err),
-        };
-        if packet.track_id() != track_id {
-            continue;
-        }
-
-        match decoder.decode(&packet) {
-            Ok(decoded) => return Ok(Some(consume(decoded))),
-            Err(SymphoniaError::DecodeError(_)) => {
-                decode_errors += 1;
-                if decode_errors > MAX_DECODE_RETRIES {
-                    return Err(SymphoniaError::DecodeError("too many decode errors"));
-                }
-            }
-            Err(err) => return Err(err),
-        }
-    }
-}
-
-fn sample_buffer_from_decoded(decoded: AudioBufferRef<'_>) -> (SignalSpec, SampleBuffer<f32>) {
-    let spec = *decoded.spec();
-    let mut sample_buffer = SampleBuffer::<f32>::new(decoded.capacity() as u64, spec);
-    sample_buffer.copy_interleaved_ref(decoded);
-    (spec, sample_buffer)
-}
-
-fn copy_decoded_into_sample_buffer(
-    decoded: AudioBufferRef<'_>,
-    sample_buffer: &mut SampleBuffer<f32>,
-) -> SignalSpec {
-    let spec = *decoded.spec();
-    let required_samples = decoded.frames().saturating_mul(spec.channels.count());
-    if sample_buffer.capacity() < required_samples {
-        *sample_buffer = SampleBuffer::new(decoded.capacity() as u64, spec);
-    }
-    sample_buffer.copy_interleaved_ref(decoded);
-    spec
-}
-
-fn to_seek_error(err: SymphoniaError) -> SeekError {
-    SeekError::Other(Arc::new(std::io::Error::new(
-        std::io::ErrorKind::Other,
-        err.to_string(),
-    )))
-}
-
-fn skip_back_a_tiny_bit(
-    Time {
-        mut seconds,
-        mut frac,
-    }: Time,
-) -> Time {
-    frac -= 0.0001;
-    if frac < 0.0 {
-        seconds = seconds.saturating_sub(1);
-        frac = 1.0 + frac;
-    }
-    Time { seconds, frac }
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_playback_decoder<S>(
@@ -761,8 +265,13 @@ pub fn spawn_playback_decoder<S>(
 where
     S: PlaybackSink,
 {
-    match SeekableSymphoniaSource::open(path) {
-        Ok(source) => spawn_decoder_for_source(
+    let opened = OpenedDecoder::open_with(|| {
+        let input = crate::source::open_playback(crate::source::SourceLocator::from_path(path))?;
+        let extension = input.extension().map(str::to_string);
+        Ok((input, extension))
+    })?;
+    match opened {
+        OpenedDecoder::Symphonia(source) => spawn_decoder_for_source(
             source,
             path,
             initial_position,
@@ -775,30 +284,19 @@ where
             playback_id,
             start_paused,
         ),
-        Err(
-            error @ (AudioError::Decode(_)
-            | AudioError::UnsupportedFormat(_)
-            | AudioError::NoAudioTrack),
-        ) => {
-            let source = ffmpeg::FfmpegSource::open(path).map_err(|fallback| {
-                AudioError::Decode(format!("{error}; fallback failed: {fallback}"))
-            })?;
-            tracing::debug!("Symphonia 无法解码，使用 FFmpeg：{error}");
-            spawn_decoder_for_source(
-                source,
-                path,
-                initial_position,
-                output,
-                output_channels,
-                output_sample_rate,
-                analysis_tx,
-                analysis_enabled,
-                event_tx,
-                playback_id,
-                start_paused,
-            )
-        }
-        Err(error) => Err(error),
+        OpenedDecoder::Ffmpeg(source) => spawn_decoder_for_source(
+            source,
+            path,
+            initial_position,
+            output,
+            output_channels,
+            output_sample_rate,
+            analysis_tx,
+            analysis_enabled,
+            event_tx,
+            playback_id,
+            start_paused,
+        ),
     }
 }
 
@@ -1560,67 +1058,6 @@ mod tests {
 }
 
 #[cfg(test)]
-mod stream_tests {
-    use super::*;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    /// Serve `declared` bytes of header but only `sent` of body, in slow chunks.
-    fn serve(declared: usize, sent: usize) -> String {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/t.mp3", listener.local_addr().unwrap());
-        std::thread::spawn(move || {
-            let (mut s, _) = listener.accept().unwrap();
-            let mut req = [0u8; 1024];
-            let _ = s.read(&mut req);
-            let _ = write!(s, "HTTP/1.1 200 OK\r\nContent-Length: {declared}\r\n\r\n");
-            let chunk = vec![7u8; 256 * 1024];
-            let mut left = sent;
-            while left > 0 {
-                let n = left.min(chunk.len());
-                if s.write_all(&chunk[..n]).is_err() {
-                    return;
-                }
-                left -= n;
-                std::thread::sleep(Duration::from_millis(30));
-            }
-        });
-        url
-    }
-
-    #[test]
-    fn a_large_body_is_readable_while_it_lands() {
-        let total = 3 * 1024 * 1024;
-        let t0 = Instant::now();
-        let guard = download_to_temp_path(&serve(total, total)).unwrap();
-        // Returned before the ~360 ms the body takes to send.
-        assert!(t0.elapsed() < Duration::from_millis(250));
-        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
-        assert_eq!(src.size(), Some(total as u64));
-        let mut all = Vec::new();
-        src.read_to_end(&mut all).unwrap();
-        assert_eq!(all.len(), total);
-    }
-
-    #[test]
-    fn a_body_cut_short_fails_the_read() {
-        let guard = download_to_temp_path(&serve(3 * 1024 * 1024, 1024 * 1024)).unwrap();
-        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
-        assert!(src.read_to_end(&mut Vec::new()).is_err());
-    }
-
-    #[test]
-    fn dropping_the_guard_unblocks_a_waiting_reader() {
-        let guard = download_to_temp_path(&serve(3 * 1024 * 1024, 256 * 1024)).unwrap();
-        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
-        let t = std::thread::spawn(move || src.read_to_end(&mut Vec::new()));
-        std::thread::sleep(Duration::from_millis(300));
-        drop(guard);
-        assert!(t.join().unwrap().is_err());
-    }
-}
-
-#[cfg(test)]
 mod gate_tests {
     use super::*;
     use crate::source::growing::Progress;
@@ -1652,112 +1089,5 @@ mod gate_tests {
         progress.advance(id, 1000);
         progress.end_writer(id, Ok(()));
         assert!(!gate.should_hold(), "the tail is released by completion");
-    }
-}
-
-#[cfg(test)]
-mod range_tests {
-    use super::*;
-    use std::io::{Read, Seek, SeekFrom, Write};
-    use std::net::TcpListener;
-    use std::sync::atomic::AtomicUsize;
-
-    const TOTAL: usize = 12 * 1024 * 1024;
-
-    fn byte(i: usize) -> u8 {
-        (i % 251) as u8
-    }
-
-    /// Serves `TOTAL` bytes at roughly 3 MB/s per connection. With
-    /// `honor_range` off it answers every request `200` from byte 0.
-    fn serve(honor_range: bool) -> (String, Arc<AtomicUsize>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}/t.flac", listener.local_addr().unwrap());
-        let connections = Arc::new(AtomicUsize::new(0));
-        let counted = connections.clone();
-        std::thread::spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(mut s) = stream else { return };
-                counted.fetch_add(1, Ordering::SeqCst);
-                std::thread::spawn(move || {
-                    let mut req = [0u8; 2048];
-                    let n = s.read(&mut req).unwrap_or(0);
-                    let req = String::from_utf8_lossy(&req[..n]).to_string();
-                    let start = req
-                        .lines()
-                        .find_map(|l| {
-                            l.to_ascii_lowercase()
-                                .strip_prefix("range: bytes=")
-                                .map(str::to_string)
-                        })
-                        .and_then(|r| r.trim_end_matches('-').parse::<usize>().ok())
-                        .filter(|_| honor_range)
-                        .unwrap_or(0);
-                    let head = if honor_range && start > 0 {
-                        format!(
-                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{TOTAL}\r\n\r\n",
-                            TOTAL - start,
-                            TOTAL - 1
-                        )
-                    } else {
-                        format!("HTTP/1.1 200 OK\r\nContent-Length: {TOTAL}\r\n\r\n")
-                    };
-                    if s.write_all(head.as_bytes()).is_err() {
-                        return;
-                    }
-                    let mut at = start;
-                    while at < TOTAL {
-                        let end = (at + 128 * 1024).min(TOTAL);
-                        let chunk: Vec<u8> = (at..end).map(byte).collect();
-                        if s.write_all(&chunk).is_err() {
-                            return;
-                        }
-                        at = end;
-                        std::thread::sleep(Duration::from_millis(40));
-                    }
-                });
-            }
-        });
-        (url, connections)
-    }
-
-    #[test]
-    fn a_far_seek_is_served_by_a_second_range_request() {
-        let (url, connections) = serve(true);
-        let guard = download_to_temp_path(&url).unwrap();
-        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
-
-        // The whole body takes ~3.8 s at the server's pace; the tail must not.
-        let at = TOTAL - 50_000;
-        let t0 = Instant::now();
-        src.seek(SeekFrom::Start(at as u64)).unwrap();
-        let mut got = vec![0u8; 1000];
-        src.read_exact(&mut got).unwrap();
-        assert!(
-            t0.elapsed() < Duration::from_millis(1500),
-            "took {:?}",
-            t0.elapsed()
-        );
-        assert!(got.iter().enumerate().all(|(i, b)| *b == byte(at + i)));
-        assert_eq!(connections.load(Ordering::SeqCst), 2);
-
-        // And the file still ends up whole and exact, with the writers met.
-        src.seek(SeekFrom::Start(0)).unwrap();
-        let mut all = Vec::new();
-        src.read_to_end(&mut all).unwrap();
-        assert_eq!(all.len(), TOTAL);
-        assert!(all.iter().enumerate().all(|(i, b)| *b == byte(i)));
-    }
-
-    #[test]
-    fn a_server_that_ignores_range_falls_back_to_waiting() {
-        let (url, _) = serve(false);
-        let guard = download_to_temp_path(&url).unwrap();
-        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
-        let at = TOTAL - 50_000;
-        src.seek(SeekFrom::Start(at as u64)).unwrap();
-        let mut got = vec![0u8; 1000];
-        src.read_exact(&mut got).unwrap();
-        assert!(got.iter().enumerate().all(|(i, b)| *b == byte(at + i)));
     }
 }

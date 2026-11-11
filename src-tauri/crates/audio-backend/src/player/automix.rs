@@ -6,7 +6,6 @@ use tracing::{info, warn};
 
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
-use crate::decoder;
 use crate::types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AutoMixConfig, AutoMixNativeState, AutoMixStatus,
     CrossfadeCurve, DisplayAudioInfo, SongData, TrackIdentity,
@@ -433,7 +432,7 @@ fn prepare_track_blocking(
     if cancel.is_cancelled() {
         return Err(SUPERSEDED.into());
     }
-    let audio_info = decoder::symphonia::extract_metadata_only(&local_path)
+    let audio_info = crate::metadata::extract_metadata_only(&local_path)
         .map_err(|e| format!("read next track metadata: {e}"))?;
     let display_info = build_display_info(&audio_info, &source);
     let quality = AudioQuality {
@@ -978,8 +977,8 @@ fn clamp_plan_to_content(mut plan: CrossfadePlan, effective_end: f64) -> Crossfa
 fn resolve_source_to_local_path(
     source: &str,
 ) -> Result<(PathBuf, Option<crate::source::TempGuard>), String> {
-    if decoder::is_http_url(source) {
-        let temp = decoder::download_to_temp_path(source).map_err(|e| e.to_string())?;
+    if crate::source::is_http_url(source) {
+        let temp = crate::source::download_to_temp_path(source).map_err(|e| e.to_string())?;
         let path = temp.to_path_buf();
         Ok((path, Some(temp)))
     } else {

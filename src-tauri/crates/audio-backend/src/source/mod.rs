@@ -22,7 +22,9 @@ use symphonia::core::io::MediaSource;
 
 use crate::error::{AudioError, AudioResult};
 
+mod download;
 pub(crate) mod growing;
+pub use download::download_to_temp_path;
 pub use growing::{expected_len, TempGuard};
 
 // ── Locator ──────────────────────────────────────────────────────
@@ -39,6 +41,11 @@ pub enum SourceLocator<'a> {
     Content(&'a str),
 }
 
+/// Whether this locator uses HTTP(S).
+pub fn is_http_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://")
+}
+
 /// Whether `s` is an Android SAF content URI.
 pub fn is_content_uri(s: &str) -> bool {
     s.starts_with("content://")
@@ -50,7 +57,7 @@ impl<'a> SourceLocator<'a> {
     pub fn classify(s: &'a str) -> Self {
         if is_content_uri(s) {
             SourceLocator::Content(s)
-        } else if crate::decoder::is_http_url(s) {
+        } else if is_http_url(s) {
             SourceLocator::Http(s)
         } else {
             SourceLocator::Path(Path::new(s))
@@ -210,7 +217,10 @@ fn hash_uri(uri: &str) -> String {
 ///
 /// Written to a sibling `.part` and renamed, so an interrupted copy can never
 /// be picked up as a complete one by a later run.
-fn spool_to_file<R: Read>(uri: &str, mut reader: R) -> AudioResult<(std::fs::File, Option<TempGuard>)> {
+fn spool_to_file<R: Read>(
+    uri: &str,
+    mut reader: R,
+) -> AudioResult<(std::fs::File, Option<TempGuard>)> {
     if let Some(dir) = STREAM_CACHE_DIR.get() {
         let target = dir.join(format!("{}.bin", hash_uri(uri)));
         if let Ok(file) = std::fs::File::open(&target) {
@@ -244,9 +254,8 @@ fn spool_to_file<R: Read>(uri: &str, mut reader: R) -> AudioResult<(std::fs::Fil
 /// A readable, seekable handle on a track's bytes, plus whatever temporary
 /// state has to outlive the read.
 ///
-/// Implements `MediaSource` so it can be handed straight to a
-/// `MediaSourceStream`, and `Read`/`Seek` so the AutoMix analyzer (which goes
-/// through rodio's `Decoder`, not symphonia's probe) can use the same value.
+/// Implements `MediaSource` for Symphonia and `Read`/`Seek` for FFmpeg and
+/// other encoded-audio consumers.
 pub struct OpenedSource {
     media: Box<dyn MediaSource>,
     ext_hint: Option<String>,
@@ -319,7 +328,7 @@ pub fn open_str(locator: &str) -> AudioResult<OpenedSource> {
 /// Open whatever `loc` points at.
 ///
 /// Blocking. `Http` starts the download and reads it as it lands (see
-/// `decoder::download_to_temp_path` for why the agent is per-call), and a
+/// `download_to_temp_path` for why the agent is per-call), and a
 /// non-seekable `Content` source is spooled to a file before it is returned —
 /// symphonia's probe seeks backwards, so handing it a pipe fails at the first
 /// format check rather than at a boundary anyone can act on.
@@ -344,10 +353,15 @@ fn open_as(loc: SourceLocator<'_>, playback: bool) -> AudioResult<OpenedSource> 
                 Some(progress) => Box::new(growing::GrowingFile::open(path, progress, playback)?),
                 None => Box::new(std::fs::File::open(path)?),
             };
-            Ok(OpenedSource { media, ext_hint, spooled: false, _temp: None })
+            Ok(OpenedSource {
+                media,
+                ext_hint,
+                spooled: false,
+                _temp: None,
+            })
         }
         SourceLocator::Http(url) => {
-            let temp = crate::decoder::download_to_temp_path(url)?;
+            let temp = download_to_temp_path(url)?;
             let mut opened = open_as(SourceLocator::Path(&temp), playback)?;
             opened.ext_hint = ext_hint;
             opened._temp = Some(temp);

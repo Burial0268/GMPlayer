@@ -32,6 +32,10 @@ blocks on the socket, teardown shuts that socket down, and a disconnected
 listener retries after five seconds. Existing device polling remains the
 fallback on all platforms, including ALSA-only hosts. Windows retains its
 existing MMDevAPI registration, concrete endpoint resolution and COM policy.
+All registrations now live in `output/device_watcher/` behind the same statically
+selected `PlatformBackend` contract. Windows retains process lifetime; Linux and
+macOS retain their owned worker lifetimes. `output/platform/` only resolves and
+configures devices. The common watcher drains atomic events without OS branches.
 
 ## Validation
 
@@ -60,6 +64,38 @@ without a running server.
 macOS still requires validation on a Mac: switch the default output while playing
 and paused, add/remove a USB output, change the selected output's sample rate,
 and verify that a named selection does not follow an unrelated default change.
+
+## AutoMix worker boundaries
+
+Reviewed SPlayer-Next's
+[`native/automix-worker`](https://github.com/SPlayer-Dev/SPlayer-Next/tree/a8716df8f1a2cd08db3307ad592669df24bc05f4/native/automix-worker)
+at the same AGPL-3.0 reference revision above. It separates inference from playback,
+uses bounded beat/Demucs windows, transports PCM through FP32 files rather than
+JSON arrays, and returns compact beat/level results plus file paths. Its spectral
+transforms reuse FFT plans and scratch buffers. This refactor borrows the ownership
+boundary; it imports no ONNX inference code or models.
+
+GMPlayer's PCM algorithms and serialized results now live in
+[`../automix-analysis`](../automix-analysis/README.md), which depends only on Serde
+and RustFFT and builds for native and WASM. The backend keeps source I/O,
+preparation generations, scheduling, caches and crossfade policy. Its existing
+public analysis API re-exports the shared implementation. The WASM section wrapper
+continues feeding the same extractor in bounded chunks. Native full-track analysis
+still materializes mono PCM; extracting the crate does not make that path streaming.
+
+`decoder/input.rs` chooses Symphonia or FFmpeg once for both playback and native
+file analysis. Their consumers retain concrete sources in the PCM loops. Analysis
+uses `source::open`, never `source::open_playback`, and still latches real I/O
+errors so an interrupted read cannot be accepted as a shorter complete analysis.
+Byte-based analysis keeps its existing Rodio adapter. Metadata consumers now call
+`metadata` directly instead of routing through a decoder compatibility wrapper.
+HTTP download ownership also moves to `source`, removing its reverse decoder
+dependency without changing the growing-file protocol.
+
+The next useful worker-level improvement is bounded native analysis memory. Model
+inference would additionally need model assets, a runtime and platform-specific
+worker deployment; the shared PCM crate supplies a dependency boundary for that
+work without putting it in the playback engine.
 
 ## Native codec fallback
 
@@ -100,8 +136,7 @@ The wrapper also retains its upstream timeline/cursor unit tests.
 ```sh
 cd src-tauri
 cargo test -p gmplayer-ffmpeg-audio --lib
-cargo test -p gmplayer-audio-backend --lib
-cargo check
+cargo test -p gmplayer-audio-backend -p gmplayer-automix-analysis --libcargo check
 cargo check -p gmplayer-audio-backend --target wasm32-unknown-unknown
 ```
 
@@ -133,7 +168,7 @@ accounting approach from [SPlayer-Next PR #429](https://github.com/SPlayer-Dev/S
 revision `ae4d3255de854ed36e8eeaa447d03f0aa0589cd2`. The reference is AGPL-3.0;
 Signalsmith Stretch's Rust wrapper is an MIT dependency.
 
-`automix/beats.rs` measures spectral-flux onset peaks in the first and last
+`../automix-analysis/src/beats.rs` measures spectral-flux onset peaks in the first and last
 40 seconds. It fits observed stable runs of at least eight pulses and three
 seconds, requires 90% of the pulses to fit, and never extrapolates the grid beyond
 its measured interval. The existing global BPM result remains available to the
@@ -174,7 +209,7 @@ Validation:
 ```sh
 pnpm test:automix-native
 cd src-tauri
-cargo test --locked -p gmplayer-audio-backend --lib
+cargo test --locked -p gmplayer-audio-backend -p gmplayer-automix-analysis --lib
 ```
 
 The deterministic callback harness checks exact cue/handoff frames for mono,

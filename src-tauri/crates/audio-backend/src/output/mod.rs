@@ -585,12 +585,6 @@ pub fn refreshed_output_device_key(
     selected_output_device_key(selector)
 }
 
-/// Consume Windows' process-wide default-output hint. macOS and Linux keep
-/// their registrations in the player-owned `DeviceWatcher` instead.
-pub fn take_default_output_changed() -> bool {
-    platform::take_default_output_changed()
-}
-
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",

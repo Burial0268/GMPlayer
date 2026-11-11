@@ -27,7 +27,6 @@ pub(super) use other::default_output_id;
 #[cfg(target_os = "windows")]
 pub(super) use windows::{
     apartment_note, default_output_device, default_output_id, ensure_audio_apartment,
-    take_default_output_changed,
 };
 
 /// COM apartments are a Windows-only concern — see
@@ -51,13 +50,6 @@ pub(super) fn default_output_device(host: &cpal::Host) -> Option<cpal::Device> {
     use cpal::traits::HostTrait;
 
     host.default_output_device()
-}
-
-/// Windows keeps its process-wide registration here; macOS and Linux use the
-/// player-owned `output::device_watcher`. Other hosts retain periodic probing.
-#[cfg(not(target_os = "windows"))]
-pub(super) fn take_default_output_changed() -> bool {
-    false
 }
 
 /// Accept a CPAL device id as the identity of the *system default* output only
