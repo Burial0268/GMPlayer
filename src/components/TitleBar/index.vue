@@ -134,16 +134,15 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(18px) saturate(160%);
   backdrop-filter: blur(18px) saturate(160%);
 
-  // BigPlayer mode: white controls over the immersive cover. Keep them faintly
-  // visible (not opacity:0) and rise to full on hover — on desktop these are the
-  // ONLY window min/close controls, so a fully-invisible hover-only target is
-  // undiscoverable and leaves the user unable to close the app while the player
-  // is open. The frosted pill + backdrop-blur keeps them legible over the cover.
+  // BigPlayer mode: keep the window controls out of the cover until the pointer
+  // reaches their fixed hit area. The transparent pill remains interactive, so
+  // the controls are still discoverable and usable without taking visual space.
   &.bigplayer-mode {
-    opacity: 0.6;
+    opacity: 0;
     color: rgba(255, 255, 255, 0.85);
 
-    &:hover {
+    &:hover,
+    &:focus-within {
       opacity: 1;
     }
   }
