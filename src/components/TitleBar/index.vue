@@ -8,7 +8,9 @@
     <div
       v-if="showTitleBar"
       class="titlebar"
-      :class="titlebarClasses"
+      :class="[titlebarClasses, { 'titlebar-hidden': titlebarHidden }]"
+      @mouseenter="titlebarHovering = true"
+      @mouseleave="titlebarHovering = false"
       :data-tauri-drag-region="draggable ? '' : undefined"
     >
       <div v-if="title" class="titlebar-title" data-tauri-drag-region>
@@ -21,7 +23,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, type Component } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount, watch, type Component } from "vue";
 import { musicStore, settingStore } from "@/store";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { getDesktopEnvironment, isMobile, type DesktopEnvironment } from "@/utils/tauri";
@@ -73,6 +75,25 @@ const titlebarClasses = computed(() => [
   },
 ]);
 const showTitleBar = ref(false);
+const titlebarHovering = ref(false);
+const titlebarGracePeriodOver = ref(false);
+const titlebarHidden = computed(
+  () => music.showBigPlayer && titlebarGracePeriodOver.value && !titlebarHovering.value,
+);
+let titlebarGraceTimer: number | undefined;
+
+function resetTitlebarAutoHide() {
+  window.clearTimeout(titlebarGraceTimer);
+  titlebarGracePeriodOver.value = false;
+  titlebarHovering.value = false;
+  if (music.showBigPlayer) {
+    titlebarGraceTimer = window.setTimeout(() => {
+      titlebarGracePeriodOver.value = true;
+    }, 5000);
+  }
+}
+
+watch(() => music.showBigPlayer, resetTitlebarAutoHide, { immediate: true });
 
 onMounted(async () => {
   if (!isTauri()) return;
@@ -93,6 +114,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.clearTimeout(titlebarGraceTimer);
   if (showTitleBar.value && props.variant === "floating") {
     document.documentElement.classList.remove("has-floating-titlebar");
   }
@@ -134,16 +156,17 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(18px) saturate(160%);
   backdrop-filter: blur(18px) saturate(160%);
 
-  // BigPlayer mode: keep the window controls out of the cover until the pointer
-  // reaches their fixed hit area. The transparent pill remains interactive, so
-  // the controls are still discoverable and usable without taking visual space.
+  // BigPlayer mode: keep the window controls visible briefly after opening, then
+  // hide them until the pointer reaches their fixed hit area.
   &.bigplayer-mode {
-    opacity: 0;
     color: rgba(255, 255, 255, 0.85);
 
-    &:hover,
-    &:focus-within {
-      opacity: 1;
+    &.titlebar-hidden {
+      opacity: 0;
+
+      &:hover {
+        opacity: 1;
+      }
     }
   }
 }
