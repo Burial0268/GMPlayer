@@ -214,14 +214,12 @@ function draw(
 
   paintBackground(ctx, input, cover, height, scale);
 
-  // Text uses the player's mix colour and plus-lighter. Covers and the logo stay
-  // source-over: blending them adds the picture onto the backdrop a second time.
-  // An unsupported operation is left untouched, so the text still draws in the mix colour.
+  // Canvas calls CSS's plus-lighter blend mode "lighter". Covers and the logo
+  // stay source-over: blending them would add the picture onto the backdrop a
+  // second time.
   const lyric = mixFill(coverMixChannels(input.themeRgb, input.immersive), 1);
   const fillLyric = (alpha: number) => {
-    // The DOM lib here predates Canvas plus-lighter (Chrome 113+). An unknown
-    // operation is ignored, and the text still paints in the mix colour.
-    ctx.globalCompositeOperation = "plus-lighter" as GlobalCompositeOperation;
+    ctx.globalCompositeOperation = "lighter";
     ctx.globalAlpha = alpha;
     ctx.fillStyle = lyric;
   };
