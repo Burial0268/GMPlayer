@@ -6,6 +6,7 @@ use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use super::spool::PcmSpool;
 use super::{analyze_mono_samples, TrackAnalysis};
 use crate::decoder::OpenedDecoder;
 use crate::error::AudioError;
@@ -268,9 +269,9 @@ pub fn analyze_audio_file_until(
         ))
     });
     let decoded = match opened {
-        Ok(OpenedDecoder::Symphonia(mut source)) => collect_mono_until(&mut source, cancelled),
+        Ok(OpenedDecoder::Symphonia(mut source)) => PcmSpool::decode(&mut source, cancelled),
         Ok(OpenedDecoder::Ffmpeg(mut source)) => {
-            let decoded = collect_mono_until(&mut source, cancelled);
+            let decoded = PcmSpool::decode(&mut source, cancelled);
             match source.take_error() {
                 Some(error) => Err(format!("decode audio: FFmpeg: {error}")),
                 None => decoded,
@@ -282,16 +283,7 @@ pub fn analyze_audio_file_until(
     if let Some(error) = io_error.lock().ok().and_then(|mut latch| latch.take()) {
         return Err(format!("read audio source: {error}"));
     }
-    let (samples, sample_rate, duration) = decoded?;
-    if cancelled() {
-        return Err("analysis cancelled".into());
-    }
-    Ok(analyze_mono_samples(
-        &samples,
-        sample_rate,
-        duration,
-        analyze_bpm,
-    ))
+    decoded?.analyze(analyze_bpm)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -512,7 +504,7 @@ mod tests {
         let OpenedDecoder::Symphonia(mut decoder) = opened else {
             panic!("WAV must use Symphonia");
         };
-        let _ = collect_mono_until(&mut decoder, &|| false);
+        let _ = PcmSpool::decode(&mut decoder, &|| false);
         let recorded = latch
             .lock()
             .unwrap()
@@ -532,6 +524,46 @@ mod tests {
             err.starts_with("read audio source:"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn scratch_analysis_remains_cancellable_after_decode_finishes() {
+        let mut decoder = Decoder::new(Cursor::new(wav_bytes(44_100, 2, 44_100))).unwrap();
+        let flag = std::cell::Cell::new(false);
+        let cancelled = || flag.get();
+        let spool = PcmSpool::decode(&mut decoder, &cancelled).unwrap();
+        flag.set(true);
+        let error = spool.analyze(false).unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+    }
+
+    #[test]
+    fn cancelled_file_decode_does_not_finish_preparation() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&wav_bytes(44_100 * 4, 2, 44_100)).unwrap();
+        file.flush().unwrap();
+        let polls = std::cell::Cell::new(0);
+        let error = analyze_audio_file_until(file.path(), true, &|| {
+            polls.set(polls.get() + 1);
+            polls.get() >= 3
+        })
+        .unwrap_err();
+        assert!(error.contains("cancelled"), "{error}");
+    }
+
+    #[test]
+    #[ignore = "set AUTOMIX_PROFILE_FILE; run the test executable directly to measure RSS"]
+    fn profile_file_analysis() {
+        let path = std::env::var("AUTOMIX_PROFILE_FILE").expect("set AUTOMIX_PROFILE_FILE");
+        if let Ok(cache) = std::env::var("AUTOMIX_PROFILE_CACHE") {
+            crate::source::set_stream_cache_dir(cache.into());
+        }
+        let start = std::time::Instant::now();
+        let analysis = analyze_audio_file(path, true).expect("analyze profile input");
+        println!("analysis elapsed: {:?}", start.elapsed());
+        if let Ok(output) = std::env::var("AUTOMIX_PROFILE_JSON") {
+            std::fs::write(output, serde_json::to_vec(&analysis).unwrap()).unwrap();
+        }
     }
 
     /// Prints the sections found in a real track, for checking the heuristic

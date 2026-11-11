@@ -80,8 +80,12 @@ GMPlayer's PCM algorithms and serialized results now live in
 and RustFFT and builds for native and WASM. The backend keeps source I/O,
 preparation generations, scheduling, caches and crossfade policy. Its existing
 public analysis API re-exports the shared implementation. The WASM section wrapper
-continues feeding the same extractor in bounded chunks. Native full-track analysis
-still materializes mono PCM; extracting the crate does not make that path streaming.
+continues feeding the same extractor in bounded chunks. Native file analysis now
+uses the same PCM algorithms through `MonoPcm` reads and fixed windows. Its scratch
+adapter keeps up to 4 MiB in memory, then spills exact mono f32 samples into an
+unnamed file in the app cache. No compressed-source seeks or repeated decodes are
+needed, so filter warm-up, global downsample indices and absolute beat positions
+remain those of the original decoded signal.
 
 `decoder/input.rs` chooses Symphonia or FFmpeg once for both playback and native
 file analysis. Their consumers retain concrete sources in the PCM loops. Analysis
@@ -92,10 +96,41 @@ Byte-based analysis keeps its existing Rodio adapter. Metadata consumers now cal
 HTTP download ownership also moves to `source`, removing its reverse decoder
 dependency without changing the growing-file protocol.
 
-The next useful worker-level improvement is bounded native analysis memory. Model
-inference would additionally need model assets, a runtime and platform-specific
-worker deployment; the shared PCM crate supplies a dependency boundary for that
-work without putting it in the playback engine.
+Model inference would additionally need model assets, a runtime and
+platform-specific worker deployment; the shared PCM crate supplies a dependency
+boundary without putting that work in the playback engine. The existing encoded-
+byte analysis adapter still collects mono PCM; the bounded path is the native file
+API used by AutoMix.
+
+Bounded analysis retains the existing thresholds and result schema. Tests compare
+every serialized field against the array path at 8–192 kHz, fractional
+seconds, inaccurate duration hints, short/silent audio and a silent tail longer
+than the outro window. Native tests compare Opus, WMA and WavPack against full PCM
+and cover cancellation both while decoding and after decoding finishes. Real
+source I/O failures remain errors before analysis begins. Scratch read/write
+failures abort analysis and let the existing playback planner fall back.
+
+To profile a real input, build the ignored `profile_file_analysis` test with
+`cargo test --locked -p gmplayer-audio-backend --lib --no-run`. Run the emitted test
+executable directly under an RSS profiler, with `AUTOMIX_PROFILE_FILE` set to the
+input and `AUTOMIX_PROFILE_CACHE` set to a storage-backed scratch directory. Pass
+`profile_file_analysis --ignored --nocapture`; `AUTOMIX_PROFILE_JSON` optionally
+saves the complete result for exact comparisons. Profiling `cargo test` itself
+would include compiler memory.
+
+On this Linux machine, a generated ten-minute 48 kHz stereo WAV with pulses,
+changing sections and 3.17 seconds of tail silence was compared against the
+pre-change executable (`1dd07a9`, debug builds, fresh test processes):
+
+| Native file analysis | Peak RSS | Elapsed | User CPU |
+| --- | ---: | ---: | ---: |
+| Full mono vector | 152.4 MiB | 19.16 s | 19.00 s |
+| Bounded PCM, storage-backed app cache | 35.9 MiB | 19.87 s | 19.35 s |
+
+The complete serialized analysis was byte-identical. RSS dropped about 76%; the
+extra scratch I/O used about 110 MiB temporarily, and left no PCM file afterward.
+These are one-machine debug measurements, not Android throughput claims. Short
+inputs stay below the 4 MiB spill threshold and need no disk file.
 
 ## Native codec fallback
 

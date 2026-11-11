@@ -72,7 +72,11 @@ pub(super) fn analyze_volume(data: &[f32]) -> VolumeAnalysis {
         sum_squares += (s as f64) * (s as f64);
     }
 
-    let rms = (sum_squares / data.len() as f64).sqrt() as f32;
+    volume_from_totals(peak, sum_squares, data.len())
+}
+
+pub(super) fn volume_from_totals(peak: f32, sum_squares: f64, samples: usize) -> VolumeAnalysis {
+    let rms = (sum_squares / samples as f64).sqrt() as f32;
     let estimated_lufs = if rms > 0.0 {
         20.0 * (rms / REFERENCE_RMS).log10() - 0.691
     } else {
@@ -142,6 +146,15 @@ pub(super) fn analyze_energy(data: &[f32], sample_rate: u32, duration: f32) -> E
         trailing_silence = (trailing_silence * 10.0).round() / 10.0;
     }
 
+    finish_energy(energy_per_second, duration, trailing_silence)
+}
+
+pub(super) fn finish_energy(
+    mut energy_per_second: Vec<f32>,
+    duration: f32,
+    trailing_silence: f32,
+) -> EnergyAnalysis {
+    let second_count = duration.ceil() as usize;
     // Normalize via 95th percentile (exclude trailing silence)
     let content_seconds = (second_count as f32 - trailing_silence.floor()).max(1.0) as usize;
     let content_seconds = content_seconds.min(second_count);
@@ -351,6 +364,13 @@ pub(super) fn run_bpm_detection(
         return None;
     }
 
+    let mut result = bpm_from_window(samples, offset_sec)?;
+    result.head = super::beats::region(data, sample_rate, false);
+    result.tail = super::beats::region(data, sample_rate, true);
+    Some(result)
+}
+
+pub(super) fn bpm_from_window(samples: &[f32], offset_sec: f32) -> Option<BPMResult> {
     let hop_size = 256usize;
     let frame_size = 1024usize;
     let hops_per_second = BPM_ANALYSIS_RATE as f32 / hop_size as f32;
@@ -377,8 +397,8 @@ pub(super) fn run_bpm_detection(
         confidence,
         beat_grid,
         analysis_offset: offset_sec,
-        head: super::beats::region(data, sample_rate, false),
-        tail: super::beats::region(data, sample_rate, true),
+        head: None,
+        tail: None,
     })
 }
 

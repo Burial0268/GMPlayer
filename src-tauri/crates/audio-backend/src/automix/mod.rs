@@ -14,6 +14,8 @@ pub(crate) mod emotion;
 #[cfg(not(target_arch = "wasm32"))]
 mod file;
 #[cfg(not(target_arch = "wasm32"))]
+mod spool;
+#[cfg(not(target_arch = "wasm32"))]
 pub use file::{
     analyze_audio_bytes, analyze_audio_file, analyze_audio_file_until, analyze_audio_source,
     AutomixAnalyzeRequest, AutomixAnalyzeSourceRequest,

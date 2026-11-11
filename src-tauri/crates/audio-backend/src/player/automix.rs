@@ -531,9 +531,8 @@ fn build_time_based_plan(config: &AutoMixConfig, current_duration: f64) -> Cross
     }
 }
 
-/// One full-track decode at a time. Every skip starts another prepare, and a
-/// superseded one used to keep its ~40 MB PCM buffer while the new one built
-/// its own; queuing here lets the old one see its cancel flag and leave first.
+/// One decode/analysis at a time. A superseded prepare releases its scratch
+/// before the next one starts spending CPU and cache I/O.
 fn analysis_gate() -> &'static Mutex<()> {
     static GATE: OnceLock<Mutex<()>> = OnceLock::new();
     GATE.get_or_init(|| Mutex::new(()))
@@ -564,7 +563,7 @@ fn analyze_optional(
 // A track is analyzed when it is the "next" candidate and again once it becomes
 // "current" on the following prepare — a guaranteed double-decode in steady-state
 // playback. Repeated prepares (playlist edits, "add to play next") compound it.
-// Cache the *analysis* (a few KB of Vecs; the ~40MB PCM is already discarded) so
+// Cache the compact analysis after PCM scratch is discarded so
 // each distinct file is decoded at most once. Keyed by path + size + mtime, so a
 // replaced file invalidates automatically.
 

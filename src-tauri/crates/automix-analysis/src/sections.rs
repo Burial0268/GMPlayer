@@ -40,7 +40,7 @@ const FLUX_DIM: usize = TIMBRE_BANDS + 1;
 const NO_BIN: u8 = u8::MAX;
 
 /// Shorter content has no structure worth planning a transition around.
-const MIN_STRUCTURE_SECONDS: f32 = 20.0;
+pub(super) const MIN_STRUCTURE_SECONDS: f32 = 20.0;
 const DEFAULT_KERNEL_SECONDS: f32 = 8.0;
 const DEFAULT_MIN_SECTION_SECONDS: f32 = 6.0;
 /// Two passages are the same part when their aligned blocks correlate this well.

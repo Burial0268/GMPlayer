@@ -42,6 +42,8 @@ rodio = { version = "0.22", default-features = false, features = ["symphonia-all
 # workspace root is what keeps those feature sets from being unified across
 # targets.
 parking_lot = "0.12"
+# Private scratch PCM uses native f32 bytes without per-sample packing/copies.
+bytemuck = { version = "1.25", default-features = false }
 rtrb = "0.3.4"
 log = "0.4"
 tauri = { version = "2" }

@@ -7,7 +7,7 @@ use super::BeatRegion;
 const RATE: usize = 11_025;
 const WINDOW: usize = 1024;
 const HOP: usize = 128;
-const SECONDS: usize = 40;
+pub(super) const SECONDS: usize = 40;
 
 pub(super) fn region(data: &[f32], sample_rate: u32, tail: bool) -> Option<BeatRegion> {
     if sample_rate == 0 {
@@ -16,6 +16,15 @@ pub(super) fn region(data: &[f32], sample_rate: u32, tail: bool) -> Option<BeatR
     let frames = (SECONDS * sample_rate as usize).min(data.len());
     let start = if tail { data.len() - frames } else { 0 };
     let input = &data[start..start + frames];
+    window_region(input, sample_rate, start, tail)
+}
+
+pub(super) fn window_region(
+    input: &[f32],
+    sample_rate: u32,
+    start: usize,
+    tail: bool,
+) -> Option<BeatRegion> {
     let len = input.len() * RATE / sample_rate as usize;
     if len < WINDOW * 2 {
         return None;

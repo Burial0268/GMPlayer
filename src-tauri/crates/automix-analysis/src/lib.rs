@@ -210,6 +210,8 @@ const VOCAL_WINDOW_SECONDS: f32 = OUTRO_WINDOW_MS / 1000.0;
 mod analysis;
 mod beats;
 pub mod sections;
+mod streaming;
+pub use streaming::{analyze_pcm, MonoPcm};
 mod structure;
 mod vocal;
 
@@ -242,58 +244,6 @@ pub fn analyze_mono_samples(
         duration,
     );
 
-    // Phrase analysis (lightweight)
-    let phrases = bpm.as_ref().and_then(|b| {
-        if b.confidence < 0.3 || b.beat_grid.len() < 32 {
-            return None;
-        }
-        let beats_per_phrase = 16usize;
-        let phrases: Vec<Phrase> = b
-            .beat_grid
-            .chunks(beats_per_phrase)
-            .enumerate()
-            .filter_map(|(i, chunk)| {
-                if chunk.len() >= beats_per_phrase {
-                    Some(Phrase {
-                        start: chunk[0],
-                        end: chunk[beats_per_phrase - 1],
-                        index: i as u32,
-                    })
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        if phrases.len() < 2 {
-            return None;
-        }
-
-        let intro_end = intro
-            .as_ref()
-            .map(|i| i.energy_build_duration)
-            .unwrap_or(0.0);
-
-        let mix_in_phrase = phrases
-            .iter()
-            .find(|p| p.start >= intro_end)
-            .cloned()
-            .unwrap_or_else(|| phrases[0].clone());
-
-        let mix_out_phrase = if phrases.len() >= 4 {
-            Some(phrases[phrases.len() - 4].clone())
-        } else if phrases.len() >= 2 {
-            Some(phrases[phrases.len() - 2].clone())
-        } else {
-            None
-        };
-
-        Some(PhraseAnalysis {
-            phrases,
-            mix_out_phrase,
-            mix_in_phrase: Some(mix_in_phrase),
-        })
-    });
     let vocal_activity = analyze_vocal_activity(samples, sample_rate, duration);
     let content_end = (duration - energy.trailing_silence).clamp(0.0, duration);
     let sections = sections::analyze_song_sections(
@@ -308,6 +258,71 @@ pub fn analyze_mono_samples(
             vocal_activity: vocal_activity.as_ref(),
         },
     );
+    complete_analysis(TrackAnalysis {
+        volume,
+        energy,
+        bpm,
+        fingerprint,
+        outro,
+        intro,
+        phrases: None,
+        sections,
+        vocal_activity,
+        mix_candidates: None,
+        duration,
+    })
+}
+
+fn complete_analysis(mut result: TrackAnalysis) -> TrackAnalysis {
+    let TrackAnalysis {
+        energy,
+        bpm,
+        outro,
+        intro,
+        vocal_activity,
+        duration,
+        ..
+    } = &result;
+    let phrases = bpm.as_ref().and_then(|b| {
+        if b.confidence < 0.3 || b.beat_grid.len() < 32 {
+            return None;
+        }
+        let beats_per_phrase = 16usize;
+        let phrases: Vec<Phrase> = b
+            .beat_grid
+            .chunks(beats_per_phrase)
+            .enumerate()
+            .filter_map(|(i, chunk)| {
+                (chunk.len() >= beats_per_phrase).then(|| Phrase {
+                    start: chunk[0],
+                    end: chunk[beats_per_phrase - 1],
+                    index: i as u32,
+                })
+            })
+            .collect();
+        if phrases.len() < 2 {
+            return None;
+        }
+        let intro_end = intro
+            .as_ref()
+            .map(|i| i.energy_build_duration)
+            .unwrap_or(0.0);
+        let mix_in_phrase = phrases
+            .iter()
+            .find(|p| p.start >= intro_end)
+            .cloned()
+            .unwrap_or_else(|| phrases[0].clone());
+        let mix_out_phrase = if phrases.len() >= 4 {
+            Some(phrases[phrases.len() - 4].clone())
+        } else {
+            Some(phrases[phrases.len() - 2].clone())
+        };
+        Some(PhraseAnalysis {
+            phrases,
+            mix_out_phrase,
+            mix_in_phrase: Some(mix_in_phrase),
+        })
+    });
     // Mix candidates keep the old grid so that AutoMix without emotional
     // transitions plans exactly as it did before sections were detected.
     let legacy_sections = analyze_legacy_grid_sections(
@@ -316,7 +331,7 @@ pub fn analyze_mono_samples(
         intro.as_ref(),
         outro.as_ref(),
         vocal_activity.as_ref(),
-        duration,
+        *duration,
     );
     let mix_candidates = build_mix_point_analysis(
         &energy,
@@ -325,20 +340,9 @@ pub fn analyze_mono_samples(
         phrases.as_ref(),
         legacy_sections.as_ref(),
         vocal_activity.as_ref(),
-        duration,
+        *duration,
     );
-
-    TrackAnalysis {
-        volume,
-        energy,
-        bpm,
-        fingerprint,
-        outro,
-        intro,
-        phrases,
-        sections,
-        vocal_activity,
-        mix_candidates,
-        duration,
-    }
+    result.phrases = phrases;
+    result.mix_candidates = mix_candidates;
+    result
 }

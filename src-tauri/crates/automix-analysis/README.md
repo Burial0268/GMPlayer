@@ -24,9 +24,22 @@ a binding in `audio-backend`, using this same extractor.
 | Preparation, cache, cancellation and playback plans | `audio-backend/src/player/automix.rs` |
 | Output callbacks and rendered transition timing | `audio-backend/src/output/` and `player/` |
 
-Native file analysis still collects full-song mono PCM. This boundary permits
-future analysis workers without requiring them to depend on the player; it does
-not introduce inference models, a subprocess protocol or bounded native memory.
+`analyze_pcm` accepts a caller-owned `MonoPcm` reader. It accumulates volume,
+energy and vocal filter state in blocks, extracts the same section features,
+and reads only the required intro/outro, BPM and fingerprint windows. PCM work
+buffers cover at most 60 seconds plus 200 warm-up samples; result arrays and
+compact structure features still grow with duration. Reads remain cancellable
+between blocks, including reads that fill a longer window.
+
+Native file analysis uses `audio-backend/src/automix/spool.rs`: it decodes mono
+once, keeps at most 4 MiB in a `tempfile::SpooledTempFile`, then spills to the app
+cache. Scratch stores exact native f32 bytes through Bytemuck and disappears when
+closed. Short inputs need no disk file; larger ones trade temporary storage
+(`4 * decoded mono frames` bytes) for bounded PCM heap use. App hosts configure a
+storage-backed cache through `set_stream_cache_dir`; a standalone host's default
+system temp directory may be a memory filesystem. The array API and encoded-byte
+adapter retain their existing contracts.
+
 The worker design reviewed for this split is documented in
 [`audio-backend/UPSTREAM.md`](../audio-backend/UPSTREAM.md#automix-worker-boundaries).
 

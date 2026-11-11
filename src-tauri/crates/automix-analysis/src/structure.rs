@@ -13,30 +13,76 @@ use super::{
 
 // ─── Multiband Outro Analysis ──────────────────────────────────────
 
+struct OutroLayout {
+    duration: f32,
+    width: usize,
+    windows: usize,
+    start: usize,
+    end: usize,
+}
+
+fn outro_layout(
+    sample_rate: u32,
+    duration: f32,
+    trailing_silence: f32,
+    samples: usize,
+) -> Option<OutroLayout> {
+    let content_duration = duration - trailing_silence;
+    if content_duration < 10.0 {
+        return None;
+    }
+    let duration = OUTRO_ANALYSIS_SECONDS.min(content_duration);
+    let width = (sample_rate as f32 * OUTRO_WINDOW_MS / 1000.0) as usize;
+    let windows = ((duration * 1000.0) / OUTRO_WINDOW_MS) as usize;
+    if windows < 4 || width < 1 {
+        return None;
+    }
+    let start = (content_duration * sample_rate as f32) as usize;
+    let start = start.saturating_sub((duration * sample_rate as f32) as usize);
+    let end = (start + windows * width).min(samples);
+    (start < end).then_some(OutroLayout {
+        duration,
+        width,
+        windows,
+        start,
+        end,
+    })
+}
+
+pub(super) fn outro_sample_range(
+    sample_rate: u32,
+    duration: f32,
+    trailing_silence: f32,
+    samples: usize,
+) -> Option<std::ops::Range<usize>> {
+    let layout = outro_layout(sample_rate, duration, trailing_silence, samples)?;
+    Some(layout.start.saturating_sub(200)..layout.end)
+}
+
 pub(super) fn analyze_outro_multiband(
     data: &[f32],
     sample_rate: u32,
     duration: f32,
     trailing_silence: f32,
 ) -> Option<OutroAnalysis> {
-    let content_duration = duration - trailing_silence;
-    if content_duration < 10.0 {
-        return None;
-    }
+    analyze_outro_window(data, sample_rate, duration, trailing_silence, 0)
+}
 
-    let analysis_duration = OUTRO_ANALYSIS_SECONDS.min(content_duration);
-    let window_samples = (sample_rate as f32 * OUTRO_WINDOW_MS / 1000.0) as usize;
-    let total_windows = ((analysis_duration * 1000.0) / OUTRO_WINDOW_MS) as usize;
-
-    if total_windows < 4 || window_samples < 1 {
-        return None;
-    }
-
-    let content_end_sample = ((duration - trailing_silence) * sample_rate as f32) as usize;
-    let analysis_start_sample =
-        content_end_sample.saturating_sub((analysis_duration * sample_rate as f32) as usize);
-    let analysis_start_sample = analysis_start_sample.max(0);
-
+pub(super) fn analyze_outro_window(
+    data: &[f32],
+    sample_rate: u32,
+    duration: f32,
+    trailing_silence: f32,
+    first_sample: usize,
+) -> Option<OutroAnalysis> {
+    let layout = outro_layout(
+        sample_rate,
+        duration,
+        trailing_silence,
+        first_sample + data.len(),
+    )?;
+    let (analysis_duration, window_samples, total_windows, analysis_start_sample) =
+        (layout.duration, layout.width, layout.windows, layout.start);
     let sample_rate_f = sample_rate as f32;
 
     // Design filters
@@ -54,7 +100,7 @@ pub(super) fn analyze_outro_multiband(
 
     // Warm-up (200 samples)
     let warmup_start = analysis_start_sample.saturating_sub(200).max(0);
-    for &s in &data[warmup_start..analysis_start_sample] {
+    for &s in &data[warmup_start - first_sample..analysis_start_sample - first_sample] {
         iir_process(&low_c, &mut lz1, &mut lz2, s);
         iir_process(&mid_c, &mut mz1, &mut mz2, s);
         iir_process(&high_c, &mut hz1, &mut hz2, s);
@@ -77,9 +123,9 @@ pub(super) fn analyze_outro_multiband(
     let mut prev_mid = 0f32;
     let mut prev_high = 0f32;
 
-    let end_sample = (analysis_start_sample + total_windows * window_samples).min(data.len());
+    let end_sample = layout.end - first_sample;
 
-    for &s in &data[analysis_start_sample..end_sample] {
+    for &s in &data[analysis_start_sample - first_sample..end_sample] {
         if window_idx >= total_windows {
             break;
         }

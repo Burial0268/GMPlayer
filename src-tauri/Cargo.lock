@@ -2414,6 +2414,7 @@ dependencies = [
  "anyhow",
  "audio-analysis",
  "audio_thread_priority",
+ "bytemuck",
  "coreaudio-rs 0.11.3",
  "cpal",
  "gmplayer-automix-analysis",
@@ -2445,6 +2446,7 @@ version = "0.1.0"
 dependencies = [
  "rustfft",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

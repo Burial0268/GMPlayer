@@ -158,6 +158,29 @@ fn native_automix_can_analyze_extended_files_and_still_cancel() {
 }
 
 #[test]
+fn bounded_file_analysis_matches_the_full_pcm_reference_for_extended_codecs() {
+    for &(extension, bytes, _) in FIXTURES {
+        let file = fixture(extension, bytes);
+        let mut source = FfmpegSource::open(file.path()).unwrap();
+        let rate = source.sample_rate().get();
+        let channels = source.channels().get() as usize;
+        let duration = source.total_duration().unwrap().as_secs_f32();
+        let interleaved = collect(&mut source);
+        let mono: Vec<f32> = interleaved
+            .chunks(channels)
+            .map(|frame| frame.iter().copied().sum::<f32>() / frame.len() as f32)
+            .collect();
+        let expected = crate::automix::analyze_mono_samples(&mono, rate, duration, true);
+        let actual = crate::automix::analyze_audio_file(file.path(), true).unwrap();
+        assert_eq!(
+            serde_json::to_value(actual).unwrap(),
+            serde_json::to_value(expected).unwrap(),
+            "{extension}"
+        );
+    }
+}
+
+#[test]
 fn bundled_ffmpeg_has_the_decoders_we_advertise_but_not_av3a() {
     use std::ffi::CString;
     for name in [

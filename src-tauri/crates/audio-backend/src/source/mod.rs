@@ -196,6 +196,18 @@ pub fn set_stream_cache_dir(dir: PathBuf) -> bool {
     STREAM_CACHE_DIR.set(dir).is_ok()
 }
 
+/// Scratch keeps short inputs in bounded memory, then spills into the app cache.
+/// The disk file is removed by the OS when its handle closes, including cancellation.
+pub(crate) fn temporary_file(memory_limit: usize) -> std::io::Result<tempfile::SpooledTempFile> {
+    match STREAM_CACHE_DIR.get() {
+        Some(dir) => {
+            std::fs::create_dir_all(dir)?;
+            Ok(tempfile::spooled_tempfile_in(memory_limit, dir))
+        }
+        None => Ok(tempfile::spooled_tempfile(memory_limit)),
+    }
+}
+
 /// 128-bit FNV-1a, as two rounds with different bases. Only used to name cache
 /// files, so speed matters more than the distribution guarantees of a real
 /// digest — and the cost of a collision is a wrong cached body, which the
