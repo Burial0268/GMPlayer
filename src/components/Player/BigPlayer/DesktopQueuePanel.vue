@@ -228,8 +228,16 @@ onBeforeUnmount(() => {
   padding: 18px 14px 14px;
   box-sizing: border-box;
   color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  mix-blend-mode: plus-lighter;
-
+  // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
+  :is(
+    .queue-header,
+    .queue-index,
+    .queue-info,
+    .queue-duration,
+    .queue-remove,
+    .queue-locate,
+    .queue-empty
+  ),
   :deep(.n-icon),
   :deep(svg),
   :deep(path) {

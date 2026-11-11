@@ -1061,10 +1061,18 @@ defineExpose({
   min-height: 0;
   overflow: hidden;
   color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  mix-blend-mode: plus-lighter;
   transform: var(--queue-shift, none);
   pointer-events: auto;
-
+  // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
+  :is(
+    .mobile-queue-header,
+    .queue-index,
+    .queue-info,
+    .queue-duration,
+    .queue-remove,
+    .queue-locate,
+    .queue-empty
+  ),
   :deep(.n-icon),
   :deep(svg),
   :deep(path) {
