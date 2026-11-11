@@ -21,6 +21,8 @@ export interface LyricCardInput {
   backdrop?: HTMLCanvasElement;
   /** `"r, g, b"`, the shape `siteStore.songPicColor` holds. */
   themeRgb: string;
+  /** Immersive player mixes the cover into the lyric colour; otherwise it is the flat mix grey. */
+  immersive: boolean;
   fontFamily: string;
   brand: string;
   logoSrc: string;
@@ -68,8 +70,23 @@ const VEIL = [0.62, 0.8] as const;
 const BACKDROP_BRIGHTNESS = 0.4;
 /** Black over the fluid still, top to bottom edge. */
 const STILL_SHADE = [0.12, 0.4] as const;
-// Lyrics and title sit under pure white, which reads harsh over the backdrop.
-const TEXT = "rgb(255 255 255 / 0.8)";
+// Same mix as `--main-cover-mix-color`: 72% of the cover, 28% of rgb(239, 239, 239).
+// Outside immersive mode the player uses the flat grey, cover or not.
+function coverMixChannels(themeRgb: string, immersive: boolean): [number, number, number] {
+  const flat: [number, number, number] = [239, 239, 239];
+  if (!immersive) return flat;
+  const parts = themeRgb.split(",").map((v) => Number(v.trim()));
+  if (parts.length < 3 || parts.slice(0, 3).some((n) => Number.isNaN(n))) return flat;
+  return parts.slice(0, 3).map((c) => Math.round(c * 0.72 + 239 * 0.28)) as [
+    number,
+    number,
+    number,
+  ];
+}
+
+function mixFill(channels: [number, number, number], alpha: number) {
+  return `rgb(${channels[0]} ${channels[1]} ${channels[2]} / ${alpha})`;
+}
 
 const loadImage = (src: string): Promise<HTMLImageElement | null> =>
   new Promise((resolve) => {
@@ -197,19 +214,31 @@ function draw(
 
   paintBackground(ctx, input, cover, height, scale);
 
+  // Text uses the player's mix colour and plus-lighter. Covers and the logo stay
+  // source-over: blending them adds the picture onto the backdrop a second time.
+  // An unsupported operation is left untouched, so the text still draws in the mix colour.
+  const lyric = mixFill(coverMixChannels(input.themeRgb, input.immersive), 1);
+  const fillLyric = (alpha: number) => {
+    // The DOM lib here predates Canvas plus-lighter (Chrome 113+). An unknown
+    // operation is ignored, and the text still paints in the mix colour.
+    ctx.globalCompositeOperation = "plus-lighter" as GlobalCompositeOperation;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = lyric;
+  };
+
   // Lyrics, centred in whatever room the footer leaves.
   const footerTop = height - PAD - COVER;
   let y = PAD + Math.max(0, (footerTop - SECTION_GAP - PAD - lyricsHeight) / 2);
   ctx.textBaseline = "top";
   groups.forEach((group, i) => {
     if (i > 0) y += GROUP_GAP;
-    ctx.fillStyle = TEXT;
+    fillLyric(0.8);
     ctx.font = font(800, MAIN_SIZE);
     for (const row of group.main) {
       ctx.fillText(row, PAD, y + (mainLH - MAIN_SIZE) / 2);
       y += mainLH;
     }
-    ctx.fillStyle = "rgb(255 255 255 / 0.64)";
+    fillLyric(0.64);
     ctx.font = font(600, SUB_SIZE);
     for (const row of group.subs) {
       ctx.fillText(row, PAD, y + (subLH - SUB_SIZE) / 2);
@@ -218,17 +247,23 @@ function draw(
   });
 
   // Footer: artwork, title and artist on the left, the app mark on the right.
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
   ctx.font = font(600, 28);
   const brandWidth = ctx.measureText(input.brand).width + (logo ? LOGO + 12 : 0);
   const brandX = WIDTH - PAD - brandWidth;
   const midY = footerTop + COVER / 2;
-  ctx.globalAlpha = 0.8;
   ctx.textBaseline = "middle";
+  ctx.save();
+  ctx.globalAlpha = 0.8;
   if (logo) ctx.drawImage(logo, brandX, midY - LOGO / 2, LOGO, LOGO);
-  ctx.fillStyle = "#fff";
+  ctx.restore();
+  fillLyric(0.8);
+  ctx.textBaseline = "middle";
   ctx.fillText(input.brand, logo ? brandX + LOGO + 12 : brandX, midY);
-  ctx.globalAlpha = 1;
 
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
   if (cover) {
     ctx.save();
     ctx.shadowColor = "rgb(0 0 0 / 0.3)";
@@ -247,12 +282,15 @@ function draw(
   }
   const metaX = cover ? PAD + COVER + 28 : PAD;
   const metaWidth = brandX - 40 - metaX;
-  ctx.fillStyle = TEXT;
+  fillLyric(0.8);
+  ctx.textBaseline = "middle";
   ctx.font = font(700, 38);
   ctx.fillText(ellipsize(ctx, input.title, metaWidth), metaX, midY - 24);
-  ctx.fillStyle = "rgb(255 255 255 / 0.7)";
+  fillLyric(0.7);
   ctx.font = font(500, 30);
   ctx.fillText(ellipsize(ctx, input.artist, metaWidth), metaX, midY + 24);
+  ctx.globalCompositeOperation = "source-over";
+  ctx.globalAlpha = 1;
 
   return canvas;
 }

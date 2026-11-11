@@ -50,8 +50,14 @@ defineEmits<{
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  color: var(--main-cover-color);
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
   mix-blend-mode: plus-lighter;
+
+  :deep(.n-icon),
+  :deep(svg),
+  :deep(path) {
+    mix-blend-mode: plus-lighter;
+  }
 }
 
 .toggle-icon-button {

@@ -260,9 +260,9 @@ const desktopLayoutRef = ref<InstanceType<typeof DesktopPlayerLayout> | null>(nu
 // Proxy refs for mobile cover frame composable (read from child component)
 const phonyBigCoverRef = computed(() => mobileLayoutRef.value?.phonyBigCoverRef ?? null);
 const phonySmallCoverRef = computed(() => mobileLayoutRef.value?.phonySmallCoverRef ?? null);
-// The frame is positioned inside the page the queue pager translates, so it is
-// measured against that page: against the shell, a song change while the queue
-// is open places it a whole page off. At rest the page coincides with the shell.
+// Measured against the player page, not the shell. The queue pager no longer
+// translates that page (a transform there isolates plus-lighter for the whole
+// slide); the cover applies the shift itself, and the measurement strips it.
 const mobileCoverRootRef = computed(() =>
   isMobile.value
     ? (phonyBigCoverRef.value?.closest<HTMLElement>(".mobile-player-content") ??

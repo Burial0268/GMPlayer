@@ -5,90 +5,93 @@
     :inert="!show"
     data-navigation-layer="queue-player"
   >
-    <div class="queue-header">
-      <div class="queue-title">
-        <n-icon size="24" :component="QueueMusicRound" />
-        <div class="queue-title-text">
-          <span class="title">{{ $t("general.name.playlists") }}</span>
-          <span class="count" v-if="music.getPlaylists.length">
-            {{ $t("general.name.songSize", { size: music.getPlaylists.length }) }}
-          </span>
+    <div class="queue-surface" aria-hidden="true"></div>
+    <div class="queue-content">
+      <div class="queue-header">
+        <div class="queue-title">
+          <n-icon size="24" :component="QueueMusicRound" />
+          <div class="queue-title-text">
+            <span class="title">{{ $t("general.name.playlists") }}</span>
+            <span class="count" v-if="music.getPlaylists.length">
+              {{ $t("general.name.songSize", { size: music.getPlaylists.length }) }}
+            </span>
+          </div>
         </div>
+        <button
+          v-if="music.getPlaylists.length"
+          class="queue-clear"
+          type="button"
+          @click="music.clearPlaylists()"
+        >
+          {{ $t("player.queue.clear") }}
+        </button>
       </div>
+
+      <n-virtual-list
+        v-if="music.getPlaylists.length"
+        ref="queueListRef"
+        class="queue-list"
+        :items="queueRows"
+        :item-size="52"
+        :item-resizable="true"
+        key-field="key"
+        :show-scrollbar="false"
+      >
+        <template #default="{ item: row }">
+          <div
+            :id="`desktop-queue-${row.index}`"
+            :class="[
+              'queue-song',
+              {
+                'is-current': row.index === music.persistData.playSongIndex,
+                'row-odd': row.index % 2 === 0,
+                'row-even': row.index % 2 === 1,
+                'row-first': row.index === 0,
+                'row-last': row.index === music.getPlaylists.length - 1,
+              },
+            ]"
+            role="button"
+            tabindex="0"
+            @click="changeQueueIndex(row.index)"
+            @keydown.enter.prevent="changeQueueIndex(row.index)"
+          >
+            <div class="queue-index s-num">
+              <span v-if="row.index !== music.persistData.playSongIndex">{{
+                String(row.index + 1).padStart(2, "0")
+              }}</span>
+              <div v-else class="playing-bars">
+                <span class="line"></span>
+                <span class="line"></span>
+                <span class="line"></span>
+              </div>
+            </div>
+            <img class="queue-cover" :src="getQueueCover(row.item)" alt="cover" />
+            <div class="queue-info">
+              <div class="queue-name text-hidden">{{ row.item.name }}</div>
+              <div class="queue-artists text-hidden">{{ formatArtists(row.item.artist) }}</div>
+            </div>
+            <div class="queue-duration s-num" v-if="row.item.time">{{ row.item.time }}</div>
+            <button class="queue-remove" type="button" @click.stop="music.removeSong(row.index)">
+              <n-icon size="17" :component="DeleteRound" />
+            </button>
+          </div>
+        </template>
+      </n-virtual-list>
+      <div class="queue-empty" v-else>
+        {{ $t("other.playlistEmpty") }}
+      </div>
+
+      <!-- 底部整宽定位按钮：网格第三行，常驻面板底边。 -->
       <button
         v-if="music.getPlaylists.length"
-        class="queue-clear"
+        class="queue-locate"
         type="button"
-        @click="music.clearPlaylists()"
+        @click="scrollCurrentQueueSong"
       >
-        {{ $t("player.queue.clear") }}
+        <n-icon size="18" :component="MyLocationRound" />
+        <span>{{ $t("player.queue.locate") }}</span>
       </button>
     </div>
-
-    <n-virtual-list
-      v-if="music.getPlaylists.length"
-      ref="queueListRef"
-      class="queue-list"
-      :items="queueRows"
-      :item-size="52"
-      :item-resizable="true"
-      key-field="key"
-      :show-scrollbar="false"
-    >
-      <template #default="{ item: row }">
-        <div
-          :id="`desktop-queue-${row.index}`"
-          :class="[
-            'queue-song',
-            {
-              'is-current': row.index === music.persistData.playSongIndex,
-              'row-odd': row.index % 2 === 0,
-              'row-even': row.index % 2 === 1,
-              'row-first': row.index === 0,
-              'row-last': row.index === music.getPlaylists.length - 1,
-            },
-          ]"
-          role="button"
-          tabindex="0"
-          @click="changeQueueIndex(row.index)"
-          @keydown.enter.prevent="changeQueueIndex(row.index)"
-        >
-          <div class="queue-index s-num">
-            <span v-if="row.index !== music.persistData.playSongIndex">{{
-              String(row.index + 1).padStart(2, "0")
-            }}</span>
-            <div v-else class="playing-bars">
-              <span class="line"></span>
-              <span class="line"></span>
-              <span class="line"></span>
-            </div>
-          </div>
-          <img class="queue-cover" :src="getQueueCover(row.item)" alt="cover" />
-          <div class="queue-info">
-            <div class="queue-name text-hidden">{{ row.item.name }}</div>
-            <div class="queue-artists text-hidden">{{ formatArtists(row.item.artist) }}</div>
-          </div>
-          <div class="queue-duration s-num" v-if="row.item.time">{{ row.item.time }}</div>
-          <button class="queue-remove" type="button" @click.stop="music.removeSong(row.index)">
-            <n-icon size="17" :component="DeleteRound" />
-          </button>
-        </div>
-      </template>
-    </n-virtual-list>
-    <div class="queue-empty" v-else>
-      {{ $t("other.playlistEmpty") }}
-    </div>
-
-    <!-- 底部整宽定位按钮：网格第三行，常驻面板底边。 -->
-    <button
-      v-if="music.getPlaylists.length"
-      class="queue-locate"
-      type="button"
-      @click="scrollCurrentQueueSong"
-    >
-      <n-icon size="18" :component="MyLocationRound" />
-      <span>{{ $t("player.queue.locate") }}</span>
-    </button>
   </aside>
 </template>
 
@@ -178,31 +181,59 @@ onBeforeUnmount(() => {
   right: clamp(24px, 4vw, 64px);
   bottom: clamp(88px, 12vh, 118px);
   width: clamp(340px, 28vw, 430px);
-  z-index: 6;
   box-sizing: border-box;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  padding: 18px 14px 14px;
-  border-radius: var(--radius-md);
-  color: var(--main-cover-color);
-  background: rgba(20, 20, 20, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.26);
-  -webkit-backdrop-filter: blur(36px) saturate(1.2);
-  backdrop-filter: blur(36px) saturate(1.2);
-  opacity: 0;
   pointer-events: none;
+
+  // 面板自己不挂 opacity / transform / filter / z-index：那是 stacking context，
+  // 里面的 plus-lighter 在滑入期间混不出去，落定才突然加亮。毛玻璃和文字拆成同级，
+  // 各自套同一套显隐；文字自己带混合，自己动不隔断。
+  &.show {
+    pointer-events: auto;
+
+    .queue-surface,
+    .queue-content {
+      opacity: 1;
+      transform: translate3d(0, 0, 0) scale(1);
+    }
+  }
+}
+
+.queue-surface,
+.queue-content {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+  opacity: 0;
   transform: translate3d(28px, 0, 0) scale(0.985);
   transform-origin: right center;
   transition:
     opacity 0.32s cubic-bezier(0.25, 1, 0.5, 1),
     transform 0.46s cubic-bezier(0.25, 1, 0.5, 1);
-  will-change: opacity, transform;
+}
 
-  &.show {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translate3d(0, 0, 0) scale(1);
+.queue-surface {
+  z-index: 6;
+  background: rgba(20, 20, 20, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 72px rgba(0, 0, 0, 0.26);
+  -webkit-backdrop-filter: blur(36px) saturate(1.2);
+  backdrop-filter: blur(36px) saturate(1.2);
+  pointer-events: none;
+}
+
+.queue-content {
+  z-index: 6;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: 18px 14px 14px;
+  box-sizing: border-box;
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
+  mix-blend-mode: plus-lighter;
+
+  :deep(.n-icon),
+  :deep(svg),
+  :deep(path) {
+    mix-blend-mode: plus-lighter;
   }
 }
 
@@ -350,7 +381,7 @@ onBeforeUnmount(() => {
     width: 3px;
     min-height: 7px;
     border-radius: 3px;
-    background: var(--main-cover-color);
+    background: var(--main-cover-mix-color, rgb(239, 239, 239));
     animation: queue-line-move 0.9s ease-in-out infinite;
 
     &:nth-child(2) {
@@ -395,7 +426,7 @@ onBeforeUnmount(() => {
   appearance: none;
   border: none;
   background: transparent;
-  color: var(--main-cover-color);
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
   width: 28px;
   height: 28px;
   border-radius: var(--radius-sm);
@@ -435,7 +466,7 @@ onBeforeUnmount(() => {
   padding: 11px 16px;
   border: 1px solid color-mix(in srgb, var(--main-cover-color) 20%, transparent);
   border-radius: var(--radius-md);
-  color: var(--main-cover-color);
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
   background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
   font: inherit;
   font-size: 0.85rem;
@@ -447,7 +478,7 @@ onBeforeUnmount(() => {
     transform 0.16s ease;
 
   .n-icon {
-    color: var(--main-cover-color);
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
   }
 
   &:hover,

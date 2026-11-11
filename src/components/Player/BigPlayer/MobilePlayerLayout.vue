@@ -2,10 +2,14 @@
   <div
     ref="pagesRef"
     :class="['mobile-pages', { 'queue-open': queueOpen, tinted }]"
-    :style="{ '--mobile-lyric-controls-height': `${lyricControlsHeight}px` }"
+    :style="{
+      '--mobile-lyric-controls-height': `${lyricControlsHeight}px`,
+      '--pager-shift': pagerShiftCss,
+      '--queue-shift': queueShiftCss,
+    }"
   >
     <div class="mobile-player-page">
-      <Motion class="mobile-player-content" :style="playerPageMotionStyle">
+      <div class="mobile-player-content">
         <div class="mobile-full-ui">
           <!-- AMLL .thumb — 抽屉把手 -->
           <Motion
@@ -209,7 +213,7 @@
         <!-- Single visible album layer. The cover slots above are measurement anchors only. -->
         <MobileCoverFrame
           :visible="albumLayerVisible"
-          :motionStyle="albumLayerStyle"
+          :motionStyle="coverFrameStyle"
           :coverUrl="coverImageUrl500"
           :layoutTransition="layoutTransition"
           :layoutDependency="mobileLayer"
@@ -253,14 +257,14 @@
         >
           <div class="artists-line">{{ artistNames }}</div>
         </Motion>
-      </Motion>
+      </div>
     </div>
 
     <!-- 移动端待播清单 — 与主内容同级的分页：共用背景，由 pager 平移切换 -->
-    <Motion
+    <div
       class="mobile-queue-layout"
       data-navigation-layer="queue-player"
-      :style="queuePageMotionStyle"
+      :style="contentShellStyle"
       @touchstart.passive="handleQueueTouchStart"
       @touchmove="handleQueueTouchMove"
       @touchend.passive="handleQueueTouchEnd"
@@ -362,7 +366,7 @@
           </button>
         </div>
       </div>
-    </Motion>
+    </div>
   </div>
 </template>
 
@@ -554,10 +558,6 @@ const smallControlsMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
   ...props.headerMotionStyle,
 }));
-const handleUiMotionStyle = computed<MotionStyleRecord>(() => ({
-  ...props.contentShellStyle,
-  ...props.handleMotionStyle,
-}));
 const textFrameStyle = (motion: MotionStyleRecord, metrics: TextMetrics | null) =>
   metrics
     ? {
@@ -566,21 +566,16 @@ const textFrameStyle = (motion: MotionStyleRecord, metrics: TextMetrics | null) 
         "--text-height": `${metrics.height}px`,
       }
     : motion;
-const titleFrameStyle = computed(() => textFrameStyle(props.titleMotionStyle, props.titleMetrics));
-const artistsFrameStyle = computed(() =>
-  textFrameStyle(props.artistsMotionStyle, props.artistsMetrics),
-);
 // Same text the real line renders: names joined by " / ".
 const artistNames = computed(() => props.artistList.map((item) => item.name).join(" / "));
 
 // ── 队列分页：主内容与 Playlist 同级、共用大播放器背景，作为连续条带垂直平移 ──
-// 0 = 主内容，1 = Playlist。主内容静止时必须是 transform: none，不留 stacking context，
-// 保住歌词层 plus-lighter 到背景画布的混合链。不能交给 motion-v 的 y：Vue 渲染时它把
-// y=0 写成 translateY(0px)，只有值变化驱动的帧才写 none——队列没开过之前，
-// 取色模式下的歌词一直是没加亮的暗色。
+// 0 = 主内容，1 = Playlist。位移不能写在 .mobile-player-content 上：它是歌词和
+// Layer 1 的祖先，滑动期间的 transform 会把 plus-lighter 关进空组，落定才重新加亮。
+// 和舞台切换一样，只发布 CSS 变量，由已经在混合的元素自己套用；静止时是 none。
 const pagesRef = ref<HTMLElement | null>(null);
 const pagerProgress = useMotionValue(props.queueOpen ? 1 : 0);
-const pagerHeightValue = useMotionValue(0);
+const pagerHeightValue = useMotionValue(window.innerHeight || 1);
 let pagerAnimation: ReturnType<typeof animate> | null = null;
 
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
@@ -588,18 +583,45 @@ const pagerHeight = () => pagerHeightValue.get() || window.innerHeight || 1;
 const measurePagerHeight = () => {
   pagerHeightValue.set(pagesRef.value?.clientHeight || window.innerHeight || 1);
 };
+const shiftOf = (px: number) => (px ? `translateY(${px}px)` : "none");
+const playerShift = useTransform(() => shiftOf(-clamp01(pagerProgress.get()) * pagerHeight()));
+const queueShift = useTransform(() => shiftOf((1 - clamp01(pagerProgress.get())) * pagerHeight()));
+const pagerShiftCss = ref(String(playerShift.get()));
+const queueShiftCss = ref(String(queueShift.get()));
+const publishPagerShift = () => {
+  pagerShiftCss.value = String(playerShift.get());
+  queueShiftCss.value = String(queueShift.get());
+};
+const stopPlayerShift = playerShift.on("change", publishPagerShift);
+const stopQueueShift = queueShift.on("change", publishPagerShift);
 
-const playerPageTransform = useTransform(() => {
-  const y = clamp01(pagerProgress.get()) * pagerHeight();
-  return y ? `translateY(${-y}px)` : "none";
-});
-const queuePageY = useTransform(() => (1 - clamp01(pagerProgress.get())) * pagerHeight());
-const playerPageMotionStyle = computed<MotionStyleRecord>(() => ({
-  transform: playerPageTransform,
+const motionOffset = (value: MotionStyleRecord[string]) => {
+  if (typeof value === "number") return value;
+  if (typeof value === "string") return Number(value) || 0;
+  if (value && typeof value.get === "function") return Number(value.get()) || 0;
+  return 0;
+};
+const pagerOffset = useTransform(() => clamp01(pagerProgress.get()) * pagerHeight());
+const titleY = props.titleMotionStyle.y;
+const artistsY = props.artistsMotionStyle.y;
+const shiftedTitleY = useTransform(() => motionOffset(titleY) - pagerOffset.get());
+const shiftedArtistsY = useTransform(() => motionOffset(artistsY) - pagerOffset.get());
+const titleFrameStyle = computed(() => ({
+  ...textFrameStyle(props.titleMotionStyle, props.titleMetrics),
+  y: shiftedTitleY,
 }));
-const queuePageMotionStyle = computed<MotionStyleRecord>(() => ({
+const artistsFrameStyle = computed(() => ({
+  ...textFrameStyle(props.artistsMotionStyle, props.artistsMetrics),
+  y: shiftedArtistsY,
+}));
+const handleUiMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.contentShellStyle,
-  y: queuePageY,
+  ...props.handleMotionStyle,
+  transform: playerShift,
+}));
+const coverFrameStyle = computed<MotionStyleRecord>(() => ({
+  ...props.albumLayerStyle,
+  transform: playerShift,
 }));
 
 const stopPagerAnimation = () => {
@@ -875,6 +897,8 @@ onBeforeUnmount(() => {
   removeBeforeNavigation();
   removeCancelledNavigation();
   stopPagerAnimation();
+  stopPlayerShift();
+  stopQueueShift();
   locateHandle?.cancel();
 });
 
@@ -1000,11 +1024,9 @@ defineExpose({
   visibility: hidden;
 }
 
-// .mobile-player-content / .mobile-full-ui 不得挂常驻 will-change（或其他产生
-// stacking context 的属性）：它们位于 .mobile-lyric-layout 的 plus-lighter 到
-// .mobile-player-shell (isolation: isolate) 之间，一旦成为 stacking context，
-// 歌词混合就会被隔离、混不到背景画布上（取色模式下表现为歌词失去加亮）。
-// 队列推入动画的 will-change 由 motion-v 在动画期间自行添加/移除。
+// .mobile-player-content / .mobile-full-ui 不得挂 transform、will-change 或其他
+// stacking context：它们位于 .mobile-lyric-layout 的 plus-lighter 到
+// .mobile-player-shell (isolation: isolate) 之间。分页位移在混合元素自己身上。
 
 .mobile-full-ui {
   position: absolute;
@@ -1016,15 +1038,20 @@ defineExpose({
   min-height: 0;
 }
 
-// 与主内容同级的分页：共用大播放器背景，无独立底色/毛玻璃，由 pager 平移入场。
-// 平移用 y（像素）驱动，静止在两端时 transform 归零，不残留 stacking context。
+// 与主内容同级的分页：共用大播放器背景，无独立底色/毛玻璃。
+// 布局本身不平移（overflow 只负责裁切）。位移和 plus-lighter 都在内容上，
+// vueuc 行内的 translateY 才不会把混合关在列表里。
 .mobile-queue-layout {
   display: grid;
   grid-template-rows: [thumb] calc(var(--app-safe-area-top, 0px) + 30px) [main-view] 1fr;
   grid-template-columns: 1fr;
-  color: var(--main-cover-color);
   pointer-events: none;
   overflow: hidden;
+
+  > .mobile-thumb {
+    transform: var(--queue-shift, none);
+    pointer-events: auto;
+  }
 }
 
 .mobile-queue-content {
@@ -1033,15 +1060,21 @@ defineExpose({
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
+  mix-blend-mode: plus-lighter;
+  transform: var(--queue-shift, none);
+  pointer-events: auto;
+
+  :deep(.n-icon),
+  :deep(svg),
+  :deep(path) {
+    mix-blend-mode: plus-lighter;
+  }
 }
 
 .mobile-pages.queue-open {
   .mobile-player-page {
     pointer-events: none;
-  }
-
-  .mobile-queue-layout {
-    pointer-events: auto;
   }
 }
 
@@ -1090,6 +1123,8 @@ defineExpose({
   grid-template-rows: 8px [controls] 56px [lyric-view] minmax(0, 1fr);
   grid-template-columns: 16px [cover-side] 56px [info-side] minmax(0, 1fr) 16px;
   mix-blend-mode: plus-lighter;
+  // 分页位移在混合元素自己身上。祖先一带 transform，滑动中 plus-lighter 就断了。
+  transform: var(--pager-shift, none);
   pointer-events: none;
   // Same duration and curve as the controls (`.mobile-big-controls`), so the lyrics make room as
   // they arrive and give the space back as they leave.
@@ -1114,6 +1149,7 @@ defineExpose({
   z-index: 1;
   // The actual artwork is a sibling; this group contains only slots and controls.
   mix-blend-mode: plus-lighter;
+  transform: var(--pager-shift, none);
   overflow-y: hidden;
   display: grid;
   // 独立留出封面与 metadata 的间距，矮视口缩小封面而不挤掉留白。
@@ -1643,7 +1679,7 @@ defineExpose({
     width: 3px;
     min-height: 7px;
     border-radius: 3px;
-    background: var(--main-cover-color);
+    background: var(--main-cover-mix-color, rgb(239, 239, 239));
     animation: queue-line-move 0.9s ease-in-out infinite;
 
     &:nth-child(2) {
@@ -1689,7 +1725,7 @@ defineExpose({
   appearance: none;
   border: none;
   background: transparent;
-  color: var(--main-cover-color);
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
   width: 32px;
   height: 32px;
   border-radius: var(--radius-sm);
@@ -1727,7 +1763,7 @@ defineExpose({
   padding: 0 16px;
   border: 1px solid color-mix(in srgb, var(--main-cover-color) 20%, transparent);
   border-radius: var(--radius-md);
-  color: var(--main-cover-color);
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
   background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
   font: inherit;
   font-size: 0.88rem;
@@ -1738,7 +1774,7 @@ defineExpose({
     transform 0.16s ease;
 
   .n-icon {
-    color: var(--main-cover-color);
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
   }
 
   &:active {
