@@ -94,13 +94,13 @@ export function useLayerPresentation() {
               !(sibling instanceof HTMLElement) ||
               sibling === branch ||
               sibling.matches(
-                // `.titlebar--floating` is the desktop window-control cluster (min/max/close),
+                // `.titlebar-area--floating` contains the window controls and their reveal strip,
                 // teleported to <body> so it can out-stack the body-level BigPlayer. As a direct
                 // sibling of the player surface it would otherwise be caught by this focus-trap and
                 // set `inert` — leaving the controls visible but unclickable, so the user cannot
                 // close the app while the player is open. OS window chrome is never trapped by an
                 // in-page modal; keep it live alongside the other global chrome below.
-                "script, style, link, .titlebar--floating, .v-binder-follower-container, .n-modal-container, .n-message-container, .n-notification-container",
+                "script, style, link, .titlebar-area--floating, .v-binder-follower-container, .n-modal-container, .n-message-container, .n-notification-container",
               )
             )
               continue;
