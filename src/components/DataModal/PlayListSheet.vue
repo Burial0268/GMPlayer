@@ -56,6 +56,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
+import { useSheetDrag } from "@/composables/useSheetDrag";
 
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 
@@ -87,10 +88,6 @@ const sheetY = useTransform(() => (1 - clamp01(progress.get())) * sheetTravel())
 const scrimOpacity = useTransform(() => clamp01(progress.get()));
 const sheetStyle = computed<MotionStyleRecord>(() => ({ y: sheetY }));
 const scrimStyle = computed<MotionStyleRecord>(() => ({ opacity: scrimOpacity }));
-
-const DRAG_THRESHOLD_PX = 8;
-const DISMISS_PROGRESS = 0.65;
-const DISMISS_VELOCITY = 0.6;
 
 const stopSettle = () => {
   settleGeneration++;
@@ -137,8 +134,7 @@ const openSheet = () => {
 
 const closeSheet = () => {
   if (!mounted.value) return;
-  touchState = null;
-  suppressGripClick = false;
+  drag.reset();
   stopSettle();
   if (hasFloatingQueue()) {
     suspended.value = true;
@@ -170,113 +166,25 @@ const requestClose = () => {
   else closeSheet();
 };
 
-type SheetTouch = {
-  x: number;
-  y: number;
-  dragging: boolean;
-  fromGrip: boolean;
-  scrollTop: number;
-  progress: number;
-};
-
-let touchState: SheetTouch | null = null;
-let suppressGripClick = false;
-
-/** 手指落点所在的滚动容器已经滚了多远；抓手不在列表里，closest 自然返回 null。 */
-const scrollTopAt = (target: EventTarget | null) => {
-  if (!(target instanceof Element)) return 0;
-  const scroller = target.closest(".v-vl, .queue-scroll");
-  return scroller instanceof HTMLElement ? scroller.scrollTop : 0;
-};
-
-const handleTouchStart = (event: TouchEvent) => {
-  const touch = event.changedTouches?.[0];
-  if (!touch) return;
-  // 每一次新手势都从「不吞点击」重新开始：拖拽结束后若把标记留着，下一次真正的
-  // 轻点就会被白白吃掉一次。
-  suppressGripClick = false;
-  touchState = {
-    x: touch.clientX,
-    y: touch.clientY,
-    dragging: false,
-    fromGrip: event.target instanceof Element && Boolean(event.target.closest(".sheet-grip")),
-    scrollTop: scrollTopAt(event.target),
-    progress: 0,
-  };
-};
-
-const handleTouchMove = (event: TouchEvent) => {
-  const start = touchState;
-  const touch = event.changedTouches?.[0];
-  if (!start || !touch) return;
-
-  const deltaX = touch.clientX - start.x;
-  const deltaY = touch.clientY - start.y;
-  if (!start.dragging) {
-    if (Math.abs(deltaY) < DRAG_THRESHOLD_PX) return;
-    const vertical = Math.abs(deltaY) > Math.abs(deltaX) * 1.15;
-    // 只有「列表已经在顶部」或「手指落在抓手上」时才把下拉解释为关闭手势，否则把
-    // 手势还给列表自己滚 —— 和 MobilePlayerLayout 队列页的判据一致。
-    if (!vertical || deltaY <= 0 || (!start.fromGrip && start.scrollTop > 4)) {
-      touchState = null;
-      return;
-    }
-    start.dragging = true;
-    suppressGripClick = start.fromGrip;
-    // A moving sheet is grabbed where it is, with velocity now owned by the finger.
-    start.progress = clamp01(progress.get());
-    stopSettle();
-    progress.jump(start.progress);
-  }
-
-  // 拖拽期间接管手势，阻止列表同时滚动（touchmove 不能加 .passive，否则拦不住）
-  if (event.cancelable) event.preventDefault();
-  progress.set(clamp01(start.progress - deltaY / sheetTravel()));
-};
-
-const handleTouchEnd = () => {
-  const start = touchState;
-  touchState = null;
-  if (!start?.dragging) return;
-  const velocity = progress.getVelocity();
-  // 甩动优先于位置：慢慢拖到一半再松手应该弹回，快速下滑一点点就该关。
-  const dismiss =
-    velocity < -DISMISS_VELOCITY
-      ? true
-      : velocity > DISMISS_VELOCITY
-        ? false
-        : progress.get() < DISMISS_PROGRESS;
-  if (dismiss) {
-    requestClose();
-    return;
-  }
+const settleOpen = () => {
   if (prefersReducedMotion()) progress.set(1);
   else settleAnimation = animate(progress, 1, layerMotion.settle);
 };
 
-const handleTouchCancel = () => {
-  const dragging = touchState?.dragging;
-  touchState = null;
-  suppressGripClick = false;
-  if (!dragging) return;
-  stopSettle();
-  if (prefersReducedMotion()) progress.set(1);
-  else settleAnimation = animate(progress, 1, layerMotion.settle);
-};
-
-const handleGripClick = () => {
-  // 拖拽时 preventDefault 过，多数引擎不会再合成 click；这一层是兜底，
-  // 免得「从抓手拖一半又弹回」顺带被判成一次关闭。
-  if (suppressGripClick) {
-    suppressGripClick = false;
-    return;
-  }
-  requestClose();
-};
+const drag = useSheetDrag({
+  progress,
+  travel: sheetTravel,
+  stop: stopSettle,
+  settleOpen,
+  dismiss: requestClose,
+  scrollers: ".v-vl, .queue-scroll",
+  grip: ".sheet-grip",
+});
+const { handleTouchStart, handleTouchMove, handleTouchEnd, handleTouchCancel, handleGripClick } =
+  drag;
 
 useMotionInterruption(() => {
-  touchState = null;
-  suppressGripClick = false;
+  drag.reset();
   stopSettle();
   if (!mounted.value) return;
   measureSheet();

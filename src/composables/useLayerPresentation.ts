@@ -130,7 +130,7 @@ export function useLayerPresentation() {
   const nativeModal = () =>
     [
       ...document.querySelectorAll<HTMLElement>(
-        ".n-modal-container .n-modal, .n-dialog, .n-drawer, .n-image-preview-container",
+        ".n-modal-container .n-modal, .n-dialog, .n-drawer, .n-image-preview-container, .action-sheet:not(.closing)",
       ),
     ].some((element) => element.getClientRects().length && !element.closest("[inert]"));
 

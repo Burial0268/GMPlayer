@@ -5,7 +5,7 @@
     :style="{
       '--mobile-lyric-controls-height': `${lyricControlsHeight}px`,
       '--pager-shift': pagerShiftCss,
-      '--queue-shift': queueShiftCss,
+      '--queue-offset': queueOffsetCss,
     }"
   >
     <div class="mobile-player-page">
@@ -77,7 +77,7 @@
                         : music.changeLikeList(music.getPlaySongData.id, true))
                     "
                   />
-                  <n-icon size="24" :component="MoreVertRound" @click.stop="menuOpen = true" />
+                  <n-icon size="24" :component="MoreVertRound" @click.stop="$emit('openMenu')" />
                 </div>
               </Motion>
             </div>
@@ -171,7 +171,7 @@
                           : music.changeLikeList(music.getPlaySongData.id, true))
                       "
                     />
-                    <n-icon size="24" :component="MoreVertRound" @click.stop="menuOpen = true" />
+                    <n-icon size="24" :component="MoreVertRound" @click.stop="$emit('openMenu')" />
                   </div>
                 </div>
                 <div
@@ -271,8 +271,6 @@
         </Motion>
       </div>
     </div>
-
-    <MobilePlayerMenu v-model:show="menuOpen" @openPage="$emit('openPage', $event)" />
 
     <!-- 移动端待播清单 — 与主内容同级的分页：共用背景，由 pager 平移切换 -->
     <div
@@ -395,7 +393,6 @@ import {
 } from "@vicons/material";
 import { NVirtualList } from "naive-ui";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import type { RouteLocationRaw } from "vue-router";
 import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
@@ -409,7 +406,6 @@ import BouncingSlider from "../BouncingSlider.vue";
 import MobileControls from "./MobileControls.vue";
 import MobileCoverFrame from "./MobileCoverFrame.vue";
 import LyricOffsetControl from "./LyricOffsetControl.vue";
-import MobilePlayerMenu from "./MobilePlayerMenu.vue";
 import IconLyricsOff from "../icons/IconLyricsOff.vue";
 import IconLyricsOn from "../icons/IconLyricsOn.vue";
 import IconPlaylistOff from "../icons/IconPlaylistOff.vue";
@@ -471,7 +467,7 @@ const emit = defineEmits<{
   lrcAllLeave: [];
   lrcTextClick: [time: number];
   toComment: [];
-  openPage: [to: RouteLocationRaw];
+  openMenu: [];
   closeDragStart: [];
   closeDragMove: [distance: number];
   closeDragEnd: [];
@@ -509,7 +505,6 @@ const queueTouch = ref<{
 } | null>(null);
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
-const menuOpen = ref(false);
 const playbackControlsRef = ref<HTMLElement | null>(null);
 const lyricControlsHeight = ref(0);
 const lyricControlsVisible = ref(false);
@@ -606,15 +601,15 @@ const measurePagerHeight = () => {
 };
 const shiftOf = (px: number) => (px ? `translateY(${px}px)` : "none");
 const playerShift = useTransform(() => shiftOf(-clamp01(pagerProgress.get()) * pagerHeight()));
-const queueShift = useTransform(() => shiftOf((1 - clamp01(pagerProgress.get())) * pagerHeight()));
+const queueOffset = useTransform(() => `${(1 - clamp01(pagerProgress.get())) * pagerHeight()}px`);
 const pagerShiftCss = ref(String(playerShift.get()));
-const queueShiftCss = ref(String(queueShift.get()));
+const queueOffsetCss = ref(String(queueOffset.get()));
 const publishPagerShift = () => {
   pagerShiftCss.value = String(playerShift.get());
-  queueShiftCss.value = String(queueShift.get());
+  queueOffsetCss.value = String(queueOffset.get());
 };
 const stopPlayerShift = playerShift.on("change", publishPagerShift);
-const stopQueueShift = queueShift.on("change", publishPagerShift);
+const stopQueueOffset = queueOffset.on("change", publishPagerShift);
 
 const motionOffset = (value: MotionStyleRecord[string]) => {
   if (typeof value === "number") return value;
@@ -919,7 +914,7 @@ onBeforeUnmount(() => {
   removeCancelledNavigation();
   stopPagerAnimation();
   stopPlayerShift();
-  stopQueueShift();
+  stopQueueOffset();
   locateHandle?.cancel();
 });
 
@@ -1061,8 +1056,9 @@ defineExpose({
 }
 
 // 与主内容同级的分页：共用大播放器背景，无独立底色/毛玻璃。
-// 布局本身不平移（overflow 只负责裁切）。位移和 plus-lighter 都在内容上，
-// vueuc 行内的 translateY 才不会把混合关在列表里。
+// 布局本身不平移（overflow 只负责裁切）。位移用 `top` 而不是 transform：动画中的
+// transform 会把内容提成合成层，行里的 plus-lighter 就被关进空组，落定才重新加亮。
+// 行和图标各自混合，不能像主内容那样把位移挂到每个混合元素上（行底色会跟着关进去）。
 .mobile-queue-layout {
   display: grid;
   grid-template-rows: [thumb] calc(var(--app-safe-area-top, 0px) + 30px) [main-view] 1fr;
@@ -1071,7 +1067,8 @@ defineExpose({
   overflow: hidden;
 
   > .mobile-thumb {
-    transform: var(--queue-shift, none);
+    position: relative;
+    top: var(--queue-offset, 0px);
     pointer-events: auto;
   }
 }
@@ -1083,7 +1080,8 @@ defineExpose({
   min-height: 0;
   overflow: hidden;
   color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  transform: var(--queue-shift, none);
+  position: relative;
+  top: var(--queue-offset, 0px);
   pointer-events: auto;
   // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
   :is(

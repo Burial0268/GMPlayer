@@ -98,7 +98,7 @@
               @lrcAllLeave="lrcAllLeave"
               @lrcTextClick="lrcTextClick"
               @toComment="toComment(retractMobilePlayer)"
-              @openPage="openPageFromMobilePlayer"
+              @openMenu="mobileMenuOpen = true"
             />
 
             <Spectrum
@@ -173,6 +173,11 @@
       <!-- 首次点开设置才拉取：它经 SettingsWorkspace 拖进整个 n-color-picker 分包，
            而它只是个模态框，不参与大播放器的开合动画。 -->
       <component :is="LyricSettingComponent" v-if="LyricSettingComponent" ref="LyricSettingRef" />
+      <MobilePlayerMenu
+        v-if="isMobile"
+        v-model:show="mobileMenuOpen"
+        @openPage="openPageFromMobilePlayer"
+      />
     </div>
   </Teleport>
 </template>
@@ -211,6 +216,7 @@ import { layerMotion } from "@/utils/navigation/motion";
 import BigPlayerBackground from "./BigPlayerBackground.vue";
 import BigPlayerTopBar from "./BigPlayerTopBar.vue";
 import MobilePlayerLayout from "./MobilePlayerLayout.vue";
+import MobilePlayerMenu from "./MobilePlayerMenu.vue";
 import DesktopPlayerLayout from "./DesktopPlayerLayout.vue";
 import DesktopToggleControls from "./DesktopToggleControls.vue";
 import LyricShare from "../LyricShare.vue";
@@ -1472,6 +1478,14 @@ const retractMobilePlayer = async () => {
   return true;
 };
 
+const mobileMenuOpen = ref(false);
+// The menu belongs to this player session: it must not reopen over the next one.
+watch(
+  () => music.showBigPlayer,
+  (open) => {
+    if (!open) mobileMenuOpen.value = false;
+  },
+);
 const openPageFromMobilePlayer = async (to: RouteLocationRaw) => {
   if (await retractMobilePlayer()) navigation.openPage(to);
 };
