@@ -47,7 +47,10 @@
       >
         <template #icon>
           <Transition name="fade" mode="out-in">
-            <n-icon size="64" :component="music.getPlayState ? IconPause : IconPlay" />
+            <n-icon
+              size="clamp(40px, 11vw, 46px)"
+              :component="music.getPlayState ? IconPause : IconPlay"
+            />
           </Transition>
         </template>
       </n-button>
