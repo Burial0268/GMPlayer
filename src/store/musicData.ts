@@ -1589,6 +1589,24 @@ const useMusicDataStore = defineStore("musicData", {
       $message.success(value.name + " " + getLanguageData("addSongToNext"));
     },
 
+    /**
+     * 拖动排序：把 `from` 处的歌移到 `to`。只在「接下来播放」里移动（两端都在正在播的
+     * 这首之后），所以游标和正在发声的歌都不动。随机模式（Tauri）下排列归后端，一次
+     * 手动移动会被下一次 NativeQueueOrderChanged 还原，界面因此不给把手（PlayerQueueList）。
+     */
+    moveSong(from: number, to: number) {
+      const list = this.persistData.playlists;
+      const current = this.persistData.playSongIndex;
+      const inUpcoming = (index: number) => index > current && index < list.length;
+      if (from === to || !inUpcoming(from) || !inUpcoming(to)) return false;
+      const next = list.slice();
+      next.splice(to, 0, next.splice(from, 1)[0]);
+      if (!this.applyQueueOrder(next)) return false;
+      this.afterQueueReordered();
+      publishNativeManifest();
+      return true;
+    },
+
     removeSong(index: number) {
       if (index < 0 || index >= this.persistData.playlists.length) return false;
       cancelNativeQueuePrefill();

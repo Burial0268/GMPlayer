@@ -212,6 +212,7 @@
                     >
                       <component :is="activeMobileLayer === 2 ? IconLyricsOn : IconLyricsOff" />
                     </button>
+                    <OutputDeviceButton v-if="nativeOutput" />
                     <button
                       type="button"
                       :aria-label="$t('general.name.playlists')"
@@ -291,81 +292,13 @@
       </div>
       <div class="mobile-queue-content">
         <div class="mobile-queue-panel">
-          <div class="mobile-queue-header">
-            <div class="queue-title">
-              <n-icon size="22" :component="QueueMusicRound" />
-              <div class="queue-title-text">
-                <span class="title">{{ $t("general.name.playlists") }}</span>
-                <span class="count" v-if="music.getPlaylists.length">
-                  {{ $t("general.name.songSize", { size: music.getPlaylists.length }) }}
-                </span>
-              </div>
-            </div>
-            <button
-              v-if="music.getPlaylists.length"
-              class="queue-clear"
-              type="button"
-              @click="music.clearPlaylists()"
-            >
-              {{ $t("player.queue.clear") }}
-            </button>
-          </div>
-
-          <n-virtual-list
+          <PlayerQueueList
             v-if="music.getPlaylists.length"
             ref="queueListRef"
             class="mobile-queue-list"
-            :items="queueRows"
-            :item-size="56"
-            :item-resizable="true"
-            key-field="key"
-            :show-scrollbar="false"
+            row-prefix="mobile-queue"
             @scroll="handleQueueScroll"
-          >
-            <template #default="{ item: row }">
-              <div
-                :id="`mobile-queue-${row.index}`"
-                :class="[
-                  'queue-song',
-                  {
-                    'is-current': row.index === music.persistData.playSongIndex,
-                    'row-odd': row.index % 2 === 0,
-                    'row-even': row.index % 2 === 1,
-                    'row-first': row.index === 0,
-                    'row-last': row.index === music.getPlaylists.length - 1,
-                  },
-                ]"
-                role="button"
-                tabindex="0"
-                @click="changeQueueIndex(row.index)"
-                @keydown.enter.prevent="changeQueueIndex(row.index)"
-              >
-                <div class="queue-index">
-                  <span v-if="row.index !== music.persistData.playSongIndex">
-                    {{ row.index + 1 }}
-                  </span>
-                  <div v-else class="playing-bars">
-                    <span class="line"></span>
-                    <span class="line"></span>
-                    <span class="line"></span>
-                  </div>
-                </div>
-                <img class="queue-cover" :src="getQueueCover(row.item)" alt="cover" />
-                <div class="queue-info">
-                  <div class="queue-name text-hidden">{{ row.item.name }}</div>
-                  <div class="queue-artists text-hidden">{{ formatArtists(row.item.artist) }}</div>
-                </div>
-                <div class="queue-duration" v-if="row.item.time">{{ row.item.time }}</div>
-                <button
-                  class="queue-remove"
-                  type="button"
-                  @click.stop="music.removeSong(row.index)"
-                >
-                  <n-icon size="20" :component="DeleteRound" />
-                </button>
-              </div>
-            </template>
-          </n-virtual-list>
+          />
           <div class="queue-empty" v-else>
             {{ $t("other.playlistEmpty") }}
           </div>
@@ -387,21 +320,11 @@
 </template>
 
 <script setup lang="ts">
-import {
-  DeleteRound,
-  MoreVertRound,
-  MyLocationRound,
-  QueueMusicRound,
-  StarBorderRound,
-  StarRound,
-} from "@vicons/material";
-import { NVirtualList } from "naive-ui";
+import { MoreVertRound, MyLocationRound, StarBorderRound, StarRound } from "@vicons/material";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
-import { coverUrl } from "@/utils/coverUrl";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
-import { locateVirtualRow, type LocateHandle, type VirtualListInst } from "@/utils/locateRow";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
@@ -414,19 +337,15 @@ import IconLyricsOff from "../icons/IconLyricsOff.vue";
 import IconLyricsOn from "../icons/IconLyricsOn.vue";
 import IconPlaylistOff from "../icons/IconPlaylistOff.vue";
 import IconLossless from "../icons/IconLossless.vue";
+import OutputDeviceButton from "./OutputDeviceButton.vue";
+import PlayerQueueList from "./PlayerQueueList.vue";
+import { isTauri } from "@/utils/tauri/core/runtime";
 import { useQualityText } from "@/composables/useQualityText";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 declare const $player: any;
 
 type Artist = { name: string };
-type QueueSong = {
-  id: number;
-  name: string;
-  artist?: Artist[];
-  album?: { picUrl?: string };
-  time?: string;
-};
 type StaticStyleRecord = Record<string, string | number | undefined>;
 type MotionStyleRecord = Record<string, string | number | MotionValue | undefined>;
 // Typography and slot of a real text (the song name, the artists) in the active layer, which its
@@ -491,8 +410,7 @@ const nameTextRef = ref<HTMLElement | null>(null);
 // The real title blocks of each layer: their natural slots are what the floating copy lands on.
 const bigSongInfoRef = ref<HTMLElement | null>(null);
 const smallSongInfoRef = ref<HTMLElement | null>(null);
-const queueListRef = ref<VirtualListInst | null>(null);
-let locateHandle: LocateHandle | null = null;
+const queueListRef = ref<InstanceType<typeof PlayerQueueList> | null>(null);
 const queueScrollTop = ref(0);
 const suppressCoverClick = ref(false);
 const playerTouch = ref<{
@@ -512,6 +430,8 @@ const queueTouch = ref<{
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
 const qualityText = useQualityText();
+// The output menu drives the native backend; the web player has no device list to offer.
+const nativeOutput = isTauri();
 const playbackControlsRef = ref<HTMLElement | null>(null);
 const lyricControlsHeight = ref(0);
 const lyricControlsVisible = ref(false);
@@ -679,14 +599,6 @@ const settlePagerFromGesture = () => {
   settlePager(pagerProgress.get() > (props.queueOpen ? 0.65 : 0.35));
 };
 
-const queueRows = computed(() =>
-  music.getPlaylists.map((item: QueueSong, index: number) => ({
-    item,
-    index,
-    key: `${item.id}-${index}`,
-  })),
-);
-
 const shouldIgnorePlayerSwipe = (target: EventTarget | null) => {
   if (!(target instanceof Element)) return false;
   return Boolean(
@@ -789,7 +701,9 @@ const resetQueueTouch = () => {
 };
 
 const handleQueueTouchStart = (event: TouchEvent) => {
-  if (event.target instanceof HTMLElement && event.target.closest("button")) return;
+  // `Element`, not `HTMLElement`: a touch on a button's icon targets the SVG path, and missing it
+  // let a drag on the queue's reorder handle pull the whole page down with it.
+  if (event.target instanceof Element && event.target.closest("button")) return;
   const touch = event.changedTouches?.[0];
   if (!touch) return;
   const inList = event.target instanceof Element && event.target.closest(".mobile-queue-list");
@@ -842,28 +756,7 @@ const handleQueueTouchCancel = () => {
   resetQueueTouch();
 };
 
-const formatArtists = (artists: Artist[] = []) =>
-  artists
-    .filter(Boolean)
-    .map((item) => item.name)
-    .join(" / ");
-
-const getQueueCover = (item: QueueSong) => coverUrl(item.album?.picUrl, 96);
-
-const scrollCurrentQueueSong = () => {
-  const index = music.persistData.playSongIndex;
-  if (index < 0 || index >= music.getPlaylists.length) return;
-  locateHandle?.cancel();
-  locateHandle = locateVirtualRow(queueListRef.value, index, {
-    rowSelector: `#mobile-queue-${index}`,
-    align: "start",
-    instant: prefersReducedMotion(),
-  });
-};
-
-const changeQueueIndex = (index: number) => {
-  music.selectPlaySongByIndex(index);
-};
+const scrollCurrentQueueSong = () => queueListRef.value?.scrollToCurrent();
 
 watch(
   () => props.queueOpen,
@@ -922,7 +815,6 @@ onBeforeUnmount(() => {
   stopPagerAnimation();
   stopPlayerShift();
   stopQueueOffset();
-  locateHandle?.cancel();
 });
 
 defineExpose({
@@ -1091,15 +983,8 @@ defineExpose({
   top: var(--queue-offset, 0px);
   pointer-events: auto;
   // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
-  :is(
-    .mobile-queue-header,
-    .queue-index,
-    .queue-info,
-    .queue-duration,
-    .queue-remove,
-    .queue-locate,
-    .queue-empty
-  ),
+  // The rows blend themselves (PlayerQueueList).
+  :is(.queue-locate, .queue-empty),
   :deep(.n-icon),
   :deep(svg),
   :deep(path) {
@@ -1609,7 +1494,9 @@ defineExpose({
     grid-column: 4;
   }
 
-  button {
+  // The output button renders inside n-popselect, out of reach of the scoped attribute.
+  button,
+  :deep(.output-device-button) {
     appearance: none;
     display: flex;
     align-items: center;
@@ -1634,11 +1521,14 @@ defineExpose({
     &:active {
       transform: scale(0.92);
     }
+  }
 
-    :deep(svg) {
-      width: 34px;
-      height: 34px;
-    }
+  // Flat, not nested in the list above: a `:deep()` nested inside `:deep()` compiles to an
+  // invalid selector, which would drop the whole rule.
+  button :deep(svg),
+  :deep(.output-device-button svg) {
+    width: 34px;
+    height: 34px;
   }
 }
 
@@ -1646,71 +1536,8 @@ defineExpose({
   height: 100%;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   padding: 14px 16px calc(var(--app-safe-area-bottom, 0px) + 16px);
-}
-
-.mobile-queue-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-  margin-bottom: 8px;
-}
-
-.queue-clear {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-sm);
-  color: inherit;
-  background: rgba(255, 255, 255, 0.06);
-  font: inherit;
-  font-size: 0.76rem;
-  cursor: pointer;
-  opacity: 0.72;
-  transition:
-    opacity 0.16s ease,
-    background-color 0.16s ease,
-    border-color 0.16s ease;
-
-  &:active,
-  &:focus-visible {
-    opacity: 1;
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.2);
-  }
-}
-
-.queue-title {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-
-  > .n-icon {
-    flex-shrink: 0;
-    opacity: 0.9;
-  }
-}
-
-.queue-title-text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-
-  .title {
-    font-size: 1.05rem;
-    font-weight: 700;
-    line-height: 1.2;
-  }
-
-  .count {
-    margin-top: 2px;
-    font-size: 0.78rem;
-    opacity: 0.62;
-  }
 }
 
 .mobile-queue-list {
@@ -1728,127 +1555,6 @@ defineExpose({
   :deep(.v-vl::-webkit-scrollbar) {
     width: 0;
     height: 0;
-  }
-}
-
-// 与 QueuePanel / DesktopQueuePanel 一致的斑马纹连续列表（封面自适应色）
-.queue-song {
-  min-height: 56px;
-  display: grid;
-  grid-template-columns: 26px 42px minmax(0, 1fr) auto 32px;
-  align-items: center;
-  gap: 10px;
-  border-radius: 0;
-  padding: 7px 8px;
-  box-sizing: border-box;
-  transition: background-color var(--duration-150) var(--ease-out);
-
-  &.row-first {
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
-  }
-
-  &.row-last {
-    border-radius: 0 0 var(--radius-md) var(--radius-md);
-  }
-
-  &.row-odd {
-    background: color-mix(in srgb, var(--main-cover-color) 5%, transparent);
-  }
-
-  &.row-even {
-    background: color-mix(in srgb, var(--main-cover-color) 9%, transparent);
-  }
-
-  &:active {
-    background: color-mix(in srgb, var(--main-cover-color) 15%, transparent);
-  }
-
-  &.is-current {
-    background: color-mix(in srgb, var(--main-cover-color) 22%, transparent);
-  }
-}
-
-.queue-index {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.78rem;
-  opacity: 0.66;
-  font-variant-numeric: tabular-nums;
-}
-
-.playing-bars {
-  height: 18px;
-  width: 18px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 3px;
-
-  .line {
-    width: 3px;
-    min-height: 7px;
-    border-radius: 3px;
-    background: var(--main-cover-mix-color, rgb(239, 239, 239));
-    animation: queue-line-move 0.9s ease-in-out infinite;
-
-    &:nth-child(2) {
-      animation-delay: 0.12s;
-    }
-
-    &:nth-child(3) {
-      animation-delay: 0.24s;
-    }
-  }
-}
-
-.queue-cover {
-  width: 42px;
-  height: 42px;
-  border-radius: var(--radius-sm);
-  object-fit: cover;
-}
-
-.queue-info {
-  min-width: 0;
-
-  .queue-name {
-    font-weight: 650;
-    font-size: 0.88rem;
-    line-height: 1.25;
-  }
-
-  .queue-artists {
-    margin-top: 2px;
-    font-size: 0.75rem;
-    opacity: 0.62;
-  }
-}
-
-.queue-duration {
-  font-size: 0.76rem;
-  opacity: 0.54;
-  font-variant-numeric: tabular-nums;
-}
-
-.queue-remove {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0.56;
-  cursor: pointer;
-
-  &:active {
-    opacity: 1;
-    background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
   }
 }
 
@@ -1890,33 +1596,6 @@ defineExpose({
   &:active {
     background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
     transform: scale(0.985);
-  }
-}
-
-@media (max-width: 380px) {
-  .queue-song {
-    grid-template-columns: 24px 40px minmax(0, 1fr) 32px;
-    gap: 8px;
-  }
-
-  .queue-cover {
-    width: 40px;
-    height: 40px;
-  }
-
-  .queue-duration {
-    display: none;
-  }
-}
-
-@keyframes queue-line-move {
-  0%,
-  100% {
-    height: 8px;
-  }
-
-  50% {
-    height: 18px;
   }
 }
 
