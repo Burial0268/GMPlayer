@@ -6,6 +6,7 @@
       role="button"
       tabindex="0"
       :aria-label="$t('navigation.search')"
+      @pointerdown="getSearchHotData"
       @click="openSearchPanel"
       @keydown.enter="openSearchPanel"
       @keydown.space.prevent="openSearchPanel"
@@ -377,6 +378,10 @@ const delHistory = () =>
 // Mobile: the layer fades over the page while its field grows out of the Nav button, like a
 // native search bar. Clipping the whole layer instead wiped a hard edge across the page and,
 // on close, collapsed onto the layer's own white field rather than the button it came from.
+// The visible list's sections and first rows, which cascade in after the field.
+const CASCADE_ROWS =
+  ":scope > .list .suggest-tip, :scope > .list .history-list, :scope > .list .hot-list .list-title, :scope > .list .hot-item, :scope > .list .suggest-item";
+const CASCADE_LIMIT = 10;
 const motionParts = () => {
   const root = searchRootRef.value;
   return {
@@ -385,7 +390,26 @@ const motionParts = () => {
     rest: root
       ? [...root.querySelectorAll(":scope > .search-toolbar .search-cancel-slot, :scope > .list")]
       : [],
+    rows: root
+      ? [...root.querySelectorAll(CASCADE_ROWS)]
+          .filter((row) => row.getClientRects().length)
+          .slice(0, CASCADE_LIMIT)
+      : [],
   };
+};
+const cascade = (rows, delay) => {
+  const duration = motionDuration(layerMotion.search.enter);
+  return rows.map((row, index) =>
+    animateMini(
+      row,
+      { opacity: [0, 1], transform: ["translateY(12px)", "translateY(0px)"] },
+      {
+        duration: duration * 0.75,
+        delay: delay + index * motionDuration(layerMotion.search.stagger),
+        ease: layerMotion.search.ease,
+      },
+    ),
+  );
 };
 const finishMotion = () => {
   animationGeneration++;
@@ -393,8 +417,8 @@ const finishMotion = () => {
   animation = undefined;
   companions.forEach((companion) => companion.cancel());
   companions = [];
-  const { root, field, rest } = motionParts();
-  for (const element of [root, field, ...rest]) {
+  const { root, field, rest, rows } = motionParts();
+  for (const element of [root, field, ...rest, ...rows]) {
     element?.style.removeProperty("opacity");
     element?.style.removeProperty("clip-path");
     element?.style.removeProperty("transform");
@@ -427,7 +451,7 @@ watch(
       return;
     }
     await nextTick();
-    const { root, field, rest } = motionParts();
+    const { root, field, rest, rows } = motionParts();
     if (generation !== animationGeneration || !root || !field) return;
     const anchor = searchAnchorRef.value?.querySelector(".search-trigger")?.getBoundingClientRect();
     const box = field.getBoundingClientRect();
@@ -437,7 +461,10 @@ watch(
       : "inset(0px 0px 0px 100% round 999px)";
     const full = "inset(0px 0px 0px 0px round 999px)";
     const duration = motionDuration(show ? layerMotion.search.enter : layerMotion.search.exit);
-    const options = { duration, ease: layerMotion.search.ease };
+    const options = {
+      duration,
+      ease: show ? layerMotion.search.ease : layerMotion.search.exitEase,
+    };
     const opacity = [from?.opacity ?? (show ? 0 : 1), show ? 1 : 0];
     animation = animateMini(root, { opacity }, options);
     companions.push(
@@ -447,20 +474,35 @@ watch(
         options,
       ),
     );
-    // Content follows the field instead of racing it: it settles in the second half.
-    if (show)
+    // Content follows the field instead of racing it: the panel fades in behind it, then its
+    // rows cascade, so the eye lands on the field first and reads down from there.
+    if (show) {
       for (const element of rest)
         companions.push(
           animateMini(
             element,
-            { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
-            { duration: duration * 0.7, delay: duration * 0.3, ease: layerMotion.ease },
+            { opacity: [0, 1] },
+            { duration: duration * 0.5, delay: duration * 0.15 },
           ),
         );
-    await animation;
+      companions.push(...cascade(rows, duration * 0.2));
+    }
+    // Clean up only once the last row has landed, not when the layer's own fade ends.
+    await Promise.allSettled([animation, ...companions]);
     if (generation === animationGeneration) finishMotion();
   },
   { immediate: true },
+);
+// The first open usually beats the hot list over the network; when it lands while the layer is
+// up, its rows cascade in like the rest instead of replacing the placeholder in one frame.
+watch(
+  () => searchData.hot.length > 0,
+  async (loaded) => {
+    if (!loaded || !isMobile.value || !presented.value) return;
+    await nextTick();
+    const rows = motionParts().rows.filter((row) => row.closest(".hot-list"));
+    cascade(rows, 0);
+  },
 );
 watch(
   active,
