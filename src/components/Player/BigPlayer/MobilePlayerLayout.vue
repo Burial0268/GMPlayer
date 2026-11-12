@@ -237,6 +237,8 @@
           :layoutEnabled="false"
           :layoutId="null"
           :borderRadius="12"
+          :shrunk="coverShrunk"
+          :dimmed="coverShrunk && music.getLoadingState"
           interactive
           @click="handleCoverClick"
           @touchstart.passive="handlePlayerTouchStart"
@@ -551,6 +553,15 @@ const handleUiMotionStyle = computed<MotionStyleRecord>(() => ({
   ...props.handleMotionStyle,
   transform: playerShift,
 }));
+// Layer 1 only, where the artwork is the page; and not while it travels to or from the mini bar,
+// where a shrunk frame would land off its slot.
+const coverShrunk = computed(
+  () =>
+    activeMobileLayer.value === 1 &&
+    !props.textTravelling &&
+    (!music.getPlayState || music.getLoadingState),
+);
+
 const coverFrameStyle = computed<MotionStyleRecord>(() => ({
   ...props.albumLayerStyle,
   transform: playerShift,
