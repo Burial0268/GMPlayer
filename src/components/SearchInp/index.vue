@@ -298,6 +298,7 @@ const searchData = reactive({ hot: [], suggest: {} });
 let suggestTimer;
 let suggestGeneration = 0;
 let animation;
+let companions = [];
 let animationGeneration = 0;
 let suspended = false;
 
@@ -373,45 +374,89 @@ const delHistory = () =>
     },
   });
 
+// Mobile: the layer fades over the page while its field grows out of the Nav button, like a
+// native search bar. Clipping the whole layer instead wiped a hard edge across the page and,
+// on close, collapsed onto the layer's own white field rather than the button it came from.
+const motionParts = () => {
+  const root = searchRootRef.value;
+  return {
+    root,
+    field: root?.querySelector(".search-toolbar .input"),
+    rest: root
+      ? [...root.querySelectorAll(":scope > .search-toolbar .search-cancel-slot, :scope > .list")]
+      : [],
+  };
+};
 const finishMotion = () => {
   animationGeneration++;
   animation?.cancel();
   animation = undefined;
-  searchRootRef.value?.style.removeProperty("clip-path");
+  companions.forEach((companion) => companion.cancel());
+  companions = [];
+  const { root, field, rest } = motionParts();
+  for (const element of [root, field, ...rest]) {
+    element?.style.removeProperty("opacity");
+    element?.style.removeProperty("clip-path");
+    element?.style.removeProperty("transform");
+  }
   rendered.value = presented.value;
 };
 watch(
   presented,
   async (show) => {
     const generation = ++animationGeneration;
-    const interruptedClip =
-      animation && searchRootRef.value ? getComputedStyle(searchRootRef.value).clipPath : undefined;
+    // Reversal starts from where the running motion is; the clip is the field's own.
+    const parts = motionParts();
+    const from =
+      animation && parts.root
+        ? {
+            opacity: Number(getComputedStyle(parts.root).opacity),
+            clip: parts.field && getComputedStyle(parts.field).clipPath,
+          }
+        : undefined;
     animation?.cancel();
     animation = undefined;
-    if (interruptedClip) searchRootRef.value.style.clipPath = interruptedClip;
+    companions.forEach((companion) => companion.cancel());
+    companions = [];
     const resume = suspended && show;
     suspended = !show && navigation.hasLayer("search");
     if (show) rendered.value = true;
     if (!isMobile.value || resume || suspended) {
+      finishMotion();
       rendered.value = show;
-      searchRootRef.value?.style.removeProperty("clip-path");
       return;
     }
     await nextTick();
-    if (generation !== animationGeneration || !searchRootRef.value) return;
-    const anchor = searchAnchorRef.value?.getBoundingClientRect();
+    const { root, field, rest } = motionParts();
+    if (generation !== animationGeneration || !root || !field) return;
+    const anchor = searchAnchorRef.value?.querySelector(".search-trigger")?.getBoundingClientRect();
+    const box = field.getBoundingClientRect();
+    const inset = (value) => `${Math.max(0, value)}px`;
     const collapsed = anchor
-      ? `inset(${anchor.top}px calc(100% - ${anchor.right}px) calc(100% - ${anchor.bottom}px) ${anchor.left}px round 22px)`
-      : "inset(0px 0px 100% 0px round 22px)";
-    const full = "inset(0px 0px 0px 0px round 0px)";
-    animation = animateMini(
-      searchRootRef.value,
-      { clipPath: [interruptedClip ?? (show ? collapsed : full), show ? full : collapsed] },
-      {
-        duration: motionDuration(show ? layerMotion.search.enter : layerMotion.search.exit),
-        ease: layerMotion.search.ease,
-      },
+      ? `inset(${inset(anchor.top - box.top)} ${inset(box.right - anchor.right)} ${inset(box.bottom - anchor.bottom)} ${inset(anchor.left - box.left)} round 999px)`
+      : "inset(0px 0px 0px 100% round 999px)";
+    const full = "inset(0px 0px 0px 0px round 999px)";
+    const duration = motionDuration(show ? layerMotion.search.enter : layerMotion.search.exit);
+    const options = { duration, ease: layerMotion.search.ease };
+    const opacity = [from?.opacity ?? (show ? 0 : 1), show ? 1 : 0];
+    animation = animateMini(root, { opacity }, options);
+    companions.push(
+      animateMini(
+        field,
+        { clipPath: [from?.clip ?? (show ? collapsed : full), show ? full : collapsed] },
+        options,
+      ),
     );
+    // Content follows the field instead of racing it: it settles in the second half.
+    if (show)
+      for (const element of rest)
+        companions.push(
+          animateMini(
+            element,
+            { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
+            { duration: duration * 0.7, delay: duration * 0.3, ease: layerMotion.ease },
+          ),
+        );
     await animation;
     if (generation === animationGeneration) finishMotion();
   },
