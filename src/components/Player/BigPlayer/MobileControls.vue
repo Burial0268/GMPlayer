@@ -113,17 +113,20 @@ const { persistData } = storeToRefs(music);
 /**
  * An imported local file has no Netease comment thread.
  *
- * The button is dimmed rather than removed: this row is `space-evenly`, so
- * dropping one end of it would shift the transport off centre.
+ * The button is dimmed rather than removed: the row is a five-column grid that the
+ * player's bottom bar aligns to, so dropping one end would shift every column.
  */
 const isLocalTrack = computed(() => Boolean(music.getPlaySongData?.local?.uri));
 </script>
 
 <style lang="scss" scoped>
+// Five equal columns rather than `space-evenly`: the buttons differ in width, and equal gaps put
+// their centres off any common rhythm. The bottom bar uses the same columns.
 .mobile-control-buttons {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: center;
-  justify-content: space-evenly;
+  justify-items: center;
   width: 100%;
   mix-blend-mode: plus-lighter;
 

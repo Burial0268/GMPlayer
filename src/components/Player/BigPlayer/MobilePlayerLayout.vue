@@ -193,6 +193,10 @@
                     />
                     <div class="time-display">
                       <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
+                      <span v-if="qualityText" class="quality-badge">
+                        <n-icon :component="IconLossless" />
+                        <span class="quality-label">{{ qualityText }}</span>
+                      </span>
                       <span>-{{ remainingTime }}</span>
                     </div>
                   </div>
@@ -409,6 +413,8 @@ import LyricOffsetControl from "./LyricOffsetControl.vue";
 import IconLyricsOff from "../icons/IconLyricsOff.vue";
 import IconLyricsOn from "../icons/IconLyricsOn.vue";
 import IconPlaylistOff from "../icons/IconPlaylistOff.vue";
+import IconLossless from "../icons/IconLossless.vue";
+import { useQualityText } from "@/composables/useQualityText";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 declare const $player: any;
@@ -505,6 +511,7 @@ const queueTouch = ref<{
 } | null>(null);
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
+const qualityText = useQualityText();
 const playbackControlsRef = ref<HTMLElement | null>(null);
 const lyricControlsHeight = ref(0);
 const lyricControlsVisible = ref(false);
@@ -1542,15 +1549,41 @@ defineExpose({
       mix-blend-mode: plus-lighter;
     }
 
+    // Three columns so the quality badge stays centred whatever width the two times have.
     .time-display {
-      display: flex;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 8px;
       margin-top: 8px;
       font-size: max(1.2vh, 0.7rem);
       font-variant-numeric: tabular-nums;
       opacity: var(--mobile-time-opacity);
       color: var(--main-cover-mix-color, rgb(239, 239, 239));
       mix-blend-mode: plus-lighter;
+
+      > :last-child {
+        grid-column: 3;
+        justify-self: end;
+      }
+    }
+
+    // Same badge as the desktop cover layout (PlayerCover's `.quality-badge`).
+    .quality-badge {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      min-width: 0;
+      padding: 2px 8px;
+      border-radius: var(--radius-xs);
+      background-color: rgba(255, 255, 255, 0.1);
+      white-space: nowrap;
+
+      .quality-label {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
     }
   }
 }
@@ -1560,10 +1593,21 @@ defineExpose({
   will-change: transform, opacity;
 }
 
+// Same five columns as the transport row (MobileControls), so lyrics and queue sit exactly under
+// previous and next.
 .mobile-bottom-bar {
-  display: flex;
-  justify-content: space-around;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  justify-items: center;
   margin-top: 12px;
+
+  > :first-child {
+    grid-column: 2;
+  }
+
+  > :last-child {
+    grid-column: 4;
+  }
 
   button {
     appearance: none;
