@@ -408,6 +408,7 @@ const messages: Record<string, unknown> = {
       like: "Add to favorites",
       unlike: "Remove from favorites",
       more: "More options",
+      lyrics: "Lyrics",
       dislike: "Not interested",
       volume: "Volume",
       progress: "Playback progress",

@@ -103,7 +103,7 @@ export function useLayerPresentation() {
                 // set `inert` — leaving the controls visible but unclickable, so the user cannot
                 // close the app while the player is open. OS window chrome is never trapped by an
                 // in-page modal; keep it live alongside the other global chrome below.
-                "script, style, link, .titlebar-area--floating, .v-binder-follower-container, .n-modal-container, .n-message-container, .n-notification-container",
+                "script, style, link, .titlebar-area--floating, .v-binder-follower-container, .n-modal-container, .n-drawer-container, .n-message-container, .n-notification-container",
               )
             )
               continue;
@@ -130,7 +130,7 @@ export function useLayerPresentation() {
   const nativeModal = () =>
     [
       ...document.querySelectorAll<HTMLElement>(
-        ".n-modal-container .n-modal, .n-dialog, .n-image-preview-container",
+        ".n-modal-container .n-modal, .n-dialog, .n-drawer, .n-image-preview-container",
       ),
     ].some((element) => element.getClientRects().length && !element.closest("[inert]"));
 

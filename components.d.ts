@@ -57,6 +57,7 @@ declare module 'vue' {
     MobileControls: typeof import('./src/components/Player/BigPlayer/MobileControls.vue')['default']
     MobileCoverFrame: typeof import('./src/components/Player/BigPlayer/MobileCoverFrame.vue')['default']
     MobilePlayerLayout: typeof import('./src/components/Player/BigPlayer/MobilePlayerLayout.vue')['default']
+    MobilePlayerMenu: typeof import('./src/components/Player/BigPlayer/MobilePlayerMenu.vue')['default']
     MobileTabBar: typeof import('./src/components/Sidebar/MobileTabBar.vue')['default']
     NA: typeof import('naive-ui')['NA']
     NAlert: typeof import('naive-ui')['NAlert']

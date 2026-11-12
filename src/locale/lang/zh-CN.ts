@@ -409,6 +409,7 @@ const messages: Record<string, unknown> = {
       like: "添加到我喜欢",
       unlike: "从我喜欢中移除",
       more: "更多操作",
+      lyrics: "歌词",
       dislike: "不感兴趣",
       volume: "音量",
       progress: "播放进度",

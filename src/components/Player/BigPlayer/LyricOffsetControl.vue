@@ -23,7 +23,7 @@
     <div
       v-button
       class="offset-btn"
-      @click.stop="adjustOffset(500)"
+      @click.stop="adjustOffset(LYRIC_OFFSET_STEP)"
       :title="t('setting.lyricOffsetAdvance')"
     >
       <n-icon size="18" :component="AddRound" />
@@ -43,7 +43,7 @@
     <div
       v-button
       class="offset-btn"
-      @click.stop="adjustOffset(-500)"
+      @click.stop="adjustOffset(-LYRIC_OFFSET_STEP)"
       :title="t('setting.lyricOffsetDelay')"
     >
       <n-icon size="18" :component="RemoveRound" />
@@ -53,10 +53,9 @@
 
 <script setup lang="ts">
 import { vButton } from "@/utils/buttonRole";
-import { computed } from "vue";
 import { AddRound, RemoveRound, TranslateFilled } from "@vicons/material";
-import { musicStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
+import { LYRIC_OFFSET_STEP, useLyricControls } from "@/composables/useLyricControls";
 
 const { t } = useI18n();
 
@@ -64,54 +63,8 @@ defineProps<{
   visible?: boolean;
 }>();
 
-const setting = settingStore();
-const music = musicStore();
-
-const AUTO = "__auto";
-
-const languageName = (tag: string) => {
-  try {
-    return new Intl.DisplayNames([setting.language], { type: "language" }).of(tag) ?? tag;
-  } catch {
-    return tag;
-  }
-};
-
-const languageOptions = computed(() => {
-  const languages = music.songLyric.translationLanguages;
-  if (languages.length < 2) return [];
-  return [
-    { label: t("setting.lyricTranslationLanguageAuto"), value: AUTO },
-    ...languages.map((tag) => ({ label: languageName(tag), value: tag })),
-  ];
-});
-
-// 明确选过且这首歌里有的才算选中，否则显示「跟随界面语言」
-const selectedLanguage = computed({
-  get: () =>
-    music.songLyric.translationLanguages.includes(setting.lyricTranslationLanguage)
-      ? setting.lyricTranslationLanguage
-      : AUTO,
-  set: (value: string) => {
-    setting.lyricTranslationLanguage = value === AUTO ? "" : value;
-  },
-});
-
-const offset = computed(() => setting.lyricTimeOffset ?? 0);
-
-const offsetDisplay = computed(() => {
-  const seconds = offset.value / 1000;
-  const sign = seconds > 0 ? "+" : "";
-  return `${sign}${seconds.toFixed(1)}s`;
-});
-
-const adjustOffset = (delta: number) => {
-  setting.lyricTimeOffset += delta;
-};
-
-const resetOffset = () => {
-  setting.lyricTimeOffset = 0;
-};
+const { languageOptions, selectedLanguage, offset, offsetDisplay, adjustOffset, resetOffset } =
+  useLyricControls();
 </script>
 
 <style lang="scss" scoped>

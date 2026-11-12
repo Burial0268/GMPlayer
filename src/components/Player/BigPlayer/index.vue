@@ -98,6 +98,7 @@
               @lrcAllLeave="lrcAllLeave"
               @lrcTextClick="lrcTextClick"
               @toComment="toComment(retractMobilePlayer)"
+              @openPage="openPageFromMobilePlayer"
             />
 
             <Spectrum
@@ -177,6 +178,7 @@
 </template>
 
 <script setup lang="ts">
+import type { RouteLocationRaw } from "vue-router";
 import { musicStore, settingStore, siteStore } from "@/store";
 import Spectrum from "../Spectrum.vue";
 import { storeToRefs } from "pinia";
@@ -1468,6 +1470,10 @@ const retractMobilePlayer = async () => {
     });
   }
   return true;
+};
+
+const openPageFromMobilePlayer = async (to: RouteLocationRaw) => {
+  if (await retractMobilePlayer()) navigation.openPage(to);
 };
 
 const removeCancelledNavigation = navigation.onNavigationCancelled(() => {

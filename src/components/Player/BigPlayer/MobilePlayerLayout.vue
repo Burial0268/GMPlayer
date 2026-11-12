@@ -77,8 +77,7 @@
                         : music.changeLikeList(music.getPlaySongData.id, true))
                     "
                   />
-                  <n-icon size="24" :component="QueueMusicRound" @click.stop="$emit('openQueue')" />
-                  <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+                  <n-icon size="24" :component="MoreVertRound" @click.stop="menuOpen = true" />
                 </div>
               </Motion>
             </div>
@@ -172,12 +171,7 @@
                           : music.changeLikeList(music.getPlaySongData.id, true))
                       "
                     />
-                    <n-icon
-                      size="24"
-                      :component="QueueMusicRound"
-                      @click.stop="$emit('openQueue')"
-                    />
-                    <n-icon size="24" :component="MoreVertRound" @click.stop="" />
+                    <n-icon size="24" :component="MoreVertRound" @click.stop="menuOpen = true" />
                   </div>
                 </div>
                 <div
@@ -204,6 +198,24 @@
                   </div>
                   <!-- 控制按钮 + 音量 -->
                   <MobileControls @toComment="$emit('toComment')" />
+                  <!-- Apple Music's bottom bar: lyrics toggles the two layers, queue pages over. -->
+                  <div class="mobile-bottom-bar">
+                    <button
+                      type="button"
+                      :aria-pressed="activeMobileLayer === 2"
+                      :aria-label="$t('player.controls.lyrics')"
+                      @click.stop="$emit('switchLayer')"
+                    >
+                      <component :is="activeMobileLayer === 2 ? IconLyricsOn : IconLyricsOff" />
+                    </button>
+                    <button
+                      type="button"
+                      :aria-label="$t('general.name.playlists')"
+                      @click.stop="$emit('openQueue')"
+                    >
+                      <IconPlaylistOff />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -259,6 +271,8 @@
         </Motion>
       </div>
     </div>
+
+    <MobilePlayerMenu v-model:show="menuOpen" @openPage="$emit('openPage', $event)" />
 
     <!-- 移动端待播清单 — 与主内容同级的分页：共用背景，由 pager 平移切换 -->
     <div
@@ -381,6 +395,7 @@ import {
 } from "@vicons/material";
 import { NVirtualList } from "naive-ui";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import type { RouteLocationRaw } from "vue-router";
 import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
@@ -394,6 +409,10 @@ import BouncingSlider from "../BouncingSlider.vue";
 import MobileControls from "./MobileControls.vue";
 import MobileCoverFrame from "./MobileCoverFrame.vue";
 import LyricOffsetControl from "./LyricOffsetControl.vue";
+import MobilePlayerMenu from "./MobilePlayerMenu.vue";
+import IconLyricsOff from "../icons/IconLyricsOff.vue";
+import IconLyricsOn from "../icons/IconLyricsOn.vue";
+import IconPlaylistOff from "../icons/IconPlaylistOff.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 declare const $player: any;
@@ -452,6 +471,7 @@ const emit = defineEmits<{
   lrcAllLeave: [];
   lrcTextClick: [time: number];
   toComment: [];
+  openPage: [to: RouteLocationRaw];
   closeDragStart: [];
   closeDragMove: [distance: number];
   closeDragEnd: [];
@@ -489,6 +509,7 @@ const queueTouch = ref<{
 } | null>(null);
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
+const menuOpen = ref(false);
 const playbackControlsRef = ref<HTMLElement | null>(null);
 const lyricControlsHeight = ref(0);
 const lyricControlsVisible = ref(false);
@@ -917,7 +938,8 @@ defineExpose({
   --mobile-title-opacity: 1;
   --mobile-artists-opacity: 0.7;
   --mobile-time-opacity: 0.5;
-  --mobile-controls-bottom-padding: calc(var(--app-safe-area-bottom, 0px) + 4rem);
+  // The bottom bar now fills most of what used to be empty space under the volume slider.
+  --mobile-controls-bottom-padding: calc(var(--app-safe-area-bottom, 0px) + 0.75rem);
 
   &.tinted {
     --mobile-title-opacity: 0.85;
@@ -1538,6 +1560,44 @@ defineExpose({
 .mobile-controls-motion {
   display: block;
   will-change: transform, opacity;
+}
+
+.mobile-bottom-bar {
+  display: flex;
+  justify-content: space-around;
+  margin-top: 12px;
+
+  button {
+    appearance: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
+    mix-blend-mode: plus-lighter;
+    opacity: 0.6;
+    cursor: pointer;
+    transition:
+      opacity var(--duration-200) var(--ease-out),
+      transform var(--duration-150) var(--ease-out);
+
+    &[aria-pressed="true"] {
+      opacity: 1;
+    }
+
+    &:active {
+      transform: scale(0.92);
+    }
+
+    :deep(svg) {
+      width: 34px;
+      height: 34px;
+    }
+  }
 }
 
 .mobile-queue-panel {
