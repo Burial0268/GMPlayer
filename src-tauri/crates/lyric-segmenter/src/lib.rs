@@ -116,6 +116,22 @@ impl Segmenter {
         for token in all.chain(self.jieba.cut(text, true)) {
             spanned[token.start + 1..token.end].fill(true);
         }
+        // 之 + a bound postposition (千里之外, 我们之间) leans on the word before it, also when the
+        // segment runs on past it (现实之间作斗争, where 间作 is a dictionary word).
+        let mut start = 0;
+        for i in 1..=chars.len() {
+            if i < chars.len() && spanned[i] {
+                continue;
+            }
+            let segment: String = chars[start..i].iter().collect();
+            if start > 0
+                && is_han(chars[start - 1])
+                && LEANS_BACK.iter().any(|p| segment.starts_with(p))
+            {
+                spanned[start] = true;
+            }
+            start = i;
+        }
         let mut ends = Vec::new();
         let (mut end, mut word_like) = (0u32, false);
         for (i, c) in chars.iter().enumerate() {
@@ -131,6 +147,19 @@ impl Segmenter {
         }
         ends
     }
+}
+
+/// Postpositions built on 之 that cannot start a phrase of their own: a line break before one
+/// strands half a phrase (情话飘散成千里 | 之外). 之 as a plain possessive (爱之深) is left alone.
+const LEANS_BACK: &[&str] = &[
+    "之外", "之内", "之中", "之间", "之后", "之前", "之上", "之下", "之一", "之余", "之际", "之初",
+    "之时", "之久", "之多", "之类", "之处",
+];
+
+fn is_han(c: char) -> bool {
+    matches!(c,
+        '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}'
+            | '\u{20000}'..='\u{3134F}')
 }
 
 /// Thai, Lao, Myanmar (and its extensions), Khmer (and its symbols).
@@ -157,10 +186,7 @@ fn is_chinese(text: &str) -> bool {
             '\u{1100}'..='\u{11FF}' | '\u{3130}'..='\u{318F}' | '\u{AC00}'..='\u{D7AF}' => {
                 return false
             }
-            '\u{3400}'..='\u{4DBF}' | '\u{4E00}'..='\u{9FFF}' | '\u{F900}'..='\u{FAFF}' => {
-                han = true
-            }
-            '\u{20000}'..='\u{3134F}' => han = true,
+            c if is_han(c) => han = true,
             _ => {}
         }
     }
@@ -278,6 +304,10 @@ mod tests {
             ("研究生命的起源", "研究生命"),       // 研究生/命 or 研究/生命
             ("结婚的和尚未结婚的", "和尚未"),     // 和尚/未 or 和/尚未
             ("冷凝水在杯壁画出了迷宫", "杯壁画"), // 杯壁/画 or 杯/壁画 (杯壁 from lyric-words)
+            // Not ambiguous, but 之外/之间 lean on the word before them.
+            ("情话飘散成千里之外一曲东风破", "千里之外"),
+            ("偷偷想着我们之间关系的远近", "我们之间"),
+            ("在浪漫还有现实之间作斗争", "现实之间"),
         ] {
             assert!(kept_whole(&s, line, run), "{line}: {:?}", split(&s, line));
         }
