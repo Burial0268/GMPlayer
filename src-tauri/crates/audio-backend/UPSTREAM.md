@@ -171,7 +171,8 @@ The wrapper also retains its upstream timeline/cursor unit tests.
 ```sh
 cd src-tauri
 cargo test -p gmplayer-ffmpeg-audio --lib
-cargo test -p gmplayer-audio-backend -p gmplayer-automix-analysis --libcargo check
+cargo test -p gmplayer-audio-backend -p gmplayer-automix-analysis --lib
+cargo check
 cargo check -p gmplayer-audio-backend --target wasm32-unknown-unknown
 ```
 
@@ -238,6 +239,29 @@ locator alongside the decoder/local path, so returning to A cannot reuse B's
 cached file. Repeated preparation from a recreated WebView attaches to
 the same active pair by stable identity instead of resetting its decks; a signed
 URL is never used as a cross-resolver identity.
+
+Seek and output rebuild cancellation carry the retired transition id on the idle
+event. The frontend clears matching preparation/readiness and can prepare again;
+anonymous configuration snapshots and cancelled older attempts cannot retire a
+new attempt. Silence scans use the last audible window, including a partial
+window at the start, without inferring the ending from the first second.
+
+`player/automix.rs` owns state and prepared resources. Its child modules separate
+pure planning (`plan.rs`, `beat_plan.rs`), blocking source/metadata preparation
+(`prepare.rs`) and the bounded analysis cache (`cache.rs`). `automix_runtime.rs`
+continues to own decks and rendered handoff. Preparation logs include the build
+profile, attempt id, elapsed time, source durations, silence and the final plan;
+armed and rendered events identify the same transition. No source URLs are added
+to these diagnostics.
+
+For a local pair, the ignored diagnostic below prints the analyses and plan.
+`AUTOMIX_CURRENT_FILE` and `AUTOMIX_NEXT_FILE` must name complete audio files;
+optional `AUTOMIX_PAIR_OUTPUT` names an existing directory for analysis JSON.
+Use the same files and configuration when comparing debug and release builds.
+
+```sh
+cargo test -p gmplayer-audio-backend inspect_real_pair -- --ignored --nocapture
+```
 
 Validation:
 

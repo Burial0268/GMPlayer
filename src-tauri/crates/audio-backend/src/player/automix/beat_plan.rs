@@ -1,4 +1,5 @@
-use super::{automix_analysis::TrackAnalysis, CrossfadePlan};
+use super::CrossfadePlan;
+use crate::automix::TrackAnalysis;
 
 /// Match actual local pulses. B keeps its original entry and its original speed.
 pub(super) fn align(
@@ -106,13 +107,15 @@ mod tests {
             volume_norm: false,
             ..Default::default()
         };
-        let plan = super::super::build_analysis_backed_plan(&config, 16.0, Some(&a), Some(&b));
+        let plan =
+            super::super::plan::build_analysis_backed_plan(&config, 16.0, Some(&a), Some(&b));
         assert!(plan.beat_synced);
         assert!(plan.duration > 3.8);
         assert!(plan.start_time < 11.98);
         assert!(plan.start_time + plan.duration * plan.outgoing_rate < 15.7);
         config.bpm_match = false;
-        let disabled = super::super::build_analysis_backed_plan(&config, 16.0, Some(&a), Some(&b));
+        let disabled =
+            super::super::plan::build_analysis_backed_plan(&config, 16.0, Some(&a), Some(&b));
         assert!(!disabled.beat_synced);
         assert_eq!(disabled.outgoing_rate, 1.0);
     }
@@ -120,7 +123,7 @@ mod tests {
     #[test]
     fn both_pulse_phase_and_tempo_match_without_skipping_bs_opening() {
         let config = crate::types::AutoMixConfig::default();
-        let base = super::super::build_time_based_plan(&config, 100.0);
+        let base = super::super::plan::build_time_based_plan(&config, 100.0);
         let mut a = crate::automix::analyze_mono_samples(&vec![0.1; 48_000], 48_000, 1.0, false);
         let mut b = a.clone();
         a.bpm = Some(evidence(0.5, 70.13, 60));

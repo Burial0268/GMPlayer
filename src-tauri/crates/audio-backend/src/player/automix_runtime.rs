@@ -269,6 +269,15 @@ impl AudioPlayer {
         let mix = self.native_mix.as_mut().unwrap();
         if !mix.started {
             mix.started = true;
+            info!(
+                transition_id = ?self.native_crossfade_transition_id,
+                generation = mix.generation,
+                next_index = mix.next_index,
+                phase = anchor.anchor.phase,
+                source_position = anchor.anchor.source.seconds,
+                rendered_at = anchor.rendered_at,
+                "AutoMix crossfade reached output"
+            );
             let event = AudioThreadEvent::AutomixCrossfadeStarted {
                 from_id: mix.from_id.clone(),
                 to_id: mix.to_id.clone(),
@@ -494,8 +503,8 @@ impl AudioPlayer {
         self.native_crossfade_active = true;
         self.native_crossfade_transition_id = prepared.transition_id;
         info!(
-            "AutoMix crossfade armed: next_index={}, preloaded={}, cue={:?}, duration={:.3}, rate={:.5}, beat_synced={}",
-            prepared.next_index, preloaded, start_position, duration,
+            "AutoMix crossfade armed: transition_id={:?}, next_index={}, preloaded={}, position={:.3}, cue={:?}, duration={:.3}, rate={:.5}, beat_synced={}",
+            prepared.transition_id, prepared.next_index, preloaded, now, start_position, duration,
             prepared.plan.as_ref().map_or(1.0, |plan| plan.outgoing_rate),
             prepared.plan.as_ref().is_some_and(|plan| plan.beat_synced),
         );

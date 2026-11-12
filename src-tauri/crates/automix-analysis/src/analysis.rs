@@ -123,25 +123,20 @@ pub(super) fn analyze_energy(data: &[f32], sample_rate: u32, duration: f32) -> E
     let mut trailing_silence = 0f32;
 
     if window_samples > 0 {
-        let mut pos = len.saturating_sub(window_samples);
-        loop {
-            let win_end = (pos + window_samples).min(len);
+        trailing_silence = duration;
+        let mut end = len;
+        while end > 0 {
+            let start = end.saturating_sub(window_samples);
             let mut sum_sq = 0f64;
-            for &s in &data[pos..win_end] {
+            for &s in &data[start..end] {
                 sum_sq += (s as f64) * (s as f64);
             }
-            let rms = (sum_sq / (win_end - pos) as f64).sqrt() as f32;
+            let rms = (sum_sq / (end - start) as f64).sqrt() as f32;
             if rms > SILENCE_THRESHOLD {
-                trailing_silence = (len - pos - window_samples) as f32 / sample_rate as f32;
+                trailing_silence = (len - end) as f32 / sample_rate as f32;
                 break;
             }
-            if pos < window_samples {
-                break;
-            }
-            pos = pos.saturating_sub(window_samples);
-        }
-        if trailing_silence == 0.0 && energy_per_second[0] < SILENCE_THRESHOLD {
-            trailing_silence = duration;
+            end = start;
         }
         trailing_silence = (trailing_silence * 10.0).round() / 10.0;
     }

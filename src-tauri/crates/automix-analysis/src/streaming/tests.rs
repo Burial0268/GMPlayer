@@ -94,6 +94,30 @@ fn a_long_silent_tail_does_not_hide_the_audible_outro() {
 }
 
 #[test]
+fn a_silent_intro_does_not_turn_an_audible_ending_into_silence() {
+    let rate = 11025;
+    for tail in [0.0, 1.5, 6.0] {
+        let mut data = song(rate, 6.0, tail);
+        data[..rate as usize].fill(0.0);
+        let mut source = Samples {
+            data: &data,
+            reads: 0,
+            largest_read: 0,
+            fail_after: None,
+        };
+        let streamed = analyze_pcm(&mut source, rate, 6.0, false).unwrap();
+        let buffered = analyze_mono_samples(&data, rate, 6.0, false);
+        for analysis in [streamed, buffered] {
+            assert!(
+                (analysis.energy.trailing_silence - tail).abs() < 0.11,
+                "expected {tail}s of trailing silence, got {}",
+                analysis.energy.trailing_silence
+            );
+        }
+    }
+}
+
+#[test]
 fn reader_failures_abort_early_and_late_analysis_work() {
     let data = song(11025, 6.0, 0.0);
     let mut successful = Samples {
@@ -119,5 +143,24 @@ fn reader_failures_abort_early_and_late_analysis_work() {
             analyze_pcm(&mut source, 11025, 6.0, true).unwrap_err(),
             "reader cancelled or failed"
         );
+    }
+}
+
+#[test]
+fn silence_scan_includes_the_partial_window_at_the_start() {
+    for (len, audible, expected) in [(2050, 50, 2.0), (50, 50, 0.0), (50, 0, 0.1)] {
+        let mut data = vec![0.0; len];
+        data[..audible].fill(0.5);
+        let mut source = Samples {
+            data: &data,
+            reads: 0,
+            largest_read: 0,
+            fail_after: None,
+        };
+        let duration = len as f32 / 1000.0;
+        let streamed = trailing_silence(&mut source, 1000, duration, &mut Vec::new()).unwrap();
+        let buffered = analysis::analyze_energy(&data, 1000, duration).trailing_silence;
+        assert_eq!(streamed, expected);
+        assert_eq!(buffered, expected);
     }
 }

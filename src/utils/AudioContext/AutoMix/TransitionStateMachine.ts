@@ -688,6 +688,21 @@ export class TransitionStateMachine {
         }
         if (
           status.state === "idle" &&
+          status.transitionId !== undefined &&
+          status.transitionId !== null &&
+          (this._state === "analyzing" || this._state === "waiting")
+        ) {
+          // Seek/output rebuild cancelled this attempt. Anonymous configure snapshots do not.
+          this._nativeAutoMixPreparing = false;
+          this._nativeAutoMixReady = false;
+          this._nativeForceStartSent = false;
+          this._nativeNextIndex = -1;
+          this._clearTransition(status.transitionId);
+          this._state = "idle";
+          this._updateStoreState();
+        }
+        if (
+          status.state === "idle" &&
           this._state === "crossfading" &&
           this._nativeForceStartSent &&
           status.currentIndex === this._nativeNextIndex

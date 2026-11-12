@@ -9,6 +9,7 @@ function environment(deferResolution = false) {
   let now = 0;
   let timerId = 0;
   let playing = true;
+  let position = 90;
   const timers = new Map<number, { at: number; callback: () => void }>();
   const sent: unknown[] = [];
   const commits: number[] = [];
@@ -17,6 +18,7 @@ function environment(deferResolution = false) {
     getSourceUrl: () => "https://example.test/current.mp3",
     playing: () => playing,
     duration: () => 100,
+    seek: () => position,
     pause() {
       playing = false;
     },
@@ -126,6 +128,7 @@ function environment(deferResolution = false) {
     },
     advance(milliseconds: number) {
       now += milliseconds;
+      if (playing) position += milliseconds / 1000;
       for (const [id, timer] of timers) {
         if (timer.at <= now) {
           timers.delete(id);
@@ -151,6 +154,26 @@ test("a native crossfade survives a long pause and accepts the backend's eventua
   env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
   assert.deepEqual(env.commits, [1]);
   assert.equal(env.state.getState(), "finishing");
+});
+
+test("pausing just before a native cue preserves it until playback reaches it after resume", () => {
+  const env = environment();
+  env.state._crossfadeStartTime = 92;
+  env.sound.pause();
+  env.advance(60_000);
+  env.state.monitorPlayback(env.sound);
+  assert.equal(env.state.getState(), "waiting");
+  assert.equal(env.state._nativeAutoMixReady, true);
+  assert.deepEqual(env.sent, []);
+  assert.deepEqual(env.commits, []);
+
+  env.sound.play();
+  env.state.monitorPlayback(env.sound);
+  assert.deepEqual(env.sent, [], "elapsed pause time must not reach the cue");
+  env.advance(2_000);
+  env.state.monitorPlayback(env.sound);
+  assert.equal(env.sent.length, 1);
+  assert.equal((env.sent[0] as any).type, "automixForceStart");
 });
 
 test("pausing while native analysis or preparation is pending preserves the backend plan", () => {
@@ -204,4 +227,35 @@ test("a late URL resolution cannot prepare the retired track or clear a newer pr
   assert.equal(prepares[0].transitionId, current);
   assert.deepEqual(prepares[0].currentIdentity, { provider: "netease", id: "1" });
   assert.deepEqual(prepares[0].nextIdentity, { provider: "netease", id: "2" });
+});
+
+test("a backend seek cancellation allows the same track to prepare again", () => {
+  for (const phase of ["analyzing", "waiting"]) {
+    const env = environment(true);
+    env.state._state = phase;
+    env.state._nativeAutoMixPreparing = phase === "analyzing";
+    env.event("automixStatus", {
+      status: { state: "idle", enabled: true, currentIndex: 0, transitionId: env.transitionId },
+    });
+    assert.equal(env.state.getState(), "idle", "Rust discarded the plan on seek");
+    assert.equal(env.state._nativeAutoMixReady, false);
+    assert.equal(env.state._nativeAutoMixPreparing, false);
+    assert.deepEqual(env.sent, [], "adopting cancellation must not send another cancel");
+    env.state._handleIdle(90, 100);
+    assert.equal(env.state.getState(), "analyzing");
+    assert.notEqual(env.state._activeTransition.id, env.transitionId);
+  }
+});
+
+test("configuration idle snapshots and retired cancellations preserve a new prepare", () => {
+  const env = environment();
+  env.state._state = "analyzing";
+  env.state._nativeAutoMixPreparing = true;
+  for (const transitionId of [null, env.transitionId + 1]) {
+    env.event("automixStatus", {
+      status: { state: "idle", enabled: true, currentIndex: 0, transitionId },
+    });
+    assert.equal(env.state.getState(), "analyzing");
+    assert.equal(env.state._activeTransition.id, env.transitionId);
+  }
 });

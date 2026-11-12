@@ -56,7 +56,7 @@ pub fn analyze_pcm<P: MonoPcm>(
         raw_energy.push((second_squares / second_frames as f64).sqrt() as f32);
     }
     raw_energy.resize(duration.ceil() as usize, 0.0);
-    let trailing = trailing_silence(pcm, sample_rate, duration, raw_energy[0], &mut block)?;
+    let trailing = trailing_silence(pcm, sample_rate, duration, &mut block)?;
     let energy = finish_energy(raw_energy, duration, trailing);
     let volume = volume_from_totals(peak, squares, len);
     let content_end = (duration - trailing).clamp(0.0, duration);
@@ -161,7 +161,6 @@ fn trailing_silence<P: MonoPcm>(
     pcm: &mut P,
     rate: u32,
     duration: f32,
-    first_energy: f32,
     block: &mut Vec<f32>,
 ) -> Result<f32, P::Error> {
     let len = pcm.sample_count();
@@ -170,25 +169,22 @@ fn trailing_silence<P: MonoPcm>(
         return Ok(0.0);
     }
     let mut end = len;
-    let mut trailing = 0.0;
-    'scan: while end >= width {
-        let windows = (end / width).min((BLOCK / width).max(1));
-        let first = end - windows * width;
-        block.resize(windows * width, 0.0);
+    let mut trailing = duration;
+    'scan: while end > 0 {
+        let windows = (end / width).min((BLOCK / width).max(1)).max(1);
+        let first = end.saturating_sub(windows * width);
+        block.resize(end - first, 0.0);
         pcm.read_at(first, block)?;
-        for i in (0..windows).rev() {
-            let sum = block[i * width..(i + 1) * width]
+        for (i, window) in block.rchunks(width).enumerate() {
+            let sum = window
                 .iter()
                 .fold(0.0f64, |sum, &sample| sum + sample as f64 * sample as f64);
-            if (sum / width as f64).sqrt() as f32 > SILENCE_THRESHOLD {
-                trailing = (len - first - (i + 1) * width) as f32 / rate as f32;
+            if (sum / window.len() as f64).sqrt() as f32 > SILENCE_THRESHOLD {
+                trailing = (len - end + i * width) as f32 / rate as f32;
                 break 'scan;
             }
         }
         end = first;
-    }
-    if trailing == 0.0 && first_energy < SILENCE_THRESHOLD {
-        trailing = duration;
     }
     block.resize(BLOCK, 0.0);
     Ok((trailing * 10.0).round() / 10.0)

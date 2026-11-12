@@ -156,3 +156,52 @@ fn a_missing_incoming_deck_refuses_a_late_beat_and_cancel_keeps_the_active_gener
     assert_eq!(worker.primary.gain, 1.0);
     assert!(worker.scheduled.is_none());
 }
+
+#[test]
+fn pausing_before_a_queued_cue_freezes_start_and_handoff_until_resume() {
+    for channels in [1, 2, 6] {
+        let primary = deck_with_timing(vec![(4000, 0.0, 1.0)], channels, 1, 1.0);
+        let secondary = deck_with_timing(vec![(4000, 0.0, 1.0)], channels, 2, 0.0);
+        let (mut worker, mut output) = worker(primary, secondary, channels);
+        worker.apply_control(MixerControl::StartCrossfade {
+            outgoing: DeckId::Primary,
+            incoming: DeckId::Secondary,
+            duration_samples: 777 * channels,
+            start_position: Some(333.0 / 48_000.0),
+            transition: 12,
+            params: CrossfadeParams::default(),
+        });
+        let stop = AtomicBool::new(false);
+        let epoch = AtomicU64::new(0);
+        // Queue the whole overlap before the device reaches its start.
+        while worker.phase != 2 {
+            let mut block = Vec::new();
+            assert!(worker.mix_block(&mut block, channels, false, false));
+            assert!(output.writer.push_block_with_anchor(
+                block,
+                worker.block_anchor,
+                PushCancel::with_interrupt_epoch(&stop, &epoch, 0),
+            ));
+        }
+        output.render(332 * channels);
+        let clock = output.writer.render_clock();
+        let before = clock.anchor().unwrap();
+        let queued = output.writer.queued_samples();
+        assert_eq!(before.anchor.phase, 0);
+        output.writer.set_paused(true);
+        // Device callbacks continue for a minute while playback is paused.
+        for _ in 0..60 {
+            assert!(output.render(48_000 * channels).iter().all(|s| *s == 0.0));
+            assert_eq!(clock.rendered_samples(), (332 * channels) as u64);
+            assert_eq!(clock.anchor().unwrap().version, before.version);
+            assert_eq!(output.writer.queued_samples(), queued);
+        }
+        output.writer.set_paused(false);
+        output.render(channels);
+        assert_eq!(clock.anchor().unwrap().anchor.phase, 0);
+        output.render(channels);
+        assert_eq!(clock.anchor().unwrap().anchor.phase, 1);
+        assert_eq!(clock.anchor().unwrap().rendered_at, (333 * channels) as u64);
+        assert_eq!(clock.anchor().unwrap().anchor.phase, 1);
+    }
+}
