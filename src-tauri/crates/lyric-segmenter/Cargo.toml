@@ -1,0 +1,21 @@
+[package]
+name = "lyric-segmenter"
+version = "0.1.0"
+edition = "2021"
+description = "Word segmentation for lyric line breaking: jieba for Chinese, ICU4X dictionaries for everything else"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+jieba-rs = "0.11"
+# Dictionary segmentation only: `auto` would add the LSTM models for Southeast Asian scripts.
+icu_segmenter = { version = "~2.2", default-features = false, features = ["compiled_data"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+# NOTE: `[profile.*]` is only honoured at the workspace root (`src-tauri/Cargo.toml`).
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

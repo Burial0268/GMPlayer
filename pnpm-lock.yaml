@@ -65,6 +65,9 @@ importers:
       '@player-helper/gmplayer-audio-backend':
         specifier: workspace:*
         version: link:src-tauri/crates/audio-backend/pkg
+      '@player-helper/lyric-segmenter':
+        specifier: workspace:*
+        version: link:src-tauri/crates/lyric-segmenter/pkg
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -256,6 +259,8 @@ importers:
   src-tauri/crates/audio-analysis/pkg: {}
 
   src-tauri/crates/audio-backend/pkg: {}
+
+  src-tauri/crates/lyric-segmenter/pkg: {}
 
 packages:
 

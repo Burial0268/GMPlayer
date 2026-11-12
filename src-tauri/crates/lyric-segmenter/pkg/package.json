@@ -1,0 +1,18 @@
+{
+  "name": "@player-helper/lyric-segmenter",
+  "type": "module",
+  "description": "Word segmentation for lyric line breaking: jieba for Chinese, ICU4X dictionaries for everything else",
+  "version": "0.1.0",
+  "files": [
+    "lyric_segmenter_bg.wasm",
+    "lyric_segmenter.js",
+    "lyric_segmenter_bg.js",
+    "lyric_segmenter.d.ts"
+  ],
+  "main": "lyric_segmenter.js",
+  "types": "lyric_segmenter.d.ts",
+  "sideEffects": [
+    "./lyric_segmenter.js",
+    "./snippets/*"
+  ]
+}

@@ -167,7 +167,15 @@ export default defineConfig(({ mode }) => {
               clientsClaim: true,
               skipWaiting: true,
               cleanupOutdatedCaches: true,
+              // The segmenter's dictionaries (~6 MB) load at idle; every update re-downloading them
+              // as precache would cost more than the first fetch, so they are cached on use.
+              globIgnores: ["**/lyric_segmenter_bg-*.wasm"],
               runtimeCaching: [
+                {
+                  urlPattern: /lyric_segmenter_bg-[^/]*\.wasm$/,
+                  handler: "CacheFirst",
+                  options: { cacheName: "wasm-cache" },
+                },
                 {
                   urlPattern: /(.*?)\.(woff2|woff|ttf)/,
                   handler: "CacheFirst",

@@ -1,3 +1,5 @@
+// Must load before anything imports AMLL: it captures Intl.Segmenter when its module loads.
+import "@/utils/lyricSegmenter";
 import { createApp, watch } from "vue";
 import { createPinia } from "pinia";
 import { useI18n } from "@/locale";
