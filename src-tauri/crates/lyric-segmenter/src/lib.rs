@@ -3,7 +3,10 @@
 //!
 //! A line with only Han characters (and Latin, digits, punctuation) is Chinese and goes through
 //! jieba, whose dictionary + HMM cuts Chinese lyrics far closer to how they are sung than ICU's
-//! CJ dictionary. Anything with kana or Hangul is Japanese or Korean, and everything else goes
+//! CJ dictionary. What the page needs is not the one right reading but places a line may break,
+//! so a Chinese line only breaks where no word jieba knows spans the gap: an ambiguous run such as
+//! 杯壁画 (杯壁/画 or 杯/壁画) or 研究生命 stays whole instead of betting on one reading. Anything
+//! with kana or Hangul is Japanese or Korean, and everything else goes
 //! through ICU4X's dictionary segmenter, so one engine answers for every other script — except
 //! Thai, Lao, Khmer and Burmese, which get no answer (an empty result) and are segmented by the
 //! browser's own ICU, which carries those dictionaries anyway. Leaving them out of ICU4X's data
@@ -21,7 +24,8 @@ use jieba_rs::Jieba;
 const JIEBA_DICT: &[u8] = include_bytes!("../data/jieba-dict.txt");
 
 /// Words lyrics need and jieba's dictionary lacks (see the file's header). Added one by one:
-/// `Jieba::load_dict` would reset the dictionary's total frequency to this file's.
+/// `Jieba::load_dict` would reset the dictionary's total frequency to this file's. Only their
+/// presence matters, since a word only has to be known to keep its span from breaking.
 const LYRIC_WORDS: &str = include_str!("../data/lyric-words.txt");
 
 /// ICU's baked dictionaries without the Southeast Asian ones. Requesting them is answered "not
@@ -58,12 +62,8 @@ impl Default for Segmenter {
             .expect("baked CJ dictionary");
         let mut jieba = Jieba::with_dict(&mut &JIEBA_DICT[..]).expect("bundled jieba dictionary");
         for line in LYRIC_WORDS.lines().filter(|l| !l.starts_with('#')) {
-            let mut fields = line.split_whitespace();
-            if let (Some(word), Some(freq)) = (fields.next(), fields.next()) {
-                let freq = freq
-                    .parse()
-                    .expect("lyric-words.txt: frequency must be an integer");
-                jieba.add_word(word, Some(freq), None);
+            if let Some(word) = line.split_whitespace().next() {
+                jieba.add_word(word, None, None);
             }
         }
         Self { jieba, icu }
@@ -80,15 +80,7 @@ impl Segmenter {
         if is_southeast_asian(text) {
             Vec::new()
         } else if is_chinese(text) {
-            let mut end = 0u32;
-            self.jieba
-                .cut(text, true)
-                .into_iter()
-                .map(|token| {
-                    end += token.word.encode_utf16().count() as u32;
-                    end << 1 | u32::from(token.word.chars().any(char::is_alphanumeric))
-                })
-                .collect()
+            self.unambiguous_breaks(text)
         } else {
             let utf16: Vec<u16> = text.encode_utf16().collect();
             let mut iter = self.icu.as_borrowed().segment_utf16(&utf16);
@@ -101,6 +93,39 @@ impl Segmenter {
             }
             ends
         }
+    }
+}
+
+impl Segmenter {
+    /// Splits a Chinese line only where no candidate word spans the gap. Candidates are every
+    /// dictionary word of two or more characters (`cut_all`) plus the words of the best cut, which
+    /// adds what the HMM recognised and keeps Latin words whole.
+    fn unambiguous_breaks(&self, text: &str) -> Vec<u32> {
+        let chars: Vec<char> = text.chars().collect();
+        // spanned[i]: some candidate covers the gap before character i.
+        let mut spanned = vec![false; chars.len() + 1];
+        let all = self
+            .jieba
+            .cut_all(text)
+            .into_iter()
+            .filter(|t| t.end - t.start >= 2);
+        for token in all.chain(self.jieba.cut(text, true)) {
+            spanned[token.start + 1..token.end].fill(true);
+        }
+        let mut ends = Vec::new();
+        let (mut end, mut word_like) = (0u32, false);
+        for (i, c) in chars.iter().enumerate() {
+            if i > 0 && !spanned[i] {
+                ends.push(end << 1 | u32::from(word_like));
+                word_like = false;
+            }
+            end += c.len_utf16() as u32;
+            word_like |= c.is_alphanumeric();
+        }
+        if !chars.is_empty() {
+            ends.push(end << 1 | u32::from(word_like));
+        }
+        ends
     }
 }
 
@@ -181,6 +206,15 @@ mod tests {
             .collect()
     }
 
+    /// Whether `word` sits in `line` with no break inside it.
+    fn kept_whole(s: &Segmenter, line: &str, word: &str) -> bool {
+        let start = line[..line.find(word).expect(word)].encode_utf16().count() as u32;
+        let end = start + word.encode_utf16().count() as u32;
+        s.segments(line)
+            .into_iter()
+            .all(|packed| !(start < packed >> 1 && packed >> 1 < end))
+    }
+
     fn words(pieces: &[(String, bool)]) -> Vec<&str> {
         pieces
             .iter()
@@ -233,14 +267,27 @@ mod tests {
     }
 
     #[test]
-    fn lyric_words_fix_reported_lines() {
+    fn ambiguous_runs_stay_whole() {
         let s = Segmenter::default();
-        // (line, a word it must keep whole)
+        // (line, the run either reading needs unbroken)
+        for (line, run) in [
+            ("研究生命的起源", "研究生命"),       // 研究生/命 or 研究/生命
+            ("结婚的和尚未结婚的", "和尚未"),     // 和尚/未 or 和/尚未
+            ("冷凝水在杯壁画出了迷宫", "杯壁画"), // 杯壁/画 or 杯/壁画 (杯壁 from lyric-words)
+        ] {
+            assert!(kept_whole(&s, line, run), "{line}: {:?}", split(&s, line));
+        }
+    }
+
+    #[test]
+    fn reported_lines_do_not_break_inside_a_word() {
+        let s = Segmenter::default();
         for (line, word) in [
             ("冷凝水在杯壁画出了迷宫", "杯壁"),
             ("蒸发成辞职信里两行鞠躬", "辞职信"),
+            ("眼前的未来也并没有想通", "想通"),
         ] {
-            assert!(words(&split(&s, line)).contains(&word), "{line}");
+            assert!(kept_whole(&s, line, word), "{line}: {:?}", split(&s, line));
         }
     }
 
