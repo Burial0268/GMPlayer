@@ -343,6 +343,9 @@ const copyLink = async (target) => {
   position: fixed;
   inset: 0;
   z-index: 100;
+  // The opened mobile player is `pointer-events: none` and re-enables only its own parts;
+  // inheriting that let every touch fall through to the cover and controls underneath.
+  pointer-events: auto;
   color: var(--text-primary);
   --sheet-fill: color-mix(in srgb, var(--text-primary) 6%, transparent);
   --sheet-separator: color-mix(in srgb, var(--text-primary) 10%, transparent);
