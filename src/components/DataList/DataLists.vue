@@ -2032,6 +2032,11 @@ const jumpLink = (id, type) => {
         transition:
           opacity var(--duration-150) var(--ease-out),
           transform var(--duration-150) var(--ease-out);
+        // Touch has no row hover to reveal them, and an invisible button still takes the tap.
+        @media (hover: none) {
+          opacity: 1;
+          transform: none;
+        }
         @media (hover: hover) {
           &:hover {
             transform: scale(1.1);
