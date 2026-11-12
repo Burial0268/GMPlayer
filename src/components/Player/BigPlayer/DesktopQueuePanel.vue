@@ -16,24 +16,12 @@
       <div class="queue-empty" v-else>
         {{ $t("other.playlistEmpty") }}
       </div>
-
-      <!-- 底部整宽定位按钮：网格第三行，常驻面板底边。 -->
-      <button
-        v-if="music.getPlaylists.length"
-        class="queue-locate"
-        type="button"
-        @click="scrollCurrentQueueSong"
-      >
-        <n-icon size="18" :component="MyLocationRound" />
-        <span>{{ $t("player.queue.locate") }}</span>
-      </button>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { MyLocationRound } from "@vicons/material";
 import { musicStore } from "@/store";
 import PlayerQueueList from "./PlayerQueueList.vue";
 
@@ -112,13 +100,13 @@ onBeforeUnmount(() => {
 .queue-content {
   z-index: 6;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   padding: 18px 14px 14px;
   box-sizing: border-box;
   color: var(--main-cover-mix-color, rgb(239, 239, 239));
   // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
   // The rows blend themselves (PlayerQueueList).
-  :is(.queue-locate, .queue-empty),
+  .queue-empty,
   :deep(.n-icon),
   :deep(svg),
   :deep(path) {
@@ -154,46 +142,6 @@ onBeforeUnmount(() => {
 }
 
 // 底部整宽定位按钮（网格第三行）。面板叠在专辑封面上，配色随 --main-cover-color。
-.queue-locate {
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 11px 16px;
-  border: 1px solid color-mix(in srgb, var(--main-cover-color) 20%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 640;
-  cursor: pointer;
-  transition:
-    background-color 0.16s ease,
-    border-color 0.16s ease,
-    transform 0.16s ease;
-
-  .n-icon {
-    color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  }
-
-  &:focus-visible {
-    background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
-    border-color: color-mix(in srgb, var(--main-cover-color) 32%, transparent);
-  }
-
-  @media (hover: hover) {
-    &:hover {
-      background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
-      border-color: color-mix(in srgb, var(--main-cover-color) 32%, transparent);
-    }
-  }
-
-  &:active {
-    transform: scale(0.985);
-  }
-}
 
 @media (max-width: 1180px) {
   .desktop-queue-panel {

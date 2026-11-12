@@ -423,6 +423,7 @@ const messages: Record<string, unknown> = {
       collapse: "Hide queue",
       locate: "Jump to current",
       history: "History",
+      fromTop: "Then from the top",
       shuffle: "Shuffle",
       repeat: "Repeat",
       reorder: "Drag to reorder",

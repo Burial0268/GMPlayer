@@ -302,17 +302,6 @@
           <div class="queue-empty" v-else>
             {{ $t("other.playlistEmpty") }}
           </div>
-
-          <!-- 与桌面大播放器同一个底部整宽定位按钮，网格第三行。 -->
-          <button
-            v-if="music.getPlaylists.length"
-            class="queue-locate"
-            type="button"
-            @click="scrollCurrentQueueSong"
-          >
-            <n-icon size="18" :component="MyLocationRound" />
-            <span>{{ $t("player.queue.locate") }}</span>
-          </button>
         </div>
       </div>
     </div>
@@ -320,7 +309,7 @@
 </template>
 
 <script setup lang="ts">
-import { MoreVertRound, MyLocationRound, StarBorderRound, StarRound } from "@vicons/material";
+import { MoreVertRound, StarBorderRound, StarRound } from "@vicons/material";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
@@ -706,7 +695,8 @@ const handleQueueTouchStart = (event: TouchEvent) => {
   if (event.target instanceof Element && event.target.closest("button")) return;
   const touch = event.changedTouches?.[0];
   if (!touch) return;
-  const inList = event.target instanceof Element && event.target.closest(".mobile-queue-list");
+  // The scrolling list only: the pinned now-playing card above it pulls the page like the header.
+  const inList = event.target instanceof Element && event.target.closest(".player-queue-scroll");
   queueTouch.value = {
     x: touch.clientX,
     y: touch.clientY,
@@ -984,7 +974,7 @@ defineExpose({
   pointer-events: auto;
   // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
   // The rows blend themselves (PlayerQueueList).
-  :is(.queue-locate, .queue-empty),
+  .queue-empty,
   :deep(.n-icon),
   :deep(svg),
   :deep(path) {
@@ -1536,7 +1526,7 @@ defineExpose({
   height: 100%;
   box-sizing: border-box;
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   padding: 14px 16px calc(var(--app-safe-area-bottom, 0px) + 16px);
 }
 
@@ -1566,37 +1556,6 @@ defineExpose({
   text-align: center;
   opacity: 0.56;
   font-size: 0.95rem;
-}
-
-// 与 DesktopQueuePanel 的底部定位按钮同一套：叠在封面背景上，配色随 --main-cover-color。
-.queue-locate {
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  min-height: var(--control-touch-size, 44px);
-  padding: 0 16px;
-  border: 1px solid color-mix(in srgb, var(--main-cover-color) 20%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
-  font: inherit;
-  font-size: 0.88rem;
-  font-weight: 640;
-  cursor: pointer;
-  transition:
-    background-color 0.16s ease,
-    transform 0.16s ease;
-
-  .n-icon {
-    color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  }
-
-  &:active {
-    background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
-    transform: scale(0.985);
-  }
 }
 
 // ═══ 状态切换 ═══

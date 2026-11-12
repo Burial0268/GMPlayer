@@ -1,122 +1,173 @@
 <template>
-  <n-virtual-list
-    ref="listRef"
-    v-bind="$attrs"
-    :class="['player-queue-list', { reordering: !!drag, settling }]"
-    :items="items"
-    :item-size="rowHeight"
-    :item-resizable="true"
-    key-field="key"
-    :show-scrollbar="false"
-  >
-    <template #default="{ item }">
-      <div v-if="item.kind === 'section'" class="queue-section">
-        <span class="queue-section-title">{{ item.label }}</span>
-        <button v-if="item.clear" class="queue-clear" type="button" @click="music.clearPlaylists()">
-          {{ $t("player.queue.clear") }}
-        </button>
+  <div class="player-queue">
+    <!-- The playing song stays put; only the list under it scrolls. -->
+    <div v-if="playing" class="queue-now">
+      <img class="queue-now-cover" :src="cover(playing, 160)" alt="" />
+      <div class="queue-info">
+        <div class="queue-name text-hidden">{{ playing.name }}</div>
+        <div class="queue-artists text-hidden">{{ artists(playing) }}</div>
       </div>
-
-      <div v-else-if="item.kind === 'now'" :id="`${rowPrefix}-${item.index}`" class="queue-now">
-        <img class="queue-now-cover" :src="cover(item.song, 160)" alt="" />
-        <div class="queue-info">
-          <div class="queue-name text-hidden">{{ item.song.name }}</div>
-          <div class="queue-artists text-hidden">{{ artists(item.song) }}</div>
-        </div>
-        <div v-if="!music.getPersonalFmMode" class="queue-modes">
-          <button
-            type="button"
-            class="queue-mode"
-            :aria-pressed="mode === 'random'"
-            :aria-label="$t('player.queue.shuffle')"
-            @click="music.setPlaySongMode(mode === 'random' ? 'normal' : 'random')"
-          >
-            <component :is="mode === 'random' ? IconShuffleOn : IconShuffle" />
-          </button>
-          <!-- No "repeat off" exists: list and shuffle repeat the queue, single repeats one. -->
-          <button
-            type="button"
-            class="queue-mode"
-            aria-pressed="true"
-            :aria-label="$t('player.queue.repeat')"
-            @click="music.setPlaySongMode(mode === 'single' ? 'normal' : 'single')"
-          >
-            <component :is="mode === 'single' ? IconRepeatOneOn : IconRepeatOn" />
-          </button>
-        </div>
-      </div>
-
-      <div
-        v-else
-        :id="`${rowPrefix}-${item.index}`"
-        :class="[
-          'queue-row',
-          { history: item.history, lifted: drag?.from === item.index, released: drag?.released },
-        ]"
-        :style="rowStyle(item.index)"
-      >
-        <!-- The row is see-through (it blends with the cover), so the action exists only where a
-             swipe has uncovered it, sized to the swipe. -->
+      <div v-if="!music.getPersonalFmMode" class="queue-modes">
         <button
-          v-if="swipe?.index === item.index"
-          class="queue-row-delete"
           type="button"
-          tabindex="-1"
-          :style="{ width: `${-swipe.x}px`, transition: swipe.tracking ? 'none' : undefined }"
-          @click="remove(item.index)"
+          class="queue-mode"
+          :aria-pressed="mode === 'random'"
+          :aria-label="$t('player.queue.shuffle')"
+          @click="music.setPlaySongMode(mode === 'random' ? 'normal' : 'random')"
         >
-          {{ $t("player.queue.remove") }}
+          <component :is="mode === 'random' ? IconShuffleOn : IconShuffle" />
         </button>
-        <div
-          class="queue-row-body"
-          :style="bodyStyle(item.index)"
-          role="button"
-          tabindex="0"
-          @pointerdown="startSwipe($event, item.index)"
-          @click="select(item.index)"
-          @keydown.enter.prevent="select(item.index)"
+        <!-- The modes are exclusive (list loop, shuffle, single loop), so exactly one of the two
+             is lit: repeat is off in shuffle, and from shuffle it switches to list loop. -->
+        <button
+          type="button"
+          class="queue-mode"
+          :aria-pressed="mode !== 'random'"
+          :aria-label="$t('player.queue.repeat')"
+          @click="music.setPlaySongMode(mode === 'normal' ? 'single' : 'normal')"
         >
-          <img class="queue-cover" :src="cover(item.song, 96)" alt="" />
-          <div class="queue-info">
-            <div class="queue-name text-hidden">{{ item.song.name }}</div>
-            <div class="queue-artists text-hidden">{{ artists(item.song) }}</div>
+          <component
+            :is="
+              mode === 'single' ? IconRepeatOneOn : mode === 'normal' ? IconRepeatOn : IconRepeat
+            "
+          />
+        </button>
+      </div>
+    </div>
+    <div class="queue-scroll-area">
+      <n-virtual-list
+        ref="listRef"
+        :class="['player-queue-list', 'player-queue-scroll', { reordering: !!drag, settling }]"
+        :items="items"
+        :item-size="rowHeight"
+        :item-resizable="true"
+        key-field="key"
+        :show-scrollbar="false"
+        @scroll="onListScroll"
+      >
+        <template #default="{ item }">
+          <div
+            v-if="item.kind === 'section'"
+            :id="item.anchor ? `${rowPrefix}-upcoming` : undefined"
+            class="queue-section"
+            :data-section="item.key"
+            data-header
+          >
+            <span class="queue-section-title">{{ item.label }}</span>
+            <button
+              v-if="item.clear"
+              class="queue-clear"
+              type="button"
+              @click="music.clearUpcoming()"
+            >
+              {{ $t("player.queue.clear") }}
+            </button>
           </div>
-          <button
-            v-if="!touchOnly"
-            class="queue-remove"
-            type="button"
-            :aria-label="$t('player.queue.remove')"
-            @click.stop="remove(item.index)"
+
+          <div
+            v-else
+            :id="item.history ? undefined : `${rowPrefix}-${item.index}`"
+            :data-section="item.section"
+            :class="[
+              'queue-row',
+              {
+                history: item.history,
+                lifted: drag?.from === item.index,
+                released: drag?.released,
+              },
+            ]"
+            :style="rowStyle(item.index)"
           >
-            <n-icon size="18" :component="DeleteRound" />
-          </button>
+            <!-- The row is see-through (it blends with the cover), so the action exists only where a
+             swipe has uncovered it, sized to the swipe. -->
+            <button
+              v-if="swipe?.index === item.index"
+              class="queue-row-delete"
+              type="button"
+              tabindex="-1"
+              :style="{ width: `${-swipe.x}px`, transition: swipe.tracking ? 'none' : undefined }"
+              @click="remove(item.index)"
+            >
+              {{ $t("player.queue.remove") }}
+            </button>
+            <div
+              class="queue-row-body"
+              :style="bodyStyle(item.index)"
+              role="button"
+              tabindex="0"
+              @pointerdown="!item.history && startSwipe($event, item.index)"
+              @click="tap(item)"
+              @keydown.enter.prevent="tap(item)"
+            >
+              <img class="queue-cover" :src="cover(item.song, 96)" alt="" />
+              <div class="queue-info">
+                <div class="queue-name text-hidden">{{ item.song.name }}</div>
+                <div class="queue-artists text-hidden">{{ artists(item.song) }}</div>
+              </div>
+              <button
+                v-if="!touchOnly && !item.history"
+                class="queue-remove"
+                type="button"
+                :aria-label="$t('player.queue.remove')"
+                @click.stop="remove(item.index)"
+              >
+                <n-icon size="18" :component="DeleteRound" />
+              </button>
+              <button
+                v-if="reorderable && !item.history"
+                class="queue-handle"
+                type="button"
+                :aria-label="$t('player.queue.reorder')"
+                @pointerdown.stop="startDrag($event, item.index)"
+                @click.stop
+              >
+                <n-icon size="22" :component="DragHandleRound" />
+              </button>
+            </div>
+          </div>
+        </template>
+      </n-virtual-list>
+      <!-- The header of the section the list is in, held under the playing song while its rows
+         slide beneath; the next section's own header pushes it out. A copy rather than
+         `position: sticky`, because a virtual list unmounts a header it has scrolled past. -->
+      <div
+        v-show="pinnedSection"
+        ref="pinnedRef"
+        class="queue-pinned"
+        :style="{ top: `${pinned?.push ?? 0}px` }"
+      >
+        <div v-if="pinnedSection" class="queue-section">
+          <span class="queue-section-title">{{ pinnedSection.label }}</span>
           <button
-            v-if="reorderable && !item.history"
-            class="queue-handle"
+            v-if="pinnedSection.clear"
+            class="queue-clear"
             type="button"
-            :aria-label="$t('player.queue.reorder')"
-            @pointerdown.stop="startDrag($event, item.index)"
-            @click.stop
+            @click="music.clearUpcoming()"
           >
-            <n-icon size="22" :component="DragHandleRound" />
+            {{ $t("player.queue.clear") }}
           </button>
         </div>
       </div>
-    </template>
-  </n-virtual-list>
+    </div>
+  </div>
 </template>
 
 <script setup lang="ts">
 /**
- * The big player's queue, as Apple Music lays it out: what has played (dimmed) above, the
- * playing song with the shuffle / repeat toggles, then "Playing Next". Shared by the mobile
- * queue page and the desktop queue panel; each owns its own chrome around it.
+ * The big player's queue, as Apple Music lays it out. Shared by the mobile queue page and the
+ * desktop queue panel; each owns its own chrome around it. Top to bottom:
  *
- * Only "Playing Next" can be reordered, by the ≡ handle, as in Apple Music. In shuffle the
- * handles are hidden: on Tauri the backend owns the permutation and would put a moved song
- * back (see `moveSong`). Touch removes a song by swiping it left; a mouse gets a delete button.
+ * - History: songs actually played (`playHistory`), oldest first, so the most recent sits just
+ *   above the playing song. Not queue positions: the songs before the cursor were not
+ *   necessarily played (start an album at track 5), and the queue plays them after its end.
+ * - The playing song, with the shuffle / repeat toggles.
+ * - Playing Next: the songs after the cursor; then "from the top", the songs before it, which
+ *   list and shuffle repeat reach after the end and Next wraps to. Each reorders within itself
+ *   by its ≡ handle (`moveSong`). In shuffle the handles are hidden: on Tauri the backend owns
+ *   the permutation and would put a moved song back. Clear empties both and keeps the playing
+ *   song. Touch removes a song by swiping it left; a mouse gets a delete button.
  */
-import { computed, onBeforeUnmount, ref, watch, type CSSProperties } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from "vue";
 import { NVirtualList } from "naive-ui";
 import { DeleteRound, DragHandleRound } from "@vicons/material";
 import { musicStore } from "@/store";
@@ -126,20 +177,24 @@ import { prefersReducedMotion } from "@/utils/reducedMotion";
 import { locateVirtualRow, type LocateHandle, type VirtualListInst } from "@/utils/locateRow";
 import IconShuffle from "../icons/IconShuffle.vue";
 import IconShuffleOn from "../icons/IconShuffleOn.vue";
+import IconRepeat from "../icons/IconRepeat.vue";
 import IconRepeatOn from "../icons/IconRepeatOn.vue";
 import IconRepeatOneOn from "../icons/IconRepeatOneOn.vue";
 import { useI18n } from "vue-i18n";
 
-defineOptions({ inheritAttrs: false });
+const emit = defineEmits<{ scroll: [event: Event] }>();
 const props = withDefaults(defineProps<{ rowPrefix: string; rowHeight?: number }>(), {
   rowHeight: 56,
 });
 
 type Song = { id: number; name: string; artist?: { name: string }[]; album?: { picUrl?: string } };
+// Enough to look back with; the store keeps about a hundred.
+const HISTORY_LIMIT = 20;
+
 type Item =
-  | { kind: "section"; key: string; label: string; clear?: boolean }
-  | { kind: "now"; key: string; index: number; song: Song }
-  | { kind: "song"; key: string; index: number; song: Song; history: boolean };
+  // `anchor`: the first upcoming section, which opening the queue scrolls under the card.
+  | { kind: "section"; key: string; label: string; clear?: boolean; anchor?: boolean }
+  | { kind: "song"; key: string; index: number; song: Song; history: boolean; section: string };
 
 const { t } = useI18n();
 const music = musicStore();
@@ -158,9 +213,12 @@ const artists = (song: Song) =>
     .map((artist) => artist.name)
     .join(" / ");
 
+const playing = computed<Song | undefined>(() => music.getPlaylists[current.value]);
+
 const items = computed<Item[]>(() => {
   const list: Song[] = music.getPlaylists;
   const at = current.value;
+  const nowPlaying = playing.value;
   // Keyed by song, not slot, so a reordered row keeps its element; a repeated song gets a count.
   const seen = new Map<number, number>();
   const keyOf = (song: Song) => {
@@ -168,30 +226,134 @@ const items = computed<Item[]>(() => {
     seen.set(song.id, n);
     return `${song.id}#${n}`;
   };
-  const rows: Item[] = [];
-  if (at > 0) rows.push({ kind: "section", key: "history", label: t("player.queue.history") });
-  list.forEach((song, index) => {
-    if (index === at) {
-      rows.push({ kind: "now", key: keyOf(song), index, song });
-      if (index < list.length - 1)
-        rows.push({
-          kind: "section",
-          key: "next",
-          label: t("player.queue.playingNext"),
-          clear: true,
-        });
-    } else rows.push({ kind: "song", key: keyOf(song), index, song, history: index < at });
+  const queueRow = (song: Song, index: number, section: string): Item => ({
+    kind: "song",
+    key: keyOf(song),
+    index,
+    song,
+    history: false,
+    section,
   });
+  const rows: Item[] = [];
+
+  const history = (music.getPlayHistory as Song[])
+    .filter((song) => song.id !== nowPlaying?.id)
+    .slice(0, HISTORY_LIMIT)
+    .reverse();
+  if (history.length) {
+    rows.push({ kind: "section", key: "history", label: t("player.queue.history") });
+    for (const song of history)
+      rows.push({
+        kind: "song",
+        key: `history-${song.id}`,
+        index: -1,
+        song,
+        history: true,
+        section: "history",
+      });
+  }
+  if (!nowPlaying) return rows;
+
+  const after = list.slice(at + 1);
+  const before = list.slice(0, at);
+  if (after.length) {
+    rows.push({
+      kind: "section",
+      key: "next",
+      label: t("player.queue.playingNext"),
+      clear: true,
+      anchor: true,
+    });
+    after.forEach((song, offset) => rows.push(queueRow(song, at + 1 + offset, "next")));
+  }
+  if (before.length) {
+    rows.push({
+      kind: "section",
+      key: "from-top",
+      label: t("player.queue.fromTop"),
+      clear: !after.length,
+      anchor: !after.length,
+    });
+    before.forEach((song, index) => rows.push(queueRow(song, index, "from-top")));
+  }
   return rows;
 });
 
-const select = (index: number) => {
+// ── Pinned section header ───────────────────────────────────────────────────
+const pinnedRef = ref<HTMLElement | null>(null);
+const pinned = ref<{ key: string; push: number } | null>(null);
+const pinnedSection = computed(() =>
+  pinned.value
+    ? (items.value.find((item) => item.kind === "section" && item.key === pinned.value!.key) as
+        | Extract<Item, { kind: "section" }>
+        | undefined)
+    : undefined,
+);
+let pinFrame = 0;
+
+/** Which section the top edge of the list is in, read off the rows on screen. */
+const updatePinned = () => {
+  pinFrame = 0;
+  const scroller = listRef.value?.getScrollContainer();
+  if (!scroller) return;
+  const top = scroller.getBoundingClientRect().top;
+  let section: string | undefined;
+  let nextHeader = Infinity;
+  // Rendered in item order, so the first one reaching below the edge is where the list is.
+  for (const element of scroller.querySelectorAll<HTMLElement>("[data-section]")) {
+    const box = element.getBoundingClientRect();
+    if (box.bottom <= top + 0.5) continue;
+    if (!section) {
+      // Its own header still fully in view needs no copy over it.
+      if ("header" in element.dataset && box.top >= top - 0.5) break;
+      section = element.dataset.section;
+    } else if ("header" in element.dataset) {
+      nextHeader = box.top;
+      break;
+    }
+  }
+  const height = pinnedRef.value?.offsetHeight || 52;
+  const push = Math.min(0, nextHeader - top - height);
+  pinned.value = section ? { key: section, push } : null;
+  fadeUnder(scroller, section ? top + height + push : top);
+};
+
+/**
+ * Rows fade out as they slide under the pinned header (or past the list's top edge), as Apple's
+ * do. Per row and written straight to the element on the scroll frame: a mask on the list would
+ * cut every row's plus-lighter off from the background, and a reactive value would re-render
+ * every visible row each frame. Only the one or two rows crossing the edge carry an opacity.
+ */
+const fadeUnder = (scroller: HTMLElement, edge: number) => {
+  for (const row of scroller.querySelectorAll<HTMLElement>(".queue-row")) {
+    const box = row.getBoundingClientRect();
+    const shown =
+      box.top >= edge || row.classList.contains("lifted")
+        ? 1
+        : Math.max(0, Math.min(1, (box.bottom - edge) / box.height));
+    if (shown < 1) row.style.opacity = String(shown);
+    else row.style.removeProperty("opacity");
+  }
+};
+const schedulePinned = () => {
+  if (!pinFrame) pinFrame = requestAnimationFrame(updatePinned);
+};
+const onListScroll = (event: Event) => {
+  emit("scroll", event);
+  schedulePinned();
+};
+watch(items, () => nextTick(schedulePinned), { immediate: true });
+
+const tap = (item: Extract<Item, { kind: "song" }>) => {
+  // A tap while a row rests open only closes it, as on iOS.
   if (swipe.value || suppressClick) {
     suppressClick = false;
     closeSwipe();
     return;
   }
-  music.selectPlaySongByIndex(index);
+  // A history song plays from where it is in the queue, or joins the end of it.
+  if (item.history) music.addSongToPlaylists(item.song as never, true);
+  else music.selectPlaySongByIndex(item.index);
 };
 
 // ── Drag to reorder ──────────────────────────────────────────────────────────
@@ -230,8 +392,12 @@ const updateDrag = () => {
   const container = scroller();
   if (!d || !container) return;
   d.dy = d.pointerY - d.startY + (container.scrollTop - d.startScroll);
-  const last = music.getPlaylists.length - 1;
-  d.to = Math.min(last, Math.max(current.value + 1, d.from + Math.round(d.dy / d.height)));
+  // A row moves within its own section: after the playing song, or "from the top" before it.
+  const [low, high] =
+    d.from > current.value
+      ? [current.value + 1, music.getPlaylists.length - 1]
+      : [0, current.value - 1];
+  d.to = Math.min(high, Math.max(low, d.from + Math.round(d.dy / d.height)));
 };
 
 const scrollStep = () => {
@@ -402,21 +568,26 @@ const remove = (index: number) => {
 
 // ── Locate ───────────────────────────────────────────────────────────────────
 let locateHandle: LocateHandle | null = null;
-/** Brings the playing song's card to the top; what has played stays above it. */
+/**
+ * Puts what plays next right under the pinned card; history stays above, a scroll up away.
+ * With nothing upcoming, the most recent history is what sits there instead.
+ */
 const scrollToCurrent = () => {
-  const index = current.value;
-  if (index < 0 || index >= music.getPlaylists.length) return;
-  const position = items.value.findIndex((item) => item.kind === "now");
-  if (position < 0) return;
+  const position = items.value.findIndex((item) => item.kind === "section" && item.anchor);
   locateHandle?.cancel();
+  if (position < 0) {
+    listRef.value?.scrollTo({ index: items.value.length - 1 });
+    return;
+  }
   locateHandle = locateVirtualRow(listRef.value, position, {
-    rowSelector: `#${props.rowPrefix}-${index}`,
+    rowSelector: `#${props.rowPrefix}-upcoming`,
     align: "start",
     instant: prefersReducedMotion(),
   });
 };
 
 onBeforeUnmount(() => {
+  cancelAnimationFrame(pinFrame);
   endDrag();
   stopSwipeTracking();
   locateHandle?.cancel();
@@ -427,11 +598,43 @@ defineExpose({ scrollToCurrent });
 
 <style lang="scss" scoped>
 // Text and icons blend with the cover-coloured background; covers and the delete action do not.
-.player-queue-list {
+.player-queue {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   color: var(--main-cover-mix-color, rgb(239, 239, 239));
 
   :is(.queue-section, .queue-info, .queue-mode, .queue-remove, .queue-handle) {
     mix-blend-mode: plus-lighter;
+  }
+}
+
+.queue-scroll-area {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  // A pushed header leaves upward under the list's edge, not over the playing song.
+  overflow: clip;
+  display: flex;
+  flex-direction: column;
+}
+
+.player-queue-list {
+  flex: 1;
+  min-height: 0;
+  overscroll-behavior: contain;
+}
+
+// Moved by `top`, not transform: a transformed copy would be promoted to its own layer and cut its
+// title's plus-lighter off from what is behind it.
+.queue-pinned {
+  position: absolute;
+  right: 0;
+  left: 0;
+  z-index: 3;
+
+  .queue-section {
+    position: relative;
   }
 }
 
@@ -466,11 +669,14 @@ defineExpose({ scrollToCurrent });
 }
 
 .queue-now {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
-  padding: 10px 8px;
+  padding: 4px 8px 12px;
+  // The list scrolls under this edge; the hairline says where.
+  border-bottom: 1px solid color-mix(in srgb, var(--main-cover-mix-color, #fff) 12%, transparent);
 }
 
 .queue-now-cover {

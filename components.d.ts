@@ -43,6 +43,7 @@ declare module 'vue' {
     IconPlay: typeof import('./src/components/Player/icons/IconPlay.vue')['default']
     IconPlaylistOff: typeof import('./src/components/Player/icons/IconPlaylistOff.vue')['default']
     IconPlaylistOn: typeof import('./src/components/Player/icons/IconPlaylistOn.vue')['default']
+    IconRepeat: typeof import('./src/components/Player/icons/IconRepeat.vue')['default']
     IconRepeatOn: typeof import('./src/components/Player/icons/IconRepeatOn.vue')['default']
     IconRepeatOneOn: typeof import('./src/components/Player/icons/IconRepeatOneOn.vue')['default']
     IconRewind: typeof import('./src/components/Player/icons/IconRewind.vue')['default']

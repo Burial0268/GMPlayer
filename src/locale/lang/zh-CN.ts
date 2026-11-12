@@ -424,6 +424,7 @@ const messages: Record<string, unknown> = {
       collapse: "收起播放列表",
       locate: "定位到正在播放",
       history: "播放历史",
+      fromTop: "然后从头播放",
       shuffle: "随机播放",
       repeat: "循环播放",
       reorder: "拖动排序",

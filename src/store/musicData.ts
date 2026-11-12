@@ -1590,18 +1590,40 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     /**
-     * 拖动排序：把 `from` 处的歌移到 `to`。只在「接下来播放」里移动（两端都在正在播的
-     * 这首之后），所以游标和正在发声的歌都不动。随机模式（Tauri）下排列归后端，一次
-     * 手动移动会被下一次 NativeQueueOrderChanged 还原，界面因此不给把手（PlayerQueueList）。
+     * 拖动排序：把 `from` 处的歌移到 `to`。两端必须在正在播的这首的同一侧——之后（接下来
+     * 播放）或之前（循环回到开头后播放）——所以它前面的歌数不变，游标和正在发声的歌都不动。
+     * 随机模式（Tauri）下排列归后端，一次手动移动会被下一次 NativeQueueOrderChanged 还原，
+     * 界面因此不给把手（PlayerQueueList）。
      */
     moveSong(from: number, to: number) {
       const list = this.persistData.playlists;
       const current = this.persistData.playSongIndex;
-      const inUpcoming = (index: number) => index > current && index < list.length;
-      if (from === to || !inUpcoming(from) || !inUpcoming(to)) return false;
+      const side = (index: number) =>
+        index < 0 || index >= list.length || index === current ? 0 : index > current ? 1 : -1;
+      if (from === to || !side(from) || side(from) !== side(to)) return false;
       const next = list.slice();
       next.splice(to, 0, next.splice(from, 1)[0]);
       if (!this.applyQueueOrder(next)) return false;
+      this.afterQueueReordered();
+      publishNativeManifest();
+      return true;
+    },
+
+    /**
+     * 清空待播：只留正在播的这首，播放不中断（Apple Music 的「清除」）。
+     *
+     * 写入次序同 applyQueueOrder：先把它放进 0 号槽（此刻两个槽位都是它），再移游标，
+     * 最后截断。全程 `playlists[playSongIndex]` 都是同一首，Player 的同步 watcher 不会
+     * 把中间态当成切歌。
+     */
+    clearUpcoming() {
+      const list = this.persistData.playlists;
+      const playing = list[this.persistData.playSongIndex];
+      if (!playing || list.length < 2) return false;
+      list[0] = playing;
+      this.persistData.playSongIndex = 0;
+      list.splice(1);
+      this.preloadedSongIds.clear();
       this.afterQueueReordered();
       publishNativeManifest();
       return true;
