@@ -446,16 +446,22 @@ watch(
     });
     // AMLL segments each line's whole text while laying it out; have the worker cut them first.
     // Warm, that is a few ms; cold, it gives up after a bounded wait and lines lay out natively.
-    void prepareLyricSegments(
+    const { ready, late } = prepareLyricSegments(
       lines.flatMap((line) => [
         line.words.map((word) => word.word).join(""),
         line.translatedLyric,
         line.romanLyric,
       ]),
-    ).then(() => {
+    );
+    void ready.then(() => {
       if (generation !== lyricGeneration) return;
       amllLyricLines.value = lines;
       applyLyricLines(lines);
+    });
+    // AMLL keeps a laid-out line's breaks, so a late answer only shows if the lines are handed
+    // over again. Done once, and only when the worker's cut differs from the native one.
+    void late.then((changed) => {
+      if (changed && generation === lyricGeneration) applyLyricLines(lines);
     });
   },
   { immediate: true },

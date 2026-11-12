@@ -87,24 +87,55 @@ function getWorker(): Worker | null {
   return worker;
 }
 
+let nativeWords: Intl.Segmenter | undefined;
+/** Whether the native segmenter cuts `text` anywhere other than `ends` does. */
+function nativeDiffers(text: string, ends: Uint32Array): boolean {
+  nativeWords ??= Native && new Native(undefined, { granularity: "word" });
+  if (!nativeWords) return true;
+  let i = 0;
+  for (const { index, segment, isWordLike } of nativeWords.segment(text)) {
+    const packed = ends[i++];
+    if (packed === undefined || packed >>> 1 !== index + segment.length) return true;
+    if (((packed & 1) === 1) !== Boolean(isWordLike)) return true;
+  }
+  return i !== ends.length;
+}
+
+const settled = Promise.resolve();
+const unchanged = Promise.resolve(false);
+
 /**
- * Has the worker cut `texts` so `segment()` can answer them from the cache. Resolves when the
- * answer is in, or after `waitMs` — whichever is first — so a cold worker never holds lyrics
- * back: those lines lay out natively, and the late answer still lands for later relayouts.
+ * Has the worker cut `texts` so `segment()` can answer them from the cache.
+ *
+ * `ready` resolves when the answer is in or after `waitMs`, whichever is first, so a cold worker
+ * never holds lyrics back: those lines lay out natively. AMLL never re-breaks a line it has laid
+ * out, so a late answer would otherwise never show. `late` resolves `true` once such an answer
+ * has landed and cuts at least one text differently from the native segmenter, i.e. when the
+ * caller has to hand its lines to AMLL again to get the better breaks.
  */
-export function prepareLyricSegments(texts: Iterable<string>, waitMs = 300): Promise<void> {
+export function prepareLyricSegments(
+  texts: Iterable<string>,
+  waitMs = 300,
+): { ready: Promise<void>; late: Promise<boolean> } {
   const missing = [...new Set(texts)].filter((text) => text.trim() && !cache.has(text));
   const target = missing.length ? getWorker() : null;
-  if (!target) return Promise.resolve();
+  if (!target) return { ready: settled, late: unchanged };
   const id = ++requestId;
-  const answered = new Promise<void>((resolve) => {
+  let timedOut = false;
+  const answered = new Promise<boolean>((resolve) => {
     pending.set(id, (results) => {
       results?.forEach((ends, i) => remember(missing[i], ends));
-      resolve();
+      resolve(timedOut && Boolean(results?.some((ends, i) => nativeDiffers(missing[i], ends))));
     });
   });
   target.postMessage({ id, texts: missing });
-  return Promise.race([answered, new Promise<void>((resolve) => setTimeout(resolve, waitMs))]);
+  const timeout = new Promise<void>((resolve) =>
+    setTimeout(() => {
+      timedOut = true;
+      resolve();
+    }, waitMs),
+  );
+  return { ready: Promise.race([answered.then(() => undefined), timeout]), late: answered };
 }
 
 if (Native) {
