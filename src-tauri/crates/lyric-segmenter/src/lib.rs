@@ -23,10 +23,12 @@ use jieba_rs::Jieba;
 /// the wire: the WASM is served brotli/gzip and Tauri compresses the assets it embeds.
 const JIEBA_DICT: &[u8] = include_bytes!("../data/jieba-dict.txt");
 
-/// Words lyrics need and jieba's dictionary lacks (see the file's header). Added one by one:
-/// `Jieba::load_dict` would reset the dictionary's total frequency to this file's. Only their
-/// presence matters, since a word only has to be known to keep its span from breaking.
+/// Words lyrics need and jieba's dictionary lacks (see the file's header). Only their presence
+/// matters, since a word only has to be known to keep its span from breaking.
 const LYRIC_WORDS: &str = include_str!("../data/lyric-words.txt");
+
+/// Recent vocabulary from cutword's 2024 dictionary that jieba lacks (see `data/README.md`).
+const CUTWORD_WORDS: &str = include_str!("../data/cutword-words.txt");
 
 /// ICU's baked dictionaries without the Southeast Asian ones. Requesting them is answered "not
 /// found", which ICU accepts (it loads each dictionary as optional), so nothing references that
@@ -61,9 +63,11 @@ impl Default for Segmenter {
         icu.load_dictionary_unstable(&CjDictionaryOnly)
             .expect("baked CJ dictionary");
         let mut jieba = Jieba::with_dict(&mut &JIEBA_DICT[..]).expect("bundled jieba dictionary");
-        for line in LYRIC_WORDS.lines().filter(|l| !l.starts_with('#')) {
-            if let Some(word) = line.split_whitespace().next() {
-                jieba.add_word(word, None, None);
+        // Added one by one: `Jieba::load_dict` would reset the total frequency to these files'.
+        for line in LYRIC_WORDS.lines().chain(CUTWORD_WORDS.lines()) {
+            let mut fields = line.split_whitespace();
+            if let Some(word) = fields.next().filter(|w| !w.starts_with('#')) {
+                jieba.add_word(word, fields.next().and_then(|f| f.parse().ok()), None);
             }
         }
         Self { jieba, icu }
@@ -286,6 +290,9 @@ mod tests {
             ("冷凝水在杯壁画出了迷宫", "杯壁"),
             ("蒸发成辞职信里两行鞠躬", "辞职信"),
             ("眼前的未来也并没有想通", "想通"),
+            // From cutword's recent vocabulary; jieba alone cut 掉/进 and 想/过.
+            ("主动掉进陷阱还是往你脸上贴金", "掉进"),
+            ("也曾想过以后生活没有人牵挂", "想过"),
         ] {
             assert!(kept_whole(&s, line, word), "{line}: {:?}", split(&s, line));
         }
