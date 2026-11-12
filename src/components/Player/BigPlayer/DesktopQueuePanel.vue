@@ -1,5 +1,6 @@
 <template>
   <aside
+    ref="panelRef"
     :class="['desktop-queue-panel', { show }]"
     :aria-hidden="!show"
     :inert="!show"
@@ -23,6 +24,7 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { musicStore } from "@/store";
+import { useLayerNavigation } from "@/utils/navigation";
 import PlayerQueueList from "./PlayerQueueList.vue";
 
 const props = defineProps<{
@@ -45,8 +47,31 @@ watch(
   },
 );
 
+// A press anywhere outside closes the panel, as a popover does; the press still lands on what it
+// was aimed at. Not the toggle (it would close here, then reopen on its click), nor what Naive
+// teleports out of the player (the output menu, dialogs, toasts), nor the window controls.
+const navigation = useLayerNavigation();
+const panelRef = ref<HTMLElement | null>(null);
+const KEEP_OPEN =
+  ".desktop-toggle-controls, .v-binder-follower-container, .n-modal-container, .n-drawer-container, .n-message-container, .titlebar-area--floating";
+const closeOnOutsidePress = (event: PointerEvent) => {
+  const target = event.target;
+  if (event.button !== 0 || !(target instanceof Element)) return;
+  if (panelRef.value?.contains(target) || target.closest(KEEP_OPEN)) return;
+  navigation.closeQueue();
+};
+watch(
+  () => props.show,
+  (show) => {
+    if (show) window.addEventListener("pointerdown", closeOnOutsidePress, true);
+    else window.removeEventListener("pointerdown", closeOnOutsidePress, true);
+  },
+  { immediate: true },
+);
+
 onBeforeUnmount(() => {
   if (scrollTimer.value) window.clearTimeout(scrollTimer.value);
+  window.removeEventListener("pointerdown", closeOnOutsidePress, true);
 });
 </script>
 
