@@ -270,11 +270,18 @@ onBeforeUnmount(() => {
     background-color 0.16s ease,
     border-color 0.16s ease;
 
-  &:hover,
   &:focus-visible {
     opacity: 1;
     background: rgba(255, 255, 255, 0.12);
     border-color: rgba(255, 255, 255, 0.2);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      opacity: 1;
+      background: rgba(255, 255, 255, 0.12);
+      border-color: rgba(255, 255, 255, 0.2);
+    }
   }
 }
 
@@ -356,11 +363,13 @@ onBeforeUnmount(() => {
     background: color-mix(in srgb, var(--main-cover-color) 9%, transparent);
   }
 
-  &:hover {
-    background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
+  @media (hover: hover) {
+    &:hover {
+      background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
 
-    .queue-remove {
-      opacity: 0.82;
+      .queue-remove {
+        opacity: 0.82;
+      }
     }
   }
 
@@ -448,10 +457,21 @@ onBeforeUnmount(() => {
     opacity var(--duration-200) var(--ease-out),
     background-color var(--duration-200) var(--ease-out);
 
-  &:hover,
   &:focus-visible {
     opacity: 1;
     background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
+  }
+
+  // Touch has no row hover; an invisible but tappable remove button is a mis-tap trap.
+  @media (hover: none) {
+    opacity: 0.6;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      opacity: 1;
+      background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
+    }
   }
 }
 
@@ -489,10 +509,16 @@ onBeforeUnmount(() => {
     color: var(--main-cover-mix-color, rgb(239, 239, 239));
   }
 
-  &:hover,
   &:focus-visible {
     background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
     border-color: color-mix(in srgb, var(--main-cover-color) 32%, transparent);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
+      border-color: color-mix(in srgb, var(--main-cover-color) 32%, transparent);
+    }
   }
 
   &:active {

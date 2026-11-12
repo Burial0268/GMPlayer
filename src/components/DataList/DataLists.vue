@@ -1860,17 +1860,19 @@ const jumpLink = (id, type) => {
       border-color var(--duration-200) var(--ease-out),
       box-shadow var(--duration-200) var(--ease-out);
     cursor: pointer;
-    &:hover {
-      border-color: var(--main-color);
-      box-shadow:
-        0 1px 2px -2px var(--main-boxshadow-color),
-        0 3px 6px 0 var(--main-boxshadow-color),
-        0 5px 12px 4px var(--main-boxshadow-hover-color);
-      .action {
-        .like,
-        .download {
-          opacity: 1;
-          transform: scale(1);
+    @media (hover: hover) {
+      &:hover {
+        border-color: var(--main-color);
+        box-shadow:
+          0 1px 2px -2px var(--main-boxshadow-color),
+          0 3px 6px 0 var(--main-boxshadow-color),
+          0 5px 12px 4px var(--main-boxshadow-hover-color);
+        .action {
+          .like,
+          .download {
+            opacity: 1;
+            transform: scale(1);
+          }
         }
       }
     }
@@ -1938,8 +1940,10 @@ const jumpLink = (id, type) => {
           // hair of extra weight. 700 → one solid block, 600 still a touch heavy.
           font-weight: 500;
           transition: color var(--duration-150) var(--ease-out);
-          &:hover {
-            color: var(--main-color);
+          @media (hover: hover) {
+            &:hover {
+              color: var(--main-color);
+            }
           }
         }
         .n-tag {
@@ -1995,8 +1999,10 @@ const jumpLink = (id, type) => {
         // whole row read flat. Drop it a tone so the eye lands on the title first.
         color: var(--text-secondary);
         transition: color var(--duration-150) var(--ease-out);
-        &:hover {
-          color: var(--main-color);
+        @media (hover: hover) {
+          &:hover {
+            color: var(--main-color);
+          }
         }
       }
     }
@@ -2026,8 +2032,10 @@ const jumpLink = (id, type) => {
         transition:
           opacity var(--duration-150) var(--ease-out),
           transform var(--duration-150) var(--ease-out);
-        &:hover {
-          transform: scale(1.1);
+        @media (hover: hover) {
+          &:hover {
+            transform: scale(1.1);
+          }
         }
         &:active {
           transform: scale(1);
@@ -2093,12 +2101,21 @@ const jumpLink = (id, type) => {
     transition: color var(--duration-300) var(--ease-out);
   }
 
-  &:hover,
   &:active {
     box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.18);
 
     .n-icon {
       color: var(--locate-icon-hover);
+    }
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.18);
+
+      .n-icon {
+        color: var(--locate-icon-hover);
+      }
     }
   }
 }
@@ -2274,10 +2291,16 @@ const jumpLink = (id, type) => {
       color var(--duration-150) var(--ease-out),
       transform var(--duration-150) var(--ease-out);
 
-    &:hover,
     &:active {
       color: var(--main-color);
       background-color: var(--drawer-item-hover);
+    }
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--main-color);
+        background-color: var(--drawer-item-hover);
+      }
     }
 
     &:active {
@@ -2289,10 +2312,16 @@ const jumpLink = (id, type) => {
     }
 
     &.danger {
-      &:hover,
       &:active {
         color: var(--n-error-color, #d03050);
         background-color: color-mix(in srgb, var(--n-error-color, #d03050) 12%, transparent);
+      }
+
+      @media (hover: hover) {
+        &:hover {
+          color: var(--n-error-color, #d03050);
+          background-color: color-mix(in srgb, var(--n-error-color, #d03050) 12%, transparent);
+        }
       }
     }
 

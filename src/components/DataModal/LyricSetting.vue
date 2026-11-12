@@ -69,8 +69,10 @@ defineExpose({
   color: #fff;
   background-color: rgb(255 255 255 / 0.18);
 
-  &:hover {
-    background-color: rgb(255 255 255 / 0.26);
+  @media (hover: hover) {
+    &:hover {
+      background-color: rgb(255 255 255 / 0.26);
+    }
   }
 }
 </style>

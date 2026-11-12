@@ -1390,13 +1390,15 @@ watch(
           cursor: pointer;
           transition: all var(--duration-300) var(--ease-out);
 
-          &:hover {
-            background-color: color-mix(
-              in srgb,
-              rgb(var(--content-panel-accent-rgb, 128, 128, 128)) 16%,
-              transparent
-            );
-            color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+          @media (hover: hover) {
+            &:hover {
+              background-color: color-mix(
+                in srgb,
+                rgb(var(--content-panel-accent-rgb, 128, 128, 128)) 16%,
+                transparent
+              );
+              color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+            }
           }
 
           &:active {
@@ -1499,9 +1501,11 @@ watch(
       border-radius: var(--detail-song-list-radius);
     }
 
-    :deep(.datalists .songs:hover) {
-      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-      box-shadow: none;
+    @media (hover: hover) {
+      :deep(.datalists .songs:hover) {
+        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+        box-shadow: none;
+      }
     }
 
     :deep(.datalists .songs.play) {

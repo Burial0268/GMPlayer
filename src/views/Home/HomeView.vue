@@ -527,10 +527,16 @@ onBeforeUnmount(() => {
       color var(--duration-200) var(--ease-out),
       background-color var(--duration-200) var(--ease-out);
 
-    &:hover,
     &:focus-visible {
       color: var(--n-text-color);
       background: color-mix(in srgb, var(--n-text-color) 11%, transparent);
+    }
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--n-text-color);
+        background: color-mix(in srgb, var(--n-text-color) 11%, transparent);
+      }
     }
   }
 }
@@ -704,9 +710,14 @@ onBeforeUnmount(() => {
       bottom: auto;
     }
 
-    &:hover .media-overlay h3,
     &:focus-visible .media-overlay h3 {
       color: #fff;
+    }
+
+    @media (hover: hover) {
+      &:hover .media-overlay h3 {
+        color: #fff;
+      }
     }
   }
 
@@ -721,7 +732,6 @@ onBeforeUnmount(() => {
     }
   }
 
-  &:hover,
   &:focus-visible {
     .open-cue {
       opacity: 1;
@@ -730,6 +740,19 @@ onBeforeUnmount(() => {
 
     .feed-copy h3 {
       color: var(--main-color);
+    }
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      .open-cue {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .feed-copy h3 {
+        color: var(--main-color);
+      }
     }
   }
 }
@@ -850,13 +873,23 @@ onBeforeUnmount(() => {
     border-radius: var(--radius-sm);
   }
 
-  &:hover,
   &:focus-visible {
     background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
 
     .hot-track__play,
     strong {
       color: var(--main-color);
+    }
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+
+      .hot-track__play,
+      strong {
+        color: var(--main-color);
+      }
     }
   }
 }

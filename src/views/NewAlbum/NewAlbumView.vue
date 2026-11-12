@@ -167,9 +167,11 @@ onMounted(() => {
       line-height: 0;
       cursor: pointer;
       transition: all var(--duration-300) var(--ease-out);
-      &:hover {
-        background-color: var(--main-second-color);
-        color: var(--main-color);
+      @media (hover: hover) {
+        &:hover {
+          background-color: var(--main-second-color);
+          color: var(--main-color);
+        }
       }
       &:active {
         transform: scale(0.9);

@@ -175,7 +175,6 @@ onMounted(() => {
     transform var(--duration-200) var(--ease-out);
 }
 
-.liked-card:hover,
 .liked-card:focus-visible {
   background: color-mix(in srgb, var(--n-text-color) 8%, transparent);
 
@@ -186,6 +185,21 @@ onMounted(() => {
   .liked-card__arrow {
     color: var(--n-text-color);
     transform: translateX(2px);
+  }
+}
+
+@media (hover: hover) {
+  .liked-card:hover {
+    background: color-mix(in srgb, var(--n-text-color) 8%, transparent);
+
+    .liked-card__artwork img {
+      transform: scale(1.04);
+    }
+
+    .liked-card__arrow {
+      color: var(--n-text-color);
+      transform: translateX(2px);
+    }
   }
 }
 

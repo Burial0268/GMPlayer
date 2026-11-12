@@ -762,12 +762,14 @@ onBeforeUnmount(() => {
                 font-size: 12px;
                 cursor: pointer;
                 transition: all var(--duration-300) var(--ease-out);
-                &:hover {
-                  background-color: var(--search-chip-bg-hover);
-                  box-shadow:
-                    inset 0 0 0 1px color-mix(in srgb, var(--main-color) 34%, transparent),
-                    0 3px 8px rgb(0 0 0 / 8%);
-                  color: var(--main-color);
+                @media (hover: hover) {
+                  &:hover {
+                    background-color: var(--search-chip-bg-hover);
+                    box-shadow:
+                      inset 0 0 0 1px color-mix(in srgb, var(--main-color) 34%, transparent),
+                      0 3px 8px rgb(0 0 0 / 8%);
+                    color: var(--main-color);
+                  }
                 }
                 &:active {
                   transform: scale(0.95);
@@ -801,8 +803,10 @@ onBeforeUnmount(() => {
                 margin-bottom: 0;
               }
 
-              &:hover {
-                background-color: var(--n-border-color);
+              @media (hover: hover) {
+                &:hover {
+                  background-color: var(--n-border-color);
+                }
               }
               .num {
                 width: 26px;
@@ -905,8 +909,10 @@ onBeforeUnmount(() => {
                 overflow: hidden;
                 white-space: nowrap;
                 text-overflow: ellipsis;
-                &:hover {
-                  background-color: var(--n-border-color);
+                @media (hover: hover) {
+                  &:hover {
+                    background-color: var(--n-border-color);
+                  }
                 }
               }
             }

@@ -282,14 +282,24 @@ watch(
       background-color: transparent;
     }
 
-    &:hover,
     &:focus-within {
       scrollbar-color: var(--settings-nav-scrollbar-thumb) transparent;
     }
 
-    &:hover::-webkit-scrollbar-thumb,
+    @media (hover: hover) {
+      &:hover {
+        scrollbar-color: var(--settings-nav-scrollbar-thumb) transparent;
+      }
+    }
+
     &:focus-within::-webkit-scrollbar-thumb {
       background-color: var(--settings-nav-scrollbar-thumb);
+    }
+
+    @media (hover: hover) {
+      &:hover::-webkit-scrollbar-thumb {
+        background-color: var(--settings-nav-scrollbar-thumb);
+      }
     }
 
     .settings-nav-item {
@@ -311,16 +321,20 @@ watch(
         color var(--duration-200) var(--ease-out),
         background-color var(--duration-200) var(--ease-out);
 
-      &:hover {
-        color: var(--n-text-color);
-        background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+      @media (hover: hover) {
+        &:hover {
+          color: var(--n-text-color);
+          background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+        }
       }
 
       &.active {
         color: var(--main-color);
 
-        &:hover {
-          background-color: transparent;
+        @media (hover: hover) {
+          &:hover {
+            background-color: transparent;
+          }
         }
 
         .nav-icon {

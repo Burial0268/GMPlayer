@@ -176,9 +176,11 @@ const resetOffset = () => {
     background-color var(--duration-150) var(--ease-out),
     transform var(--duration-150) var(--ease-out);
 
-  &:hover {
-    opacity: 1 !important;
-    background: rgba(255, 255, 255, 0.12);
+  @media (hover: hover) {
+    &:hover {
+      opacity: 1 !important;
+      background: rgba(255, 255, 255, 0.12);
+    }
   }
 
   &:active {
@@ -205,9 +207,11 @@ const resetOffset = () => {
     visibility var(--duration-200) var(--ease-out),
     background-color var(--duration-150) var(--ease-out);
 
-  &:hover {
-    opacity: 1 !important;
-    background: rgba(255, 255, 255, 0.12);
+  @media (hover: hover) {
+    &:hover {
+      opacity: 1 !important;
+      background: rgba(255, 255, 255, 0.12);
+    }
   }
 }
 </style>

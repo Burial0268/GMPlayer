@@ -367,9 +367,11 @@ const routerJump = (url: string, query: LocationQueryRaw) => {
     .artist-name {
       cursor: pointer;
 
-      &:hover {
-        opacity: 1;
-        text-decoration: underline;
+      @media (hover: hover) {
+        &:hover {
+          opacity: 1;
+          text-decoration: underline;
+        }
       }
     }
   }
@@ -408,8 +410,10 @@ const routerJump = (url: string, query: LocationQueryRaw) => {
     opacity var(--duration-200) var(--ease-out),
     transform var(--duration-150) var(--ease-out);
 
-  &:hover {
-    opacity: 1;
+  @media (hover: hover) {
+    &:hover {
+      opacity: 1;
+    }
   }
 
   &:active {
@@ -458,9 +462,11 @@ const routerJump = (url: string, query: LocationQueryRaw) => {
       opacity var(--duration-200) var(--ease-out),
       transform var(--duration-150) var(--ease-out);
 
-    &:hover {
-      opacity: 1;
-      transform: scale(1.1);
+    @media (hover: hover) {
+      &:hover {
+        opacity: 1;
+        transform: scale(1.1);
+      }
     }
 
     &:active {

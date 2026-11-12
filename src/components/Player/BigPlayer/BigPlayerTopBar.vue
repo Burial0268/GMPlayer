@@ -76,10 +76,12 @@ defineEmits<{
       // background-color 走重绘，合成器接不了。
       will-change: transform, opacity;
 
-      &:hover {
-        background-color: #ffffff20;
-        transform: scale(1.05);
-        opacity: 1;
+      @media (hover: hover) {
+        &:hover {
+          background-color: #ffffff20;
+          transform: scale(1.05);
+          opacity: 1;
+        }
       }
 
       &:active {

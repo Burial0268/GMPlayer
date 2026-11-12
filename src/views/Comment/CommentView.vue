@@ -159,8 +159,10 @@ watch(
     left: 0;
     text-align: center;
     z-index: 2;
-    :hover {
-      background-color: var(--n-border-color);
+    @media (hover: hover) {
+      :hover {
+        background-color: var(--n-border-color);
+      }
     }
     :deep(.n-card__content) {
       transition: all var(--duration-300) var(--ease-out);

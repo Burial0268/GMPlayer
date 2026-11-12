@@ -516,8 +516,10 @@ onUnmounted(() => {
           opacity: 1;
           .artist-name {
             cursor: pointer;
-            &:hover {
-              opacity: 1;
+            @media (hover: hover) {
+              &:hover {
+                opacity: 1;
+              }
             }
           }
         }
@@ -539,8 +541,10 @@ onUnmounted(() => {
           cursor: pointer;
           opacity: 1;
           transition: opacity var(--duration-200) var(--ease-out);
-          &:hover {
-            opacity: 1;
+          @media (hover: hover) {
+            &:hover {
+              opacity: 1;
+            }
           }
         }
       }
@@ -621,8 +625,10 @@ onUnmounted(() => {
         transition:
           opacity var(--duration-200) var(--ease-out),
           transform var(--duration-150) var(--ease-out);
-        &:hover {
-          opacity: 1;
+        @media (hover: hover) {
+          &:hover {
+            opacity: 1;
+          }
         }
         &.loading {
           opacity: 0.35;

@@ -88,13 +88,20 @@ defineEmits<{
     display: block;
   }
 
-  &:hover,
   &[aria-pressed="true"] {
     opacity: 0.92;
   }
 
-  &:hover {
-    transform: scale(1.05);
+  @media (hover: hover) {
+    &:hover {
+      opacity: 0.92;
+    }
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      transform: scale(1.05);
+    }
   }
 
   &:active {

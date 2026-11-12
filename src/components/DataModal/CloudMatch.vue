@@ -19,7 +19,7 @@
           :placeholder="$t('other.asIdDes')"
           :show-button="false"
         />
-        <n-popover trigger="hover" :keep-alive-on-hover="false">
+        <n-popover trigger="hover" :keep-alive-on-hover="false" :disabled="isTouchOnly()">
           <template #trigger>
             <n-button style="margin-left: 12px" @click="toSearch(cloudMatchBeforeData.name)">
               <template #icon>
@@ -60,6 +60,7 @@
 
 <script setup>
 import { setCloudMatch } from "@/api/user";
+import { isTouchOnly } from "@/utils/touchOnly";
 import { userStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import { Search } from "@icon-park/vue-next";

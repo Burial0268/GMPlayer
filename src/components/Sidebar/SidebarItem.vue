@@ -49,8 +49,10 @@ defineEmits(["navigate"]);
     grid-template-columns: var(--sidebar-item-slot, 40px) 0;
   }
 
-  &:hover {
-    background-color: var(--sidebar-hover-bg, var(--n-border-color));
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--sidebar-hover-bg, var(--n-border-color));
+    }
   }
 
   &:active {

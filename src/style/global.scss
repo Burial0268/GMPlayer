@@ -481,8 +481,10 @@ html[lang^="en"] :is(.s-label, .detail-kind) {
     color: var(--n-text-color-3);
     transition: color var(--duration-200) var(--ease-out);
 
-    &:hover {
-      color: var(--n-text-color-2);
+    @media (hover: hover) {
+      &:hover {
+        color: var(--n-text-color-2);
+      }
     }
 
     &.n-tabs-tab--active {
@@ -571,12 +573,14 @@ html[lang^="en"] :is(.s-label, .detail-kind) {
       transition: transform var(--duration-200) var(--ease-out);
     }
 
-    &:hover {
-      color: var(--n-text-color);
-      background-color: color-mix(in srgb, var(--n-text-color) 7%, transparent);
+    @media (hover: hover) {
+      &:hover {
+        color: var(--n-text-color);
+        background-color: color-mix(in srgb, var(--n-text-color) 7%, transparent);
 
-      &::after {
-        transform: translateX(2px);
+        &::after {
+          transform: translateX(2px);
+        }
       }
     }
   }
@@ -706,10 +710,12 @@ html.has-floating-titlebar {
 
 // NSlider
 .n-slider {
-  &:hover {
-    .n-slider-rail {
-      .n-slider-rail__fill {
-        background-color: var(--main-color);
+  @media (hover: hover) {
+    &:hover {
+      .n-slider-rail {
+        .n-slider-rail__fill {
+          background-color: var(--main-color);
+        }
       }
     }
   }

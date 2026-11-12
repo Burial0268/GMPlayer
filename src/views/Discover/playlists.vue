@@ -303,9 +303,11 @@ onMounted(() => {
     width: 140px;
     font-size: 16px;
     transition: all var(--duration-300) var(--ease-out);
-    &:hover {
-      background-color: var(--main-second-color);
-      color: var(--main-color);
+    @media (hover: hover) {
+      &:hover {
+        background-color: var(--main-second-color);
+        color: var(--main-color);
+      }
     }
     &:active {
       transform: scale(0.95);
@@ -328,9 +330,11 @@ onMounted(() => {
 .tag {
   cursor: pointer;
   transition: all var(--duration-300) var(--ease-out);
-  &:hover {
-    background-color: var(--main-second-color);
-    color: var(--main-color);
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--main-second-color);
+      color: var(--main-color);
+    }
   }
   &:active {
     transform: scale(0.95);

@@ -770,8 +770,10 @@ const goToPlaylist = (id: number) => {
     color 0.2s;
   color: var(--sidebar-text);
 
-  &:hover {
-    background-color: var(--sidebar-hover-bg);
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--sidebar-hover-bg);
+    }
   }
 }
 
@@ -943,9 +945,11 @@ const goToPlaylist = (id: number) => {
       background-color 0.18s ease,
       color 0.18s ease;
 
-    &:hover {
-      color: var(--sidebar-text);
-      background-color: var(--sidebar-item-hover, rgba(128, 128, 128, 0.16));
+    @media (hover: hover) {
+      &:hover {
+        color: var(--sidebar-text);
+        background-color: var(--sidebar-item-hover, rgba(128, 128, 128, 0.16));
+      }
     }
   }
 
@@ -960,15 +964,17 @@ const goToPlaylist = (id: number) => {
     }
   }
 
-  &:hover {
-    color: var(--sidebar-text);
+  @media (hover: hover) {
+    &:hover {
+      color: var(--sidebar-text);
 
-    .section-chevron {
-      opacity: 1;
-    }
+      .section-chevron {
+        opacity: 1;
+      }
 
-    .section-action {
-      opacity: 0.72;
+      .section-action {
+        opacity: 0.72;
+      }
     }
   }
 }
@@ -1075,8 +1081,10 @@ const goToPlaylist = (id: number) => {
     justify-self: center;
   }
 
-  &:hover {
-    background-color: var(--sidebar-active-bg);
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--sidebar-active-bg);
+    }
   }
 }
 

@@ -241,9 +241,11 @@ onMounted(() => {
   cursor: pointer;
 }
 
-.track-name:hover {
-  text-decoration: underline;
-  text-underline-offset: 3px;
+@media (hover: hover) {
+  .track-name:hover {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
 }
 
 .track-name:focus-visible,
@@ -264,8 +266,10 @@ onMounted(() => {
     .name {
       color: rgba(255, 255, 255, 0.64);
 
-      &:hover {
-        color: rgba(255, 255, 255, 0.92);
+      @media (hover: hover) {
+        &:hover {
+          color: rgba(255, 255, 255, 0.92);
+        }
       }
     }
   }
@@ -304,8 +308,10 @@ onMounted(() => {
     transform var(--duration-150) ease;
 }
 
-.control-button:hover {
-  transform: translateY(-1px);
+@media (hover: hover) {
+  .control-button:hover {
+    transform: translateY(-1px);
+  }
 }
 
 .control-button:active {
@@ -326,10 +332,12 @@ onMounted(() => {
   backdrop-filter: blur(16px) saturate(150%);
 }
 
-.control-button.secondary:hover {
-  color: #fff;
-  background: rgba(36, 36, 36, 0.62);
-  border-color: rgba(255, 255, 255, 0.22);
+@media (hover: hover) {
+  .control-button.secondary:hover {
+    color: #fff;
+    background: rgba(36, 36, 36, 0.62);
+    border-color: rgba(255, 255, 255, 0.22);
+  }
 }
 
 .control-button.primary {
@@ -346,9 +354,11 @@ onMounted(() => {
   backdrop-filter: blur(18px) saturate(160%);
 }
 
-.control-button.primary:hover {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(255, 255, 255, 0.68);
+@media (hover: hover) {
+  .control-button.primary:hover {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(255, 255, 255, 0.68);
+  }
 }
 
 .skeleton {
@@ -406,12 +416,6 @@ onMounted(() => {
 @container personal-fm (max-width: 280px) {
   .station-label span {
     display: none;
-  }
-}
-
-@media (hover: none) {
-  .control-button:hover {
-    transform: none;
   }
 }
 

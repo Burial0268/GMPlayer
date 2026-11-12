@@ -482,8 +482,10 @@ watch(
             cursor: pointer;
             transition: color var(--duration-150) var(--ease-out);
 
-            &:hover {
-              color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+            @media (hover: hover) {
+              &:hover {
+                color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+              }
             }
           }
         }
@@ -512,13 +514,15 @@ watch(
           background-color: color-mix(in srgb, var(--n-border-color) 62%, transparent);
           transition: all var(--duration-300) var(--ease-out);
 
-          &:hover {
-            background-color: color-mix(
-              in srgb,
-              rgb(var(--content-panel-accent-rgb, 128, 128, 128)) 16%,
-              transparent
-            );
-            color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+          @media (hover: hover) {
+            &:hover {
+              background-color: color-mix(
+                in srgb,
+                rgb(var(--content-panel-accent-rgb, 128, 128, 128)) 16%,
+                transparent
+              );
+              color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+            }
           }
         }
       }
@@ -613,9 +617,11 @@ watch(
       border-radius: var(--radius-md);
     }
 
-    :deep(.comment:hover) {
-      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-      box-shadow: none;
+    @media (hover: hover) {
+      :deep(.comment:hover) {
+        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+        box-shadow: none;
+      }
     }
 
     :deep(.comment .n-card__content) {

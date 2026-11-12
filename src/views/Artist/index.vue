@@ -445,8 +445,10 @@ watch(
             margin-right: 5px;
           }
 
-          &:hover {
-            color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+          @media (hover: hover) {
+            &:hover {
+              color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+            }
           }
         }
       }

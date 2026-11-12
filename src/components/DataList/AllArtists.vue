@@ -62,8 +62,10 @@ const jumpArtist = (id, origin) => {
   .name {
     cursor: pointer;
     transition: color var(--duration-300) var(--ease-out);
-    &:hover {
-      color: var(--main-color);
+    @media (hover: hover) {
+      &:hover {
+        color: var(--main-color);
+      }
     }
   }
   .line {
