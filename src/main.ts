@@ -1,4 +1,4 @@
-// Must load before anything imports AMLL: it captures Intl.Segmenter when its module loads.
+// Lyric word segmentation (patches Intl.Segmenter; see the module).
 import "@/utils/lyricSegmenter";
 import { createApp, watch } from "vue";
 import { createPinia } from "pinia";

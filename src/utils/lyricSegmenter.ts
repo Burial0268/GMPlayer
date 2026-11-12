@@ -3,8 +3,11 @@
  * everything else) behind `Intl.Segmenter` for word granularity.
  *
  * It has to be the global rather than something passed in: AMLL builds its word segmenter as a
- * static field when its module loads, and never exports a way to swap it. That also fixes the
- * order — this module is the first import in `main.ts`, ahead of anything that imports AMLL.
+ * static field when its module loads and never exports a way to swap it. So this patches the
+ * native `segment()` method rather than replacing the constructor: a method is looked up at call
+ * time, so instances created before this module ran use it too. Replacing the constructor relied
+ * on running first, which a production bundle does not guarantee — the AMLL chunk was evaluated
+ * ahead of the entry chunk, and AMLL kept the native segmenter for good.
  *
  * `segment()` is synchronous but the WASM lives in a worker (`lyricSegmenter.worker.ts`), so
  * that loading it and building jieba's dictionary never block the main thread. The two meet in
@@ -16,6 +19,7 @@
  */
 
 const Native = typeof Intl !== "undefined" ? Intl.Segmenter : undefined;
+const nativeSegment = Native?.prototype.segment;
 
 /** Packed segment ends per text (UTF-16 end << 1 | word-like), in insertion order. */
 const cache = new Map<string, Uint32Array>();
@@ -93,7 +97,8 @@ function nativeDiffers(text: string, ends: Uint32Array): boolean {
   nativeWords ??= Native && new Native(undefined, { granularity: "word" });
   if (!nativeWords) return true;
   let i = 0;
-  for (const { index, segment, isWordLike } of nativeWords.segment(text)) {
+  // Through the original method: the patched one would answer from the cache.
+  for (const { index, segment, isWordLike } of nativeSegment!.call(nativeWords, text)) {
     const packed = ends[i++];
     if (packed === undefined || packed >>> 1 !== index + segment.length) return true;
     if (((packed & 1) === 1) !== Boolean(isWordLike)) return true;
@@ -138,27 +143,18 @@ export function prepareLyricSegments(
   return { ready: Promise.race([answered.then(() => undefined), timeout]), late: answered };
 }
 
-if (Native) {
-  class WordSegmenter extends Native {
-    readonly #word: boolean;
-
-    constructor(locales?: string | string[], options?: Intl.SegmenterOptions) {
-      super(locales, options);
-      this.#word = this.resolvedOptions().granularity === "word";
+if (Native && nativeSegment) {
+  const isWord = new WeakMap<Intl.Segmenter, boolean>();
+  Native.prototype.segment = function (this: Intl.Segmenter, input: string): Intl.Segments {
+    let word = isWord.get(this);
+    if (word === undefined) {
+      word = this.resolvedOptions().granularity === "word";
+      isWord.set(this, word);
     }
-
-    segment(input: string): Intl.Segments {
-      const text = String(input);
-      const ends = this.#word ? cache.get(text) : undefined;
-      return ends ? cachedSegments(text, ends) : super.segment(text);
-    }
-  }
-
-  Object.defineProperty(Intl, "Segmenter", {
-    value: WordSegmenter,
-    writable: true,
-    configurable: true,
-  });
+    const text = String(input);
+    const ends = word ? cache.get(text) : undefined;
+    return ends ? cachedSegments(text, ends) : nativeSegment.call(this, text);
+  };
 
   // Start the worker loading once the app is up, so the first song finds it warm.
   if (typeof requestIdleCallback === "function") {
