@@ -152,7 +152,11 @@ export function useLayerPresentation() {
   // MainActivity move the task to the background (playback keeps running).
   let exitArmedAt = -Infinity;
   const nativeBack = () => {
-    if (handleBack()) return true;
+    // A back that closed something disarms: the next root press must warn again, not exit.
+    if (handleBack()) {
+      exitArmedAt = -Infinity;
+      return true;
+    }
     if (performance.now() - exitArmedAt < EXIT_CONFIRM_MS) return false;
     exitArmedAt = performance.now();
     $message.info(t("navigation.pressAgainToExit"), { duration: EXIT_CONFIRM_MS });

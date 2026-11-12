@@ -7,6 +7,7 @@ const EDGE = 24; // px from the left edge where a back swipe may start
 const SLOP = 10; // px before the gesture commits to an axis
 const COMMIT_RATIO = 0.35; // of the viewport width
 const COMMIT_VELOCITY = 0.5; // px/ms, a flick commits even when short
+const FLICK_WINDOW = 100; // ms between the last move and release for the velocity to count
 
 export interface EdgeSwipeTarget {
   /** The page to drag, or undefined while a transition owns the host. */
@@ -83,7 +84,9 @@ export function useEdgeSwipeBack(target: EdgeSwipeTarget) {
 
   const release = (e: PointerEvent, cancelled: boolean) => {
     if (!drag || drag.id !== e.pointerId) return;
-    const { page, style, axis, offset, velocity } = drag;
+    const { page, style, axis, offset, time } = drag;
+    // No move is reported while the finger rests, so a drag held still has no flick left in it.
+    const velocity = e.timeStamp - time > FLICK_WINDOW ? 0 : drag.velocity;
     drag = undefined;
     if (!axis) return;
     page?.style.removeProperty("will-change");
