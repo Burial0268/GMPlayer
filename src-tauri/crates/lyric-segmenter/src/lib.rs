@@ -20,6 +20,10 @@ use jieba_rs::Jieba;
 /// the wire: the WASM is served brotli/gzip and Tauri compresses the assets it embeds.
 const JIEBA_DICT: &[u8] = include_bytes!("../data/jieba-dict.txt");
 
+/// Words lyrics need and jieba's dictionary lacks (see the file's header). Added one by one:
+/// `Jieba::load_dict` would reset the dictionary's total frequency to this file's.
+const LYRIC_WORDS: &str = include_str!("../data/lyric-words.txt");
+
 /// ICU's baked dictionaries without the Southeast Asian ones. Requesting them is answered "not
 /// found", which ICU accepts (it loads each dictionary as optional), so nothing references that
 /// data and the linker drops it.
@@ -52,10 +56,17 @@ impl Default for Segmenter {
                 .expect("baked word rules");
         icu.load_dictionary_unstable(&CjDictionaryOnly)
             .expect("baked CJ dictionary");
-        Self {
-            jieba: Jieba::with_dict(&mut &JIEBA_DICT[..]).expect("bundled jieba dictionary"),
-            icu,
+        let mut jieba = Jieba::with_dict(&mut &JIEBA_DICT[..]).expect("bundled jieba dictionary");
+        for line in LYRIC_WORDS.lines().filter(|l| !l.starts_with('#')) {
+            let mut fields = line.split_whitespace();
+            if let (Some(word), Some(freq)) = (fields.next(), fields.next()) {
+                let freq = freq
+                    .parse()
+                    .expect("lyric-words.txt: frequency must be an integer");
+                jieba.add_word(word, Some(freq), None);
+            }
         }
+        Self { jieba, icu }
     }
 }
 
@@ -219,6 +230,18 @@ mod tests {
         assert!(s.segments("ฉันรักเธอ").is_empty());
         assert!(s.segments("ខ្ញុំស្រលាញ់អ្នក").is_empty());
         assert!(!s.segments("我爱你 I love you").is_empty());
+    }
+
+    #[test]
+    fn lyric_words_fix_reported_lines() {
+        let s = Segmenter::default();
+        // (line, a word it must keep whole)
+        for (line, word) in [
+            ("冷凝水在杯壁画出了迷宫", "杯壁"),
+            ("蒸发成辞职信里两行鞠躬", "辞职信"),
+        ] {
+            assert!(words(&split(&s, line)).contains(&word), "{line}");
+        }
     }
 
     #[test]

@@ -8,3 +8,6 @@ MIT-licensed.
 It is vendored because `jieba-rs` only embeds it zstd-compressed (its `default-dict` feature),
 and zstd builds C sources for `wasm32-unknown-unknown`, which needs clang. Build hosts without
 clang (Vercel's image among them) then fail in `cc-rs`. Re-copy it when upgrading `jieba-rs`.
+
+`lyric-words.txt` is ours: words lyrics use that jieba's dictionary lacks, each with the
+smallest frequency that fixed a reported line. See its header before adding one.

@@ -1,0 +1,5 @@
+# Words lyrics use that jieba's dictionary lacks, one `word frequency` per line.
+# Each one fixed a reported line: give it the smallest frequency that does, and add
+# that line to the `lyric_words_fix_reported_lines` test in src/lib.rs.
+# 冷凝水在杯壁画出了迷宫: without it, 杯/壁画 (壁画 1046) and the line broke at 杯|壁.
+杯壁 1000
