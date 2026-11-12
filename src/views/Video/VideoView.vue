@@ -323,8 +323,10 @@ watch(
               display: none;
             }
           }
-          &:hover {
-            color: var(--main-color);
+          @media (hover: hover) {
+            &:hover {
+              color: var(--main-color);
+            }
           }
           .n-icon {
             margin-right: 6px;

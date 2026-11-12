@@ -19,7 +19,7 @@
     <div class="title" v-else>
       <span class="key">{{ $t("general.name.noKeywords") }}</span>
       <br />
-      <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
+      <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -58,6 +58,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore } from "@/store";
 import { useRouter } from "vue-router";
 import { getComment } from "@/api/comment";
@@ -68,6 +69,7 @@ import Pagination from "@/components/Pagination/index.vue";
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const music = musicStore();
 
 // 歌曲信息
@@ -104,7 +106,7 @@ const getCommentData = (id: string | number | string[], offset = 0) => {
       commentsCount.value = res.total;
     } else {
       $message.error(t("general.message.acquisitionFailed"));
-      router.go(-1);
+      navigation.closeTop();
     }
     // 请求后回顶
     if (typeof $scrollToTop !== "undefined") $scrollToTop();
@@ -113,7 +115,7 @@ const getCommentData = (id: string | number | string[], offset = 0) => {
 
 // 当前页数数据变化
 const pageNumberChange = (val: number) => {
-  router.push({
+  navigation.replacePage({
     path: "/comment",
     query: {
       id: songId.value,
@@ -159,8 +161,10 @@ watch(
     left: 0;
     text-align: center;
     z-index: 2;
-    :hover {
-      background-color: var(--n-border-color);
+    @media (hover: hover) {
+      :hover {
+        background-color: var(--n-border-color);
+      }
     }
     :deep(.n-card__content) {
       transition: all var(--duration-300) var(--ease-out);

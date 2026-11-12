@@ -6,7 +6,7 @@
       :class="['tab-item', { active: isActive(tab) }]"
       type="button"
       :aria-current="isActive(tab) ? 'page' : undefined"
-      @click="navigation.switchRoot(tab.key, tab.to)"
+      @click="select(tab)"
     >
       <n-icon :size="22" :component="tab.icon" />
       <span class="tab-label">{{ tab.label }}</span>
@@ -21,6 +21,7 @@ import { settingStore, userStore } from "@/store";
 import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri/core/runtime";
+import { prefersReducedMotion } from "@/utils/reducedMotion";
 
 const { t } = useI18n();
 const navigation = useLayerNavigation();
@@ -61,6 +62,15 @@ const tabs = computed(() => [
 
 const isActive = (tab) => {
   return navigation.current.value?.root === tab.key;
+};
+
+// Re-tapping the tab whose root is already showing scrolls it to the top, as native tab bars do.
+const select = (tab) => {
+  if (navigation.switchRoot(tab.key, tab.to)) return;
+  document
+    .getElementById("mainContent")
+    ?.closest(".n-scrollbar-container")
+    ?.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "instant" : "smooth" });
 };
 </script>
 

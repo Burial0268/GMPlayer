@@ -151,7 +151,12 @@
             />
           </div>
           <div :class="music.getPersonalFmMode ? 'menu fm' : 'menu'">
-            <n-popover v-if="music.getPlaySongData" trigger="hover" :keep-alive-on-hover="false">
+            <n-popover
+              v-if="music.getPlaySongData"
+              trigger="hover"
+              :keep-alive-on-hover="false"
+              :disabled="isTouchOnly()"
+            >
               <template #trigger>
                 <div class="like">
                   <n-icon
@@ -176,7 +181,7 @@
                   : $t("menu.collection")
               }}
             </n-popover>
-            <n-popover trigger="hover" :keep-alive-on-hover="false">
+            <n-popover trigger="hover" :keep-alive-on-hover="false" :disabled="isTouchOnly()">
               <template #trigger>
                 <div class="add-playlist">
                   <n-icon
@@ -191,6 +196,7 @@
             </n-popover>
             <n-dropdown
               trigger="hover"
+              :disabled="isTouchOnly()"
               :options="patternOptions"
               :show-arrow="true"
               @select="patternClick"
@@ -208,7 +214,7 @@
                 />
               </div>
             </n-dropdown>
-            <n-popover trigger="hover" :keep-alive-on-hover="false">
+            <n-popover trigger="hover" :keep-alive-on-hover="false" :disabled="isTouchOnly()">
               <template #trigger>
                 <div
                   :class="music.showPlayList ? 'playlist open' : 'playlist'"
@@ -277,6 +283,7 @@
 
 <script setup>
 import { vButton } from "@/utils/buttonRole";
+import { isTouchOnly } from "@/utils/touchOnly";
 import { getMusicDetail } from "@/api/song";
 import { resolveSongUrl } from "@/utils/AudioContext/resolveSongUrl";
 import { Motion, AnimatePresence, LayoutGroup } from "motion-v";
@@ -1663,8 +1670,10 @@ watch(
           opacity: var(--mobile-mini-player-title-opacity, 1);
           transition: color var(--duration-300) var(--ease-out);
 
-          &:hover {
-            color: var(--player-accent-color);
+          @media (hover: hover) {
+            &:hover {
+              color: var(--player-accent-color);
+            }
           }
         }
 
@@ -1755,9 +1764,11 @@ watch(
         transform: scale(1);
         transition: all var(--duration-300) var(--ease-out);
 
-        &:hover {
-          color: var(--n-color-embedded);
-          background-color: var(--player-accent-color);
+        @media (hover: hover) {
+          &:hover {
+            color: var(--n-color-embedded);
+            background-color: var(--player-accent-color);
+          }
         }
 
         &:active {
@@ -1789,8 +1800,10 @@ watch(
           position: absolute;
         }
 
-        &:hover {
-          transform: scale(1.1);
+        @media (hover: hover) {
+          &:hover {
+            transform: scale(1.1);
+          }
         }
 
         &:active {
@@ -1837,9 +1850,11 @@ watch(
         transition: all var(--duration-300) var(--ease-out);
 
         @media (min-width: 640px) {
-          &:hover {
-            background-color: var(--player-accent-color);
-            color: var(--n-color-embedded);
+          @media (hover: hover) {
+            &:hover {
+              background-color: var(--player-accent-color);
+              color: var(--n-color-embedded);
+            }
           }
         }
 

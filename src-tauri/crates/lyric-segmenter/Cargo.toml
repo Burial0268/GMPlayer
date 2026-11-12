@@ -1,0 +1,25 @@
+[package]
+name = "lyric-segmenter"
+version = "0.1.0"
+edition = "2021"
+description = "Word segmentation for lyric line breaking: jieba for Chinese, ICU4X dictionaries for everything else"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# No `default-dict`: it embeds the dictionary zstd-compressed, which compiles zstd's C sources
+# for wasm32 and needs clang. The same dictionary is bundled in `data/` instead.
+jieba-rs = { version = "0.11", default-features = false }
+# Dictionary segmentation only: `auto` would add the LSTM models for Southeast Asian scripts.
+icu_segmenter = { version = "~2.2", default-features = false, features = ["compiled_data"] }
+# For the data provider that leaves out the Southeast Asian dictionaries (see `CjDictionaryOnly`).
+icu_provider = "~2.2"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+
+# NOTE: `[profile.*]` is only honoured at the workspace root (`src-tauri/Cargo.toml`).
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false

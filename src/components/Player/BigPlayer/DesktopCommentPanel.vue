@@ -430,10 +430,16 @@ onBeforeUnmount(cancelCommentsReady);
     background-color var(--duration-150) var(--ease-out),
     transform var(--duration-150) var(--ease-out);
 
-  &:hover,
   &:focus-visible {
     opacity: 1;
     background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      opacity: 1;
+      background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
+    }
   }
 
   &:active {
@@ -490,10 +496,15 @@ onBeforeUnmount(cancelCommentsReady);
         transform var(--duration-200) var(--ease-out);
     }
 
-    &:hover,
     &:focus-visible,
     &.active {
       opacity: 0.94;
+    }
+
+    @media (hover: hover) {
+      &:hover {
+        opacity: 0.94;
+      }
     }
 
     &.active::after {
@@ -568,8 +579,10 @@ onBeforeUnmount(cancelCommentsReady);
       border-radius: 0 0 var(--radius-md) var(--radius-md);
     }
 
-    &:hover {
-      background-color: color-mix(in srgb, var(--main-cover-color) 18%, transparent);
+    @media (hover: hover) {
+      &:hover {
+        background-color: color-mix(in srgb, var(--main-cover-color) 18%, transparent);
+      }
     }
 
     &.comment-row-odd :deep(.comment) {
@@ -694,10 +707,16 @@ onBeforeUnmount(cancelCommentsReady);
     opacity var(--duration-150) var(--ease-out),
     background-color var(--duration-150) var(--ease-out);
 
-  &:hover,
   &:focus-visible {
     opacity: 1;
     background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      opacity: 1;
+      background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
+    }
   }
 }
 

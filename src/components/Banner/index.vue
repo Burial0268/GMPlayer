@@ -247,8 +247,10 @@ onBeforeUnmount(() => {
     right: 14px;
   }
 
-  &:hover {
-    background: rgb(0 0 0 / 42%);
+  @media (hover: hover) {
+    &:hover {
+      background: rgb(0 0 0 / 42%);
+    }
   }
 
   &:focus-visible {
@@ -257,18 +259,28 @@ onBeforeUnmount(() => {
   }
 }
 
-// 悬停轮播图 / 键盘聚焦时，箭头淡入归位（与封面卡片悬停显现播放键一致）
-.banner:hover .banner-arrow,
 .banner-arrow:focus-visible {
   opacity: 1;
   transform: scale(1);
   pointer-events: auto;
 }
 
-// 点击回弹
-.banner:hover .banner-arrow:active,
+@media (hover: hover) {
+  .banner:hover .banner-arrow {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+}
+
 .banner-arrow:focus-visible:active {
   transform: scale(0.92);
+}
+
+@media (hover: hover) {
+  .banner:hover .banner-arrow:active {
+    transform: scale(0.92);
+  }
 }
 
 .banner-controls {
@@ -318,8 +330,10 @@ onBeforeUnmount(() => {
     border-radius: var(--radius-pill);
   }
 
-  &:hover span {
-    background-color: rgb(255 255 255 / 68%);
+  @media (hover: hover) {
+    &:hover span {
+      background-color: rgb(255 255 255 / 68%);
+    }
   }
 
   &.is-active {

@@ -160,8 +160,10 @@ nav {
           transform var(--duration-200) var(--ease-out);
 
         @media (min-width: 640px) {
-          &:hover {
-            background-color: var(--hover-overlay);
+          @media (hover: hover) {
+            &:hover {
+              background-color: var(--hover-overlay);
+            }
           }
         }
 
@@ -205,8 +207,10 @@ nav {
         transform var(--duration-200) var(--ease-out),
         color var(--duration-200) var(--ease-out);
 
-      &:hover {
-        background-color: color-mix(in srgb, var(--material-regular-bg) 94%, var(--text-primary));
+      @media (hover: hover) {
+        &:hover {
+          background-color: color-mix(in srgb, var(--material-regular-bg) 94%, var(--text-primary));
+        }
       }
 
       &:active {
@@ -260,8 +264,10 @@ nav {
       --nav-pill-specular: rgba(255, 255, 255, 0.16);
       --nav-pill-grade: saturate(170%) brightness(82%) contrast(88%);
 
-      .right .action-icon:hover {
-        background-color: rgba(255, 255, 255, 0.12);
+      @media (hover: hover) {
+        .right .action-icon:hover {
+          background-color: rgba(255, 255, 255, 0.12);
+        }
       }
     }
 
@@ -277,8 +283,10 @@ nav {
       backdrop-filter: blur(12px) var(--nav-pill-grade);
     }
 
-    .right .action-icon:hover {
-      background-color: var(--hover-overlay);
+    @media (hover: hover) {
+      .right .action-icon:hover {
+        background-color: var(--hover-overlay);
+      }
     }
 
     .left {

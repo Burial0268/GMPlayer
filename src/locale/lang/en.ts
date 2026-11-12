@@ -5,6 +5,7 @@ const messages: Record<string, unknown> = {
     search: "Search",
     player: "Player",
     cancel: "Cancel",
+    pressAgainToExit: "Press back again to exit",
   },
   // Navigation
   nav: {
@@ -407,6 +408,10 @@ const messages: Record<string, unknown> = {
       like: "Add to favorites",
       unlike: "Remove from favorites",
       more: "More options",
+      lyrics: "Lyrics",
+      output: "Output device",
+      outputDefault: "System default",
+      outputUnavailable: "not connected",
       dislike: "Not interested",
       volume: "Volume",
       progress: "Playback progress",
@@ -417,6 +422,12 @@ const messages: Record<string, unknown> = {
       clear: "Clear",
       collapse: "Hide queue",
       locate: "Jump to current",
+      history: "History",
+      fromTop: "Then from the top",
+      shuffle: "Shuffle",
+      repeat: "Repeat",
+      reorder: "Drag to reorder",
+      remove: "Remove",
     },
     share: {
       title: "Share lyrics",

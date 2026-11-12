@@ -146,8 +146,10 @@ const setting = settingStore();
         // background-color 走重绘，合成器接不了。
         will-change: transform;
 
-        &:hover {
-          transform: scale(1.1);
+        @media (hover: hover) {
+          &:hover {
+            transform: scale(1.1);
+          }
         }
 
         &:active {
@@ -179,8 +181,10 @@ const setting = settingStore();
         transform: scale(1);
       }
 
-      &:hover .n-icon {
-        transform: scale(1.1);
+      @media (hover: hover) {
+        &:hover .n-icon {
+          transform: scale(1.1);
+        }
       }
     }
   }
@@ -199,9 +203,11 @@ const setting = settingStore();
     // background-color 走重绘，合成器接不了。
     will-change: transform, opacity;
 
-    &:hover {
-      background-color: #ffffff30;
-      transform: scale(1.05);
+    @media (hover: hover) {
+      &:hover {
+        background-color: #ffffff30;
+        transform: scale(1.05);
+      }
     }
 
     &:active {

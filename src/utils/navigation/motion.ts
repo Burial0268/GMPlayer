@@ -8,11 +8,14 @@ export const layerMotion = {
   cardDetails: { hide: 0.12, show: 0.22, delay: 0.075 },
   page: 0.28,
   root: 0.18,
-  // Ease in and out so full-screen clipping stays readable in both directions.
+  // Fade plus a field growing from the Nav button. Entry decelerates into place and its rows
+  // cascade in `stagger` apart; exit is quicker and accelerates away, as dismissals do.
   search: {
-    enter: 0.52,
-    exit: 0.46,
-    ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
+    enter: 0.4,
+    exit: 0.22,
+    stagger: 0.02,
+    ease: [0.22, 1, 0.36, 1] as [number, number, number, number],
+    exitEase: [0.4, 0, 1, 1] as [number, number, number, number],
   },
   desktop: 0.3,
   ease: [0.22, 1, 0.36, 1] as [number, number, number, number],

@@ -187,18 +187,20 @@ const toUser = (id) => {
         transition: all var(--duration-300) var(--ease-out);
         z-index: 1;
       }
-      &:hover {
-        box-shadow: 0 4px 16px 0 #00000040;
-        .n-icon {
-          opacity: 1;
-          transform: scale(1);
-        }
-        .coverImg {
-          filter: brightness(0.8);
-          transform: scale(1.05);
-        }
-        .shadow {
-          opacity: 1;
+      @media (hover: hover) {
+        &:hover {
+          box-shadow: 0 4px 16px 0 #00000040;
+          .n-icon {
+            opacity: 1;
+            transform: scale(1);
+          }
+          .coverImg {
+            filter: brightness(0.8);
+            transform: scale(1.05);
+          }
+          .shadow {
+            opacity: 1;
+          }
         }
       }
       &:active {
@@ -213,8 +215,10 @@ const toUser = (id) => {
       font-size: 16px;
       transition: all var(--duration-300) var(--ease-out);
       cursor: pointer;
-      &:hover {
-        color: var(--main-color);
+      @media (hover: hover) {
+        &:hover {
+          color: var(--main-color);
+        }
       }
     }
     .sign {

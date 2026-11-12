@@ -150,18 +150,20 @@ const props = defineProps({
         bottom: 0;
         border-top-right-radius: var(--radius-md);
       }
-      &:hover {
-        box-shadow: 0 15px 30px rgb(0 0 0 / 10%);
-        .coverImg {
-          filter: brightness(0.8);
-          transform: scale(1.1);
-        }
-        .play {
-          transform: scale(1);
-          opacity: 1;
-        }
-        .description {
-          opacity: 0;
+      @media (hover: hover) {
+        &:hover {
+          box-shadow: 0 15px 30px rgb(0 0 0 / 10%);
+          .coverImg {
+            filter: brightness(0.8);
+            transform: scale(1.1);
+          }
+          .play {
+            transform: scale(1);
+            opacity: 1;
+          }
+          .description {
+            opacity: 0;
+          }
         }
       }
       &:active {
@@ -178,9 +180,11 @@ const props = defineProps({
         -webkit-line-clamp: 2;
         transition: all var(--duration-300) var(--ease-out);
         cursor: pointer;
-        &:hover {
-          opacity: 1;
-          color: var(--main-color);
+        @media (hover: hover) {
+          &:hover {
+            opacity: 1;
+            color: var(--main-color);
+          }
         }
       }
       .by {
@@ -188,9 +192,11 @@ const props = defineProps({
         opacity: 0.6;
         transition: all var(--duration-300) var(--ease-out);
         cursor: pointer;
-        &:hover {
-          opacity: 1;
-          color: var(--main-color);
+        @media (hover: hover) {
+          &:hover {
+            opacity: 1;
+            color: var(--main-color);
+          }
         }
       }
       .artists {

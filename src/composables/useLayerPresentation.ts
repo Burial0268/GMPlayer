@@ -3,11 +3,14 @@ import { musicStore, siteStore } from "@/store";
 import { useLayerNavigation } from "@/utils/navigation";
 import { restoreSourceFocus } from "@/utils/navigation/sources";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
+import { useI18n } from "vue-i18n";
 
+const EXIT_CONFIRM_MS = 2000;
 const FOCUSABLE = "button, a[href], input, textarea, select, [tabindex]:not([tabindex='-1'])";
 
 export function useLayerPresentation() {
   const navigation = useLayerNavigation();
+  const { t } = useI18n();
   const { isMobile } = useResponsiveLayout();
   const music = musicStore();
   const site = siteStore();
@@ -100,7 +103,7 @@ export function useLayerPresentation() {
                 // set `inert` — leaving the controls visible but unclickable, so the user cannot
                 // close the app while the player is open. OS window chrome is never trapped by an
                 // in-page modal; keep it live alongside the other global chrome below.
-                "script, style, link, .titlebar-area--floating, .v-binder-follower-container, .n-modal-container, .n-message-container, .n-notification-container",
+                "script, style, link, .titlebar-area--floating, .v-binder-follower-container, .n-modal-container, .n-drawer-container, .n-message-container, .n-notification-container",
               )
             )
               continue;
@@ -127,7 +130,7 @@ export function useLayerPresentation() {
   const nativeModal = () =>
     [
       ...document.querySelectorAll<HTMLElement>(
-        ".n-modal-container .n-modal, .n-dialog, .n-image-preview-container",
+        ".n-modal-container .n-modal, .n-dialog, .n-drawer, .n-image-preview-container, .action-sheet:not(.closing)",
       ),
     ].some((element) => element.getClientRects().length && !element.closest("[inert]"));
 
@@ -144,6 +147,20 @@ export function useLayerPresentation() {
       return true;
     }
     return navigation.closeTop();
+  };
+  // Android back at a root page: the first press only warns, like native apps; `false` lets
+  // MainActivity move the task to the background (playback keeps running).
+  let exitArmedAt = -Infinity;
+  const nativeBack = () => {
+    // A back that closed something disarms: the next root press must warn again, not exit.
+    if (handleBack()) {
+      exitArmedAt = -Infinity;
+      return true;
+    }
+    if (performance.now() - exitArmedAt < EXIT_CONFIRM_MS) return false;
+    exitArmedAt = performance.now();
+    $message.info(t("navigation.pressAgainToExit"), { duration: EXIT_CONFIRM_MS });
+    return true;
   };
   const keydown = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
@@ -178,7 +195,7 @@ export function useLayerPresentation() {
   onMounted(() => {
     queueMedia.addEventListener("change", queueLayoutChanged);
     window.addEventListener("keydown", keydown);
-    nativeWindow.__gmplayerBack = handleBack;
+    nativeWindow.__gmplayerBack = nativeBack;
   });
   onBeforeUnmount(() => {
     queueMedia.removeEventListener("change", queueLayoutChanged);

@@ -104,6 +104,8 @@ interface SettingDataState {
   autoMixTransitionEffects: boolean;
   autoMixVocalGuard: boolean;
   autoMixEmotionalTransition: boolean;
+  /** Native output device by name; "" follows the system default. */
+  audioOutputDevice: string;
   // DSP settings. Defaults must resolve to a native bypass path.
   dspEnabled: boolean;
   dspEqEnabled: boolean;
@@ -220,6 +222,7 @@ export function repairSettingData(store: any): void {
     });
   }
 
+  if (typeof store.audioOutputDevice !== "string") store.audioOutputDevice = "";
   if (typeof store.dspEnabled !== "boolean") store.dspEnabled = false;
   if (typeof store.dspEqEnabled !== "boolean") store.dspEqEnabled = true;
   if (typeof store.dspLimiterEnabled !== "boolean") store.dspLimiterEnabled = false;
@@ -297,6 +300,7 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixTransitionEffects: true,
       autoMixVocalGuard: true,
       autoMixEmotionalTransition: true,
+      audioOutputDevice: "",
       // DSP defaults: native mixer stays bypassed until explicitly enabled.
       dspEnabled: false,
       dspEqEnabled: true,

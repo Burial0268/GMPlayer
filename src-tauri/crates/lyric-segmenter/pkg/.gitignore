@@ -1,0 +1,8 @@
+*
+!.gitignore
+!package.json
+!*.js
+!*.ts
+!*.wasm
+!snippets/
+!snippets/**

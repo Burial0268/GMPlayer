@@ -628,8 +628,10 @@ watch(
     cursor: pointer;
     transition: background-color 0.2s;
 
-    &:hover {
-      background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+    @media (hover: hover) {
+      &:hover {
+        background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+      }
     }
 
     &.busy {

@@ -1,3 +1,5 @@
+// Lyric word segmentation (patches Intl.Segmenter; see the module).
+import "@/utils/lyricSegmenter";
 import { createApp, watch } from "vue";
 import { createPinia } from "pinia";
 import { useI18n } from "@/locale";

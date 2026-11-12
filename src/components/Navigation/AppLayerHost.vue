@@ -33,6 +33,7 @@ import { rectOf, restoreSourceFocus, type SurfaceRect } from "@/utils/navigation
 import { animateRouteLayers, type InterruptedSurface } from "@/utils/navigation/routeMotion";
 import { layerMotion, motionDuration } from "@/utils/navigation/motion";
 import { useLayerPresentation } from "@/composables/useLayerPresentation";
+import { useEdgeSwipeBack } from "@/composables/useEdgeSwipeBack";
 
 const navigation = useLayerNavigation();
 useLayerPresentation();
@@ -51,6 +52,8 @@ let run = 0;
 let hostStyle: string | null | undefined;
 let scrollOverflow: string | undefined;
 let enterDone: (() => void) | undefined;
+// A committed edge swipe: the page still carries the finger's offset until the pop takes over.
+let gesture: { element: HTMLElement; offset: number; style: string | null } | undefined;
 
 const scroller = () => host.value?.closest<HTMLElement>(".n-scrollbar-container");
 const routeLayer = (): AppLayer | undefined =>
@@ -110,6 +113,8 @@ function cancelMotion() {
   desktopAnimation = undefined;
   desktopDone?.();
   desktopDone = undefined;
+  // Once the page is leaving, its restored pre-drag style already removes the offset.
+  if (gesture && originalStyles.has(gesture.element)) gesture = undefined;
   originalStyles.forEach((_value, element) => restoreStyle(element));
   const callbacks = [...leaving.values()];
   leaving.clear();
@@ -121,12 +126,37 @@ function cancelMotion() {
   navigation.finishTransition(navigation.transition.value.id);
 }
 
+useEdgeSwipeBack({
+  page: () =>
+    host.value?.childElementCount === 1 ? (host.value.firstElementChild as HTMLElement) : undefined,
+  commit: (element, offset, style) => {
+    gesture = { element, offset, style };
+  },
+});
+
+function dropGesture() {
+  gesture?.element.style.removeProperty("transform");
+  gesture = undefined;
+}
+
 const removeBefore = navigation.onBeforeNavigation(() => {
   saveScroll();
-  interrupted = active?.snapshot();
+  const snapshot = active?.snapshot();
+  cancelMotion();
+  interrupted =
+    snapshot ??
+    (gesture && {
+      element: gesture.element,
+      transform: `translate3d(${gesture.offset}px, 0px, 0px)`,
+      contentOpacity: "1",
+      scale: { x: 1, y: 1, radiusX: 0, radiusY: 0 },
+      gesture: true,
+    });
+});
+const removeCancelled = navigation.onNavigationCancelled(() => {
+  dropGesture();
   cancelMotion();
 });
-const removeCancelled = navigation.onNavigationCancelled(cancelMotion);
 
 watch(
   () => navigation.transition.value.id,
@@ -149,8 +179,13 @@ watch(
 
 function beforeLeave(element: Element) {
   if (!(element instanceof HTMLElement)) return;
+  const dragged = gesture?.element === element ? gesture : undefined;
+  // Restore to the style from before the drag, and measure the page where it rests.
+  if (dragged) originalStyles.set(element, dragged.style);
   saveStyle(element);
-  outgoingRects.set(element, rectOf(element));
+  const rect = rectOf(element);
+  if (dragged) rect.x -= dragged.offset;
+  outgoingRects.set(element, rect);
   element.inert = true;
   element.setAttribute("aria-hidden", "true");
 }
@@ -259,6 +294,8 @@ async function enter(element: Element, done: () => void) {
     frame = 0;
     if (token !== run || !host.value) return;
     positionLeavingPages();
+    // Same frame as the animation's first keyframe, which carries the offset from here on.
+    dropGesture();
     element.style.opacity = "";
     element.style.position = "relative";
     element.style.zIndex = request.direction === "pop" ? "1" : "3";

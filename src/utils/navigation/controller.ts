@@ -237,20 +237,6 @@ export function createLayerNavigation(router: Router) {
   ) {
     const previous = current.value;
     if (!previous || (previous.kind === kind && previous.presentation !== "page")) return;
-    if (kind === "search" && previous.kind === "search") {
-      return go(
-        previous.route,
-        [
-          ...state.value.layers.slice(0, -1),
-          {
-            ...previous,
-            presentation: "search",
-            search: { query: previous.search?.query ?? "", phase: "input" },
-          },
-        ],
-        true,
-      );
-    }
     const next: AppLayer = {
       id: nextLayerId(),
       parentId: previous.id,
@@ -276,7 +262,16 @@ export function createLayerNavigation(router: Router) {
             ? "share-player"
             : kind,
       source: sourceFor(options),
-      ...(kind === "search" ? { search: { query: "", phase: "input" as const } } : {}),
+      // Over a results page the input stacks on top and starts from its query: cancel pops back
+      // to those results. Turning the results layer itself into the input made cancel pop it too.
+      ...(kind === "search"
+        ? {
+            search: {
+              query: previous.kind === "search" ? (previous.search?.query ?? "") : "",
+              phase: "input" as const,
+            },
+          }
+        : {}),
     };
     return go(next.route, [...state.value.layers, next]);
   }

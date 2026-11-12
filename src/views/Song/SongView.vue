@@ -130,7 +130,7 @@
       loadingState ? $t("general.name.noKeywords") : $t("general.message.acquisitionFailed")
     }}</span>
     <br />
-    <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
+    <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
       {{ $t("general.name.goBack") }}
     </n-button>
   </div>
@@ -171,6 +171,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLayerNavigation } from "@/utils/navigation";
 import { getSimiPlayList, getMusicDetail } from "@/api/song";
 import { getComment } from "@/api/comment";
 import { useRouter } from "vue-router";
@@ -191,6 +192,7 @@ type RouteQueryId = string | string[] | null | undefined;
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const music = musicStore();
 const addPlayListRef = ref<any>(null);
 const { applyContentPanelAccent } = useContentPanelAccent();
@@ -482,8 +484,10 @@ watch(
             cursor: pointer;
             transition: color var(--duration-150) var(--ease-out);
 
-            &:hover {
-              color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+            @media (hover: hover) {
+              &:hover {
+                color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+              }
             }
           }
         }
@@ -512,13 +516,15 @@ watch(
           background-color: color-mix(in srgb, var(--n-border-color) 62%, transparent);
           transition: all var(--duration-300) var(--ease-out);
 
-          &:hover {
-            background-color: color-mix(
-              in srgb,
-              rgb(var(--content-panel-accent-rgb, 128, 128, 128)) 16%,
-              transparent
-            );
-            color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+          @media (hover: hover) {
+            &:hover {
+              background-color: color-mix(
+                in srgb,
+                rgb(var(--content-panel-accent-rgb, 128, 128, 128)) 16%,
+                transparent
+              );
+              color: rgb(var(--content-panel-accent-rgb, 128, 128, 128));
+            }
           }
         }
       }
@@ -613,9 +619,11 @@ watch(
       border-radius: var(--radius-md);
     }
 
-    :deep(.comment:hover) {
-      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-      box-shadow: none;
+    @media (hover: hover) {
+      :deep(.comment:hover) {
+        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+        box-shadow: none;
+      }
     }
 
     :deep(.comment .n-card__content) {

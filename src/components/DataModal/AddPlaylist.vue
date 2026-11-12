@@ -136,8 +136,10 @@ defineExpose({
       border-radius: var(--radius-md);
       cursor: pointer;
       transition: all var(--duration-300) var(--ease-out);
-      &:hover {
-        background-color: var(--n-border-color);
+      @media (hover: hover) {
+        &:hover {
+          background-color: var(--n-border-color);
+        }
       }
       .pic {
         width: 60px;

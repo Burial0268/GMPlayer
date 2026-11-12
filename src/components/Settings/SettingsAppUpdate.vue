@@ -618,8 +618,10 @@ const handleInstallUpdate = () => {
         background-color: transparent;
       }
 
-      :deep(.release-notes-markdown a:hover) {
-        text-decoration: underline;
+      @media (hover: hover) {
+        :deep(.release-notes-markdown a:hover) {
+          text-decoration: underline;
+        }
       }
 
       :deep(.release-notes-markdown strong) {

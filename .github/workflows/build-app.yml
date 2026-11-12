@@ -76,9 +76,50 @@ jobs:
       - name: 运行 ncm-core 离线测试
         run: cargo test -p ncm-core --manifest-path src-tauri/Cargo.toml
 
+  # 与平台无关的单元测试：导航层栈（返回路径、搜索会话）和歌词分词器。两者都直接
+  # 进安装包——分词器以 WASM 形式随前端发布，构建 job 里的 `pnpm build:wasm` 负责产出——
+  # 所以和协议层守卫一样作为构建前置。
+  unit-tests:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: 克隆仓库
+
+      - name: 安装 PNPM
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: 配置 Rust 缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: unit-tests
+
+      - name: 安装依赖
+        run: pnpm install
+
+      - name: 导航层测试
+        run: pnpm test:navigation
+
+      - name: 歌词分词器测试
+        run: cargo test -p lyric-segmenter --manifest-path src-tauri/Cargo.toml
+
   build-tauri-desktop:
     name: 构建 Tauri 桌面版本
-    needs: [clean-pre-release, verify-ncm-protocol]
+    needs: [clean-pre-release, verify-ncm-protocol, unit-tests]
     strategy:
       fail-fast: false
       matrix:
@@ -305,7 +346,7 @@ jobs:
             src-tauri/target/**/release/gmplayer
   build-tauri-android:
     name: 构建 Tauri 安卓移动版本
-    needs: [clean-pre-release, verify-ncm-protocol]
+    needs: [clean-pre-release, verify-ncm-protocol, unit-tests]
     runs-on: ubuntu-latest
     env:
       # 必须与 `gen/android/app/build.gradle.kts` 的 minSdk 和

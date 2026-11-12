@@ -443,10 +443,16 @@ const handleAction = (key: string) => {
     :deep(.settings-nav-item) {
       color: rgb(255 255 255 / 0.76);
 
-      &:hover,
       &.active {
         color: #fff;
         background-color: rgb(255 255 255 / 0.16);
+      }
+
+      @media (hover: hover) {
+        &:hover {
+          color: #fff;
+          background-color: rgb(255 255 255 / 0.16);
+        }
       }
     }
 

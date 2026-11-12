@@ -333,9 +333,11 @@ const routerJump = (url, query) => {
     gap: 1.5rem;
     padding: 2.25rem 0 calc(2.25rem + var(--cover-size) * 0.06);
   }
-  &:hover {
-    .control {
-      opacity: 1;
+  @media (hover: hover) {
+    &:hover {
+      .control {
+        opacity: 1;
+      }
     }
   }
   .record-stage {
@@ -475,8 +477,10 @@ const routerJump = (url, query) => {
           opacity: 1;
           .artist-name {
             cursor: pointer;
-            &:hover {
-              opacity: 1;
+            @media (hover: hover) {
+              &:hover {
+                opacity: 1;
+              }
             }
           }
         }
@@ -497,8 +501,10 @@ const routerJump = (url, query) => {
           cursor: pointer;
           opacity: 1;
           transition: opacity var(--duration-200) var(--ease-out);
-          &:hover {
-            opacity: 1;
+          @media (hover: hover) {
+            &:hover {
+              opacity: 1;
+            }
           }
         }
       }
@@ -569,8 +575,10 @@ const routerJump = (url, query) => {
         transition:
           opacity var(--duration-200) var(--ease-out),
           transform var(--duration-150) var(--ease-out);
-        &:hover {
-          opacity: 1;
+        @media (hover: hover) {
+          &:hover {
+            opacity: 1;
+          }
         }
         &.loading {
           opacity: 0.35;

@@ -1,5 +1,10 @@
 <template>
-  <n-popover v-if="listenTogether.isInRoom" trigger="hover" :keep-alive-on-hover="false">
+  <n-popover
+    v-if="listenTogether.isInRoom"
+    trigger="hover"
+    :keep-alive-on-hover="false"
+    :disabled="isTouchOnly()"
+  >
     <template #trigger>
       <div
         v-button
@@ -30,7 +35,7 @@
       </div>
     </div>
   </n-popover>
-  <n-popover v-else trigger="hover" :keep-alive-on-hover="false">
+  <n-popover v-else trigger="hover" :keep-alive-on-hover="false" :disabled="isTouchOnly()">
     <template #trigger>
       <div
         v-button
@@ -47,6 +52,7 @@
 
 <script setup>
 import { vButton } from "@/utils/buttonRole";
+import { isTouchOnly } from "@/utils/touchOnly";
 import { useI18n } from "vue-i18n";
 import { listenTogetherStore } from "@/store";
 import { PeopleOutline } from "@vicons/ionicons5";
@@ -71,18 +77,22 @@ defineEmits(["click"]);
   color: var(--main-color);
   background-color: var(--main-color-hover);
 
-  &:hover {
-    background-color: var(--main-color);
-    color: var(--main-second-color);
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--main-color);
+      color: var(--main-second-color);
+    }
   }
 
   &.inactive {
     color: var(--n-text-color-3);
     background-color: transparent;
 
-    &:hover {
-      background-color: var(--n-action-color);
-      color: var(--main-color);
+    @media (hover: hover) {
+      &:hover {
+        background-color: var(--n-action-color);
+        color: var(--main-color);
+      }
     }
   }
 

@@ -1,0 +1,5 @@
+# Words lyrics use that jieba's dictionary lacks, one per line.
+# Only presence matters: a known word keeps its span from breaking, and where it overlaps
+# another word (杯壁 with 壁画 in 杯壁画) the whole run stays together, so there is no
+# frequency to tune. Add the reported line to `reported_lines_do_not_break_inside_a_word`.
+杯壁

@@ -122,7 +122,7 @@
         loading ? $t("general.name.noKeywords") : $t("local.detail.missing")
       }}</span>
       <br />
-      <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
+      <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -159,6 +159,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLayerNavigation } from "@/utils/navigation";
 import {
   FileMusic,
   FolderOpen,
@@ -204,6 +205,7 @@ import LocalSongLyricPane from "./LocalSongLyricPane.vue";
  */
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const music = musicStore();
 const setting = settingStore();
 const local = useLocalLibraryStore();

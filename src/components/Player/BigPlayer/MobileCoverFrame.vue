@@ -1,7 +1,10 @@
 <template>
   <Motion
     v-if="visible"
-    :class="['mobile-cover-frame', { 'is-interactive': interactive }]"
+    :class="[
+      'mobile-cover-frame',
+      { 'is-interactive': interactive, 'is-shrunk': shrunk, 'is-dimmed': dimmed },
+    ]"
     :layout="frameLayoutEnabled"
     :layout-id="frameLayoutId"
     :layout-dependency="layoutDependency"
@@ -69,6 +72,10 @@ const props = defineProps<{
   borderRadius?: number;
   interactive?: boolean;
   loadAnimation?: boolean;
+  /** Paused or loading: settles back a little, as the desktop cover does. */
+  shrunk?: boolean;
+  /** Loading: also drained of colour, as on desktop. */
+  dimmed?: boolean;
 }>();
 
 defineEmits<{
@@ -122,7 +129,21 @@ function onImgError(): void {
   pointer-events: auto;
   z-index: 1;
   box-shadow: 0px 12px 40px rgba(0, 0, 0, 0.35);
-  transition: box-shadow var(--duration-300) var(--ease-out);
+  // The pause shrink is the `scale` property, not `transform`: motion owns the transform (the
+  // pager shift) and places the frame by left/top/width/height, so `scale` composes with both and
+  // shrinks the artwork about its own centre, shadow and corners included.
+  transition:
+    box-shadow var(--duration-300) var(--ease-out),
+    scale var(--duration-500) var(--ease-out),
+    filter var(--duration-500) var(--ease-out);
+
+  &.is-shrunk {
+    scale: 0.95;
+  }
+
+  &.is-dimmed {
+    filter: grayscale(0.8);
+  }
   // will-change 只列合成器真正能接管的属性。width/height/left/top/border-radius
   // 改动一定要走布局或重绘，写进来换不到任何加速，却让这个图层常驻——而它就
   // 压在动画中的背景画布上面，每帧都要参与合成。stacking context 由 transform
