@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 jieba-rs = { version = "0.11", default-features = false }
 # Dictionary segmentation only: `auto` would add the LSTM models for Southeast Asian scripts.
 icu_segmenter = { version = "~2.2", default-features = false, features = ["compiled_data"] }
+# For the data provider that leaves out the Southeast Asian dictionaries (see `CjDictionaryOnly`).
+icu_provider = "~2.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

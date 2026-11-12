@@ -129,8 +129,13 @@ export function prepareLyricSegments(
   let timedOut = false;
   const answered = new Promise<boolean>((resolve) => {
     pending.set(id, (results) => {
-      results?.forEach((ends, i) => remember(missing[i], ends));
-      resolve(timedOut && Boolean(results?.some((ends, i) => nativeDiffers(missing[i], ends))));
+      // An empty answer is the worker declining (a Southeast Asian script): left uncached,
+      // `segment()` answers that text natively.
+      results?.forEach((ends, i) => ends.length && remember(missing[i], ends));
+      resolve(
+        timedOut &&
+          Boolean(results?.some((ends, i) => ends.length > 0 && nativeDiffers(missing[i], ends))),
+      );
     });
   });
   target.postMessage({ id, texts: missing });

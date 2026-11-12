@@ -4,25 +4,57 @@
 //! A line with only Han characters (and Latin, digits, punctuation) is Chinese and goes through
 //! jieba, whose dictionary + HMM cuts Chinese lyrics far closer to how they are sung than ICU's
 //! CJ dictionary. Anything with kana or Hangul is Japanese or Korean, and everything else goes
-//! through ICU4X's dictionary segmenter, so one engine answers for every other script.
+//! through ICU4X's dictionary segmenter, so one engine answers for every other script — except
+//! Thai, Lao, Khmer and Burmese, which get no answer (an empty result) and are segmented by the
+//! browser's own ICU, which carries those dictionaries anyway. Leaving them out of ICU4X's data
+//! is most of what keeps this WASM small.
 
-use icu_segmenter::{options::WordBreakInvariantOptions, WordSegmenter, WordSegmenterBorrowed};
+use icu_provider::prelude::*;
+use icu_segmenter::{
+    provider::{Baked, SegmenterDictionaryAutoV1, SegmenterDictionaryExtendedV1},
+    WordSegmenter,
+};
 use jieba_rs::Jieba;
 
 /// jieba's own dictionary, uncompressed (see `data/README.md`). Shipping it raw costs nothing on
 /// the wire: the WASM is served brotli/gzip and Tauri compresses the assets it embeds.
 const JIEBA_DICT: &[u8] = include_bytes!("../data/jieba-dict.txt");
 
+/// ICU's baked dictionaries without the Southeast Asian ones. Requesting them is answered "not
+/// found", which ICU accepts (it loads each dictionary as optional), so nothing references that
+/// data and the linker drops it.
+struct CjDictionaryOnly;
+
+impl DataProvider<SegmenterDictionaryAutoV1> for CjDictionaryOnly {
+    fn load(&self, req: DataRequest) -> Result<DataResponse<SegmenterDictionaryAutoV1>, DataError> {
+        Baked.load(req)
+    }
+}
+
+impl DataProvider<SegmenterDictionaryExtendedV1> for CjDictionaryOnly {
+    fn load(
+        &self,
+        req: DataRequest,
+    ) -> Result<DataResponse<SegmenterDictionaryExtendedV1>, DataError> {
+        Err(DataErrorKind::IdentifierNotFound.with_req(SegmenterDictionaryExtendedV1::INFO, req))
+    }
+}
+
 pub struct Segmenter {
     jieba: Jieba,
-    icu: WordSegmenterBorrowed<'static>,
+    icu: WordSegmenter,
 }
 
 impl Default for Segmenter {
     fn default() -> Self {
+        let mut icu =
+            WordSegmenter::try_new_for_non_complex_scripts_unstable(&Baked, Default::default())
+                .expect("baked word rules");
+        icu.load_dictionary_unstable(&CjDictionaryOnly)
+            .expect("baked CJ dictionary");
         Self {
             jieba: Jieba::with_dict(&mut &JIEBA_DICT[..]).expect("bundled jieba dictionary"),
-            icu: WordSegmenter::new_dictionary(WordBreakInvariantOptions::default()),
+            icu,
         }
     }
 }
@@ -31,8 +63,12 @@ impl Segmenter {
     /// One entry per segment: its end offset in UTF-16 code units (a JS string index) shifted
     /// left by one, with bit 0 set when the segment is word-like. Segments are contiguous and
     /// start at 0, so the ends alone describe them.
+    ///
+    /// Empty for a line in a Southeast Asian script: no answer, the page segments it natively.
     pub fn segments(&self, text: &str) -> Vec<u32> {
-        if is_chinese(text) {
+        if is_southeast_asian(text) {
+            Vec::new()
+        } else if is_chinese(text) {
             let mut end = 0u32;
             self.jieba
                 .cut(text, true)
@@ -44,7 +80,7 @@ impl Segmenter {
                 .collect()
         } else {
             let utf16: Vec<u16> = text.encode_utf16().collect();
-            let mut iter = self.icu.segment_utf16(&utf16);
+            let mut iter = self.icu.as_borrowed().segment_utf16(&utf16);
             let mut ends = Vec::new();
             while let Some(end) = iter.next() {
                 // ICU reports the start of the text as a boundary; it ends no segment.
@@ -55,6 +91,19 @@ impl Segmenter {
             ends
         }
     }
+}
+
+/// Thai, Lao, Myanmar (and its extensions), Khmer (and its symbols).
+fn is_southeast_asian(text: &str) -> bool {
+    text.chars().any(|c| {
+        matches!(c,
+            '\u{0E00}'..='\u{0EFF}'
+                | '\u{1000}'..='\u{109F}'
+                | '\u{A9E0}'..='\u{A9FF}'
+                | '\u{AA60}'..='\u{AA7F}'
+                | '\u{1780}'..='\u{17FF}'
+                | '\u{19E0}'..='\u{19FF}')
+    })
 }
 
 fn is_chinese(text: &str) -> bool {
@@ -162,6 +211,14 @@ mod tests {
         assert_eq!(words(&pieces), ["hello", "world"]);
         let chinese = split(&s, "你好，世界");
         assert!(chinese.iter().any(|(p, w)| p == "，" && !w));
+    }
+
+    #[test]
+    fn southeast_asian_lines_are_left_to_the_page() {
+        let s = Segmenter::default();
+        assert!(s.segments("ฉันรักเธอ").is_empty());
+        assert!(s.segments("ខ្ញុំស្រលាញ់អ្នក").is_empty());
+        assert!(!s.segments("我爱你 I love you").is_empty());
     }
 
     #[test]
