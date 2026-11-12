@@ -1,5 +1,6 @@
 <template>
   <div class="desktop-toggle-controls">
+    <OutputDeviceButton v-if="nativeOutput" placement="top-end" />
     <button
       v-if="hasLyrics"
       class="toggle-icon-button"
@@ -27,6 +28,11 @@ import IconLyricsOff from "../icons/IconLyricsOff.vue";
 import IconLyricsOn from "../icons/IconLyricsOn.vue";
 import IconPlaylistOff from "../icons/IconPlaylistOff.vue";
 import IconPlaylistOn from "../icons/IconPlaylistOn.vue";
+import OutputDeviceButton from "./OutputDeviceButton.vue";
+import { isTauri } from "@/utils/tauri/core/runtime";
+
+// The output menu drives the native backend; the web player has no device list to offer.
+const nativeOutput = isTauri();
 
 defineProps<{
   lyricsVisible: boolean;
@@ -60,7 +66,10 @@ defineEmits<{
   }
 }
 
-.toggle-icon-button {
+// The output button renders inside n-popselect, where this component's scoped attribute does not
+// reach; `:deep` gives it the same look as the toggles beside it.
+.toggle-icon-button,
+:deep(.output-device-button) {
   appearance: none;
   border: none;
   background-color: transparent;
@@ -80,13 +89,6 @@ defineEmits<{
     opacity 0.24s ease,
     transform 0.26s cubic-bezier(0.34, 1.56, 0.64, 1);
   will-change: opacity, transform;
-
-  :deep(svg) {
-    width: 2.45rem;
-    height: 2.45rem;
-    aspect-ratio: 1 / 1;
-    display: block;
-  }
 
   &[aria-pressed="true"] {
     opacity: 0.92;
@@ -111,11 +113,21 @@ defineEmits<{
   @media screen and (max-width: 1600px), (max-height: 1000px) {
     width: 2.8rem;
     height: 2.8rem;
+  }
+}
 
-    :deep(svg) {
-      width: 2.25rem;
-      height: 2.25rem;
-    }
+// Flat, not nested in the list above: a `:deep()` nested inside `:deep()` compiles to an invalid
+// selector, which would drop the whole rule for the toggles too.
+.toggle-icon-button :deep(svg),
+:deep(.output-device-button svg) {
+  width: 2.45rem;
+  height: 2.45rem;
+  aspect-ratio: 1 / 1;
+  display: block;
+
+  @media screen and (max-width: 1600px), (max-height: 1000px) {
+    width: 2.25rem;
+    height: 2.25rem;
   }
 }
 </style>

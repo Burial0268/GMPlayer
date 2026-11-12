@@ -644,7 +644,34 @@ fn resolve_output_device(
     match selector {
         OutputDeviceSelector::Default => platform::default_output_device(host)
             .ok_or_else(|| "no default output device".to_string()),
-        OutputDeviceSelector::Named(name) => find_output_device_by_name(host, name),
+        // A remembered device that is unplugged must not leave the app silent: play on the
+        // default meanwhile. The periodic probe resolves the same way, so the device key moves
+        // back, and the output with it, once the device returns.
+        OutputDeviceSelector::Named(name) => match find_output_device_by_name(host, name) {
+            Ok(device) => {
+                note_output_fallback(None);
+                Ok(device)
+            }
+            Err(missing) => {
+                note_output_fallback(Some(&missing));
+                platform::default_output_device(host)
+                    .ok_or_else(|| format!("{missing}; no default output device"))
+            }
+        },
+    }
+}
+
+/// Logs entering and leaving the default-device fallback, not every probe that is in it.
+fn note_output_fallback(reason: Option<&str>) {
+    static FALLING_BACK: AtomicBool = AtomicBool::new(false);
+    match reason {
+        Some(reason) if !FALLING_BACK.swap(true, Ordering::Relaxed) => {
+            warn!("{reason}，改用默认输出设备");
+        }
+        None if FALLING_BACK.swap(false, Ordering::Relaxed) => {
+            info!("所选输出设备已恢复");
+        }
+        _ => {}
     }
 }
 
@@ -673,6 +700,31 @@ fn find_output_device_by_name(host: &cpal::Host, name: &str) -> Result<cpal::Dev
     }
 
     case_insensitive_match.ok_or_else(|| format!("output device not found: {target}"))
+}
+
+/// Output device names for a picker, in host order, each once.
+///
+/// Names only, the same identity `find_output_device_by_name` selects by: asking every device
+/// for its `default_output_config()` would open every PCM on ALSA (see
+/// `fallback_output_device_signature`). Call it from `spawn_device_task`, like every other probe,
+/// so the apartment policy holds on Windows.
+pub fn output_device_names() -> Result<Vec<String>, String> {
+    platform::ensure_audio_apartment();
+    with_output_probe_host(|host| {
+        let devices = host
+            .output_devices()
+            .map_err(|e| format!("enumerate output devices: {e:?}"))?;
+        let mut names: Vec<String> = Vec::new();
+        for device in devices {
+            let name = device_name(&device);
+            // shortcut: two devices sharing a name collapse into one entry, because selection
+            // is by name too; switch both to `device.id()` if that ever shows up in practice.
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        Ok(names)
+    })
 }
 
 fn output_device_key_and_config(

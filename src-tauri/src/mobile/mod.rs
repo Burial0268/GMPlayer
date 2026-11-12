@@ -63,6 +63,7 @@ pub fn run() {
             commands::audio_subscribe_events,
             commands::audio_get_state,
             commands::audio_get_session,
+            commands::audio_list_output_devices,
             commands::audio_preheat,
             commands::audio_analyze_automix,
             commands::audio_analyze_automix_source,
