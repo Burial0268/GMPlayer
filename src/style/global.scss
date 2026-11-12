@@ -163,6 +163,8 @@ textarea,
   --app-titlebar-safe-top: calc(var(--app-floating-control-top) + var(--app-titlebar-height));
   --z-search-overlay: 2200;
   --app-mobile-nav-height: calc(42px + var(--app-safe-area-top, 0px));
+  /* 移动端顶部玻璃带（App.vue `.content-top-shadow`）的下沿；页面内吸顶构件钉在这里。 */
+  --app-mobile-glass-bottom: calc(var(--app-mobile-nav-height) + 34px);
 
   /* 底部 chrome 几何 — 单一事实来源。移动端 MiniPlayer / TabBar / 底栏玻璃 /
      滚动容器内边距 / BackTop 全部由此派生，避免各处重复硬编码 56 与 70 后彼此漂移。

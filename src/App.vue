@@ -1015,7 +1015,9 @@ onBeforeUnmount(() => {
     --content-stage-padding-right: 0px;
     --content-scrollbar-right: 0px;
     --player-right-inset: 0px;
-    --content-sticky-top: calc(var(--app-mobile-nav-height) + 4px);
+    // Below the top glass band, not just the Nav: the band (`.content-top-shadow`) paints
+    // above the whole scroller, so a toolbar pinned inside it was blurred and unclickable.
+    --content-sticky-top: var(--app-mobile-glass-bottom);
     --content-sticky-bottom: var(--layout-content-bottom);
     // 底部 chrome 的高度统一由 :root 的 --app-bottom-chrome* 提供
     // (global.scss)，其中 tab bar 高度已经含 safe-area-bottom，不要再加一次。
@@ -1335,8 +1337,12 @@ onBeforeUnmount(() => {
     top: 0;
     right: 0;
     left: 0;
-    height: calc(var(--app-mobile-nav-height) + 42px);
+    // Every mask stop ends by nav + 34px, so this is exactly the painted band.
+    height: var(--app-mobile-glass-bottom);
     border-radius: 0;
+    // Glass is a surface, like a native bar: taps on it must not reach the rows it blurs.
+    // It is `visibility: hidden` at rest, which lets events through again at the top.
+    pointer-events: auto;
   }
 }
 
