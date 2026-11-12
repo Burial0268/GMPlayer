@@ -29,6 +29,7 @@ import {
 } from "@applemusic-like-lyrics/core";
 import { animateMini } from "motion-v";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
+import { prepareLyricSegments } from "@/utils/lyricSegmenter";
 import type { LyricShareOrigin } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
 import { getLyricPresentationTimeSeconds, onAudioUiDelayChange } from "@/utils/tauri/audio/uiDelay";
@@ -43,6 +44,8 @@ const lyricPlayerRef = shallowRef<DomLyricPlayer>();
 // 歌词末尾随歌词滚动的那一行，歌曲放完时 AMLL 会聚焦到它
 const bottomLineEl = shallowRef<HTMLElement>();
 const amllLyricLines = shallowRef<AMLLLine[]>([]);
+// Bumped per lyric change, so a late segmenter answer cannot apply a song the user left.
+let lyricGeneration = 0;
 
 const playState = computed(() => music.playState);
 
@@ -413,6 +416,7 @@ watch(
   () => {
     const rawSongLyric = toRaw(music.songLyric);
 
+    const generation = ++lyricGeneration;
     if (!rawSongLyric) {
       amllLyricLines.value = [];
       applyLyricLines([]);
@@ -440,8 +444,19 @@ watch(
       showTransl: setting.showTransl,
       showRuby: setting.showRuby,
     });
-    amllLyricLines.value = lines;
-    applyLyricLines(lines);
+    // AMLL segments each line's whole text while laying it out; have the worker cut them first.
+    // Warm, that is a few ms; cold, it gives up after a bounded wait and lines lay out natively.
+    void prepareLyricSegments(
+      lines.flatMap((line) => [
+        line.words.map((word) => word.word).join(""),
+        line.translatedLyric,
+        line.romanLyric,
+      ]),
+    ).then(() => {
+      if (generation !== lyricGeneration) return;
+      amllLyricLines.value = lines;
+      applyLyricLines(lines);
+    });
   },
   { immediate: true },
 );
