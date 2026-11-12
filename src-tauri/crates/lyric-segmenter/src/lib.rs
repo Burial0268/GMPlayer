@@ -9,6 +9,10 @@
 use icu_segmenter::{options::WordBreakInvariantOptions, WordSegmenter, WordSegmenterBorrowed};
 use jieba_rs::Jieba;
 
+/// jieba's own dictionary, uncompressed (see `data/README.md`). Shipping it raw costs nothing on
+/// the wire: the WASM is served brotli/gzip and Tauri compresses the assets it embeds.
+const JIEBA_DICT: &[u8] = include_bytes!("../data/jieba-dict.txt");
+
 pub struct Segmenter {
     jieba: Jieba,
     icu: WordSegmenterBorrowed<'static>,
@@ -17,7 +21,7 @@ pub struct Segmenter {
 impl Default for Segmenter {
     fn default() -> Self {
         Self {
-            jieba: Jieba::new(),
+            jieba: Jieba::with_dict(&mut &JIEBA_DICT[..]).expect("bundled jieba dictionary"),
             icu: WordSegmenter::new_dictionary(WordBreakInvariantOptions::default()),
         }
     }
