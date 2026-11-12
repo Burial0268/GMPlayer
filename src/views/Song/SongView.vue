@@ -130,7 +130,7 @@
       loadingState ? $t("general.name.noKeywords") : $t("general.message.acquisitionFailed")
     }}</span>
     <br />
-    <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
+    <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
       {{ $t("general.name.goBack") }}
     </n-button>
   </div>
@@ -171,6 +171,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLayerNavigation } from "@/utils/navigation";
 import { getSimiPlayList, getMusicDetail } from "@/api/song";
 import { getComment } from "@/api/comment";
 import { useRouter } from "vue-router";
@@ -191,6 +192,7 @@ type RouteQueryId = string | string[] | null | undefined;
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const music = musicStore();
 const addPlayListRef = ref<any>(null);
 const { applyContentPanelAccent } = useContentPanelAccent();

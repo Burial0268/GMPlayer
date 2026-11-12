@@ -28,7 +28,7 @@
     </template>
     <div class="empty-state" v-else>
       <h1 class="detail-name">{{ $t("other.noHistory") }}</h1>
-      <n-button strong secondary class="back-btn" @click="router.go(-1)">
+      <n-button strong secondary class="back-btn" @click="navigation.closeTop()">
         {{ $t("general.name.goBack") }}
       </n-button>
     </div>
@@ -36,15 +36,15 @@
 </template>
 
 <script setup lang="ts">
+import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore } from "@/store";
-import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { MusicList, Time } from "@icon-park/vue-next";
 import DataLists from "@/components/DataList/DataLists.vue";
 
 const { t } = useI18n();
 const music = musicStore();
-const router = useRouter();
+const navigation = useLayerNavigation();
 
 onMounted(() => {
   $setSiteTitle(t("nav.avatar.history"));

@@ -28,6 +28,7 @@
 </template>
 
 <script setup lang="ts">
+import { useLayerNavigation } from "@/utils/navigation";
 import { getAlbumNew } from "@/api/album";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";
@@ -37,6 +38,7 @@ import Pagination from "@/components/Pagination/index.vue";
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 
 // 新碟数据
 const newAlbumData = ref([]);
@@ -122,7 +124,7 @@ const pageSizeChange = (val) => {
 
 // 当前页数数据变化
 const pageNumberChange = (val) => {
-  router.push({
+  navigation.replacePage({
     path: "/new-album",
     query: {
       area: albumAreaChoose.value,
@@ -133,7 +135,7 @@ const pageNumberChange = (val) => {
 
 // 切换分类
 const changeArea = (area) => {
-  router.push({
+  navigation.replacePage({
     path: "/new-album",
     query: {
       area,

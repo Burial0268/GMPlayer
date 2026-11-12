@@ -34,13 +34,22 @@
           <h2>{{ $t("home.title.exclusive") }}</h2>
         </div>
         <nav class="feed-links" :aria-label="$t('home.title.exclusive')">
-          <button type="button" @click="router.push('/discover/playlists?page=1')">
+          <button
+            type="button"
+            @click="navigation.openPage('/discover/playlists?page=1', { origin: $event })"
+          >
             {{ $t("home.title.playlists") }}
           </button>
-          <button type="button" @click="router.push('/discover/artists?page=1')">
+          <button
+            type="button"
+            @click="navigation.openPage('/discover/artists?page=1', { origin: $event })"
+          >
             {{ $t("home.title.artists") }}
           </button>
-          <button type="button" @click="router.push('/new-album?page=1')">
+          <button
+            type="button"
+            @click="navigation.openPage('/new-album?page=1', { origin: $event })"
+          >
             {{ $t("home.title.newAlbum") }}
           </button>
         </nav>
@@ -152,7 +161,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onDeactivated, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
 import gsap from "gsap";
 import { PlayArrowRound } from "@vicons/material";
 import { getArtistList } from "@/api/artist";
@@ -183,7 +191,6 @@ const FALLBACK_COVER = "/images/pic/pic.jpg";
 
 const setting = settingStore();
 const music = musicStore();
-const router = useRouter();
 const navigation = useLayerNavigation();
 const homeRoot = ref<HTMLElement>();
 let introduction: gsap.Context | undefined;

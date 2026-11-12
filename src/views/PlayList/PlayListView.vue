@@ -66,7 +66,9 @@
             :bordered="false"
             v-for="item in playListDetail!.tags"
             :key="item"
-            @click="router.push(`/discover/playlists?cat=${item}&page=1`)"
+            @click="
+              navigation.openPage(`/discover/playlists?cat=${item}&page=1`, { origin: $event })
+            "
           >
             {{ item }}
           </n-tag>
@@ -185,7 +187,7 @@ import type { DropdownMixedOption } from "naive-ui/es/dropdown/src/interface";
 import { NIcon, NText } from "naive-ui";
 import { delPlayList, likePlaylist } from "@/api/playlist";
 import { fetchPlaylistDetail, fetchSongDetail } from "@/utils/ncm/projectedRequest";
-import { useRouter, useRoute } from "vue-router";
+import { useRoute } from "vue-router";
 import { userStore, musicStore, settingStore } from "@/store";
 import { getLongTime } from "@/utils/timeTools";
 import { transformSongData } from "@/utils/ncm/transformSongData";
@@ -215,7 +217,6 @@ import DataLists from "@/components/DataList/DataLists.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
 const { t } = useI18n();
-const router = useRouter();
 const navigation = useLayerNavigation();
 const { vContentIntro } = useContentIntro();
 const route = useRoute();
@@ -1097,7 +1098,8 @@ const toDelPlayList = (data: { id: number; name: any }) => {
         if (res.code === 200) {
           $message.success(t("general.message.deleteSuccess"));
           user.setUserPlayLists();
-          router.push("/user/playlists");
+          // The page is gone; go back to wherever it was opened from.
+          navigation.closeTop();
         }
       });
     },

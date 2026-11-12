@@ -82,13 +82,14 @@
   <div class="title" v-else>
     <span class="key">{{ $t("general.name.noKeywords") }}</span>
     <br />
-    <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
+    <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
       {{ $t("general.name.goBack") }}
     </n-button>
   </div>
 </template>
 
 <script setup lang="ts">
+import { useLayerNavigation } from "@/utils/navigation";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { PersonAddAlt1Round, PersonRemoveAlt1Round } from "@vicons/material";
@@ -99,6 +100,7 @@ import CoverLists from "@/components/DataList/CoverLists.vue";
 
 const { t } = useI18n();
 const router = useRouter();
+const navigation = useLayerNavigation();
 const user = userStore();
 
 const uid = ref(router.currentRoute.value.query.id);
@@ -182,7 +184,7 @@ const loadProfile = async (id: string | string[] | null) => {
     loading.value = false;
     console.error(t("general.message.acquisitionFailed"), err);
     $message.error(t("general.message.acquisitionFailed"));
-    router.go(-1);
+    navigation.closeTop();
   }
 };
 

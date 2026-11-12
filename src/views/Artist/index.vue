@@ -124,7 +124,7 @@
   <div class="title" v-else-if="!artistId">
     <span class="key">{{ $t("general.name.noKeywords") }}</span>
     <br />
-    <n-button strong secondary @click="router.go(-1)" style="margin-top: 20px">
+    <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
       {{ $t("general.name.goBack") }}
     </n-button>
   </div>
