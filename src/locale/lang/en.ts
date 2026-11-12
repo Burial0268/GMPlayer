@@ -5,6 +5,7 @@ const messages: Record<string, unknown> = {
     search: "Search",
     player: "Player",
     cancel: "Cancel",
+    pressAgainToExit: "Press back again to exit",
   },
   // Navigation
   nav: {

@@ -3,11 +3,14 @@ import { musicStore, siteStore } from "@/store";
 import { useLayerNavigation } from "@/utils/navigation";
 import { restoreSourceFocus } from "@/utils/navigation/sources";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
+import { useI18n } from "vue-i18n";
 
+const EXIT_CONFIRM_MS = 2000;
 const FOCUSABLE = "button, a[href], input, textarea, select, [tabindex]:not([tabindex='-1'])";
 
 export function useLayerPresentation() {
   const navigation = useLayerNavigation();
+  const { t } = useI18n();
   const { isMobile } = useResponsiveLayout();
   const music = musicStore();
   const site = siteStore();
@@ -145,6 +148,16 @@ export function useLayerPresentation() {
     }
     return navigation.closeTop();
   };
+  // Android back at a root page: the first press only warns, like native apps; `false` lets
+  // MainActivity move the task to the background (playback keeps running).
+  let exitArmedAt = -Infinity;
+  const nativeBack = () => {
+    if (handleBack()) return true;
+    if (performance.now() - exitArmedAt < EXIT_CONFIRM_MS) return false;
+    exitArmedAt = performance.now();
+    $message.info(t("navigation.pressAgainToExit"), { duration: EXIT_CONFIRM_MS });
+    return true;
+  };
   const keydown = (event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     const surface = modalSurface();
@@ -178,7 +191,7 @@ export function useLayerPresentation() {
   onMounted(() => {
     queueMedia.addEventListener("change", queueLayoutChanged);
     window.addEventListener("keydown", keydown);
-    nativeWindow.__gmplayerBack = handleBack;
+    nativeWindow.__gmplayerBack = nativeBack;
   });
   onBeforeUnmount(() => {
     queueMedia.removeEventListener("change", queueLayoutChanged);

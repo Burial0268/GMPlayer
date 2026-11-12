@@ -127,7 +127,6 @@ import { appInfo } from "@/utils/appInfo";
 import { backTopShown } from "@/utils/backTop";
 import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { ref, watch, computed, h } from "vue";
-import { useEdgeSwipeBack } from "@/composables/useEdgeSwipeBack";
 
 const { t } = useI18n();
 const music = musicStore();
@@ -136,7 +135,6 @@ const setting = settingStore();
 const site = siteStore();
 const router = useRouter();
 const route = useRoute();
-useEdgeSwipeBack();
 const contentStage = ref<HTMLElement | null>(null);
 const mainContent = ref<HTMLElement | null>(null);
 // Mirrors iOS scrollEdgeAppearance: the mobile header glass only materializes
@@ -805,6 +803,9 @@ onBeforeUnmount(() => {
     .main {
       min-height: 100%;
       padding-top: calc(var(--app-mobile-nav-height) + 10px);
+      // Horizontal pans belong to the edge swipe-back (useEdgeSwipeBack), or Chrome claims the
+      // gesture and cancels the pointer. Inner horizontal scrollers keep their own pan-x.
+      touch-action: pan-y pinch-zoom;
 
       &.settings-main {
         height: auto;

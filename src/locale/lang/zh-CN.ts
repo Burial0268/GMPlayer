@@ -1,5 +1,12 @@
 const messages: Record<string, unknown> = {
-  navigation: { label: "导航", forward: "前进", search: "搜索", player: "播放器", cancel: "取消" },
+  navigation: {
+    label: "导航",
+    forward: "前进",
+    search: "搜索",
+    player: "播放器",
+    cancel: "取消",
+    pressAgainToExit: "再按一次退出",
+  },
   // 导航栏
   nav: {
     home: "首页",
