@@ -115,6 +115,9 @@
     "overrides": {
       "@swc/core": "1.15.46",
       "@swc/wasm": "1.15.46"
+    },
+    "patchedDependencies": {
+      "@applemusic-like-lyrics/core@0.6.0": "patches/@applemusic-like-lyrics__core@0.6.0.patch"
     }
   },
   "github": "https://github.com/Burial0268/GMPlayer",
