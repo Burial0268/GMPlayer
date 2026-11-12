@@ -746,7 +746,7 @@ const handleQueueTouchCancel = () => {
   resetQueueTouch();
 };
 
-const scrollCurrentQueueSong = () => queueListRef.value?.scrollToCurrent();
+const scrollCurrentQueueSong = (smooth = false) => queueListRef.value?.scrollToCurrent(smooth);
 
 watch(
   () => props.queueOpen,
@@ -754,14 +754,14 @@ watch(
     // 由父级状态（按钮/thumb/整体关闭）驱动的开合走同一 pager 动画；
     // 手势 settle 后 prop 翻转再次触发时，spring 从当前值与速度无缝续接。
     settlePager(open);
-    if (open) nextTick(scrollCurrentQueueSong);
+    if (open) nextTick(() => scrollCurrentQueueSong());
   },
 );
 
 watch(
   () => music.persistData.playSongIndex,
   () => {
-    if (props.queueOpen) nextTick(scrollCurrentQueueSong);
+    if (props.queueOpen) nextTick(() => scrollCurrentQueueSong(true));
   },
 );
 
@@ -1536,16 +1536,6 @@ defineExpose({
   overscroll-behavior: contain;
   padding: 4px 0 12px;
   contain: layout paint style;
-
-  :deep(.v-vl) {
-    overflow-x: hidden !important;
-    scrollbar-width: none;
-  }
-
-  :deep(.v-vl::-webkit-scrollbar) {
-    width: 0;
-    height: 0;
-  }
 }
 
 .queue-empty {

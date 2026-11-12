@@ -34,112 +34,24 @@
         </button>
       </div>
     </div>
-    <div class="queue-scroll-area">
-      <n-virtual-list
-        ref="listRef"
-        :class="['player-queue-list', 'player-queue-scroll', { reordering: !!drag, settling }]"
-        :items="items"
-        :item-size="rowHeight"
-        :item-resizable="true"
-        key-field="key"
-        :show-scrollbar="false"
-        @scroll="onListScroll"
+    <div
+      ref="scrollRef"
+      :class="['player-queue-list', 'player-queue-scroll', { reordering: !!drag, settling }]"
+      @scroll="onListScroll"
+    >
+      <!-- Every section is in the DOM so its title can be natively sticky: the browser keeps it
+           under the playing song and lets the next title push it out on the compositor, in step
+           with the scroll. Only the rows are windowed, with spacers for the rest. -->
+      <section
+        v-for="group in windowed"
+        :key="group.key"
+        :id="group.anchor ? `${rowPrefix}-upcoming` : undefined"
+        class="queue-group"
       >
-        <template #default="{ item }">
-          <div
-            v-if="item.kind === 'section'"
-            :id="item.anchor ? `${rowPrefix}-upcoming` : undefined"
-            class="queue-section"
-            :data-section="item.key"
-            data-header
-          >
-            <span class="queue-section-title">{{ item.label }}</span>
-            <button
-              v-if="item.clear"
-              class="queue-clear"
-              type="button"
-              @click="music.clearUpcoming()"
-            >
-              {{ $t("player.queue.clear") }}
-            </button>
-          </div>
-
-          <div
-            v-else
-            :id="item.history ? undefined : `${rowPrefix}-${item.index}`"
-            :data-section="item.section"
-            :class="[
-              'queue-row',
-              {
-                history: item.history,
-                lifted: drag?.from === item.index,
-                released: drag?.released,
-              },
-            ]"
-            :style="rowStyle(item.index)"
-          >
-            <!-- The row is see-through (it blends with the cover), so the action exists only where a
-             swipe has uncovered it, sized to the swipe. -->
-            <button
-              v-if="swipe?.index === item.index"
-              class="queue-row-delete"
-              type="button"
-              tabindex="-1"
-              :style="{ width: `${-swipe.x}px`, transition: swipe.tracking ? 'none' : undefined }"
-              @click="remove(item.index)"
-            >
-              {{ $t("player.queue.remove") }}
-            </button>
-            <div
-              class="queue-row-body"
-              :style="bodyStyle(item.index)"
-              role="button"
-              tabindex="0"
-              @pointerdown="!item.history && startSwipe($event, item.index)"
-              @click="tap(item)"
-              @keydown.enter.prevent="tap(item)"
-            >
-              <img class="queue-cover" :src="cover(item.song, 96)" alt="" />
-              <div class="queue-info">
-                <div class="queue-name text-hidden">{{ item.song.name }}</div>
-                <div class="queue-artists text-hidden">{{ artists(item.song) }}</div>
-              </div>
-              <button
-                v-if="!touchOnly && !item.history"
-                class="queue-remove"
-                type="button"
-                :aria-label="$t('player.queue.remove')"
-                @click.stop="remove(item.index)"
-              >
-                <n-icon size="18" :component="DeleteRound" />
-              </button>
-              <button
-                v-if="reorderable && !item.history"
-                class="queue-handle"
-                type="button"
-                :aria-label="$t('player.queue.reorder')"
-                @pointerdown.stop="startDrag($event, item.index)"
-                @click.stop
-              >
-                <n-icon size="22" :component="DragHandleRound" />
-              </button>
-            </div>
-          </div>
-        </template>
-      </n-virtual-list>
-      <!-- The header of the section the list is in, held under the playing song while its rows
-         slide beneath; the next section's own header pushes it out. A copy rather than
-         `position: sticky`, because a virtual list unmounts a header it has scrolled past. -->
-      <div
-        v-show="pinnedSection"
-        ref="pinnedRef"
-        class="queue-pinned"
-        :style="{ top: `${pinned?.push ?? 0}px` }"
-      >
-        <div v-if="pinnedSection" class="queue-section">
-          <span class="queue-section-title">{{ pinnedSection.label }}</span>
+        <div class="queue-section">
+          <span class="queue-section-title">{{ group.label }}</span>
           <button
-            v-if="pinnedSection.clear"
+            v-if="group.clear"
             class="queue-clear"
             type="button"
             @click="music.clearUpcoming()"
@@ -147,7 +59,70 @@
             {{ $t("player.queue.clear") }}
           </button>
         </div>
-      </div>
+        <div :style="{ height: `${group.before * ROW}px` }" aria-hidden="true"></div>
+        <div
+          v-for="item in group.rows"
+          :key="item.key"
+          :id="item.history ? undefined : `${rowPrefix}-${item.index}`"
+          :class="[
+            'queue-row',
+            {
+              history: item.history,
+              lifted: drag?.from === item.index,
+              released: drag?.released,
+            },
+          ]"
+          :style="rowStyle(item.index)"
+        >
+          <!-- The row is see-through (it blends with the cover), so the action exists only where a
+               swipe has uncovered it, sized to the swipe. -->
+          <button
+            v-if="swipe?.index === item.index"
+            class="queue-row-delete"
+            type="button"
+            tabindex="-1"
+            :style="{ width: `${-swipe.x}px`, transition: swipe.tracking ? 'none' : undefined }"
+            @click="remove(item.index)"
+          >
+            {{ $t("player.queue.remove") }}
+          </button>
+          <div
+            class="queue-row-body"
+            :style="bodyStyle(item.index)"
+            role="button"
+            tabindex="0"
+            @pointerdown="!item.history && startSwipe($event, item.index)"
+            @click="tap(item)"
+            @keydown.enter.prevent="tap(item)"
+          >
+            <img class="queue-cover" :src="cover(item.song, 96)" alt="" loading="lazy" />
+            <div class="queue-info">
+              <div class="queue-name text-hidden">{{ item.song.name }}</div>
+              <div class="queue-artists text-hidden">{{ artists(item.song) }}</div>
+            </div>
+            <button
+              v-if="!touchOnly && !item.history"
+              class="queue-remove"
+              type="button"
+              :aria-label="$t('player.queue.remove')"
+              @click.stop="remove(item.index)"
+            >
+              <n-icon size="18" :component="DeleteRound" />
+            </button>
+            <button
+              v-if="reorderable && !item.history"
+              class="queue-handle"
+              type="button"
+              :aria-label="$t('player.queue.reorder')"
+              @pointerdown.stop="startDrag($event, item.index)"
+              @click.stop
+            >
+              <n-icon size="22" :component="DragHandleRound" />
+            </button>
+          </div>
+        </div>
+        <div :style="{ height: `${group.after * ROW}px` }" aria-hidden="true"></div>
+      </section>
     </div>
   </div>
 </template>
@@ -167,14 +142,12 @@
  *   the permutation and would put a moved song back. Clear empties both and keeps the playing
  *   song. Touch removes a song by swiping it left; a mouse gets a delete button.
  */
-import { computed, nextTick, onBeforeUnmount, ref, watch, type CSSProperties } from "vue";
-import { NVirtualList } from "naive-ui";
+import { computed, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from "vue";
 import { DeleteRound, DragHandleRound } from "@vicons/material";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
 import { isTouchOnly } from "@/utils/touchOnly";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
-import { locateVirtualRow, type LocateHandle, type VirtualListInst } from "@/utils/locateRow";
 import IconShuffle from "../icons/IconShuffle.vue";
 import IconShuffleOn from "../icons/IconShuffleOn.vue";
 import IconRepeat from "../icons/IconRepeat.vue";
@@ -183,22 +156,26 @@ import IconRepeatOneOn from "../icons/IconRepeatOneOn.vue";
 import { useI18n } from "vue-i18n";
 
 const emit = defineEmits<{ scroll: [event: Event] }>();
-const props = withDefaults(defineProps<{ rowPrefix: string; rowHeight?: number }>(), {
-  rowHeight: 56,
-});
+defineProps<{ rowPrefix: string }>();
+
+// Fixed heights, so a group's offset and each window are arithmetic, not measurement; the
+// stylesheet pins `.queue-section` and `.queue-row` to these.
+const ROW = 56;
+const HEADER = 52;
+// Rows rendered beyond each edge of the viewport.
+const BUFFER = 8;
 
 type Song = { id: number; name: string; artist?: { name: string }[]; album?: { picUrl?: string } };
 // Enough to look back with; the store keeps about a hundred.
 const HISTORY_LIMIT = 20;
 
-type Item =
-  // `anchor`: the first upcoming section, which opening the queue scrolls under the card.
-  | { kind: "section"; key: string; label: string; clear?: boolean; anchor?: boolean }
-  | { kind: "song"; key: string; index: number; song: Song; history: boolean; section: string };
+type Row = { key: string; index: number; song: Song; history: boolean };
+// `anchor`: the first upcoming section, which opening the queue puts under the card.
+type Group = { key: string; label: string; clear?: boolean; anchor?: boolean; rows: Row[] };
 
 const { t } = useI18n();
 const music = musicStore();
-const listRef = ref<VirtualListInst | null>(null);
+const scrollRef = ref<HTMLElement | null>(null);
 const touchOnly = isTouchOnly();
 
 const mode = computed(() => music.persistData.playSongMode);
@@ -215,7 +192,7 @@ const artists = (song: Song) =>
 
 const playing = computed<Song | undefined>(() => music.getPlaylists[current.value]);
 
-const items = computed<Item[]>(() => {
+const groups = computed<Group[]>(() => {
   const list: Song[] = music.getPlaylists;
   const at = current.value;
   const nowPlaying = playing.value;
@@ -226,125 +203,135 @@ const items = computed<Item[]>(() => {
     seen.set(song.id, n);
     return `${song.id}#${n}`;
   };
-  const queueRow = (song: Song, index: number, section: string): Item => ({
-    kind: "song",
+  const queueRow = (song: Song, index: number): Row => ({
     key: keyOf(song),
     index,
     song,
     history: false,
-    section,
   });
-  const rows: Item[] = [];
+  const result: Group[] = [];
 
   const history = (music.getPlayHistory as Song[])
     .filter((song) => song.id !== nowPlaying?.id)
     .slice(0, HISTORY_LIMIT)
     .reverse();
-  if (history.length) {
-    rows.push({ kind: "section", key: "history", label: t("player.queue.history") });
-    for (const song of history)
-      rows.push({
-        kind: "song",
+  if (history.length)
+    result.push({
+      key: "history",
+      label: t("player.queue.history"),
+      rows: history.map((song) => ({
         key: `history-${song.id}`,
         index: -1,
         song,
         history: true,
-        section: "history",
-      });
-  }
-  if (!nowPlaying) return rows;
+      })),
+    });
+  if (!nowPlaying) return result;
 
   const after = list.slice(at + 1);
   const before = list.slice(0, at);
-  if (after.length) {
-    rows.push({
-      kind: "section",
+  if (after.length)
+    result.push({
       key: "next",
       label: t("player.queue.playingNext"),
       clear: true,
       anchor: true,
+      rows: after.map((song, offset) => queueRow(song, at + 1 + offset)),
     });
-    after.forEach((song, offset) => rows.push(queueRow(song, at + 1 + offset, "next")));
-  }
-  if (before.length) {
-    rows.push({
-      kind: "section",
+  if (before.length)
+    result.push({
       key: "from-top",
       label: t("player.queue.fromTop"),
       clear: !after.length,
       anchor: !after.length,
+      rows: before.map((song, index) => queueRow(song, index)),
     });
-    before.forEach((song, index) => rows.push(queueRow(song, index, "from-top")));
-  }
-  return rows;
+  return result;
 });
 
-// ── Pinned section header ───────────────────────────────────────────────────
-const pinnedRef = ref<HTMLElement | null>(null);
-const pinned = ref<{ key: string; push: number } | null>(null);
-const pinnedSection = computed(() =>
-  pinned.value
-    ? (items.value.find((item) => item.kind === "section" && item.key === pinned.value!.key) as
-        | Extract<Item, { kind: "section" }>
-        | undefined)
-    : undefined,
-);
-let pinFrame = 0;
+const groupTop = (index: number) =>
+  groups.value.slice(0, index).reduce((top, group) => top + HEADER + group.rows.length * ROW, 0);
 
-/** Which section the top edge of the list is in, read off the rows on screen. */
-const updatePinned = () => {
-  pinFrame = 0;
-  const scroller = listRef.value?.getScrollContainer();
+// ── Windowing ────────────────────────────────────────────────────────────────
+// Quantised to whole rows, so scrolling re-renders only when a row crosses the edge.
+const firstVisibleRow = ref(0);
+const visibleRows = ref(16);
+
+const windowed = computed(() => {
+  const from = (firstVisibleRow.value - BUFFER) * ROW;
+  const to = (firstVisibleRow.value + visibleRows.value + BUFFER) * ROW;
+  let top = 0;
+  return groups.value.map((group) => {
+    const rowsTop = top + HEADER;
+    const count = group.rows.length;
+    top = rowsTop + count * ROW;
+    const first = Math.min(count, Math.max(0, Math.floor((from - rowsTop) / ROW)));
+    const last = Math.min(count, Math.max(first, Math.ceil((to - rowsTop) / ROW)));
+    return { ...group, rows: group.rows.slice(first, last), before: first, after: count - last };
+  });
+});
+
+const measureWindow = () => {
+  const scroller = scrollRef.value;
   if (!scroller) return;
-  const top = scroller.getBoundingClientRect().top;
-  let section: string | undefined;
-  let nextHeader = Infinity;
-  // Rendered in item order, so the first one reaching below the edge is where the list is.
-  for (const element of scroller.querySelectorAll<HTMLElement>("[data-section]")) {
-    const box = element.getBoundingClientRect();
-    if (box.bottom <= top + 0.5) continue;
-    if (!section) {
-      // Its own header still fully in view needs no copy over it.
-      if ("header" in element.dataset && box.top >= top - 0.5) break;
-      section = element.dataset.section;
-    } else if ("header" in element.dataset) {
-      nextHeader = box.top;
-      break;
-    }
-  }
-  const height = pinnedRef.value?.offsetHeight || 52;
-  const push = Math.min(0, nextHeader - top - height);
-  pinned.value = section ? { key: section, push } : null;
-  fadeUnder(scroller, section ? top + height + push : top);
+  const first = Math.floor(scroller.scrollTop / ROW);
+  const visible = Math.ceil(scroller.clientHeight / ROW) + 1;
+  if (first !== firstVisibleRow.value) firstVisibleRow.value = first;
+  if (visible !== visibleRows.value) visibleRows.value = visible;
 };
 
 /**
- * Rows fade out as they slide under the pinned header (or past the list's top edge), as Apple's
- * do. Per row and written straight to the element on the scroll frame: a mask on the list would
- * cut every row's plus-lighter off from the background, and a reactive value would re-render
- * every visible row each frame. Only the one or two rows crossing the edge carry an opacity.
+ * Rows fade as they slide under the sticky title, as Apple's do. Where the browser has
+ * scroll-driven animations (the stylesheet's `view()` timeline) that runs on the compositor and
+ * this does nothing; elsewhere it fades the two or three rows at the edge, found by hit-testing
+ * rather than walking the list. Per row, not a mask: a mask on the list would cut every row's
+ * plus-lighter off from the background.
  */
-const fadeUnder = (scroller: HTMLElement, edge: number) => {
-  for (const row of scroller.querySelectorAll<HTMLElement>(".queue-row")) {
-    const box = row.getBoundingClientRect();
-    const shown =
-      box.top >= edge || row.classList.contains("lifted")
-        ? 1
-        : Math.max(0, Math.min(1, (box.bottom - edge) / box.height));
-    if (shown < 1) row.style.opacity = String(shown);
-    else row.style.removeProperty("opacity");
+const scrollFade =
+  typeof CSS !== "undefined" && CSS.supports?.("animation-timeline: view()") === true;
+const fadedRows = new Set<HTMLElement>();
+const fadeFallback = () => {
+  const scroller = scrollRef.value;
+  if (scrollFade || !scroller) return;
+  const box = scroller.getBoundingClientRect();
+  const edge = box.top + HEADER;
+  const hit = new Set<HTMLElement>();
+  for (const y of [edge - 48, edge - 24, edge - 2]) {
+    if (y < box.top) continue;
+    for (const node of document.elementsFromPoint(box.left + 24, y)) {
+      const row = node.closest<HTMLElement>(".queue-row");
+      if (row && scroller.contains(row)) hit.add(row);
+    }
+  }
+  for (const row of fadedRows) if (!hit.has(row)) row.style.removeProperty("opacity");
+  fadedRows.clear();
+  for (const row of hit) {
+    const rowBox = row.getBoundingClientRect();
+    // Gone by the time 40% of it is under the title, so its text never sits on the title's.
+    const shown = Math.max(0, Math.min(1, 1 - (edge - rowBox.top) / (rowBox.height * 0.4)));
+    if (shown < 1 && !row.classList.contains("lifted")) {
+      row.style.opacity = String(shown);
+      fadedRows.add(row);
+    } else row.style.removeProperty("opacity");
   }
 };
-const schedulePinned = () => {
-  if (!pinFrame) pinFrame = requestAnimationFrame(updatePinned);
-};
+
 const onListScroll = (event: Event) => {
   emit("scroll", event);
-  schedulePinned();
+  measureWindow();
+  fadeFallback();
 };
-watch(items, () => nextTick(schedulePinned), { immediate: true });
 
-const tap = (item: Extract<Item, { kind: "song" }>) => {
+let resizeObserver: ResizeObserver | null = null;
+onMounted(() => {
+  measureWindow();
+  if (scrollRef.value) {
+    resizeObserver = new ResizeObserver(measureWindow);
+    resizeObserver.observe(scrollRef.value);
+  }
+});
+
+const tap = (item: Row) => {
   // A tap while a row rests open only closes it, as on iOS.
   if (swipe.value || suppressClick) {
     suppressClick = false;
@@ -374,7 +361,7 @@ let autoScroll = 0;
 const EDGE = 56; // px from the list edge where dragging scrolls it
 const MAX_SCROLL = 14; // px per frame at the very edge
 
-const scroller = () => listRef.value?.getScrollContainer() ?? null;
+const scroller = () => scrollRef.value;
 
 const rowStyle = (index: number): CSSProperties | undefined => {
   const d = drag.value;
@@ -567,30 +554,24 @@ const remove = (index: number) => {
 };
 
 // ── Locate ───────────────────────────────────────────────────────────────────
-let locateHandle: LocateHandle | null = null;
 /**
- * Puts what plays next right under the pinned card; history stays above, a scroll up away.
- * With nothing upcoming, the most recent history is what sits there instead.
+ * Puts what plays next right under the playing song, history a scroll up away. Instant when the
+ * queue opens (Apple Music opens in place); `smooth` follows a song change while it is open.
+ * With nothing upcoming, the end of the history is what shows.
  */
-const scrollToCurrent = () => {
-  const position = items.value.findIndex((item) => item.kind === "section" && item.anchor);
-  locateHandle?.cancel();
-  if (position < 0) {
-    listRef.value?.scrollTo({ index: items.value.length - 1 });
-    return;
-  }
-  locateHandle = locateVirtualRow(listRef.value, position, {
-    rowSelector: `#${props.rowPrefix}-upcoming`,
-    align: "start",
-    instant: prefersReducedMotion(),
-  });
+const scrollToCurrent = (smooth = false) => {
+  const scroller = scrollRef.value;
+  if (!scroller) return;
+  const anchor = groups.value.findIndex((group) => group.anchor);
+  const top = anchor < 0 ? scroller.scrollHeight : groupTop(anchor);
+  scroller.scrollTo({ top, behavior: smooth && !prefersReducedMotion() ? "smooth" : "instant" });
+  measureWindow();
 };
 
 onBeforeUnmount(() => {
-  cancelAnimationFrame(pinFrame);
+  resizeObserver?.disconnect();
   endDrag();
   stopSwipeTracking();
-  locateHandle?.cancel();
 });
 
 defineExpose({ scrollToCurrent });
@@ -609,41 +590,33 @@ defineExpose({ scrollToCurrent });
   }
 }
 
-.queue-scroll-area {
+.player-queue-list {
   position: relative;
   flex: 1;
   min-height: 0;
-  // A pushed header leaves upward under the list's edge, not over the playing song.
-  overflow: clip;
-  display: flex;
-  flex-direction: column;
-}
-
-.player-queue-list {
-  flex: 1;
-  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
-}
+  scrollbar-width: none;
 
-// Moved by `top`, not transform: a transformed copy would be promoted to its own layer and cut its
-// title's plus-lighter off from what is behind it.
-.queue-pinned {
-  position: absolute;
-  right: 0;
-  left: 0;
-  z-index: 3;
-
-  .queue-section {
-    position: relative;
+  &::-webkit-scrollbar {
+    display: none;
   }
 }
 
+// Sticky within its own group, so the next group's title pushes it out; positioned by the
+// browser on the compositor, in step with the scroll, which a scripted copy could not be.
 .queue-section {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 52px;
+  box-sizing: border-box;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 12px;
-  padding: 18px 8px 8px;
+  padding: 0 8px 10px;
 }
 
 .queue-section-title {
@@ -722,6 +695,7 @@ defineExpose({ scrollToCurrent });
 
 .queue-row {
   position: relative;
+  height: 56px;
   overflow: hidden;
   border-radius: var(--radius-md);
   transition: transform 0.2s var(--ease-out);
@@ -741,6 +715,31 @@ defineExpose({ scrollToCurrent });
   }
 }
 
+// Rows fade as they slide under the sticky title (52px), gone by 40% under it so their text never
+// sits on the title's. Compositor-driven; `fadeFallback` covers browsers without it.
+@supports (animation-timeline: view()) {
+  .queue-row {
+    animation: queue-row-under linear both;
+    animation-range: exit 0% exit 40%;
+  }
+
+  // A rule of its own: the minifier folds a timeline written beside `animation` into the
+  // shorthand, which Chromium rejects (dropping the whole declaration).
+  .player-queue-list .queue-row {
+    animation-timeline: view(block 52px 0px);
+  }
+}
+
+@keyframes queue-row-under {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0;
+  }
+}
+
 .settling .queue-row,
 .settling .queue-row-body {
   transition: none !important;
@@ -748,7 +747,7 @@ defineExpose({ scrollToCurrent });
 
 .queue-row-body {
   position: relative;
-  min-height: 56px;
+  height: 56px;
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) auto auto;
   align-items: center;

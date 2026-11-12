@@ -32,7 +32,7 @@ const props = defineProps<{
 const music = musicStore();
 const queueListRef = ref<InstanceType<typeof PlayerQueueList> | null>(null);
 const scrollTimer = ref<number | null>(null);
-const scrollCurrentQueueSong = () => queueListRef.value?.scrollToCurrent();
+const scrollCurrentQueueSong = (smooth = false) => queueListRef.value?.scrollToCurrent(smooth);
 
 watch(
   () => [props.show, music.persistData.playSongIndex] as const,
@@ -40,8 +40,8 @@ watch(
     if (scrollTimer.value) window.clearTimeout(scrollTimer.value);
     if (!show) return;
     // 刚打开就对准：面板一直挂着，滑入过程中看到的已经是当前行。打开期间切歌则稍后跟过去。
-    if (!wasShown) nextTick(scrollCurrentQueueSong);
-    else scrollTimer.value = window.setTimeout(scrollCurrentQueueSong, 360);
+    if (!wasShown) nextTick(() => scrollCurrentQueueSong());
+    else scrollTimer.value = window.setTimeout(() => scrollCurrentQueueSong(true), 360);
   },
 );
 
@@ -120,16 +120,6 @@ onBeforeUnmount(() => {
   overscroll-behavior: contain;
   padding: 2px 2px 8px;
   contain: layout paint style;
-
-  :deep(.v-vl) {
-    overflow-x: hidden !important;
-    scrollbar-width: none;
-  }
-
-  :deep(.v-vl::-webkit-scrollbar) {
-    width: 0;
-    height: 0;
-  }
 }
 
 .queue-empty {
