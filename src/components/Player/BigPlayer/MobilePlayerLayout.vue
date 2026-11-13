@@ -829,14 +829,22 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
+// The app draws edge to edge over the system bar, so the bottom bar must be lifted clear of the
+// screen edge, never closer than Apple Music sits: Android's gesture inset (~16-24px) is far
+// smaller than the iPhone's 34pt home-indicator area, and "inset + a little" crowded the edge.
+// A browser keeps its own toolbar below the page, so the web build needs no lift.
+// The whole selector inside `:global()`: Vue drops anything after a `:global(...)` part, which
+// would set this on <html>, where `.mobile-pages`' own default overrides it. `html` outranks
+// the scoped `.mobile-pages[data-v]` default whatever the source order.
+:global(html.tauri-app .mobile-pages) {
+  --mobile-controls-bottom-padding: max(calc(var(--app-safe-area-bottom, 0px) + 1rem), 2.75rem);
+}
+
 .mobile-pages {
   --mobile-title-opacity: 1;
   --mobile-artists-opacity: 0.7;
   --mobile-time-opacity: 0.5;
-  // Clear of the system bar, but never closer to the screen edge than Apple Music sits: Android's
-  // gesture inset (~16-24px) is far smaller than the iPhone's 34pt home-indicator area, and
-  // "inset + a little" left the bottom bar crowding the edge there.
-  --mobile-controls-bottom-padding: max(calc(var(--app-safe-area-bottom, 0px) + 1rem), 2.75rem);
+  --mobile-controls-bottom-padding: calc(var(--app-safe-area-bottom, 0px) + 0.75rem);
 
   &.tinted {
     --mobile-title-opacity: 0.85;
