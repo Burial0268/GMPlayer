@@ -96,29 +96,32 @@
             @keydown.enter.prevent="tap(item)"
           >
             <img class="queue-cover" :src="cover(item.song, 96)" alt="" loading="lazy" />
-            <div class="queue-info">
-              <div class="queue-name text-hidden">{{ item.song.name }}</div>
-              <div class="queue-artists text-hidden">{{ artists(item.song) }}</div>
+            <!-- Everything but the cover in one box, which is the row's only blend and fade. -->
+            <div class="queue-row-text">
+              <div class="queue-info">
+                <div class="queue-name text-hidden">{{ item.song.name }}</div>
+                <div class="queue-artists text-hidden">{{ artists(item.song) }}</div>
+              </div>
+              <button
+                v-if="!touchOnly && !item.history"
+                class="queue-remove"
+                type="button"
+                :aria-label="$t('player.queue.remove')"
+                @click.stop="remove(item.index)"
+              >
+                <n-icon size="18" :component="DeleteRound" />
+              </button>
+              <button
+                v-if="reorderable && !item.history"
+                class="queue-handle"
+                type="button"
+                :aria-label="$t('player.queue.reorder')"
+                @pointerdown.stop="startDrag($event, item.index)"
+                @click.stop
+              >
+                <n-icon size="22" :component="DragHandleRound" />
+              </button>
             </div>
-            <button
-              v-if="!touchOnly && !item.history"
-              class="queue-remove"
-              type="button"
-              :aria-label="$t('player.queue.remove')"
-              @click.stop="remove(item.index)"
-            >
-              <n-icon size="18" :component="DeleteRound" />
-            </button>
-            <button
-              v-if="reorderable && !item.history"
-              class="queue-handle"
-              type="button"
-              :aria-label="$t('player.queue.reorder')"
-              @pointerdown.stop="startDrag($event, item.index)"
-              @click.stop
-            >
-              <n-icon size="22" :component="DragHandleRound" />
-            </button>
           </div>
         </div>
         <div :style="{ height: `${group.after * ROW}px` }" aria-hidden="true"></div>
@@ -581,14 +584,22 @@ defineExpose({ scrollToCurrent });
 
 <style lang="scss" scoped>
 // Text and icons blend with the cover-coloured background; covers and the delete action do not.
+// As few blending boxes as possible, never one inside another: each is an offscreen pass every
+// frame, and one nested in a blending parent only blends with that parent's transparent group.
+// `--queue-fade` is the desktop panel's show/hide fade, carried by the blending boxes themselves
+// because an opacity on any ancestor would isolate them (DesktopQueuePanel).
 .player-queue {
   display: flex;
   flex-direction: column;
   min-height: 0;
   color: var(--main-cover-mix-color, rgb(239, 239, 239));
 
-  :is(.queue-section, .queue-info, .queue-mode, .queue-remove, .queue-handle) {
+  :is(.queue-section, .queue-now .queue-info, .queue-mode, .queue-row-text) {
     mix-blend-mode: plus-lighter;
+  }
+
+  :is(.queue-section, .queue-now-cover, .queue-now .queue-info) {
+    opacity: var(--queue-fade, 1);
   }
 }
 
@@ -651,7 +662,12 @@ defineExpose({ scrollToCurrent });
   gap: 12px;
   padding: 4px 8px 12px;
   // The list scrolls under this edge; the hairline says where.
-  border-bottom: 1px solid color-mix(in srgb, var(--main-cover-mix-color, #fff) 12%, transparent);
+  border-bottom: 1px solid
+    color-mix(
+      in srgb,
+      var(--main-cover-mix-color, #fff) calc(12% * var(--queue-fade, 1)),
+      transparent
+    );
 }
 
 .queue-now-cover {
@@ -676,13 +692,13 @@ defineExpose({ scrollToCurrent });
   background: transparent;
   color: inherit;
   cursor: pointer;
-  opacity: 0.55;
+  opacity: calc(0.55 * var(--queue-fade, 1));
   transition:
     opacity var(--duration-200) var(--ease-out),
     transform var(--duration-150) var(--ease-out);
 
   &[aria-pressed="true"] {
-    opacity: 1;
+    opacity: var(--queue-fade, 1);
   }
 
   &:active {
@@ -724,7 +740,7 @@ defineExpose({ scrollToCurrent });
 // still blends. The row only names the timeline its children run on. `--row-opacity` is the
 // resting opacity (history is dimmed), read by both the children and the keyframes.
 .queue-row-body > * {
-  opacity: var(--row-opacity, 1);
+  opacity: calc(var(--row-opacity, 1) * var(--queue-fade, 1));
 }
 
 @supports (animation-timeline: view()) {
@@ -750,7 +766,7 @@ defineExpose({ scrollToCurrent });
 
 @keyframes queue-row-under {
   from {
-    opacity: var(--row-opacity, 1);
+    opacity: calc(var(--row-opacity, 1) * var(--queue-fade, 1));
   }
 
   to {
@@ -767,7 +783,7 @@ defineExpose({ scrollToCurrent });
   position: relative;
   height: 56px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) auto auto;
+  grid-template-columns: 44px minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding: 6px 8px;
@@ -783,6 +799,9 @@ defineExpose({ scrollToCurrent });
 }
 
 .queue-row-delete {
+  // A sibling of the row body, so the body's fade misses it; a swipe left open must still go with
+  // the desktop panel (a touch tablet gets the desktop layout).
+  opacity: var(--queue-fade, 1);
   position: absolute;
   inset: 0 0 0 auto;
   display: flex;
@@ -805,6 +824,14 @@ defineExpose({ scrollToCurrent });
   height: 44px;
   border-radius: var(--radius-sm);
   object-fit: cover;
+}
+
+.queue-row-text {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
 }
 
 .queue-info {

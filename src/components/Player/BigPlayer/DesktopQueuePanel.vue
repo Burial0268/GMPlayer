@@ -91,27 +91,49 @@ onBeforeUnmount(() => {
   &.show {
     pointer-events: auto;
 
-    .queue-surface,
-    .queue-content {
+    .queue-surface {
       opacity: 1;
-      // `none`, not an identity transform: any transform isolates the content, and the rows'
-      // plus-lighter would then blend with its transparent box instead of the cover.
       transform: none;
     }
+
+    .queue-content {
+      --queue-fade: 1;
+      inset: 0;
+    }
   }
+}
+
+// The text must not sit under an opacity or a transform, even mid-animation: either isolates it,
+// and its plus-lighter would blend with the panel's transparent box until the panel settled. So
+// the content slides by `inset` and fades through `--queue-fade`, which only the blending boxes
+// read (PlayerQueueList). The surface holds no blend and animates as usual.
+@property --queue-fade {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
 }
 
 .queue-surface,
 .queue-content {
   position: absolute;
-  inset: 0;
   border-radius: var(--radius-md);
+}
+
+.queue-surface {
+  inset: 0;
   opacity: 0;
-  transform: translate3d(28px, 0, 0) scale(0.985);
-  transform-origin: right center;
+  transform: translate3d(28px, 0, 0);
   transition:
     opacity 0.32s cubic-bezier(0.25, 1, 0.5, 1),
     transform 0.46s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.queue-content {
+  --queue-fade: 0;
+  inset: 0 -28px 0 28px;
+  transition:
+    --queue-fade 0.32s cubic-bezier(0.25, 1, 0.5, 1),
+    inset 0.46s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 // No z-index on either: a z-index makes the content a stacking context, and the rows' plus-lighter
@@ -132,12 +154,9 @@ onBeforeUnmount(() => {
   padding: 18px 14px 14px;
   box-sizing: border-box;
   color: var(--main-cover-mix-color, rgb(239, 239, 239));
-  // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
-  // The rows blend themselves (PlayerQueueList).
-  .queue-empty,
-  :deep(.n-icon),
-  :deep(svg),
-  :deep(path) {
+  // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。
+  // The list blends its own boxes (PlayerQueueList).
+  .queue-empty {
     mix-blend-mode: plus-lighter;
   }
 }
@@ -156,7 +175,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   text-align: center;
-  opacity: 0.56;
+  opacity: calc(0.56 * var(--queue-fade, 1));
 }
 
 @media (max-width: 1180px) {
