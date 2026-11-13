@@ -1556,7 +1556,8 @@ defineExpose({
   overflow-x: clip;
   overscroll-behavior: contain;
   padding: 4px 0 12px;
-  contain: layout paint style;
+  // No `contain: paint`: it makes the list an isolated group, and the rows' plus-lighter would
+  // blend with its transparent box instead of the background. Shows only with cover colour on.
 }
 
 .queue-empty {

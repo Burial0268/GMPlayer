@@ -94,7 +94,9 @@ onBeforeUnmount(() => {
     .queue-surface,
     .queue-content {
       opacity: 1;
-      transform: translate3d(0, 0, 0) scale(1);
+      // `none`, not an identity transform: any transform isolates the content, and the rows'
+      // plus-lighter would then blend with its transparent box instead of the cover.
+      transform: none;
     }
   }
 }
@@ -112,8 +114,10 @@ onBeforeUnmount(() => {
     transform 0.46s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
+// No z-index on either: a z-index makes the content a stacking context, and the rows' plus-lighter
+// would blend with its transparent box instead of the cover. DOM order already puts the panel over
+// the lyrics column (DesktopPlayerLayout `.right`) and the text over the surface.
 .queue-surface {
-  z-index: 6;
   background: rgba(20, 20, 20, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 24px 72px rgba(0, 0, 0, 0.26);
@@ -123,7 +127,6 @@ onBeforeUnmount(() => {
 }
 
 .queue-content {
-  z-index: 6;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
   padding: 18px 14px 14px;
@@ -144,7 +147,7 @@ onBeforeUnmount(() => {
   overflow-x: clip;
   overscroll-behavior: contain;
   padding: 2px 2px 8px;
-  contain: layout paint style;
+  // No `contain: paint`: it isolates the list the same way.
 }
 
 .queue-empty {
@@ -155,8 +158,6 @@ onBeforeUnmount(() => {
   text-align: center;
   opacity: 0.56;
 }
-
-// 底部整宽定位按钮（网格第三行）。面板叠在专辑封面上，配色随 --main-cover-color。
 
 @media (max-width: 1180px) {
   .desktop-queue-panel {
