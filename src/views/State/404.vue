@@ -6,14 +6,16 @@
     :description="$t('state.notFoundDesc')"
   >
     <template #footer>
-      <n-button type="primary" @click="router.go(-1)">{{ $t("general.name.goBack") }}</n-button>
+      <n-button type="primary" @click="navigation.closeTop()">{{
+        $t("general.name.goBack")
+      }}</n-button>
     </template>
   </n-result>
 </template>
 
 <script setup lang="ts">
-import { useRouter } from "vue-router";
-const router = useRouter();
+import { useLayerNavigation } from "@/utils/navigation";
+const navigation = useLayerNavigation();
 
 onMounted(() => {
   $setSiteTitle("404");

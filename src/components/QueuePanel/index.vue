@@ -243,10 +243,16 @@ defineExpose({ scrollToCurrent });
     color 0.16s ease,
     background-color 0.16s ease;
 
-  &:hover,
   &:focus-visible {
     color: var(--n-text-color);
     background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      color: var(--n-text-color);
+      background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
+    }
   }
 }
 
@@ -312,11 +318,13 @@ defineExpose({ scrollToCurrent });
     background-color: color-mix(in srgb, var(--n-text-color) 5%, transparent);
   }
 
-  &:hover {
-    background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
+  @media (hover: hover) {
+    &:hover {
+      background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
 
-    .queue-remove {
-      opacity: 1;
+      .queue-remove {
+        opacity: 1;
+      }
     }
   }
 
@@ -354,8 +362,19 @@ defineExpose({ scrollToCurrent });
     opacity 0.16s ease,
     background-color 0.16s ease;
 
-  &:hover {
-    background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+  &:focus-visible {
+    opacity: 1;
+  }
+
+  // Touch has no row hover; an invisible but tappable remove button is a mis-tap trap.
+  @media (hover: none) {
+    opacity: 0.6;
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+    }
   }
 }
 
@@ -391,9 +410,14 @@ defineExpose({ scrollToCurrent });
     color: var(--main-color);
   }
 
-  &:hover,
   &:focus-visible {
     background-color: color-mix(in srgb, var(--main-color) 18%, transparent);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background-color: color-mix(in srgb, var(--main-color) 18%, transparent);
+    }
   }
 
   &:active {

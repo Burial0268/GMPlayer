@@ -112,8 +112,10 @@ onMounted(() => {
       font-size: 18px;
       transition: all var(--duration-300) var(--ease-out);
       cursor: pointer;
-      &:hover {
-        color: var(--main-color);
+      @media (hover: hover) {
+        &:hover {
+          color: var(--main-color);
+        }
       }
     }
     .artists {

@@ -303,19 +303,23 @@ onMounted(getDailySongsData);
   outline-offset: 3px;
 }
 
-.daily-card:hover {
-  .artwork {
-    transform: scale(1.035);
-  }
+@media (hover: hover) {
+  .daily-card:hover {
+    .artwork {
+      transform: scale(1.035);
+    }
 
-  .play-button {
-    transform: translateY(-2px);
+    .play-button {
+      transform: translateY(-2px);
+    }
   }
 }
 
-.play-button:hover {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: rgba(255, 255, 255, 0.68);
+@media (hover: hover) {
+  .play-button:hover {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(255, 255, 255, 0.68);
+  }
 }
 
 .play-button:active {
@@ -365,13 +369,6 @@ onMounted(getDailySongsData);
   .play-button {
     width: 44px;
     height: 44px;
-  }
-}
-
-@media (hover: none) {
-  .daily-card:hover .artwork,
-  .daily-card:hover .play-button {
-    transform: none;
   }
 }
 

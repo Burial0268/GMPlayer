@@ -37,12 +37,19 @@ defineEmits<{
   top: 0;
   left: 0;
   display: flex;
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
   mix-blend-mode: plus-lighter;
   align-items: center;
   justify-content: space-between;
   z-index: 5;
   box-sizing: border-box;
   pointer-events: none;
+
+  :deep(.n-icon),
+  :deep(svg),
+  :deep(path) {
+    mix-blend-mode: plus-lighter;
+  }
 
   @media (max-width: 768px) {
     display: none;
@@ -69,10 +76,12 @@ defineEmits<{
       // background-color 走重绘，合成器接不了。
       will-change: transform, opacity;
 
-      &:hover {
-        background-color: #ffffff20;
-        transform: scale(1.05);
-        opacity: 1;
+      @media (hover: hover) {
+        &:hover {
+          background-color: #ffffff20;
+          transform: scale(1.05);
+          opacity: 1;
+        }
       }
 
       &:active {

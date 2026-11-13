@@ -11,6 +11,7 @@ members = [
   "crates/tauri-plugin-media-session",
   "crates/tauri-plugin-local-files",
   "crates/ncm-core",
+  "crates/lyric-segmenter",
 ]
 resolver = "2"
 

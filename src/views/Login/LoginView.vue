@@ -85,7 +85,9 @@
 <script setup lang="ts">
 import { userStore, musicStore, settingStore } from "@/store";
 import { getLoginState, getQrKey, checkQr, toLogin, sentCaptcha, verifyCaptcha } from "@/api/login";
-import { useRouter } from "vue-router";
+import { useRoute, useRouter } from "vue-router";
+import { useLayerNavigation } from "@/utils/navigation";
+import type { RootEntry } from "@/utils/navigation/layers";
 import { PhoneAndroidRound } from "@vicons/material";
 import { formRules } from "@/utils/ui/formRules";
 import { useI18n } from "vue-i18n";
@@ -94,6 +96,18 @@ import { NInputOtp, type FormRules } from "naive-ui";
 
 const { t } = useI18n();
 const router = useRouter();
+const route = useRoute();
+const navigation = useLayerNavigation();
+
+// Leave the way the user came: a login the guard forced continues to the page that was asked
+// for, any other one goes back to the page that offered it.
+const leaveLogin = () => {
+  const redirect = typeof route.query.redirect === "string" ? route.query.redirect : "";
+  if (!redirect) return void navigation.closeTop();
+  const root = router.resolve(redirect).meta.navigationRoot as RootEntry | undefined;
+  if (root) void navigation.switchRoot(root, redirect);
+  else void navigation.replacePage(redirect);
+};
 const user = userStore();
 const music = musicStore();
 const setting = settingStore();
@@ -202,7 +216,7 @@ const saveLoginData = async (data, sessionId?: number) => {
       $message.success(t("login.loginStatus4"));
       // 自动签到
       if ($signIn) $signIn();
-      router.push("/user");
+      leaveLogin();
     } else {
       user.userLogOut();
       $message.error(t("login.loginStatus5"));
@@ -229,7 +243,7 @@ const getQrKeyData = async (sessionId = qrSessionId) => {
       stopQrPolling();
       $message.info(t("login.loggedIn"));
       user.userLogin = true;
-      router.push("/user");
+      leaveLogin();
     } else {
       user.userLogOut();
       clearQrPollingTimer();

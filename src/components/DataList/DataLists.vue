@@ -1863,17 +1863,19 @@ const jumpLink = (id, type) => {
       border-color var(--duration-200) var(--ease-out),
       box-shadow var(--duration-200) var(--ease-out);
     cursor: pointer;
-    &:hover {
-      border-color: var(--main-color);
-      box-shadow:
-        0 1px 2px -2px var(--main-boxshadow-color),
-        0 3px 6px 0 var(--main-boxshadow-color),
-        0 5px 12px 4px var(--main-boxshadow-hover-color);
-      .action {
-        .like,
-        .download {
-          opacity: 1;
-          transform: scale(1);
+    @media (hover: hover) {
+      &:hover {
+        border-color: var(--main-color);
+        box-shadow:
+          0 1px 2px -2px var(--main-boxshadow-color),
+          0 3px 6px 0 var(--main-boxshadow-color),
+          0 5px 12px 4px var(--main-boxshadow-hover-color);
+        .action {
+          .like,
+          .download {
+            opacity: 1;
+            transform: scale(1);
+          }
         }
       }
     }
@@ -1941,8 +1943,10 @@ const jumpLink = (id, type) => {
           // hair of extra weight. 700 → one solid block, 600 still a touch heavy.
           font-weight: 500;
           transition: color var(--duration-150) var(--ease-out);
-          &:hover {
-            color: var(--main-color);
+          @media (hover: hover) {
+            &:hover {
+              color: var(--main-color);
+            }
           }
         }
         .n-tag {
@@ -1998,8 +2002,10 @@ const jumpLink = (id, type) => {
         // whole row read flat. Drop it a tone so the eye lands on the title first.
         color: var(--text-secondary);
         transition: color var(--duration-150) var(--ease-out);
-        &:hover {
-          color: var(--main-color);
+        @media (hover: hover) {
+          &:hover {
+            color: var(--main-color);
+          }
         }
       }
     }
@@ -2029,8 +2035,15 @@ const jumpLink = (id, type) => {
         transition:
           opacity var(--duration-150) var(--ease-out),
           transform var(--duration-150) var(--ease-out);
-        &:hover {
-          transform: scale(1.1);
+        // Touch has no row hover to reveal them, and an invisible button still takes the tap.
+        @media (hover: none) {
+          opacity: 1;
+          transform: none;
+        }
+        @media (hover: hover) {
+          &:hover {
+            transform: scale(1.1);
+          }
         }
         &:active {
           transform: scale(1);
@@ -2096,12 +2109,21 @@ const jumpLink = (id, type) => {
     transition: color var(--duration-300) var(--ease-out);
   }
 
-  &:hover,
   &:active {
     box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.18);
 
     .n-icon {
       color: var(--locate-icon-hover);
+    }
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.18);
+
+      .n-icon {
+        color: var(--locate-icon-hover);
+      }
     }
   }
 }
@@ -2226,90 +2248,4 @@ const jumpLink = (id, type) => {
   margin: 6px 8px;
 }
 
-:global(.n-drawer-container .n-drawer.data-list-action-drawer) {
-  --drawer-menu-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.82);
-  --drawer-menu-border: var(--acrylic-border, rgba(0, 0, 0, 0.08));
-  --drawer-item-hover: color-mix(in srgb, var(--content-panel-bg, #fff) 82%, var(--main-color) 18%);
-
-  overflow: hidden;
-  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
-  background-color: var(--drawer-menu-bg);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
-  backdrop-filter: blur(26px) saturate(180%);
-  box-shadow:
-    0 -18px 46px rgb(0 0 0 / 14%),
-    inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
-}
-
-:global(.data-list-action-drawer-header) {
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--drawer-menu-border);
-}
-
-:global(.data-list-action-drawer-body) {
-  padding: 0;
-}
-
-.drawer-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
-}
-
-.drawer-menu-divider {
-  height: 1px;
-  margin: 6px 8px;
-  background-color: var(--drawer-menu-border);
-}
-
-.drawer-menu {
-  .item {
-    display: flex;
-    align-items: center;
-    flex-direction: row;
-    min-height: 44px;
-    padding: 0 12px;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition:
-      background-color var(--duration-150) var(--ease-out),
-      color var(--duration-150) var(--ease-out),
-      transform var(--duration-150) var(--ease-out);
-
-    &:hover,
-    &:active {
-      color: var(--main-color);
-      background-color: var(--drawer-item-hover);
-    }
-
-    &:active {
-      transform: scale(0.98);
-    }
-
-    &.info-item {
-      color: var(--n-text-color-2);
-    }
-
-    &.danger {
-      &:hover,
-      &:active {
-        color: var(--n-error-color, #d03050);
-        background-color: color-mix(in srgb, var(--n-error-color, #d03050) 12%, transparent);
-      }
-    }
-
-    .n-icon {
-      margin-right: 12px;
-      color: var(--main-color);
-    }
-
-    .n-text {
-      display: flex;
-      flex-direction: row;
-      min-width: 0;
-      transform: translateY(1px);
-    }
-  }
-}
 </style>

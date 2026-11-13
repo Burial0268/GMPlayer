@@ -138,17 +138,19 @@ const setting = settingStore();
         --n-color: transparent;
         --n-color-hover: var(--main-color);
         --n-color-pressed: var(--main-color);
-        --n-text-color: var(--main-cover-color);
-        --n-text-color-hover: var(--main-cover-color);
-        --n-text-color-pressed: var(--main-cover-color);
+        --n-text-color: var(--main-cover-mix-color, rgb(239, 239, 239));
+        --n-text-color-hover: var(--main-cover-mix-color, rgb(239, 239, 239));
+        --n-text-color-pressed: var(--main-cover-mix-color, rgb(239, 239, 239));
         --n-border: none;
         border: none;
         transition: all var(--duration-300) cubic-bezier(0.34, 1.56, 0.64, 1);
         // background-color 走重绘，合成器接不了。
         will-change: transform;
 
-        &:hover {
-          transform: scale(1.1);
+        @media (hover: hover) {
+          &:hover {
+            transform: scale(1.1);
+          }
         }
 
         &:active {
@@ -157,14 +159,14 @@ const setting = settingStore();
       }
 
       .n-icon {
-        color: var(--main-cover-color);
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
       }
     }
 
     .play-state {
       --n-width: 42px;
       --n-height: 42px;
-      color: var(--main-cover-color);
+      color: var(--main-cover-mix-color, rgb(239, 239, 239));
       margin: 0 12px;
       transition: all var(--duration-300) cubic-bezier(0.34, 1.56, 0.64, 1);
       // background-color 走重绘，合成器接不了。
@@ -172,7 +174,7 @@ const setting = settingStore();
 
       .n-icon {
         transition: all var(--duration-200) cubic-bezier(0.34, 1.56, 0.64, 1);
-        color: var(--main-cover-color);
+        color: var(--main-cover-mix-color, rgb(239, 239, 239));
         will-change: transform, opacity;
       }
 
@@ -180,8 +182,10 @@ const setting = settingStore();
         transform: scale(1);
       }
 
-      &:hover .n-icon {
-        transform: scale(1.1);
+      @media (hover: hover) {
+        &:hover .n-icon {
+          transform: scale(1.1);
+        }
       }
     }
   }
@@ -200,9 +204,11 @@ const setting = settingStore();
     // background-color 走重绘，合成器接不了。
     will-change: transform, opacity;
 
-    &:hover {
-      background-color: #ffffff30;
-      transform: scale(1.05);
+    @media (hover: hover) {
+      &:hover {
+        background-color: #ffffff30;
+        transform: scale(1.05);
+      }
     }
 
     &:active {

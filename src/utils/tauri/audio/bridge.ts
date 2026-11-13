@@ -79,6 +79,17 @@ export async function audioPreheat(): Promise<void> {
   await invoke("audio_preheat");
 }
 
+/** Output device names for the player's output menu; empty outside Tauri or on failure. */
+export async function audioListOutputDevices(): Promise<string[]> {
+  if (!isTauri()) return [];
+  try {
+    return await invoke<string[]>("audio_list_output_devices");
+  } catch (err) {
+    console.warn("[audioBridge] audio_list_output_devices failed", err);
+    return [];
+  }
+}
+
 export async function audioGetState(): Promise<AudioStateResponse | null> {
   return invoke<AudioStateResponse>("audio_get_state");
 }

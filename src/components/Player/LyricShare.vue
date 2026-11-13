@@ -81,13 +81,13 @@
             </div>
             <div class="brand">
               <img src="/images/logo/favicon.png" alt="" />
-              GMPlayer
+              <span class="brand-name">GMPlayer</span>
             </div>
           </div>
         </div>
 
         <footer v-if="isMobile" class="foot">
-          <n-button round secondary :disabled="!range" @click="copyText">
+          <n-button round secondary :disabled="!picked.length" @click="copyText">
             <template #icon><Copy /></template>
             {{ t("player.share.copy") }}
           </n-button>
@@ -117,7 +117,7 @@
             <canvas ref="cardB" :class="['card', { shown: front === 1 }]" />
           </div>
           <div class="actions">
-            <n-button round secondary :disabled="!range" @click="copyText">
+            <n-button round secondary :disabled="!picked.length" @click="copyText">
               <template #icon><Copy /></template>
               {{ t("player.share.copy") }}
             </n-button>
@@ -178,7 +178,17 @@
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef, useTemplateRef, watch, type Component } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  shallowRef,
+  useTemplateRef,
+  watch,
+  type Component,
+} from "vue";
 import { animateMini } from "motion-v";
 import type { GlobalThemeOverrides, NVirtualList } from "naive-ui";
 import { Close, Copy, Download, ShareTwo } from "@icon-park/vue-next";
@@ -255,8 +265,8 @@ const shareTheme = computed<GlobalThemeOverrides>(() => ({
 const list = useTemplateRef<HTMLElement>("list");
 const scroller = useTemplateRef<InstanceType<typeof NVirtualList>>("scroller");
 const lineEls: HTMLElement[] = [];
-// A consecutive run, or nothing: the pressed line can be let go of like any other.
-const range = ref<[number, number] | null>(null);
+// Up to five lines, in lyric order, not necessarily consecutive.
+const picked = ref<number[]>([]);
 const imageUrl = ref("");
 // The PNG of the card as last drawn; see `cardBlob`.
 let imageBlob: Promise<Blob> | null = null;
@@ -370,10 +380,12 @@ watch(
   visible,
   async (shown) => {
     if (!shown || !request.value || !list.value) return;
-    range.value = [originIndex.value, originIndex.value];
+    picked.value = [originIndex.value];
+    openedViewport.value = { w: window.innerWidth, h: window.innerHeight };
     clearImage();
     still = props.captureStill();
     assets = undefined;
+    loadedFont = "";
     cardUnit.value = list.value.clientWidth / CARD_METRICS.width;
     if (isMobile.value) paintBackdrop();
     const size = rowFloor.value;
@@ -500,9 +512,9 @@ function fly() {
   });
 }
 
-// The card's background is the image's, painted once per opening.
+// The card's background is the image's. A later theme or size change repaints
+// without hiding it first, so the card does not flash empty.
 function paintBackdrop() {
-  backdropShown.value = false;
   run(async () => {
     const input = cardInput(await still);
     assets ??= loadCardAssets(input);
@@ -510,6 +522,7 @@ function paintBackdrop() {
     const canvas = backdrop.value;
     if (!canvas || !visible.value) return;
     const { clientWidth: w, clientHeight: h } = canvas;
+    if (!w || !h) return;
     drawCardBackdrop(
       input,
       loaded,
@@ -550,40 +563,52 @@ function leave() {
   clearImage();
 }
 
-// Selection stays one consecutive run: tapping a neighbour grows it, tapping an
-// end shrinks it, tapping inside cuts it there, tapping elsewhere starts over,
-// and tapping the only line clears it.
+// Any lines, up to five, kept in lyric order. Tapping a picked line drops it.
 function toggle(index: number) {
-  if (!range.value) {
-    range.value = [index, index];
+  const current = picked.value;
+  if (current.includes(index)) {
+    picked.value = current.filter((i) => i !== index);
     return;
   }
-  const [start, end] = range.value;
-  if (index < start - 1 || index > end + 1) {
-    range.value = [index, index];
-  } else if (index === start - 1 || index === end + 1) {
-    if (end - start + 1 >= MAX_LINES) {
-      window.$message.warning(t("player.share.limit", { max: MAX_LINES }));
-      return;
-    }
-    range.value = [Math.min(start, index), Math.max(end, index)];
-  } else if (start === end) {
-    range.value = null;
-  } else if (index === start) {
-    range.value = [start + 1, end];
-  } else {
-    range.value = [start, index === end ? end - 1 : index];
+  if (current.length >= MAX_LINES) {
+    window.$message.warning(t("player.share.limit", { max: MAX_LINES }));
+    return;
   }
+  picked.value = [...current, index].sort((a, b) => a - b);
 }
 
 // The list takes AMLL's column and type, so the pressed line lines up with
 // the one it replaces; the phone's card takes the image's layout instead.
+const viewport = ref({ w: window.innerWidth, h: window.innerHeight });
+const openedViewport = ref({ w: window.innerWidth, h: window.innerHeight });
+const onViewportResize = () => {
+  viewport.value = { w: window.innerWidth, h: window.innerHeight };
+};
+onMounted(() => window.addEventListener("resize", onViewportResize));
+onBeforeUnmount(() => window.removeEventListener("resize", onViewportResize));
+
+let cardObserver: ResizeObserver | undefined;
+watch(list, (el, _, onCleanup) => {
+  cardObserver?.disconnect();
+  if (!el) return;
+  const measure = () => {
+    const next = el.clientWidth / CARD_METRICS.width;
+    if (!next || Math.abs(next - cardUnit.value) <= 0.0001) return;
+    cardUnit.value = next;
+  };
+  cardObserver = new ResizeObserver(measure);
+  cardObserver.observe(el);
+  onCleanup(() => cardObserver?.disconnect());
+});
+
 const layerStyle = computed(() => {
   const origin = request.value?.origin;
+  const sx = openedViewport.value.w ? viewport.value.w / openedViewport.value.w : 1;
+  const sy = openedViewport.value.h ? viewport.value.h / openedViewport.value.h : 1;
   return {
-    "--share-left": `${origin?.rect.left ?? 0}px`,
-    "--share-top": `${origin?.rect.top ?? 0}px`,
-    "--share-width": `${origin?.rect.width ?? 0}px`,
+    "--share-left": `${(origin?.rect.left ?? 0) * sx}px`,
+    "--share-top": `${(origin?.rect.top ?? 0) * sy}px`,
+    "--share-width": `${(origin?.rect.width ?? 0) * sx}px`,
     "--share-font-size": `${origin?.fontSize ?? 24}px`,
     "--share-padding": origin?.padding ?? "0px",
     "--card-unit": `${cardUnit.value}px`,
@@ -594,15 +619,17 @@ const layerStyle = computed(() => {
     "--share-align": setting.lyricsPosition === "center" ? "center" : "left",
   };
 });
-const isSelected = (index: number) =>
-  !!range.value && index >= range.value[0] && index <= range.value[1];
+const isSelected = (index: number) => picked.value.includes(index);
 const song = computed(() => music.getPlaySongData);
 // PlayerCover's size, so the header shows an image that is already decoded.
 const cover = computed(() => coverUrl(song.value?.album?.picUrl, 1024));
 const artists = computed(() => (song.value?.artist ?? []).map((a) => a.name).join(" / "));
 const fileName = computed(() => [song.value?.name, artists.value].filter(Boolean).join(" - "));
 const selected = computed(() =>
-  range.value ? lines.value.slice(range.value[0], range.value[1] + 1) : [],
+  picked.value.flatMap((index) => {
+    const line = lines.value[index];
+    return line ? [line] : [];
+  }),
 );
 const lyricText = computed(() =>
   selected.value.map((line) => [line.text, ...line.subs].join("\n")).join("\n"),
@@ -618,49 +645,72 @@ const cardA = useTemplateRef<HTMLCanvasElement>("cardA");
 const cardB = useTemplateRef<HTMLCanvasElement>("cardB");
 const front = ref(-1);
 let assets: Promise<CardAssets> | undefined;
+let loadedFont = "";
 const drawn = shallowRef<{ input: LyricCardInput; assets: CardAssets }>();
 let drawRun = 0;
 let linkTimer = 0;
-watch([visible, selected, isMobile], ([shown, chosen, mobile]) => {
-  if (!shown) return;
-  const current = ++drawRun;
-  if (!chosen.length) {
-    // Nothing selected: nothing to preview or share.
-    clearTimeout(linkTimer);
-    clearImage();
-    front.value = -1;
-    drawn.value = undefined;
-    return;
-  }
-  run(async () => {
-    const input = cardInput(await still);
-    assets ??= loadCardAssets(input);
-    const loaded = await assets;
-    if (current !== drawRun) return;
-    if (!mobile) {
-      const target = front.value === 0 ? cardB.value : cardA.value;
-      if (!target) return;
-      const scale = Math.min(1, (PREVIEW_WIDTH * window.devicePixelRatio) / 1080);
-      drawLyricCard(input, loaded, target, scale);
-      front.value = target === cardA.value ? 0 : 1;
+watch(
+  [
+    visible,
+    selected,
+    isMobile,
+    () => site.songPicColor,
+    () => setting.immersivePlayer,
+    () => setting.lyricFont,
+    cardUnit,
+  ],
+  ([shown, chosen, mobile]) => {
+    if (!shown) return;
+    if (loadedFont !== setting.lyricFont) {
+      assets = undefined;
+      loadedFont = setting.lyricFont;
     }
-    clearImage();
-    drawn.value = { input, assets: loaded };
-    // The browser saves through a link, which needs its URL before the click;
-    // made once the selection settles, not per tap.
-    if (inTauri) return;
-    clearTimeout(linkTimer);
-    linkTimer = window.setTimeout(
-      () =>
-        run(async () => {
-          const url = URL.createObjectURL(await cardBlob());
-          if (current === drawRun) imageUrl.value = url;
-          else URL.revokeObjectURL(url);
-        }),
-      LINK_DELAY,
-    );
-  });
-});
+    const current = ++drawRun;
+    if (!chosen.length) {
+      // Nothing selected: nothing to preview or share.
+      clearTimeout(linkTimer);
+      clearImage();
+      front.value = -1;
+      drawn.value = undefined;
+      return;
+    }
+    run(async () => {
+      const input = cardInput(await still);
+      assets ??= loadCardAssets(input);
+      const loaded = await assets;
+      if (current !== drawRun) return;
+      if (!mobile) {
+        const target = front.value === 0 ? cardB.value : cardA.value;
+        if (!target) return;
+        const scale = Math.min(1, (PREVIEW_WIDTH * window.devicePixelRatio) / 1080);
+        drawLyricCard(input, loaded, target, scale);
+        front.value = target === cardA.value ? 0 : 1;
+      }
+      clearImage();
+      drawn.value = { input, assets: loaded };
+      // The browser saves through a link, which needs its URL before the click;
+      // made once the selection settles, not per tap.
+      if (inTauri) return;
+      clearTimeout(linkTimer);
+      linkTimer = window.setTimeout(
+        () =>
+          run(async () => {
+            const url = URL.createObjectURL(await cardBlob());
+            if (current === drawRun) imageUrl.value = url;
+            else URL.revokeObjectURL(url);
+          }),
+        LINK_DELAY,
+      );
+    });
+  },
+);
+
+watch(
+  [visible, isMobile, () => site.songPicColor, () => setting.immersivePlayer, cardUnit],
+  ([shown, mobile]) => {
+    if (shown && mobile) paintBackdrop();
+  },
+);
 
 /** The PNG being shared: the last draw, at full size. */
 function cardBlob(): Promise<Blob> {
@@ -693,6 +743,7 @@ const cardInput = (backdrop?: HTMLCanvasElement): LyricCardInput => ({
   coverSrc: coverUrl(song.value?.album?.picUrl, 512),
   backdrop,
   themeRgb: site.songPicColor,
+  immersive: setting.immersivePlayer,
   fontFamily: setting.lyricFont,
   brand: "GMPlayer",
   logoSrc: "/images/logo/favicon.png",
@@ -1081,6 +1132,15 @@ function ignoreAbort(error: unknown) {
   // The twin covers it exactly, so it takes over at once; a fade would dip.
   &.phase-landing .line.origin {
     transition: none;
+  }
+
+  // The column is isolated, so this blends the lines onto the card's own backdrop
+  // canvas rather than the player. The cover image stays source-over.
+  .lines,
+  .meta .text,
+  .meta .brand-name {
+    color: var(--main-cover-mix-color, rgb(239, 239, 239));
+    mix-blend-mode: plus-lighter;
   }
 
   .meta {

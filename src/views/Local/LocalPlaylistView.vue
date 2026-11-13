@@ -743,9 +743,11 @@ onMounted(async () => {
       border-radius: var(--detail-song-list-radius);
     }
 
-    :deep(.datalists .songs:hover) {
-      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-      box-shadow: none;
+    @media (hover: hover) {
+      :deep(.datalists .songs:hover) {
+        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+        box-shadow: none;
+      }
     }
 
     :deep(.datalists .songs.play) {

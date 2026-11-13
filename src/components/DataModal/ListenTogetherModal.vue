@@ -596,8 +596,10 @@ async function copyShareLink() {
       color: var(--n-text-color-3);
       transition: color var(--duration-200) var(--ease-out);
 
-      &:hover {
-        color: var(--main-color);
+      @media (hover: hover) {
+        &:hover {
+          color: var(--main-color);
+        }
       }
     }
   }
@@ -700,8 +702,10 @@ async function copyShareLink() {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 
-  &:hover {
-    scrollbar-color: var(--n-scrollbar-color) transparent;
+  @media (hover: hover) {
+    &:hover {
+      scrollbar-color: var(--n-scrollbar-color) transparent;
+    }
   }
 }
 
@@ -713,15 +717,19 @@ async function copyShareLink() {
   border-radius: var(--radius-md);
   transition: background-color var(--duration-150) var(--ease-out);
 
-  &:hover {
-    background-color: var(--n-action-color);
+  @media (hover: hover) {
+    &:hover {
+      background-color: var(--n-action-color);
+    }
   }
 
   &.user-row--self {
     background-color: color-mix(in srgb, var(--main-color) 7%, transparent);
 
-    &:hover {
-      background-color: color-mix(in srgb, var(--main-color) 12%, transparent);
+    @media (hover: hover) {
+      &:hover {
+        background-color: color-mix(in srgb, var(--main-color) 12%, transparent);
+      }
     }
   }
 }

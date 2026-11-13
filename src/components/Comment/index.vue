@@ -207,8 +207,10 @@ const toLikeComment = () => {
           font-weight: bold;
           cursor: pointer;
           transition: all var(--duration-300) var(--ease-out);
-          &:hover {
-            color: var(--main-color);
+          @media (hover: hover) {
+            &:hover {
+              color: var(--main-color);
+            }
           }
         }
       }
@@ -224,8 +226,10 @@ const toLikeComment = () => {
           font-weight: bold;
           cursor: pointer;
           transition: all var(--duration-300) var(--ease-out);
-          &:hover {
-            color: var(--main-color);
+          @media (hover: hover) {
+            &:hover {
+              color: var(--main-color);
+            }
           }
         }
       }
@@ -249,9 +253,11 @@ const toLikeComment = () => {
           cursor: pointer;
           transition: all var(--duration-300) var(--ease-out);
           opacity: 0.6;
-          &:hover {
-            color: var(--main-color);
-            opacity: 1;
+          @media (hover: hover) {
+            &:hover {
+              color: var(--main-color);
+              opacity: 1;
+            }
           }
           &:active {
             transform: scale(0.95);

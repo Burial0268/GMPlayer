@@ -7,21 +7,37 @@
   <Teleport to="body" :disabled="variant !== 'floating'">
     <div
       v-if="showTitleBar"
-      class="titlebar"
-      :class="titlebarClasses"
-      :data-tauri-drag-region="draggable ? '' : undefined"
+      ref="titlebarArea"
+      :class="['titlebar-area', `titlebar-area--${variant}`, { 'auto-hide': autoHideTitlebar }]"
+      data-tauri-drag-region
+      @mouseenter="titlebarHovering = true"
+      @mouseleave="titlebarHovering = false"
     >
-      <div v-if="title" class="titlebar-title" data-tauri-drag-region>
-        <n-icon v-if="icon" class="titlebar-icon" :component="icon" />
-        <span class="titlebar-text" data-tauri-drag-region>{{ title }}</span>
+      <div
+        class="titlebar"
+        :class="[titlebarClasses, { 'titlebar-hidden': titlebarHidden }]"
+        :data-tauri-drag-region="draggable ? '' : undefined"
+      >
+        <div v-if="title" class="titlebar-title" data-tauri-drag-region>
+          <n-icon v-if="icon" class="titlebar-icon" :component="icon" />
+          <span class="titlebar-text" data-tauri-drag-region>{{ title }}</span>
+        </div>
+        <WindowControls :label="label" :minimizable="minimizable" :maximizable="maximizable" />
       </div>
-      <WindowControls :label="label" :minimizable="minimizable" :maximizable="maximizable" />
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, type Component } from "vue";
+import {
+  ref,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  useTemplateRef,
+  watch,
+  type Component,
+} from "vue";
 import { musicStore, settingStore } from "@/store";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { getDesktopEnvironment, isMobile, type DesktopEnvironment } from "@/utils/tauri";
@@ -73,6 +89,29 @@ const titlebarClasses = computed(() => [
   },
 ]);
 const showTitleBar = ref(false);
+const titlebarArea = useTemplateRef<HTMLElement>("titlebarArea");
+const autoHideTitlebar = computed(
+  () => showTitleBar.value && props.variant === "floating" && music.showBigPlayer,
+);
+const titlebarHovering = ref(false);
+const titlebarGracePeriodOver = ref(false);
+const titlebarHidden = computed(
+  () => autoHideTitlebar.value && titlebarGracePeriodOver.value && !titlebarHovering.value,
+);
+
+watch(
+  autoHideTitlebar,
+  (hide, _, onCleanup) => {
+    titlebarGracePeriodOver.value = false;
+    titlebarHovering.value = titlebarArea.value?.matches(":hover") ?? false;
+    if (!hide) return;
+    const timer = window.setTimeout(() => {
+      titlebarGracePeriodOver.value = true;
+    }, 5000);
+    onCleanup(() => window.clearTimeout(timer));
+  },
+  { flush: "post" },
+);
 
 onMounted(async () => {
   if (!isTauri()) return;
@@ -100,6 +139,27 @@ onBeforeUnmount(() => {
 </script>
 
 <style lang="scss" scoped>
+.titlebar-area {
+  display: contents;
+}
+
+.titlebar-area--floating {
+  display: block;
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 9999;
+  height: 32px;
+  pointer-events: none;
+
+  // Keep the reveal strip alive while the pill itself cannot receive clicks.
+  &.auto-hide::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: auto;
+  }
+}
+
 .titlebar {
   display: flex;
   align-items: center;
@@ -123,8 +183,8 @@ onBeforeUnmount(() => {
   position: fixed;
   top: var(--app-floating-control-top);
   right: var(--app-floating-control-inset, 14px);
-  z-index: 9999;
   height: var(--app-titlebar-height, 30px);
+  pointer-events: auto;
   border: 1px solid var(--acrylic-border, rgba(0, 0, 0, 0.06));
   border-radius: var(--radius-lg);
   background-color: var(--titlebar-bg, rgba(255, 255, 255, 0.52));
@@ -134,17 +194,16 @@ onBeforeUnmount(() => {
   -webkit-backdrop-filter: blur(18px) saturate(160%);
   backdrop-filter: blur(18px) saturate(160%);
 
-  // BigPlayer mode: white controls over the immersive cover. Keep them faintly
-  // visible (not opacity:0) and rise to full on hover — on desktop these are the
-  // ONLY window min/close controls, so a fully-invisible hover-only target is
-  // undiscoverable and leaves the user unable to close the app while the player
-  // is open. The frosted pill + backdrop-blur keeps them legible over the cover.
   &.bigplayer-mode {
-    opacity: 0.6;
     color: rgba(255, 255, 255, 0.85);
+    transition:
+      opacity 0.3s ease-in-out,
+      background-color var(--duration-200) var(--ease-out),
+      border-color var(--duration-200) var(--ease-out);
 
-    &:hover {
-      opacity: 1;
+    &.titlebar-hidden {
+      opacity: 0;
+      pointer-events: none;
     }
   }
 }

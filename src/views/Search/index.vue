@@ -21,7 +21,7 @@
     <!-- 分类切换 -->
     <n-tabs
       class="main-tab search-tab"
-      type="line"
+      type="segment"
       @update:value="tabChange"
       v-model:value="tabValue"
       v-if="searchKeywords"
@@ -174,8 +174,11 @@ onMounted(() => {
     }
   }
 
+  // A segmented control sized to its six labels, as on macOS; the phone's full width is
+  // about that size anyway.
   .search-tab {
     margin-top: 22px;
+    max-width: 480px;
   }
 
   // `clip` 而不是 `hidden`：`hidden` 让它成为滚动容器，子页里的 sticky（DataLists 的定位

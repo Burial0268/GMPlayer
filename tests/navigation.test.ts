@@ -314,6 +314,29 @@ test("search input, results and categories replace the same session", async () =
   assert.equal(nav.current.value!.isRoot, true);
 });
 
+test("search reopened over results cancels back to them, and a new query stacks on them", async () => {
+  const { navigation: nav, router } = await fixture();
+  await nav.openSearch();
+  nav.updateSearchQuery("Miles");
+  await nav.replacePage("/search/songs?keywords=Miles");
+  const results = nav.current.value!;
+  await nav.openSearch();
+  assert.equal(nav.searchVisible.value, true);
+  assert.equal(nav.current.value!.search?.query, "Miles");
+  await traversed(router, () => {
+    nav.closeTop("search");
+  });
+  assert.equal(nav.current.value!.id, results.id);
+  assert.equal(nav.current.value!.route, "/search/songs?keywords=Miles");
+  assert.equal(nav.searchVisible.value, false);
+  await nav.openSearch();
+  await nav.replacePage("/search/songs?keywords=Coltrane");
+  await traversed(router, () => {
+    nav.closeTop();
+  });
+  assert.equal(nav.current.value!.route, "/search/songs?keywords=Miles");
+});
+
 test("a suggestion retains the underlying input session", async () => {
   const { navigation: nav, router } = await fixture();
   await nav.openSearch();

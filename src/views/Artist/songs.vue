@@ -222,11 +222,13 @@ onMounted(() => {
       transition: transform var(--duration-150) var(--ease-out);
     }
 
-    &:hover {
-      color: var(--main-color);
+    @media (hover: hover) {
+      &:hover {
+        color: var(--main-color);
 
-      .n-icon {
-        transform: translateX(2px);
+        .n-icon {
+          transform: translateX(2px);
+        }
       }
     }
   }
@@ -308,10 +310,12 @@ onMounted(() => {
     text-align: left;
     cursor: pointer;
 
-    &:hover {
-      .rank-name,
-      .rank-play {
-        color: var(--main-color);
+    @media (hover: hover) {
+      &:hover {
+        .rank-name,
+        .rank-play {
+          color: var(--main-color);
+        }
       }
     }
   }
@@ -352,9 +356,11 @@ onMounted(() => {
     font-size: 16px;
     transition: all var(--duration-300) var(--ease-out);
 
-    &:hover {
-      background-color: var(--main-second-color);
-      color: var(--main-color);
+    @media (hover: hover) {
+      &:hover {
+        background-color: var(--main-second-color);
+        color: var(--main-color);
+      }
     }
 
     &:active {

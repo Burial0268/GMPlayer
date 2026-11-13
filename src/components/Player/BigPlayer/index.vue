@@ -98,6 +98,7 @@
               @lrcAllLeave="lrcAllLeave"
               @lrcTextClick="lrcTextClick"
               @toComment="toComment(retractMobilePlayer)"
+              @openMenu="mobileMenuOpen = true"
             />
 
             <Spectrum
@@ -172,11 +173,17 @@
       <!-- 首次点开设置才拉取：它经 SettingsWorkspace 拖进整个 n-color-picker 分包，
            而它只是个模态框，不参与大播放器的开合动画。 -->
       <component :is="LyricSettingComponent" v-if="LyricSettingComponent" ref="LyricSettingRef" />
+      <MobilePlayerMenu
+        v-if="isMobile"
+        v-model:show="mobileMenuOpen"
+        @openPage="openPageFromMobilePlayer"
+      />
     </div>
   </Teleport>
 </template>
 
 <script setup lang="ts">
+import type { RouteLocationRaw } from "vue-router";
 import { musicStore, settingStore, siteStore } from "@/store";
 import Spectrum from "../Spectrum.vue";
 import { storeToRefs } from "pinia";
@@ -209,6 +216,7 @@ import { layerMotion } from "@/utils/navigation/motion";
 import BigPlayerBackground from "./BigPlayerBackground.vue";
 import BigPlayerTopBar from "./BigPlayerTopBar.vue";
 import MobilePlayerLayout from "./MobilePlayerLayout.vue";
+import MobilePlayerMenu from "./MobilePlayerMenu.vue";
 import DesktopPlayerLayout from "./DesktopPlayerLayout.vue";
 import DesktopToggleControls from "./DesktopToggleControls.vue";
 import LyricShare from "../LyricShare.vue";
@@ -260,9 +268,9 @@ const desktopLayoutRef = ref<InstanceType<typeof DesktopPlayerLayout> | null>(nu
 // Proxy refs for mobile cover frame composable (read from child component)
 const phonyBigCoverRef = computed(() => mobileLayoutRef.value?.phonyBigCoverRef ?? null);
 const phonySmallCoverRef = computed(() => mobileLayoutRef.value?.phonySmallCoverRef ?? null);
-// The frame is positioned inside the page the queue pager translates, so it is
-// measured against that page: against the shell, a song change while the queue
-// is open places it a whole page off. At rest the page coincides with the shell.
+// Measured against the player page, not the shell. The queue pager no longer
+// translates that page (a transform there isolates plus-lighter for the whole
+// slide); the cover applies the shift itself, and the measurement strips it.
 const mobileCoverRootRef = computed(() =>
   isMobile.value
     ? (phonyBigCoverRef.value?.closest<HTMLElement>(".mobile-player-content") ??
@@ -1468,6 +1476,18 @@ const retractMobilePlayer = async () => {
     });
   }
   return true;
+};
+
+const mobileMenuOpen = ref(false);
+// The menu belongs to this player session: it must not reopen over the next one.
+watch(
+  () => music.showBigPlayer,
+  (open) => {
+    if (!open) mobileMenuOpen.value = false;
+  },
+);
+const openPageFromMobilePlayer = async (to: RouteLocationRaw) => {
+  if (await retractMobilePlayer()) navigation.openPage(to);
 };
 
 const removeCancelledNavigation = navigation.onNavigationCancelled(() => {

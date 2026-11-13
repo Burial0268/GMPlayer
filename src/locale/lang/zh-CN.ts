@@ -1,5 +1,12 @@
 const messages: Record<string, unknown> = {
-  navigation: { label: "导航", forward: "前进", search: "搜索", player: "播放器", cancel: "取消" },
+  navigation: {
+    label: "导航",
+    forward: "前进",
+    search: "搜索",
+    player: "播放器",
+    cancel: "取消",
+    pressAgainToExit: "再按一次退出",
+  },
   // 导航栏
   nav: {
     home: "首页",
@@ -402,6 +409,10 @@ const messages: Record<string, unknown> = {
       like: "添加到我喜欢",
       unlike: "从我喜欢中移除",
       more: "更多操作",
+      lyrics: "歌词",
+      output: "输出设备",
+      outputDefault: "系统默认",
+      outputUnavailable: "未连接",
       dislike: "不感兴趣",
       volume: "音量",
       progress: "播放进度",
@@ -412,6 +423,12 @@ const messages: Record<string, unknown> = {
       clear: "清空",
       collapse: "收起播放列表",
       locate: "定位到正在播放",
+      history: "播放历史",
+      fromTop: "然后从头播放",
+      shuffle: "随机播放",
+      repeat: "循环播放",
+      reorder: "拖动排序",
+      remove: "移除",
     },
     share: {
       title: "分享歌词",

@@ -135,7 +135,6 @@ const openRadar = (origin) => navigation.openPage(`/playlist?id=${radarId}&page=
     transform var(--duration-200) var(--ease-out);
 }
 
-.radar-card:hover,
 .radar-card:focus-visible {
   background: color-mix(in srgb, var(--n-text-color) 8%, transparent);
 
@@ -146,6 +145,21 @@ const openRadar = (origin) => navigation.openPage(`/playlist?id=${radarId}&page=
   .radar-card__arrow {
     color: var(--n-text-color);
     transform: translateX(2px);
+  }
+}
+
+@media (hover: hover) {
+  .radar-card:hover {
+    background: color-mix(in srgb, var(--n-text-color) 8%, transparent);
+
+    .radar-card__artwork img {
+      transform: scale(1.04);
+    }
+
+    .radar-card__arrow {
+      color: var(--n-text-color);
+      transform: translateX(2px);
+    }
   }
 }
 

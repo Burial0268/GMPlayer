@@ -8,13 +8,18 @@ overrides:
   '@swc/core': 1.15.46
   '@swc/wasm': 1.15.46
 
+patchedDependencies:
+  '@applemusic-like-lyrics/core@0.6.0':
+    hash: fb36e5a3d286e3a2941e8064d8756979f053b55b9c05352015648cbd14febe2f
+    path: patches/@applemusic-like-lyrics__core@0.6.0.patch
+
 importers:
 
   .:
     dependencies:
       '@applemusic-like-lyrics/core':
         specifier: ^0.6.0
-        version: 0.6.0(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))
+        version: 0.6.0(patch_hash=fb36e5a3d286e3a2941e8064d8756979f053b55b9c05352015648cbd14febe2f)(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))
       '@applemusic-like-lyrics/lyric':
         specifier: ^1.1.0
         version: 1.1.0
@@ -60,6 +65,9 @@ importers:
       '@player-helper/gmplayer-audio-backend':
         specifier: workspace:*
         version: link:src-tauri/crates/audio-backend/pkg
+      '@player-helper/lyric-segmenter':
+        specifier: workspace:*
+        version: link:src-tauri/crates/lyric-segmenter/pkg
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -251,6 +259,8 @@ importers:
   src-tauri/crates/audio-analysis/pkg: {}
 
   src-tauri/crates/audio-backend/pkg: {}
+
+  src-tauri/crates/lyric-segmenter/pkg: {}
 
 packages:
 
@@ -4730,7 +4740,7 @@ snapshots:
       jsonpointer: 5.0.1
       leven: 3.1.0
 
-  '@applemusic-like-lyrics/core@0.6.0(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))':
+  '@applemusic-like-lyrics/core@0.6.0(patch_hash=fb36e5a3d286e3a2941e8064d8756979f053b55b9c05352015648cbd14febe2f)(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))':
     dependencies:
       '@pixi/app': 7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))
       '@pixi/core': 7.4.3
@@ -4768,7 +4778,7 @@ snapshots:
 
   '@applemusic-like-lyrics/vue@0.6.0(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))(vue@3.5.44(typescript@5.9.3))':
     dependencies:
-      '@applemusic-like-lyrics/core': 0.6.0(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))
+      '@applemusic-like-lyrics/core': 0.6.0(patch_hash=fb36e5a3d286e3a2941e8064d8756979f053b55b9c05352015648cbd14febe2f)(@pixi/app@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3))(@pixi/filter-blur@7.4.3(@pixi/core@7.4.3))(@pixi/filter-bulge-pinch@5.1.1(@pixi/core@7.4.3))(@pixi/filter-color-matrix@7.4.3(@pixi/core@7.4.3))(@pixi/sprite@7.4.3(@pixi/core@7.4.3)(@pixi/display@7.4.3(@pixi/core@7.4.3)))(@types/node@20.19.43)(vite@8.3.5(@types/node@20.19.43)(esbuild@0.27.7)(jiti@2.6.1)(sass@1.106.1)(terser@5.51.2)(yaml@2.9.0))
       vue: 3.5.44(typescript@5.9.3)
     transitivePeerDependencies:
       - '@edge-runtime/vm'

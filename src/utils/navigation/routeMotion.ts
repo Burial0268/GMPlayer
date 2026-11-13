@@ -40,6 +40,8 @@ export interface InterruptedSurface {
   titles?: { geometry: TitleGeometry; opacity: number }[];
   scale: SurfaceScale;
   decorations?: InterruptedDecoration[];
+  /** Released from an edge swipe: always a plain slide, never the card projection. */
+  gesture?: boolean;
 }
 
 const paintedCrop = (element: HTMLElement): SurfaceRect => {
@@ -152,6 +154,7 @@ export function animateRouteLayers(options: {
   const source = back ? live?.geometry : sourceSnapshot(transition.source);
   const shared =
     source &&
+    !previous?.gesture &&
     transition.source?.kind !== "control" &&
     (transition.direction === "push" || transition.direction === "pop");
   const prepareSurface = () => {

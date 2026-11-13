@@ -128,6 +128,7 @@ pub fn run() {
             // Sync query commands
             commands::audio_get_state,
             commands::audio_get_session,
+            commands::audio_list_output_devices,
             // Session-based event polling (backward compat)
             commands::audio_set_session,
             commands::audio_poll_events,

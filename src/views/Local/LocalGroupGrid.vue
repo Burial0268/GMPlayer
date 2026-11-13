@@ -143,8 +143,10 @@ const open = (group: LocalGroup, origin: Event) => {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    &:hover .cover {
-      transform: scale(1.02);
+    @media (hover: hover) {
+      &:hover .cover {
+        transform: scale(1.02);
+      }
     }
     &:active .cover {
       transform: scale(0.98);

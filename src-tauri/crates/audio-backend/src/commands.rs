@@ -257,6 +257,18 @@ pub async fn audio_get_session(
     Ok(state.player().await?.session())
 }
 
+/// Output devices the user can pick, for the player's output menu. Selection itself is the
+/// `SetAudioOutput` message; an empty name there means the system default.
+#[tauri::command]
+pub async fn audio_list_output_devices() -> Result<Vec<String>, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    crate::output::spawn_device_task(move || {
+        let _ = tx.send(crate::output::output_device_names());
+    });
+    rx.await
+        .map_err(|_| "audio device thread dropped the request".to_string())?
+}
+
 /// Register the frontend event `Channel` (Rust → frontend event stream:
 /// FFT / status / position). The frontend creates a `Channel`, wires its
 /// `onmessage`, and passes it here; the player forwards every

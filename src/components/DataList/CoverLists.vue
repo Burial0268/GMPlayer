@@ -544,25 +544,27 @@ onMounted(() => {
           }
         }
       }
-      &:hover {
-        transform: translateY(-2px);
-        box-shadow: var(--shadow-3);
-        .coverImg {
-          filter: brightness(0.72);
-          :deep(img) {
-            transform: scale(1.08);
+      @media (hover: hover) {
+        &:hover {
+          transform: translateY(-2px);
+          box-shadow: var(--shadow-3);
+          .coverImg {
+            filter: brightness(0.72);
+            :deep(img) {
+              transform: scale(1.08);
+            }
           }
-        }
-        .play {
-          transform: scale(1);
-          opacity: 1;
-        }
-        .description {
-          opacity: 0;
-          transform: translateY(4px);
-        }
-        .shadow {
-          opacity: 1;
+          .play {
+            transform: scale(1);
+            opacity: 1;
+          }
+          .description {
+            opacity: 0;
+            transform: translateY(4px);
+          }
+          .shadow {
+            opacity: 1;
+          }
         }
       }
       &:active {
@@ -582,9 +584,11 @@ onMounted(() => {
         -webkit-line-clamp: 2;
         transition: color var(--duration-150) var(--ease-out);
         cursor: pointer;
-        &:hover {
-          opacity: 1;
-          color: var(--main-color);
+        @media (hover: hover) {
+          &:hover {
+            opacity: 1;
+            color: var(--main-color);
+          }
         }
       }
       .by {
@@ -592,9 +596,11 @@ onMounted(() => {
         opacity: 0.6;
         transition: color var(--duration-150) var(--ease-out);
         cursor: pointer;
-        &:hover {
-          opacity: 1;
-          color: var(--main-color);
+        @media (hover: hover) {
+          &:hover {
+            opacity: 1;
+            color: var(--main-color);
+          }
         }
       }
       .artists {

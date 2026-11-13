@@ -53,7 +53,8 @@ router.beforeEach(async (to, from): Promise<RouteLocationRaw | void> => {
 
       $message.error(localStorage.getItem("cookie") ? "登录过期，请重新登录" : "请登录账号后使用");
       user.userLogOut();
-      return "/login";
+      // Login sends the user on to where they were going (`LoginView` reads it).
+      return { path: "/login", query: { redirect: to.fullPath } };
     } catch (err) {
       $message.error("请求发生错误");
       console.error("请求发生错误", err);

@@ -1,171 +1,77 @@
 <template>
   <aside
+    ref="panelRef"
     :class="['desktop-queue-panel', { show }]"
     :aria-hidden="!show"
     :inert="!show"
     data-navigation-layer="queue-player"
   >
-    <div class="queue-header">
-      <div class="queue-title">
-        <n-icon size="24" :component="QueueMusicRound" />
-        <div class="queue-title-text">
-          <span class="title">{{ $t("general.name.playlists") }}</span>
-          <span class="count" v-if="music.getPlaylists.length">
-            {{ $t("general.name.songSize", { size: music.getPlaylists.length }) }}
-          </span>
-        </div>
-      </div>
-      <button
+    <div class="queue-surface" aria-hidden="true"></div>
+    <div class="queue-content">
+      <PlayerQueueList
         v-if="music.getPlaylists.length"
-        class="queue-clear"
-        type="button"
-        @click="music.clearPlaylists()"
-      >
-        {{ $t("player.queue.clear") }}
-      </button>
+        ref="queueListRef"
+        class="queue-list"
+        row-prefix="desktop-queue"
+      />
+      <div class="queue-empty" v-else>
+        {{ $t("other.playlistEmpty") }}
+      </div>
     </div>
-
-    <n-virtual-list
-      v-if="music.getPlaylists.length"
-      ref="queueListRef"
-      class="queue-list"
-      :items="queueRows"
-      :item-size="52"
-      :item-resizable="true"
-      key-field="key"
-      :show-scrollbar="false"
-    >
-      <template #default="{ item: row }">
-        <div
-          :id="`desktop-queue-${row.index}`"
-          :class="[
-            'queue-song',
-            {
-              'is-current': row.index === music.persistData.playSongIndex,
-              'row-odd': row.index % 2 === 0,
-              'row-even': row.index % 2 === 1,
-              'row-first': row.index === 0,
-              'row-last': row.index === music.getPlaylists.length - 1,
-            },
-          ]"
-          role="button"
-          tabindex="0"
-          @click="changeQueueIndex(row.index)"
-          @keydown.enter.prevent="changeQueueIndex(row.index)"
-        >
-          <div class="queue-index s-num">
-            <span v-if="row.index !== music.persistData.playSongIndex">{{
-              String(row.index + 1).padStart(2, "0")
-            }}</span>
-            <div v-else class="playing-bars">
-              <span class="line"></span>
-              <span class="line"></span>
-              <span class="line"></span>
-            </div>
-          </div>
-          <img class="queue-cover" :src="getQueueCover(row.item)" alt="cover" />
-          <div class="queue-info">
-            <div class="queue-name text-hidden">{{ row.item.name }}</div>
-            <div class="queue-artists text-hidden">{{ formatArtists(row.item.artist) }}</div>
-          </div>
-          <div class="queue-duration s-num" v-if="row.item.time">{{ row.item.time }}</div>
-          <button class="queue-remove" type="button" @click.stop="music.removeSong(row.index)">
-            <n-icon size="17" :component="DeleteRound" />
-          </button>
-        </div>
-      </template>
-    </n-virtual-list>
-    <div class="queue-empty" v-else>
-      {{ $t("other.playlistEmpty") }}
-    </div>
-
-    <!-- 底部整宽定位按钮：网格第三行，常驻面板底边。 -->
-    <button
-      v-if="music.getPlaylists.length"
-      class="queue-locate"
-      type="button"
-      @click="scrollCurrentQueueSong"
-    >
-      <n-icon size="18" :component="MyLocationRound" />
-      <span>{{ $t("player.queue.locate") }}</span>
-    </button>
   </aside>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { NVirtualList } from "naive-ui";
-import { DeleteRound, QueueMusicRound, MyLocationRound } from "@vicons/material";
+import { nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { musicStore } from "@/store";
-import { coverUrl } from "@/utils/coverUrl";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
-import { locateVirtualRow, type LocateHandle, type VirtualListInst } from "@/utils/locateRow";
-
-type Artist = { name: string };
-type QueueSong = {
-  id: number;
-  name: string;
-  artist?: Artist[];
-  album?: { picUrl?: string };
-  time?: string;
-};
+import { useLayerNavigation } from "@/utils/navigation";
+import PlayerQueueList from "./PlayerQueueList.vue";
 
 const props = defineProps<{
   show: boolean;
 }>();
 
 const music = musicStore();
-const queueListRef = ref<VirtualListInst | null>(null);
+const queueListRef = ref<InstanceType<typeof PlayerQueueList> | null>(null);
 const scrollTimer = ref<number | null>(null);
-let locateHandle: LocateHandle | null = null;
-const queueRows = computed(() =>
-  music.getPlaylists.map((item: QueueSong, index: number) => ({
-    item,
-    index,
-    key: `${item.id}-${index}`,
-  })),
-);
-
-const formatArtists = (artists: Artist[] = []) =>
-  artists
-    .filter(Boolean)
-    .map((item) => item.name)
-    .join(" / ");
-
-const getQueueCover = (item: QueueSong) => coverUrl(item.album?.picUrl, 96);
-
-const scrollCurrentQueueSong = () => {
-  const index = music.persistData.playSongIndex;
-  if (index < 0 || index >= music.getPlaylists.length) return;
-  locateHandle?.cancel();
-  locateHandle = locateVirtualRow(queueListRef.value, index, {
-    rowSelector: `#desktop-queue-${index}`,
-    align: "start",
-    instant: prefersReducedMotion(),
-  });
-};
-
-const changeQueueIndex = (index: number) => {
-  music.selectPlaySongByIndex(index);
-};
+const scrollCurrentQueueSong = (smooth = false) => queueListRef.value?.scrollToCurrent(smooth);
 
 watch(
   () => [props.show, music.persistData.playSongIndex] as const,
   ([show], [wasShown]) => {
     if (scrollTimer.value) window.clearTimeout(scrollTimer.value);
-    if (!show) {
-      locateHandle?.cancel();
-      return;
-    }
+    if (!show) return;
     // 刚打开就对准：面板一直挂着，滑入过程中看到的已经是当前行。打开期间切歌则稍后跟过去。
-    if (!wasShown) nextTick(scrollCurrentQueueSong);
-    else scrollTimer.value = window.setTimeout(scrollCurrentQueueSong, 360);
+    if (!wasShown) nextTick(() => scrollCurrentQueueSong());
+    else scrollTimer.value = window.setTimeout(() => scrollCurrentQueueSong(true), 360);
   },
+);
+
+// A press anywhere outside closes the panel, as a popover does; the press still lands on what it
+// was aimed at. Not the toggle (it would close here, then reopen on its click), nor what Naive
+// teleports out of the player (the output menu, dialogs, toasts), nor the window controls.
+const navigation = useLayerNavigation();
+const panelRef = ref<HTMLElement | null>(null);
+const KEEP_OPEN =
+  ".desktop-toggle-controls, .v-binder-follower-container, .n-modal-container, .n-drawer-container, .n-message-container, .titlebar-area--floating";
+const closeOnOutsidePress = (event: PointerEvent) => {
+  const target = event.target;
+  if (event.button !== 0 || !(target instanceof Element)) return;
+  if (panelRef.value?.contains(target) || target.closest(KEEP_OPEN)) return;
+  navigation.closeQueue();
+};
+watch(
+  () => props.show,
+  (show) => {
+    if (show) window.addEventListener("pointerdown", closeOnOutsidePress, true);
+    else window.removeEventListener("pointerdown", closeOnOutsidePress, true);
+  },
+  { immediate: true },
 );
 
 onBeforeUnmount(() => {
   if (scrollTimer.value) window.clearTimeout(scrollTimer.value);
-  locateHandle?.cancel();
+  window.removeEventListener("pointerdown", closeOnOutsidePress, true);
 });
 </script>
 
@@ -176,94 +82,82 @@ onBeforeUnmount(() => {
   right: clamp(24px, 4vw, 64px);
   bottom: clamp(88px, 12vh, 118px);
   width: clamp(340px, 28vw, 430px);
-  z-index: 6;
   box-sizing: border-box;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  padding: 18px 14px 14px;
+  pointer-events: none;
+
+  // 面板自己不挂 opacity / transform / filter / z-index：那是 stacking context，
+  // 里面的 plus-lighter 在滑入期间混不出去，落定才突然加亮。毛玻璃和文字拆成同级，
+  // 各自套同一套显隐；文字自己带混合，自己动不隔断。
+  &.show {
+    pointer-events: auto;
+
+    .queue-surface {
+      opacity: 1;
+      transform: none;
+    }
+
+    .queue-content {
+      --queue-fade: 1;
+      inset: 0;
+    }
+  }
+}
+
+// The text must not sit under an opacity or a transform, even mid-animation: either isolates it,
+// and its plus-lighter would blend with the panel's transparent box until the panel settled. So
+// the content slides by `inset` and fades through `--queue-fade`, which only the blending boxes
+// read (PlayerQueueList). The surface holds no blend and animates as usual.
+@property --queue-fade {
+  syntax: "<number>";
+  inherits: true;
+  initial-value: 1;
+}
+
+.queue-surface,
+.queue-content {
+  position: absolute;
   border-radius: var(--radius-md);
-  color: var(--main-cover-color);
+}
+
+.queue-surface {
+  inset: 0;
+  opacity: 0;
+  transform: translate3d(28px, 0, 0);
+  transition:
+    opacity 0.32s cubic-bezier(0.25, 1, 0.5, 1),
+    transform 0.46s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.queue-content {
+  --queue-fade: 0;
+  inset: 0 -28px 0 28px;
+  transition:
+    --queue-fade 0.32s cubic-bezier(0.25, 1, 0.5, 1),
+    inset 0.46s cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+// No z-index on either: a z-index makes the content a stacking context, and the rows' plus-lighter
+// would blend with its transparent box instead of the cover. DOM order already puts the panel over
+// the lyrics column (DesktopPlayerLayout `.right`) and the text over the surface.
+.queue-surface {
   background: rgba(20, 20, 20, 0.2);
   border: 1px solid rgba(255, 255, 255, 0.12);
   box-shadow: 0 24px 72px rgba(0, 0, 0, 0.26);
   -webkit-backdrop-filter: blur(36px) saturate(1.2);
   backdrop-filter: blur(36px) saturate(1.2);
-  opacity: 0;
   pointer-events: none;
-  transform: translate3d(28px, 0, 0) scale(0.985);
-  transform-origin: right center;
-  transition:
-    opacity 0.32s cubic-bezier(0.25, 1, 0.5, 1),
-    transform 0.46s cubic-bezier(0.25, 1, 0.5, 1);
-  will-change: opacity, transform;
-
-  &.show {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
 }
 
-.queue-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-width: 0;
-  padding: 0 4px 14px;
-}
-
-.queue-clear {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-sm);
-  color: inherit;
-  background: rgba(255, 255, 255, 0.06);
-  font: inherit;
-  font-size: 0.76rem;
-  cursor: pointer;
-  opacity: 0.72;
-  transition:
-    opacity 0.16s ease,
-    background-color 0.16s ease,
-    border-color 0.16s ease;
-
-  &:hover,
-  &:focus-visible {
-    opacity: 1;
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.2);
-  }
-}
-
-.queue-title {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-
-  > .n-icon {
-    flex-shrink: 0;
-    opacity: 0.9;
-  }
-}
-
-.queue-title-text {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-
-  .title {
-    font-size: 1.1rem;
-    font-weight: 720;
-    line-height: 1.2;
-  }
-
-  .count {
-    margin-top: 3px;
-    font-size: 0.78rem;
-    opacity: 0.62;
+.queue-content {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  padding: 18px 14px 14px;
+  box-sizing: border-box;
+  color: var(--main-cover-mix-color, rgb(239, 239, 239));
+  // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。
+  // The list blends its own boxes (PlayerQueueList).
+  .queue-empty {
+    mix-blend-mode: plus-lighter;
   }
 }
 
@@ -272,146 +166,7 @@ onBeforeUnmount(() => {
   overflow-x: clip;
   overscroll-behavior: contain;
   padding: 2px 2px 8px;
-  contain: layout paint style;
-
-  :deep(.v-vl) {
-    overflow-x: hidden !important;
-    scrollbar-width: none;
-  }
-
-  :deep(.v-vl::-webkit-scrollbar) {
-    width: 0;
-    height: 0;
-  }
-}
-
-// 与 QueuePanel / HistoryView 一致的斑马纹连续列表，仅将中性色换成
-// 封面自适应的 --main-cover-color（面板叠在专辑封面之上）
-.queue-song {
-  min-height: 52px;
-  display: grid;
-  grid-template-columns: 26px 38px minmax(0, 1fr) auto 28px;
-  align-items: center;
-  gap: 10px;
-  border-radius: 0;
-  padding: 6px 8px;
-  box-sizing: border-box;
-  cursor: pointer;
-  transition: background-color var(--duration-150) var(--ease-out);
-
-  &.row-first {
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
-  }
-
-  &.row-last {
-    border-radius: 0 0 var(--radius-md) var(--radius-md);
-  }
-
-  &.row-odd {
-    background: color-mix(in srgb, var(--main-cover-color) 5%, transparent);
-  }
-
-  &.row-even {
-    background: color-mix(in srgb, var(--main-cover-color) 9%, transparent);
-  }
-
-  &:hover {
-    background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
-
-    .queue-remove {
-      opacity: 0.82;
-    }
-  }
-
-  &.is-current {
-    background: color-mix(in srgb, var(--main-cover-color) 22%, transparent);
-  }
-}
-
-.queue-index {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.78rem;
-  opacity: 0.66;
-}
-
-.playing-bars {
-  height: 18px;
-  width: 18px;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 3px;
-
-  .line {
-    width: 3px;
-    min-height: 7px;
-    border-radius: 3px;
-    background: var(--main-cover-color);
-    animation: queue-line-move 0.9s ease-in-out infinite;
-
-    &:nth-child(2) {
-      animation-delay: 0.12s;
-    }
-
-    &:nth-child(3) {
-      animation-delay: 0.24s;
-    }
-  }
-}
-
-.queue-cover {
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-sm);
-  object-fit: cover;
-}
-
-.queue-info {
-  min-width: 0;
-
-  .queue-name {
-    font-weight: 650;
-    font-size: 0.85rem;
-    line-height: 1.25;
-  }
-
-  .queue-artists {
-    margin-top: 2px;
-    font-size: 0.75rem;
-    opacity: 0.62;
-  }
-}
-
-.queue-duration {
-  font-size: 0.76rem;
-  opacity: 0.54;
-}
-
-.queue-remove {
-  appearance: none;
-  border: none;
-  background: transparent;
-  color: var(--main-cover-color);
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-sm);
-  padding: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  cursor: pointer;
-  transition:
-    opacity var(--duration-200) var(--ease-out),
-    background-color var(--duration-200) var(--ease-out);
-
-  &:hover,
-  &:focus-visible {
-    opacity: 1;
-    background: color-mix(in srgb, var(--main-cover-color) 14%, transparent);
-  }
+  // No `contain: paint`: it isolates the list the same way.
 }
 
 .queue-empty {
@@ -420,54 +175,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   text-align: center;
-  opacity: 0.56;
-}
-
-// 底部整宽定位按钮（网格第三行）。面板叠在专辑封面上，配色随 --main-cover-color。
-.queue-locate {
-  margin-top: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 11px 16px;
-  border: 1px solid color-mix(in srgb, var(--main-cover-color) 20%, transparent);
-  border-radius: var(--radius-md);
-  color: var(--main-cover-color);
-  background: color-mix(in srgb, var(--main-cover-color) 12%, transparent);
-  font: inherit;
-  font-size: 0.85rem;
-  font-weight: 640;
-  cursor: pointer;
-  transition:
-    background-color 0.16s ease,
-    border-color 0.16s ease,
-    transform 0.16s ease;
-
-  .n-icon {
-    color: var(--main-cover-color);
-  }
-
-  &:hover,
-  &:focus-visible {
-    background: color-mix(in srgb, var(--main-cover-color) 20%, transparent);
-    border-color: color-mix(in srgb, var(--main-cover-color) 32%, transparent);
-  }
-
-  &:active {
-    transform: scale(0.985);
-  }
-}
-
-@keyframes queue-line-move {
-  0%,
-  100% {
-    height: 16px;
-  }
-
-  50% {
-    height: 8px;
-  }
+  opacity: calc(0.56 * var(--queue-fade, 1));
 }
 
 @media (max-width: 1180px) {

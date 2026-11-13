@@ -1,0 +1,30 @@
+diff --git a/dist/style.css b/dist/style.css
+index a3db199dd283f54219ced8c141d32b189ba54b41..e4616622d579c17ceb18637b4d99294593c6ae31 100644
+--- a/dist/style.css
++++ b/dist/style.css
+@@ -56,8 +56,10 @@
+   top: 0;
+   left: 0;
+ 
+-  &:not(.FmKaba_bottomLineWrapper):hover {
+-    background-color: var(--amll-lp-hover-bg-color, #fff1);
++  @media (hover: hover) {
++    &:not(.FmKaba_bottomLineWrapper):hover {
++      background-color: var(--amll-lp-hover-bg-color, #fff1);
++    }
+   }
+ 
+   &:not(.FmKaba_bottomLineWrapper):active {
+@@ -298,8 +300,10 @@
+     --lyric-line-padding-x: 20px;
+   }
+ 
+-  &:hover .FmKaba_lyricLine, &:hover .FmKaba_lyricLineWrapper {
+-    filter: unset !important;
++  @media (hover: hover) {
++    &:hover .FmKaba_lyricLine, &:hover .FmKaba_lyricLineWrapper {
++      filter: unset !important;
++    }
+   }
+ 
+   &:not(.FmKaba_playing) .FmKaba_bgWrapper {

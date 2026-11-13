@@ -34,13 +34,22 @@
           <h2>{{ $t("home.title.exclusive") }}</h2>
         </div>
         <nav class="feed-links" :aria-label="$t('home.title.exclusive')">
-          <button type="button" @click="router.push('/discover/playlists?page=1')">
+          <button
+            type="button"
+            @click="navigation.openPage('/discover/playlists?page=1', { origin: $event })"
+          >
             {{ $t("home.title.playlists") }}
           </button>
-          <button type="button" @click="router.push('/discover/artists?page=1')">
+          <button
+            type="button"
+            @click="navigation.openPage('/discover/artists?page=1', { origin: $event })"
+          >
             {{ $t("home.title.artists") }}
           </button>
-          <button type="button" @click="router.push('/new-album?page=1')">
+          <button
+            type="button"
+            @click="navigation.openPage('/new-album?page=1', { origin: $event })"
+          >
             {{ $t("home.title.newAlbum") }}
           </button>
         </nav>
@@ -152,7 +161,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onDeactivated, onMounted, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { useRouter } from "vue-router";
 import gsap from "gsap";
 import { PlayArrowRound } from "@vicons/material";
 import { getArtistList } from "@/api/artist";
@@ -183,7 +191,6 @@ const FALLBACK_COVER = "/images/pic/pic.jpg";
 
 const setting = settingStore();
 const music = musicStore();
-const router = useRouter();
 const navigation = useLayerNavigation();
 const homeRoot = ref<HTMLElement>();
 let introduction: gsap.Context | undefined;
@@ -527,10 +534,16 @@ onBeforeUnmount(() => {
       color var(--duration-200) var(--ease-out),
       background-color var(--duration-200) var(--ease-out);
 
-    &:hover,
     &:focus-visible {
       color: var(--n-text-color);
       background: color-mix(in srgb, var(--n-text-color) 11%, transparent);
+    }
+
+    @media (hover: hover) {
+      &:hover {
+        color: var(--n-text-color);
+        background: color-mix(in srgb, var(--n-text-color) 11%, transparent);
+      }
     }
   }
 }
@@ -704,9 +717,14 @@ onBeforeUnmount(() => {
       bottom: auto;
     }
 
-    &:hover .media-overlay h3,
     &:focus-visible .media-overlay h3 {
       color: #fff;
+    }
+
+    @media (hover: hover) {
+      &:hover .media-overlay h3 {
+        color: #fff;
+      }
     }
   }
 
@@ -721,7 +739,6 @@ onBeforeUnmount(() => {
     }
   }
 
-  &:hover,
   &:focus-visible {
     .open-cue {
       opacity: 1;
@@ -730,6 +747,19 @@ onBeforeUnmount(() => {
 
     .feed-copy h3 {
       color: var(--main-color);
+    }
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      .open-cue {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .feed-copy h3 {
+        color: var(--main-color);
+      }
     }
   }
 }
@@ -850,13 +880,23 @@ onBeforeUnmount(() => {
     border-radius: var(--radius-sm);
   }
 
-  &:hover,
   &:focus-visible {
     background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
 
     .hot-track__play,
     strong {
       color: var(--main-color);
+    }
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+
+      .hot-track__play,
+      strong {
+        color: var(--main-color);
+      }
     }
   }
 }

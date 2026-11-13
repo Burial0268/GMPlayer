@@ -133,8 +133,10 @@ const lyricClasses = computed(() => ({
     text-decoration: none;
     transition: background-color 0.25s;
 
-    &:hover {
-      background-color: var(--amll-lp-hover-bg-color, #fff1);
+    @media (hover: hover) {
+      &:hover {
+        background-color: var(--amll-lp-hover-bg-color, #fff1);
+      }
     }
 
     &:active {

@@ -45,13 +45,16 @@ import {
 import { nextTick } from "vue";
 import { settingStore } from "@/store";
 import { useDspSettings } from "@/composables/useDspSettings";
+import { useAudioOutputSetting } from "@/composables/useAudioOutputSetting";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { isMobileDevice, isTauri, windowManager } from "@/utils/tauri";
 import themeColorData from "./themeColor.json";
 import { createInterfaceTheme } from "./interfaceTheme";
+import { isTouchOnly } from "@/utils/touchOnly";
 
 const setting = settingStore();
 useDspSettings();
+useAudioOutputSetting();
 
 const { isMobile } = useResponsiveLayout();
 const contrastQuery = window.matchMedia("(prefers-contrast: more)");
@@ -62,6 +65,7 @@ const interfaceTheme = computed(() =>
   createInterfaceTheme(accentColors.value, {
     dark: setting.getSiteTheme === "dark",
     mobile: isMobile.value,
+    touch: isTouchOnly(),
     increasedContrast: increasedContrast.value,
   }),
 );

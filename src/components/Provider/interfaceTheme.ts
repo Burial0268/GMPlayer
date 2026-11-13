@@ -88,9 +88,9 @@ const toneForHue = (hue: number, anchors: number[][]) => {
 
 export function createInterfaceTheme(
   source: AccentColors,
-  options: { dark: boolean; mobile: boolean; increasedContrast: boolean },
+  options: { dark: boolean; mobile: boolean; touch: boolean; increasedContrast: boolean },
 ) {
-  const { dark, mobile, increasedContrast } = options;
+  const { dark, mobile, touch, increasedContrast } = options;
   const surface = dark ? "#18181c" : "#ffffff";
   const primaryText = dark ? "#f5f5f7" : "#1d1d1f";
   const secondaryText = increasedContrast ? primaryText : dark ? "#c7c7cc" : "#57575f";
@@ -175,6 +175,9 @@ export function createInterfaceTheme(
       cardColor: surface,
       modalColor: elevated,
       popoverColor: elevated,
+      // Naive shows its bar on mouseenter and hides it on mouseleave. A tap emulates the
+      // enter and never the leave, so on touch the bar stuck on screen after every touch.
+      ...(touch ? { scrollbarColor: "transparent", scrollbarColorHover: "transparent" } : {}),
     },
     Button: {
       fontWeight: "500",
