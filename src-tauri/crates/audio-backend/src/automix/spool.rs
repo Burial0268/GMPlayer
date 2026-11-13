@@ -23,7 +23,6 @@ impl<'a> PcmSpool<'a> {
     ) -> Result<Self, String> {
         let rate = decoder.sample_rate().get();
         let channels = decoder.channels().get() as usize;
-        let duration = decoder.total_duration().map(|d| d.as_secs_f32());
         let file = crate::source::temporary_file(MEMORY_LIMIT).map_err(scratch_error)?;
         let mut spool = Self {
             file,
@@ -54,9 +53,9 @@ impl<'a> PcmSpool<'a> {
         if spool.samples == 0 {
             return Err("decode audio: no samples".into());
         }
-        spool.duration = duration
-            .filter(|d| *d > 0.0)
-            .unwrap_or(spool.samples as f32 / rate as f32);
+        // What was decoded, not what the container claimed: a headerless
+        // stream's estimate schedules the handoff against the wrong ending.
+        spool.duration = spool.samples as f32 / rate as f32;
         Ok(spool)
     }
 

@@ -157,6 +157,12 @@ impl Progress {
         s.done || s.error.is_some() || self.is_cancelled()
     }
 
+    /// The whole declared file has landed, as opposed to merely no longer growing.
+    pub(crate) fn is_complete(&self) -> bool {
+        let s = self.lock();
+        s.done && s.covered.len() == 1 && s.covered[0] == (0, self.total)
+    }
+
     /// Block until a writer makes progress or `timeout` passes.
     pub(crate) fn wait_for_change(&self, timeout: Duration) {
         let s = self.lock();
@@ -387,6 +393,11 @@ pub(crate) fn lookup(path: &Path) -> Option<Arc<Progress>> {
 /// guard's lifetime, not the writer's, for exactly that reason.
 pub fn expected_len(path: &Path) -> Option<u64> {
     lookup(path).map(|p| p.total())
+}
+
+/// Whether a registered download has landed in full. `None`: not one of ours.
+pub fn is_complete(path: &Path) -> Option<bool> {
+    lookup(path).map(|p| p.is_complete())
 }
 
 // ── Reader ───────────────────────────────────────────────────────

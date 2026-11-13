@@ -155,7 +155,14 @@ fn prepare_track_blocking(
     if cancel.is_cancelled() {
         return Err(SUPERSEDED.into());
     }
-    let plan = current_duration.map(|duration| {
+    // The decoded length outranks the container's claim: metadata probed from
+    // a stream can be short or absent, and a short one starts the mix early.
+    let planning_duration = current_analysis
+        .as_ref()
+        .map(|analysis| analysis.duration as f64)
+        .filter(|duration| duration.is_finite() && *duration > 0.0)
+        .or(current_duration);
+    let plan = planning_duration.map(|duration| {
         build_analysis_backed_plan(
             &config,
             duration,

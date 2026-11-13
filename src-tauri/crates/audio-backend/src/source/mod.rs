@@ -25,7 +25,7 @@ use crate::error::{AudioError, AudioResult};
 mod download;
 pub(crate) mod growing;
 pub use download::download_to_temp_path;
-pub use growing::{expected_len, TempGuard};
+pub use growing::{expected_len, is_complete, TempGuard};
 
 // ── Locator ──────────────────────────────────────────────────────
 

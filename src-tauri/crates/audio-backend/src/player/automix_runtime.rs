@@ -10,11 +10,16 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::decoder::{self, PlaybackSink};
-use crate::types::{AudioThreadEvent, AutoMixNativeState, SongData, TrackIdentity};
+use crate::types::{
+    AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, AutoMixNativeState, SongData,
+    TrackIdentity,
+};
 
 use super::automix;
 use super::mixer::{CrossfadeParams, DeckId};
 use super::{AudioPlayer, PlaybackIntent};
+
+const AUTOMIX_MIN_INCOMING_BUFFER_SECS: f64 = 0.25;
 
 pub(super) struct NativeMix {
     generation: u64,
@@ -104,6 +109,39 @@ impl AudioPlayer {
                 "AutoMix prepared without crossfade_start; frontend force-start fallback is required"
             );
         }
+    }
+
+    /// An immediate start fades straight into whatever the incoming deck holds,
+    /// so a preloaded decoder that has not produced audio yet is asked again
+    /// shortly. The scheduled path needs no such guard: the mixer checks the
+    /// deck at the cue. Ends with the generation, which a track change bumps.
+    pub(super) fn schedule_native_automix_ready_retry(&self, generation: u64) {
+        let tx = self.self_msg_tx.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = tx.send(AudioThreadEventMessage::new(
+                String::new(),
+                Some(AudioThreadMessage::AutomixForceStart {
+                    generation: Some(generation),
+                }),
+            ));
+        });
+    }
+
+    pub(super) fn native_automix_incoming_ready(&self) -> bool {
+        // Not preloaded: the start itself opens the decoder.
+        if self.secondary_decoder_handle.is_none() {
+            return true;
+        }
+        let incoming_writer = match self.inactive_deck() {
+            DeckId::Primary => self.deck_mixer.primary_writer(),
+            DeckId::Secondary => self.deck_mixer.secondary_writer(),
+        };
+        let config = self.output.config();
+        let minimum = (config.sample_rate as f64
+            * config.channels as f64
+            * AUTOMIX_MIN_INCOMING_BUFFER_SECS) as usize;
+        incoming_writer.deck_queued_samples() >= minimum
     }
 
     fn inactive_deck(&self) -> DeckId {

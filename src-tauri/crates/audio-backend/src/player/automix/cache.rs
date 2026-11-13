@@ -94,6 +94,13 @@ pub(super) fn analyze_cached(
         }
     }
 
+    // A second reader on a download still landing waits on the network for the
+    // rest of the file and competes with the playback decoder for it. Plan by
+    // time until the source is whole; a later prepare fills the cache.
+    if crate::source::is_complete(path) == Some(false) {
+        return None;
+    }
+
     let analysis = analyze_optional(label, path, analyze_bpm, cancel)?;
 
     if let Ok(mut cache) = analysis_cache().lock() {

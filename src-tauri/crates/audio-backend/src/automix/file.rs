@@ -211,10 +211,8 @@ fn collect_mono_until<D: Source<Item = f32>>(
         return Err("decode audio: no samples".into());
     }
 
-    let decoded_duration = mono.len() as f32 / sample_rate as f32;
-    let duration = duration_hint
-        .filter(|duration| *duration > 0.0)
-        .unwrap_or(decoded_duration);
+    // Same rule as the spooled path: the decoded length, not the hint.
+    let duration = mono.len() as f32 / sample_rate as f32;
 
     Ok((mono, sample_rate, duration))
 }
