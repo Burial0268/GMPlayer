@@ -219,13 +219,6 @@ pub struct AudioInfo {
     pub metadata_tags: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpectrumConfig {
-    pub fft_size: usize,
-    pub smoothing: f32,
-    pub max_freq: Option<f32>,
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // AMLL-style message/event system — IPC contract with frontend
 // ═══════════════════════════════════════════════════════════════════

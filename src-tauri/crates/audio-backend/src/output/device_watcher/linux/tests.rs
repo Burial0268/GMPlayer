@@ -2,7 +2,7 @@ use std::io::Write;
 use std::sync::mpsc;
 
 use super::*;
-use protocol::{AuthReply, SetClientNameReply, SubscriptionEvent, SubscriptionEventType};
+use protocol::{AuthReply, SetClientNameReply, SubscriptionEvent};
 
 fn handshake(server: &mut BufReader<UnixStream>) {
     let version = protocol::MAX_VERSION;
@@ -60,7 +60,12 @@ fn subscription_handles_framed_events_and_ignores_unrelated_facilities() {
             u32::MAX,
             &Command::SubscribeEvent(SubscriptionEvent {
                 event_facility: facility,
-                event_type: SubscriptionEventType::Changed,
+                // A sink `Changed` is volume or run state; only arrival counts.
+                event_type: if facility == SubscriptionEventFacility::Sink {
+                    SubscriptionEventType::New
+                } else {
+                    SubscriptionEventType::Changed
+                },
                 index: Some(7),
             }),
             protocol::MAX_VERSION,
@@ -78,9 +83,20 @@ fn subscription_handles_framed_events_and_ignores_unrelated_facilities() {
     assert_eq!(pending.take().0, DEFAULT_CHANGED | DEVICES_CHANGED);
     assert_eq!(pending.take().0, 0);
 
-    record_event(&pending, SubscriptionEventFacility::Source);
-    record_event(&pending, SubscriptionEventFacility::SinkInput);
+    for facility in [
+        SubscriptionEventFacility::Source,
+        SubscriptionEventFacility::SinkInput,
+        SubscriptionEventFacility::Sink,
+    ] {
+        record_event(&pending, facility, SubscriptionEventType::Changed);
+    }
     assert_eq!(pending.take().0, 0);
+    record_event(
+        &pending,
+        SubscriptionEventFacility::Sink,
+        SubscriptionEventType::Removed,
+    );
+    assert_eq!(pending.take().0, DEVICES_CHANGED);
 }
 
 #[test]

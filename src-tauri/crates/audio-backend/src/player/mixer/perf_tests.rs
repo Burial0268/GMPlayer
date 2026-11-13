@@ -33,7 +33,7 @@ fn mix_segment_reference(
             } else {
                 secondary.next_sample(&mut consumed.1)
             };
-            block.push((p.unwrap_or(0.0) * gains.0 + s.unwrap_or(0.0) * gains.1).clamp(-1.0, 1.0));
+            block.push(p.unwrap_or(0.0) * gains.0 + s.unwrap_or(0.0) * gains.1);
         }
     }
     consumed

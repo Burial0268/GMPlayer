@@ -31,8 +31,6 @@ mod player;
 mod rt_priority;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod source;
-#[cfg(not(target_arch = "wasm32"))]
-mod spectrum;
 mod types;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
@@ -69,7 +67,7 @@ pub use player::session_controls::{
 pub use types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
     DisplayAudioInfo, NativePlaybackMode, NativeSessionSnapshot, NowPlayingInfo, PlaybackState,
-    SessionControls, SessionControlsPatch, SongData, SpectrumConfig, TrackIdentity,
+    SessionControls, SessionControlsPatch, SongData, TrackIdentity,
 };
 #[cfg(target_arch = "wasm32")]
 pub use wasm::WasmAudioBackend;

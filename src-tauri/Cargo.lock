@@ -2424,7 +2424,6 @@ dependencies = [
  "pulseaudio",
  "rodio",
  "rtrb",
- "rustfft",
  "serde",
  "serde_json",
  "signalsmith-stretch",

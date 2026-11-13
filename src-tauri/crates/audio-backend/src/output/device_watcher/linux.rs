@@ -9,7 +9,9 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use pulseaudio::protocol::{self, Command, SubscriptionEventFacility, SubscriptionMask};
+use pulseaudio::protocol::{
+    self, Command, SubscriptionEventFacility, SubscriptionEventType, SubscriptionMask,
+};
 use tracing::{info, warn};
 
 use super::{PendingChanges, PlatformBackend, DEFAULT_CHANGED, DEVICES_CHANGED};
@@ -155,15 +157,23 @@ fn subscribe(socket: UnixStream, pending: &PendingChanges, ready: impl FnOnce())
     loop {
         let (_, command) = protocol::read_command_message(&mut socket, version)?;
         if let Command::SubscribeEvent(event) = command {
-            record_event(pending, event.event_facility);
+            record_event(pending, event.event_facility, event.event_type);
         }
     }
 }
 
-fn record_event(pending: &PendingChanges, facility: SubscriptionEventFacility) {
-    match facility {
-        SubscriptionEventFacility::Server => pending.record(DEFAULT_CHANGED),
-        SubscriptionEventFacility::Sink => pending.record(DEVICES_CHANGED),
+fn record_event(
+    pending: &PendingChanges,
+    facility: SubscriptionEventFacility,
+    event_type: SubscriptionEventType,
+) {
+    match (facility, event_type) {
+        (SubscriptionEventFacility::Server, _) => pending.record(DEFAULT_CHANGED),
+        // A sink also reports `Changed` for volume, mute and run state, the last
+        // one each time our own stream starts or pauses. None of them moves a
+        // device, and each would cost a probe.
+        (SubscriptionEventFacility::Sink, SubscriptionEventType::Changed) => {}
+        (SubscriptionEventFacility::Sink, _) => pending.record(DEVICES_CHANGED),
         _ => {}
     }
 }

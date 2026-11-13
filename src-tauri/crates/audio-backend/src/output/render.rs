@@ -94,16 +94,16 @@ pub(super) fn fill_output<T>(
 {
     sync_output_barrier(state, generation, flush_epoch);
 
+    let channels = state.output_channels;
     if paused.load(Ordering::Acquire) {
-        data.fill(T::from_sample(0.0));
-        state.last_values.fill(0.0);
-        state.underrun_fade_frames_remaining = 0;
+        // Decay from the last frame rather than cutting to zero: a pause from
+        // the OS media session and a rebuffer both land here mid-waveform.
+        fill_underrun_tail(data, state, channels);
         state.flush_fade_frames_remaining = 0;
         return;
     }
 
     let volume = f32::from_bits(volume_bits.load(Ordering::Acquire));
-    let channels = state.output_channels;
     let total = data.len();
     let mut pos = fill_flush_fade(data, state, channels);
     let mut queued_written = 0usize;
@@ -610,6 +610,54 @@ mod tests {
             );
             previous = current;
         }
+    }
+
+    #[test]
+    fn pausing_fades_from_the_last_frame_then_stays_silent() {
+        let (mut data_tx, _recycle_rx, _alive, mut state) = test_state(4, 8, 0, 0, 2, 8);
+        let paused = AtomicBool::new(false);
+        let volume_bits = AtomicU32::new(1.0f32.to_bits());
+        let generation = AtomicU64::new(0);
+        let flush_epoch = AtomicU64::new(0);
+        let queued_samples = AtomicUsize::new(8);
+        let rendered_samples = AtomicU64::new(0);
+        for _ in 0..2 {
+            assert!(data_tx
+                .push(OutputBlock {
+                    samples: vec![0.8, -0.8, 0.8, -0.8],
+                    generation: 0,
+                    flush_epoch: 0,
+                    anchor: None,
+                })
+                .is_ok());
+        }
+        let render = |data: &mut [f32], state: &mut CallbackState| {
+            fill_output(
+                data,
+                state,
+                &paused,
+                &volume_bits,
+                &generation,
+                &flush_epoch,
+                &queued_samples,
+                &rendered_samples,
+            )
+        };
+        let mut data = vec![0.0f32; 4];
+        render(&mut data, &mut state);
+        paused.store(true, Ordering::Release);
+
+        let mut tail = vec![0.0f32; (UNDERRUN_FADE_FRAMES + 4) * 2];
+        render(&mut tail, &mut state);
+
+        assert_eq!(&tail[..2], &[0.8, -0.8]);
+        assert!(tail[2].abs() < 0.8 && tail[2] > 0.0);
+        assert_eq!(&tail[UNDERRUN_FADE_FRAMES * 2..], &[0.0; 8]);
+        // Queued audio is held, not consumed, while paused.
+        assert_eq!(rendered_samples.load(Ordering::Acquire), 4);
+        let mut silent = vec![1.0f32; 4];
+        render(&mut silent, &mut state);
+        assert_eq!(silent, [0.0; 4]);
     }
 
     #[test]

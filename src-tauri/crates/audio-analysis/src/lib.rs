@@ -81,6 +81,8 @@ pub struct FftProcessor {
 
     fft: Arc<dyn rustfft::Fft<f32>>,
     fft_input: [Complex<f32>; FFT_SIZE],
+    /// `Fft::process` allocates this on every call otherwise.
+    fft_scratch: Vec<Complex<f32>>,
     hamming_window: [f32; FFT_SIZE],
     magnitudes: [f32; FFT_BIN_COUNT],
     sample_map: Vec<SamplePoint>,
@@ -120,12 +122,14 @@ impl FftProcessor {
         let out = config.output_size.max(1);
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
+        let fft_scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
         Self {
             config,
             sliding_window: [0.0; FFT_SIZE],
             available_samples: 0,
             sample_rate: 44100,
             fft,
+            fft_scratch,
             fft_input: [Complex { re: 0.0, im: 0.0 }; FFT_SIZE],
             hamming_window: build_hamming_window(),
             magnitudes: [0.0; FFT_BIN_COUNT],
@@ -247,7 +251,8 @@ impl FftProcessor {
             self.fft_input[i].im = 0.0;
         }
 
-        self.fft.process(&mut self.fft_input);
+        self.fft
+            .process_with_scratch(&mut self.fft_input, &mut self.fft_scratch);
 
         let scale = MAGNITUDE_GAIN / (FFT_SIZE as f32).sqrt();
         for i in 0..FFT_BIN_COUNT {

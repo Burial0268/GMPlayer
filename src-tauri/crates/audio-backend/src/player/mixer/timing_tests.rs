@@ -189,6 +189,8 @@ fn pausing_before_a_queued_cue_freezes_start_and_handoff_until_resume() {
         let queued = output.writer.queued_samples();
         assert_eq!(before.anchor.phase, 0);
         output.writer.set_paused(true);
+        // The callback decays from the last frame over its anti-click window.
+        output.render(64 * channels);
         // Device callbacks continue for a minute while playback is paused.
         for _ in 0..60 {
             assert!(output.render(48_000 * channels).iter().all(|s| *s == 0.0));

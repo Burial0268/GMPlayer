@@ -268,6 +268,11 @@ impl PlaybackSink for DeckWriter {
 }
 
 impl DeckWriter {
+    /// This deck's own queue, excluding what the shared output already holds.
+    pub(super) fn deck_queued_samples(&self) -> usize {
+        self.queued_samples.load(Ordering::Acquire)
+    }
+
     fn flush_deck_for_seek(&self) {
         let generation = self.generation.load(Ordering::Acquire);
         let flush_epoch = self.flush_epoch.fetch_add(1, Ordering::AcqRel) + 1;
@@ -685,7 +690,9 @@ impl DeckRuntime {
     }
 
     /// Bulk-fill up to `samples` samples from this deck into `dst`, applying
-    /// `gain` and clamping over contiguous runs (which autovectorizes). Pulls
+    /// `gain` over contiguous runs (which autovectorizes). No clamp here: the
+    /// DSP chain runs after the mix, and a limiter fed pre-clipped audio has
+    /// nothing left to limit. The device callback owns the one final clamp. Pulls
     /// fresh blocks from the queue as needed and stops early on underrun.
     /// Returns the number of samples written and adds it to `consumed`; the
     /// queued-sample counter is committed once per block by the caller.
@@ -709,9 +716,9 @@ impl DeckRuntime {
             // which keeps this run vectorizable (a push loop re-checks capacity
             // every sample).
             if gain == 1.0 {
-                dst.extend(src.iter().map(|&s| s.clamp(-1.0, 1.0)));
+                dst.extend_from_slice(src);
             } else {
-                dst.extend(src.iter().map(|&s| (s * gain).clamp(-1.0, 1.0)));
+                dst.extend(src.iter().map(|&s| s * gain));
             }
             self.current_index += run;
             written += run;
@@ -935,7 +942,7 @@ impl MixerWorker {
     ///
     /// Fast path: with no crossfade in progress the deck gains are constant for
     /// the whole block, so when exactly one deck is contributing we bulk-copy
-    /// it (gain + clamp over contiguous runs, which autovectorizes) instead of
+    /// it (gain over contiguous runs, which autovectorizes) instead of
     /// running the two-deck mixer. On a starved deck this path emits a *short*
     /// block so the output callback can fade the gap. Crossfades and the rare
     /// case with two constant-gain decks mix contiguous runs instead; a starved
@@ -1440,7 +1447,7 @@ fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
             } else {
                 0.0
             };
-            *sample = (p * primary_gain + s * secondary_gain).clamp(-1.0, 1.0);
+            *sample = p * primary_gain + s * secondary_gain;
         }
     }
 }
@@ -1583,15 +1590,16 @@ mod tests {
     }
 
     #[test]
-    fn fill_scaled_bulk_copies_with_gain_and_clamp() {
+    fn fill_scaled_applies_gain_and_leaves_overs_for_the_limiter() {
         let (mut deck, _tx) = deck_from_blocks(vec![vec![0.5, -0.5, 2.0, -2.0]]);
         let mut dst = Vec::new();
         let mut consumed = 0;
-        let written = deck.fill_scaled(&mut dst, 4, 0.5, &mut consumed);
+        let written = deck.fill_scaled(&mut dst, 4, 0.75, &mut consumed);
         assert_eq!(written, 4);
         assert_eq!(consumed, 4);
-        // 2.0 * 0.5 = 1.0 and -2.0 * 0.5 = -1.0 stay inside the clamp range.
-        assert_eq!(dst, vec![0.25, -0.25, 1.0, -1.0]);
+        // Overs survive the mix: clipping them here would hide them from the
+        // limiter, and the device callback clamps whatever is left.
+        assert_eq!(dst, vec![0.375, -0.375, 1.5, -1.5]);
     }
 
     #[test]
