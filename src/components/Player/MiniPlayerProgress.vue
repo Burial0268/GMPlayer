@@ -21,6 +21,7 @@
       @change="songTimeSliderUpdate"
       @click.stop
       :tooltip="'active'"
+      :process="sliderSegments"
       :lazy="true"
       :use-keyboard="false"
     >
@@ -54,6 +55,19 @@ const sliderPercent = computed({
     music.getPlaySongTime.barMoveDistance = val;
   },
 });
+
+// Played, then buffered-but-unplayed; the rail itself is what has not arrived.
+// The second segment exists only while part of the track is still to land.
+const sliderSegments = (dotsPos: number[]): Array<[number, number, object?]> => {
+  const played = dotsPos[0] ?? 0;
+  const duration = music.getPlaySongTime.duration;
+  const buffered = duration > 0 ? (music.bufferedTime / duration) * 100 : 0;
+  if (buffered <= played || buffered >= 100) return [[0, played]];
+  return [
+    [0, played],
+    [played, buffered, { background: "var(--player-buffered-color)" }],
+  ];
+};
 
 const normalizeSliderPercent = (val: unknown): number | null => {
   const raw = Array.isArray(val) ? val[0] : val;

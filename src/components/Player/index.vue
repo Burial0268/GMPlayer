@@ -1539,6 +1539,12 @@ watch(
     rgb(var(--player-page-accent-rgb)) 22%,
     var(--n-border-color) 78%
   );
+  // 已缓冲但未播放的一段：介于轨道与已播放之间。
+  --player-buffered-color: color-mix(
+    in srgb,
+    var(--player-accent-color) 38%,
+    var(--player-rail-color) 62%
+  );
   // 外壳底色保持素色，与 sidebar / QueuePanel 完全一致(var(--app-shell-bg))，不再叠加封面取色，
   // 让 sidebar · 播放栏 · 队列 连成同一块连续的中性外壳。
   --player-surface-bg: var(--app-shell-bg, var(--layout-bg, #fff));

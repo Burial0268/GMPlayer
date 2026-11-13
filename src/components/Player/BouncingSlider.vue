@@ -12,6 +12,11 @@
     <slot name="before-icon" />
     <div ref="innerRef" class="inner-wrapper">
       <Motion tag="div" class="inner" :style="{ clipPath }">
+        <div
+          v-if="bufferedScale > 0"
+          class="buffered"
+          :style="{ transform: `scaleX(${bufferedScale})` }"
+        />
         <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
       </Motion>
     </div>
@@ -29,7 +34,7 @@ import {
   useAnimationFrame,
   animate,
 } from "motion-v";
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 
 const props = withDefaults(
   defineProps<{
@@ -38,6 +43,8 @@ const props = withDefaults(
     max: number;
     isPlaying?: boolean;
     changeOnDrag?: boolean;
+    /** How far the track is buffered, in the units of `value`. */
+    buffered?: number;
   }>(),
   {
     isPlaying: false,
@@ -50,6 +57,15 @@ const emit = defineEmits<{
   seekStart: [];
   seekEnd: [];
 }>();
+
+// Drawn only while part of the track is still to arrive: a local or fully
+// landed source keeps the plain rail it always had.
+const bufferedScale = computed(() => {
+  const range = props.max - props.min;
+  const buffered = props.buffered ?? 0;
+  if (range <= 0 || buffered <= props.min || buffered >= props.max) return 0;
+  return (buffered - props.min) / range;
+});
 
 const MAX_HEIGHT = 20;
 const MIN_HEIGHT = 8;
@@ -257,17 +273,28 @@ const handleClick = (event: MouseEvent) => {
 }
 
 .inner {
+  position: relative;
   width: 100%;
   height: 20px;
   background-color: #ffffff26;
 }
 
+.buffered,
 .thumb {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   background-color: white;
-  opacity: 0.4;
   transform-origin: left center;
+}
+
+.buffered {
+  opacity: 0.18;
+  /* The backend reports in half-second steps; glide between them. */
+  transition: transform 0.4s linear;
+}
+
+.thumb {
+  opacity: 0.4;
 }
 
 .bouncing-slider > :deep(.n-icon) {
