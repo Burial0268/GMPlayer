@@ -993,12 +993,10 @@ defineExpose({
   position: relative;
   top: var(--queue-offset, 0px);
   pointer-events: auto;
-  // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。只选文字和图标。
-  // The rows blend themselves (PlayerQueueList).
-  .queue-empty,
-  :deep(.n-icon),
-  :deep(svg),
-  :deep(path) {
+  // 混合不挂在这块上：封面是它的子节点，会跟着被加亮。
+  // The list blends its own boxes (PlayerQueueList); a blanket svg/path rule here nested a blend
+  // inside each of them, an extra offscreen pass per icon per frame for nothing.
+  .queue-empty {
     mix-blend-mode: plus-lighter;
   }
 }
@@ -1489,8 +1487,8 @@ defineExpose({
   will-change: transform, opacity;
 }
 
-// Same five columns as the transport row (MobileControls), so lyrics and queue sit exactly under
-// previous and next.
+// Same five columns as the transport row (MobileControls): lyrics, output and queue sit under
+// its first, middle and last buttons. Adjacent columns crowded the three together.
 .mobile-bottom-bar {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -1498,11 +1496,15 @@ defineExpose({
   margin-top: 12px;
 
   > :first-child {
-    grid-column: 2;
+    grid-column: 1;
   }
 
   > :last-child {
-    grid-column: 4;
+    grid-column: 5;
+  }
+
+  :deep(.output-device-button) {
+    grid-column: 3;
   }
 
   // The output button renders inside n-popselect, out of reach of the scoped attribute.
