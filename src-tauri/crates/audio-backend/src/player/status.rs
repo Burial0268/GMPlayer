@@ -139,7 +139,7 @@ impl AudioPlayer {
             duration,
             position,
             volume: self.volume,
-            load_position: 0.0,
+            load_position: self.published_buffered,
             playlist_inited: self.playlist_inited,
             playlist: self.playlist.clone(),
             current_play_index: self.current_play_index,
@@ -200,6 +200,43 @@ impl AudioPlayer {
                 identity,
                 timeline_epoch,
             })
+            .await;
+    }
+
+    /// Seconds of the current track that can play without waiting on a download.
+    fn buffered_position(&self) -> f64 {
+        if self.current_song.is_none() {
+            return 0.0;
+        }
+        let duration = self.clock.lock().duration();
+        let landed = self
+            .current_local_path
+            .as_deref()
+            .and_then(crate::source::buffered_bytes);
+        match landed {
+            // shortcut: bytes map to time linearly, which is exact only for
+            // constant bitrate; upgrade to the demuxer's seek index if a VBR
+            // file's bar is visibly off.
+            Some((end, total)) if total > 0 && end < total => {
+                duration * end as f64 / total as f64
+            }
+            _ => duration,
+        }
+    }
+
+    /// Publish the buffered position when it moved by half a second or landed.
+    pub(super) async fn publish_buffered_position(&mut self) {
+        let position = self.buffered_position();
+        let previous = self.published_buffered;
+        let landed = position >= self.clock.lock().duration();
+        if position == previous || ((position - previous).abs() < 0.5 && !landed) {
+            return;
+        }
+        self.published_buffered = position;
+        self.session.lock().buffered_position = position;
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::LoadProgress { position })
             .await;
     }
 

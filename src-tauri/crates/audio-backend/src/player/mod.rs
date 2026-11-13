@@ -195,6 +195,8 @@ struct AudioPlayer {
     stream_buffering: bool,
     /// Last `PlaybackPhaseChanged` published, for edge detection.
     published_phase: Option<(crate::types::PlaybackPhase, Option<TrackIdentity>)>,
+    /// Last `LoadProgress` published, in seconds.
+    published_buffered: f64,
 
     // Manifest-driven planning. The bounded `playback_queue` above stays the
     // transport to the decoder; these own *what plays next* across the full
@@ -463,6 +465,7 @@ impl AudioPlayer {
             load_in_flight: false,
             stream_buffering: false,
             published_phase: None,
+            published_buffered: 0.0,
             manifest: ManifestStore::new(),
             planner: Planner::new(),
             source_cache: SourceCache::new(),
@@ -613,6 +616,7 @@ impl AudioPlayer {
             // Whatever the arm above did, this is the one place its effect on
             // the phase is published.
             self.publish_playback_phase().await;
+            self.publish_buffered_position().await;
         }
 
         // Cleanup

@@ -176,6 +176,8 @@ export interface NativeSessionSnapshot {
   shuffleId?: string | null;
   /** Last phase the backend published. */
   phase?: PlaybackPhase;
+  /** Seconds of the track playable without waiting on the network. */
+  bufferedPosition?: number;
 }
 
 /**

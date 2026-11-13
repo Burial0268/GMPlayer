@@ -20,6 +20,7 @@ import { getManifestRevision } from "./NativeManifestRevision";
 
 let unsubscribe: (() => void) | null = null;
 let unsubscribePhase: (() => void) | null = null;
+let unsubscribeBuffered: (() => void) | null = null;
 
 /**
  * The page's loading display follows the backend's phase, not the lifecycle of
@@ -30,6 +31,9 @@ export const installPlaybackPhaseSubscriber = (): void => {
   if (!isTauri() || unsubscribePhase) return;
   unsubscribePhase = onBackendEvent("playbackPhaseChanged", (event) => {
     useMusicDataStore().adoptBackendPlaybackPhase(event.data.phase);
+  });
+  unsubscribeBuffered ??= onBackendEvent("loadProgress", (event) => {
+    useMusicDataStore().bufferedTime = event.data.position;
   });
 };
 

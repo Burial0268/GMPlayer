@@ -455,6 +455,8 @@ pub enum AudioThreadEvent {
         #[serde(default)]
         timeline_epoch: u64,
     },
+    /// How far into the track, in seconds, audio can play without waiting on
+    /// the network. Equals the duration for a local or fully landed source.
     #[serde(rename_all = "camelCase")]
     LoadProgress { position: f64 },
     #[serde(rename_all = "camelCase")]
@@ -1001,6 +1003,9 @@ pub struct NativeSessionSnapshot {
     /// waiting for the next edge.
     #[serde(default)]
     pub phase: PlaybackPhase,
+    /// Last published `LoadProgress` position, in seconds.
+    #[serde(default)]
+    pub buffered_position: f64,
 }
 
 /// Resolved "what is playing" for OS media sessions.
@@ -1339,6 +1344,7 @@ mod tests {
             order: vec![TrackIdentity::Netease { id: "7".into() }],
             shuffle_id: Some("saved-pass".into()),
             phase: PlaybackPhase::Buffering,
+            buffered_position: 42.0,
         };
         let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
         let object = value.as_object().expect("object");

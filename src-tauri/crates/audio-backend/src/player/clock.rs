@@ -67,6 +67,10 @@ impl PlayerClock {
             .map_or(0, |anchor| anchor.version);
     }
 
+    pub(super) fn duration(&self) -> f64 {
+        self.duration
+    }
+
     pub(super) fn set_duration(&mut self, duration: f64) {
         self.duration = duration.max(0.0);
         self.base_position = self.clamp_position(self.base_position);

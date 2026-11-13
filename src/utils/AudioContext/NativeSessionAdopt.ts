@@ -106,6 +106,7 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   // A page recreated mid-track starts from the phase it missed the edge for.
   if (snapshot.hasTrack && snapshot.phase) {
     useMusicDataStore().adoptBackendPlaybackPhase(snapshot.phase);
+    useMusicDataStore().bufferedTime = snapshot.bufferedPosition ?? 0;
   }
 
   // Keep our manifest counter ahead of the backend's even when we do not adopt:
