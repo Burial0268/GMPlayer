@@ -195,6 +195,10 @@ struct AudioPlayer {
     stream_buffering: bool,
     /// Last `PlaybackPhaseChanged` published, for edge detection.
     published_phase: Option<(crate::types::PlaybackPhase, Option<TrackIdentity>)>,
+    /// Device render count when the current track's decoder came up. Until the
+    /// count moves past it nothing of this track has reached the device, and
+    /// the phase is still `Loading` however ready the decoder is.
+    first_audio_mark: u64,
     /// Last `LoadProgress` published, in seconds.
     published_buffered: f64,
 
@@ -465,6 +469,7 @@ impl AudioPlayer {
             load_in_flight: false,
             stream_buffering: false,
             published_phase: None,
+            first_audio_mark: 0,
             published_buffered: 0.0,
             manifest: ManifestStore::new(),
             planner: Planner::new(),

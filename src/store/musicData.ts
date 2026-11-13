@@ -138,6 +138,8 @@ interface MusicDataState {
    * landed. Stays 0 on the web path, which downloads a track before playing it.
    */
   bufferedTime: number;
+  /** Last phase the native backend reported; `null` before any, and on the web. */
+  backendPhase: PlaybackPhase | null;
   preloadedSongIds: Set<number>;
   // persistData.likeList 的查询索引。数组本身仍是持久化的唯一真源，
   // 这里只是派生索引：Array.includes 是 O(n)，而且会把整个数组登记为依赖，
@@ -194,6 +196,7 @@ const useMusicDataStore = defineStore("musicData", {
       isLoadingSong: false,
       loadingStage: "idle",
       bufferedTime: 0,
+      backendPhase: null,
       preloadedSongIds: new Set(),
       likeSet: new Set(persistedStore.persistData.likeList),
       autoMixState: {
@@ -1726,6 +1729,7 @@ const useMusicDataStore = defineStore("musicData", {
      * those survive a phase that says nothing about them.
      */
     adoptBackendPlaybackPhase(phase: PlaybackPhase) {
+      this.backendPhase = phase;
       if (phase === "loading" || phase === "buffering") {
         this.isLoadingSong = true;
         this.loadingStage = phase === "loading" ? "buffering" : "rebuffering";

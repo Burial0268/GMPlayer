@@ -868,7 +868,10 @@ const setupNativeSound = (
   sound.once("load", () => {
     _clearLoadTimeout();
     if (discardIfStale()) return;
-    music.loadingStage = "idle";
+    // The decoder being up is not audio: the backend stays in `loading` until
+    // the device renders the track, and its phase clears the spinner then.
+    // Re-applying the last phase covers an attach that produces no new edge.
+    music.adoptBackendPlaybackPhase(music.backendPhase ?? "playing");
     const songId = boundSongId;
     const sourceId = music.getPlaySongData?.sourceId ? music.getPlaySongData.sourceId : 0;
     const isLogin = user.userLogin;
@@ -895,7 +898,6 @@ const setupNativeSound = (
     // call). No extra `sound.seek()` here — that used to race with the
     // first `SyncStatus` and overwrite the optimistic local position.
     music.playingSongId = boundSongId;
-    music.isLoadingSong = false;
     clearLoadRetryCount(boundSongId);
     if (isLogin) scheduleScrobble("native-load");
 

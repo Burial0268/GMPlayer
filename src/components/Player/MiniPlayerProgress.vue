@@ -57,15 +57,30 @@ const sliderPercent = computed({
 });
 
 // Played, then buffered-but-unplayed; the rail itself is what has not arrived.
-// The second segment exists only while part of the track is still to land.
+// The second segment is visible only while part of the track is still to land.
 const sliderSegments = (dotsPos: number[]): Array<[number, number, object?]> => {
   const played = dotsPos[0] ?? 0;
   const duration = music.getPlaySongTime.duration;
-  const buffered = duration > 0 ? (music.bufferedTime / duration) * 100 : 0;
-  if (buffered <= played || buffered >= 100) return [[0, played]];
+  const buffered = duration > 0 ? Math.min(100, (music.bufferedTime / duration) * 100) : 0;
+  if (buffered <= 0) return [[0, played]];
+  // Once landed the segment stays and turns transparent, so the end of the
+  // download dissolves into the rail instead of vanishing.
+  const landed = buffered >= 100;
   return [
     [0, played],
-    [played, buffered, { background: "var(--player-buffered-color)" }],
+    [
+      played,
+      Math.max(played, buffered),
+      {
+        background: "var(--player-buffered-color)",
+        opacity: landed ? 0 : 1,
+        // Longhands: the slider sets its own for width/left, and a `transition`
+        // shorthand here would reset those.
+        transitionProperty: "width, left, opacity",
+        transitionDuration: "0.5s, 0.5s, 0.7s",
+        transitionDelay: landed ? "0s, 0s, 0.4s" : "0s",
+      },
+    ],
   ];
 };
 

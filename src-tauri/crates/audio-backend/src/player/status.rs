@@ -175,6 +175,11 @@ impl AudioPlayer {
             PlaybackPhase::Paused
         } else if self.stream_buffering {
             PlaybackPhase::Buffering
+        } else if self.output.writer().render_clock().rendered_samples() == self.first_audio_mark {
+            // The decoder is up but the device has rendered nothing since: the
+            // user still hears silence, so this is not yet playing. `==`, not
+            // `<=`, because an output rebuild restarts the count from zero.
+            PlaybackPhase::Loading
         } else {
             PlaybackPhase::Playing
         };
