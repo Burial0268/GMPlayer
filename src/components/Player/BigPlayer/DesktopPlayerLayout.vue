@@ -379,7 +379,7 @@ defineExpose({ tipRef, leftContentRef, rightContentRef });
     width: 60%;
     min-width: 0;
     height: 100%;
-    z-index: 1;
+    // No z-index: the queue panel after it must paint above it without one of its own.
     box-sizing: border-box;
     mix-blend-mode: plus-lighter;
     padding-right: 1rem;
