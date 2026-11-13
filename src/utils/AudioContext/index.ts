@@ -13,6 +13,8 @@ export {
   setSeek,
   fadePlayOrPause,
   soundStop,
+  seekActiveSound,
+  stopActiveSound,
   processSpectrum,
   adoptIncomingSound,
   setPageVisible,
@@ -110,3 +112,4 @@ export { CrossfadeScheduler as CrossfadeManager } from "./AutoMix";
 export { AutoMixEngine, getAutoMixEngine } from "./AutoMix";
 export { analyzeTrack, spectralSimilarity, terminateAnalysisWorker } from "./AutoMix";
 export { findNearestBeat } from "./AutoMix";
+export { activeSound } from "./activeSound";

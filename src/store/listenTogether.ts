@@ -13,11 +13,11 @@ import type { SongData } from "@/store/musicTypes";
 // 走 barrel 会把这个环放大到整个 AudioContext。两侧都只在运行时互相调用。
 import { publishNativeManifest } from "@/utils/AudioContext/NativeManifestPublisher";
 import { setNativeListenTogetherRoom } from "@/utils/AudioContext/NativeListenTogetherSync";
+import { activeSound } from "@/utils/AudioContext/activeSound";
 import { asRawEntry } from "@/utils/rawEntry";
 import getLanguageData from "@/utils/getLanguageData";
 
 declare const $message: any;
-declare const $player: any;
 
 /**
  * 房间角色类型
@@ -577,9 +577,8 @@ const useListenTogetherStore = defineStore("listenTogether", {
           const currentTime = musicStore.getPlaySongPlaybackCurrentTime();
 
           if (Math.abs(currentTime - progressSec) > 3) {
-            if (typeof $player !== "undefined" && $player.seek) {
-              $player.seek(progressSec);
-            }
+            // Raw seek: `setSeek` would report this back to the room as ours.
+            activeSound.value?.seek(progressSec);
           }
 
           const currentPlayState = musicStore.getPlayState;

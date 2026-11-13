@@ -185,7 +185,7 @@ import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
-import { setSeek } from "@/utils/AudioContext";
+import { activeSound, seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
 import BouncingSlider from "./BouncingSlider.vue";
@@ -293,7 +293,7 @@ const qualityLevelText = computed(() => {
 
 const nativeAudioQuality = computed(() => {
   if (!music.getPlaySongData || music.getLoadingState) return null;
-  const player = typeof window !== "undefined" ? window.$player : undefined;
+  const player = activeSound.value;
   if (!(player instanceof NativeRustSound)) return null;
   return player.getAudioQuality();
 });
@@ -353,8 +353,8 @@ const cyclePlayMode = () => {
 
 // 歌曲进度条更新
 const handleProgressSeek = (val) => {
-  if (typeof $player !== "undefined" && music.getPlaySongTime?.duration) {
-    setSeek($player, val);
+  if (music.getPlaySongTime?.duration) {
+    seekActiveSound(val);
   }
 };
 

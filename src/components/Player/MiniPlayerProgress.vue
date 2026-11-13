@@ -7,8 +7,8 @@
   that whole template on every tick during playback. Reading the store here
   confines the per-tick invalidation to this component.
 
-  `setSeek` takes `window.$player` directly rather than a prop, so the parent
-  does not have to thread its `player` shallowRef down.
+  Seeks go through `seekActiveSound`, so the parent does not have to thread a
+  player ref down.
 -->
 <template>
   <div class="slider">
@@ -38,7 +38,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { musicStore, listenTogetherStore } from "@/store";
-import { setSeek } from "@/utils/AudioContext/PlayerFunctions";
+import { seekActiveSound } from "@/utils/AudioContext/PlayerFunctions";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import VueSlider from "vue-slider-component";
 import "vue-slider-component/theme/default.css";
@@ -112,7 +112,7 @@ const songTimeSliderUpdate = (val: unknown) => {
   isSliderDragging.value = false;
   pendingSliderPercent.value = null;
   const currentTime = (music.getPlaySongTime.duration / 100) * percent;
-  setSeek(window.$player, currentTime);
+  seekActiveSound(currentTime);
   // 一起听歌：发送进度跳转命令（房主和房客均可）
   if (listenTogether.isInRoom) {
     listenTogether.sendPlayCommand("seek", Math.floor(currentTime * 1000));

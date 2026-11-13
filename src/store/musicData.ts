@@ -10,6 +10,7 @@ import { NIcon } from "naive-ui";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import {
   soundStop,
+  stopActiveSound,
   fadePlayOrPause,
   getAutoMixEngine,
   getAudioPreloader,
@@ -49,6 +50,7 @@ import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { naturalQueueOrder } from "@/utils/playlistOrder";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/PersonalFmState";
+import { activeSound } from "@/utils/AudioContext/activeSound";
 import {
   startNativePersonalFm,
   stopNativePersonalFm,
@@ -57,7 +59,6 @@ import {
 } from "@/utils/AudioContext/NativePersonalFm";
 
 declare const $message: any;
-declare const $player: any;
 
 /**
  * Fisher-Yates，就地打乱。
@@ -459,7 +460,7 @@ const useMusicDataStore = defineStore("musicData", {
         // 进入 FM：不再撤销 manifest。既然现在预取了一批曲目（见 FM_BUFFER_* 与
         // refillFmBuffer），就把这批交给后端 planner 自行推进——这正是 Android 后台
         // JS 被 Binder 冻结时下一首仍能播出、native 线程不再卡死的关键。
-        if (typeof $player !== "undefined") soundStop($player);
+        stopActiveSound();
         const head = this.persistData.personalFmData as SongData;
         if (head?.id) {
           // 已有展示头：把它作为缓冲的第一首，游标归零，随后后台续满。
@@ -515,7 +516,7 @@ const useMusicDataStore = defineStore("musicData", {
           }
           this.persistData.personalFmData = head;
           this.persistData.playSongIndex = 0;
-          if (typeof $player !== "undefined") soundStop($player);
+          stopActiveSound();
           this.commitPlaySongIndex(0);
           this.setPlayState(true);
           publishNativeManifest({ force: true });
@@ -645,14 +646,14 @@ const useMusicDataStore = defineStore("musicData", {
       }
       if (nextIdx < 0) {
         // 缓冲见底（或剩下的全被踩过）：拉一批再前进。
-        if (typeof $player !== "undefined") soundStop($player);
+        stopActiveSound();
         fmWaiting = true;
         this.isLoadingSong = true;
         this.loadingStage = "stalled";
         if (fmRetryTimer === null) void this.refillFmBuffer();
         return true;
       }
-      if (typeof $player !== "undefined") soundStop($player);
+      stopActiveSound();
       const next = buffer[nextIdx];
       // 先整表换成 [next, ...后续未被踩的 runway]，再把游标归零：与旧 FM 的
       // `playlists=[]; push; commit(0)` 同形，中间态由 getPlaySongData 的 generation
@@ -1138,7 +1139,7 @@ const useMusicDataStore = defineStore("musicData", {
         // 还没有 sound 说明后端没见过我们的列表：它的第一份 manifest 会被当作
         // 「上次的队列」原样信任，所以得明说这次要洗。有 sound 时后端已经收到
         // 模式切换（或马上会收到 manifest），自己会洗，再请求只会洗两次。
-        if (!(window.$player instanceof NativeRustSound)) requestNativeReshuffle();
+        if (!(activeSound.value instanceof NativeRustSound)) requestNativeReshuffle();
         return false;
       }
       const next = shuffleInPlace<SongData>(list.slice());
@@ -1414,7 +1415,7 @@ const useMusicDataStore = defineStore("musicData", {
           return false;
         }
 
-        const activePlayer = typeof $player !== "undefined" ? $player : undefined;
+        const activePlayer = activeSound.value;
         const listMode = this.persistData.playSongMode;
         let nextIndex = this.persistData.playSongIndex;
         if (listMode === "normal" || listMode === "random") {
@@ -1490,14 +1491,14 @@ const useMusicDataStore = defineStore("musicData", {
         index < 0 ||
         index >= this.persistData.playlists.length ||
         (index === this.persistData.playSongIndex &&
-          SoundManager.getSongId(window.$player) ===
+          SoundManager.getSongId(activeSound.value) ===
             Number(this.persistData.playlists[index]?.id) &&
           this.loadingStage !== "error")
       ) {
         return;
       }
       if (index === this.persistData.playSongIndex) {
-        if (typeof $player !== "undefined") soundStop($player);
+        stopActiveSound();
         this.isLoadingSong = true;
         this.setPlayState(true);
         const song = this.persistData.playlists[index];
@@ -1506,7 +1507,7 @@ const useMusicDataStore = defineStore("musicData", {
         }
         return;
       }
-      if (typeof $player !== "undefined") soundStop($player);
+      stopActiveSound();
       this.commitPlaySongIndex(index);
       this.resetSongLyricState();
       this.isLoadingSong = true;
@@ -1526,7 +1527,7 @@ const useMusicDataStore = defineStore("musicData", {
       try {
         if (identityChanged) {
           console.log("Play a song that is not the same as the last one");
-          if (typeof $player !== "undefined") soundStop($player);
+          stopActiveSound();
           this.isLoadingSong = true;
           // 将要播放不同歌曲，立即清空旧歌词，等待新歌词加载
           this.resetSongLyricState();
@@ -1605,7 +1606,7 @@ const useMusicDataStore = defineStore("musicData", {
       if (index < this.persistData.playSongIndex) {
         this.persistData.playSongIndex--;
       } else if (index === this.persistData.playSongIndex) {
-        if (typeof $player !== "undefined") soundStop($player);
+        stopActiveSound();
       }
       $message.success(name + " " + getLanguageData("removeSong"));
       this.persistData.playlists.splice(index, 1);
@@ -1618,7 +1619,7 @@ const useMusicDataStore = defineStore("musicData", {
       getAudioPreloader().cleanup();
       if (this.persistData.playSongIndex >= this.persistData.playlists.length) {
         this.persistData.playSongIndex = 0;
-        if (typeof $player !== "undefined") soundStop($player);
+        stopActiveSound();
       }
       publishNativeManifest();
       if (removedCurrentSong) {
@@ -1641,7 +1642,7 @@ const useMusicDataStore = defineStore("musicData", {
       clearNativeManifest();
       getAudioPreloader().cleanup();
 
-      const activePlayer = typeof window !== "undefined" ? window.$player : undefined;
+      const activePlayer = activeSound.value;
       if (activePlayer instanceof NativeRustSound) {
         activePlayer.clearPlaybackQueue();
       }
@@ -1649,7 +1650,7 @@ const useMusicDataStore = defineStore("musicData", {
         SoundManager.unload();
       } else if (activePlayer) {
         activePlayer.unload?.();
-        window.$player = undefined;
+        activeSound.value = undefined;
       }
 
       this.persistData.personalFmMode = false;

@@ -101,8 +101,6 @@ import { coverUrl } from "@/utils/coverUrl";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
 import { locateVirtualRow, type LocateHandle, type VirtualListInst } from "@/utils/locateRow";
 
-declare const $player: any;
-
 type Artist = { name: string };
 type QueueSong = {
   id: number;

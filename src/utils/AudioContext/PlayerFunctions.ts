@@ -15,6 +15,7 @@ import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
 import useUserDataStore from "@/store/userData";
 
+import { activeSound } from "./activeSound";
 const musicStore = () => useMusicDataStore();
 const settingStore = () => useSettingDataStore();
 const userStore = () => useUserDataStore();
@@ -1550,6 +1551,16 @@ export const fadePlayOrPause = (
 export const soundStop = (sound: ISound | undefined): void => {
   sound?.stop();
   setSeek(sound, 0);
+};
+
+/** Seek whatever is playing. A no-op when nothing is loaded. */
+export const seekActiveSound = (seek: number): void => {
+  if (activeSound.value) setSeek(activeSound.value, seek);
+};
+
+/** Stop whatever is playing and rewind it. A no-op when nothing is loaded. */
+export const stopActiveSound = (): void => {
+  if (activeSound.value) soundStop(activeSound.value);
 };
 
 /**

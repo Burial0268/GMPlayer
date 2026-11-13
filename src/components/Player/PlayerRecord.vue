@@ -176,7 +176,7 @@ import { musicStore, settingStore, userStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
-import { setSeek } from "@/utils/AudioContext";
+import { seekActiveSound } from "@/utils/AudioContext";
 import BouncingSlider from "./BouncingSlider.vue";
 import { NIcon } from "naive-ui";
 import { useI18n } from "vue-i18n";
@@ -294,8 +294,8 @@ const cyclePlayMode = () => {
 
 // 歌曲进度条更新
 const handleProgressSeek = (val) => {
-  if (typeof $player !== "undefined" && music.getPlaySongTime?.duration) {
-    setSeek($player, val);
+  if (music.getPlaySongTime?.duration) {
+    seekActiveSound(val);
   }
 };
 

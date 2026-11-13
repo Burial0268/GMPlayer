@@ -392,8 +392,6 @@ import MobileCoverFrame from "./MobileCoverFrame.vue";
 import LyricOffsetControl from "./LyricOffsetControl.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
-declare const $player: any;
-
 type Artist = { name: string };
 type QueueSong = {
   id: number;
