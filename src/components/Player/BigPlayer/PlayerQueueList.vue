@@ -799,6 +799,9 @@ defineExpose({ scrollToCurrent });
 }
 
 .queue-row-delete {
+  // A sibling of the row body, so the body's fade misses it; a swipe left open must still go with
+  // the desktop panel (a touch tablet gets the desktop layout).
+  opacity: var(--queue-fade, 1);
   position: absolute;
   inset: 0 0 0 auto;
   display: flex;
