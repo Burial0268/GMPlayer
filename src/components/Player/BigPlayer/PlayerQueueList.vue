@@ -303,16 +303,18 @@ const fadeFallback = () => {
       if (row && scroller.contains(row)) hit.add(row);
     }
   }
-  for (const row of fadedRows) if (!hit.has(row)) row.style.removeProperty("opacity");
+  for (const row of fadedRows) if (!hit.has(row)) row.style.removeProperty("--row-opacity");
   fadedRows.clear();
   for (const row of hit) {
     const rowBox = row.getBoundingClientRect();
     // Gone by the time 40% of it is under the title, so its text never sits on the title's.
     const shown = Math.max(0, Math.min(1, 1 - (edge - rowBox.top) / (rowBox.height * 0.4)));
     if (shown < 1 && !row.classList.contains("lifted")) {
-      row.style.opacity = String(shown);
+      // The variable, not the row's opacity, which would isolate its plus-lighter.
+      const resting = row.classList.contains("history") ? 0.55 : 1;
+      row.style.setProperty("--row-opacity", String(shown * resting));
       fadedRows.add(row);
-    } else row.style.removeProperty("opacity");
+    } else row.style.removeProperty("--row-opacity");
   }
 };
 
@@ -710,29 +712,45 @@ defineExpose({ scrollToCurrent });
     transition: transform 0.16s var(--ease-out);
   }
 
-  &.history .queue-row-body {
-    opacity: 0.55;
+  &.history {
+    --row-opacity: 0.55;
   }
 }
 
 // Rows fade as they slide under the sticky title (52px), gone by 40% under it so their text never
-// sits on the title's. Compositor-driven; `fadeFallback` covers browsers without it.
+// sits on the title's. The opacity is on the row's children, never on the row: an element with
+// (animated) opacity is an isolated group, and every plus-lighter inside it would blend with its
+// row instead of with the cover behind. An element carrying both its own opacity and the blend
+// still blends. The row only names the timeline its children run on. `--row-opacity` is the
+// resting opacity (history is dimmed), read by both the children and the keyframes.
+.queue-row-body > * {
+  opacity: var(--row-opacity, 1);
+}
+
 @supports (animation-timeline: view()) {
   .queue-row {
+    view-timeline: --queue-row block;
+  }
+
+  .queue-row-body > * {
     animation: queue-row-under linear both;
     animation-range: exit 0% exit 40%;
   }
 
-  // A rule of its own: the minifier folds a timeline written beside `animation` into the
+  // Rules of their own: the minifier folds a timeline written beside `animation` into the
   // shorthand, which Chromium rejects (dropping the whole declaration).
   .player-queue-list .queue-row {
-    animation-timeline: view(block 52px 0px);
+    view-timeline-inset: 52px 0px;
+  }
+
+  .player-queue-list .queue-row-body > * {
+    animation-timeline: --queue-row;
   }
 }
 
 @keyframes queue-row-under {
   from {
-    opacity: 1;
+    opacity: var(--row-opacity, 1);
   }
 
   to {

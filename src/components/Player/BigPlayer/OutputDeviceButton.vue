@@ -14,7 +14,9 @@
       class="output-device-button"
       :aria-label="$t('player.controls.output')"
     >
-      <n-icon :component="AirplayRound" />
+      <!-- The bare svg, like the lyrics and queue icons beside it: an n-icon box is 1em, and the
+           parent's 34px svg overflowed it down and to the right, off the row's centre line. -->
+      <AirplayRound />
     </button>
   </n-popselect>
 </template>
