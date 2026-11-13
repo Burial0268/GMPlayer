@@ -9,6 +9,7 @@
       v-if="showTitleBar"
       ref="titlebarArea"
       :class="['titlebar-area', `titlebar-area--${variant}`, { 'auto-hide': autoHideTitlebar }]"
+      data-tauri-drag-region
       @mouseenter="titlebarHovering = true"
       @mouseleave="titlebarHovering = false"
     >
