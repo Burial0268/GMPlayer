@@ -833,8 +833,10 @@ defineExpose({
   --mobile-title-opacity: 1;
   --mobile-artists-opacity: 0.7;
   --mobile-time-opacity: 0.5;
-  // The bottom bar now fills most of what used to be empty space under the volume slider.
-  --mobile-controls-bottom-padding: calc(var(--app-safe-area-bottom, 0px) + 0.75rem);
+  // Clear of the system bar, but never closer to the screen edge than Apple Music sits: Android's
+  // gesture inset (~16-24px) is far smaller than the iPhone's 34pt home-indicator area, and
+  // "inset + a little" left the bottom bar crowding the edge there.
+  --mobile-controls-bottom-padding: max(calc(var(--app-safe-area-bottom, 0px) + 1rem), 2.75rem);
 
   &.tinted {
     --mobile-title-opacity: 0.85;
