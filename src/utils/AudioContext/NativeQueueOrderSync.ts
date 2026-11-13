@@ -19,6 +19,19 @@ import { logNative } from "@/utils/tauri/core/nativeLog";
 import { getManifestRevision } from "./NativeManifestRevision";
 
 let unsubscribe: (() => void) | null = null;
+let unsubscribePhase: (() => void) | null = null;
+
+/**
+ * The page's loading display follows the backend's phase, not the lifecycle of
+ * whichever sound object happened to be bound: a backend-driven advance reuses
+ * the sound, so per-sound `load`/`waiting` handlers never saw the next track.
+ */
+export const installPlaybackPhaseSubscriber = (): void => {
+  if (!isTauri() || unsubscribePhase) return;
+  unsubscribePhase = onBackendEvent("playbackPhaseChanged", (event) => {
+    useMusicDataStore().adoptBackendPlaybackPhase(event.data.phase);
+  });
+};
 
 /** Idempotent. Safe to call from every place that talks to the backend. */
 export const installQueueOrderSubscriber = (): void => {

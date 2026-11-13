@@ -193,6 +193,8 @@ struct AudioPlayer {
     /// `stream_stall`). The output is paused and the clock frozen while true,
     /// though `playback_intent` still says playing.
     stream_buffering: bool,
+    /// Last `PlaybackPhaseChanged` published, for edge detection.
+    published_phase: Option<(crate::types::PlaybackPhase, Option<TrackIdentity>)>,
 
     // Manifest-driven planning. The bounded `playback_queue` above stays the
     // transport to the decoder; these own *what plays next* across the full
@@ -460,6 +462,7 @@ impl AudioPlayer {
             announced_track: None,
             load_in_flight: false,
             stream_buffering: false,
+            published_phase: None,
             manifest: ManifestStore::new(),
             planner: Planner::new(),
             source_cache: SourceCache::new(),
@@ -607,6 +610,9 @@ impl AudioPlayer {
                 self.send_listen_together_heartbeat();
               }
             }
+            // Whatever the arm above did, this is the one place its effect on
+            // the phase is published.
+            self.publish_playback_phase().await;
         }
 
         // Cleanup

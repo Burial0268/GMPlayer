@@ -36,7 +36,10 @@ import useMusicDataStore from "@/store/musicData";
 import { reconcileNativeManifestRevision } from "./NativeManifestPublisher";
 import { adoptNativePersonalFm } from "./NativePersonalFm";
 import { logNative } from "@/utils/tauri/core/nativeLog";
-import { installQueueOrderSubscriber } from "./NativeQueueOrderSync";
+import {
+  installPlaybackPhaseSubscriber,
+  installQueueOrderSubscriber,
+} from "./NativeQueueOrderSync";
 
 const MUSIC_ID_PREFIX = "local:";
 
@@ -96,9 +99,14 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   // arriving later must still be heard. This is the one boot-time install point
   // (a sound, and so a manifest, cannot exist before this runs).
   installQueueOrderSubscriber();
+  installPlaybackPhaseSubscriber();
 
   const snapshot = await withTimeout(audioGetSession(), SESSION_QUERY_TIMEOUT_MS);
   if (!snapshot) return null;
+  // A page recreated mid-track starts from the phase it missed the edge for.
+  if (snapshot.hasTrack && snapshot.phase) {
+    useMusicDataStore().adoptBackendPlaybackPhase(snapshot.phase);
+  }
 
   // Keep our manifest counter ahead of the backend's even when we do not adopt:
   // a reload resets the in-memory counter, and publishing a revision the

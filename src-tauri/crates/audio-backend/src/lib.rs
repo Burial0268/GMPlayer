@@ -66,7 +66,8 @@ pub use player::session_controls::{
 };
 pub use types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
-    DisplayAudioInfo, NativePlaybackMode, NativeSessionSnapshot, NowPlayingInfo, PlaybackState,
+    DisplayAudioInfo, NativePlaybackMode, NativeSessionSnapshot, NowPlayingInfo, PlaybackPhase,
+    PlaybackState,
     SessionControls, SessionControlsPatch, SongData, TrackIdentity,
 };
 #[cfg(target_arch = "wasm32")]

@@ -44,7 +44,7 @@ import {
 import { asRawEntries, asRawEntry } from "@/utils/rawEntry";
 import { hintTracks } from "@/utils/ncmPrefetch";
 import { isTauri } from "@/utils/tauri/core/runtime";
-import type { NativeFmSnapshot, TrackIdentity } from "@/utils/tauri/audio/protocol";
+import type { NativeFmSnapshot, PlaybackPhase, TrackIdentity } from "@/utils/tauri/audio/protocol";
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { naturalQueueOrder } from "@/utils/playlistOrder";
@@ -1709,6 +1709,28 @@ const useMusicDataStore = defineStore("musicData", {
 
     updateCurrentTime(time: number) {
       (this as any).currentTime = Math.floor(time * 1000);
+    },
+
+    /**
+     * Follow the backend's playback phase. It owns what happens once a request
+     * has reached it (loading, rebuffering, playing); the page owns only what
+     * happens before that or without it — `resolving`, `stalled`, `error` — so
+     * those survive a phase that says nothing about them.
+     */
+    adoptBackendPlaybackPhase(phase: PlaybackPhase) {
+      if (phase === "loading" || phase === "buffering") {
+        this.isLoadingSong = true;
+        this.loadingStage = phase === "loading" ? "buffering" : "rebuffering";
+        return;
+      }
+      const pageOwned =
+        this.loadingStage === "resolving" ||
+        this.loadingStage === "stalled" ||
+        // A failed load ends in `idle`/`paused`; only audio clears the error.
+        (this.loadingStage === "error" && phase !== "playing");
+      if (pageOwned) return;
+      this.isLoadingSong = false;
+      this.loadingStage = "idle";
     },
 
     setLoadingState(state: boolean) {

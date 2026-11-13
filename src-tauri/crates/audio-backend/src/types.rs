@@ -12,6 +12,23 @@ pub enum PlaybackState {
     Ended = 3,
 }
 
+/// What the player is doing, as one value every surface can render.
+///
+/// Derived in one place from the flags that used to be read separately (intent,
+/// load in flight, stream stall, whether anything is loaded), so two surfaces
+/// cannot combine them differently. `Loading` and `Buffering` are not pauses:
+/// the first has no audio yet, the second ran out of download mid-track.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlaybackPhase {
+    #[default]
+    Idle,
+    Loading,
+    Buffering,
+    Playing,
+    Paused,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrossfadeCurve {
     #[serde(rename = "linear")]
@@ -473,6 +490,15 @@ pub enum AudioThreadEvent {
     Buffering {
         music_id: String,
         is_buffering: bool,
+    },
+    /// The one playback-state edge. Emitted only when the phase or the track it
+    /// describes changes, after whatever handler caused it has finished, so a
+    /// subscriber needs no per-track arming to follow backend-driven changes.
+    #[serde(rename_all = "camelCase")]
+    PlaybackPhaseChanged {
+        phase: PlaybackPhase,
+        identity: Option<TrackIdentity>,
+        timeline_epoch: u64,
     },
     #[serde(rename_all = "camelCase")]
     AudioPlayFinished { music_id: String },
@@ -971,6 +997,10 @@ pub struct NativeSessionSnapshot {
     pub order: Vec<TrackIdentity>,
     #[serde(default)]
     pub shuffle_id: Option<String>,
+    /// Last published phase, so a recreated page starts from it instead of
+    /// waiting for the next edge.
+    #[serde(default)]
+    pub phase: PlaybackPhase,
 }
 
 /// Resolved "what is playing" for OS media sessions.
@@ -1308,9 +1338,20 @@ mod tests {
             play_mode: NativePlaybackMode::Random,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
             shuffle_id: Some("saved-pass".into()),
+            phase: PlaybackPhase::Buffering,
         };
         let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
         let object = value.as_object().expect("object");
+        assert_eq!(object["phase"], "buffering");
+        let edge = serde_json::to_value(AudioThreadEvent::PlaybackPhaseChanged {
+            phase: PlaybackPhase::Loading,
+            identity: None,
+            timeline_epoch: 3,
+        })
+        .expect("serialize");
+        assert_eq!(edge["type"], "playbackPhaseChanged");
+        assert_eq!(edge["data"]["phase"], "loading");
+        assert_eq!(edge["data"]["timelineEpoch"], 3);
 
         for key in [
             "hasTrack",

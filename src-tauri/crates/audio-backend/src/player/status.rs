@@ -4,10 +4,12 @@
 
 use tokio::sync::mpsc;
 
-use crate::types::{AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage};
+use crate::types::{
+    AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, PlaybackPhase, TrackIdentity,
+};
 
 use super::api::SeekRequest;
-use super::AudioPlayer;
+use super::{AudioPlayer, PlaybackIntent};
 
 impl AudioPlayer {
     pub(super) fn emitter(&self) -> EventEmitter {
@@ -149,6 +151,55 @@ impl AudioPlayer {
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::NowPlayingChanged { info: now_playing })
+            .await;
+    }
+
+    /// The single derivation of [`PlaybackPhase`]. Mirrors `now_playing_info`'s
+    /// loading rule, but reports the user's intent rather than the clock: a
+    /// stalled stream freezes the clock while the user is still playing.
+    pub(super) fn playback_phase(&self) -> (PlaybackPhase, Option<TrackIdentity>) {
+        if let Some((identity, _)) = &self.announced_track {
+            if self.current_identity.as_ref() != Some(identity) {
+                return (PlaybackPhase::Loading, Some(identity.clone()));
+            }
+        }
+        let identity = self.current_identity.clone();
+        let phase = if self.load_in_flight {
+            PlaybackPhase::Loading
+        } else if self.current_song.is_none() {
+            match &self.personal_fm {
+                Some(fm) if fm.desired_playing && !fm.auth_failed => PlaybackPhase::Loading,
+                _ => PlaybackPhase::Idle,
+            }
+        } else if self.playback_intent != PlaybackIntent::Playing {
+            PlaybackPhase::Paused
+        } else if self.stream_buffering {
+            PlaybackPhase::Buffering
+        } else {
+            PlaybackPhase::Playing
+        };
+        (phase, identity)
+    }
+
+    /// Publish the phase if it moved. Called after every loop iteration, and
+    /// where a single handler crosses an edge it would otherwise hide (a load
+    /// that starts and finishes inside one message).
+    pub(super) async fn publish_playback_phase(&mut self) {
+        let current = self.playback_phase();
+        if self.published_phase.as_ref() == Some(&current) {
+            return;
+        }
+        self.published_phase = Some(current.clone());
+        let (phase, identity) = current;
+        self.session.lock().phase = phase;
+        let timeline_epoch = self.clock.lock().epoch();
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::PlaybackPhaseChanged {
+                phase,
+                identity,
+                timeline_epoch,
+            })
             .await;
     }
 

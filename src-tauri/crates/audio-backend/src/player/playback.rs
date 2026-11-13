@@ -240,6 +240,7 @@ impl AudioPlayer {
 
         // Emit LoadingAudio so the frontend can show a spinner / await load.
         self.load_in_flight = true;
+        self.publish_playback_phase().await;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadingAudio {
