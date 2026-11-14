@@ -50,7 +50,7 @@ import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { naturalQueueOrder } from "@/utils/playlistOrder";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/PersonalFmState";
-import { activeSound } from "@/utils/AudioContext/activeSound";
+import { activeSound } from "@/utils/AudioContext/SoundManager";
 import {
   startNativePersonalFm,
   stopNativePersonalFm,
@@ -138,6 +138,8 @@ interface MusicDataState {
    * landed. Stays 0 on the web path, which downloads a track before playing it.
    */
   bufferedTime: number;
+  /** Last phase the native backend reported; `null` before any, and on the web. */
+  backendPhase: PlaybackPhase | null;
   preloadedSongIds: Set<number>;
   // persistData.likeList 的查询索引。数组本身仍是持久化的唯一真源，
   // 这里只是派生索引：Array.includes 是 O(n)，而且会把整个数组登记为依赖，
@@ -194,6 +196,7 @@ const useMusicDataStore = defineStore("musicData", {
       isLoadingSong: false,
       loadingStage: "idle",
       bufferedTime: 0,
+      backendPhase: null,
       preloadedSongIds: new Set(),
       likeSet: new Set(persistedStore.persistData.likeList),
       autoMixState: {
@@ -1686,12 +1689,7 @@ const useMusicDataStore = defineStore("musicData", {
       if (activePlayer instanceof NativeRustSound) {
         activePlayer.clearPlaybackQueue();
       }
-      if (SoundManager.getCurrentSound()) {
-        SoundManager.unload();
-      } else if (activePlayer) {
-        activePlayer.unload?.();
-        activeSound.value = undefined;
-      }
+      SoundManager.unload();
 
       this.persistData.personalFmMode = false;
       this.persistData.playlists = [];
@@ -1766,6 +1764,7 @@ const useMusicDataStore = defineStore("musicData", {
      * those survive a phase that says nothing about them.
      */
     adoptBackendPlaybackPhase(phase: PlaybackPhase) {
+      this.backendPhase = phase;
       if (phase === "loading" || phase === "buffering") {
         this.isLoadingSong = true;
         this.loadingStage = phase === "loading" ? "buffering" : "rebuffering";
@@ -1777,6 +1776,21 @@ const useMusicDataStore = defineStore("musicData", {
         // A failed load ends in `idle`/`paused`; only audio clears the error.
         (this.loadingStage === "error" && phase !== "playing");
       if (pageOwned) return;
+      this.isLoadingSong = false;
+      this.loadingStage = "idle";
+    },
+
+    /**
+     * The page believes loading is over (a sound loaded, an advance was
+     * adopted). The backend's phase outranks that belief: while it still says
+     * loading or buffering, its own edge ends the spinner, not this call.
+     */
+    settleLoading() {
+      const phase = this.backendPhase;
+      if (phase === "loading" || phase === "buffering") {
+        this.adoptBackendPlaybackPhase(phase);
+        return;
+      }
       this.isLoadingSong = false;
       this.loadingStage = "idle";
     },

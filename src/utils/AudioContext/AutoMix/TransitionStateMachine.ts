@@ -1878,7 +1878,6 @@ export class TransitionStateMachine {
       }
     }
 
-    window.$player = incomingSound;
     adoptIncomingSound(incomingSound);
     this._pendingNextIndex = -1;
   }
@@ -2004,12 +2003,6 @@ export class TransitionStateMachine {
           console.log("TransitionStateMachine: Applied pending playSongIndex (bg tab fallback)");
         }
       }
-      if (currentSound && window.$player !== currentSound) {
-        window.$player = currentSound;
-        if (transitionId === undefined || this._isTransitionActive(transitionId, "web")) {
-          adoptIncomingSound(currentSound);
-        }
-      }
       this._pendingNextIndex = -1;
     }
 
@@ -2101,7 +2094,6 @@ export class TransitionStateMachine {
           if (this._musicStoreRef) {
             outgoing.volume(this._musicStoreRef.persistData.playVolume);
           }
-          window.$player = outgoing;
         }
       } else {
         incoming.stop();

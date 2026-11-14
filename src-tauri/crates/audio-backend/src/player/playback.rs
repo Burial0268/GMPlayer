@@ -492,6 +492,7 @@ impl AudioPlayer {
         // Decoder is up and the timeline is anchored: whatever the media
         // session was showing as "buffering" is now real playback.
         self.load_in_flight = false;
+        self.first_audio_mark = self.output.writer().render_clock().rendered_samples();
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadAudio {

@@ -723,3 +723,32 @@ for (const permissionDenied of [false, true])
     unmounted[0]();
     scope.stop();
   });
+
+test("the page cannot end loading while the backend still reports it", () => {
+  const env = queueEnvironment();
+  const music = env.music;
+
+  music.adoptBackendPlaybackPhase("loading");
+  music.settleLoading();
+  assert.equal(music.isLoadingSong, true, "the decoder being up is not audio");
+  assert.equal(music.loadingStage, "buffering");
+
+  music.adoptBackendPlaybackPhase("buffering");
+  music.settleLoading();
+  assert.equal(music.loadingStage, "rebuffering");
+
+  music.adoptBackendPlaybackPhase("playing");
+  assert.equal(music.isLoadingSong, false);
+  assert.equal(music.loadingStage, "idle");
+
+  // A page-owned stage survives a phase that says nothing about it, and the
+  // page itself may end it.
+  music.loadingStage = "resolving";
+  music.isLoadingSong = true;
+  music.adoptBackendPlaybackPhase("paused");
+  assert.equal(music.loadingStage, "resolving");
+  music.settleLoading();
+  assert.equal(music.isLoadingSong, false);
+  assert.equal(music.loadingStage, "idle");
+  env.restore();
+});

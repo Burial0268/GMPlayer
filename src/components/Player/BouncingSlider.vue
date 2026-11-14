@@ -14,7 +14,9 @@
       <Motion tag="div" class="inner" :style="{ clipPath }">
         <div
           v-if="bufferedScale > 0"
+          :key="bufferedRun"
           class="buffered"
+          :class="{ landed: bufferedScale >= 1 }"
           :style="{ transform: `scaleX(${bufferedScale})` }"
         />
         <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
@@ -58,13 +60,21 @@ const emit = defineEmits<{
   seekEnd: [];
 }>();
 
-// Drawn only while part of the track is still to arrive: a local or fully
-// landed source keeps the plain rail it always had.
+// 0 when unknown, 1 once the whole track has landed. A landed bar is drawn
+// transparent rather than removed, so reaching the end fades out instead of
+// vanishing, and a local file (landed from the start) never shows one.
 const bufferedScale = computed(() => {
   const range = props.max - props.min;
   const buffered = props.buffered ?? 0;
-  if (range <= 0 || buffered <= props.min || buffered >= props.max) return 0;
-  return (buffered - props.min) / range;
+  if (range <= 0 || buffered <= props.min) return 0;
+  return Math.min(1, (buffered - props.min) / range);
+});
+
+// A new element whenever the buffer moves backwards (next track, a seek past
+// what has arrived), so the bar starts where it is instead of sweeping back.
+const bufferedRun = ref(0);
+watch(bufferedScale, (scale, previous) => {
+  if (scale < previous) bufferedRun.value += 1;
 });
 
 const MAX_HEIGHT = 20;
@@ -290,7 +300,15 @@ const handleClick = (event: MouseEvent) => {
 .buffered {
   opacity: 0.18;
   /* The backend reports in half-second steps; glide between them. */
-  transition: transform 0.4s linear;
+  transition:
+    transform 0.4s linear,
+    opacity 0.7s ease;
+}
+
+/* Finish the last stretch of the glide, then dissolve into the rail. */
+.buffered.landed {
+  opacity: 0;
+  transition-delay: 0s, 0.4s;
 }
 
 .thumb {
