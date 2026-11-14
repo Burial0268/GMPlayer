@@ -1,6 +1,6 @@
 <template>
   <Motion
-    class="bouncing-slider"
+    :class="['bouncing-slider', { indeterminate }]"
     :style="{ x: bounceXSpring }"
     :onPanStart="handlePanStart"
     :onPan="handlePan"
@@ -20,6 +20,7 @@
           :style="{ transform: `scaleX(${bufferedScale})` }"
         />
         <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
+        <div v-if="indeterminate" class="sweep" />
       </Motion>
     </div>
     <slot name="after-icon" />
@@ -47,10 +48,16 @@ const props = withDefaults(
     changeOnDrag?: boolean;
     /** How far the track is buffered, in the units of `value`. */
     buffered?: number;
+    /**
+     * No position to show (an AutoMix crossfade): the bar glows, a light sweeps across it, and it
+     * takes no seeks — there is no single track for one to land in.
+     */
+    indeterminate?: boolean;
   }>(),
   {
     isPlaying: false,
     changeOnDrag: false,
+    indeterminate: false,
   },
 );
 
@@ -280,6 +287,17 @@ const handleClick = (event: MouseEvent) => {
 .inner-wrapper {
   flex: 1;
   width: 100%;
+  /* On the wrapper: `.inner` is clipped to its rounded shape and would clip its own shadow. */
+  transition: filter 0.8s ease;
+}
+
+.indeterminate {
+  pointer-events: none;
+}
+
+.indeterminate .inner-wrapper {
+  filter: drop-shadow(0 0 6px rgb(255 255 255 / 55%));
+  transition-duration: 0.7s;
 }
 
 .inner {
@@ -313,6 +331,39 @@ const handleClick = (event: MouseEvent) => {
 
 .thumb {
   opacity: 0.4;
+  transition: opacity 0.25s ease;
+}
+
+.indeterminate .thumb,
+.indeterminate .buffered {
+  opacity: 0;
+}
+
+.sweep {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 85%), transparent);
+  /* -100% → 250% of its own 40% width: enters fully off the left edge, leaves off the right. */
+  animation: slider-sweep 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@keyframes slider-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sweep {
+    width: 100%;
+    opacity: 0.5;
+    animation: none;
+  }
 }
 
 .bouncing-slider > :deep(.n-icon) {

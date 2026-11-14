@@ -397,6 +397,8 @@ const messages: Record<string, unknown> = {
   },
   // Player
   player: {
+    // AutoMix 转场期间替代音质标签
+    autoMixTransition: "Transition",
     // 无障碍标签：图标按钮没有可见文字，读屏器只能靠 aria-label
     controls: {
       playMode: "Play mode",

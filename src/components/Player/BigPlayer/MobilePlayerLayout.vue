@@ -190,15 +190,28 @@
                       :max="music.getPlaySongTime.duration || 1"
                       :is-playing="music.getPlayState"
                       :buffered="music.bufferedTime"
+                      :indeterminate="autoMixTransitioning"
                       @update:value="handleProgressSeek"
                     />
                     <div class="time-display">
                       <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                      <span v-if="qualityText" class="quality-badge">
+                      <span
+                        v-if="qualityText || autoMixTransitioning"
+                        :class="[
+                          'quality-badge',
+                          'automix-badge',
+                          { transitioning: autoMixTransitioning },
+                        ]"
+                      >
                         <n-icon :component="IconLossless" />
-                        <span class="quality-label">{{ qualityText }}</span>
+                        <span class="automix-badge-labels">
+                          <span class="quality-label automix-badge-quality">{{ qualityText }}</span>
+                          <span class="automix-badge-transition">
+                            {{ $t("player.autoMixTransition") }}
+                          </span>
+                        </span>
                       </span>
-                      <span>-{{ remainingTime }}</span>
+                      <span>{{ autoMixTransitioning ? "∞" : `-${remainingTime}` }}</span>
                     </div>
                   </div>
                   <!-- 控制按钮 + 音量 -->
@@ -332,6 +345,7 @@ import OutputDeviceButton from "./OutputDeviceButton.vue";
 import PlayerQueueList from "./PlayerQueueList.vue";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { useQualityText } from "@/composables/useQualityText";
+import { useAutoMixTransition } from "@/composables/useAutoMixTransition";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 type Artist = { name: string };
@@ -419,6 +433,7 @@ const queueTouch = ref<{
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
 const qualityText = useQualityText();
+const autoMixTransitioning = useAutoMixTransition();
 // The output menu drives the native backend; the web player has no device list to offer.
 const nativeOutput = isTauri();
 const playbackControlsRef = ref<HTMLElement | null>(null);

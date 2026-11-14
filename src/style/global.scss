@@ -736,25 +736,58 @@ html.has-floating-titlebar {
   word-break: break-all;
 }
 
-// AutoMix 转场：下一首叠在当前这首上，按混音进度淡入（`useAutoMixVisual` 每帧写
-// `--automix-mix`）。opacity 挂在层自己身上，不挂祖先，否则会隔断 plus-lighter 混合。
-.automix-stack {
-  display: grid;
-  min-width: 0;
+// AutoMix 转场（Apple Music 式）：混音期间音质标签读作「过渡」并发光，见 useAutoMixTransition。
+// 高亮用 box-shadow 叠一层，不碰各组件 scoped 里的背景色。
+.automix-badge {
+  transition: box-shadow 0.8s ease;
 
-  > * {
-    grid-area: 1 / 1;
+  .automix-badge-labels {
+    display: grid;
     min-width: 0;
+
+    > * {
+      grid-area: 1 / 1;
+      min-width: 0;
+      transition: opacity 0.25s ease;
+    }
+  }
+
+  .automix-badge-transition {
+    opacity: 0;
+  }
+
+  &.transitioning {
+    box-shadow:
+      inset 0 0 0 100vmax rgb(255 255 255 / 14%),
+      0 0 12px rgb(255 255 255 / 30%);
+    transition-duration: 0.7s;
+
+    .automix-badge-quality {
+      opacity: 0;
+    }
+
+    .automix-badge-transition {
+      opacity: 1;
+      animation: automix-badge-glow 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+    }
   }
 }
 
-.automix-out {
-  opacity: calc(1 - var(--automix-mix, 0));
+@keyframes automix-badge-glow {
+  0%,
+  100% {
+    text-shadow: 0 0 2px currentColor;
+  }
+
+  50% {
+    text-shadow: 0 0 10px currentColor;
+  }
 }
 
-.automix-in {
-  opacity: var(--automix-mix, 0);
-  pointer-events: none;
+@media (prefers-reduced-motion: reduce) {
+  .automix-badge.transitioning .automix-badge-transition {
+    animation: none;
+  }
 }
 
 // 响应式布局

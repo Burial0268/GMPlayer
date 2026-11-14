@@ -26,26 +26,11 @@
                 decoding="async"
                 alt="pic"
               />
-              <img
-                v-if="mixIncoming"
-                class="automix-cover automix-in"
-                :src="coverUrl(mixIncoming.album?.picUrl, 50)"
-                decoding="async"
-                alt=""
-              />
             </div>
             <div class="name">
-              <div
-                v-button
-                class="song automix-stack"
-                data-mobile-player-title
-                @click.stop="openSongDetail"
-              >
-                <OverflowMarquee :class="{ 'automix-out': mixIncoming }" :speed="36">
+              <div v-button class="song" data-mobile-player-title @click.stop="openSongDetail">
+                <OverflowMarquee :speed="36">
                   {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
-                </OverflowMarquee>
-                <OverflowMarquee v-if="mixIncoming" class="automix-in" :speed="36">
-                  {{ mixIncoming.name }}
                 </OverflowMarquee>
               </div>
               <!-- 显示歌手或歌词 -->
@@ -338,7 +323,6 @@ import ListenTogetherModal from "@/components/DataModal/ListenTogetherModal.vue"
 import ListenTogetherStatus from "./ListenTogetherStatus.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
-import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import BigPlayer from "./BigPlayer/index.vue";
 import MiniPlayerProgress from "./MiniPlayerProgress.vue";
 import { watch } from "vue";
@@ -367,7 +351,6 @@ useNativeMediaControls(computed(() => !bootAdopting.value));
 const addPlayListRef = ref(null);
 const PlayListDrawerRef = ref(null);
 const bigPlayerRef = ref(null);
-const { incoming: mixIncoming } = useAutoMixVisual();
 
 let miniTouchState = null;
 let suppressMiniClick = false;
@@ -1597,11 +1580,6 @@ const applyLocalTrackChange = async (change) => {
           border-radius: inherit;
           object-fit: cover;
           display: block;
-        }
-
-        .automix-cover {
-          position: absolute;
-          inset: 0;
         }
       }
 
