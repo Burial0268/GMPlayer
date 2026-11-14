@@ -214,3 +214,8 @@ test("the lyric view reads the sound's own clock, not the store's", () => {
   assert.match(lyricPlayer, /activeSound\.value\?\.position/);
   assert.doesNotMatch(lyricPlayer, /\.seek\?\.\(/);
 });
+
+test("a rebuffer does not hide lyrics that are already on screen", () => {
+  const rolling = readFileSync("src/components/Player/RollingLyrics.vue", "utf8");
+  assert.match(rolling, /loading:\s*music\.isLoadingSong && music\.loadingStage !== "rebuffering"/);
+});

@@ -67,7 +67,9 @@ const lyricClasses = computed(() => ({
   "lyric-am": true,
   "lyric-left": setting.lyricsPosition === "left",
   "lyric-center": setting.lyricsPosition === "center",
-  loading: music.isLoadingSong,
+  // A track loading, not a rebuffer: a stream that falls behind for a moment mid-track must not
+  // blank lyrics that are already on screen.
+  loading: music.isLoadingSong && music.loadingStage !== "rebuffering",
 }));
 </script>
 
