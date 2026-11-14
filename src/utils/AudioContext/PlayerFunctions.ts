@@ -249,6 +249,14 @@ const disableActiveNativeAnalysis = (): void => {
   sound.setAnalysisEnabled(false);
 };
 
+// Once per track: the only record of whether Netease accepted a listen (`console` never reaches
+// GMPlayer.log, and a rejection is not an HTTP error).
+const logScrobble = (level: "info" | "warn", message: string, detail?: unknown): void => {
+  const suffix = detail === undefined ? "" : `: ${JSON.stringify(detail)?.slice(0, 600)}`;
+  logNative(level, `[scrobble] ${message}${suffix}`);
+  if (IS_DEV) console[level === "warn" ? "warn" : "log"](`[scrobble] ${message}`, detail ?? "");
+};
+
 const scheduleScrobble = (reason: string): void => {
   const music = musicStore();
   const user = userStore();
@@ -292,9 +300,11 @@ const scheduleScrobble = (reason: string): void => {
       type: "song",
       cookie: desktopCookie,
       ua: buildNeteaseDesktopUserAgent(),
-    }).catch((err) => {
-      console.error("播放状态提交失败：" + err);
-    });
+    })
+      .then((res) => {
+        if (res?.code !== 200) logScrobble("warn", `play state for ${songId} rejected`, res);
+      })
+      .catch((err) => logScrobble("warn", `play state for ${songId} failed`, String(err)));
 
     songScrobbleV2(songId, totalSec, {
       sourceid: sourceId || undefined,
@@ -304,13 +314,16 @@ const scheduleScrobble = (reason: string): void => {
       total: totalSec || undefined,
     })
       .then((res) => {
+        // A rejected PLV/PLD upload still answers HTTP 200, with the reason in the body.
+        if (res?.code !== 200) {
+          logScrobble("warn", `${songId} rejected (${reason})`, res);
+          return;
+        }
         lastScrobbleKey = scrobbleKey;
         lastScrobbleAt = Date.now();
-        if (IS_DEV) console.log(`歌曲打卡完成 (${reason})`, res);
+        logScrobble("info", `${songId} reported (${reason}, ${totalSec}s)`);
       })
-      .catch((err) => {
-        console.error("歌曲打卡失败：" + err);
-      });
+      .catch((err) => logScrobble("warn", `${songId} failed (${reason})`, String(err)));
   }, SCROBBLE_DELAY_MS);
 };
 
