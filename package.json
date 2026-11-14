@@ -17,6 +17,7 @@
     "preview": "vite preview",
     "test:navigation": "node scripts/test-navigation.mjs",
     "test:audio-ui": "node scripts/test-audio-ui.mjs",
+    "test:wasm-analysis": "node --test tests/wasm-analysis.test.mjs",
     "test:native-sound-attach": "node scripts/test-native-sound-attach.mjs",
     "test:audio-lifecycle": "node scripts/test-audio-lifecycle.mjs",
     "test:automix-native": "node scripts/test-automix-native.mjs",

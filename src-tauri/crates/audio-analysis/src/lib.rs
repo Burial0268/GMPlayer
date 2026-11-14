@@ -26,7 +26,7 @@ use rustfft::{num_complex::Complex, FftPlanner};
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const FFT_SIZE: usize = 2048;
+pub const FFT_SIZE: usize = 2048;
 const FFT_BIN_COUNT: usize = FFT_SIZE / 2 + 1;
 const RESULT_BUF_SIZE: usize = 2048;
 /// AMLL's window (below) is a ramp that peaks around 2·10⁴ instead of a taper
@@ -62,6 +62,25 @@ impl Default for FftConfig {
             freq_min: 80.0,
             freq_max: 2000.0,
         }
+    }
+}
+
+impl FftConfig {
+    /// Playback visuals include kick fundamentals below AMLL's 80 Hz default.
+    pub fn visualization() -> Self {
+        Self {
+            freq_min: 40.0,
+            ..Self::default()
+        }
+    }
+}
+
+/// Match FFmpeg's stereo downmix after the input channels have been averaged.
+pub fn visualization_downmix_gain(channels: u16) -> f32 {
+    if channels == 2 {
+        std::f32::consts::SQRT_2
+    } else {
+        1.0
     }
 }
 
@@ -425,6 +444,11 @@ impl FftProcessor {
         &self.result_buf
     }
 
+    /// The two samples AMLL's 128-bin interpolation feeds to the background.
+    pub fn low_frequency_bins(&self) -> [f32; 2] {
+        [self.result_buf[0], self.result_buf[RESULT_BUF_SIZE >> 7]]
+    }
+
     pub fn is_ready(&self) -> bool {
         true
     }
@@ -731,6 +755,26 @@ impl AudioProcessor {
 mod tests {
     use super::*;
     use std::f32::consts::TAU;
+
+    #[test]
+    fn visualization_stereo_matches_calibrated_mono() {
+        let mut stereo = FftProcessor::new(FftConfig::visualization());
+        let mut mono = FftProcessor::new(FftConfig::visualization());
+        let gain = visualization_downmix_gain(2);
+        let samples: Vec<f32> = (0..FFT_SIZE)
+            .map(|i| 0.3 * (TAU * 55.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let interleaved: Vec<f32> = samples.iter().flat_map(|s| [s * gain, s * gain]).collect();
+        let downmixed: Vec<f32> = samples.iter().map(|s| s * gain).collect();
+        stereo.push_interleaved_pcm(&interleaved, 2, 48_000);
+        mono.push_pcm(&downmixed, 48_000);
+        stereo.read_spectrum_raw();
+        mono.read_spectrum_raw();
+        assert_eq!(stereo.raw_spectrum(), mono.raw_spectrum());
+        assert_eq!(stereo.low_frequency_bins(), mono.low_frequency_bins());
+        assert!(mono.low_frequency_bins().iter().all(|&bin| bin > 1000.0));
+        assert_eq!(visualization_downmix_gain(1), 1.0);
+    }
 
     #[test]
     fn test_amplitude_to_level() {

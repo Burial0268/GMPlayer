@@ -194,10 +194,9 @@ export class NativeRustSound implements ISound {
   private _fftData: number[] = [];
   private _frequencyData: Uint8Array<ArrayBuffer> = new Uint8Array(0);
   private _averageAmplitude: number = 0;
-  /** Low-frequency volume from the `lowFrequencyVolume` event (WASM backend,
-   * which computes it in its worker). */
+  /** Compatibility with backends that still send a computed low-frequency volume. */
   private _lowFreqVolume: number = 0;
-  /** Native backend: the lowest raw FFT bins of the latest frame. The AMLL
+  /** Native and WASM: the lowest raw FFT bins of the latest frame. The AMLL
    * low-pass runs on them per display frame in `getLowFrequencyVolume`. */
   private _lowFreqBins: number[] | null = null;
   private readonly _lowFreq = new LowFreqVolumeAnalyzer();

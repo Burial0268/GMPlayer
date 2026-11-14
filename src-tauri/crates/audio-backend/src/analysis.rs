@@ -30,13 +30,12 @@ use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use audio_analysis::{FftConfig, FftProcessor};
+use audio_analysis::{visualization_downmix_gain, FftConfig, FftProcessor, FFT_SIZE};
 use tokio::sync::mpsc as tokio_mpsc;
 use tracing::warn;
 
 use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 
-const FFT_SIZE: usize = 2048;
 /// Poll interval while a frame is due but not enough audio has arrived yet.
 const TICK: Duration = Duration::from_millis(8);
 const FFT_HOP: Duration = Duration::from_millis(16);
@@ -50,10 +49,6 @@ const FFT_DATA_INTERVAL: Duration = Duration::from_millis(50);
 const PCM_QUEUE_CAPACITY: usize = 128;
 /// Bound on blocks waiting out their lead; a runaway lead releases the oldest.
 const MAX_DELAYED_BLOCKS: usize = 512;
-/// Distance between the `result_buf` entries AMLL's `vec_interp` reads for
-/// bins 0 and 1 (`RESULT_BUF_SIZE >> 7`).
-const BIN_STRIDE: usize = 16;
-const LOW_BIN_COUNT: usize = 2;
 /// A playing stream produces a frame every `FFT_HOP`; a gap this long means the
 /// decoder or the playback queues stalled, which shows up as a dead background.
 const FRAME_GAP_WARN: Duration = Duration::from_millis(300);
@@ -245,13 +240,7 @@ struct Analysis {
 impl Analysis {
     fn new(evt: EventSink) -> Self {
         Self {
-            fft: FftProcessor::new(FftConfig {
-                output_size: FFT_SIZE,
-                // AMLL starts at 80 Hz, which puts both low bins near 100 Hz:
-                // bass and toms, above most kick fundamentals (45–65 Hz).
-                freq_min: 40.0,
-                freq_max: 2000.0,
-            }),
+            fft: FftProcessor::new(FftConfig::visualization()),
             delayed: DelayQueue::default(),
             pending_mono_samples: 0,
             sample_rate: 44_100,
@@ -320,7 +309,7 @@ impl Analysis {
         }
 
         while let Some(mut pcm) = self.delayed.pop_due(now) {
-            let gain = downmix_gain(pcm.channels);
+            let gain = visualization_downmix_gain(pcm.channels);
             if gain != 1.0 {
                 pcm.samples.iter_mut().for_each(|s| *s *= gain);
             }
@@ -355,7 +344,7 @@ impl Analysis {
         let drained = (FFT_HOP.as_secs_f32() * self.sample_rate as f32) as usize;
         self.pending_mono_samples = self.pending_mono_samples.saturating_sub(drained.max(1));
 
-        let bins = (0..LOW_BIN_COUNT).map(|i| raw[i * BIN_STRIDE]).collect();
+        let bins = self.fft.low_frequency_bins().to_vec();
         let sent = self
             .evt
             .send(AudioThreadEventMessage::new(
@@ -388,19 +377,6 @@ impl Analysis {
         for pcm in self.delayed.drain() {
             recycle(pcm);
         }
-    }
-}
-
-/// `push_interleaved_pcm` averages channels; AMLL's ffmpeg downmix is
-/// `0.7071 * (L + R)`, so a centred bass note comes out 1.41x louder. The FFT
-/// levels feed a log curve and a fixed 0.35 threshold, and at the averaged level
-/// the output moves about a quarter as much. Stereo only: other layouts use
-/// ffmpeg's own matrix and are left averaged.
-fn downmix_gain(channels: u16) -> f32 {
-    if channels == 2 {
-        std::f32::consts::SQRT_2
-    } else {
-        1.0
     }
 }
 
@@ -512,7 +488,7 @@ mod tests {
             .is_ok());
         wait_event(
             &mut received,
-            |event| matches!(event, AudioThreadEvent::LowFreqBins { bins } if bins.len() == LOW_BIN_COUNT),
+            |event| matches!(event, AudioThreadEvent::LowFreqBins { bins } if bins.len() == 2),
         );
         wait_event(
             &mut received,
@@ -526,8 +502,8 @@ mod tests {
     fn stereo_downmix_matches_ffmpeg_not_the_average() {
         // ffmpeg: mono = 0.7071 * (L + R); the processor averages, so scale by sqrt(2).
         let (l, r) = (0.5f32, 0.1f32);
-        assert!((downmix_gain(2) * (l + r) / 2.0 - 0.7071 * (l + r)).abs() < 1e-4);
-        assert_eq!(downmix_gain(1), 1.0);
+        assert!((visualization_downmix_gain(2) * (l + r) / 2.0 - 0.7071 * (l + r)).abs() < 1e-4);
+        assert_eq!(visualization_downmix_gain(1), 1.0);
     }
 
     #[test]
