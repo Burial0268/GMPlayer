@@ -1798,11 +1798,9 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     /**
-     * A user switch committed a different song, and the song watcher loads it after its
-     * debounce. Until that load reaches the backend the spinner is the page's (`resolving`), so
-     * the old track's `paused` phase — the backend answering the switch's own stop — cannot
-     * end it. Only when a load will follow: no song, the same id (a duplicate row) or native
-     * FM are skipped by the watcher, and nothing would then end the stage.
+     * Until the new song's load reaches the backend the spinner is the page's (`resolving`), so
+     * the old track's `paused` phase cannot end it. Skipped when the song watcher starts no load
+     * (no song, same id, native FM): nothing would end the stage.
      */
     beginSongSwitch(fromId: number | undefined) {
       this.isLoadingSong = true;
