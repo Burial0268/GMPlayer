@@ -51,7 +51,6 @@ import { logNative } from "@/utils/tauri/core/nativeLog";
 import { naturalQueueOrder } from "@/utils/playlistOrder";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/native/PersonalFmState";
 import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
-import { skipTrace } from "@/utils/skipTrace";
 import {
   startNativePersonalFm,
   stopNativePersonalFm,
@@ -1398,11 +1397,6 @@ const useMusicDataStore = defineStore("musicData", {
     },
 
     setPlaySongIndex(type: "next" | "prev") {
-      skipTrace("setPlaySongIndex", type, {
-        from: this.persistData.playSongIndex,
-        playState: this.playState,
-        isLoadingSong: this.isLoadingSong,
-      });
       if (isTauri() && this.persistData.personalFmMode) {
         if (type === "next") nextNativePersonalFm();
         return true;
@@ -1476,9 +1470,6 @@ const useMusicDataStore = defineStore("musicData", {
           return !!currentSong;
         }
 
-        skipTrace("soundStop old", activePlayer ? SoundManager.getSongId(activePlayer) : null, {
-          nextIndex,
-        });
         if (activePlayer) soundStop(activePlayer);
         this.isLoadingSong = true;
         if (!this.commitPlaySongIndex(nextIndex)) {
@@ -1490,10 +1481,6 @@ const useMusicDataStore = defineStore("musicData", {
         this.resetSongLyricState();
         this.beginSongSwitch(currentSong?.id);
         nextTick().then(() => {
-          skipTrace("nextTick re-arm playState=true", {
-            playState: this.playState,
-            isLoadingSong: this.isLoadingSong,
-          });
           if (this.persistData.playlists.length > 0) this.setPlayState(true);
         });
         return true;

@@ -55,7 +55,6 @@ import {
   buildNeteaseDesktopUserAgent,
   createNeteasePlaybackSessionId,
 } from "../neteaseClient";
-import { skipTrace } from "@/utils/skipTrace";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 /** How long a backend-initiated transition (native advance / AutoMix adoption)
@@ -755,7 +754,6 @@ const setupNativeSound = (
   };
 
   SoundManager.setCurrentSound(sound, boundSongId);
-  skipTrace("setupNativeSound", boundSongId, { autoPlay, loadAttempt });
   music.loadingStage = "buffering";
 
   applyGlobalCoverPalette(music.getPlaySongData.album.picUrl).catch((err) => {
@@ -798,9 +796,7 @@ const setupNativeSound = (
   // ── Load ──────────────────────────────────────────────────────
   sound.once("load", () => {
     _clearLoadTimeout();
-    const stale = discardIfStale();
-    skipTrace("native load", boundSongId, { stale, alreadyPlaying: sound.playing(), autoPlay });
-    if (stale) return;
+    if (discardIfStale()) return;
     // The decoder being up is not audio: the backend stays in `loading` until
     // the device renders the track, and its phase clears the spinner then.
     music.settleLoading();
@@ -857,7 +853,6 @@ const setupNativeSound = (
 
   // ── Play ──────────────────────────────────────────────────────
   function handleNativePlay(): void {
-    skipTrace("native play", SoundManager.getSongId(sound), { active: isActiveBoundSound() });
     if (!isActiveBoundSound()) return;
     const autoMixCheck = getAutoMixEngine();
     if (autoMixCheck.isCrossfading()) return;
@@ -945,10 +940,6 @@ const setupNativeSound = (
 
   // ── Pause ─────────────────────────────────────────────────────
   sound.on("pause", () => {
-    skipTrace("native pause", SoundManager.getSongId(sound), {
-      active: isActiveBoundSound(),
-      crossfading: getAutoMixEngine().isCrossfading(),
-    });
     if (!isActiveBoundSound()) return;
     // The store already moved to another song: this is a switch stopping the
     // old track, not a pause. Playback is still wanted, and the store's time

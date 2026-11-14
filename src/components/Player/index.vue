@@ -366,7 +366,6 @@ import {
   setupNativePersonalFm,
   sendNativeFmPlaying,
 } from "@/utils/AudioContext/native/NativePersonalFm";
-import { skipTrace } from "@/utils/skipTrace";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -605,11 +604,6 @@ const attachNativeFmPlayback = (event) => {
 // 获取歌曲播放数据
 const getPlaySongData = async (data, level = setting.songLevel, requestedGeneration = null) => {
   const generation = requestedGeneration ?? ++_songLoadGeneration;
-  skipTrace("getPlaySongData", data?.id, {
-    generation,
-    current: _songLoadGeneration,
-    stale: generation !== _songLoadGeneration,
-  });
   if (generation !== _songLoadGeneration) return;
   try {
     if (!data || !data.id) {
@@ -835,7 +829,6 @@ const patternClick = (val) => {
 
 // 歌曲更换事件
 const songChange = debounce(500, (val, generation) => {
-  skipTrace("songChange fired", val?.id, { generation, current: _songLoadGeneration });
   getPlaySongData(val, setting.songLevel, generation);
 });
 
@@ -974,15 +967,6 @@ watch(
   { flush: "sync" },
 );
 
-// TEMP(skip-trace): the console snippet, built in — every loading/phase edge, in order.
-watch(
-  () => [music.isLoadingSong, music.loadingStage, music.backendPhase],
-  ([loading, stage, phase], old) => {
-    skipTrace("loading", { isLoadingSong: loading, stage, phase, was: old });
-  },
-  { flush: "sync" },
-);
-
 // 监听当前音乐数据变化
 watch(
   () => (music ? music.getPlaySongData : null),
@@ -991,7 +975,6 @@ watch(
     // 但同一首歌不应重新加载；不同的歌（即使处于相同索引）必须加载。
     if (val?.id !== oldVal?.id) {
       const generation = ++_songLoadGeneration;
-      skipTrace("song watcher", oldVal?.id, "→", val?.id, { generation });
       songChange.cancel({ upcomingOnly: true });
       if (bootAdopting.value || (isTauri() && music.persistData.personalFmMode)) {
         if (!bootAdopting.value && val?.id) loadLyricFor(val, val.id);
@@ -1060,12 +1043,6 @@ watch(
   () => music.getPlayState,
   (val) => {
     console.log(`[Player] Play state changed to: ${val}. Player instance:`, player.value);
-    skipTrace("playState watcher", val, {
-      isLoadingSong: music.isLoadingSong,
-      soundSongId: player.value ? SoundManager.getSongId(player.value) : null,
-      currentSongId: Number(music.getPlaySongData?.id),
-      bootAdopting: bootAdopting.value,
-    });
     if (bootAdopting.value) return;
     if (isTauri() && music.persistData.personalFmMode) {
       if (!music.nativeFmSession || music.nativeFmSession.desiredPlaying !== val) {
@@ -1089,7 +1066,6 @@ watch(
         currentSongId,
         soundSongId: SoundManager.getSongId(player.value),
       });
-      skipTrace("refusing-resume", { startsLoad: !music.isLoadingSong && !!music.getPlaySongData });
       if (!music.isLoadingSong && music.getPlaySongData) {
         music.isLoadingSong = true;
         const generation = ++_songLoadGeneration;

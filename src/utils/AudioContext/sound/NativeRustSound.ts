@@ -41,7 +41,6 @@ import type {
 } from "../../tauri/audio/protocol";
 import { getAudioBackendTransport, type AudioBackendTransport } from "../../tauri/audio/transport";
 import { isAudioBackendRuntimeAvailable } from "../../tauri/audio/backendRuntime";
-import { skipTrace } from "@/utils/skipTrace";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 const LOAD_TIMEOUT_MS = 10_000;
@@ -422,9 +421,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   // ═════════════════════════════════════════════════════════════╝
 
   private _sendCommand(msg: AudioThreadMessage): boolean {
-    if (msg.type === "pauseAudio" || msg.type === "resumeAudio") skipTrace("→ backend", msg.type);
-    else if (msg.type === "setPlaylist" && msg.playIndex !== undefined)
-      skipTrace("→ backend setPlaylist", { autoplay: msg.autoplay, id: msg.loadRequestId });
     const transport = this._transport ?? getAudioBackendTransport();
     this._transport = transport;
     const sentNow = transport.sendOrQueue(msg);
@@ -715,11 +711,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
       }
 
       case "playStatus": {
-        skipTrace("← playStatus", evt.data.isPlaying, {
-          ready: this._backendTrackReady,
-          loaded: this._loaded,
-          was: this._playbackState,
-        });
         if (!this._backendTrackReady) break;
         const wantPlaying = evt.data.isPlaying;
         this._pendingPlayCommand = false;
