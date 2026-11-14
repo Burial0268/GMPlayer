@@ -6,16 +6,20 @@
     <div class="dock-content">
       <div class="dock-head">
         <div class="dock-text">
-          <span class="dock-name text-hidden">
-            {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+          <span class="dock-name">
+            <OverflowMarquee :speed="36">
+              {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+            </OverflowMarquee>
           </span>
-          <span v-if="artistList.length" class="dock-artists text-hidden">
-            <template v-for="(ar, index) in artistList" :key="ar.id">
-              <span v-button class="artist-name" @click="routerJump('/artist', { id: ar.id })">
-                {{ ar.name }}
-              </span>
-              <span v-if="index < artistList.length - 1"> / </span>
-            </template>
+          <span v-if="artistList.length" class="dock-artists">
+            <OverflowMarquee>
+              <template v-for="(ar, index) in artistList" :key="ar.id">
+                <span v-button class="artist-name" @click="routerJump('/artist', { id: ar.id })">
+                  {{ ar.name }}
+                </span>
+                <span v-if="index < artistList.length - 1">&nbsp;/&nbsp;</span>
+              </template>
+            </OverflowMarquee>
           </span>
         </div>
         <button

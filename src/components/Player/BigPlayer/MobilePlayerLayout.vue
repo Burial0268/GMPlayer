@@ -257,11 +257,7 @@
           :style="titleFrameStyle"
         >
           <div class="title-name">
-            <OverflowMarquee
-              v-if="isNameOverflow && !textTravelling"
-              class="title-marquee"
-              :speed="36"
-            >
+            <OverflowMarquee v-if="!textTravelling" class="title-marquee" :speed="36">
               <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
             </OverflowMarquee>
             <template v-else>{{ songName || $t("other.noSong") }}</template>
@@ -275,7 +271,10 @@
           aria-hidden="true"
           :style="artistsFrameStyle"
         >
-          <div class="artists-line">{{ artistNames }}</div>
+          <div class="artists-line">
+            <OverflowMarquee v-if="!textTravelling">{{ artistNames }}</OverflowMarquee>
+            <template v-else>{{ artistNames }}</template>
+          </div>
         </Motion>
       </div>
     </div>
@@ -924,7 +923,6 @@ defineExpose({
 
   .title-marquee-content {
     display: inline-block;
-    padding-right: 2em;
     white-space: nowrap;
   }
 }
@@ -1194,7 +1192,6 @@ defineExpose({
 
         .mobile-name-marquee-content {
           display: inline-block;
-          padding-right: 2em;
           white-space: nowrap;
         }
       }
@@ -1400,7 +1397,6 @@ defineExpose({
 
           .mobile-name-marquee-content {
             display: inline-block;
-            padding-right: 2em;
             white-space: nowrap;
           }
         }

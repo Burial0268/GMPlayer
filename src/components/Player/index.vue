@@ -28,26 +28,18 @@
               />
             </div>
             <div class="name">
-              <div
-                v-button
-                class="song text-hidden"
-                data-mobile-player-title
-                @click.stop="openSongDetail"
-              >
-                {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+              <div v-button class="song" data-mobile-player-title @click.stop="openSongDetail">
+                <OverflowMarquee :speed="36">
+                  {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+                </OverflowMarquee>
               </div>
               <!-- 显示歌手或歌词 -->
               <div class="artisrOrLrc" v-if="music.getPlaySongData">
                 <Transition name="fade" mode="out-in">
                   <template v-if="setting.bottomLyricShow">
                     <Transition name="mini-lyric" mode="out-in">
-                      <n-text
-                        v-if="miniLyricLine"
-                        :key="miniLyricLine.key"
-                        :class="['lrc', { 'is-marquee': miniLrcOverflow }]"
-                        :depth="3"
-                      >
-                        <span ref="lrcMeasureRef" class="lrc-measure-content">
+                      <n-text v-if="miniLyricLine" :key="miniLyricLine.key" class="lrc" :depth="3">
+                        <OverflowMarquee class="mini-lrc-marquee" :speed="34">
                           <span
                             v-for="item in miniLyricLine.words"
                             :key="item.key"
@@ -55,38 +47,17 @@
                           >
                             {{ item.content }}
                           </span>
-                        </span>
-                        <OverflowMarquee
-                          v-if="miniLrcOverflow"
-                          class="mini-lrc-marquee"
-                          :speed="34"
-                        >
-                          <span class="lrc-marquee-content">
-                            <span
-                              v-for="item in miniLyricLine.words"
-                              :key="item.key"
-                              class="lrc-word"
-                            >
-                              {{ item.content }}
-                            </span>
-                          </span>
                         </OverflowMarquee>
                       </n-text>
-                      <AllArtists
-                        v-else
-                        key="artists"
-                        class="text-hidden"
-                        data-mobile-player-artists
-                        :artistsData="music.getPlaySongData.artist"
-                      />
+                      <OverflowMarquee v-else key="artists" data-mobile-player-artists>
+                        <AllArtists :artistsData="music.getPlaySongData.artist" />
+                      </OverflowMarquee>
                     </Transition>
                   </template>
                   <template v-else>
-                    <AllArtists
-                      class="text-hidden"
-                      data-mobile-player-artists
-                      :artistsData="music.getPlaySongData.artist"
-                    />
+                    <OverflowMarquee data-mobile-player-artists>
+                      <AllArtists :artistsData="music.getPlaySongData.artist" />
+                    </OverflowMarquee>
                   </template>
                 </Transition>
               </div>
@@ -379,8 +350,6 @@ const bootAdopting = ref(isTauri());
 useNativeMediaControls(computed(() => !bootAdopting.value));
 const addPlayListRef = ref(null);
 const PlayListDrawerRef = ref(null);
-const lrcMeasureRef = ref(null);
-const miniLrcOverflow = ref(false);
 const bigPlayerRef = ref(null);
 
 let miniTouchState = null;
@@ -434,16 +403,6 @@ const miniLyricLine = computed(() => {
     words: [{ key: index, content }],
   };
 });
-
-const updateMiniLrcOverflow = () => {
-  const textEl = lrcMeasureRef.value;
-  const containerEl = textEl?.parentElement;
-  if (!textEl || !containerEl) {
-    miniLrcOverflow.value = false;
-    return;
-  }
-  miniLrcOverflow.value = textEl.scrollWidth > containerEl.clientWidth + 1;
-};
 
 const getMiniSharedFrames = () => {
   const artworkEl = document.querySelector("[data-mobile-player-artwork]");
@@ -1464,25 +1423,6 @@ const applyLocalTrackChange = async (change) => {
   // stuttering backwards), so a republish is the only route in.
   publishNativeManifest({ force: true });
 };
-
-watch(
-  () => [
-    miniLyricLine.value?.key,
-    miniLyricLine.value?.words.map((item) => item.content).join(""),
-    setting.bottomLyricShow,
-    setting.showYrc,
-  ],
-  () => {
-    miniLrcOverflow.value = false;
-    nextTick(updateMiniLrcOverflow);
-  },
-  { immediate: true },
-);
-
-watch(
-  () => music.showBigPlayer,
-  () => nextTick(updateMiniLrcOverflow),
-);
 </script>
 
 <style lang="scss" scoped>
@@ -1692,19 +1632,6 @@ watch(
             overflow: hidden;
             word-break: normal;
 
-            .lrc-measure-content {
-              display: inline-block;
-              white-space: nowrap;
-            }
-
-            &.is-marquee {
-              .lrc-measure-content {
-                position: absolute;
-                visibility: hidden;
-                pointer-events: none;
-              }
-            }
-
             .mini-lrc-marquee {
               width: 100%;
               height: 1.3em;
@@ -1718,12 +1645,6 @@ watch(
                 min-width: max-content;
                 white-space: nowrap;
               }
-            }
-
-            .lrc-marquee-content {
-              display: inline-block;
-              padding-right: 2em;
-              white-space: nowrap;
             }
 
             .lrc-word {

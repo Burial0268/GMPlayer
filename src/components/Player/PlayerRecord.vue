@@ -35,8 +35,10 @@
             :layout-id="sharedLayoutIds.title"
             :transition="sharedContentTransition"
           >
-            <span class="name text-hidden">
-              {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+            <span class="name">
+              <OverflowMarquee :speed="36">
+                {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+              </OverflowMarquee>
             </span>
           </Motion>
           <Motion
@@ -46,13 +48,18 @@
             :layout-id="sharedLayoutIds.artists"
             :transition="sharedContentTransition"
           >
-            <span class="artists text-hidden">
-              <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
-                <span v-button class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{
-                  ar.name
-                }}</span>
-                <span v-if="index < music.getPlaySongData.artist.length - 1"> / </span>
-              </span>
+            <span class="artists">
+              <OverflowMarquee>
+                <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
+                  <span
+                    v-button
+                    class="artist-name"
+                    @click="routerJump('/artist', { id: ar.id })"
+                    >{{ ar.name }}</span
+                  >
+                  <span v-if="index < music.getPlaySongData.artist.length - 1">&nbsp;/&nbsp;</span>
+                </span>
+              </OverflowMarquee>
             </span>
           </Motion>
         </div>
@@ -466,6 +473,8 @@ const routerJump = (url, query) => {
       color: var(--main-cover-mix-color, rgb(239, 239, 239));
       .text {
         display: flex;
+        flex: 1 1 auto;
+        min-width: 0;
         flex-direction: column;
         gap: 0.25rem;
         mix-blend-mode: plus-lighter;
