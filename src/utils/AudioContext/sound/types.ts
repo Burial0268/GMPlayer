@@ -103,7 +103,6 @@ export interface ISound {
   getFrequencyData(): Uint8Array<ArrayBuffer>;
   getFFTData(): ArrayLike<number>;
   getLowFrequencyVolume(): number;
-  getAverageAmplitude(): number;
   getEffectManager(): AudioEffectManager | null;
   getGainNode(): GainNode | null;
   ensureAudioGraph(): Promise<boolean>;

@@ -483,6 +483,7 @@ impl WasmAudioBackend {
             analysis.spectrum_elapsed_ms %= 50.0;
         }
         let low_freq_seq = self.next_seq();
+        let spectrum;
         let mut events = Vec::with_capacity(2);
         events.push(AnalysisEventMessage {
             callback_id: "",
@@ -491,15 +492,15 @@ impl WasmAudioBackend {
         });
         if send_spectrum {
             let fft_seq = self.next_seq();
-            let spectrum = self
+            spectrum = self
                 .analysis
                 .as_ref()
                 .expect("analysis exists")
                 .fft
-                .raw_spectrum();
+                .display_spectrum();
             events.push(AnalysisEventMessage {
                 callback_id: "",
-                data: AnalysisFrameEvent::FftData { data: spectrum },
+                data: AnalysisFrameEvent::FftData { data: &spectrum },
                 seq: fft_seq,
             });
         }

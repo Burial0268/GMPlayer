@@ -516,14 +516,6 @@ export class NativeSound extends SoundEvents implements ISound {
   }
 
   /**
-   * Get average amplitude from the last getFrequencyData() call
-   * @returns number in 0-255 range
-   */
-  getAverageAmplitude(): number {
-    return this._effectManager ? this._effectManager.getAverageAmplitude() : 0;
-  }
-
-  /**
    * Get the AudioEffectManager instance for direct configuration.
    * Allows runtime tuning of freq range, lowFreqVolume parameters, etc.
    */

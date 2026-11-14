@@ -96,7 +96,6 @@ export { AudioContextManager } from "./AudioContextManager";
 export {
   clearSpectrumFrame,
   getSpectrumFrame,
-  getSpectrumScale,
   getSpectrumVersion,
   setSpectrumFrame,
 } from "./analysis/SpectrumFrame";

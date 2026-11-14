@@ -589,17 +589,16 @@ const startSpectrumUpdate = (sound: ISound): void => {
     // Skip spectrum computation when page is not visible
     if (isPageVisible) {
       if (needsSpectrum) {
-        // Native Rust backend: use the 2048-bin raw FFT frame delivered over
+        // Native Rust backend: use the 512-value display frame delivered over
         // the native event Channel. Do not call getFrequencyData() here:
         // the web backend's AnalyserNode path is windowed/smoothed and only
         // 1024 bins by default.
         const spectrumData = isBackendSound(sound) ? sound.getFFTData() : sound.getFrequencyData();
-        const scale = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
-        setSpectrumFrame(spectrumData, scale);
+        setSpectrumFrame(spectrumData);
       } else if (needsLowFreq && !isBackendSound(sound)) {
         // Web backend only: populate AnalyserNode buffer for mobile fallback.
         // NativeRustSound receives lowFreqVolume from Rust over WS; normalizing
-        // its 2048-bin FFT here would be extra main-thread work per RAF.
+        // its spectrum frame here would be extra main-thread work per RAF.
         sound.getFrequencyData();
       }
 

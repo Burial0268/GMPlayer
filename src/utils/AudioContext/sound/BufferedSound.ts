@@ -282,10 +282,6 @@ export class BufferedSound extends SoundEvents implements ISound {
     return this._inner?.getLowFrequencyVolume() ?? NEUTRAL_LOW_FREQ_VOLUME;
   }
 
-  getAverageAmplitude(): number {
-    return this._inner?.getAverageAmplitude() ?? 0;
-  }
-
   getEffectManager(): AudioEffectManager | null {
     return this._inner?.getEffectManager() ?? null;
   }

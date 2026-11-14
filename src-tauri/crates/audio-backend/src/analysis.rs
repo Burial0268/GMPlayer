@@ -39,7 +39,7 @@ use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
 /// Poll interval while a frame is due but not enough audio has arrived yet.
 const TICK: Duration = Duration::from_millis(8);
 const FFT_HOP: Duration = Duration::from_millis(16);
-/// The full 2048-bin frame is only for the spectrum bars; at `FFT_HOP` it would
+/// The display frame is only for the spectrum bars; at `FFT_HOP` it would
 /// triple the IPC traffic for no visible gain.
 const FFT_DATA_INTERVAL: Duration = Duration::from_millis(50);
 /// Covers the deepest playback queue (48 deck + 48 output blocks): after a start
@@ -340,7 +340,6 @@ impl Analysis {
             }
         }
         self.fft.read_spectrum_raw();
-        let raw = self.fft.raw_spectrum();
         let drained = (FFT_HOP.as_secs_f32() * self.sample_rate as f32) as usize;
         self.pending_mono_samples = self.pending_mono_samples.saturating_sub(drained.max(1));
 
@@ -359,7 +358,9 @@ impl Analysis {
         self.evt
             .send(AudioThreadEventMessage::new(
                 String::new(),
-                Some(AudioThreadEvent::FFTData { data: raw.to_vec() }),
+                Some(AudioThreadEvent::FFTData {
+                    data: self.fft.display_spectrum().to_vec(),
+                }),
             ))
             .is_ok()
     }
@@ -492,7 +493,7 @@ mod tests {
         );
         wait_event(
             &mut received,
-            |event| matches!(event, AudioThreadEvent::FFTData { data } if !data.is_empty()),
+            |event| matches!(event, AudioThreadEvent::FFTData { data } if data.len() == audio_analysis::DISPLAY_SPECTRUM_BINS),
         );
         drop(sender);
         worker.join().unwrap();

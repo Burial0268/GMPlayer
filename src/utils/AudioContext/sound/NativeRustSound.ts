@@ -177,7 +177,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   /** Raw FFT magnitudes from the `fftData` event. */
   private _fftData: number[] = [];
   private _frequencyData: Uint8Array<ArrayBuffer> = new Uint8Array(0);
-  private _averageAmplitude: number = 0;
   /** Compatibility with backends that still send a computed low-frequency volume. */
   private _lowFreqVolume: number = 0;
   /** Native and WASM: the lowest raw FFT bins of the latest frame. The AMLL
@@ -561,7 +560,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     if (this._frequencyData.length !== 0) {
       this._frequencyData = new Uint8Array(0);
     }
-    this._averageAmplitude = 0;
     this._clearNoFFTWarning();
   }
 
@@ -827,11 +825,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
 
       case "fftData": {
         this._fftData = evt.data.data;
-        let sum = 0;
-        for (let i = 0; i < this._fftData.length; i++) {
-          sum += this._fftData[i];
-        }
-        this._averageAmplitude = this._fftData.length > 0 ? sum / this._fftData.length : 0;
         this._fftReceived = true;
         this._clearNoFFTWarning();
         if (IS_DEV) {
@@ -1486,10 +1479,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     // Called once per rAF by the spectrum loop, which is the cadence AMLL's
     // gradient window and smoothing are defined on.
     return this._lowFreqBins ? this._lowFreq.analyze(this._lowFreqBins) : this._lowFreqVolume;
-  }
-
-  getAverageAmplitude(): number {
-    return this._averageAmplitude;
   }
 
   getAudioQuality(): AudioQuality | null {
