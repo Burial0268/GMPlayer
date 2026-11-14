@@ -6,9 +6,12 @@
     <div class="dock-content">
       <div class="dock-head">
         <div class="dock-text">
-          <span class="dock-name">
-            <OverflowMarquee :speed="36">
+          <span class="dock-name automix-stack">
+            <OverflowMarquee :class="{ 'automix-out': mixIncoming }" :speed="36">
               {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+            </OverflowMarquee>
+            <OverflowMarquee v-if="mixIncoming" class="automix-in" :speed="36">
+              {{ mixIncoming.name }}
             </OverflowMarquee>
           </span>
           <span v-if="artistList.length" class="dock-artists">
@@ -161,6 +164,7 @@ import type { LocationQueryRaw } from "vue-router";
 import { musicStore, settingStore, userStore } from "@/store";
 // Aliased: this file already exposes a `coverUrl` computed of its own.
 import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
+import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import BouncingSlider from "../BouncingSlider.vue";
@@ -179,6 +183,7 @@ const emit = defineEmits<{
 
 const navigation = useLayerNavigation();
 const music = musicStore();
+const { incoming: mixIncoming } = useAutoMixVisual();
 const user = userStore();
 const setting = settingStore();
 const { persistData } = storeToRefs(music);

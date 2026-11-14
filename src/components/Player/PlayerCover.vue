@@ -1,7 +1,9 @@
 <template>
   <div ref="coverContainerRef" class="player-cover-container">
     <div class="cover-stage">
-      <Transition name="fade" mode="out-in">
+      <!-- An AutoMix hand-off is already blended by the overlay; fading the base again would
+           flash the outgoing cover under it. -->
+      <Transition :name="mixIncoming ? 'automix-cut' : 'fade'" mode="out-in">
         <div
           :key="`cover_pic--${music.getPlaySongData?.album?.pic ?? defaultCover}`"
           :class="[
@@ -27,6 +29,13 @@
               alt="cover"
             />
           </Motion>
+          <img
+            v-if="mixIncoming"
+            class="album automix-cover automix-in"
+            decoding="async"
+            :src="coverUrl(mixIncoming.album?.picUrl, 1024)"
+            alt=""
+          />
         </div>
       </Transition>
     </div>
@@ -39,9 +48,12 @@
             :layout-id="sharedLayoutIds.title"
             :transition="sharedContentTransition"
           >
-            <span class="name">
-              <OverflowMarquee :speed="36">
+            <span class="name automix-stack">
+              <OverflowMarquee :class="{ 'automix-out': mixIncoming }" :speed="36">
                 {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+              </OverflowMarquee>
+              <OverflowMarquee v-if="mixIncoming" class="automix-in" :speed="36">
+                {{ mixIncoming.name }}
               </OverflowMarquee>
             </span>
           </Motion>
@@ -52,8 +64,11 @@
             :layout-id="sharedLayoutIds.artists"
             :transition="sharedContentTransition"
           >
-            <span class="artists">
-              <OverflowMarquee>
+            <span class="artists automix-stack">
+              <OverflowMarquee v-if="mixIncoming" class="automix-in">
+                {{ artistNames(mixIncoming) }}
+              </OverflowMarquee>
+              <OverflowMarquee :class="{ 'automix-out': mixIncoming }">
                 <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
                   <span
                     v-button
@@ -195,6 +210,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 import { useQualityText } from "@/composables/useQualityText";
+import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
@@ -286,6 +302,8 @@ const handleMoreSelect = (key) => {
 };
 
 const qualityText = useQualityText();
+const { incoming: mixIncoming } = useAutoMixVisual();
+const artistNames = (song) => (song.artist ?? []).map((ar) => ar.name).join(" / ");
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {
@@ -440,6 +458,11 @@ onUnmounted(() => {
       width: 100%;
       height: 100%;
       border-radius: var(--radius-panel);
+    }
+    .automix-cover {
+      position: absolute;
+      inset: 0;
+      object-fit: cover;
     }
   }
   .controls {

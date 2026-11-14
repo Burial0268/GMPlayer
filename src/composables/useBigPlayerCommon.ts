@@ -3,6 +3,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore, settingStore } from "@/store";
 import { activeSound, seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
+import { useAutoMixVisual } from "./useAutoMixVisual";
 
 export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   const navigation = useLayerNavigation();
@@ -14,10 +15,18 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   // the old unconditional `http:` → `https:` rewrite turned
   // `http://asset.localhost/…` into an origin with no protocol handler, and
   // AMLL's `setAlbum` then retried a network fetch until it gave up.
-  const coverImageUrl = computed(() => coverUrl(music.getPlaySongData?.album?.picUrl));
+  //
+  // Past the equal-power point of an AutoMix crossfade the incoming song leads: the background
+  // takes only a URL, so it switches there with its own transition, and when the store catches up
+  // at the end of the mix the URL is already the one it holds.
+  const mix = useAutoMixVisual();
+  const visualPicUrl = computed(
+    () => ((mix.pastMidpoint.value && mix.incoming.value) || music.getPlaySongData)?.album?.picUrl,
+  );
+  const coverImageUrl = computed(() => coverUrl(visualPicUrl.value));
 
   // The resize hint is Netease's; a file on disk is served as-is.
-  const coverImageUrl500 = computed(() => coverUrl(music.getPlaySongData?.album?.picUrl, 500));
+  const coverImageUrl500 = computed(() => coverUrl(visualPicUrl.value, 500));
 
   // --- Song metadata ---
   const artistList = computed(() => music.getPlaySongData?.artist ?? []);
