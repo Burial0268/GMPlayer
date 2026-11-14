@@ -16,6 +16,12 @@
  * segments a whole line's text, which is exactly what gets prepared. Grapheme and sentence
  * granularity always stay native. Without a native `Intl.Segmenter` nothing is installed;
  * AMLL and `lyricLineBreak` already handle its absence.
+ *
+ * The worker is not resident. Its WASM holds ~44 MB of linear memory (measured; jieba's
+ * dictionary) for a few ms of work per song, so it is terminated after `IDLE_RELEASE_MS` without
+ * use and started again by `warmLyricSegmenter`, which the lyric view calls the moment a song's
+ * lyric is cleared — the fetch that follows is the head start. A cold start is ~200 ms, inside
+ * the bounded wait below, and the answers stay in the cache on this thread either way.
  */
 
 const Native = typeof Intl !== "undefined" ? Intl.Segmenter : undefined;
@@ -53,14 +59,29 @@ function cachedSegments(input: string, ends: Uint32Array): Intl.Segments {
   };
 }
 
+const IDLE_RELEASE_MS = 30_000;
+
 let worker: Worker | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
 let failed = !Native;
 let requestId = 0;
 const pending = new Map<number, (results?: Uint32Array[]) => void>();
 
+/** Restart the idle countdown; the worker goes once nothing has used it for the whole of it. */
+const touch = () => {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    // An answer still owed means it is in use, however long ago it was asked.
+    if (pending.size) return touch();
+    worker?.terminate();
+    worker = null;
+  }, IDLE_RELEASE_MS);
+};
+
 const retire = (reason: unknown) => {
   console.warn("[lyricSegmenter] worker unavailable, using native", reason);
   failed = true;
+  clearTimeout(idleTimer);
   worker?.terminate();
   worker = null;
   pending.forEach((settle) => settle());
@@ -69,6 +90,7 @@ const retire = (reason: unknown) => {
 
 function getWorker(): Worker | null {
   if (failed) return null;
+  touch();
   if (worker) return worker;
   try {
     worker = new Worker(new URL("./lyricSegmenter.worker.ts", import.meta.url), {
@@ -85,6 +107,7 @@ function getWorker(): Worker | null {
       const settle = pending.get(data.id);
       pending.delete(data.id);
       settle?.(data.results);
+      touch();
     }
   };
   worker.onerror = (event) => retire(event.message);
@@ -105,6 +128,9 @@ function nativeDiffers(text: string, ends: Uint32Array): boolean {
   }
   return i !== ends.length;
 }
+
+/** Start the worker ahead of the lines it is about to be asked for. */
+export const warmLyricSegmenter = (): void => void getWorker();
 
 const settled = Promise.resolve();
 const unchanged = Promise.resolve(false);

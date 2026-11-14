@@ -29,7 +29,7 @@ import {
 } from "@applemusic-like-lyrics/core";
 import { animateMini } from "motion-v";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
-import { prepareLyricSegments } from "@/utils/lyricSegmenter";
+import { prepareLyricSegments, warmLyricSegmenter } from "@/utils/lyricSegmenter";
 import type { LyricShareOrigin } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
 import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
@@ -415,6 +415,7 @@ watch(
 
     const generation = ++lyricGeneration;
     if (!rawSongLyric) {
+      warmLyricSegmenter();
       amllLyricLines.value = [];
       applyLyricLines([]);
       return;
@@ -441,6 +442,9 @@ watch(
       showTransl: setting.showTransl,
       showRuby: setting.showRuby,
     });
+    // No lines is a song changing: its lyric is being fetched, so start the segmenter now and
+    // let the fetch be its head start.
+    if (lines.length === 0) warmLyricSegmenter();
     // AMLL segments each line's whole text while laying it out; have the worker cut them first.
     // Warm, that is a few ms; cold, it gives up after a bounded wait and lines lay out natively.
     const { ready, late } = prepareLyricSegments(

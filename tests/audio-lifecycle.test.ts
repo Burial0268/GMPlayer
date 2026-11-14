@@ -797,3 +797,69 @@ test("sound listeners fire persistent-first, once-listeners once, and survive re
   sound.emit("play");
   assert.equal(calls.length, 5);
 });
+
+test("the lyric segmenter worker is released when idle and comes back on demand", async () => {
+  let now = 0;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  let timerId = 0;
+  const advance = (ms: number) => {
+    now += ms;
+    for (const [id, timer] of [...timers]) {
+      if (timer.at > now || !timers.delete(id)) continue;
+      timer.run();
+    }
+  };
+  const workers: any[] = [];
+  class Worker {
+    terminated = false;
+    onmessage?: (event: { data: any }) => void;
+    posted: any[] = [];
+    constructor() {
+      workers.push(this);
+    }
+    postMessage(message: any) {
+      this.posted.push(message);
+    }
+    terminate() {
+      this.terminated = true;
+    }
+  }
+  const segmenter = sourceModule(
+    "src/utils/lyricSegmenter.ts",
+    {},
+    {
+      Worker,
+      URL: class {},
+      setTimeout: (run: () => void, ms: number) => {
+        timers.set(++timerId, { at: now + ms, run });
+        return timerId;
+      },
+      clearTimeout: (id: number) => timers.delete(id),
+    },
+  );
+  const live = () => workers.filter((worker) => !worker.terminated).length;
+
+  // Started once the app is up, then let go: nothing asked it for anything.
+  advance(1000);
+  assert.equal(live(), 1);
+  advance(30_000);
+  assert.equal(live(), 0);
+
+  // A song change warms it, and an answer still owed keeps it past the countdown.
+  segmenter.warmLyricSegmenter();
+  assert.equal(live(), 1);
+  const { late } = segmenter.prepareLyricSegments(["辞职信里"], 300);
+  advance(30_000);
+  assert.equal(live(), 1, "a pending request must not be terminated under");
+  const worker = workers.at(-1);
+  worker.onmessage({ data: { id: worker.posted[0].id, results: [new Uint32Array([5, 9])] } });
+  advance(300);
+  await late;
+
+  // The answer outlives the worker: the cache is on this thread.
+  advance(30_000);
+  assert.equal(live(), 0);
+  assert.equal(segmenter.prepareLyricSegments(["辞职信里"], 300).late.constructor.name, "Promise");
+  assert.equal(live(), 0, "a cached line needs no worker");
+  assert.equal(workers.length, 2);
+});
