@@ -863,11 +863,14 @@ test("the lyric segmenter worker is held while lyrics are visible and released w
   assert.equal(live(), 0, "a cached line needs no worker");
 
   // On screen it is held for as long as the view is, then released again.
-  segmenter.holdLyricSegmenter(true);
+  const first = segmenter.holdLyricSegmenter();
+  const second = segmenter.holdLyricSegmenter();
+  first();
+  first();
   assert.equal(live(), 1);
   advance(idle * 20);
   assert.equal(live(), 1, "visible lyrics keep the worker however long nothing is asked");
-  segmenter.holdLyricSegmenter(false);
+  second();
   advance(idle * 2);
   assert.equal(live(), 0);
   assert.equal(workers.length, 3);

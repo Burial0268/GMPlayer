@@ -21,7 +21,7 @@
  * memory (measured; jieba's dictionary) for a few ms of work per song, so off screen it is
  * terminated after `IDLE_RELEASE_MS` without use and started again by the next song's lines; a
  * cold answer then lands late, but nobody is looking and it is in the cache by the time the
- * view opens. `holdLyricSegmenter(true)` keeps it alive for as long as the view is visible:
+ * view opens. `holdLyricSegmenter()` keeps it alive for as long as the view is visible:
  * releasing it there and warming it at each track change was tried, and a cold start in a real
  * WebView outlasts the bounded wait below, so every song laid out twice.
  */
@@ -65,7 +65,8 @@ const IDLE_RELEASE_MS = 10_000;
 
 let worker: Worker | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
-let held = false;
+// A count, not a flag: a layout switch mounts the next lyric view before the last one lets go.
+let holds = 0;
 let failed = !Native;
 let requestId = 0;
 const pending = new Map<number, (results?: Uint32Array[]) => void>();
@@ -75,7 +76,7 @@ const touch = () => {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
     // On screen, or an answer still owed: in use, however long ago it was asked.
-    if (held || pending.size) return touch();
+    if (holds > 0 || pending.size) return touch();
     worker?.terminate();
     worker = null;
   }, IDLE_RELEASE_MS);
@@ -133,9 +134,15 @@ function nativeDiffers(text: string, ends: Uint32Array): boolean {
 }
 
 /** Keep the worker alive while lyrics are visible; let it go idle once they are not. */
-export const holdLyricSegmenter = (hold: boolean): void => {
-  held = hold;
-  if (hold) getWorker();
+export const holdLyricSegmenter = (): (() => void) => {
+  holds++;
+  getWorker();
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    holds--;
+  };
 };
 
 const settled = Promise.resolve();
