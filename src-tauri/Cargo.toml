@@ -2,7 +2,9 @@
 members = [
   "crates/audio-analysis",
   "crates/orientation",
+  "crates/automix-analysis",
   "crates/audio-backend",
+  "crates/ffmpeg-audio",
   "crates/taskbar-lyric",
   "crates/now-playing-controls",
   "crates/tauri-plugin-now-playing-controls",
@@ -19,7 +21,7 @@ version = "0.1.0"
 description = "Third Party Netease Cloud Music Player, based on Tauri + Vue"
 authors = ["GBCLStudio"]
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.88"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -124,7 +126,7 @@ tauri-plugin-pinia = "4.2.1"
 # lyric nor the artwork, so a downloaded track has to be tagged by us or it has no
 # metadata at all beyond its filename.
 #
-# Held at 0.22 by this crate's `rust-version = 1.80`: 0.25 requires 1.89. Kept to
+# Held at 0.22 by this crate's `rust-version = 1.88`: 0.25 requires 1.89. Kept to
 # the one non-default feature `id3v2_compression_support`, since an MP3 in the wild
 # may carry compressed frames and lofty otherwise refuses the whole tag.
 lofty = { version = "0.22", default-features = false, features = ["id3v2_compression_support"] }

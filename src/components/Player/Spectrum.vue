@@ -7,7 +7,7 @@
 
 <script setup>
 import { ensureSpectrumUpdate } from "@/utils/AudioContext";
-import { getSpectrumFrame, getSpectrumVersion } from "@/utils/AudioContext/SpectrumFrame";
+import { getSpectrumFrame, getSpectrumVersion } from "@/utils/AudioContext/analysis/SpectrumFrame";
 
 const props = defineProps({
   show: {
@@ -96,7 +96,7 @@ const drawSpectrum = (data) => {
   ctx.fillStyle = "#efefef";
 
   // Batch all bars into a single path. Each visual bar is a peak-reduced
-  // range over the full FFT frame, so a 2048-bin native frame keeps its
+  // range over the whole frame, so the backend's 512-value display frame keeps its
   // precision instead of only drawing the first ~200 bins.
   ctx.beginPath();
   for (let i = 0; i < numBars; i++) {

@@ -11,6 +11,7 @@ pub(super) struct OutputBlock {
     pub(super) samples: Vec<f32>,
     pub(super) generation: u64,
     pub(super) flush_epoch: u64,
+    pub(super) anchor: Option<super::OutputAnchor>,
 }
 
 pub(super) struct CallbackState {
@@ -37,6 +38,7 @@ pub(super) struct CallbackState {
     // the underrun hot path.
     underrun_fade_frames_remaining: usize,
     flush_fade_frames_remaining: usize,
+    render_counter: Option<Arc<super::RenderCounter>>,
 }
 
 impl CallbackState {
@@ -63,7 +65,12 @@ impl CallbackState {
             last_values: vec![0.0; output_channels],
             underrun_fade_frames_remaining: 0,
             flush_fade_frames_remaining: 0,
+            render_counter: None,
         }
+    }
+
+    pub(super) fn set_render_counter(&mut self, counter: Arc<super::RenderCounter>) {
+        self.render_counter = Some(counter);
     }
 }
 
@@ -87,16 +94,16 @@ pub(super) fn fill_output<T>(
 {
     sync_output_barrier(state, generation, flush_epoch);
 
+    let channels = state.output_channels;
     if paused.load(Ordering::Acquire) {
-        data.fill(T::from_sample(0.0));
-        state.last_values.fill(0.0);
-        state.underrun_fade_frames_remaining = 0;
+        // Decay from the last frame rather than cutting to zero: a pause from
+        // the OS media session and a rebuffer both land here mid-waveform.
+        fill_underrun_tail(data, state, channels);
         state.flush_fade_frames_remaining = 0;
         return;
     }
 
     let volume = f32::from_bits(volume_bits.load(Ordering::Acquire));
-    let channels = state.output_channels;
     let total = data.len();
     let mut pos = fill_flush_fade(data, state, channels);
     let mut queued_written = 0usize;
@@ -119,9 +126,15 @@ pub(super) fn fill_output<T>(
         if state.current_index >= state.current_block.len() {
             match next_current_block(state, generation, flush_epoch) {
                 Some(block) => {
+                    if let (Some(counter), Some(anchor)) = (&state.render_counter, block.anchor) {
+                        counter.publish(
+                            anchor,
+                            rendered_samples.load(Ordering::Relaxed) + queued_written as u64,
+                        );
+                    }
                     // Return the spent block to the mixer's pool instead of
                     // dropping (freeing) it inside the real-time callback.
-                    let spent = std::mem::replace(&mut state.current_block, block);
+                    let spent = std::mem::replace(&mut state.current_block, block.samples);
                     retain_or_recycle_buffer(state, spent);
                     state.current_index = 0;
                 }
@@ -181,7 +194,7 @@ fn next_current_block(
     state: &mut CallbackState,
     generation: &AtomicU64,
     flush_epoch: &AtomicU64,
-) -> Option<Vec<f32>> {
+) -> Option<OutputBlock> {
     flush_pending_recycles(state);
     // Replacing the current block may need to retain its allocation. Leave
     // one preallocated slot available before taking ownership of another PCM
@@ -215,7 +228,7 @@ fn next_current_block(
                 }
                 state.accepted_generation = block.generation;
                 state.accepted_flush_epoch = block.flush_epoch;
-                return Some(block.samples);
+                return Some(block);
             }
             Err(_) => return None,
         }
@@ -415,6 +428,7 @@ mod tests {
                 samples: vec![0.9, 0.9, 0.9, 0.9],
                 generation: 0,
                 flush_epoch: 0,
+                anchor: None,
             })
             .is_ok());
         assert!(data_tx
@@ -422,6 +436,7 @@ mod tests {
                 samples: vec![0.25, -0.25, 0.5, -0.5],
                 generation: 0,
                 flush_epoch: 1,
+                anchor: None,
             })
             .is_ok());
         let mut data = vec![0.0f32; 4];
@@ -476,6 +491,7 @@ mod tests {
                     samples: vec![value, -value, value, -value],
                     generation: 0,
                     flush_epoch: 0,
+                    anchor: None,
                 })
                 .is_ok());
         }
@@ -557,6 +573,7 @@ mod tests {
                 samples: vec![0.8, -0.8, 0.8, -0.8],
                 generation: 0,
                 flush_epoch: 0,
+                anchor: None,
             })
             .is_ok());
         let mut data = vec![0.0f32; 16];
@@ -593,6 +610,54 @@ mod tests {
             );
             previous = current;
         }
+    }
+
+    #[test]
+    fn pausing_fades_from_the_last_frame_then_stays_silent() {
+        let (mut data_tx, _recycle_rx, _alive, mut state) = test_state(4, 8, 0, 0, 2, 8);
+        let paused = AtomicBool::new(false);
+        let volume_bits = AtomicU32::new(1.0f32.to_bits());
+        let generation = AtomicU64::new(0);
+        let flush_epoch = AtomicU64::new(0);
+        let queued_samples = AtomicUsize::new(8);
+        let rendered_samples = AtomicU64::new(0);
+        for _ in 0..2 {
+            assert!(data_tx
+                .push(OutputBlock {
+                    samples: vec![0.8, -0.8, 0.8, -0.8],
+                    generation: 0,
+                    flush_epoch: 0,
+                    anchor: None,
+                })
+                .is_ok());
+        }
+        let render = |data: &mut [f32], state: &mut CallbackState| {
+            fill_output(
+                data,
+                state,
+                &paused,
+                &volume_bits,
+                &generation,
+                &flush_epoch,
+                &queued_samples,
+                &rendered_samples,
+            )
+        };
+        let mut data = vec![0.0f32; 4];
+        render(&mut data, &mut state);
+        paused.store(true, Ordering::Release);
+
+        let mut tail = vec![0.0f32; (UNDERRUN_FADE_FRAMES + 4) * 2];
+        render(&mut tail, &mut state);
+
+        assert_eq!(&tail[..2], &[0.8, -0.8]);
+        assert!(tail[2].abs() < 0.8 && tail[2] > 0.0);
+        assert_eq!(&tail[UNDERRUN_FADE_FRAMES * 2..], &[0.0; 8]);
+        // Queued audio is held, not consumed, while paused.
+        assert_eq!(rendered_samples.load(Ordering::Acquire), 4);
+        let mut silent = vec![1.0f32; 4];
+        render(&mut silent, &mut state);
+        assert_eq!(silent, [0.0; 4]);
     }
 
     #[test]

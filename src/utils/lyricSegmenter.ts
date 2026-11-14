@@ -16,6 +16,14 @@
  * segments a whole line's text, which is exactly what gets prepared. Grapheme and sentence
  * granularity always stay native. Without a native `Intl.Segmenter` nothing is installed;
  * AMLL and `lyricLineBreak` already handle its absence.
+ *
+ * The worker is resident only while lyrics are on screen. Its WASM holds ~44 MB of linear
+ * memory (measured; jieba's dictionary) for a few ms of work per song, so off screen it is
+ * terminated after `IDLE_RELEASE_MS` without use and started again by the next song's lines; a
+ * cold answer then lands late, but nobody is looking and it is in the cache by the time the
+ * view opens. `holdLyricSegmenter(true)` keeps it alive for as long as the view is visible:
+ * releasing it there and warming it at each track change was tried, and a cold start in a real
+ * WebView outlasts the bounded wait below, so every song laid out twice.
  */
 
 const Native = typeof Intl !== "undefined" ? Intl.Segmenter : undefined;
@@ -53,14 +61,30 @@ function cachedSegments(input: string, ends: Uint32Array): Intl.Segments {
   };
 }
 
+const IDLE_RELEASE_MS = 10_000;
+
 let worker: Worker | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | undefined;
+let held = false;
 let failed = !Native;
 let requestId = 0;
 const pending = new Map<number, (results?: Uint32Array[]) => void>();
 
+/** Restart the idle countdown; the worker goes once nothing has used it for the whole of it. */
+const touch = () => {
+  clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    // On screen, or an answer still owed: in use, however long ago it was asked.
+    if (held || pending.size) return touch();
+    worker?.terminate();
+    worker = null;
+  }, IDLE_RELEASE_MS);
+};
+
 const retire = (reason: unknown) => {
   console.warn("[lyricSegmenter] worker unavailable, using native", reason);
   failed = true;
+  clearTimeout(idleTimer);
   worker?.terminate();
   worker = null;
   pending.forEach((settle) => settle());
@@ -69,6 +93,7 @@ const retire = (reason: unknown) => {
 
 function getWorker(): Worker | null {
   if (failed) return null;
+  touch();
   if (worker) return worker;
   try {
     worker = new Worker(new URL("./lyricSegmenter.worker.ts", import.meta.url), {
@@ -85,6 +110,7 @@ function getWorker(): Worker | null {
       const settle = pending.get(data.id);
       pending.delete(data.id);
       settle?.(data.results);
+      touch();
     }
   };
   worker.onerror = (event) => retire(event.message);
@@ -105,6 +131,12 @@ function nativeDiffers(text: string, ends: Uint32Array): boolean {
   }
   return i !== ends.length;
 }
+
+/** Keep the worker alive while lyrics are visible; let it go idle once they are not. */
+export const holdLyricSegmenter = (hold: boolean): void => {
+  held = hold;
+  if (hold) getWorker();
+};
 
 const settled = Promise.resolve();
 const unchanged = Promise.resolve(false);

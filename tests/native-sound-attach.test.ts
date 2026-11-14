@@ -11,10 +11,17 @@ import type {
   TrackIdentity,
 } from "../src/utils/tauri/audio/protocol";
 
-type NativeRustSoundModule = typeof import("../src/utils/tauri/audio/nativeRustSound");
+type NativeRustSoundModule = typeof import("../src/utils/AudioContext/sound/NativeRustSound") &
+  typeof import("../src/utils/AudioContext/sound/SoundManager");
 
 const bundled = buildSync({
-  entryPoints: ["src/utils/tauri/audio/nativeRustSound.ts"],
+  // One bundle, so the sound and the manager that names it active share a module.
+  stdin: {
+    contents: `export * from "./src/utils/AudioContext/sound/NativeRustSound";
+export { SoundManager } from "./src/utils/AudioContext/sound/SoundManager";`,
+    resolveDir: process.cwd(),
+    loader: "ts",
+  },
   bundle: true,
   platform: "node",
   format: "cjs",
@@ -81,8 +88,9 @@ const statusFor = (snapshot: NativeSessionSnapshot, position: number): AudioThre
  */
 function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: number) {
   const sent: AudioThreadMessage[] = [];
-  let channel: { onmessage?: (envelope: AudioThreadEventMessage<AudioThreadEvent>) => void } | null =
-    null;
+  let channel: {
+    onmessage?: (envelope: AudioThreadEventMessage<AudioThreadEvent>) => void;
+  } | null = null;
   let seq = 0;
   const emit = (data: AudioThreadEvent) => {
     channel?.onmessage?.({ callbackId: "", data, seq: ++seq });
@@ -103,7 +111,10 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
         const msg = args?.msg?.data as AudioThreadMessage;
         sent.push(msg);
         if (msg.type === "syncStatus" && snapshot?.hasTrack && Number.isFinite(statusDelayMs)) {
-          setTimeout(() => emit(statusFor(snapshot, snapshot.position + statusDelayMs / 1000)), statusDelayMs);
+          setTimeout(
+            () => emit(statusFor(snapshot, snapshot.position + statusDelayMs / 1000)),
+            statusDelayMs,
+          );
         }
         if (msg.type === "setPlaylist" && msg.playIndex !== undefined) {
           const song = msg.songs[msg.playIndex];
@@ -145,7 +156,6 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
     dispatchEvent: () => true,
     setTimeout,
     clearTimeout,
-    $player: undefined,
   };
 
   const module = { exports: {} as NativeRustSoundModule };
@@ -164,6 +174,7 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
       ) {}
     },
     require(id: string) {
+      if (id === "vue") return require("vue");
       assert.equal(id, "@tauri-apps/api/core");
       return { invoke, Channel };
     },
@@ -177,12 +188,12 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
         msg.type === "jumpToSongAt",
     );
 
-  return { NativeRustSound: module.exports.NativeRustSound, window, sent, restarts, emit };
+  return { ...module.exports, window, sent, restarts, emit };
 }
 
 async function attach(env: ReturnType<typeof environment>, storedPosition: number) {
   const sound = new env.NativeRustSound(sourceUrl);
-  env.window.$player = sound;
+  env.SoundManager.setCurrentSound(sound);
   let loaded = 0;
   sound.on("load", () => loaded++);
   await sound.load(storedPosition, { attachIdentity: identity });
@@ -198,13 +209,13 @@ test("a late status reply attaches from the session snapshot instead of restarti
   assert.equal(loaded(), 1);
   assert.deepEqual(env.restarts(), [], "a track the backend is playing must not be reloaded");
   assert.equal(sound.playing(), true);
-  assert.ok(Math.abs((sound.seek() as number) - 187.4) < 1, `seek ${sound.seek()}`);
+  assert.ok(Math.abs(sound.position - 187.4) < 1, `position ${sound.position}`);
 
   // The reply lands afterwards: same track, so it only refines the clock.
   await wait(500);
   assert.deepEqual(env.restarts(), []);
   assert.equal(sound.playing(), true);
-  assert.ok((sound.seek() as number) >= 187.4);
+  assert.ok(sound.position >= 187.4);
 });
 
 test("a status reply that never arrives still attaches", async () => {
@@ -214,7 +225,7 @@ test("a status reply that never arrives still attaches", async () => {
   assert.equal(loaded(), 1);
   assert.deepEqual(env.restarts(), []);
   assert.equal(sound.playing(), false);
-  assert.ok(Math.abs((sound.seek() as number) - 42) < 1e-6);
+  assert.ok(Math.abs(sound.position - 42) < 1e-6);
 });
 
 test("a prompt status reply attaches as before", async () => {
@@ -228,7 +239,10 @@ test("a prompt status reply attaches as before", async () => {
 });
 
 test("a backend on another track is not adopted and the track loads normally", async () => {
-  const env = environment(session({ identity: otherIdentity, musicId: "local:https://cdn.example/other" }), Infinity);
+  const env = environment(
+    session({ identity: otherIdentity, musicId: "local:https://cdn.example/other" }),
+    Infinity,
+  );
   const { loaded } = await attach(env, 30);
 
   assert.equal(loaded(), 1);
@@ -237,4 +251,81 @@ test("a backend on another track is not adopted and the track loads normally", a
   assert.ok(restart && restart.type === "setPlaylist");
   assert.equal(restart.playIndex, 0);
   assert.equal(restart.initialPosition, 30);
+});
+
+test("one backend track change is announced once, whole, however many events describe it", async () => {
+  const env = environment(session(), 20);
+  const { sound } = await attach(env, 0);
+  const changes: any[] = [];
+  sound.on("trackchange", (change) => changes.push(change));
+
+  const next = session({
+    musicId: "local:https://cdn.example/track-2002.mp3?token=rust",
+    identity: otherIdentity,
+    playlistIndex: 4,
+    position: 0,
+    duration: 200,
+  });
+  const info = (statusFor(next, 0) as any).data.musicInfo;
+  const quality = { bitrate: 320, sampleRate: 44100, channels: 2 };
+  const changed: AudioThreadEvent = {
+    type: "trackChanged",
+    data: {
+      timelineEpoch: 13,
+      musicId: next.musicId,
+      identity: next.identity,
+      currentPlayIndex: next.playlistIndex,
+      musicInfo: info,
+      quality,
+      isPlaying: true,
+    },
+  };
+  const status = statusFor(next, 0) as any;
+  status.data.timelineEpoch = 13;
+
+  // The order the backend emits a planner advance in, plus a duplicate edge.
+  env.emit(changed);
+  env.emit(changed);
+  env.emit({
+    type: "loadAudio",
+    data: {
+      musicId: next.musicId,
+      musicInfo: info,
+      quality,
+      currentPlayIndex: next.playlistIndex,
+      identity: next.identity,
+      timelineEpoch: 13,
+    },
+  });
+  env.emit(status);
+  env.emit({
+    type: "nativePlannerAdvanced",
+    data: {
+      manifestRevision: 7,
+      identity: otherIdentity,
+      playlistIndex: next.playlistIndex,
+      musicId: next.musicId,
+    },
+  } as AudioThreadEvent);
+  env.emit(status);
+
+  assert.equal(changes.length, 1);
+  assert.deepEqual(
+    { ...changes[0], position: Math.round(changes[0].position) },
+    {
+      timelineEpoch: 13,
+      identity: otherIdentity,
+      musicId: next.musicId,
+      playlistIndex: 4,
+      position: 0,
+      duration: 200,
+    },
+  );
+  // The new track's clock, not the old track's elapsed time carried over.
+  assert.ok(sound.position < 5, `position ${sound.position}`);
+  assert.equal(sound.duration(), 200);
+
+  // A load the frontend asked for is not a backend-initiated change.
+  env.emit({ ...changed, data: { ...(changed as any).data, timelineEpoch: 14, loadRequestId: 9 } });
+  assert.equal(changes.length, 1);
 });

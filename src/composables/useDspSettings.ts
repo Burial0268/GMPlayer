@@ -30,21 +30,25 @@ export const buildDspConfig = (): DspConfig => {
 
   if (!setting.dspEnabled) return DISABLED_DSP_CONFIG;
 
+  // Sent unfiltered: the backend keys each band's filter history by its position
+  // here and skips disabled or flat bands itself. Dropping them would renumber
+  // the rest whenever a neighbour crosses 0 dB.
   const eqBands: EqualizerBand[] = setting.dspEqEnabled
-    ? setting.dspEqBands
-        .filter((band) => band.enabled && Math.abs(band.gainDb) > EQ_EPSILON_DB)
-        .map((band) => ({
-          enabled: true,
-          filterType: band.filterType,
-          frequency: band.frequency,
-          gainDb: clamp(band.gainDb, -12, 12),
-          q: clamp(band.q, 0.1, 18),
-        }))
+    ? setting.dspEqBands.map((band) => ({
+        enabled: band.enabled,
+        filterType: band.filterType,
+        frequency: band.frequency,
+        gainDb: clamp(band.gainDb, -12, 12),
+        q: clamp(band.q, 0.1, 18),
+      }))
     : [];
 
   const preampDb = setting.dspEqEnabled ? clamp(setting.dspEqPreampDb, -12, 12) : 0;
+  const hasActiveBand = eqBands.some(
+    (band) => band.enabled && Math.abs(band.gainDb) > EQ_EPSILON_DB,
+  );
   const equalizerEnabled =
-    setting.dspEqEnabled && (eqBands.length > 0 || Math.abs(preampDb) > EQ_EPSILON_DB);
+    setting.dspEqEnabled && (hasActiveBand || Math.abs(preampDb) > EQ_EPSILON_DB);
   const limiterEnabled = setting.dspLimiterEnabled;
 
   const config: DspConfig = {

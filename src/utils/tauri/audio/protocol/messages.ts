@@ -111,6 +111,8 @@ export type AudioThreadMessage =
       currentIndex: number;
       nextIndex: number;
       nextSong: SongData;
+      currentIdentity?: TrackIdentity | null;
+      nextIdentity?: TrackIdentity | null;
       transitionId?: number | null;
     }
   | { type: "automixCancel" }

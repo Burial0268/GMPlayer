@@ -7,6 +7,7 @@ import { runInNewContext } from "node:vm";
 import { transformSync } from "esbuild";
 import { effectScope, nextTick, reactive, ref, toRaw, watch } from "vue";
 import { createPinia, defineStore } from "pinia";
+import { identityForSong } from "../src/utils/tauri/audio/identity";
 
 const require = createRequire(resolve("package.json"));
 
@@ -36,6 +37,7 @@ function sourceModule(path: string, imports: Record<string, unknown>, globals = 
 
 const musicTypes = sourceModule("src/store/musicTypes.ts", {});
 const playlistOrder = sourceModule("src/utils/playlistOrder.ts", {});
+const soundTypes = sourceModule("src/utils/AudioContext/sound/types.ts", {});
 const keyOf = (identity: any) =>
   identity ? `${identity.provider}:${identity.id ?? identity.path}` : null;
 const identities = (ids: number[]) => ids.map((id) => ({ provider: "netease", id: String(id) }));
@@ -51,12 +53,14 @@ function queueEnvironment(native = true) {
     },
   });
   const window: any = {};
+  const activeSound: { value: any } = { value: undefined };
   const storage = new Map<string, string>();
   const localStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),
   };
   class NativeRustSound {
+    kind = "backend";
     manifests: any[] = [];
     isDestroyed() {
       return false;
@@ -74,7 +78,7 @@ function queueEnvironment(native = true) {
       "./musicTypes": musicTypes,
       "@/utils/getLanguageData": { __esModule: true, default: (key: string) => key },
       "@/utils/tauri/core/runtime": { isTauri: () => native },
-      "@/utils/tauri/audio/nativeRustSound": { NativeRustSound },
+      "@/utils/AudioContext/sound/types": soundTypes,
       "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
       "@/utils/tauri/core/nativeLog": { logNative() {} },
       "@/utils/playlistOrder": playlistOrder,
@@ -105,22 +109,24 @@ function queueEnvironment(native = true) {
     music.resetPlaySongTime = () => {};
     music.resetSongLyricState = () => {};
     const revision = sourceModule(
-      "src/utils/AudioContext/NativeManifestRevision.ts",
+      "src/utils/AudioContext/native/NativeManifestRevision.ts",
       {},
       { localStorage },
     );
     publisher = sourceModule(
-      "src/utils/AudioContext/NativeManifestPublisher.ts",
+      "src/utils/AudioContext/native/NativeManifestPublisher.ts",
       {
         vue: { toRaw },
         "@/utils/tauri/core/runtime": { isTauri: () => native },
         "@/store/musicTypes": musicTypes,
-        "@/utils/tauri/audio/nativeRustSound": { NativeRustSound, setPlannerRevisionObserver() {} },
+        "@/utils/AudioContext/sound/NativeRustSound": { setPlannerRevisionObserver() {} },
+        "@/utils/AudioContext/sound/types": soundTypes,
         "@/store/musicData": { __esModule: true, default: () => music },
         "@/store/listenTogether": { __esModule: true, default: () => ({ isInRoom: false }) },
-        "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
+        "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf, identityForSong },
         "@/utils/tauri/core/nativeLog": { logNative() {} },
         "./NativeManifestRevision": revision,
+        "../sound/SoundManager": { activeSound },
       },
       { window },
     );
@@ -139,8 +145,8 @@ function queueEnvironment(native = true) {
       return shuffleDraws;
     },
     attach() {
-      window.$player = new NativeRustSound();
-      return window.$player;
+      activeSound.value = new NativeRustSound();
+      return activeSound.value;
     },
   };
 }
@@ -617,7 +623,7 @@ test("session-control subscribers install before the transport is connected", as
     "../core/nativeLog": { logNative() {} },
     "./transport": { getAudioBackendTransport: () => env.transport },
   });
-  const controls = sourceModule("src/utils/AudioContext/NativeSessionControlsSync.ts", {
+  const controls = sourceModule("src/utils/AudioContext/native/NativeSessionControlsSync.ts", {
     "@/utils/tauri/core/runtime": { isTauri: () => true },
     "@/utils/tauri/audio/backendEvents": backendEvents,
   });
@@ -722,3 +728,147 @@ for (const permissionDenied of [false, true])
     unmounted[0]();
     scope.stop();
   });
+
+test("the page cannot end loading while the backend still reports it", () => {
+  const env = queueEnvironment();
+  const music = env.music;
+
+  music.adoptBackendPlaybackPhase("loading");
+  music.settleLoading();
+  assert.equal(music.isLoadingSong, true, "the decoder being up is not audio");
+  assert.equal(music.loadingStage, "buffering");
+
+  music.adoptBackendPlaybackPhase("buffering");
+  music.settleLoading();
+  assert.equal(music.loadingStage, "rebuffering");
+
+  music.adoptBackendPlaybackPhase("playing");
+  assert.equal(music.isLoadingSong, false);
+  assert.equal(music.loadingStage, "idle");
+
+  // A page-owned stage survives a phase that says nothing about it, and the
+  // page itself may end it.
+  music.loadingStage = "resolving";
+  music.isLoadingSong = true;
+  music.adoptBackendPlaybackPhase("paused");
+  assert.equal(music.loadingStage, "resolving");
+  music.settleLoading();
+  assert.equal(music.isLoadingSong, false);
+  assert.equal(music.loadingStage, "idle");
+  env.restore();
+});
+
+test("sound listeners fire persistent-first, once-listeners once, and survive re-registration", () => {
+  const { SoundEvents } = sourceModule("src/utils/AudioContext/sound/SoundEvents.ts", {});
+  class Probe extends SoundEvents {
+    emit(event: string, ...args: unknown[]) {
+      this._emit(event, ...args);
+    }
+  }
+  const sound = new Probe();
+  const calls: string[] = [];
+  const again = () => {
+    calls.push("once");
+    sound.once("play", again);
+  };
+  const removed = () => calls.push("removed");
+  sound.once("play", again);
+  sound.on("play", () => calls.push("on"));
+  sound.on("play", removed).off("play", removed);
+  sound.on("loaderror", () => {
+    throw new Error("listener failure must not stop the rest");
+  });
+  sound.on("loaderror", (error: unknown) => calls.push(String(error)));
+
+  sound.emit("play");
+  sound.emit("play");
+  assert.deepEqual(calls, ["on", "once", "on", "once"]);
+
+  const error = console.error;
+  console.error = () => {};
+  try {
+    sound.emit("loaderror", "boom");
+  } finally {
+    console.error = error;
+  }
+  assert.equal(calls.at(-1), "boom");
+
+  sound.off("play");
+  sound.emit("play");
+  assert.equal(calls.length, 5);
+});
+
+test("the lyric segmenter worker is held while lyrics are visible and released when idle", async () => {
+  let now = 0;
+  const timers = new Map<number, { at: number; run: () => void }>();
+  let timerId = 0;
+  const advance = (ms: number) => {
+    now += ms;
+    for (const [id, timer] of [...timers]) {
+      if (timer.at > now || !timers.delete(id)) continue;
+      timer.run();
+    }
+  };
+  const workers: any[] = [];
+  class Worker {
+    terminated = false;
+    onmessage?: (event: { data: any }) => void;
+    posted: any[] = [];
+    constructor() {
+      workers.push(this);
+    }
+    postMessage(message: any) {
+      this.posted.push(message);
+    }
+    terminate() {
+      this.terminated = true;
+    }
+  }
+  const segmenter = sourceModule(
+    "src/utils/lyricSegmenter.ts",
+    {},
+    {
+      Worker,
+      URL: class {},
+      setTimeout: (run: () => void, ms: number) => {
+        timers.set(++timerId, { at: now + ms, run });
+        return timerId;
+      },
+      clearTimeout: (id: number) => timers.delete(id),
+    },
+  );
+  const live = () => workers.filter((worker) => !worker.terminated).length;
+  const idle = 10_000;
+
+  // Started once the app is up, then let go: nothing asked it for anything.
+  advance(1000);
+  assert.equal(live(), 1);
+  advance(idle);
+  assert.equal(live(), 0);
+
+  // Off screen a song's lines start it, and an answer still owed keeps it past the countdown.
+  const { late } = segmenter.prepareLyricSegments(["辞职信里"], 300);
+  assert.equal(live(), 1);
+  advance(idle);
+  assert.equal(live(), 1, "a pending request must not be terminated under");
+  const worker = workers.at(-1);
+  worker.onmessage({ data: { id: worker.posted[0].id, results: [new Uint32Array([5, 9])] } });
+  advance(300);
+  await late;
+
+  // The answer outlives the worker: the cache is on this thread.
+  advance(idle);
+  assert.equal(live(), 0);
+  segmenter.prepareLyricSegments(["辞职信里"], 300);
+  assert.equal(live(), 0, "a cached line needs no worker");
+
+  // On screen it is held for as long as the view is, then released again.
+  segmenter.holdLyricSegmenter(true);
+  assert.equal(live(), 1);
+  advance(idle * 20);
+  assert.equal(live(), 1, "visible lyrics keep the worker however long nothing is asked");
+  segmenter.holdLyricSegmenter(false);
+  advance(idle * 2);
+  assert.equal(live(), 0);
+  assert.equal(workers.length, 3);
+});

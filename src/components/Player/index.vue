@@ -313,6 +313,7 @@ import {
   localLibraryStore,
 } from "@/store";
 import {
+  activeSound,
   createSound,
   setVolume,
   setSeek,
@@ -328,12 +329,13 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { debounce } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
-import { NativeRustSound, announceNativeTrack } from "@/utils/tauri/audio/nativeRustSound";
+import { announceNativeTrack } from "@/utils/AudioContext/sound/NativeRustSound";
+import { isBackendSound } from "@/utils/AudioContext/sound/types";
 import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";
 import {
   toTrackDisplay,
   publishNativeManifest,
-} from "@/utils/AudioContext/NativeManifestPublisher";
+} from "@/utils/AudioContext/native/NativeManifestPublisher";
 import { windowManager } from "@/utils/tauri/window/manager";
 import {
   broadcastPlayerLyrics,
@@ -352,7 +354,7 @@ import AllArtists from "@/components/DataList/AllArtists.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import BigPlayer from "./BigPlayer/index.vue";
 import MiniPlayerProgress from "./MiniPlayerProgress.vue";
-import { shallowRef, watch } from "vue";
+import { watch } from "vue";
 import { parseLyricData as parseLyric } from "@/utils/LyricsProcessor";
 import { lyricFetcher } from "@/utils/lyricFetcher";
 import { localLyricFor } from "@/utils/localLibrary";
@@ -360,7 +362,10 @@ import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
 import { detectWordTimedLyricFormat } from "@/utils/LyricsProcessor/timeUtils";
 import { ttmlCreditsOf } from "@/utils/LyricsProcessor/parser/ttmlCredits";
 import { coverUrl } from "@/utils/coverUrl";
-import { setupNativePersonalFm, sendNativeFmPlaying } from "@/utils/AudioContext/NativePersonalFm";
+import {
+  setupNativePersonalFm,
+  sendNativeFmPlaying,
+} from "@/utils/AudioContext/native/NativePersonalFm";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -558,10 +563,9 @@ const handleMiniTouchCancel = () => {
 // 一起听歌模态框
 const showListenTogetherModal = ref(false);
 
-// 音频标签
-// Audio controller identity must stay raw: SoundManager compares instances by reference.
-// A normal ref deeply proxies class instances and makes the active sound look stale.
-const player = shallowRef(null);
+// The shared active-sound ref (shallow: SoundManager compares instances by
+// reference). It follows every replacement on its own, including AutoMix's.
+const player = activeSound;
 
 // Async generation tracker — each getPlaySongData call increments this.
 // Stale async callbacks (URL fetches, availability checks) compare their captured
@@ -587,13 +591,10 @@ const attachNativeFmPlayback = (event) => {
   if (identity?.provider !== "netease" || !data.musicId?.startsWith("local:")) return;
   const song = music.getPlaySongData;
   if (!song || String(song.id) !== identity.id) return;
-  if (window.$player instanceof NativeRustSound && !window.$player.isDestroyed()) {
-    player.value = window.$player;
-    return;
-  }
+  if (isBackendSound(player.value) && !player.value.isDestroyed()) return;
   const sourceUrl = data.musicId.slice("local:".length);
   if (!sourceUrl) return;
-  player.value = createSound(sourceUrl, music.nativeFmSession.desiredPlaying, undefined, {
+  createSound(sourceUrl, music.nativeFmSession.desiredPlaying, undefined, {
     songId: song.id,
     attachIdentity: identity,
   });
@@ -630,7 +631,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       const attach = pendingBackendAttach;
       pendingBackendAttach = null;
       console.log(`[Player] Attaching to live backend playback for ID: ${id}`);
-      player.value = createSound(attach.sourceUrl, attach.isPlaying, undefined, {
+      createSound(attach.sourceUrl, attach.isPlaying, undefined, {
         songId: id,
         attachIdentity: attach.identity,
       });
@@ -644,11 +645,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
     // playback from 0).
     if (isNativeAdvanceHoldActiveFor(id)) {
       console.log("[Player] Native advance adopted, only fetching lyrics");
-      if (window.$player) {
-        player.value = window.$player;
-      }
-      music.isLoadingSong = false;
-      music.loadingStage = "idle";
+      music.settleLoading();
       // A background native advance through the FM buffer consumed part of the
       // runway while JS was frozen. Now that we're alive, sync the home card's
       // display head to what's actually playing and top the buffer back up (which
@@ -671,15 +668,11 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
     // continue through normal URL resolution.
     if (autoMix.isHandoffActive()) {
       const requestedSongId = Number(id);
-      const activeSoundSongId = SoundManager.getSongId(window.$player);
+      const activeSoundSongId = SoundManager.getSongId(player.value);
       const incomingSongId = Number(music.autoMixState.incomingSongId);
       if (requestedSongId === activeSoundSongId || requestedSongId === incomingSongId) {
         console.log("[Player] AutoMix handoff owns requested song, only fetching lyrics");
-        if (window.$player) {
-          player.value = window.$player;
-        }
-        music.isLoadingSong = false;
-        music.loadingStage = "idle";
+        music.settleLoading();
         loadLyricFor(data, id);
         return;
       }
@@ -694,7 +687,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       const uri = String(data.local.uri);
       announceNativeTrack({ provider: "local", path: uri }, toTrackDisplay(data));
       console.log(`[Player] Creating sound instance for local file: ${uri}`);
-      player.value = createSound(uri, true, undefined, { songId: id });
+      createSound(uri, true, undefined, { songId: id });
       loadLocalLyric(data);
       return;
     }
@@ -712,7 +705,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
         return;
       }
       console.log(`[Player] Using preloaded audio for: ${id}`);
-      player.value = createSound("", true, preloadedSound, {
+      createSound("", true, preloadedSound, {
         songId: id,
       });
       // Preloaded sound is already loaded — 'load' event won't fire again,
@@ -741,7 +734,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       failedAutoSkipSongIds.clear();
       failedAutoSkipQueueKey = "";
       console.log(`[Player] Creating sound instance with ${result.source} URL: ${result.url}`);
-      player.value = createSound(result.url, true, undefined, {
+      createSound(result.url, true, undefined, {
         songId: id,
       });
     } else {
@@ -987,7 +980,6 @@ watch(
       if (!val?.id) {
         failedAutoSkipSongIds.clear();
         failedAutoSkipQueueKey = "";
-        player.value = null;
         window.document.title =
           sessionStorage.getItem("siteTitle") ?? import.meta.env.VITE_SITE_TITLE;
       }
@@ -1038,10 +1030,6 @@ watch(
 watch(
   () => persistData.value.playVolume,
   (val) => {
-    // Sync player ref if AutoMix changed the underlying sound
-    if (window.$player && player.value !== window.$player) {
-      player.value = window.$player;
-    }
     if (player.value) setVolume(player.value, val);
   },
 );
@@ -1068,9 +1056,6 @@ watch(
       music.setPlayState(false);
       return;
     }
-    if (window.$player && player.value !== window.$player) {
-      player.value = window.$player;
-    }
 
     if (val && player.value && SoundManager.getSongId(player.value) !== currentSongId) {
       console.warn("[Player] Refusing to resume a sound bound to another song", {
@@ -1087,7 +1072,7 @@ watch(
     }
 
     let nativePlaybackHandled = false;
-    if (player.value instanceof NativeRustSound && !music.isLoadingSong) {
+    if (isBackendSound(player.value) && !music.isLoadingSong) {
       const autoMix = getAutoMixEngine();
       if (!autoMix.isCrossfading() && typeof player.value.playing === "function") {
         const isPlaying = player.value.playing();
@@ -1135,10 +1120,6 @@ watch(
           }
           // Crossfade no longer active — fall through to normal resume
         }
-      }
-      // Sync player ref if AutoMix changed the underlying sound
-      if (window.$player && player.value !== window.$player) {
-        player.value = window.$player;
       }
       if (player.value && !music.isLoadingSong) {
         const hPlayer = player.value; // Assuming player.value is the Howl instance
@@ -1545,6 +1526,12 @@ watch(
     in srgb,
     rgb(var(--player-page-accent-rgb)) 22%,
     var(--n-border-color) 78%
+  );
+  // 已缓冲但未播放的一段：介于轨道与已播放之间。
+  --player-buffered-color: color-mix(
+    in srgb,
+    var(--player-accent-color) 38%,
+    var(--player-rail-color) 62%
   );
   // 外壳底色保持素色，与 sidebar / QueuePanel 完全一致(var(--app-shell-bg))，不再叠加封面取色，
   // 让 sidebar · 播放栏 · 队列 连成同一块连续的中性外壳。

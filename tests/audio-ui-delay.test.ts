@@ -45,7 +45,7 @@ function close(actual: number, expected: number) {
 test("native Android lyrics share the progress display delay", () => {
   const time = environment(true, true);
   close(time.getLyricPresentationTimeSeconds(12), 11.55);
-  assert.equal(time.getLyricPresentationTimeSeconds(12), time.applyMobileTauriAudioUiDelay(12));
+  assert.equal(time.getLyricPresentationTimeSeconds(12), time.applyAudioUiDelay(12));
 });
 
 test("browser and desktop playback do not gain a mobile output delay", async () => {
@@ -197,7 +197,7 @@ test("the hold is armed by the seek funnel with the position actually seeked to"
   // the lyric index from the new position.
   assert.match(
     playerFunctions,
-    /target\.seek\(currentTime\);\s*(?:\/\/[^\n]*\n\s*)*armLyricSeekPresentationHold\(currentTime\);\s*(?:\/\/[^\n]*\n\s*)*music\.setPlaySongTime\(/,
+    /target\.seekTo\(currentTime\);\s*(?:\/\/[^\n]*\n\s*)*armLyricSeekPresentationHold\(currentTime\);\s*(?:\/\/[^\n]*\n\s*)*music\.setPlaySongTime\(/,
   );
   // The tap itself still hands the raw line time to the seek and to the view;
   // only the presentation conversion knows about the hold.

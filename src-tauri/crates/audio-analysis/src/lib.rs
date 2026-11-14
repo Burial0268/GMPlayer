@@ -26,9 +26,13 @@ use rustfft::{num_complex::Complex, FftPlanner};
 
 // ── Constants ──────────────────────────────────────────────────────
 
-const FFT_SIZE: usize = 2048;
+pub const FFT_SIZE: usize = 2048;
 const FFT_BIN_COUNT: usize = FFT_SIZE / 2 + 1;
 const RESULT_BUF_SIZE: usize = 2048;
+/// Values in a spectrum frame sent for display. The bars are mirrored, so a
+/// 4096 px canvas at the default bar width draws 512 of them; more than this is
+/// reduced again on arrival and was only ever IPC payload.
+pub const DISPLAY_SPECTRUM_BINS: usize = 512;
 /// AMLL's window (below) is a ramp that peaks around 2·10⁴ instead of a taper
 /// peaking at 1, and its magnitudes are what the low-pass `/255` level and 0.35
 /// threshold, and the spectrum bars' 255 floor, were tuned on. This puts the
@@ -65,6 +69,25 @@ impl Default for FftConfig {
     }
 }
 
+impl FftConfig {
+    /// Playback visuals include kick fundamentals below AMLL's 80 Hz default.
+    pub fn visualization() -> Self {
+        Self {
+            freq_min: 40.0,
+            ..Self::default()
+        }
+    }
+}
+
+/// Match FFmpeg's stereo downmix after the input channels have been averaged.
+pub fn visualization_downmix_gain(channels: u16) -> f32 {
+    if channels == 2 {
+        std::f32::consts::SQRT_2
+    } else {
+        1.0
+    }
+}
+
 // ── FftProcessor ───────────────────────────────────────────────────
 
 /// Raw FFT path for IPC/display export and low-frequency analysis. Dynamic peak
@@ -81,6 +104,8 @@ pub struct FftProcessor {
 
     fft: Arc<dyn rustfft::Fft<f32>>,
     fft_input: [Complex<f32>; FFT_SIZE],
+    /// `Fft::process` allocates this on every call otherwise.
+    fft_scratch: Vec<Complex<f32>>,
     hamming_window: [f32; FFT_SIZE],
     magnitudes: [f32; FFT_BIN_COUNT],
     sample_map: Vec<SamplePoint>,
@@ -120,12 +145,14 @@ impl FftProcessor {
         let out = config.output_size.max(1);
         let mut planner = FftPlanner::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
+        let fft_scratch = vec![Complex { re: 0.0, im: 0.0 }; fft.get_inplace_scratch_len()];
         Self {
             config,
             sliding_window: [0.0; FFT_SIZE],
             available_samples: 0,
             sample_rate: 44100,
             fft,
+            fft_scratch,
             fft_input: [Complex { re: 0.0, im: 0.0 }; FFT_SIZE],
             hamming_window: build_hamming_window(),
             magnitudes: [0.0; FFT_BIN_COUNT],
@@ -247,7 +274,8 @@ impl FftProcessor {
             self.fft_input[i].im = 0.0;
         }
 
-        self.fft.process(&mut self.fft_input);
+        self.fft
+            .process_with_scratch(&mut self.fft_input, &mut self.fft_scratch);
 
         let scale = MAGNITUDE_GAIN / (FFT_SIZE as f32).sqrt();
         for i in 0..FFT_BIN_COUNT {
@@ -418,6 +446,26 @@ impl FftProcessor {
     /// AMLL-style smoothed raw FFT magnitudes (IPC / native display / lowFreq).
     pub fn raw_spectrum(&self) -> &[f32] {
         &self.result_buf
+    }
+
+    /// The spectrum as sent for display: each value is the peak of its run of
+    /// raw bins, which is the reduction the bar renderer applies anyway.
+    ///
+    /// A copy. `result_buf` is untouched, so `low_frequency_bins` and
+    /// `get_raw_bins` read exactly what they read before.
+    pub fn display_spectrum(&self) -> [f32; DISPLAY_SPECTRUM_BINS] {
+        const RUN: usize = RESULT_BUF_SIZE / DISPLAY_SPECTRUM_BINS;
+        std::array::from_fn(|i| {
+            self.result_buf[i * RUN..(i + 1) * RUN]
+                .iter()
+                .copied()
+                .fold(0.0, f32::max)
+        })
+    }
+
+    /// The two samples AMLL's 128-bin interpolation feeds to the background.
+    pub fn low_frequency_bins(&self) -> [f32; 2] {
+        [self.result_buf[0], self.result_buf[RESULT_BUF_SIZE >> 7]]
     }
 
     pub fn is_ready(&self) -> bool {
@@ -728,6 +776,26 @@ mod tests {
     use std::f32::consts::TAU;
 
     #[test]
+    fn visualization_stereo_matches_calibrated_mono() {
+        let mut stereo = FftProcessor::new(FftConfig::visualization());
+        let mut mono = FftProcessor::new(FftConfig::visualization());
+        let gain = visualization_downmix_gain(2);
+        let samples: Vec<f32> = (0..FFT_SIZE)
+            .map(|i| 0.3 * (TAU * 55.0 * i as f32 / 48_000.0).sin())
+            .collect();
+        let interleaved: Vec<f32> = samples.iter().flat_map(|s| [s * gain, s * gain]).collect();
+        let downmixed: Vec<f32> = samples.iter().map(|s| s * gain).collect();
+        stereo.push_interleaved_pcm(&interleaved, 2, 48_000);
+        mono.push_pcm(&downmixed, 48_000);
+        stereo.read_spectrum_raw();
+        mono.read_spectrum_raw();
+        assert_eq!(stereo.raw_spectrum(), mono.raw_spectrum());
+        assert_eq!(stereo.low_frequency_bins(), mono.low_frequency_bins());
+        assert!(mono.low_frequency_bins().iter().all(|&bin| bin > 1000.0));
+        assert_eq!(visualization_downmix_gain(1), 1.0);
+    }
+
+    #[test]
     fn test_amplitude_to_level() {
         let analyzer = LowFreqAnalyzer::new(LowFreqConfig::default());
         assert!((analyzer._amplitude_to_level(0.0)).abs() < 1e-6);
@@ -809,6 +877,30 @@ mod tests {
         let bins = proc.get_raw_bins(2).unwrap();
         assert_eq!(bins.len(), 2);
         assert!(bins.iter().any(|&v| v > 0.0));
+    }
+
+    #[test]
+    fn display_spectrum_keeps_every_peak_and_leaves_the_raw_frame_alone() {
+        let mut proc = FftProcessor::new(FftConfig::visualization());
+        for (i, value) in proc.result_buf.iter_mut().enumerate() {
+            *value = ((i * 37) % 101) as f32;
+        }
+        let raw = proc.result_buf;
+        let low = proc.low_frequency_bins();
+
+        let display = proc.display_spectrum();
+        assert_eq!(display.len(), DISPLAY_SPECTRUM_BINS);
+        let run = RESULT_BUF_SIZE / DISPLAY_SPECTRUM_BINS;
+        assert_eq!(RESULT_BUF_SIZE % DISPLAY_SPECTRUM_BINS, 0);
+        for (i, value) in display.iter().enumerate() {
+            let peak = raw[i * run..(i + 1) * run]
+                .iter()
+                .copied()
+                .fold(0.0, f32::max);
+            assert_eq!(*value, peak);
+        }
+        assert_eq!(proc.result_buf, raw);
+        assert_eq!(proc.low_frequency_bins(), low);
     }
 
     #[test]

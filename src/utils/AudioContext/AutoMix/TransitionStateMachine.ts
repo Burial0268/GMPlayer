@@ -28,8 +28,8 @@ import {
   type EmotionalArc,
 } from "./EmotionalArc";
 import { AudioContextManager } from "../AudioContextManager";
-import { BufferedSound } from "../BufferedSound";
-import { SoundManager } from "../SoundManager";
+import { BufferedSound } from "../sound/BufferedSound";
+import { SoundManager } from "../sound/SoundManager";
 import {
   adoptIncomingSound,
   handoffAutoMixToNativeBackend,
@@ -39,10 +39,11 @@ import { resolveSongUrl } from "../resolveSongUrl";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
 import { audioSendMsg } from "../../tauri/audio/bridge";
 import { isNativeAudioBackendAvailable } from "../../tauri/audio/backendRuntime";
+import { identityForSong } from "../../tauri/audio/identity";
 import type { AudioThreadEvent } from "../../tauri/audio/protocol";
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
-import type { ISound } from "../types";
+import { isBackendSound, type ISound } from "../sound/types";
 import type {
   AutoMixState,
   CachedAnalysis,
@@ -56,7 +57,7 @@ const IS_DEV = import.meta.env?.DEV ?? false;
 
 /** 只有后端驱动的 sound 带 `getSourceUrl`（BufferedSound 走 blob URL）。 */
 const soundSourceUrl = (sound: ISound | null): string | null =>
-  (sound as { getSourceUrl?: () => string | null } | null)?.getSourceUrl?.() ?? null;
+  isBackendSound(sound) ? sound.getSourceUrl() : null;
 
 /** Seconds before expected crossfade to start pre-analysis */
 const PREPARE_AHEAD = 13;
@@ -171,8 +172,6 @@ export class TransitionStateMachine {
 
   // Delayed finishing→idle transition timer.
   private _finishingTimerId: ReturnType<typeof setTimeout> | null = null;
-  private _nativeFinishTimerId: ReturnType<typeof setTimeout> | null = null;
-
   // Native AutoMix handoff state (Tauri backend owns the actual crossfade).
   private _nativeAutoMixPreparing: boolean = false;
   private _nativeAutoMixReady: boolean = false;
@@ -392,6 +391,8 @@ export class TransitionStateMachine {
     }
 
     if (!currentSound || !currentSound.playing()) {
+      // Native pause preserves preparation; Rust owns end and cancellation events.
+      if (this._isNativeAutoMixSound(currentSound)) return;
       if (this._state === "waiting" || this._state === "analyzing") {
         if (IS_DEV) {
           console.log(
@@ -403,7 +404,7 @@ export class TransitionStateMachine {
       return;
     }
 
-    const currentTime = currentSound.seek() as number;
+    const currentTime = currentSound.position;
     const duration = currentSound.duration();
     if (!duration || duration <= 0) return;
 
@@ -483,11 +484,7 @@ export class TransitionStateMachine {
   }
 
   private _isNativeAutoMixSound(sound: ISound | null): boolean {
-    return (
-      isNativeAudioBackendAvailable() &&
-      !!sound &&
-      typeof (sound as { getSourceUrl?: () => string | null }).getSourceUrl === "function"
-    );
+    return isNativeAudioBackendAvailable() && isBackendSound(sound);
   }
 
   private _startNativeAutoMixPrepare(duration: number): void {
@@ -541,6 +538,7 @@ export class TransitionStateMachine {
       })
       .catch((err) => {
         if (!this._isTransitionActive(transitionId, "native")) return;
+        this._nativeAutoMixPreparing = false;
         // Back off exactly as a backend-reported failure does. Without this the
         // state goes straight back to `idle`, and `_handleIdle` runs per frame —
         // so a prepare that cannot get off the ground (an unresolvable URL, a
@@ -558,7 +556,9 @@ export class TransitionStateMachine {
         }
       })
       .finally(() => {
-        this._nativeAutoMixPreparing = false;
+        if (this._isTransitionActive(transitionId, "native")) {
+          this._nativeAutoMixPreparing = false;
+        }
       });
   }
 
@@ -581,11 +581,17 @@ export class TransitionStateMachine {
     nextIndex: number,
     nextSong: any,
   ): Promise<void> {
+    const currentIdentity = identityForSong(
+      this._musicStoreRef?.persistData?.playlists?.[currentIndex],
+    );
+    const nextIdentity = identityForSong(nextSong);
     const resolved = await resolveSongUrl(nextSong);
+    if (!this._isTransitionActive(transitionId, "native")) return;
     if (!resolved?.url) throw new Error("Failed to resolve next song URL for native AutoMix");
 
     const transport = getAudioBackendTransport();
     await transport.connect();
+    if (!this._isTransitionActive(transitionId, "native")) return;
     this._ensureNativeAutoMixSubscription();
     if (IS_DEV) {
       console.debug("TransitionStateMachine: Sending native AutoMix prepare", {
@@ -610,10 +616,13 @@ export class TransitionStateMachine {
         emotionalTransition: this._settingsEmotionalTransition,
       },
     });
+    if (!this._isTransitionActive(transitionId, "native")) return;
     await audioSendMsg({
       type: "automixPrepareNext",
       currentIndex,
       nextIndex,
+      currentIdentity,
+      nextIdentity,
       transitionId,
       nextSong: {
         type: "local",
@@ -675,6 +684,21 @@ export class TransitionStateMachine {
         }
         if (
           status.state === "idle" &&
+          status.transitionId !== undefined &&
+          status.transitionId !== null &&
+          (this._state === "analyzing" || this._state === "waiting")
+        ) {
+          // Seek/output rebuild cancelled this attempt. Anonymous configure snapshots do not.
+          this._nativeAutoMixPreparing = false;
+          this._nativeAutoMixReady = false;
+          this._nativeForceStartSent = false;
+          this._nativeNextIndex = -1;
+          this._clearTransition(status.transitionId);
+          this._state = "idle";
+          this._updateStoreState();
+        }
+        if (
+          status.state === "idle" &&
           this._state === "crossfading" &&
           this._nativeForceStartSent &&
           status.currentIndex === this._nativeNextIndex
@@ -705,7 +729,6 @@ export class TransitionStateMachine {
         this._crossfadeDuration = event.data.duration || this._crossfadeDuration;
         this._state = "crossfading";
         this._updateStoreState();
-        this._armNativeAutoMixWatchdog();
         break;
       case "automixCrossfadeComplete":
         if (!this._acceptNativeTransitionEvent(event.data.transitionId)) return;
@@ -730,35 +753,14 @@ export class TransitionStateMachine {
     this._nativeForceStartSent = false;
     this._nativeNextIndex = -1;
     this._clearTransition();
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-      this._nativeFinishTimerId = null;
-    }
     if (this._state === "analyzing" || this._state === "waiting" || this._state === "crossfading") {
       this._state = "idle";
       this._updateStoreState();
     }
   }
 
-  private _armNativeAutoMixWatchdog(): void {
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-    }
-    const timeoutMs = Math.max(5000, this._crossfadeDuration * 3000 + 5000);
-    this._nativeFinishTimerId = setTimeout(() => {
-      this._nativeFinishTimerId = null;
-      if (this._state === "crossfading" && this._nativeNextIndex >= 0) {
-        this._handleNativeAutoMixFailure("Native AutoMix completion timeout");
-      }
-    }, timeoutMs);
-  }
-
   private _completeNativeAutoMix(currentIndex: number): void {
     const transitionId = this._activeTransition?.mode === "native" ? this._activeTransition.id : 0;
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-      this._nativeFinishTimerId = null;
-    }
 
     const nextIndex = this.resolveActiveTransitionTargetIndex(
       currentIndex >= 0 ? currentIndex : this._nativeNextIndex,
@@ -1306,7 +1308,7 @@ export class TransitionStateMachine {
     }
 
     // Emotional arc: shaped by the energy of the passages that will overlap.
-    const outgoingNow = outgoingSound.seek() as number;
+    const outgoingNow = outgoingSound.position;
     let arc: EmotionalArc = "neutral";
     let arcProfile: ArcProfile | null = null;
     if (this._settingsEmotionalTransition && this._currentAnalysis && this._nextAnalysis) {
@@ -1724,8 +1726,8 @@ export class TransitionStateMachine {
       params.fadeInOnly = true;
     }
 
-    const outgoingGain = this._getGainNode(outgoingSound);
-    const incomingGain = this._getGainNode(incomingSound);
+    const outgoingGain = outgoingSound.getGainNode();
+    const incomingGain = incomingSound.getGainNode();
 
     if (outgoingGain && incomingGain) {
       this._crossfadeScheduler.scheduleFullCrossfade(outgoingGain, incomingGain, params, () =>
@@ -1872,7 +1874,6 @@ export class TransitionStateMachine {
       }
     }
 
-    window.$player = incomingSound;
     adoptIncomingSound(incomingSound);
     this._pendingNextIndex = -1;
   }
@@ -1925,19 +1926,6 @@ export class TransitionStateMachine {
     });
   }
 
-  private _getGainNode(sound: ISound): GainNode | null {
-    if (sound instanceof BufferedSound) {
-      const inner = sound.getInnerSound();
-      if (inner) {
-        return inner.getGainNode();
-      }
-    }
-    if ("getGainNode" in sound && typeof (sound as any).getGainNode === "function") {
-      return (sound as any).getGainNode();
-    }
-    return null;
-  }
-
   // ─── State: FINISHING ──────────────────────────────────────────
 
   private _onCrossfadeComplete(transitionId?: number): void {
@@ -1970,13 +1958,13 @@ export class TransitionStateMachine {
     const currentSound = SoundManager.getCurrentSound();
     if (currentSound && this._musicStoreRef) {
       const userVolume = this._musicStoreRef.persistData.playVolume;
-      currentSound.volume(userVolume);
+      currentSound.setVolume(userVolume);
     }
 
     this._activeGainAdjustment = this._crossfadeScheduler.getIncomingGainAdjustment();
 
     if (currentSound && this._activeGainAdjustment !== 1) {
-      const gainNode = this._getGainNode(currentSound);
+      const gainNode = currentSound.getGainNode();
       if (gainNode && this._musicStoreRef) {
         const userVolume = this._musicStoreRef.persistData.playVolume;
         gainNode.gain.value = userVolume * this._activeGainAdjustment;
@@ -1996,12 +1984,6 @@ export class TransitionStateMachine {
         }
         if (IS_DEV) {
           console.log("TransitionStateMachine: Applied pending playSongIndex (bg tab fallback)");
-        }
-      }
-      if (currentSound && window.$player !== currentSound) {
-        window.$player = currentSound;
-        if (transitionId === undefined || this._isTransitionActive(transitionId, "web")) {
-          adoptIncomingSound(currentSound);
         }
       }
       this._pendingNextIndex = -1;
@@ -2069,10 +2051,6 @@ export class TransitionStateMachine {
       clearTimeout(this._finishingTimerId);
       this._finishingTimerId = null;
     }
-    if (this._nativeFinishTimerId !== null) {
-      clearTimeout(this._nativeFinishTimerId);
-      this._nativeFinishTimerId = null;
-    }
 
     this._preBufferManager.cleanup();
     this._nativeAutoMixPreparing = false;
@@ -2097,9 +2075,8 @@ export class TransitionStateMachine {
         if (outgoing) {
           SoundManager.revertTransition();
           if (this._musicStoreRef) {
-            outgoing.volume(this._musicStoreRef.persistData.playVolume);
+            outgoing.setVolume(this._musicStoreRef.persistData.playVolume);
           }
-          window.$player = outgoing;
         }
       } else {
         incoming.stop();
@@ -2235,6 +2212,15 @@ export class TransitionStateMachine {
     }
     this._refreshSettings();
 
+    if (this._isNativeAutoMixSound(sound)) {
+      // A backend advance reuses its sound object. Retire only local bookkeeping;
+      // cancelling here would tear down the track Rust has already adopted.
+      this._nativeAutoMixPreparing = false;
+      this._nativeAutoMixReady = false;
+      this._nativeForceStartSent = false;
+      this._nativeNextIndex = -1;
+      if (this._isNativeTransitionActive()) this._clearTransition();
+    }
     this._activeGainAdjustment = 1;
     this._preBufferManager.cleanup();
 

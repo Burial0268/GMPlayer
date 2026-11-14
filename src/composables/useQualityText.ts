@@ -1,6 +1,7 @@
 import { computed } from "vue";
 import { musicStore, settingStore } from "@/store";
-import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
+import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
+import { isBackendSound } from "@/utils/AudioContext/sound/types";
 
 /** 音质标签：所选音质，原生后端在播时再加上实际的采样率与码率。 */
 export function useQualityText() {
@@ -21,8 +22,8 @@ export function useQualityText() {
 
   const nativeAudioQuality = computed(() => {
     if (!music.getPlaySongData || music.getLoadingState) return null;
-    const player = typeof window !== "undefined" ? window.$player : undefined;
-    if (!(player instanceof NativeRustSound)) return null;
+    const player = activeSound.value;
+    if (!isBackendSound(player)) return null;
     return player.getAudioQuality();
   });
 

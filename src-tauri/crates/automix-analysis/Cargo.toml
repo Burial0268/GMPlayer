@@ -1,0 +1,13 @@
+[package]
+name = "gmplayer-automix-analysis"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "PCM-only AutoMix analysis shared by native and WASM workers"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+rustfft = "6"
+
+[dev-dependencies]
+serde_json = "1"

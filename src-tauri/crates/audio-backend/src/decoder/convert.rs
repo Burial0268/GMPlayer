@@ -10,15 +10,11 @@
 
 use std::time::Duration;
 
-use rodio::Source;
+use super::{pcm::PcmSource, resample};
 
-use super::{resample, SeekableSymphoniaSource};
-
-pub(super) struct FrameConverter {
-    // Playback always uses our Symphonia source. Keeping the concrete type
-    // here lets the compiler inline the per-sample iterator hot path instead
-    // of paying a trait-object dispatch for every decoded sample.
-    source: SeekableSymphoniaSource,
+pub(super) struct FrameConverter<D: PcmSource> {
+    // Each decoder gets a concrete worker, keeping dispatch out of sample loops.
+    source: D,
     input_channels: usize,
     output_channels: usize,
     matrix: Vec<Vec<(usize, f32)>>,
@@ -37,9 +33,9 @@ pub(super) struct FrameConverter {
     passthrough: bool,
 }
 
-impl FrameConverter {
+impl<D: PcmSource> FrameConverter<D> {
     pub(super) fn new(
-        source: SeekableSymphoniaSource,
+        source: D,
         input_channels: u16,
         input_sample_rate: u32,
         output_channels: u16,
@@ -166,32 +162,9 @@ impl FrameConverter {
 /// buffer. Returns `false` if the source ends, leaving any partial frame to
 /// be discarded by the caller — matching rodio's frame-aligned EOF behaviour.
 #[inline]
-fn read_input_frame(
-    source: &mut SeekableSymphoniaSource,
-    channels: usize,
-    buf: &mut [f32],
-) -> bool {
+fn read_input_frame<D: PcmSource>(source: &mut D, channels: usize, buf: &mut [f32]) -> bool {
     debug_assert_eq!(buf.len(), channels);
-
-    // Fast path: the whole frame sits inside the current decoded buffer, so
-    // copy it as one slice — the resample/mix hot loop calls this per output
-    // frame and the per-sample `next()` chain costs a branch per sample.
-    let samples = source.buffer.samples();
-    let offset = source.buffer_offset;
-    if offset + channels <= samples.len() {
-        buf[..channels].copy_from_slice(&samples[offset..offset + channels]);
-        source.buffer_offset = offset + channels;
-        return true;
-    }
-
-    // Slow path: the frame straddles a refill boundary (or the source ends).
-    for slot in &mut buf[..channels] {
-        match source.next() {
-            Some(sample) => *slot = sample,
-            None => return false,
-        }
-    }
-    true
+    source.read_frame(buf)
 }
 
 /// Apply the channel mix matrix for a single frame (no interpolation).

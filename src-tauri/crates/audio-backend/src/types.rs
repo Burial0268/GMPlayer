@@ -12,6 +12,23 @@ pub enum PlaybackState {
     Ended = 3,
 }
 
+/// What the player is doing, as one value every surface can render.
+///
+/// Derived in one place from the flags that used to be read separately (intent,
+/// load in flight, stream stall, whether anything is loaded), so two surfaces
+/// cannot combine them differently. `Loading` and `Buffering` are not pauses:
+/// the first has no audio yet, the second ran out of download mid-track.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PlaybackPhase {
+    #[default]
+    Idle,
+    Loading,
+    Buffering,
+    Playing,
+    Paused,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CrossfadeCurve {
     #[serde(rename = "linear")]
@@ -219,13 +236,6 @@ pub struct AudioInfo {
     pub metadata_tags: Vec<(String, String)>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpectrumConfig {
-    pub fft_size: usize,
-    pub smoothing: f32,
-    pub max_freq: Option<f32>,
-}
-
 // ═══════════════════════════════════════════════════════════════════
 // AMLL-style message/event system — IPC contract with frontend
 // ═══════════════════════════════════════════════════════════════════
@@ -322,6 +332,10 @@ pub enum AudioThreadMessage {
         current_index: usize,
         next_index: usize,
         next_song: SongData,
+        #[serde(default)]
+        current_identity: Option<TrackIdentity>,
+        #[serde(default)]
+        next_identity: Option<TrackIdentity>,
         #[serde(default)]
         transition_id: Option<u64>,
     },
@@ -441,6 +455,8 @@ pub enum AudioThreadEvent {
         #[serde(default)]
         timeline_epoch: u64,
     },
+    /// How far into the track, in seconds, audio can play without waiting on
+    /// the network. Equals the duration for a local or fully landed source.
     #[serde(rename_all = "camelCase")]
     LoadProgress { position: f64 },
     #[serde(rename_all = "camelCase")]
@@ -463,6 +479,29 @@ pub enum AudioThreadEvent {
         #[serde(default)]
         timeline_epoch: u64,
     },
+    /// The one track-change edge: a different source has just become the
+    /// playing one, described whole.
+    ///
+    /// Emitted exactly once per `timeline_epoch` that starts a track, *before*
+    /// the `LoadAudio` / `AutomixCrossfadeComplete` / `SyncStatus` /
+    /// `NativePlannerAdvanced` that follow it. Those used to be the only
+    /// record of a change, so a subscriber rebuilt "the track changed" from
+    /// three partial events with flags armed in between, and announced it once
+    /// per event. Everything needed to adopt the track is here, so a subscriber
+    /// reads no other event and no earlier state.
+    ///
+    /// `load_request_id` is `Some` only for a load the frontend asked for.
+    #[serde(rename_all = "camelCase")]
+    TrackChanged {
+        timeline_epoch: u64,
+        music_id: String,
+        identity: Option<TrackIdentity>,
+        current_play_index: usize,
+        music_info: DisplayAudioInfo,
+        quality: AudioQuality,
+        is_playing: bool,
+        load_request_id: Option<u64>,
+    },
     #[serde(rename_all = "camelCase")]
     LoadingAudio {
         music_id: String,
@@ -476,6 +515,15 @@ pub enum AudioThreadEvent {
     Buffering {
         music_id: String,
         is_buffering: bool,
+    },
+    /// The one playback-state edge. Emitted only when the phase or the track it
+    /// describes changes, after whatever handler caused it has finished, so a
+    /// subscriber needs no per-track arming to follow backend-driven changes.
+    #[serde(rename_all = "camelCase")]
+    PlaybackPhaseChanged {
+        phase: PlaybackPhase,
+        identity: Option<TrackIdentity>,
+        timeline_epoch: u64,
     },
     #[serde(rename_all = "camelCase")]
     AudioPlayFinished { music_id: String },
@@ -974,6 +1022,13 @@ pub struct NativeSessionSnapshot {
     pub order: Vec<TrackIdentity>,
     #[serde(default)]
     pub shuffle_id: Option<String>,
+    /// Last published phase, so a recreated page starts from it instead of
+    /// waiting for the next edge.
+    #[serde(default)]
+    pub phase: PlaybackPhase,
+    /// Last published `LoadProgress` position, in seconds.
+    #[serde(default)]
+    pub buffered_position: f64,
 }
 
 /// Resolved "what is playing" for OS media sessions.
@@ -1311,9 +1366,37 @@ mod tests {
             play_mode: NativePlaybackMode::Random,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
             shuffle_id: Some("saved-pass".into()),
+            phase: PlaybackPhase::Buffering,
+            buffered_position: 42.0,
         };
         let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
         let object = value.as_object().expect("object");
+        assert_eq!(object["phase"], "buffering");
+        let edge = serde_json::to_value(AudioThreadEvent::PlaybackPhaseChanged {
+            phase: PlaybackPhase::Loading,
+            identity: None,
+            timeline_epoch: 3,
+        })
+        .expect("serialize");
+        assert_eq!(edge["type"], "playbackPhaseChanged");
+        assert_eq!(edge["data"]["phase"], "loading");
+        assert_eq!(edge["data"]["timelineEpoch"], 3);
+        let change = serde_json::to_value(AudioThreadEvent::TrackChanged {
+            timeline_epoch: 4,
+            music_id: "local:a".into(),
+            identity: Some(TrackIdentity::Netease { id: "7".into() }),
+            current_play_index: 2,
+            music_info: DisplayAudioInfo::default(),
+            quality: AudioQuality::default(),
+            is_playing: true,
+            load_request_id: None,
+        })
+        .expect("serialize");
+        assert_eq!(change["type"], "trackChanged");
+        assert_eq!(change["data"]["timelineEpoch"], 4);
+        assert_eq!(change["data"]["currentPlayIndex"], 2);
+        assert_eq!(change["data"]["identity"]["id"], "7");
+        assert!(change["data"]["loadRequestId"].is_null());
 
         for key in [
             "hasTrack",

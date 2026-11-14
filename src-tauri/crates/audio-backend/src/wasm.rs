@@ -6,7 +6,7 @@
 
 use std::io::Cursor;
 
-use audio_analysis::{AudioProcessor, LowFreqConfig};
+use audio_analysis::{visualization_downmix_gain, FftConfig, FftProcessor, FFT_SIZE};
 use serde::Serialize;
 use symphonia::core::audio::SampleBuffer;
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -35,7 +35,7 @@ struct WebBackendReply {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AnalysisFrameReply<'a> {
-    events: [AnalysisEventMessage<'a>; 2],
+    events: Vec<AnalysisEventMessage<'a>>,
     effects: [WebBackendEffect; 0],
 }
 
@@ -52,8 +52,8 @@ struct AnalysisEventMessage<'a> {
 enum AnalysisFrameEvent<'a> {
     #[serde(rename = "fftData")]
     FftData { data: &'a [f32] },
-    #[serde(rename = "lowFrequencyVolume")]
-    LowFrequencyVolume { volume: f64 },
+    #[serde(rename = "lowFreqBins")]
+    LowFreqBins { bins: [f32; 2] },
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -179,81 +179,76 @@ struct AnalysisState {
     sample_rate: u32,
     channels: u16,
     duration: f64,
-    processor: AudioProcessor,
-    spectrum: Vec<f32>,
+    fft: FftProcessor,
     next_sample_index: usize,
+    spectrum_elapsed_ms: f64,
 }
 
 impl AnalysisState {
-    fn new(decoded: DecodedAudio, freq_min: f32, freq_max: f32) -> Self {
-        let cfg = LowFreqConfig::default();
-        let mut processor = AudioProcessor::new(
-            2048,
+    fn new(mut decoded: DecodedAudio, freq_min: f32, freq_max: f32) -> Self {
+        let fft = FftProcessor::new(FftConfig {
             freq_min,
             freq_max,
-            cfg.bin_count,
-            cfg.window_size,
-            cfg.gradient_threshold,
-        );
-        processor.clear();
+            ..FftConfig::visualization()
+        });
         let sample_rate = decoded.sample_rate.max(1);
         let channels = decoded.channels.max(1);
+        // Offline AutoMix keeps the decoder's averaged PCM; only visuals use this gain.
+        let gain = visualization_downmix_gain(channels);
+        if gain != 1.0 {
+            decoded
+                .samples
+                .iter_mut()
+                .for_each(|sample| *sample *= gain);
+        }
 
         Self {
             samples: decoded.samples,
             sample_rate,
             channels,
             duration: decoded.duration,
-            processor,
-            spectrum: vec![0.0; 2048],
+            fft,
             next_sample_index: 0,
+            spectrum_elapsed_ms: 50.0,
         }
     }
 
     fn set_freq_range(&mut self, from: f32, to: f32) {
-        self.processor.fft.set_freq_range(from, to);
+        self.fft.set_freq_range(from, to);
     }
 
     fn clear(&mut self) {
-        self.processor.clear();
-        self.spectrum.fill(0.0);
+        self.fft.clear_queue();
         self.next_sample_index = 0;
+        self.spectrum_elapsed_ms = 50.0;
     }
 
-    fn process(&mut self, position: f64, delta_ms: f64) -> f64 {
+    fn process(&mut self, position: f64) -> bool {
         let target = sample_index_for_position(position, self.sample_rate, self.samples.len());
+        if target == self.next_sample_index {
+            return false;
+        }
         if target >= self.samples.len() {
-            self.processor.clear();
-            self.spectrum.fill(0.0);
+            self.fft.clear_queue();
             self.next_sample_index = self.samples.len();
-            return 0.0;
+            return true;
         }
 
-        let seek_back_edge = self.next_sample_index.saturating_sub(2048);
         let seek_forward_edge = self
             .next_sample_index
-            .saturating_add((self.sample_rate as usize / 2).max(2048));
-        if target < seek_back_edge || target > seek_forward_edge {
-            self.processor.clear();
-            self.next_sample_index = target;
+            .saturating_add((self.sample_rate as usize / 2).max(FFT_SIZE));
+        if target < self.next_sample_index || target > seek_forward_edge {
+            self.clear();
+            self.next_sample_index = target.saturating_sub(FFT_SIZE);
         }
 
-        let feed_until = target.saturating_add(2048).min(self.samples.len());
-        if feed_until > self.next_sample_index {
-            self.processor.push_pcm(
-                &self.samples[self.next_sample_index..feed_until],
-                self.sample_rate,
-            );
-            self.next_sample_index = feed_until;
-        }
-
-        let delta = if delta_ms.is_finite() {
-            delta_ms.clamp(1.0, 100.0) as f32
-        } else {
-            33.0
-        };
-        let low_freq = self.processor.process_frame(delta, &mut self.spectrum);
-        low_freq as f64
+        // End the window at the media clock, as native analysis does at audible PCM.
+        self.fft.push_pcm(
+            &self.samples[self.next_sample_index..target],
+            self.sample_rate,
+        );
+        self.next_sample_index = target;
+        self.fft.read_spectrum_raw()
     }
 }
 
@@ -278,6 +273,7 @@ pub struct WasmAudioBackend {
     analysis: Option<AnalysisState>,
     analysis_freq_min: f32,
     analysis_freq_max: f32,
+    analysis_fft_enabled: bool,
     seq: u64,
     /// Mirrors the native `PlayerClock::epoch`: bumped whenever a new track's
     /// timeline starts, so the shared frontend controller can apply one rule on
@@ -301,8 +297,9 @@ impl WasmAudioBackend {
             music_info: DisplayAudioInfo::default(),
             quality: AudioQuality::default(),
             analysis: None,
-            analysis_freq_min: 80.0,
-            analysis_freq_max: 2000.0,
+            analysis_freq_min: FftConfig::visualization().freq_min,
+            analysis_freq_max: FftConfig::visualization().freq_max,
+            analysis_fft_enabled: true,
             seq: 0,
             timeline_epoch: 0,
         }
@@ -473,23 +470,42 @@ impl WasmAudioBackend {
             return self.reply(Vec::new(), Vec::new());
         };
 
-        let low_freq = analysis.process(self.position, delta_ms);
-        let fft_seq = self.next_seq();
+        if delta_ms.is_finite() {
+            analysis.spectrum_elapsed_ms += delta_ms.clamp(0.0, 100.0);
+        }
+        if !analysis.process(self.position) {
+            return self.reply(Vec::new(), Vec::new());
+        }
+        let bins = analysis.fft.low_frequency_bins();
+        // Low bins follow the 16 ms hop; the full spectrum matches native's 50 ms cadence.
+        let send_spectrum = self.analysis_fft_enabled && analysis.spectrum_elapsed_ms >= 50.0;
+        if send_spectrum {
+            analysis.spectrum_elapsed_ms %= 50.0;
+        }
         let low_freq_seq = self.next_seq();
-        let spectrum = &self.analysis.as_ref().expect("analysis exists").spectrum;
+        let spectrum;
+        let mut events = Vec::with_capacity(2);
+        events.push(AnalysisEventMessage {
+            callback_id: "",
+            data: AnalysisFrameEvent::LowFreqBins { bins },
+            seq: low_freq_seq,
+        });
+        if send_spectrum {
+            let fft_seq = self.next_seq();
+            spectrum = self
+                .analysis
+                .as_ref()
+                .expect("analysis exists")
+                .fft
+                .display_spectrum();
+            events.push(AnalysisEventMessage {
+                callback_id: "",
+                data: AnalysisFrameEvent::FftData { data: &spectrum },
+                seq: fft_seq,
+            });
+        }
         let reply = AnalysisFrameReply {
-            events: [
-                AnalysisEventMessage {
-                    callback_id: "",
-                    data: AnalysisFrameEvent::FftData { data: spectrum },
-                    seq: fft_seq,
-                },
-                AnalysisEventMessage {
-                    callback_id: "",
-                    data: AnalysisFrameEvent::LowFrequencyVolume { volume: low_freq },
-                    seq: low_freq_seq,
-                },
-            ],
+            events,
             effects: [],
         };
 
@@ -608,6 +624,9 @@ impl WasmAudioBackend {
             AudioThreadMessage::SeekAudio { position, .. } => {
                 self.position = finite_nonnegative(position);
                 self.music_info.position = self.position;
+                if let Some(analysis) = self.analysis.as_mut() {
+                    analysis.clear();
+                }
                 self.reply(
                     vec![AudioThreadEvent::PlayPosition {
                         position: self.position,
@@ -680,9 +699,10 @@ impl WasmAudioBackend {
                 )
             }
             AudioThreadMessage::SetFFT { enabled } => {
-                if !enabled {
+                self.analysis_fft_enabled = enabled;
+                if enabled {
                     if let Some(analysis) = self.analysis.as_mut() {
-                        analysis.clear();
+                        analysis.spectrum_elapsed_ms = 50.0;
                     }
                 }
                 self.reply(Vec::new(), Vec::new())

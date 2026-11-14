@@ -4,8 +4,12 @@ use cpal::{SampleRate, StreamConfig};
 use super::{platform, OutputTarget};
 
 const PREFERRED_RATES: [u32; 2] = [48_000, 44_100];
-const PREFERRED_FORMATS: [cpal::SampleFormat; 3] = [
+// Float first, then by depth: a 16-bit stream truncates everything above it
+// without dither, so it is the last PCM resort rather than the second choice.
+const PREFERRED_FORMATS: [cpal::SampleFormat; 5] = [
     cpal::SampleFormat::F32,
+    cpal::SampleFormat::I32,
+    cpal::SampleFormat::I24,
     cpal::SampleFormat::I16,
     cpal::SampleFormat::U16,
 ];
@@ -25,6 +29,8 @@ pub(super) fn select_any_output_config(
 ) -> Option<cpal::SupportedStreamConfig> {
     let configs = device.supported_output_configs().ok()?;
     configs
+        // A DSD range carries a bitstream; the callback only renders PCM.
+        .filter(|range| !range.sample_format().is_dsd())
         .map(|range| {
             let (sample_rate, rate_score) = select_sample_rate(&range, 48_000, None);
             let score = (format_score(range.sample_format()), rate_score);
@@ -50,6 +56,8 @@ pub(super) fn select_output_config(
     let configs = device.supported_output_configs().ok()?;
 
     configs
+        // A DSD range carries a bitstream; the callback only renders PCM.
+        .filter(|range| !range.sample_format().is_dsd())
         .map(|range| {
             let channels = range.channels();
             let sample_format = range.sample_format();
@@ -163,6 +171,14 @@ fn format_score(format: cpal::SampleFormat) -> u32 {
 mod tests {
     use super::*;
     use cpal::SupportedBufferSize;
+
+    #[test]
+    fn format_score_prefers_float_then_depth() {
+        use cpal::SampleFormat::*;
+        assert!(format_score(F32) < format_score(I32));
+        assert!(format_score(I32) < format_score(I24));
+        assert!(format_score(I24) < format_score(I16));
+    }
 
     #[test]
     fn desired_channels_keep_stereo_for_music_sources() {
