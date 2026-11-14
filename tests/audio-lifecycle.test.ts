@@ -90,6 +90,7 @@ function queueEnvironment(native = true) {
         cancelNativeQueuePrefill() {},
         getAudioPreloader: () => ({ cleanup() {} }),
         getAutoMixEngine: () => ({ isHandoffActive: () => false }),
+        stopActiveSound() {},
       },
     },
     { window, Math: math, $message: { info() {} } },
@@ -754,6 +755,37 @@ test("the page cannot end loading while the backend still reports it", () => {
   assert.equal(music.loadingStage, "resolving");
   music.settleLoading();
   assert.equal(music.isLoadingSong, false);
+  assert.equal(music.loadingStage, "idle");
+  env.restore();
+});
+
+test("a switch keeps the spinner through the old track's paused phase, until the load reaches the backend", () => {
+  const env = queueEnvironment();
+  const music = env.music;
+  music.persistData.playlists = [1, 2, 1].map((id) => ({ id, name: String(id) }));
+  music.persistData.playSongIndex = 0;
+  music.commitPlaySongIndex = (index: number) => {
+    music.persistData.playSongIndex = index;
+    return true;
+  };
+  music.adoptBackendPlaybackPhase("playing");
+
+  music.selectPlaySongByIndex(1);
+  assert.equal(music.loadingStage, "resolving");
+  // The backend answering the switch's own stop of the old track.
+  music.adoptBackendPlaybackPhase("paused");
+  assert.equal(music.isLoadingSong, true);
+  // The new song's load reaches the backend and owns the spinner from here.
+  music.adoptBackendPlaybackPhase("loading");
+  music.adoptBackendPlaybackPhase("playing");
+  assert.equal(music.isLoadingSong, false);
+  assert.equal(music.loadingStage, "idle");
+
+  // A duplicate row of the same song starts no load, so nothing would end `resolving`.
+  music.selectPlaySongByIndex(2);
+  music.adoptBackendPlaybackPhase("loading");
+  music.adoptBackendPlaybackPhase("playing");
+  music.selectPlaySongByIndex(0);
   assert.equal(music.loadingStage, "idle");
   env.restore();
 });

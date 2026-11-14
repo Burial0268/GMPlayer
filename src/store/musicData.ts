@@ -1488,6 +1488,7 @@ const useMusicDataStore = defineStore("musicData", {
         }
         // 已经切换到下一首/上一首歌曲，先清空旧歌词，等待新歌词加载
         this.resetSongLyricState();
+        this.beginSongSwitch(currentSong?.id);
         nextTick().then(() => {
           skipTrace("nextTick re-arm playState=true", {
             playState: this.playState,
@@ -1523,10 +1524,11 @@ const useMusicDataStore = defineStore("musicData", {
         }
         return;
       }
+      const fromId = this.getPlaySongData?.id;
       stopActiveSound();
       this.commitPlaySongIndex(index);
       this.resetSongLyricState();
-      this.isLoadingSong = true;
+      this.beginSongSwitch(fromId);
       this.setPlayState(true);
     },
 
@@ -1806,6 +1808,21 @@ const useMusicDataStore = defineStore("musicData", {
       }
       this.isLoadingSong = false;
       this.loadingStage = "idle";
+    },
+
+    /**
+     * A user switch committed a different song, and the song watcher loads it after its
+     * debounce. Until that load reaches the backend the spinner is the page's (`resolving`), so
+     * the old track's `paused` phase — the backend answering the switch's own stop — cannot
+     * end it. Only when a load will follow: no song, the same id (a duplicate row) or native
+     * FM are skipped by the watcher, and nothing would then end the stage.
+     */
+    beginSongSwitch(fromId: number | undefined) {
+      this.isLoadingSong = true;
+      const toId = this.getPlaySongData?.id;
+      if (!toId || Number(toId) === Number(fromId)) return;
+      if (isTauri() && this.persistData.personalFmMode) return;
+      this.loadingStage = "resolving";
     },
 
     setLoadingState(state: boolean) {

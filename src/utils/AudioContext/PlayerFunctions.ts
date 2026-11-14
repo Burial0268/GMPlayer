@@ -950,14 +950,19 @@ const setupNativeSound = (
       crossfading: getAutoMixEngine().isCrossfading(),
     });
     if (!isActiveBoundSound()) return;
-    clearRebuffering();
+    // The store already moved to another song: this is a switch stopping the
+    // old track, not a pause. Playback is still wanted, and the store's time
+    // and loading state now belong to the new song.
+    const leaving = SoundManager.getSongId(sound) !== Number(music.getPlaySongData?.id);
+    if (!leaving) clearRebuffering();
     const autoMix = getAutoMixEngine();
     if (autoMix.isCrossfading()) return;
-    checkpointActivePosition(sound, music);
+    if (!leaving) checkpointActivePosition(sound, music);
     stopTimeUpdate();
     // No audio flows while paused — park the per-frame analysis loop instead
     // of polling FFT/lowfreq at 60fps. The play handler restarts it.
     stopSpectrumUpdate();
+    if (leaving) return;
     if (IS_DEV) console.log("[Native] 音乐暂停");
     music.setPlayState(false);
     window.$setSiteTitle("");
@@ -1643,6 +1648,9 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   const music = musicStore();
   const settings = settingStore();
   const songId = Number(music.getPlaySongData?.id);
+  // Before the await: the store already names this song, and a pause or resume
+  // landing in between must not read the sound as bound to the previous one.
+  SoundManager.setCurrentSongId(songId, sound);
 
   if (isBackendSound(sound)) {
     await sound.requestStatusSync();
@@ -1651,7 +1659,6 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   stopSpectrumUpdate();
   stopTimeUpdate();
 
-  SoundManager.setCurrentSongId(songId, sound);
   music.playingSongId = Number.isFinite(songId) && songId !== 0 ? songId : null;
   music.setPlayState(music.nativeFmSession?.desiredPlaying ?? true);
   music.settleLoading();

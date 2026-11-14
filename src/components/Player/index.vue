@@ -778,6 +778,10 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
     if (music.getPlaylists[0] && music.getPlayState) {
       $message.warning(t("general.message.playError"));
       music.setPlaySongIndex("next");
+    } else {
+      // A page-owned stage (`resolving`) is not ended by any backend phase.
+      music.isLoadingSong = false;
+      music.loadingStage = "error";
     }
   }
 };
