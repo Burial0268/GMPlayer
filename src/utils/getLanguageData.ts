@@ -37,7 +37,6 @@ interface LanguageTexts {
   noSong?: string;
   songPlayError?: string;
   songLoadTest?: string;
-  songNotDetails: string;
   ltCreateSuccess: string;
   ltCreateFailed: string;
   ltJoinSuccess: string;
@@ -89,7 +88,6 @@ const languageData: LanguageData = {
     noSong: "未找到歌曲",
     songPlayError: "歌曲播放失败",
     songLoadTest: "歌曲重试次数过多，请刷新后重试",
-    songNotDetails: "歌曲详细信息获取失败，可尝试歌曲匹配",
     ltCreateSuccess: "一起听房间创建成功",
     ltCreateFailed: "创建房间失败，请重试",
     ltJoinSuccess: "加入房间成功",
@@ -128,7 +126,6 @@ const languageData: LanguageData = {
     addSongToNext: "has been added to the next song to play",
     noSong: "No song was found",
     removeSong: "has been removed from the playlist",
-    songNotDetails: "Song details failed to get, try song match",
     ltCreateSuccess: "Room created successfully",
     ltCreateFailed: "Failed to create room, please try again",
     ltJoinSuccess: "Joined room successfully",

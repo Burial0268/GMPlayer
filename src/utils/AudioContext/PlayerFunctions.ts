@@ -7,7 +7,6 @@
  * - Improved error handling
  */
 
-import { h } from "vue";
 import { songScrobbleV2, submitSongPlayState } from "@/api/song";
 // Import stores directly to avoid circular dependency through barrel exports
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
@@ -18,8 +17,6 @@ import useUserDataStore from "@/store/userData";
 const musicStore = () => useMusicDataStore();
 const settingStore = () => useSettingDataStore();
 const userStore = () => useUserDataStore();
-import { NIcon } from "naive-ui";
-import { MusicNoteFilled } from "@vicons/material";
 import getLanguageData from "@/utils/getLanguageData";
 import { applyGlobalCoverPalette } from "@/utils/color/coverPalette";
 import { coverUrl } from "@/utils/coverUrl";
@@ -874,14 +871,6 @@ const setupNativeSound = (
     // Resumed into a stall the backend has not cleared yet.
     if ((sound as { isBuffering?: () => boolean }).isBuffering?.()) applyRebuffering();
 
-    if (typeof window.$message !== "undefined" && songArtist !== null) {
-      window.$message.info(`${songName} - ${songArtist}`, {
-        icon: () => h(NIcon, null, { default: () => h(MusicNoteFilled) }),
-      });
-    } else {
-      window.$message.warning(getLanguageData("songNotDetails"));
-    }
-
     if (IS_DEV) console.log(`[Native] 开始播放：${songName} - ${songArtist}`);
 
     setMediaSession(music);
@@ -1227,18 +1216,6 @@ export const createSound = (
       clearLoadRetryCount(boundSongId);
       music.playingSongId = boundSongId;
       music.setPlayState(true);
-
-      // 播放通知
-      if (typeof window.$message !== "undefined" && songArtist !== null) {
-        window.$message.info(`${songName} - ${songArtist}`, {
-          icon: () =>
-            h(NIcon, null, {
-              default: () => h(MusicNoteFilled),
-            }),
-        });
-      } else {
-        window.$message.warning(getLanguageData("songNotDetails"));
-      }
 
       if (IS_DEV) {
         console.log(`开始播放：${songName} - ${songArtist}`);
