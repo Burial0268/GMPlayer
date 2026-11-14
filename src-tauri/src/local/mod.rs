@@ -68,6 +68,7 @@ impl LocalLibraryState {
             .app_cache_dir()
             .unwrap_or_else(|_| data_dir.clone());
         let _ = std::fs::create_dir_all(&data_dir);
+        cover::migrate_out_of_cache(&cache_root, &data_dir);
 
         LocalLibraryState {
             index: Mutex::new(LocalIndex::load(data_dir.clone())),
@@ -78,8 +79,10 @@ impl LocalLibraryState {
         }
     }
 
+    /// In the data dir, not the cache: Android empties an app's cache on its own, and an imported
+    /// cover has no other copy.
     pub fn cover_dir(&self) -> PathBuf {
-        cover::cover_dir(&self.cache_root)
+        cover::cover_dir(&self.data_root)
     }
 
     pub fn lyric_dir(&self) -> PathBuf {

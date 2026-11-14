@@ -52,8 +52,33 @@ const COVER_QUALITY: u8 = 85;
 /// the old ones as unreferenced.
 const COVER_REVISION: &str = "r1";
 
-pub fn cover_dir(cache_root: &Path) -> PathBuf {
-    cache_root.join(COVER_DIR)
+pub fn cover_dir(root: &Path) -> PathBuf {
+    root.join(COVER_DIR)
+}
+
+/// Covers used to live under the app cache dir. Move what is still there, once: a scan skips
+/// unchanged files, so a cover lost with the cache only comes back on the probe that notices it.
+/// Copied file by file when a rename cannot cross filesystems (a cache on tmpfs).
+pub fn migrate_out_of_cache(cache_root: &Path, data_root: &Path) {
+    let old = cover_dir(cache_root);
+    let new = cover_dir(data_root);
+    if old == new || new.exists() || !old.is_dir() {
+        return;
+    }
+    if std::fs::rename(&old, &new).is_ok() {
+        log::info!(target: "local", "moved covers out of the cache into {}", new.display());
+        return;
+    }
+    let copied = std::fs::create_dir_all(&new).and_then(|()| {
+        for entry in std::fs::read_dir(&old)? {
+            let entry = entry?;
+            std::fs::copy(entry.path(), new.join(entry.file_name()))?;
+        }
+        std::fs::remove_dir_all(&old)
+    });
+    if let Err(err) = copied {
+        log::warn!(target: "local", "could not move covers out of the cache: {err}");
+    }
 }
 
 /// Store `art` and return its cache filename.
@@ -388,5 +413,22 @@ mod tests {
         let referenced = [kept.clone()].into_iter().collect();
         assert_eq!(prune(dir.path(), &referenced), 1);
         assert!(dir.path().join(kept).exists());
+    }
+
+    #[test]
+    fn covers_move_out_of_the_cache_once() {
+        let cache = tempfile::tempdir().expect("tempdir");
+        let data = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(cover_dir(cache.path())).unwrap();
+        std::fs::write(cover_dir(cache.path()).join("a.jpg"), b"x").unwrap();
+
+        migrate_out_of_cache(cache.path(), data.path());
+        assert!(cover_dir(data.path()).join("a.jpg").exists());
+        assert!(!cover_dir(cache.path()).exists());
+
+        // A later cache entry must not overwrite the data dir's covers.
+        std::fs::create_dir_all(cover_dir(cache.path())).unwrap();
+        migrate_out_of_cache(cache.path(), data.path());
+        assert!(cover_dir(cache.path()).exists());
     }
 }

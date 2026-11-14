@@ -308,14 +308,21 @@ pub fn index_listing<R: Runtime>(
     // 3000-track folder should cost one directory walk, not 3000 decodes.
     let mut to_probe: Vec<&Candidate> = Vec::new();
     let mut keep: HashSet<String> = HashSet::with_capacity(total);
+    let cover_dir = state.cover_dir();
     {
         let index = state.index.lock();
         for candidate in &listing.audio {
             keep.insert(candidate.key.clone());
             match index.track(&candidate.key) {
+                // A cover file that is gone (the cache it used to live in was cleared) is only
+                // ever re-extracted by a probe; skipping would keep the broken image for good.
                 Some(existing)
                     if existing.unchanged(candidate.size, candidate.modified_at)
-                        && existing.source_id == source.id =>
+                        && existing.source_id == source.id
+                        && existing
+                            .cover_key
+                            .as_ref()
+                            .is_none_or(|key| cover_dir.join(key).exists()) =>
                 {
                     outcome.skipped += 1;
                 }
@@ -324,7 +331,6 @@ pub fn index_listing<R: Runtime>(
         }
     }
 
-    let cover_dir = state.cover_dir();
     let cursor = AtomicUsize::new(0);
     let done = AtomicUsize::new(outcome.skipped);
     let results: parking_lot::Mutex<Vec<LocalTrack>> = parking_lot::Mutex::new(Vec::new());
