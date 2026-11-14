@@ -123,6 +123,8 @@ export interface BackendLoadOptions {
    * attaches without sending `setPlaylist`/`jumpToSong` at all.
    */
   attachIdentity?: TrackIdentity | null;
+  /** Play intent carried by the atomic load, so it starts playing instead of paused-then-resumed. */
+  autoplay?: boolean;
 }
 
 export interface BackendSound extends ISound {

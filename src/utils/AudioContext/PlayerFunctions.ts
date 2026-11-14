@@ -1001,6 +1001,7 @@ const setupNativeSound = (
  * @param src - 音频文件地址
  * @param autoPlay - 是否自动播放（默认为 true）
  * @return 音频对象
+    autoplay: autoPlay,
  */
 export const createSound = (
   src: string,

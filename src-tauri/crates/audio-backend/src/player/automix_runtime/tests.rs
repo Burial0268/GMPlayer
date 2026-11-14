@@ -1,6 +1,7 @@
 use super::*;
 use crate::types::{
     AudioThreadEventMessage, AudioThreadMessage, AutoMixConfig, NativeSessionSnapshot,
+    PlaybackPhase,
 };
 use std::io::Write;
 use std::sync::Arc;
@@ -65,7 +66,7 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         player.analysis_enabled.store(false, Ordering::Release);
         let message = |data| AudioThreadEventMessage::new("live-test".into(), Some(data));
         player.process_message(message(AudioThreadMessage::SetPlaylist {
-            songs: vec![a.clone(), b.clone()], windowed: true, play_index: Some(0), initial_position: Some(8.0), load_request_id: None,
+            songs: vec![a.clone(), b.clone()], windowed: true, play_index: Some(0), initial_position: Some(8.0), load_request_id: None, autoplay: None,
         })).await.unwrap();
         player.process_message(message(AudioThreadMessage::AutomixConfigure {
             config: AutoMixConfig {
@@ -177,5 +178,66 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         assert_eq!(player.current_song.as_ref().unwrap().get_id(), b.get_id());
         player.process_message(message(AudioThreadMessage::JumpToSong { song_index: 0 })).await.unwrap();
         assert_eq!(player.current_local_path.as_deref(), Some(Path::new(a.file_path().unwrap())), "previous must reopen A rather than reusing B's decoded source");
+    });
+}
+
+#[test]
+#[ignore = "isolated PulseAudio: scripts/test-audio-device-watch.sh live_autoplay_load"]
+fn live_autoplay_load_after_a_pause_goes_straight_from_loading_to_playing() {
+    assert_eq!(
+        std::env::var("GMPLAYER_DEVICE_WATCH_TEST").as_deref(),
+        Ok("1")
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("a.wav");
+        pulse_file(&path, 0.5);
+        let song = SongData::Local {
+            file_path: path.to_string_lossy().to_string(), orig_order: 0, display: None,
+        };
+        let (_, messages) = tokio::sync::mpsc::unbounded_channel();
+        let (_, seeks) = tokio::sync::mpsc::unbounded_channel();
+        let (events, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut player = AudioPlayer::new(messages, seeks, events,
+            Arc::new(parking_lot::Mutex::new(NativeSessionSnapshot::default()))).await.unwrap();
+        player.analysis_enabled.store(false, Ordering::Release);
+        let message = |data| AudioThreadEventMessage::new("live-test".into(), Some(data));
+        // What an in-app skip sends: the old track's stop, then the atomic load.
+        player.process_message(message(AudioThreadMessage::PauseAudio)).await.unwrap();
+        player.publish_playback_phase().await;
+        while event_rx.try_recv().is_ok() {}
+        player.process_message(message(AudioThreadMessage::SetPlaylist {
+            songs: vec![song], windowed: true, play_index: Some(0), initial_position: None,
+            load_request_id: Some(1), autoplay: Some(true),
+        })).await.unwrap();
+        assert_eq!(player.playback_intent, PlaybackIntent::Playing);
+
+        let mut phases = Vec::new();
+        let mut loaded = false;
+        let mut play_status = Vec::new();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline && phases.last() != Some(&PlaybackPhase::Playing) {
+            player.publish_playback_phase().await;
+            while let Ok(event) = event_rx.try_recv() {
+                match event.data {
+                    Some(AudioThreadEvent::PlaybackPhaseChanged { phase, .. }) => phases.push(phase),
+                    Some(AudioThreadEvent::LoadAudio { .. }) => loaded = true,
+                    Some(AudioThreadEvent::PlayStatus { is_playing }) => {
+                        assert!(loaded, "PlayStatus must follow LoadAudio");
+                        play_status.push(is_playing);
+                    }
+                    _ => {}
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(play_status, vec![true], "the load itself starts playback, once");
+        assert_eq!(phases.first(), Some(&PlaybackPhase::Loading), "phases: {phases:?}");
+        assert_eq!(phases.last(), Some(&PlaybackPhase::Playing), "phases: {phases:?}");
+        assert!(!phases.contains(&PlaybackPhase::Paused), "phases: {phases:?}");
     });
 }

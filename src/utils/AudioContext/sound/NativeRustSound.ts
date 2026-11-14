@@ -379,6 +379,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
           initialPosition: initPos,
           loadRequestId,
         });
+          autoplay: options?.autoplay,
       } else {
         this._sendCommand({ type: "setPlaylist", songs: [song], windowed: true });
         if (initPos > 0) {
@@ -724,6 +725,13 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         if (wantPlaying) {
           this._playbackState = "playing";
           this._syncTimelineClock();
+        if (!this._loaded) {
+          // An autoplay load reports playing before `load` fires; the load
+          // handler sees `playing()` and starts the track exactly once.
+          this._playbackState = wantPlaying ? "playing" : "paused";
+          this._syncTimelineClock();
+          break;
+        }
           this._emit("play");
         } else {
           this._playbackState = "paused";

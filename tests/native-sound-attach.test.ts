@@ -141,6 +141,8 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
                 timelineEpoch: 13,
               },
             });
+            // An autoplay load starts playback itself, right after LoadAudio.
+            if (msg.autoplay) emit({ type: "playStatus", data: { isPlaying: true } });
           }, 0);
         }
         return undefined;
@@ -251,6 +253,27 @@ test("a backend on another track is not adopted and the track loads normally", a
   assert.ok(restart && restart.type === "setPlaylist");
   assert.equal(restart.playIndex, 0);
   assert.equal(restart.initialPosition, 30);
+});
+
+test("an autoplay load starts playing without a play event before load or a second resume", async () => {
+  const env = environment(null, Infinity);
+  const sound = new env.NativeRustSound(sourceUrl);
+  env.SoundManager.setCurrentSound(sound);
+  const events: string[] = [];
+  for (const name of ["load", "play", "pause"] as const) sound.on(name, () => events.push(name));
+  await sound.load(0, { autoplay: true });
+
+  const [load] = env.restarts();
+  assert.ok(load && load.type === "setPlaylist");
+  assert.equal(load.autoplay, true);
+  assert.deepEqual(events, ["load"], "the load handler starts the track, once");
+  assert.equal(sound.playing(), true);
+  sound.play();
+  assert.deepEqual(
+    env.sent.filter((msg) => msg.type === "resumeAudio"),
+    [],
+    "the backend is already playing",
+  );
 });
 
 test("one backend track change is announced once, whole, however many events describe it", async () => {

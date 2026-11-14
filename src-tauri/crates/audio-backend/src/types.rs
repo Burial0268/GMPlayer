@@ -300,6 +300,11 @@ pub enum AudioThreadMessage {
         /// the controller that initiated this atomic load.
         #[serde(default)]
         load_request_id: Option<u64>,
+        /// Play intent for the atomic `play_index` load, applied before it
+        /// starts so the track loads playing instead of paused-then-resumed.
+        /// `None` keeps whatever intent the backend already holds.
+        #[serde(default)]
+        autoplay: Option<bool>,
     },
     #[serde(rename_all = "camelCase")]
     SetVolume { volume: f64 },

@@ -190,6 +190,7 @@ impl AudioPlayer {
                     play_index,
                     initial_position,
                     load_request_id,
+                    autoplay,
                 } => {
                     if self.personal_fm.is_some() {
                         return self.finish_message(msg).await;
@@ -238,6 +239,13 @@ impl AudioPlayer {
                         })
                         .await;
                     if should_start {
+                        if let Some(play) = autoplay {
+                            self.playback_intent = if *play {
+                                PlaybackIntent::Playing
+                            } else {
+                                PlaybackIntent::Paused
+                            };
+                        }
                         self.start_playing_song(true, *initial_position, *load_request_id)
                             .await?;
                         // The frontend chose this track. Its identity is not

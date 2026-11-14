@@ -92,6 +92,7 @@ export type AudioThreadMessage =
       playIndex?: number;
       initialPosition?: number;
       loadRequestId?: number;
+      autoplay?: boolean;
     }
   | { type: "setVolume"; volume: number }
   | { type: "setVolumeRelative"; volume: number }
