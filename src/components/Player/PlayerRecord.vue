@@ -90,6 +90,7 @@
             :min="0"
             :max="music.getPlaySongTime.duration || 1"
             :is-playing="music.getPlayState"
+            :buffered="music.bufferedTime"
             @update:value="handleProgressSeek"
           />
         </div>

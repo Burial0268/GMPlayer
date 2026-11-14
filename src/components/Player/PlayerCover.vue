@@ -185,9 +185,9 @@ import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
-import { activeSound, seekActiveSound } from "@/utils/AudioContext";
+import { seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
-import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
+import { useQualityText } from "@/composables/useQualityText";
 import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
@@ -278,48 +278,7 @@ const handleMoreSelect = (key) => {
   else if (key === "taskbarLyrics") openTaskbarLyrics();
 };
 
-// 音质标签
-const qualityLevelText = computed(() => {
-  const level = setting.songLevel;
-  const qualityMap = {
-    standard: "标准",
-    higher: "较高",
-    exhigh: "极高",
-    lossless: "无损",
-    hires: "Hi-Res",
-  };
-  return qualityMap[level] || null;
-});
-
-const nativeAudioQuality = computed(() => {
-  if (!music.getPlaySongData || music.getLoadingState) return null;
-  const player = activeSound.value;
-  if (!(player instanceof NativeRustSound)) return null;
-  return player.getAudioQuality();
-});
-
-const formatSampleRate = (sampleRate) => {
-  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return null;
-  const khz = sampleRate / 1000;
-  return `${Number.isInteger(khz) ? khz.toFixed(0) : khz.toFixed(1)} kHz`;
-};
-
-const formatBitrate = (bitrate) => {
-  if (!Number.isFinite(bitrate) || bitrate <= 0) return null;
-  const kbps = bitrate / 1000;
-  return `${kbps >= 100 ? Math.round(kbps) : kbps.toFixed(1)} kbps`;
-};
-
-const qualityText = computed(() => {
-  const quality = nativeAudioQuality.value;
-  if (!quality) return qualityLevelText.value;
-
-  const details = [formatSampleRate(quality.sampleRate), formatBitrate(quality.bitrate)].filter(
-    Boolean,
-  );
-  if (!details.length) return qualityLevelText.value;
-  return [qualityLevelText.value, ...details].filter(Boolean).join(" · ");
-});
+const qualityText = useQualityText();
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {
@@ -517,8 +476,10 @@ onUnmounted(() => {
           opacity: 1;
           .artist-name {
             cursor: pointer;
-            &:hover {
-              opacity: 1;
+            @media (hover: hover) {
+              &:hover {
+                opacity: 1;
+              }
             }
           }
         }
@@ -540,8 +501,10 @@ onUnmounted(() => {
           cursor: pointer;
           opacity: 1;
           transition: opacity var(--duration-200) var(--ease-out);
-          &:hover {
-            opacity: 1;
+          @media (hover: hover) {
+            &:hover {
+              opacity: 1;
+            }
           }
         }
       }
@@ -622,8 +585,10 @@ onUnmounted(() => {
         transition:
           opacity var(--duration-200) var(--ease-out),
           transform var(--duration-150) var(--ease-out);
-        &:hover {
-          opacity: 1;
+        @media (hover: hover) {
+          &:hover {
+            opacity: 1;
+          }
         }
         &.loading {
           opacity: 0.35;
