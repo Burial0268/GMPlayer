@@ -1,10 +1,8 @@
 import type { MessageApi, DialogApi, NotificationApi, LoadingBarApi } from "naive-ui";
-import type { ISound } from "@/utils/AudioContext/types";
 
 declare global {
   interface Window {
     // Audio
-    readonly $player: ISound | undefined;
     AudioContext: typeof AudioContext;
     webkitAudioContext: typeof AudioContext;
 
@@ -24,7 +22,6 @@ declare global {
   }
 
   // Allow bare usage without window. prefix
-  var $player: Window["$player"];
   var $message: Window["$message"];
   var $notification: Window["$notification"];
   var $dialog: Window["$dialog"];

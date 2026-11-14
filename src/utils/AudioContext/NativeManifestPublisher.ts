@@ -42,6 +42,7 @@ import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 import { identityForSong as toIdentity, trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
+import { activeSound } from "./SoundManager";
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
 let lastFingerprint = "";
@@ -249,7 +250,7 @@ const flushNativeManifest = (): void => {
   const force = pendingForce;
   pendingForce = false;
 
-  const sound = window.$player;
+  const sound = activeSound.value;
   if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
 
   const music = useMusicDataStore();
@@ -359,7 +360,7 @@ const flushNativeManifest = (): void => {
  */
 export const clearNativeManifest = (): void => {
   if (!isTauri()) return;
-  const sound = window.$player;
+  const sound = activeSound.value;
   if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
   lastFingerprint = "";
   // `ClearNativeManifest` rebuilds the backend `Planner` from scratch, which

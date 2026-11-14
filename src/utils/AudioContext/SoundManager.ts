@@ -2,9 +2,8 @@
  * SoundManager - the one owner of the current sound instance.
  *
  * `activeSound` is the same slot, read-only and reactive: the manager's current
- * sound used to live beside a separately written `window.$player`, and every
- * guard had to compare against both. `window.$player` is now a read-only view of
- * it, kept for the modules that are tested against a stubbed `window`.
+ * sound used to live beside a separately written `window.$player` global, and
+ * every guard had to compare against both. There is no global any more.
  */
 
 import { shallowRef, type ShallowRef } from "vue";
@@ -14,10 +13,6 @@ const current = shallowRef<ISound | undefined>();
 
 /** The current sound. Changes only through `SoundManager`. */
 export const activeSound: Readonly<ShallowRef<ISound | undefined>> = current;
-
-if (typeof window !== "undefined") {
-  Object.defineProperty(window, "$player", { configurable: true, get: () => current.value });
-}
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 

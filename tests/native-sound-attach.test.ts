@@ -11,10 +11,17 @@ import type {
   TrackIdentity,
 } from "../src/utils/tauri/audio/protocol";
 
-type NativeRustSoundModule = typeof import("../src/utils/tauri/audio/nativeRustSound");
+type NativeRustSoundModule = typeof import("../src/utils/tauri/audio/nativeRustSound") &
+  typeof import("../src/utils/AudioContext/SoundManager");
 
 const bundled = buildSync({
-  entryPoints: ["src/utils/tauri/audio/nativeRustSound.ts"],
+  // One bundle, so the sound and the manager that names it active share a module.
+  stdin: {
+    contents: `export * from "./src/utils/tauri/audio/nativeRustSound";
+export { SoundManager } from "./src/utils/AudioContext/SoundManager";`,
+    resolveDir: process.cwd(),
+    loader: "ts",
+  },
   bundle: true,
   platform: "node",
   format: "cjs",
@@ -81,8 +88,9 @@ const statusFor = (snapshot: NativeSessionSnapshot, position: number): AudioThre
  */
 function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: number) {
   const sent: AudioThreadMessage[] = [];
-  let channel: { onmessage?: (envelope: AudioThreadEventMessage<AudioThreadEvent>) => void } | null =
-    null;
+  let channel: {
+    onmessage?: (envelope: AudioThreadEventMessage<AudioThreadEvent>) => void;
+  } | null = null;
   let seq = 0;
   const emit = (data: AudioThreadEvent) => {
     channel?.onmessage?.({ callbackId: "", data, seq: ++seq });
@@ -103,7 +111,10 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
         const msg = args?.msg?.data as AudioThreadMessage;
         sent.push(msg);
         if (msg.type === "syncStatus" && snapshot?.hasTrack && Number.isFinite(statusDelayMs)) {
-          setTimeout(() => emit(statusFor(snapshot, snapshot.position + statusDelayMs / 1000)), statusDelayMs);
+          setTimeout(
+            () => emit(statusFor(snapshot, snapshot.position + statusDelayMs / 1000)),
+            statusDelayMs,
+          );
         }
         if (msg.type === "setPlaylist" && msg.playIndex !== undefined) {
           const song = msg.songs[msg.playIndex];
@@ -145,7 +156,6 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
     dispatchEvent: () => true,
     setTimeout,
     clearTimeout,
-    $player: undefined,
   };
 
   const module = { exports: {} as NativeRustSoundModule };
@@ -164,6 +174,7 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
       ) {}
     },
     require(id: string) {
+      if (id === "vue") return require("vue");
       assert.equal(id, "@tauri-apps/api/core");
       return { invoke, Channel };
     },
@@ -177,12 +188,12 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
         msg.type === "jumpToSongAt",
     );
 
-  return { NativeRustSound: module.exports.NativeRustSound, window, sent, restarts, emit };
+  return { ...module.exports, window, sent, restarts, emit };
 }
 
 async function attach(env: ReturnType<typeof environment>, storedPosition: number) {
   const sound = new env.NativeRustSound(sourceUrl);
-  env.window.$player = sound;
+  env.SoundManager.setCurrentSound(sound);
   let loaded = 0;
   sound.on("load", () => loaded++);
   await sound.load(storedPosition, { attachIdentity: identity });
@@ -228,7 +239,10 @@ test("a prompt status reply attaches as before", async () => {
 });
 
 test("a backend on another track is not adopted and the track loads normally", async () => {
-  const env = environment(session({ identity: otherIdentity, musicId: "local:https://cdn.example/other" }), Infinity);
+  const env = environment(
+    session({ identity: otherIdentity, musicId: "local:https://cdn.example/other" }),
+    Infinity,
+  );
   const { loaded } = await attach(env, 30);
 
   assert.equal(loaded(), 1);

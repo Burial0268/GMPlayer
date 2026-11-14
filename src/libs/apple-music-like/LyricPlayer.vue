@@ -31,6 +31,7 @@ import { animateMini } from "motion-v";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
 import type { LyricShareOrigin } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
+import { activeSound } from "@/utils/AudioContext/SoundManager";
 import { getLyricPresentationTimeSeconds, onAudioUiDelayChange } from "@/utils/tauri/audio/uiDelay";
 import "@applemusic-like-lyrics/core/style.css";
 
@@ -92,10 +93,6 @@ function lineClickStartTime(evt: LyricLineMouseEvent): number | undefined {
   return undefined;
 }
 
-function getWindowPlayer(): SyncableSound | undefined {
-  return (window as Window & { $player?: SyncableSound }).$player;
-}
-
 function lyricPresentationTimeMs(playbackTime: number): number {
   return Math.round(
     getLyricPresentationTimeSeconds(playbackTime, setting.lyricTimeOffset ?? 0) * 1000,
@@ -103,7 +100,7 @@ function lyricPresentationTimeMs(playbackTime: number): number {
 }
 
 function readPlaybackPosition(): number {
-  const player = getWindowPlayer();
+  const player: SyncableSound | undefined = activeSound.value;
   const seekValue = player?.seek?.();
   return typeof seekValue === "number" && Number.isFinite(seekValue)
     ? seekValue
@@ -111,7 +108,7 @@ function readPlaybackPosition(): number {
 }
 
 function readCurrentPlaybackTime(): { currentTime: number; duration: number } {
-  const player = getWindowPlayer();
+  const player: SyncableSound | undefined = activeSound.value;
   const durationValue = player?.duration?.();
   const currentTime = readPlaybackPosition();
   const duration =

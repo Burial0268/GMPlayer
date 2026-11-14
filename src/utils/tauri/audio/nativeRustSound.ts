@@ -20,6 +20,7 @@
 
 import type { ISound, SoundEventCallback, SoundEventType } from "../../AudioContext/types";
 import { LowFreqVolumeAnalyzer } from "../../AudioContext/LowFreqVolumeAnalyzer";
+import { activeSound } from "../../AudioContext/SoundManager";
 import { isTauri } from "../core/runtime";
 import { audioGetSession } from "./bridge";
 import { AudioTimelineSync } from "./timeline";
@@ -327,7 +328,7 @@ export class NativeRustSound implements ISound {
     // Only the native/Tauri runtime can have a real backend that outlives the
     // current frontend controller. The Web/WASM runtime is page-local and uses a
     // singleton JS transport, so adopting its previous state after SoundManager
-    // clears window.$player can bind a new NativeRustSound to a stale <audio>.
+    // drops its sound can bind a new NativeRustSound to a stale <audio>.
     const canAttachExistingBackend =
       isTauri() && (options?.allowInitialBackendAttach === true || this._attachIdentity !== null);
     if (canAttachExistingBackend) {
@@ -1246,7 +1247,7 @@ export class NativeRustSound implements ISound {
   }
 
   private _isActiveController(): boolean {
-    return window.$player === this;
+    return activeSound.value === this;
   }
 
   isDestroyed(): boolean {
