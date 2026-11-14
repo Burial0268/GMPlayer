@@ -13,7 +13,7 @@ import type { SongData } from "@/store/musicTypes";
 // 走 barrel 会把这个环放大到整个 AudioContext。两侧都只在运行时互相调用。
 import { publishNativeManifest } from "@/utils/AudioContext/NativeManifestPublisher";
 import { setNativeListenTogetherRoom } from "@/utils/AudioContext/NativeListenTogetherSync";
-import { activeSound } from "@/utils/AudioContext/activeSound";
+import { activeSound } from "@/utils/AudioContext/SoundManager";
 import { asRawEntry } from "@/utils/rawEntry";
 import getLanguageData from "@/utils/getLanguageData";
 

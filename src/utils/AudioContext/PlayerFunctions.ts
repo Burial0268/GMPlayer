@@ -15,7 +15,6 @@ import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
 import useUserDataStore from "@/store/userData";
 
-import { activeSound } from "./activeSound";
 const musicStore = () => useMusicDataStore();
 const settingStore = () => useSettingDataStore();
 const userStore = () => useUserDataStore();
@@ -25,7 +24,7 @@ import getLanguageData from "@/utils/getLanguageData";
 import { applyGlobalCoverPalette } from "@/utils/color/coverPalette";
 import { coverUrl } from "@/utils/coverUrl";
 import { BufferedSound } from "./BufferedSound";
-import { SoundManager } from "./SoundManager";
+import { SoundManager, activeSound } from "./SoundManager";
 import { AudioContextManager } from "./AudioContextManager";
 import { getAutoMixEngine } from "./AutoMix";
 import { getAudioPreloader } from "./AudioPreloader";
@@ -222,10 +221,7 @@ const isNativeRustSoundLike = (sound: ISound | undefined | null): sound is Nativ
 
 const getActiveNativeSound = (): NativeRustSound | null => {
   const currentSound = SoundManager.getCurrentSound();
-  if (isNativeRustSoundLike(currentSound)) return currentSound;
-  const windowPlayer = window.$player as ISound | undefined;
-  if (isNativeRustSoundLike(windowPlayer)) return windowPlayer;
-  return null;
+  return isNativeRustSoundLike(currentSound) ? currentSound : null;
 };
 
 const isDestroyedNativeSound = (sound: ISound | undefined | null): boolean => {
@@ -235,9 +231,6 @@ const isDestroyedNativeSound = (sound: ISound | undefined | null): boolean => {
 const resolveSeekTarget = (sound: ISound | undefined): ISound | undefined => {
   const currentSound = SoundManager.getCurrentSound() ?? undefined;
   if (currentSound && !isDestroyedNativeSound(currentSound)) return currentSound;
-
-  const windowPlayer = window.$player as ISound | undefined;
-  if (windowPlayer && !isDestroyedNativeSound(windowPlayer)) return windowPlayer;
 
   if (sound && !isDestroyedNativeSound(sound)) return sound;
   return undefined;
@@ -503,8 +496,7 @@ const scheduleAudioTimePresentation = (
     if (
       !pending ||
       pending.generation !== timeupdateGeneration ||
-      SoundManager.getCurrentSound() !== pending.sound ||
-      (window.$player && window.$player !== pending.sound)
+      SoundManager.getCurrentSound() !== pending.sound
     ) {
       return;
     }
@@ -521,11 +513,7 @@ const startTimeUpdate = (sound: ISound, music: ReturnType<typeof musicStore>): v
   lastPlaybackPresentationAt = 0;
 
   const timeLoop = (frameTime = performance.now()): void => {
-    if (
-      generation !== timeupdateGeneration ||
-      SoundManager.getCurrentSound() !== sound ||
-      (window.$player && window.$player !== sound)
-    ) {
+    if (generation !== timeupdateGeneration || SoundManager.getCurrentSound() !== sound) {
       return;
     }
 
@@ -635,11 +623,7 @@ const startSpectrumUpdate = (sound: ISound): void => {
   const autoMix = getAutoMixEngine();
 
   const updateLoop = (): void => {
-    if (
-      generation !== spectrumUpdateGeneration ||
-      SoundManager.getCurrentSound() !== sound ||
-      (window.$player && window.$player !== sound)
-    ) {
+    if (generation !== spectrumUpdateGeneration || SoundManager.getCurrentSound() !== sound) {
       return;
     }
 
@@ -689,7 +673,7 @@ export const ensureSpectrumUpdate = (): void => {
   const settings = settingStore();
   if (!settings.musicFrequency && !settings.dynamicFlowSpeed && !settings.autoMixEnabled) return;
 
-  const sound = SoundManager.getCurrentSound() ?? (window.$player as ISound | undefined);
+  const sound = SoundManager.getCurrentSound();
   if (!sound) return;
 
   startSpectrumUpdate(sound);
@@ -757,8 +741,8 @@ const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
     if (AudioContextManager.isMobile()) {
       try {
         navigator.mediaSession.setActionHandler("seekto", (details) => {
-          if (details.seekTime !== undefined && window.$player) {
-            setSeek(window.$player, details.seekTime);
+          if (details.seekTime !== undefined && activeSound.value) {
+            setSeek(activeSound.value, details.seekTime);
           }
         });
       } catch {
@@ -809,8 +793,7 @@ const setupNativeSound = (
    * notification's transport buttons a few tracks in. `boundSongId` still
    * guards the *load race* below, which is what it is actually for.
    */
-  const isActiveBoundSound = (): boolean =>
-    window.$player === sound && SoundManager.getCurrentSound() === sound;
+  const isActiveBoundSound = (): boolean => SoundManager.getCurrentSound() === sound;
 
   const isCurrentLoadOwner = (): boolean =>
     loadAttempt === soundLoadAttempt &&
@@ -824,7 +807,6 @@ const setupNativeSound = (
   };
 
   SoundManager.setCurrentSound(sound, boundSongId);
-  window.$player = sound;
   music.loadingStage = "buffering";
 
   applyGlobalCoverPalette(music.getPlaySongData.album.picUrl).catch((err) => {
@@ -870,8 +852,7 @@ const setupNativeSound = (
     if (discardIfStale()) return;
     // The decoder being up is not audio: the backend stays in `loading` until
     // the device renders the track, and its phase clears the spinner then.
-    // Re-applying the last phase covers an attach that produces no new edge.
-    music.adoptBackendPlaybackPhase(music.backendPhase ?? "playing");
+    music.settleLoading();
     const songId = boundSongId;
     const sourceId = music.getPlaySongData?.sourceId ? music.getPlaySongData.sourceId : 0;
     const isLogin = user.userLogin;
@@ -998,8 +979,7 @@ const setupNativeSound = (
   };
   const clearRebuffering = (): void => {
     if (music.loadingStage !== "rebuffering") return;
-    music.isLoadingSong = false;
-    music.loadingStage = "idle";
+    music.settleLoading();
   };
   sound.on("waiting", () => {
     if (!isActiveBoundSound()) return;
@@ -1088,12 +1068,12 @@ export const createSound = (
     const autoMix = getAutoMixEngine();
     if (autoMix.isHandoffActive()) {
       const requestedSongId = Number(context.songId);
-      const handoffSongId = SoundManager.getSongId(window.$player);
+      const handoffSongId = SoundManager.getSongId();
       if (Number.isFinite(requestedSongId) && requestedSongId === handoffSongId) {
         if (IS_DEV) {
           console.log("[createSound] AutoMix owns requested song, reusing handoff sound");
         }
-        return window.$player;
+        return activeSound.value;
       }
       autoMix.cancelCrossfade();
     }
@@ -1102,8 +1082,7 @@ export const createSound = (
     // request, so it must enable the attach path even when a controller
     // already exists (e.g. a retry after a failed boot load).
     const allowInitialBackendAttach =
-      isNativeAudioBackendAvailable() &&
-      (!!context.attachIdentity || (!SoundManager.hasSound() && !window.$player));
+      isNativeAudioBackendAvailable() && (!!context.attachIdentity || !SoundManager.hasSound());
     const loadAttempt = ++soundLoadAttempt;
     const loadContext: SoundLoadContext = { ...context, loadAttempt };
 
@@ -1170,11 +1149,8 @@ export const createSound = (
       sound.volume(music.persistData.playVolume);
     }
     SoundManager.setCurrentSound(sound, boundSongId);
-    window.$player = sound;
     const isActiveBoundSound = (): boolean =>
-      isRequestCurrent() &&
-      SoundManager.isCurrentSoundForSong(sound, boundSongId) &&
-      window.$player === sound;
+      isRequestCurrent() && SoundManager.isCurrentSoundForSong(sound, boundSongId);
     const isCurrentLoadOwner = (): boolean =>
       loadAttempt === soundLoadAttempt &&
       isRequestCurrent() &&
@@ -1277,7 +1253,7 @@ export const createSound = (
       // notifications, wrong time tracking, and wrong spectrum monitoring.
       if (!isActiveBoundSound()) return;
       // During AutoMix crossfade, this sound is the outgoing one being resumed —
-      // skip to prevent side effects (window.$player may not be updated yet).
+      // skip to prevent side effects (the active sound may not be updated yet).
       const autoMixCheck = getAutoMixEngine();
       if (autoMixCheck.isCrossfading()) {
         if (IS_DEV) {
@@ -1635,7 +1611,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   // Register pause handler with crossfade guard
   incomingSound.on("pause", () => {
     // If this sound is no longer the active player, ignore
-    if (window.$player && window.$player !== incomingSound) return;
+    if (activeSound.value && activeSound.value !== incomingSound) return;
     const autoMix = getAutoMixEngine();
     if (autoMix.isCrossfading()) {
       if (IS_DEV) {
@@ -1659,7 +1635,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   // Without this, pausing and resuming after AutoMix crossfade permanently
   // kills time tracking (pause handler cancels timeupdateInterval but nothing restarts it).
   incomingSound.on("play", () => {
-    if (window.$player && window.$player !== incomingSound) return;
+    if (activeSound.value && activeSound.value !== incomingSound) return;
 
     music.setPlayState(true);
 
@@ -1676,7 +1652,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   // Register end handler
   incomingSound.on("end", () => {
     // If this sound is no longer the active player, don't cancel current loops
-    if (window.$player && window.$player !== incomingSound) return;
+    if (activeSound.value && activeSound.value !== incomingSound) return;
     stopTimeUpdate();
     stopSpectrumUpdate();
     if (IS_DEV) {
@@ -1721,7 +1697,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   SoundManager.setCurrentSongId(songId, sound);
   music.playingSongId = Number.isFinite(songId) && songId !== 0 ? songId : null;
   music.setPlayState(music.nativeFmSession?.desiredPlaying ?? true);
-  music.isLoadingSong = false;
+  music.settleLoading();
 
   const duration = sound.duration();
   const currentTime = (sound.seek() as number) || 0;
@@ -1769,7 +1745,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   // and re-prepares against the new track, superseding the stale plan. It must
   // NOT be a `cancelCrossfade()` — that tears down a transition, and on the
   // path where one has just committed it unloads the sound that is playing and
-  // reverts `window.$player` to the retired one, which is a hard stall.
+  // makes the retired one current again, which is a hard stall.
   // Internally a no-op while a real crossfade is completing.
   // Local tracks participate in AutoMix like any other (`songId !== 0`, not
   // `> 0`): their ids are negative, and gating on positivity silently left the
@@ -1804,7 +1780,7 @@ export const handoffAutoMixToNativeBackend = async (
   try {
     await nativeSound.load(position);
 
-    if (SoundManager.getCurrentSound() !== currentSound || window.$player !== currentSound) {
+    if (SoundManager.getCurrentSound() !== currentSound) {
       nativeSound.unload();
       return false;
     }
@@ -1814,7 +1790,6 @@ export const handoffAutoMixToNativeBackend = async (
     nativeSound.volume(volume);
 
     SoundManager.setCurrentSound(nativeSound, music.getPlaySongData?.id);
-    window.$player = nativeSound;
     adoptIncomingSound(nativeSound);
     nativeSound.play();
 
@@ -1830,7 +1805,6 @@ export const handoffAutoMixToNativeBackend = async (
   } catch (err) {
     nativeSound.unload();
     SoundManager.setCurrentSound(currentSound, music.getPlaySongData?.id);
-    window.$player = currentSound;
     if (IS_DEV) {
       console.warn("[AutoMix handoff] Native backend restore failed", err);
     }

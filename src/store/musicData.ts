@@ -50,7 +50,7 @@ import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { naturalQueueOrder } from "@/utils/playlistOrder";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/PersonalFmState";
-import { activeSound } from "@/utils/AudioContext/activeSound";
+import { activeSound } from "@/utils/AudioContext/SoundManager";
 import {
   startNativePersonalFm,
   stopNativePersonalFm,
@@ -1649,12 +1649,7 @@ const useMusicDataStore = defineStore("musicData", {
       if (activePlayer instanceof NativeRustSound) {
         activePlayer.clearPlaybackQueue();
       }
-      if (SoundManager.getCurrentSound()) {
-        SoundManager.unload();
-      } else if (activePlayer) {
-        activePlayer.unload?.();
-        activeSound.value = undefined;
-      }
+      SoundManager.unload();
 
       this.persistData.personalFmMode = false;
       this.persistData.playlists = [];
@@ -1741,6 +1736,21 @@ const useMusicDataStore = defineStore("musicData", {
         // A failed load ends in `idle`/`paused`; only audio clears the error.
         (this.loadingStage === "error" && phase !== "playing");
       if (pageOwned) return;
+      this.isLoadingSong = false;
+      this.loadingStage = "idle";
+    },
+
+    /**
+     * The page believes loading is over (a sound loaded, an advance was
+     * adopted). The backend's phase outranks that belief: while it still says
+     * loading or buffering, its own edge ends the spinner, not this call.
+     */
+    settleLoading() {
+      const phase = this.backendPhase;
+      if (phase === "loading" || phase === "buffering") {
+        this.adoptBackendPlaybackPhase(phase);
+        return;
+      }
       this.isLoadingSong = false;
       this.loadingStage = "idle";
     },

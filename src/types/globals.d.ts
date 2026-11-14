@@ -4,7 +4,7 @@ import type { ISound } from "@/utils/AudioContext/types";
 declare global {
   interface Window {
     // Audio
-    $player: ISound | undefined;
+    readonly $player: ISound | undefined;
     AudioContext: typeof AudioContext;
     webkitAudioContext: typeof AudioContext;
 

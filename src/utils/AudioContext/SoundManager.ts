@@ -1,12 +1,23 @@
 /**
- * SoundManager - Singleton manager for the current sound instance
+ * SoundManager - the one owner of the current sound instance.
  *
- * Key improvements:
- * - Reduced debug logging in production
- * - Proper cleanup of global references
+ * `activeSound` is the same slot, read-only and reactive: the manager's current
+ * sound used to live beside a separately written `window.$player`, and every
+ * guard had to compare against both. `window.$player` is now a read-only view of
+ * it, kept for the modules that are tested against a stubbed `window`.
  */
 
+import { shallowRef, type ShallowRef } from "vue";
 import type { ISound } from "./types";
+
+const current = shallowRef<ISound | undefined>();
+
+/** The current sound. Changes only through `SoundManager`. */
+export const activeSound: Readonly<ShallowRef<ISound | undefined>> = current;
+
+if (typeof window !== "undefined") {
+  Object.defineProperty(window, "$player", { configurable: true, get: () => current.value });
+}
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -15,7 +26,12 @@ const IS_DEV = import.meta.env?.DEV ?? false;
  * Supports dual sound instances for AutoMix crossfade transitions.
  */
 class SoundManagerClass {
-  private _currentSound: ISound | null = null;
+  private get _currentSound(): ISound | null {
+    return current.value ?? null;
+  }
+  private set _currentSound(sound: ISound | null) {
+    current.value = sound ?? undefined;
+  }
   private _outgoingSound: ISound | null = null;
   private _currentSongId: number | null = null;
   private _outgoingSongId: number | null = null;
@@ -37,10 +53,6 @@ class SoundManagerClass {
       currentSound.unload();
       this._currentSound = null;
       this._currentSongId = null;
-      // Clear global reference to allow garbage collection
-      if (window.$player === currentSound) {
-        window.$player = undefined;
-      }
     }
   }
 
@@ -79,9 +91,6 @@ class SoundManagerClass {
     sound.unload();
     this._currentSound = null;
     this._currentSongId = null;
-    if (window.$player === sound) {
-      window.$player = undefined;
-    }
     return true;
   }
 

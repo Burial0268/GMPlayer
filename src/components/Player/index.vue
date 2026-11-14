@@ -634,8 +634,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
     // playback from 0).
     if (isNativeAdvanceHoldActiveFor(id)) {
       console.log("[Player] Native advance adopted, only fetching lyrics");
-      music.isLoadingSong = false;
-      music.loadingStage = "idle";
+      music.settleLoading();
       // A background native advance through the FM buffer consumed part of the
       // runway while JS was frozen. Now that we're alive, sync the home card's
       // display head to what's actually playing and top the buffer back up (which
@@ -662,8 +661,7 @@ const getPlaySongData = async (data, level = setting.songLevel, requestedGenerat
       const incomingSongId = Number(music.autoMixState.incomingSongId);
       if (requestedSongId === activeSoundSongId || requestedSongId === incomingSongId) {
         console.log("[Player] AutoMix handoff owns requested song, only fetching lyrics");
-        music.isLoadingSong = false;
-        music.loadingStage = "idle";
+        music.settleLoading();
         loadLyricFor(data, id);
         return;
       }
