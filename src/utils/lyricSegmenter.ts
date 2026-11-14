@@ -17,11 +17,13 @@
  * granularity always stay native. Without a native `Intl.Segmenter` nothing is installed;
  * AMLL and `lyricLineBreak` already handle its absence.
  *
- * The worker is not resident. Its WASM holds ~44 MB of linear memory (measured; jieba's
- * dictionary) for a few ms of work per song, so it is terminated after `IDLE_RELEASE_MS` without
- * use and started again by `warmLyricSegmenter`, which the lyric view calls the moment a song's
- * lyric is cleared — the fetch that follows is the head start. A cold start is ~200 ms, inside
- * the bounded wait below, and the answers stay in the cache on this thread either way.
+ * The worker is resident only while lyrics are on screen. Its WASM holds ~44 MB of linear
+ * memory (measured; jieba's dictionary) for a few ms of work per song, so off screen it is
+ * terminated after `IDLE_RELEASE_MS` without use and started again by the next song's lines; a
+ * cold answer then lands late, but nobody is looking and it is in the cache by the time the
+ * view opens. `holdLyricSegmenter(true)` keeps it alive for as long as the view is visible:
+ * releasing it there and warming it at each track change was tried, and a cold start in a real
+ * WebView outlasts the bounded wait below, so every song laid out twice.
  */
 
 const Native = typeof Intl !== "undefined" ? Intl.Segmenter : undefined;
@@ -59,10 +61,11 @@ function cachedSegments(input: string, ends: Uint32Array): Intl.Segments {
   };
 }
 
-const IDLE_RELEASE_MS = 30_000;
+const IDLE_RELEASE_MS = 10_000;
 
 let worker: Worker | null = null;
 let idleTimer: ReturnType<typeof setTimeout> | undefined;
+let held = false;
 let failed = !Native;
 let requestId = 0;
 const pending = new Map<number, (results?: Uint32Array[]) => void>();
@@ -71,8 +74,8 @@ const pending = new Map<number, (results?: Uint32Array[]) => void>();
 const touch = () => {
   clearTimeout(idleTimer);
   idleTimer = setTimeout(() => {
-    // An answer still owed means it is in use, however long ago it was asked.
-    if (pending.size) return touch();
+    // On screen, or an answer still owed: in use, however long ago it was asked.
+    if (held || pending.size) return touch();
     worker?.terminate();
     worker = null;
   }, IDLE_RELEASE_MS);
@@ -129,8 +132,11 @@ function nativeDiffers(text: string, ends: Uint32Array): boolean {
   return i !== ends.length;
 }
 
-/** Start the worker ahead of the lines it is about to be asked for. */
-export const warmLyricSegmenter = (): void => void getWorker();
+/** Keep the worker alive while lyrics are visible; let it go idle once they are not. */
+export const holdLyricSegmenter = (hold: boolean): void => {
+  held = hold;
+  if (hold) getWorker();
+};
 
 const settled = Promise.resolve();
 const unchanged = Promise.resolve(false);

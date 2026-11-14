@@ -798,7 +798,7 @@ test("sound listeners fire persistent-first, once-listeners once, and survive re
   assert.equal(calls.length, 5);
 });
 
-test("the lyric segmenter worker is released when idle and comes back on demand", async () => {
+test("the lyric segmenter worker is held while lyrics are visible and released when idle", async () => {
   let now = 0;
   const timers = new Map<number, { at: number; run: () => void }>();
   let timerId = 0;
@@ -838,18 +838,18 @@ test("the lyric segmenter worker is released when idle and comes back on demand"
     },
   );
   const live = () => workers.filter((worker) => !worker.terminated).length;
+  const idle = 10_000;
 
   // Started once the app is up, then let go: nothing asked it for anything.
   advance(1000);
   assert.equal(live(), 1);
-  advance(30_000);
+  advance(idle);
   assert.equal(live(), 0);
 
-  // A song change warms it, and an answer still owed keeps it past the countdown.
-  segmenter.warmLyricSegmenter();
-  assert.equal(live(), 1);
+  // Off screen a song's lines start it, and an answer still owed keeps it past the countdown.
   const { late } = segmenter.prepareLyricSegments(["辞职信里"], 300);
-  advance(30_000);
+  assert.equal(live(), 1);
+  advance(idle);
   assert.equal(live(), 1, "a pending request must not be terminated under");
   const worker = workers.at(-1);
   worker.onmessage({ data: { id: worker.posted[0].id, results: [new Uint32Array([5, 9])] } });
@@ -857,9 +857,18 @@ test("the lyric segmenter worker is released when idle and comes back on demand"
   await late;
 
   // The answer outlives the worker: the cache is on this thread.
-  advance(30_000);
+  advance(idle);
   assert.equal(live(), 0);
-  assert.equal(segmenter.prepareLyricSegments(["辞职信里"], 300).late.constructor.name, "Promise");
+  segmenter.prepareLyricSegments(["辞职信里"], 300);
   assert.equal(live(), 0, "a cached line needs no worker");
-  assert.equal(workers.length, 2);
+
+  // On screen it is held for as long as the view is, then released again.
+  segmenter.holdLyricSegmenter(true);
+  assert.equal(live(), 1);
+  advance(idle * 20);
+  assert.equal(live(), 1, "visible lyrics keep the worker however long nothing is asked");
+  segmenter.holdLyricSegmenter(false);
+  advance(idle * 2);
+  assert.equal(live(), 0);
+  assert.equal(workers.length, 3);
 });
