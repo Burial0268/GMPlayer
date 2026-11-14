@@ -55,6 +55,7 @@ import {
   buildNeteaseDesktopUserAgent,
   createNeteasePlaybackSessionId,
 } from "../neteaseClient";
+import { skipTrace } from "@/utils/skipTrace";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 /** How long a backend-initiated transition (native advance / AutoMix adoption)
@@ -754,6 +755,7 @@ const setupNativeSound = (
   };
 
   SoundManager.setCurrentSound(sound, boundSongId);
+  skipTrace("setupNativeSound", boundSongId, { autoPlay, loadAttempt });
   music.loadingStage = "buffering";
 
   applyGlobalCoverPalette(music.getPlaySongData.album.picUrl).catch((err) => {
@@ -796,7 +798,9 @@ const setupNativeSound = (
   // ── Load ──────────────────────────────────────────────────────
   sound.once("load", () => {
     _clearLoadTimeout();
-    if (discardIfStale()) return;
+    const stale = discardIfStale();
+    skipTrace("native load", boundSongId, { stale, alreadyPlaying: sound.playing(), autoPlay });
+    if (stale) return;
     // The decoder being up is not audio: the backend stays in `loading` until
     // the device renders the track, and its phase clears the spinner then.
     music.settleLoading();
@@ -853,6 +857,7 @@ const setupNativeSound = (
 
   // ── Play ──────────────────────────────────────────────────────
   function handleNativePlay(): void {
+    skipTrace("native play", SoundManager.getSongId(sound), { active: isActiveBoundSound() });
     if (!isActiveBoundSound()) return;
     const autoMixCheck = getAutoMixEngine();
     if (autoMixCheck.isCrossfading()) return;
@@ -940,6 +945,10 @@ const setupNativeSound = (
 
   // ── Pause ─────────────────────────────────────────────────────
   sound.on("pause", () => {
+    skipTrace("native pause", SoundManager.getSongId(sound), {
+      active: isActiveBoundSound(),
+      crossfading: getAutoMixEngine().isCrossfading(),
+    });
     if (!isActiveBoundSound()) return;
     clearRebuffering();
     const autoMix = getAutoMixEngine();
@@ -992,6 +1001,7 @@ const setupNativeSound = (
   void sound.load(savedPosAtLoad, {
     allowInitialBackendAttach: options.allowInitialBackendAttach === true,
     attachIdentity: context.attachIdentity ?? null,
+    autoplay: autoPlay,
   });
   return sound;
 };
@@ -1001,7 +1011,6 @@ const setupNativeSound = (
  * @param src - 音频文件地址
  * @param autoPlay - 是否自动播放（默认为 true）
  * @return 音频对象
-    autoplay: autoPlay,
  */
 export const createSound = (
   src: string,
