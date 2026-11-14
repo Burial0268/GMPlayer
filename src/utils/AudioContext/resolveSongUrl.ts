@@ -15,8 +15,31 @@
 import { getMusicUrl, getMusicNumUrl } from "@/api/song";
 import type { MusicLevel } from "@/api/types";
 import useSettingDataStore from "@/store/settingData";
+import { reactive } from "vue";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
+
+/**
+ * The level Netease actually served per song id, for the quality badge. It is routinely lower
+ * than the one asked for (no VIP, no master for this track), so the setting cannot stand in for
+ * it. Recorded here because every resolution — the playing song, prefill, preload, AutoMix —
+ * passes through this module.
+ */
+const servedLevels = reactive(new Map<number, string>());
+// Upcoming tracks are resolved a few at a time; this only has to outlive the gap to playback.
+const SERVED_LEVELS_LIMIT = 64;
+
+const recordServedLevel = (id: number, level: unknown): void => {
+  servedLevels.delete(id);
+  if (typeof level !== "string" || !level) return;
+  servedLevels.set(id, level);
+  if (servedLevels.size > SERVED_LEVELS_LIMIT) {
+    servedLevels.delete(servedLevels.keys().next().value as number);
+  }
+};
+
+/** What Netease served for `id`, or undefined when we did not resolve it from Netease. */
+export const getServedLevel = (id: unknown): string | undefined => servedLevels.get(Number(id));
 const useUnmServerHas = !!import.meta.env.VITE_UNM_API;
 
 export interface SongUrlInput {
@@ -163,13 +186,16 @@ async function resolveSongUrlUncached(
     if (IS_DEV) {
       console.log(`${logPrefix}: VIP/paid song, going directly to UNM`);
     }
+    recordServedLevel(song.id, null);
     return resolveViaUnm(song.id, logPrefix);
   }
 
   // Step 1: Try NCM official API
   let url: string | null = null;
+  let servedLevel: unknown = null;
   try {
     const res = await getMusicUrl(song.id, effectiveLevel);
+    servedLevel = res?.data?.[0]?.level;
 
     const rawUrl = res?.data?.[0]?.url;
     if (rawUrl) {
@@ -192,8 +218,10 @@ async function resolveSongUrlUncached(
 
   // Step 2: If NCM succeeded, return it
   if (url) {
+    recordServedLevel(song.id, servedLevel);
     return { url, source: "ncm" };
   }
+  recordServedLevel(song.id, null);
 
   // Step 3: UNM fallback
   if (unmEnabled) {
