@@ -16,7 +16,7 @@
 import { AudioAnalysisProcessor } from "./AudioAnalysisProcessor";
 import { LowFreqVolumeAnalyzer } from "./LowFreqVolumeAnalyzer";
 import type { LowFreqVolumeOptions } from "./LowFreqVolumeAnalyzer";
-import { AudioContextManager } from "./AudioContextManager";
+import { AudioContextManager } from "../AudioContextManager";
 import { isPCMWorkletRegisteredFor } from "./pcm-capture-worklet";
 
 export interface EffectManagerOptions {

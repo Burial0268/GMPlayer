@@ -6,7 +6,7 @@
  * state so the crossfade can begin instantly when triggered.
  */
 
-import { BufferedSound } from "../BufferedSound";
+import { BufferedSound } from "../sound/BufferedSound";
 import { analyzeTrack } from "./TrackAnalyzer";
 import { resolveSongUrl } from "../resolveSongUrl";
 import type { CachedAnalysis } from "./types";

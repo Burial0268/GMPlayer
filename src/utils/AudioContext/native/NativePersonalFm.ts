@@ -1,6 +1,6 @@
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
-import { setNativePersonalFmActive } from "@/utils/tauri/audio/nativeRustSound";
+import { setNativePersonalFmActive } from "@/utils/AudioContext/sound/NativeRustSound";
 import type { AudioThreadEvent, NativeFmSnapshot } from "@/utils/tauri/audio/protocol";
 import useMusicDataStore from "@/store/musicData";
 import { syncNativeResolverConfig } from "./NativeResolverConfigSync";

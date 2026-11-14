@@ -23,20 +23,20 @@ import { MusicNoteFilled } from "@vicons/material";
 import getLanguageData from "@/utils/getLanguageData";
 import { applyGlobalCoverPalette } from "@/utils/color/coverPalette";
 import { coverUrl } from "@/utils/coverUrl";
-import { BufferedSound } from "./BufferedSound";
-import { SoundManager, activeSound } from "./SoundManager";
+import { BufferedSound } from "./sound/BufferedSound";
+import { SoundManager, activeSound } from "./sound/SoundManager";
 import { AudioContextManager } from "./AudioContextManager";
 import { getAutoMixEngine } from "./AutoMix";
 import { getAudioPreloader } from "./AudioPreloader";
-import { getNativeQueueRegistryEntry, prefillNativeQueue } from "./NativeQueuePrefill";
-import { publishNativeManifest, toTrackDisplay } from "./NativeManifestPublisher";
+import { getNativeQueueRegistryEntry, prefillNativeQueue } from "./native/NativeQueuePrefill";
+import { publishNativeManifest, toTrackDisplay } from "./native/NativeManifestPublisher";
 import type { TrackDisplay } from "@/utils/tauri/audio/protocol";
-import { syncNativeResolverConfig } from "./NativeResolverConfigSync";
-import { publishSessionControls } from "./NativeSessionControlsSync";
-import { clearSpectrumFrame, setSpectrumFrame } from "./SpectrumFrame";
-import { publishLowFreqVolume, resetLowFreqVolume } from "./lowFreqVolume";
-import type { ISound } from "./types";
-import { NativeRustSound } from "../tauri/audio/nativeRustSound";
+import { syncNativeResolverConfig } from "./native/NativeResolverConfigSync";
+import { publishSessionControls } from "./native/NativeSessionControlsSync";
+import { clearSpectrumFrame, setSpectrumFrame } from "./analysis/SpectrumFrame";
+import { publishLowFreqVolume, resetLowFreqVolume } from "./analysis/lowFreqVolume";
+import { isBackendSound, type BackendSound, type ISound } from "./sound/types";
+import { NativeRustSound } from "./sound/NativeRustSound";
 import {
   isAudioBackendRuntimeAvailable,
   isNativeAudioBackendAvailable,
@@ -183,7 +183,7 @@ const resetPlaySongTime = (music: ReturnType<typeof musicStore>): void => {
 const checkpointActivePosition = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   const duration = getUsableDuration(sound.duration(), music.getPlaySongTime.duration);
   const position = normalizePlaybackPosition(
-    sound.seek(),
+    sound.position,
     duration,
     music.getPlaySongPlaybackCurrentTime(),
   );
@@ -207,7 +207,7 @@ const getRelayPlayMode = (mode: ReturnType<typeof musicStore>["persistData"]["pl
 
 const requestNativeBackendSync = (): void => {
   const sound = SoundManager.getCurrentSound();
-  if (!isNativeRustSoundLike(sound)) return;
+  if (!isBackendSound(sound)) return;
 
   const now = Date.now();
   if (now - lastBackendSyncRequestAt < 250) return;
@@ -215,17 +215,13 @@ const requestNativeBackendSync = (): void => {
   getAudioBackendTransport().sendOrQueue({ type: "syncStatus" });
 };
 
-const isNativeRustSoundLike = (sound: ISound | undefined | null): sound is NativeRustSound => {
-  return !!sound && typeof (sound as NativeRustSound).requestStatusSync === "function";
-};
-
-const getActiveNativeSound = (): NativeRustSound | null => {
+const getActiveNativeSound = (): BackendSound | null => {
   const currentSound = SoundManager.getCurrentSound();
-  return isNativeRustSoundLike(currentSound) ? currentSound : null;
+  return isBackendSound(currentSound) ? currentSound : null;
 };
 
 const isDestroyedNativeSound = (sound: ISound | undefined | null): boolean => {
-  return sound instanceof NativeRustSound && sound.isDestroyed();
+  return isBackendSound(sound) && sound.isDestroyed();
 };
 
 const resolveSeekTarget = (sound: ISound | undefined): ISound | undefined => {
@@ -240,7 +236,7 @@ const syncNativeAnalysisState = (
   sound: ISound | undefined | null,
   settings = settingStore(),
 ): void => {
-  if (!(sound instanceof NativeRustSound)) return;
+  if (!isBackendSound(sound)) return;
   const analysisEnabled = isPageVisible && (settings.musicFrequency || settings.dynamicFlowSpeed);
   sound.setAnalysisEnabled(analysisEnabled);
   sound.setFFTEnabled(analysisEnabled && settings.musicFrequency);
@@ -473,7 +469,7 @@ const scheduleAudioTimePresentation = (
   generation: number,
 ): void => {
   if (!sound.playing()) return;
-  if (isNativeRustSoundLike(sound)) {
+  if (isBackendSound(sound)) {
     const now = Date.now();
     if (now - lastBackendStateAuditAt >= 2000) {
       lastBackendStateAuditAt = now;
@@ -483,7 +479,7 @@ const scheduleAudioTimePresentation = (
   pendingPlaybackPresentation = {
     sound,
     music,
-    currentTime: sound.seek() as number,
+    currentTime: sound.position,
     duration: sound.duration(),
     generation,
   };
@@ -646,11 +642,10 @@ const startSpectrumUpdate = (sound: ISound): void => {
         // the native event Channel. Do not call getFrequencyData() here:
         // the web backend's AnalyserNode path is windowed/smoothed and only
         // 1024 bins by default.
-        const spectrumData =
-          sound instanceof NativeRustSound ? sound.getFFTData() : sound.getFrequencyData();
+        const spectrumData = isBackendSound(sound) ? sound.getFFTData() : sound.getFrequencyData();
         const scale = Math.round((sound.getAverageAmplitude() / 255 + 1) * 100) / 100;
         setSpectrumFrame(spectrumData, scale);
-      } else if (needsLowFreq && !(sound instanceof NativeRustSound)) {
+      } else if (needsLowFreq && !isBackendSound(sound)) {
         // Web backend only: populate AnalyserNode buffer for mobile fallback.
         // NativeRustSound receives lowFreqVolume from Rust over WS; normalizing
         // its 2048-bin FFT here would be extra main-thread work per RAF.
@@ -686,14 +681,14 @@ export const ensureSpectrumUpdate = (): void => {
  */
 const checkAudioTime = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   if (sound.playing()) {
-    if (isNativeRustSoundLike(sound)) {
+    if (isBackendSound(sound)) {
       const now = Date.now();
       if (now - lastBackendStateAuditAt >= 2000) {
         lastBackendStateAuditAt = now;
         requestNativeBackendSync();
       }
     }
-    const currentTime = sound.seek() as number;
+    const currentTime = sound.position;
     const duration = sound.duration();
     music.setPlaySongTime({ currentTime, duration });
   }
@@ -868,7 +863,7 @@ const setupNativeSound = (
     } else if (savedPosAtLoad > 0) {
       const duration = getUsableDuration(sound.duration(), savedDurationAtLoad);
       const currentTime = normalizePlaybackPosition(
-        (sound.seek() as number) || savedPosAtLoad,
+        sound.position || savedPosAtLoad,
         duration,
         savedPosAtLoad,
       );
@@ -876,7 +871,7 @@ const setupNativeSound = (
     }
     // When `isMemoryAtLoad` is true, the resumed position was already baked into
     // the load via `jumpToSongAt` (see setupNativeSound's `sound.load(savedPos)`
-    // call). No extra `sound.seek()` here — that used to race with the
+    // call). No extra `sound.seekTo()` here — that used to race with the
     // first `SyncStatus` and overwrite the optimistic local position.
     music.playingSongId = boundSongId;
     clearLoadRetryCount(boundSongId);
@@ -891,7 +886,7 @@ const setupNativeSound = (
     // then volume(vol) would only race two IPC calls — if the second
     // arrives before the first the volume stays at 0 permanently.
     // Just restore the user's volume directly.
-    sound.volume(vol);
+    sound.setVolume(vol);
 
     if (autoPlay) {
       const alreadyPlaying = sound.playing();
@@ -1146,7 +1141,7 @@ export const createSound = (
       });
     if (preloadedSound) {
       // Preloaded sound was created with volume=0 — restore actual volume
-      sound.volume(music.persistData.playVolume);
+      sound.setVolume(music.persistData.playVolume);
     }
     SoundManager.setCurrentSound(sound, boundSongId);
     const isActiveBoundSound = (): boolean =>
@@ -1182,7 +1177,7 @@ export const createSound = (
       : 0;
 
     if (savedPosAtLoad > 0) {
-      sound.seek(savedPosAtLoad);
+      sound.seekTo(savedPosAtLoad);
       music.setPlaySongTime({ currentTime: savedPosAtLoad, duration: savedDurationAtLoad });
     } else if (!isMemoryAtLoad) {
       resetPlaySongTime(music);
@@ -1227,12 +1222,12 @@ export const createSound = (
       if (isMemoryAtLoad) {
         const duration = getUsableDuration(sound.duration(), savedDurationAtLoad);
         const currentTime = normalizePlaybackPosition(
-          (sound.seek() as number) || savedPosAtLoad,
+          sound.position || savedPosAtLoad,
           duration,
           savedPosAtLoad,
         );
         if (currentTime > 0) {
-          sound.seek(currentTime);
+          sound.seekTo(currentTime);
           music.setPlaySongTime({ currentTime, duration });
         }
       } else {
@@ -1413,14 +1408,14 @@ export const createSound = (
  * @param volume - 设置的音量值，0-1之间的浮点数
  */
 export const setVolume = (sound: ISound | undefined, volume: number): void => {
-  sound?.volume(volume);
+  sound?.setVolume(volume);
 
   // When AutoMix normalization is active, apply the persistent gain adjustment
   // to the GainNode so that manual volume changes maintain LUFS normalization.
   const autoMix = getAutoMixEngine();
   const gainAdj = autoMix.getActiveGainAdjustment();
   if (gainAdj !== 1 && sound) {
-    const gainNode = (sound as any).getGainNode?.();
+    const gainNode = sound.getGainNode();
     if (gainNode) {
       gainNode.gain.value = volume * gainAdj;
     }
@@ -1458,7 +1453,7 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
   if (autoMix.isCrossfading()) {
     autoMix.cancelCrossfade();
   }
-  target.seek(currentTime);
+  target.seekTo(currentTime);
   // The lyric clock runs behind the playback clock on mobile; pin it at the
   // target before the store update below recomputes the lyric index from it.
   armLyricSeekPresentationHold(currentTime);
@@ -1487,7 +1482,7 @@ export const fadePlayOrPause = (
   if (IS_DEV) {
     console.log("[fadePlayOrPause] type:", type, "sound:", !!sound, "playing:", sound?.playing());
   }
-  if (sound instanceof NativeRustSound) {
+  if (isBackendSound(sound)) {
     if (type === "play") {
       sound.play();
     } else {
@@ -1568,7 +1563,7 @@ export const adoptIncomingSound = (incomingSound: ISound): void => {
   // The song data watcher no longer resets time during crossfade (to prevent duration=0),
   // so we must do it here to avoid briefly showing the outgoing song's time.
   const initDuration = incomingSound.duration();
-  const initTime = (incomingSound.seek() as number) || 0;
+  const initTime = incomingSound.position || 0;
   music.setPlaySongTime({
     currentTime: initTime,
     duration: initDuration > 0 ? initDuration : 0,
@@ -1687,7 +1682,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   const settings = settingStore();
   const songId = Number(music.getPlaySongData?.id);
 
-  if (isNativeRustSoundLike(sound)) {
+  if (isBackendSound(sound)) {
     await sound.requestStatusSync();
   }
 
@@ -1700,7 +1695,7 @@ export const syncNativeAutoMixCurrentSound = async (sound: ISound): Promise<void
   music.settleLoading();
 
   const duration = sound.duration();
-  const currentTime = (sound.seek() as number) || 0;
+  const currentTime = sound.position || 0;
   music.setPlaySongTime({
     currentTime,
     duration: duration > 0 ? duration : 0,
@@ -1769,11 +1764,11 @@ export const handoffAutoMixToNativeBackend = async (
   sourceUrl: string | null | undefined,
 ): Promise<boolean> => {
   if (!sourceUrl || !isNativeAudioBackendAvailable()) return false;
-  if (currentSound instanceof NativeRustSound) return false;
+  if (isBackendSound(currentSound)) return false;
   if (!currentSound.playing()) return false;
 
   const music = musicStore();
-  const position = Math.max(0, (currentSound.seek() as number) || 0);
+  const position = Math.max(0, currentSound.position || 0);
   const volume = music.persistData.playVolume;
   const nativeSound = new NativeRustSound(sourceUrl, displayForSongId(music.playingSongId));
 
@@ -1785,9 +1780,9 @@ export const handoffAutoMixToNativeBackend = async (
       return false;
     }
 
-    const latestPosition = Math.max(0, (currentSound.seek() as number) || position);
-    nativeSound.seek(latestPosition);
-    nativeSound.volume(volume);
+    const latestPosition = Math.max(0, currentSound.position || position);
+    nativeSound.seekTo(latestPosition);
+    nativeSound.setVolume(volume);
 
     SoundManager.setCurrentSound(nativeSound, music.getPlaySongData?.id);
     adoptIncomingSound(nativeSound);

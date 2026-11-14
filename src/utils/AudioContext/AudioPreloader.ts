@@ -10,7 +10,7 @@
  * - Coexists with AutoMix (skips preload when AutoMix is active)
  */
 
-import { BufferedSound } from "./BufferedSound";
+import { BufferedSound } from "./sound/BufferedSound";
 import { resolveSongUrl } from "./resolveSongUrl";
 import { getAutoMixEngine } from "./AutoMix";
 import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";

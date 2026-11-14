@@ -37,6 +37,7 @@ function sourceModule(path: string, imports: Record<string, unknown>, globals = 
 
 const musicTypes = sourceModule("src/store/musicTypes.ts", {});
 const playlistOrder = sourceModule("src/utils/playlistOrder.ts", {});
+const soundTypes = sourceModule("src/utils/AudioContext/sound/types.ts", {});
 const keyOf = (identity: any) =>
   identity ? `${identity.provider}:${identity.id ?? identity.path}` : null;
 const identities = (ids: number[]) => ids.map((id) => ({ provider: "netease", id: String(id) }));
@@ -59,6 +60,7 @@ function queueEnvironment(native = true) {
     setItem: (key: string, value: string) => storage.set(key, value),
   };
   class NativeRustSound {
+    kind = "backend";
     manifests: any[] = [];
     isDestroyed() {
       return false;
@@ -76,7 +78,7 @@ function queueEnvironment(native = true) {
       "./musicTypes": musicTypes,
       "@/utils/getLanguageData": { __esModule: true, default: (key: string) => key },
       "@/utils/tauri/core/runtime": { isTauri: () => native },
-      "@/utils/tauri/audio/nativeRustSound": { NativeRustSound },
+      "@/utils/AudioContext/sound/types": soundTypes,
       "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
       "@/utils/tauri/core/nativeLog": { logNative() {} },
       "@/utils/playlistOrder": playlistOrder,
@@ -107,23 +109,24 @@ function queueEnvironment(native = true) {
     music.resetPlaySongTime = () => {};
     music.resetSongLyricState = () => {};
     const revision = sourceModule(
-      "src/utils/AudioContext/NativeManifestRevision.ts",
+      "src/utils/AudioContext/native/NativeManifestRevision.ts",
       {},
       { localStorage },
     );
     publisher = sourceModule(
-      "src/utils/AudioContext/NativeManifestPublisher.ts",
+      "src/utils/AudioContext/native/NativeManifestPublisher.ts",
       {
         vue: { toRaw },
         "@/utils/tauri/core/runtime": { isTauri: () => native },
         "@/store/musicTypes": musicTypes,
-        "@/utils/tauri/audio/nativeRustSound": { NativeRustSound, setPlannerRevisionObserver() {} },
+        "@/utils/AudioContext/sound/NativeRustSound": { setPlannerRevisionObserver() {} },
+        "@/utils/AudioContext/sound/types": soundTypes,
         "@/store/musicData": { __esModule: true, default: () => music },
         "@/store/listenTogether": { __esModule: true, default: () => ({ isInRoom: false }) },
         "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf, identityForSong },
         "@/utils/tauri/core/nativeLog": { logNative() {} },
         "./NativeManifestRevision": revision,
-        "./SoundManager": { activeSound },
+        "../sound/SoundManager": { activeSound },
       },
       { window },
     );
@@ -620,7 +623,7 @@ test("session-control subscribers install before the transport is connected", as
     "../core/nativeLog": { logNative() {} },
     "./transport": { getAudioBackendTransport: () => env.transport },
   });
-  const controls = sourceModule("src/utils/AudioContext/NativeSessionControlsSync.ts", {
+  const controls = sourceModule("src/utils/AudioContext/native/NativeSessionControlsSync.ts", {
     "@/utils/tauri/core/runtime": { isTauri: () => true },
     "@/utils/tauri/audio/backendEvents": backendEvents,
   });
@@ -753,4 +756,44 @@ test("the page cannot end loading while the backend still reports it", () => {
   assert.equal(music.isLoadingSong, false);
   assert.equal(music.loadingStage, "idle");
   env.restore();
+});
+
+test("sound listeners fire persistent-first, once-listeners once, and survive re-registration", () => {
+  const { SoundEvents } = sourceModule("src/utils/AudioContext/sound/SoundEvents.ts", {});
+  class Probe extends SoundEvents {
+    emit(event: string, ...args: unknown[]) {
+      this._emit(event, ...args);
+    }
+  }
+  const sound = new Probe();
+  const calls: string[] = [];
+  const again = () => {
+    calls.push("once");
+    sound.once("play", again);
+  };
+  const removed = () => calls.push("removed");
+  sound.once("play", again);
+  sound.on("play", () => calls.push("on"));
+  sound.on("play", removed).off("play", removed);
+  sound.on("loaderror", () => {
+    throw new Error("listener failure must not stop the rest");
+  });
+  sound.on("loaderror", (error: unknown) => calls.push(String(error)));
+
+  sound.emit("play");
+  sound.emit("play");
+  assert.deepEqual(calls, ["on", "once", "on", "once"]);
+
+  const error = console.error;
+  console.error = () => {};
+  try {
+    sound.emit("loaderror", "boom");
+  } finally {
+    console.error = error;
+  }
+  assert.equal(calls.at(-1), "boom");
+
+  sound.off("play");
+  sound.emit("play");
+  assert.equal(calls.length, 5);
 });

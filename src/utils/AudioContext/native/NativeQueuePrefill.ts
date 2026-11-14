@@ -20,13 +20,13 @@
 
 import { isTauri } from "@/utils/tauri/core/runtime";
 import type { SongData as QueueSongData } from "@/utils/tauri/audio/protocol";
-import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
-import { resolveSongUrl } from "./resolveSongUrl";
+import { isBackendSound } from "@/utils/AudioContext/sound/types";
+import { resolveSongUrl } from "../resolveSongUrl";
 import { toTrackDisplay } from "./NativeManifestPublisher";
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
-import { SoundManager, activeSound } from "./SoundManager";
+import { SoundManager, activeSound } from "../sound/SoundManager";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -108,7 +108,7 @@ export const cancelNativeQueuePrefill = (): void => {
 export async function prefillNativeQueue(): Promise<void> {
   if (!isTauri()) return;
   const sound = activeSound.value;
-  if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
+  if (!isBackendSound(sound) || sound.isDestroyed()) return;
 
   const music = useMusicDataStore();
   const listenTogether = useListenTogetherStore();

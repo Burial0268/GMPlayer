@@ -28,8 +28,8 @@ import {
   type EmotionalArc,
 } from "./EmotionalArc";
 import { AudioContextManager } from "../AudioContextManager";
-import { BufferedSound } from "../BufferedSound";
-import { SoundManager } from "../SoundManager";
+import { BufferedSound } from "../sound/BufferedSound";
+import { SoundManager } from "../sound/SoundManager";
 import {
   adoptIncomingSound,
   handoffAutoMixToNativeBackend,
@@ -43,7 +43,7 @@ import { identityForSong } from "../../tauri/audio/identity";
 import type { AudioThreadEvent } from "../../tauri/audio/protocol";
 import useMusicDataStore from "@/store/musicData";
 import useSettingDataStore from "@/store/settingData";
-import type { ISound } from "../types";
+import { isBackendSound, type ISound } from "../sound/types";
 import type {
   AutoMixState,
   CachedAnalysis,
@@ -57,7 +57,7 @@ const IS_DEV = import.meta.env?.DEV ?? false;
 
 /** 只有后端驱动的 sound 带 `getSourceUrl`（BufferedSound 走 blob URL）。 */
 const soundSourceUrl = (sound: ISound | null): string | null =>
-  (sound as { getSourceUrl?: () => string | null } | null)?.getSourceUrl?.() ?? null;
+  isBackendSound(sound) ? sound.getSourceUrl() : null;
 
 /** Seconds before expected crossfade to start pre-analysis */
 const PREPARE_AHEAD = 13;
@@ -404,7 +404,7 @@ export class TransitionStateMachine {
       return;
     }
 
-    const currentTime = currentSound.seek() as number;
+    const currentTime = currentSound.position;
     const duration = currentSound.duration();
     if (!duration || duration <= 0) return;
 
@@ -484,11 +484,7 @@ export class TransitionStateMachine {
   }
 
   private _isNativeAutoMixSound(sound: ISound | null): boolean {
-    return (
-      isNativeAudioBackendAvailable() &&
-      !!sound &&
-      typeof (sound as { getSourceUrl?: () => string | null }).getSourceUrl === "function"
-    );
+    return isNativeAudioBackendAvailable() && isBackendSound(sound);
   }
 
   private _startNativeAutoMixPrepare(duration: number): void {
@@ -1312,7 +1308,7 @@ export class TransitionStateMachine {
     }
 
     // Emotional arc: shaped by the energy of the passages that will overlap.
-    const outgoingNow = outgoingSound.seek() as number;
+    const outgoingNow = outgoingSound.position;
     let arc: EmotionalArc = "neutral";
     let arcProfile: ArcProfile | null = null;
     if (this._settingsEmotionalTransition && this._currentAnalysis && this._nextAnalysis) {
@@ -1730,8 +1726,8 @@ export class TransitionStateMachine {
       params.fadeInOnly = true;
     }
 
-    const outgoingGain = this._getGainNode(outgoingSound);
-    const incomingGain = this._getGainNode(incomingSound);
+    const outgoingGain = outgoingSound.getGainNode();
+    const incomingGain = incomingSound.getGainNode();
 
     if (outgoingGain && incomingGain) {
       this._crossfadeScheduler.scheduleFullCrossfade(outgoingGain, incomingGain, params, () =>
@@ -1930,19 +1926,6 @@ export class TransitionStateMachine {
     });
   }
 
-  private _getGainNode(sound: ISound): GainNode | null {
-    if (sound instanceof BufferedSound) {
-      const inner = sound.getInnerSound();
-      if (inner) {
-        return inner.getGainNode();
-      }
-    }
-    if ("getGainNode" in sound && typeof (sound as any).getGainNode === "function") {
-      return (sound as any).getGainNode();
-    }
-    return null;
-  }
-
   // ─── State: FINISHING ──────────────────────────────────────────
 
   private _onCrossfadeComplete(transitionId?: number): void {
@@ -1975,13 +1958,13 @@ export class TransitionStateMachine {
     const currentSound = SoundManager.getCurrentSound();
     if (currentSound && this._musicStoreRef) {
       const userVolume = this._musicStoreRef.persistData.playVolume;
-      currentSound.volume(userVolume);
+      currentSound.setVolume(userVolume);
     }
 
     this._activeGainAdjustment = this._crossfadeScheduler.getIncomingGainAdjustment();
 
     if (currentSound && this._activeGainAdjustment !== 1) {
-      const gainNode = this._getGainNode(currentSound);
+      const gainNode = currentSound.getGainNode();
       if (gainNode && this._musicStoreRef) {
         const userVolume = this._musicStoreRef.persistData.playVolume;
         gainNode.gain.value = userVolume * this._activeGainAdjustment;
@@ -2092,7 +2075,7 @@ export class TransitionStateMachine {
         if (outgoing) {
           SoundManager.revertTransition();
           if (this._musicStoreRef) {
-            outgoing.volume(this._musicStoreRef.persistData.playVolume);
+            outgoing.setVolume(this._musicStoreRef.persistData.playVolume);
           }
         }
       } else {

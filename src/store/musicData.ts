@@ -21,7 +21,7 @@ import {
   requestNativeReshuffle,
   publishSessionControls,
 } from "@/utils/AudioContext";
-import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
+import { isBackendSound } from "@/utils/AudioContext/sound/types";
 import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";
 import getLanguageData from "@/utils/getLanguageData";
 import {
@@ -49,14 +49,14 @@ import type { NativeFmSnapshot, PlaybackPhase, TrackIdentity } from "@/utils/tau
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { naturalQueueOrder } from "@/utils/playlistOrder";
-import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/PersonalFmState";
-import { activeSound } from "@/utils/AudioContext/SoundManager";
+import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/native/PersonalFmState";
+import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
 import {
   startNativePersonalFm,
   stopNativePersonalFm,
   nextNativePersonalFm,
   trashNativePersonalFm,
-} from "@/utils/AudioContext/NativePersonalFm";
+} from "@/utils/AudioContext/native/NativePersonalFm";
 
 declare const $message: any;
 
@@ -1142,7 +1142,7 @@ const useMusicDataStore = defineStore("musicData", {
         // 还没有 sound 说明后端没见过我们的列表：它的第一份 manifest 会被当作
         // 「上次的队列」原样信任，所以得明说这次要洗。有 sound 时后端已经收到
         // 模式切换（或马上会收到 manifest），自己会洗，再请求只会洗两次。
-        if (!(activeSound.value instanceof NativeRustSound)) requestNativeReshuffle();
+        if (!isBackendSound(activeSound.value)) requestNativeReshuffle();
         return false;
       }
       const next = shuffleInPlace<SongData>(list.slice());
@@ -1686,7 +1686,7 @@ const useMusicDataStore = defineStore("musicData", {
       getAudioPreloader().cleanup();
 
       const activePlayer = activeSound.value;
-      if (activePlayer instanceof NativeRustSound) {
+      if (isBackendSound(activePlayer)) {
         activePlayer.clearPlaybackQueue();
       }
       SoundManager.unload();

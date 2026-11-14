@@ -9,10 +9,11 @@
  * - Reduced console.log for production performance
  */
 
-import { AudioEffectManager, NEUTRAL_LOW_FREQ_VOLUME } from "./AudioEffectManager";
-import { ensureWasmReady } from "./AudioAnalysisProcessor";
-import { AudioContextManager } from "./AudioContextManager";
-import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from "./types";
+import { AudioEffectManager, NEUTRAL_LOW_FREQ_VOLUME } from "../analysis/AudioEffectManager";
+import { ensureWasmReady } from "../analysis/AudioAnalysisProcessor";
+import { AudioContextManager } from "../AudioContextManager";
+import type { SoundOptions, ISound } from "./types";
+import { SoundEvents } from "./SoundEvents";
 
 // Development mode detection
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -22,7 +23,9 @@ const clampVolume = (volume: number): number => Math.max(0, Math.min(1, volume))
 /**
  * NativeSound - HTML5 Audio player with Web Audio API integration
  */
-export class NativeSound implements ISound {
+export class NativeSound extends SoundEvents implements ISound {
+  readonly kind = "element";
+
   // Audio element
   private _audio: HTMLAudioElement;
 
@@ -32,10 +35,6 @@ export class NativeSound implements ISound {
   private _loaded: boolean = false;
   private _pendingPlay: boolean = false;
   private _unloading: boolean = false;
-
-  // Event system
-  private _eventListeners: Map<SoundEventType, SoundEventCallback[]> = new Map();
-  private _onceListeners: Map<SoundEventType, SoundEventCallback[]> = new Map();
 
   // Web Audio API nodes
   private _sourceNode: MediaElementAudioSourceNode | null = null;
@@ -71,10 +70,8 @@ export class NativeSound implements ISound {
   // Seek guard: handler for the current pending 'seeked' event
   private _seekedHandler: (() => void) | null = null;
 
-  // Compatibility structure for legacy spectrum access
-  public _sounds: { _node: HTMLAudioElement }[];
-
   constructor({ src, volume = 1, preload = true }: SoundOptions) {
+    super();
     // Audio element
     this._audio = new Audio();
     this._audio.crossOrigin = "anonymous";
@@ -94,9 +91,6 @@ export class NativeSound implements ISound {
     // State
     this._volume = clampVolume(volume);
     this._audio.volume = this._volume;
-
-    // Compatibility structure for legacy spectrum access
-    this._sounds = [{ _node: this._audio }];
 
     this._bindNativeEvents();
 
@@ -301,32 +295,6 @@ export class NativeSound implements ISound {
     this._audio.addEventListener("waiting", this._boundHandlers.waiting);
   }
 
-  private _emit(event: SoundEventType, ...args: unknown[]): void {
-    const listeners = this._eventListeners.get(event);
-    if (listeners) {
-      for (let i = 0; i < listeners.length; i++) {
-        const cb = listeners[i];
-        try {
-          cb(...args);
-        } catch (e) {
-          console.error(`NativeSound: Error in ${event} listener:`, e);
-        }
-      }
-    }
-    const onceListeners = this._onceListeners.get(event);
-    if (onceListeners) {
-      for (let i = 0; i < onceListeners.length; i++) {
-        const cb = onceListeners[i];
-        try {
-          cb(...args);
-        } catch (e) {
-          console.error(`NativeSound: Error in once ${event} listener:`, e);
-        }
-      }
-      this._onceListeners.delete(event);
-    }
-  }
-
   playing(): boolean {
     return !this._audio.paused && !this._audio.ended;
   }
@@ -412,10 +380,11 @@ export class NativeSound implements ISound {
     return this;
   }
 
-  seek(pos?: number): number | this {
-    if (pos === undefined) {
-      return this._audio.currentTime;
-    }
+  get position(): number {
+    return this._audio.currentTime;
+  }
+
+  seekTo(pos: number): this {
     try {
       // Remove previous seeked handler if rapid-seeking
       if (this._seekedHandler) {
@@ -444,10 +413,11 @@ export class NativeSound implements ISound {
     return this._audio.duration || 0;
   }
 
-  volume(vol?: number): number | this {
-    if (vol === undefined) {
-      return this._volume;
-    }
+  get volume(): number {
+    return this._volume;
+  }
+
+  setVolume(vol: number): this {
     this._volume = clampVolume(vol);
     // Use GainNode for volume control (doesn't affect spectrum)
     if (this._gainNode) {
@@ -513,41 +483,6 @@ export class NativeSound implements ISound {
       };
 
       this._fadeAnimationId = requestAnimationFrame(animate);
-    }
-    return this;
-  }
-
-  on(event: SoundEventType, callback: SoundEventCallback): this {
-    if (!this._eventListeners.has(event)) {
-      this._eventListeners.set(event, []);
-    }
-    this._eventListeners.get(event)!.push(callback);
-    return this;
-  }
-
-  once(event: SoundEventType, callback: SoundEventCallback): this {
-    if (!this._onceListeners.has(event)) {
-      this._onceListeners.set(event, []);
-    }
-    this._onceListeners.get(event)!.push(callback);
-    return this;
-  }
-
-  off(event: SoundEventType, callback?: SoundEventCallback): this {
-    if (callback) {
-      const listeners = this._eventListeners.get(event);
-      if (listeners) {
-        const index = listeners.indexOf(callback);
-        if (index > -1) listeners.splice(index, 1);
-      }
-      const onceListeners = this._onceListeners.get(event);
-      if (onceListeners) {
-        const index = onceListeners.indexOf(callback);
-        if (index > -1) onceListeners.splice(index, 1);
-      }
-    } else {
-      this._eventListeners.delete(event);
-      this._onceListeners.delete(event);
     }
     return this;
   }
@@ -688,8 +623,7 @@ export class NativeSound implements ISound {
     }
     // Note: We don't close AudioContext here - it's managed globally
 
-    this._eventListeners.clear();
-    this._onceListeners.clear();
+    this._clearListeners();
     this._isAudioGraphInitialized = false;
   }
 }

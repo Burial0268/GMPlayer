@@ -27,18 +27,18 @@ export {
   prefillNativeQueue,
   cancelNativeQueuePrefill,
   getNativeQueueRegistryEntry,
-} from "./NativeQueuePrefill";
+} from "./native/NativeQueuePrefill";
 
 // Native manifest planner (Tauri unbounded background advance)
 export {
   publishNativeManifest,
   clearNativeManifest,
   requestNativeReshuffle,
-} from "./NativeManifestPublisher";
+} from "./native/NativeManifestPublisher";
 export {
   syncNativeResolverConfig,
   invalidateNativeResolverConfig,
-} from "./NativeResolverConfigSync";
+} from "./native/NativeResolverConfigSync";
 
 // Session controls (play mode / favourite) shared with the OS media session
 export {
@@ -48,26 +48,28 @@ export {
   isAdoptingSessionControls,
   requestNextPlayMode,
   requestToggleFavourite,
-} from "./NativeSessionControlsSync";
+} from "./native/NativeSessionControlsSync";
 
 // Boot-time reconciliation with a backend that outlived the WebView
-export { adoptNativeBackendSession } from "./NativeSessionAdopt";
-export type { AdoptedBackendSession } from "./NativeSessionAdopt";
+export { adoptNativeBackendSession } from "./native/NativeSessionAdopt";
+export type { AdoptedBackendSession } from "./native/NativeSessionAdopt";
 
 // Listen-together keepalive hand-off (Tauri only)
-export { setNativeListenTogetherRoom } from "./NativeListenTogetherSync";
+export { setNativeListenTogetherRoom } from "./native/NativeListenTogetherSync";
 
 // Export types
 export type {
   SoundOptions,
   SoundEventType,
   SoundEventCallback,
+  SoundEventMap,
   ISound,
-  PlaySongTime,
-} from "./types";
+  BackendSound,
+} from "./sound/types";
+export { isBackendSound } from "./sound/types";
 
-export type { EffectManagerOptions } from "./AudioEffectManager";
-export type { LowFreqVolumeOptions } from "./LowFreqVolumeAnalyzer";
+export type { EffectManagerOptions } from "./analysis/AudioEffectManager";
+export type { LowFreqVolumeOptions } from "./analysis/LowFreqVolumeAnalyzer";
 
 // AutoMix types (from new AutoMix sub-module)
 export type { CrossfadeCurve, CrossfadeParams } from "./AutoMix";
@@ -84,12 +86,12 @@ export type { BPMResult } from "./AutoMix";
 export type { AutoMixState } from "./AutoMix";
 
 // Export classes for advanced usage
-export { NativeSound } from "./NativeSound";
-export { BufferedSound } from "./BufferedSound";
-export { SoundManager } from "./SoundManager";
-export { AudioEffectManager } from "./AudioEffectManager";
-export { AudioAnalysisProcessor } from "./AudioAnalysisProcessor";
-export { LowFreqVolumeAnalyzer } from "./LowFreqVolumeAnalyzer";
+export { NativeSound } from "./sound/NativeSound";
+export { BufferedSound } from "./sound/BufferedSound";
+export { SoundManager } from "./sound/SoundManager";
+export { AudioEffectManager } from "./analysis/AudioEffectManager";
+export { AudioAnalysisProcessor } from "./analysis/AudioAnalysisProcessor";
+export { LowFreqVolumeAnalyzer } from "./analysis/LowFreqVolumeAnalyzer";
 export { AudioContextManager } from "./AudioContextManager";
 export {
   clearSpectrumFrame,
@@ -97,8 +99,8 @@ export {
   getSpectrumScale,
   getSpectrumVersion,
   setSpectrumFrame,
-} from "./SpectrumFrame";
-export type { SpectrumFrame } from "./SpectrumFrame";
+} from "./analysis/SpectrumFrame";
+export type { SpectrumFrame } from "./analysis/SpectrumFrame";
 
 // AudioPreloader
 export { AudioPreloader, getAudioPreloader } from "./AudioPreloader";
@@ -112,4 +114,4 @@ export { CrossfadeScheduler as CrossfadeManager } from "./AutoMix";
 export { AutoMixEngine, getAutoMixEngine } from "./AutoMix";
 export { analyzeTrack, spectralSimilarity, terminateAnalysisWorker } from "./AutoMix";
 export { findNearestBeat } from "./AutoMix";
-export { activeSound } from "./SoundManager";
+export { activeSound } from "./sound/SoundManager";

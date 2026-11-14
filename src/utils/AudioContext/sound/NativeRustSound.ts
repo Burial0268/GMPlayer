@@ -18,25 +18,29 @@
  *     side only emits 1 Hz heartbeats.
  */
 
-import type { ISound, SoundEventCallback, SoundEventType } from "../../AudioContext/types";
-import { LowFreqVolumeAnalyzer } from "../../AudioContext/LowFreqVolumeAnalyzer";
-import { activeSound } from "../../AudioContext/SoundManager";
-import { isTauri } from "../core/runtime";
-import { audioGetSession } from "./bridge";
-import { AudioTimelineSync } from "./timeline";
-import { sameTrackIdentity } from "./identity";
-import { setMeasuredOutputLatencyMs } from "./uiDelay";
+import type { BackendLoadOptions, BackendSound, SoundEventMap, SoundEventType } from "./types";
+import { SoundEvents } from "./SoundEvents";
+import { LowFreqVolumeAnalyzer } from "../analysis/LowFreqVolumeAnalyzer";
+import { activeSound } from "./SoundManager";
+import { isTauri } from "../../tauri/core/runtime";
+import { audioGetSession } from "../../tauri/audio/bridge";
+import { AudioTimelineSync } from "../../tauri/audio/timeline";
+import { sameTrackIdentity } from "../../tauri/audio/identity";
+import { setMeasuredOutputLatencyMs } from "../../tauri/audio/uiDelay";
 import type {
   AudioQuality,
   AudioThreadEvent,
+  AudioThreadMessage,
   DisplayAudioInfo,
   NativePlannerStatus,
+  NativePlaybackManifest,
+  NativeResolverConfig,
   SongData,
   TrackDisplay,
   TrackIdentity,
-} from "./protocol";
-import { getAudioBackendTransport, type AudioBackendTransport } from "./transport";
-import { isAudioBackendRuntimeAvailable } from "./backendRuntime";
+} from "../../tauri/audio/protocol";
+import { getAudioBackendTransport, type AudioBackendTransport } from "../../tauri/audio/transport";
+import { isAudioBackendRuntimeAvailable } from "../../tauri/audio/backendRuntime";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 const LOAD_TIMEOUT_MS = 10_000;
@@ -84,8 +88,6 @@ interface LocalState {
   currentPlayIndex: number;
 }
 
-type EventMap = Record<string, SoundEventCallback[]>;
-
 /**
  * Tell the backend which track is about to load, before its URL is resolved.
  *
@@ -123,24 +125,8 @@ type SyncPromise = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
-type NativeLoadOptions = {
-  allowInitialBackendAttach?: boolean;
-  /**
-   * Adopt a track the backend is *already* playing, matched on stable identity
-   * rather than on `local:<url>`.
-   *
-   * The URL is re-resolved with a fresh CDN token every session, so after a
-   * WebView reload the id-based comparison can never match and the controller
-   * would replace live playback with the frontend's persisted (stale) track.
-   * When this is set and the backend reports the same identity, `load()`
-   * attaches without sending `setPlaylist`/`jumpToSong` at all.
-   */
-  attachIdentity?: TrackIdentity | null;
-};
-
-export class NativeRustSound implements ISound {
-  private _events: EventMap = {};
-  private _onceEvents: EventMap = {};
+export class NativeRustSound extends SoundEvents implements BackendSound {
+  readonly kind = "backend";
   private _transport: AudioBackendTransport | null = null;
   private _unlistenTransport: (() => void) | null = null;
 
@@ -285,6 +271,7 @@ export class NativeRustSound implements ISound {
   private _noFFTWarnTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(src: string | string[], display?: TrackDisplay) {
+    super();
     this._path = Array.isArray(src) ? src[0] : src;
     this._display = display;
     // Rust computes `local:<file_path>` (see types.rs::SongData::get_id);
@@ -297,7 +284,7 @@ export class NativeRustSound implements ISound {
   //  load() — register listeners, open track, await load event  ║
   // ═════════════════════════════════════════════════════════════╝
 
-  async load(initialPosition?: number, options?: NativeLoadOptions): Promise<void> {
+  async load(initialPosition?: number, options?: BackendLoadOptions): Promise<void> {
     if (this._loaded || this._destroyed || this._terminallyCleared) return;
 
     if (!isAudioBackendRuntimeAvailable()) {
@@ -348,7 +335,7 @@ export class NativeRustSound implements ISound {
           initPos > 0 &&
           Math.abs(this._state.position - initPos) > 1
         ) {
-          this.seek(initPos);
+          this.seekTo(initPos);
         }
         this._loaded = true;
         this._armNoFFTWarning();
@@ -361,7 +348,7 @@ export class NativeRustSound implements ISound {
     }
 
     // Pre-seed local state from `initialPosition` so seekers (e.g. the
-    // RAF time-loop reading `sound.seek()`) return the saved position
+    // RAF time-loop reading `sound.position`) return the saved position
     // even before the first event arrives from Rust. This is what makes
     // the progress bar display the resumed position immediately on
     // startup, not jump from 0 once events catch up.
@@ -451,7 +438,7 @@ export class NativeRustSound implements ISound {
   //  Transport: invoke control path                             ║
   // ═════════════════════════════════════════════════════════════╝
 
-  private _sendCommand(msg: import("./protocol").AudioThreadMessage): boolean {
+  private _sendCommand(msg: AudioThreadMessage): boolean {
     const transport = this._transport ?? getAudioBackendTransport();
     this._transport = transport;
     const sentNow = transport.sendOrQueue(msg);
@@ -467,7 +454,7 @@ export class NativeRustSound implements ISound {
    * pre-resolved URLs, so the backend can advance to any track in the list —
    * and re-resolve expired links — without a live JS runtime.
    */
-  setNativeManifest(manifest: import("./protocol").NativePlaybackManifest): void {
+  setNativeManifest(manifest: NativePlaybackManifest): void {
     if (this._destroyed || this._terminallyCleared) return;
     this._sendCommand({ type: "setNativeManifest", manifest });
   }
@@ -479,7 +466,7 @@ export class NativeRustSound implements ISound {
   }
 
   /** Push resolver endpoints/credentials (login, logout, setting changes). */
-  setNativeResolverConfig(config: import("./protocol").NativeResolverConfig): void {
+  setNativeResolverConfig(config: NativeResolverConfig): void {
     if (this._destroyed || this._terminallyCleared) return;
     this._sendCommand({ type: "setNativeResolverConfig", config });
   }
@@ -1236,7 +1223,7 @@ export class NativeRustSound implements ISound {
 
   private _issueSeek(position: number): boolean {
     const requestId = isTauri() ? this._newSeekRequestId() : undefined;
-    const msg: import("./protocol").AudioThreadMessage =
+    const msg: AudioThreadMessage =
       requestId !== undefined
         ? { type: "seekAudio", position, requestId, expectedMusicId: this._expectedMusicId }
         : { type: "seekAudio", position, expectedMusicId: this._expectedMusicId };
@@ -1524,19 +1511,20 @@ export class NativeRustSound implements ISound {
     return this;
   }
 
-  seek(pos?: number): number | this {
-    if (pos !== undefined) {
-      if (!this._destroyed && !this._terminallyCleared) {
-        const position = this._normalizeSeekPosition(pos);
-        const sentNow = this._issueSeek(position);
-        if (isTauri() && sentNow) {
-          window.setTimeout(() => {
-            void this.requestStatusSync(300);
-          }, 0);
-        }
+  seekTo(pos: number): this {
+    if (!this._destroyed && !this._terminallyCleared) {
+      const position = this._normalizeSeekPosition(pos);
+      const sentNow = this._issueSeek(position);
+      if (isTauri() && sentNow) {
+        window.setTimeout(() => {
+          void this.requestStatusSync(300);
+        }, 0);
       }
-      return this;
     }
+    return this;
+  }
+
+  get position(): number {
     this._syncTimelineClock();
     const position = this._timeline.readPosition();
     this._state.position = position;
@@ -1553,14 +1541,15 @@ export class NativeRustSound implements ISound {
     return typeof reported === "number" && reported > 0 ? reported : this._state.duration;
   }
 
-  volume(vol?: number): number | this {
-    if (vol !== undefined) {
-      this._volume = Math.max(0, Math.min(1, vol));
-      if (!this._muted && !this._destroyed) {
-        this._sendCommand({ type: "setVolume", volume: this._volume });
-      }
-      return this;
+  setVolume(vol: number): this {
+    this._volume = Math.max(0, Math.min(1, vol));
+    if (!this._muted && !this._destroyed) {
+      this._sendCommand({ type: "setVolume", volume: this._volume });
     }
+    return this;
+  }
+
+  get volume(): number {
     return this._volume;
   }
 
@@ -1570,52 +1559,12 @@ export class NativeRustSound implements ISound {
     // `sound.fade(...); sound.once("fade", () => sound.pause())` pattern
     // (PlayerFunctions.fadePlayOrPause) has time to register the listener
     // before the event fires.
-    this.volume(to);
+    this.setVolume(to);
     this._emitDeferred("fade");
     return this;
   }
 
   // ── Events ────────────────────────────────────────────────────
-
-  on(event: SoundEventType, callback: SoundEventCallback): this {
-    (this._events[event] ??= []).push(callback);
-    return this;
-  }
-
-  once(event: SoundEventType, callback: SoundEventCallback): this {
-    (this._onceEvents[event] ??= []).push(callback);
-    return this;
-  }
-
-  off(event: SoundEventType, callback?: SoundEventCallback): this {
-    if (!callback) {
-      delete this._events[event];
-      delete this._onceEvents[event];
-    } else {
-      this._events[event] = (this._events[event] ?? []).filter((cb) => cb !== callback);
-      this._onceEvents[event] = (this._onceEvents[event] ?? []).filter((cb) => cb !== callback);
-    }
-    return this;
-  }
-
-  private _emit(event: SoundEventType, ...args: unknown[]): void {
-    for (const cb of this._events[event] ?? []) {
-      try {
-        cb(...args);
-      } catch {
-        /* ignore */
-      }
-    }
-    const once = this._onceEvents[event] ?? [];
-    delete this._onceEvents[event];
-    for (const cb of once) {
-      try {
-        cb(...args);
-      } catch {
-        /* ignore */
-      }
-    }
-  }
 
   /**
    * Schedule an emit for the next microtask. Used by `play`/`pause`/
@@ -1627,7 +1576,7 @@ export class NativeRustSound implements ISound {
    * been registered yet and is silently dropped — leaving volume at 0
    * after a pause→play cycle. Microtask defers just enough.
    */
-  private _emitDeferred(event: SoundEventType, ...args: unknown[]): void {
+  private _emitDeferred<E extends SoundEventType>(event: E, ...args: SoundEventMap[E]): void {
     queueMicrotask(() => {
       if (this._destroyed) return;
       this._emit(event, ...args);
@@ -1702,7 +1651,7 @@ export class NativeRustSound implements ISound {
     return (await this._transport?.ensureAudioGraph?.()) ?? false;
   }
 
-  getEffectManager(): import("../../AudioContext/AudioEffectManager").AudioEffectManager | null {
+  getEffectManager(): null {
     return null;
   }
 
@@ -1734,8 +1683,7 @@ export class NativeRustSound implements ISound {
       this._unlistenTransport = null;
     }
     this._clearFFTState();
-    this._events = {};
-    this._onceEvents = {};
+    this._clearListeners();
     this._seenEventSeq.clear();
     this._seenEventSeqOrder.length = 0;
     this._seenEventSeqHead = 0;

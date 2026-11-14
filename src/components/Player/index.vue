@@ -329,12 +329,13 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { debounce } from "throttle-debounce";
 import { useI18n } from "vue-i18n";
 import { isTauri } from "@/utils/tauri";
-import { NativeRustSound, announceNativeTrack } from "@/utils/tauri/audio/nativeRustSound";
+import { announceNativeTrack } from "@/utils/AudioContext/sound/NativeRustSound";
+import { isBackendSound } from "@/utils/AudioContext/sound/types";
 import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";
 import {
   toTrackDisplay,
   publishNativeManifest,
-} from "@/utils/AudioContext/NativeManifestPublisher";
+} from "@/utils/AudioContext/native/NativeManifestPublisher";
 import { windowManager } from "@/utils/tauri/window/manager";
 import {
   broadcastPlayerLyrics,
@@ -361,7 +362,10 @@ import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
 import { detectWordTimedLyricFormat } from "@/utils/LyricsProcessor/timeUtils";
 import { ttmlCreditsOf } from "@/utils/LyricsProcessor/parser/ttmlCredits";
 import { coverUrl } from "@/utils/coverUrl";
-import { setupNativePersonalFm, sendNativeFmPlaying } from "@/utils/AudioContext/NativePersonalFm";
+import {
+  setupNativePersonalFm,
+  sendNativeFmPlaying,
+} from "@/utils/AudioContext/native/NativePersonalFm";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -587,7 +591,7 @@ const attachNativeFmPlayback = (event) => {
   if (identity?.provider !== "netease" || !data.musicId?.startsWith("local:")) return;
   const song = music.getPlaySongData;
   if (!song || String(song.id) !== identity.id) return;
-  if (player.value instanceof NativeRustSound && !player.value.isDestroyed()) return;
+  if (isBackendSound(player.value) && !player.value.isDestroyed()) return;
   const sourceUrl = data.musicId.slice("local:".length);
   if (!sourceUrl) return;
   createSound(sourceUrl, music.nativeFmSession.desiredPlaying, undefined, {
@@ -1068,7 +1072,7 @@ watch(
     }
 
     let nativePlaybackHandled = false;
-    if (player.value instanceof NativeRustSound && !music.isLoadingSong) {
+    if (isBackendSound(player.value) && !music.isLoadingSong) {
       const autoMix = getAutoMixEngine();
       if (!autoMix.isCrossfading() && typeof player.value.playing === "function") {
         const isPlaying = player.value.playing();

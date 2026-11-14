@@ -111,7 +111,7 @@ async function bootstrap() {
         setNcmTransport(mode);
         // 原生播放源解析跟随同一条链路。配置是推送式的（planner 在 WebView 冻结
         // 时仍在解析），所以切换后必须主动重推，不能等下一次自然触发。
-        void import("@/utils/AudioContext/NativeResolverConfigSync").then((m) =>
+        void import("@/utils/AudioContext/native/NativeResolverConfigSync").then((m) =>
           m.syncNativeResolverConfig({ force: true }),
         );
       },

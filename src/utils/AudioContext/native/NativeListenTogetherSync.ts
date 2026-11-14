@@ -13,8 +13,8 @@
  */
 
 import { isTauri } from "@/utils/tauri/core/runtime";
-import { NativeRustSound } from "@/utils/tauri/audio/nativeRustSound";
-import { activeSound } from "./SoundManager";
+import { isBackendSound } from "@/utils/AudioContext/sound/types";
+import { activeSound } from "../sound/SoundManager";
 
 /**
  * Arm the backend keepalive for `roomId`, or disarm with `null`.
@@ -26,6 +26,6 @@ import { activeSound } from "./SoundManager";
 export const setNativeListenTogetherRoom = (roomId: string | null): boolean => {
   if (!isTauri()) return false;
   const sound = activeSound.value;
-  if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return false;
+  if (!isBackendSound(sound) || sound.isDestroyed()) return false;
   return sound.setListenTogetherRoom(roomId);
 };

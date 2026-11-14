@@ -11,14 +11,14 @@ import type {
   TrackIdentity,
 } from "../src/utils/tauri/audio/protocol";
 
-type NativeRustSoundModule = typeof import("../src/utils/tauri/audio/nativeRustSound") &
-  typeof import("../src/utils/AudioContext/SoundManager");
+type NativeRustSoundModule = typeof import("../src/utils/AudioContext/sound/NativeRustSound") &
+  typeof import("../src/utils/AudioContext/sound/SoundManager");
 
 const bundled = buildSync({
   // One bundle, so the sound and the manager that names it active share a module.
   stdin: {
-    contents: `export * from "./src/utils/tauri/audio/nativeRustSound";
-export { SoundManager } from "./src/utils/AudioContext/SoundManager";`,
+    contents: `export * from "./src/utils/AudioContext/sound/NativeRustSound";
+export { SoundManager } from "./src/utils/AudioContext/sound/SoundManager";`,
     resolveDir: process.cwd(),
     loader: "ts",
   },
@@ -209,13 +209,13 @@ test("a late status reply attaches from the session snapshot instead of restarti
   assert.equal(loaded(), 1);
   assert.deepEqual(env.restarts(), [], "a track the backend is playing must not be reloaded");
   assert.equal(sound.playing(), true);
-  assert.ok(Math.abs((sound.seek() as number) - 187.4) < 1, `seek ${sound.seek()}`);
+  assert.ok(Math.abs(sound.position - 187.4) < 1, `position ${sound.position}`);
 
   // The reply lands afterwards: same track, so it only refines the clock.
   await wait(500);
   assert.deepEqual(env.restarts(), []);
   assert.equal(sound.playing(), true);
-  assert.ok((sound.seek() as number) >= 187.4);
+  assert.ok(sound.position >= 187.4);
 });
 
 test("a status reply that never arrives still attaches", async () => {
@@ -225,7 +225,7 @@ test("a status reply that never arrives still attaches", async () => {
   assert.equal(loaded(), 1);
   assert.deepEqual(env.restarts(), []);
   assert.equal(sound.playing(), false);
-  assert.ok(Math.abs((sound.seek() as number) - 42) < 1e-6);
+  assert.ok(Math.abs(sound.position - 42) < 1e-6);
 });
 
 test("a prompt status reply attaches as before", async () => {

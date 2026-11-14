@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fmSongId, isNewNativeFmSnapshot } from "../src/utils/AudioContext/PersonalFmState";
+import { fmSongId, isNewNativeFmSnapshot } from "../src/utils/AudioContext/native/PersonalFmState";
 import type { NativeFmSnapshot } from "../src/utils/tauri/audio/protocol";
 
 const snapshot = (sessionId: number, revision: number): NativeFmSnapshot => ({

@@ -14,8 +14,10 @@
  */
 
 import { NativeSound } from "./NativeSound";
-import { NEUTRAL_LOW_FREQ_VOLUME } from "./AudioEffectManager";
-import type { SoundOptions, SoundEventType, SoundEventCallback, ISound } from "./types";
+import { NEUTRAL_LOW_FREQ_VOLUME } from "../analysis/AudioEffectManager";
+import { SOUND_EVENTS, type SoundOptions, type ISound } from "./types";
+import { SoundEvents } from "./SoundEvents";
+import type { AudioEffectManager } from "../analysis/AudioEffectManager";
 
 // Development mode detection
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -24,7 +26,9 @@ const EMPTY_U8 = new Uint8Array(0);
 /**
  * BufferedSound - Downloads full audio, then delegates to NativeSound via Blob URL
  */
-export class BufferedSound implements ISound {
+export class BufferedSound extends SoundEvents implements ISound {
+  readonly kind = "element";
+
   // Internal NativeSound (created after download completes)
   private _inner: NativeSound | null = null;
 
@@ -46,18 +50,11 @@ export class BufferedSound implements ISound {
   private _pendingPlay: boolean = false;
   private _pendingSeek: number | null = null;
 
-  // Pre-load event storage: listeners registered before NativeSound exists
-  private _preListeners: Map<SoundEventType, SoundEventCallback[]> = new Map();
-  private _preOnceListeners: Map<SoundEventType, SoundEventCallback[]> = new Map();
-
-  // Compatibility structure for legacy spectrum access
-  public _sounds: { _node: HTMLAudioElement }[];
-
   constructor({ src, volume = 1, preload = true }: SoundOptions) {
+    super();
     this._src = Array.isArray(src) ? src[0] : src;
     this._volume = volume;
     this._preload = preload;
-    this._sounds = [];
 
     if (IS_DEV) {
       console.log("BufferedSound created:", this._src);
@@ -99,7 +96,7 @@ export class BufferedSound implements ISound {
         // Fallback: no streaming, just read all at once
         arrayBuffer = await response.arrayBuffer();
         this._downloadProgress = 1;
-        this._emitPre("progress", 1);
+        this._emit("progress", 1);
       } else {
         // Stream download with progress tracking
         const reader = response.body.getReader();
@@ -130,7 +127,7 @@ export class BufferedSound implements ISound {
 
           // total is non-zero in this branch; keep the same progress semantics.
           this._downloadProgress = received / total;
-          this._emitPre("progress", this._downloadProgress);
+          this._emit("progress", this._downloadProgress);
         }
 
         if (directView) {
@@ -173,7 +170,7 @@ export class BufferedSound implements ISound {
       }
 
       console.error("BufferedSound: Failed to download audio:", err);
-      this._emitPre("loaderror");
+      this._emit("loaderror");
     }
   }
 
@@ -188,27 +185,15 @@ export class BufferedSound implements ISound {
       preload: true,
     });
 
-    // Forward all pre-registered event listeners to NativeSound
-    for (const [event, callbacks] of this._preListeners) {
-      for (const cb of callbacks) {
-        this._inner.on(event, cb);
-      }
+    // Listeners live on this object for its whole life; the inner sound only feeds them.
+    for (const event of SOUND_EVENTS) {
+      this._inner.on(event, (...args: []) => this._emit(event, ...args));
     }
-    for (const [event, callbacks] of this._preOnceListeners) {
-      for (const cb of callbacks) {
-        this._inner.once(event, cb);
-      }
-    }
-    this._preListeners.clear();
-    this._preOnceListeners.clear();
-
-    // Update compatibility structure to real audio element
-    this._sounds = this._inner._sounds;
     this._loaded = true;
 
     // Execute pending seek (must happen before play)
     if (this._pendingSeek !== null) {
-      this._inner.seek(this._pendingSeek);
+      this._inner.seekTo(this._pendingSeek);
       this._pendingSeek = null;
     }
 
@@ -216,32 +201,6 @@ export class BufferedSound implements ISound {
     if (this._pendingPlay) {
       this._pendingPlay = false;
       this._inner.play();
-    }
-  }
-
-  // ── Pre-load Event Emitter ────────────────────────────
-
-  private _emitPre(event: SoundEventType, ...args: unknown[]): void {
-    const listeners = this._preListeners.get(event);
-    if (listeners) {
-      for (const cb of listeners) {
-        try {
-          cb(...args);
-        } catch (e) {
-          console.error(`BufferedSound: Error in pre-load ${event} listener:`, e);
-        }
-      }
-    }
-    const onceListeners = this._preOnceListeners.get(event);
-    if (onceListeners) {
-      for (const cb of onceListeners) {
-        try {
-          cb(...args);
-        } catch (e) {
-          console.error(`BufferedSound: Error in pre-load once ${event} listener:`, e);
-        }
-      }
-      this._preOnceListeners.delete(event);
     }
   }
 
@@ -280,19 +239,13 @@ export class BufferedSound implements ISound {
     return this;
   }
 
-  seek(pos?: number): number | this {
-    if (this._inner) {
-      if (pos === undefined) {
-        return this._inner.seek() as number;
-      }
-      this._inner.seek(pos);
-      return this;
-    }
-    // Not loaded yet
-    if (pos === undefined) {
-      return this._pendingSeek ?? 0;
-    }
-    this._pendingSeek = pos;
+  get position(): number {
+    return this._inner?.position ?? this._pendingSeek ?? 0;
+  }
+
+  seekTo(pos: number): this {
+    if (this._inner) this._inner.seekTo(pos);
+    else this._pendingSeek = pos;
     return this;
   }
 
@@ -300,69 +253,19 @@ export class BufferedSound implements ISound {
     return this._inner?.duration() ?? 0;
   }
 
-  volume(vol?: number): number | this {
-    if (this._inner) {
-      if (vol === undefined) {
-        return this._inner.volume() as number;
-      }
-      this._inner.volume(vol);
-      return this;
-    }
-    if (vol === undefined) {
-      return this._volume;
-    }
-    this._volume = Math.max(0, Math.min(1, vol));
+  get volume(): number {
+    return this._inner?.volume ?? this._volume;
+  }
+
+  setVolume(vol: number): this {
+    if (this._inner) this._inner.setVolume(vol);
+    else this._volume = Math.max(0, Math.min(1, vol));
     return this;
   }
 
   fade(from: number, to: number, duration: number): this {
     if (this._inner) {
       this._inner.fade(from, to, duration);
-    }
-    return this;
-  }
-
-  on(event: SoundEventType, callback: SoundEventCallback): this {
-    if (this._inner) {
-      this._inner.on(event, callback);
-    } else {
-      if (!this._preListeners.has(event)) {
-        this._preListeners.set(event, []);
-      }
-      this._preListeners.get(event)!.push(callback);
-    }
-    return this;
-  }
-
-  once(event: SoundEventType, callback: SoundEventCallback): this {
-    if (this._inner) {
-      this._inner.once(event, callback);
-    } else {
-      if (!this._preOnceListeners.has(event)) {
-        this._preOnceListeners.set(event, []);
-      }
-      this._preOnceListeners.get(event)!.push(callback);
-    }
-    return this;
-  }
-
-  off(event: SoundEventType, callback?: SoundEventCallback): this {
-    if (this._inner) {
-      this._inner.off(event, callback);
-    } else if (callback) {
-      const listeners = this._preListeners.get(event);
-      if (listeners) {
-        const idx = listeners.indexOf(callback);
-        if (idx > -1) listeners.splice(idx, 1);
-      }
-      const onceListeners = this._preOnceListeners.get(event);
-      if (onceListeners) {
-        const idx = onceListeners.indexOf(callback);
-        if (idx > -1) onceListeners.splice(idx, 1);
-      }
-    } else {
-      this._preListeners.delete(event);
-      this._preOnceListeners.delete(event);
     }
     return this;
   }
@@ -383,8 +286,12 @@ export class BufferedSound implements ISound {
     return this._inner?.getAverageAmplitude() ?? 0;
   }
 
-  getEffectManager(): import("./AudioEffectManager").AudioEffectManager | null {
+  getEffectManager(): AudioEffectManager | null {
     return this._inner?.getEffectManager() ?? null;
+  }
+
+  getGainNode(): GainNode | null {
+    return this._inner?.getGainNode() ?? null;
   }
 
   /**
@@ -407,14 +314,6 @@ export class BufferedSound implements ISound {
    */
   isLoaded(): boolean {
     return this._loaded;
-  }
-
-  /**
-   * Get the inner NativeSound instance, or null if not yet created.
-   * Used by AutoMixEngine to access GainNode for crossfade.
-   */
-  getInnerSound(): NativeSound | null {
-    return this._inner;
   }
 
   /**
@@ -452,8 +351,7 @@ export class BufferedSound implements ISound {
       this._blobUrl = null;
     }
 
-    this._preListeners.clear();
-    this._preOnceListeners.clear();
+    this._clearListeners();
     this._loaded = false;
   }
 }

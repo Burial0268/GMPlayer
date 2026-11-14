@@ -15,10 +15,13 @@ function environment(deferResolution = false) {
   const commits: number[] = [];
   const resolutions: Array<(value: unknown) => void> = [];
   const sound = {
+    kind: "backend",
     getSourceUrl: () => "https://example.test/current.mp3",
     playing: () => playing,
     duration: () => 100,
-    seek: () => position,
+    get position() {
+      return position;
+    },
     pause() {
       playing = false;
     },
@@ -43,7 +46,8 @@ function environment(deferResolution = false) {
     resetSongLyricState() {},
   };
   const imports: Record<string, unknown> = {
-    "../SoundManager": { SoundManager: { getCurrentSound: () => sound } },
+    "../sound/SoundManager": { SoundManager: { getCurrentSound: () => sound } },
+    "../sound/types": { isBackendSound: (s: any) => s?.kind === "backend" },
     "../PlayerFunctions": { syncNativeAutoMixCurrentSound: async () => {} },
     "../../tauri/audio/backendRuntime": { isNativeAudioBackendAvailable: () => true },
     "../../tauri/audio/identity": { identityForSong },

@@ -33,7 +33,8 @@ import type {
   NativePlaybackManifest,
   TrackIdentity,
 } from "@/utils/tauri/audio/protocol";
-import { NativeRustSound, setPlannerRevisionObserver } from "@/utils/tauri/audio/nativeRustSound";
+import { setPlannerRevisionObserver } from "@/utils/AudioContext/sound/NativeRustSound";
+import { isBackendSound, type BackendSound } from "@/utils/AudioContext/sound/types";
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
@@ -42,7 +43,7 @@ import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 import { identityForSong as toIdentity, trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
-import { activeSound } from "./SoundManager";
+import { activeSound } from "../sound/SoundManager";
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
 let lastFingerprint = "";
@@ -172,7 +173,7 @@ let plannerEnabled: boolean | null = null;
  * planner advancing through that buffer is exactly the desired behaviour (and
  * the only way the next track can play while the Android JS worker is frozen).
  */
-const applyPlannerGate = (sound: NativeRustSound, enabled: boolean): void => {
+const applyPlannerGate = (sound: BackendSound, enabled: boolean): void => {
   if (plannerEnabled === enabled) return;
   plannerEnabled = enabled;
   sound.setNativePlannerEnabled(enabled);
@@ -251,7 +252,7 @@ const flushNativeManifest = (): void => {
   pendingForce = false;
 
   const sound = activeSound.value;
-  if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
+  if (!isBackendSound(sound) || sound.isDestroyed()) return;
 
   const music = useMusicDataStore();
   if (music.persistData.personalFmMode) return;
@@ -361,7 +362,7 @@ const flushNativeManifest = (): void => {
 export const clearNativeManifest = (): void => {
   if (!isTauri()) return;
   const sound = activeSound.value;
-  if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
+  if (!isBackendSound(sound) || sound.isDestroyed()) return;
   lastFingerprint = "";
   // `ClearNativeManifest` rebuilds the backend `Planner` from scratch, which
   // re-enables it. Drop our cached gate so the next publish always re-asserts.

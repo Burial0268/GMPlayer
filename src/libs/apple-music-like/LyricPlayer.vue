@@ -32,7 +32,7 @@ import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/Lyr
 import { prepareLyricSegments } from "@/utils/lyricSegmenter";
 import type { LyricShareOrigin } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
-import { activeSound } from "@/utils/AudioContext/SoundManager";
+import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
 import { getLyricPresentationTimeSeconds, onAudioUiDelayChange } from "@/utils/tauri/audio/uiDelay";
 import "@applemusic-like-lyrics/core/style.css";
 

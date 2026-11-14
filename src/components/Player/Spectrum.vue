@@ -7,7 +7,7 @@
 
 <script setup>
 import { ensureSpectrumUpdate } from "@/utils/AudioContext";
-import { getSpectrumFrame, getSpectrumVersion } from "@/utils/AudioContext/SpectrumFrame";
+import { getSpectrumFrame, getSpectrumVersion } from "@/utils/AudioContext/analysis/SpectrumFrame";
 
 const props = defineProps({
   show: {
