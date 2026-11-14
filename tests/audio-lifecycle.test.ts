@@ -636,6 +636,40 @@ test("session-control subscribers install before the transport is connected", as
   drop();
 });
 
+test("a backend mode nobody has stated yet is not adopted", () => {
+  const handlers = new Map<string, Function>();
+  const adopted: string[] = [];
+  const music = {
+    playingSongId: null,
+    getPlaySongData: null,
+    adoptPlaySongMode: (mode: string) => adopted.push(mode),
+  };
+  const controls = sourceModule("src/utils/AudioContext/native/NativeSessionControlsSync.ts", {
+    "@/utils/tauri/core/runtime": { isTauri: () => true },
+    "@/utils/tauri/audio/backendEvents": {
+      onBackendEvent: (type: string, handler: Function) => {
+        handlers.set(type, handler);
+        return () => {};
+      },
+    },
+    "@/store": { musicStore: () => music, userStore: () => ({}), useLocalLibraryStore: () => ({}) },
+    "./NativeManifestPublisher": { publishNativeManifest() {} },
+  });
+  controls.installSessionControlsSubscriber();
+  const emit = (playModeKnown: boolean) =>
+    handlers.get("sessionControlsChanged")!({
+      data: {
+        controls: { playMode: "normal", favourite: false, canFavourite: false, playModeKnown },
+      },
+    });
+
+  // A fresh backend's default leaking out with a like-state change.
+  emit(false);
+  assert.deepEqual(adopted, []);
+  emit(true);
+  assert.deepEqual(adopted, ["normal"]);
+});
+
 test("cold subscribers hear events during a single shared connection handshake", async () => {
   const env = transportEnvironment();
   const seen: any[] = [];

@@ -243,6 +243,11 @@ export interface SessionControls {
   favourite: boolean;
   /** Whether toggling is possible at all (logged in, Netease track). */
   canFavourite: boolean;
+  /**
+   * False while the backend has been told no mode by anyone: `playMode` is then its default,
+   * not the user's choice, and must not be adopted.
+   */
+  playModeKnown: boolean;
 }
 
 /**

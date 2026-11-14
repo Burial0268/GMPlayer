@@ -1091,6 +1091,12 @@ pub struct SessionControls {
     /// no Netease identity, has nothing to like — and a control the OS renders
     /// but cannot honour is worse than one it does not render.
     pub can_favourite: bool,
+    /// Whether anyone has told the backend the mode. A process that has heard from no frontend
+    /// and no OS button holds `play_mode`'s default, not the user's choice — and a like-state
+    /// change published before the frontend's own push carried that default out, where the
+    /// frontend adopted it, restored natural order, and then waited in vain for a permutation.
+    /// Surfaces must not adopt `play_mode` while this is false.
+    pub play_mode_known: bool,
 }
 
 /// Partial update to [`SessionControls`]. Absent fields are left alone, which is
@@ -1118,6 +1124,7 @@ impl SessionControls {
             play_mode: patch.play_mode.unwrap_or(self.play_mode),
             favourite: patch.favourite.unwrap_or(self.favourite),
             can_favourite: patch.can_favourite.unwrap_or(self.can_favourite),
+            play_mode_known: self.play_mode_known || patch.play_mode.is_some(),
         };
         let changed = next != *self;
         *self = next;
@@ -1589,6 +1596,7 @@ mod tests {
                 play_mode: NativePlaybackMode::Random,
                 favourite: true,
                 can_favourite: true,
+                play_mode_known: true,
             },
             ..base.clone()
         };
@@ -1611,6 +1619,7 @@ mod tests {
             play_mode: NativePlaybackMode::Random,
             favourite: true,
             can_favourite: true,
+            play_mode_known: true,
         };
 
         // Empty patch: nothing claimed, nothing changed.
@@ -1630,6 +1639,26 @@ mod tests {
             controls.play_mode,
             NativePlaybackMode::Random,
             "an absent field must be left alone, not defaulted"
+        );
+    }
+
+    /// A fresh backend's mode is a default until someone states one; a patch that
+    /// only carries the like state must not make it look decided.
+    #[test]
+    fn the_default_mode_is_not_known_until_stated() {
+        let mut controls = SessionControls::default();
+        assert!(controls.apply(&SessionControlsPatch {
+            favourite: Some(true),
+            ..Default::default()
+        }));
+        assert!(!controls.play_mode_known);
+        assert!(controls.apply(&SessionControlsPatch {
+            play_mode: Some(NativePlaybackMode::Normal),
+            ..Default::default()
+        }));
+        assert!(
+            controls.play_mode_known,
+            "stating the default still decides it"
         );
     }
 

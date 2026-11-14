@@ -1080,6 +1080,7 @@ mod tests {
             play_mode,
             favourite,
             can_favourite: true,
+            play_mode_known: true,
         }
     }
 
