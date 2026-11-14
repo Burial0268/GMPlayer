@@ -26,7 +26,7 @@ import { toTrackDisplay } from "./NativeManifestPublisher";
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
-import { SoundManager } from "./SoundManager";
+import { SoundManager, activeSound } from "./SoundManager";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -107,7 +107,7 @@ export const cancelNativeQueuePrefill = (): void => {
  */
 export async function prefillNativeQueue(): Promise<void> {
   if (!isTauri()) return;
-  const sound = window.$player;
+  const sound = activeSound.value;
   if (!(sound instanceof NativeRustSound) || sound.isDestroyed()) return;
 
   const music = useMusicDataStore();
@@ -192,7 +192,7 @@ export async function prefillNativeQueue(): Promise<void> {
   );
 
   if (signal.aborted || generation !== prefillGeneration) return;
-  if (sound.isDestroyed() || window.$player !== sound) return;
+  if (sound.isDestroyed() || activeSound.value !== sound) return;
   if (music.persistData.personalFmMode || listenTogether.isInRoom) return;
   // Bail if the store moved on while URLs were resolving — the new track's
   // own play handler re-runs the prefill against fresh state.

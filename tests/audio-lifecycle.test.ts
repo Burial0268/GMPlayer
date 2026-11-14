@@ -52,6 +52,7 @@ function queueEnvironment(native = true) {
     },
   });
   const window: any = {};
+  const activeSound: { value: any } = { value: undefined };
   const storage = new Map<string, string>();
   const localStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -122,6 +123,7 @@ function queueEnvironment(native = true) {
         "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf, identityForSong },
         "@/utils/tauri/core/nativeLog": { logNative() {} },
         "./NativeManifestRevision": revision,
+        "./SoundManager": { activeSound },
       },
       { window },
     );
@@ -140,8 +142,8 @@ function queueEnvironment(native = true) {
       return shuffleDraws;
     },
     attach() {
-      window.$player = new NativeRustSound();
-      return window.$player;
+      activeSound.value = new NativeRustSound();
+      return activeSound.value;
     },
   };
 }
