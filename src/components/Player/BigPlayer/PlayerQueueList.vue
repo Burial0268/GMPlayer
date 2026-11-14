@@ -2,8 +2,9 @@
   <div class="player-queue">
     <!-- The playing song stays put; only the list under it scrolls. -->
     <div v-if="playing" class="queue-now">
-      <img class="queue-now-cover" :src="cover(playing, 160)" alt="" />
-      <div class="queue-info">
+      <!-- Keyed so a new song fades in, while the rows below glide up into place. -->
+      <img :key="`cover-${playing.id}`" class="queue-now-cover" :src="cover(playing, 160)" alt="" />
+      <div :key="`info-${playing.id}`" class="queue-info">
         <div class="queue-name text-hidden">{{ playing.name }}</div>
         <div class="queue-artists text-hidden">{{ artists(playing) }}</div>
       </div>
@@ -64,6 +65,8 @@
           v-for="item in group.rows"
           :key="item.key"
           :id="item.history ? undefined : `${rowPrefix}-${item.index}`"
+          :data-key="item.key"
+          :data-index="item.index"
           :class="[
             'queue-row',
             {
@@ -145,7 +148,15 @@
  *   the permutation and would put a moved song back. Clear empties both and keeps the playing
  *   song. Touch removes a song by swiping it left; a mouse gets a delete button.
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  type CSSProperties,
+} from "vue";
 import { DeleteRound, DragHandleRound } from "@vicons/material";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
@@ -159,7 +170,7 @@ import IconRepeatOneOn from "../icons/IconRepeatOneOn.vue";
 import { useI18n } from "vue-i18n";
 
 const emit = defineEmits<{ scroll: [event: Event] }>();
-defineProps<{ rowPrefix: string }>();
+const props = defineProps<{ rowPrefix: string }>();
 
 // Fixed heights, so a group's offset and each window are arithmetic, not measurement; the
 // stylesheet pins `.queue-section` and `.queue-row` to these.
@@ -566,12 +577,127 @@ const remove = (index: number) => {
  */
 const scrollToCurrent = (smooth = false) => {
   const scroller = scrollRef.value;
-  if (!scroller) return;
+  // A song change the list is animating has already put the list where this would.
+  if (!scroller || (smooth && switching)) return;
   const anchor = groups.value.findIndex((group) => group.anchor);
   const top = anchor < 0 ? scroller.scrollHeight : groupTop(anchor);
   scroller.scrollTo({ top, behavior: smooth && !prefersReducedMotion() ? "smooth" : "instant" });
   measureWindow();
 };
+
+// ── Song change ──────────────────────────────────────────────────────────────
+/**
+ * When the new song was on screen in the list, the list moves as one: the rows it skipped (and
+ * the song itself, now in the card) fade out sliding up, and the rows after it glide up into
+ * "Playing Next" from where they were. Without this the groups re-sorted in one frame and the
+ * parent's smooth scroll followed, which read as the list scrolling first and the song changing
+ * after. Read before the DOM patches (`flush: "pre"`), played after it.
+ */
+const SWITCH_MS = 380;
+const SWITCH_EASE = "cubic-bezier(0.25, 1, 0.5, 1)";
+let switching = false;
+
+type SwitchPlan = {
+  songId: string;
+  // Viewport top of the first row after the new song, i.e. where the remaining list starts.
+  restTop: number;
+  leaving: { el: HTMLElement; top: number; left: number; width: number }[];
+};
+
+const planSwitch = (from: number, to: number): SwitchPlan | null => {
+  const scroller = scrollRef.value;
+  if (!scroller || to <= from || drag.value || prefersReducedMotion()) return null;
+  const box = scroller.getBoundingClientRect();
+  const target = scroller.querySelector<HTMLElement>(`#${props.rowPrefix}-${to}`);
+  const targetBox = target?.getBoundingClientRect();
+  if (!target || !targetBox || targetBox.bottom <= box.top || targetBox.top >= box.bottom) {
+    return null;
+  }
+  const leaving: SwitchPlan["leaving"] = [];
+  for (const row of scroller.querySelectorAll<HTMLElement>(".queue-row[data-index]")) {
+    const index = Number(row.dataset.index);
+    if (index <= from || index > to) continue;
+    const rect = row.getBoundingClientRect();
+    if (rect.bottom <= box.top || rect.top >= box.bottom) continue;
+    leaving.push({ el: row, top: rect.top, left: rect.left, width: rect.width });
+  }
+  return { songId: String(music.getPlaylists[to]?.id), restTop: targetBox.bottom, leaving };
+};
+
+const playSwitch = (plan: SwitchPlan) => {
+  const scroller = scrollRef.value;
+  // A replaced list moves the cursor too; only animate the song that was actually on screen.
+  if (!scroller || String(playing.value?.id) !== plan.songId) return void (switching = false);
+  scrollToCurrent();
+  requestAnimationFrame(() => {
+    const box = scroller.getBoundingClientRect();
+    const anchor = groups.value.findIndex((group) => group.anchor);
+    if (anchor < 0) return void (switching = false);
+    // Where the remaining list starts now. "Playing Next" keeps its title at the top, so its rows
+    // start under it; with nothing left after the song, "from the top" (title included) moves up.
+    const keepsTitle = groups.value[anchor].key === "next";
+    const shift = plan.restTop - box.top - (keepsTitle ? HEADER : 0);
+    const moving = [
+      ...scroller.querySelectorAll<HTMLElement>(".queue-row"),
+      ...[...scroller.querySelectorAll<HTMLElement>(".queue-group")]
+        .filter((_, index) => !keepsTitle || index !== anchor)
+        .map((group) => group.querySelector<HTMLElement>(".queue-section"))
+        .filter((section): section is HTMLElement => !!section),
+    ];
+    const ghosts = plan.leaving.map(({ el, top, left, width }) => {
+      const ghost = el.cloneNode(true) as HTMLElement;
+      ghost.removeAttribute("id");
+      Object.assign(ghost.style, {
+        position: "absolute",
+        top: `${top - box.top + scroller.scrollTop}px`,
+        left: `${left - box.left}px`,
+        width: `${width}px`,
+        zIndex: "1",
+        pointerEvents: "none",
+        transition: "none",
+      });
+      scroller.appendChild(ghost);
+      return ghost;
+    });
+    for (const el of moving) {
+      el.style.transition = "none";
+      el.style.transform = `translateY(${shift}px)`;
+    }
+    // One frame at the old positions, then everything travels the same distance.
+    void scroller.offsetHeight;
+    const travel = `transform ${SWITCH_MS}ms ${SWITCH_EASE}, opacity ${SWITCH_MS}ms ${SWITCH_EASE}`;
+    for (const el of moving) {
+      el.style.transition = travel;
+      el.style.transform = "";
+    }
+    for (const ghost of ghosts) {
+      ghost.style.transition = travel;
+      ghost.style.transform = `translateY(${-shift}px)`;
+      ghost.style.opacity = "0";
+    }
+    window.setTimeout(() => {
+      for (const ghost of ghosts) ghost.remove();
+      for (const el of moving) el.style.removeProperty("transition");
+      switching = false;
+    }, SWITCH_MS);
+  });
+};
+
+watch(
+  current,
+  (to, from) => {
+    const plan = planSwitch(from, to);
+    if (!plan) return;
+    switching = true;
+    // The first tick renders the new groups; scrolling then moves the window, which the second
+    // renders.
+    nextTick(() => {
+      scrollToCurrent();
+      nextTick(() => playSwitch(plan));
+    });
+  },
+  { flush: "pre" },
+);
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect();
@@ -675,6 +801,30 @@ defineExpose({ scrollToCurrent });
   height: 56px;
   border-radius: var(--radius-sm);
   object-fit: cover;
+}
+
+// On the blending box itself, never on an ancestor: that would isolate its plus-lighter.
+.queue-now :is(.queue-now-cover, .queue-info) {
+  // `backwards`, not `both`: once done, the rule's own opacity follows `--queue-fade` again.
+  animation: queue-now-in 0.32s cubic-bezier(0.25, 1, 0.5, 1) backwards;
+}
+
+@keyframes queue-now-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: var(--queue-fade, 1);
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .queue-now :is(.queue-now-cover, .queue-info) {
+    animation: none;
+  }
 }
 
 .queue-modes {

@@ -293,7 +293,6 @@ const coverUrl = computed(() => toCoverUrl(music.getPlaySongData?.album?.picUrl,
   min-width: 0;
   box-sizing: border-box;
   padding-right: calc(var(--app-safe-area-right, 0px) + clamp(1rem, 2.6vw, 3rem));
-  z-index: 1;
   overflow: hidden;
   // 与 DesktopPlayerLayout 的 .right 保持一致：歌词以 plus-lighter 与背景混合，
   // 因此本组件根节点不能引入 isolation / filter 之类的层叠隔断。
