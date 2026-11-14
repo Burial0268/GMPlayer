@@ -1,5 +1,5 @@
 import { musicStore } from "@/store";
-import { soundStop } from "@/utils/AudioContext";
+import { stopActiveSound } from "@/utils/AudioContext";
 
 // Order-insensitive: random mode shuffles the persisted queue in place.
 const isSameQueue = (queue: any[], songList: any[]): boolean => {
@@ -21,8 +21,8 @@ export const usePlayAllSong = () => {
       return;
     }
     // Exit personal FM mode
-    if (music.getPersonalFmMode && typeof window.$player !== "undefined") {
-      soundStop(window.$player);
+    if (music.getPersonalFmMode) {
+      stopActiveSound();
       music.setPersonalFmMode(false);
     }
     music.setPlayState(true);

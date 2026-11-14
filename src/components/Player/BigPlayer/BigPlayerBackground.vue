@@ -35,7 +35,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, useTemplateRef } from "vue";
 import { settingStore } from "@/store";
-import { subscribeLowFreqVolume } from "@/utils/AudioContext/lowFreqVolume";
+import { subscribeLowFreqVolume } from "@/utils/AudioContext/analysis/lowFreqVolume";
 import BlurBackgroundRender from "../BlurBackgroundRender.vue";
 import BackgroundRender from "@/libs/apple-music-like/BackgroundRender.vue";
 
@@ -58,7 +58,7 @@ const props = defineProps<{
 const setting = settingStore();
 
 // Low-frequency volume is deliberately kept OUT of the render graph and out of
-// reactive state entirely — see `@/utils/AudioContext/lowFreqVolume` for why.
+// reactive state entirely — see `@/utils/AudioContext/analysis/lowFreqVolume` for why.
 //
 // In short: the producer runs on requestAnimationFrame (so up to 144Hz on a
 // high-refresh panel) and the only consumer is amll-core's `setLowFreqVolume`,

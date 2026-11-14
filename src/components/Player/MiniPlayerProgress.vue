@@ -7,8 +7,8 @@
   that whole template on every tick during playback. Reading the store here
   confines the per-tick invalidation to this component.
 
-  `setSeek` takes `window.$player` directly rather than a prop, so the parent
-  does not have to thread its `player` shallowRef down.
+  Seeks go through `seekActiveSound`, so the parent does not have to thread a
+  player ref down.
 -->
 <template>
   <div class="slider">
@@ -21,6 +21,7 @@
       @change="songTimeSliderUpdate"
       @click.stop
       :tooltip="'active'"
+      :process="sliderSegments"
       :lazy="true"
       :use-keyboard="false"
     >
@@ -37,7 +38,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { musicStore, listenTogetherStore } from "@/store";
-import { setSeek } from "@/utils/AudioContext/PlayerFunctions";
+import { seekActiveSound } from "@/utils/AudioContext/PlayerFunctions";
 import { getSongPlayingTime } from "@/utils/timeTools";
 import VueSlider from "vue-slider-component";
 import "vue-slider-component/theme/default.css";
@@ -54,6 +55,34 @@ const sliderPercent = computed({
     music.getPlaySongTime.barMoveDistance = val;
   },
 });
+
+// Played, then buffered-but-unplayed; the rail itself is what has not arrived.
+// The second segment is visible only while part of the track is still to land.
+const sliderSegments = (dotsPos: number[]): Array<[number, number, object?]> => {
+  const played = dotsPos[0] ?? 0;
+  const duration = music.getPlaySongTime.duration;
+  const buffered = duration > 0 ? Math.min(100, (music.bufferedTime / duration) * 100) : 0;
+  if (buffered <= 0) return [[0, played]];
+  // Once landed the segment stays and turns transparent, so the end of the
+  // download dissolves into the rail instead of vanishing.
+  const landed = buffered >= 100;
+  return [
+    [0, played],
+    [
+      played,
+      Math.max(played, buffered),
+      {
+        background: "var(--player-buffered-color)",
+        opacity: landed ? 0 : 1,
+        // Longhands: the slider sets its own for width/left, and a `transition`
+        // shorthand here would reset those.
+        transitionProperty: "width, left, opacity",
+        transitionDuration: "0.5s, 0.5s, 0.7s",
+        transitionDelay: landed ? "0s, 0s, 0.4s" : "0s",
+      },
+    ],
+  ];
+};
 
 const normalizeSliderPercent = (val: unknown): number | null => {
   const raw = Array.isArray(val) ? val[0] : val;
@@ -98,7 +127,7 @@ const songTimeSliderUpdate = (val: unknown) => {
   isSliderDragging.value = false;
   pendingSliderPercent.value = null;
   const currentTime = (music.getPlaySongTime.duration / 100) * percent;
-  setSeek(window.$player, currentTime);
+  seekActiveSound(currentTime);
   // 一起听歌：发送进度跳转命令（房主和房客均可）
   if (listenTogether.isInRoom) {
     listenTogether.sendPlayCommand("seek", Math.floor(currentTime * 1000));

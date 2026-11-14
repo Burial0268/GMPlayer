@@ -3,7 +3,7 @@
  *
  * Import from here for anything general-purpose. Deep imports into the
  * subfolders are fine (and expected) for the heavier, more specialized
- * modules — `audio/nativeRustSound`, `audio/transport`, `player/communication`
+ * modules — `audio/transport`, `player/communication`
  * — which only a few call sites need and which shouldn't be pulled into every
  * bundle that wants `isTauri()`.
  *

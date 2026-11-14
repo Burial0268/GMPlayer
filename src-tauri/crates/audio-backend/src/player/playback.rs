@@ -25,11 +25,39 @@ use super::{AudioPlayer, PlaybackIntent};
 
 impl AudioPlayer {
     pub(super) async fn handle_decoder_finished(&mut self, playback_id: u64) {
-        if self.native_crossfade_active
-            && (playback_id == self.decoder_playback_id
-                || Some(playback_id) == self.secondary_playback_id)
-        {
+        if self.native_crossfade_active {
+            self.tick_native_mix().await;
+        }
+        if self.native_crossfade_active && playback_id == self.decoder_playback_id {
+            if let Some(mix) = self.native_mix.as_mut() {
+                if mix.started {
+                    mix.outgoing_finished = true;
+                    return;
+                }
+            }
+            self.cancel_native_automix_runtime().await;
+            if playback_id == self.decoder_playback_id {
+                let events = self.automix.mark_failed(
+                    "AutoMix outgoing audio ended before its scheduled cue".into(),
+                    self.current_play_index,
+                );
+                self.emit_many(events).await;
+                let _ = self
+                    .decoder_event_tx
+                    .send(decoder::DecoderEvent::Finished { playback_id });
+            }
             return;
+        }
+        if self.native_crossfade_active && Some(playback_id) == self.secondary_playback_id {
+            self.cancel_native_automix_runtime().await;
+            if playback_id != self.decoder_playback_id {
+                let events = self.automix.mark_failed(
+                    "AutoMix incoming audio ended during the overlap".into(),
+                    self.current_play_index,
+                );
+                self.emit_many(events).await;
+                return;
+            }
         }
 
         if playback_id != self.decoder_playback_id || self.current_song.is_none() {
@@ -212,6 +240,7 @@ impl AudioPlayer {
 
         // Emit LoadingAudio so the frontend can show a spinner / await load.
         self.load_in_flight = true;
+        self.publish_playback_phase().await;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadingAudio {
@@ -267,6 +296,8 @@ impl AudioPlayer {
             self.secondary_norm_gain = 1.0;
             self.bump_native_crossfade_gen();
             self.native_crossfade_active = false;
+            self.native_mix = None;
+            self.automix.clear_plan();
         }
         self.current_file_path = Some(file_path.clone());
 
@@ -278,8 +309,8 @@ impl AudioPlayer {
             let resolve_path = file_path.clone();
             let resolve_result = tokio::task::spawn_blocking(
                 move || -> AudioResult<(PathBuf, Option<crate::source::TempGuard>)> {
-                    if decoder::is_http_url(&resolve_path) {
-                        let temp = decoder::download_to_temp_path(&resolve_path)?;
+                    if crate::source::is_http_url(&resolve_path) {
+                        let temp = crate::source::download_to_temp_path(&resolve_path)?;
                         let path = temp.to_path_buf();
                         Ok((path, Some(temp)))
                     } else {
@@ -313,7 +344,7 @@ impl AudioPlayer {
         // source's channel count and sample rate where the device supports it.
         let path_for_info = local_path.clone();
         let info_result = tokio::task::spawn_blocking(move || {
-            decoder::symphonia::extract_metadata_only(&path_for_info)
+            crate::metadata::extract_metadata_only(&path_for_info)
         })
         .await?;
 
@@ -369,6 +400,7 @@ impl AudioPlayer {
         let output_config = self.output.config();
         self.decoder_playback_id = self.decoder_playback_id.wrapping_add(1);
         let playback_id = self.decoder_playback_id;
+        self.clock.lock().set_playback_id(playback_id);
         let decoder_event_tx = self.decoder_event_tx.clone();
         let start_paused = self.playback_intent == PlaybackIntent::Paused;
         // Analysis keeps the pause it was last told; a new chain started after a
@@ -460,6 +492,9 @@ impl AudioPlayer {
         // Decoder is up and the timeline is anchored: whatever the media
         // session was showing as "buffering" is now real playback.
         self.load_in_flight = false;
+        self.first_audio_mark = self.output.writer().render_clock().rendered_samples();
+        self.emit_track_changed(timeline_epoch, load_request_id)
+            .await;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadAudio {

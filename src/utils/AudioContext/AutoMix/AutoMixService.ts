@@ -14,7 +14,7 @@ import { VocalActivityGuard } from "./VocalActivityGuard";
 import { CompatibilityScorer } from "./CompatibilityScorer";
 import { TransitionEffects } from "./TransitionEffects";
 import type { AutoMixState } from "./types";
-import type { ISound } from "../types";
+import type { ISound } from "../sound/types";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 

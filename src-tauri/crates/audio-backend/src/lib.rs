@@ -20,6 +20,8 @@ mod decoder;
 mod effects;
 mod error;
 #[cfg(not(target_arch = "wasm32"))]
+mod formats;
+#[cfg(not(target_arch = "wasm32"))]
 mod metadata;
 #[cfg(not(target_arch = "wasm32"))]
 mod output;
@@ -29,13 +31,13 @@ mod player;
 mod rt_priority;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod source;
-#[cfg(not(target_arch = "wasm32"))]
-mod spectrum;
 mod types;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
 pub use error::{AudioError, AudioResult};
+#[cfg(not(target_arch = "wasm32"))]
+pub use formats::AUDIO_EXTENSIONS;
 #[cfg(not(target_arch = "wasm32"))]
 pub use player::{Player, PlayerEventSubscriber, SubscriberId};
 // The in-process NCM protocol layer lives in the host app (this crate also
@@ -64,8 +66,9 @@ pub use player::session_controls::{
 };
 pub use types::{
     AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
-    DisplayAudioInfo, NativePlaybackMode, NativeSessionSnapshot, NowPlayingInfo, PlaybackState,
-    SessionControls, SessionControlsPatch, SongData, SpectrumConfig, TrackIdentity,
+    DisplayAudioInfo, NativePlaybackMode, NativeSessionSnapshot, NowPlayingInfo, PlaybackPhase,
+    PlaybackState,
+    SessionControls, SessionControlsPatch, SongData, TrackIdentity,
 };
 #[cfg(target_arch = "wasm32")]
 pub use wasm::WasmAudioBackend;

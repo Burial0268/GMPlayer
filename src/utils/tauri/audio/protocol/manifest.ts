@@ -174,4 +174,14 @@ export interface NativeSessionSnapshot {
   order?: TrackIdentity[];
   /** Proof that the backend completed this queue's shuffle transaction. */
   shuffleId?: string | null;
+  /** Last phase the backend published. */
+  phase?: PlaybackPhase;
+  /** Seconds of the track playable without waiting on the network. */
+  bufferedPosition?: number;
 }
+
+/**
+ * What the backend is doing, derived in one place there. `loading` has no audio
+ * yet; `buffering` ran out of download mid-track. Neither is a pause.
+ */
+export type PlaybackPhase = "idle" | "loading" | "buffering" | "playing" | "paused";

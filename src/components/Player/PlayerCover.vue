@@ -94,6 +94,7 @@
             :min="0"
             :max="music.getPlaySongTime.duration || 1"
             :is-playing="music.getPlayState"
+            :buffered="music.bufferedTime"
             @update:value="handleProgressSeek"
           />
         </div>
@@ -184,7 +185,7 @@ import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
-import { setSeek } from "@/utils/AudioContext";
+import { seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 import { useQualityText } from "@/composables/useQualityText";
 import BouncingSlider from "./BouncingSlider.vue";
@@ -311,8 +312,8 @@ const cyclePlayMode = () => {
 
 // 歌曲进度条更新
 const handleProgressSeek = (val) => {
-  if (typeof $player !== "undefined" && music.getPlaySongTime?.duration) {
-    setSeek($player, val);
+  if (music.getPlaySongTime?.duration) {
+    seekActiveSound(val);
   }
 };
 

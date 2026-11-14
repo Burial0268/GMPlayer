@@ -1,7 +1,7 @@
 import { ref, computed, nextTick, type Ref } from "vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore, settingStore } from "@/store";
-import { setSeek } from "@/utils/AudioContext";
+import { activeSound, seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 
 export function useBigPlayerCommon(isMobile: Ref<boolean>) {
@@ -65,8 +65,8 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   };
 
   const lrcTextClick = (time: number) => {
-    if (typeof window.$player !== "undefined") {
-      setSeek(window.$player, time);
+    if (activeSound.value) {
+      seekActiveSound(time);
       music.setPlayState(true);
     }
     lrcMouseStatus.value = false;
@@ -78,8 +78,8 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   };
 
   const handleProgressSeek = (val: number) => {
-    if (typeof window.$player !== "undefined" && music.getPlaySongTime?.duration) {
-      setSeek(window.$player, val);
+    if (music.getPlaySongTime?.duration) {
+      seekActiveSound(val);
     }
   };
 

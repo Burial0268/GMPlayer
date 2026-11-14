@@ -63,6 +63,7 @@ impl AudioPlayer {
             return Ok(true);
         }
         self.pending_seek = None;
+        self.clock.lock().reset_rate();
         let _ = self.analysis_tx.send(AnalysisCommand::Clear);
         if was_playing {
             // Keep the deep Android queues for steady-state playback, while

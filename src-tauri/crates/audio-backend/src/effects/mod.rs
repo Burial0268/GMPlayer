@@ -29,8 +29,10 @@ impl DspChain {
     }
 
     pub(crate) fn set_dsp(&mut self, config: &DspConfig) {
-        self.bands.clear();
-        self.limiter = None;
+        // Filter and limiter history outlive a reconfigure: zeroing it steps the
+        // output, which clicks on every slider move.
+        let mut previous = std::mem::take(&mut self.bands);
+        let limiter_gain = self.limiter.take().map(|limiter| limiter.gain);
 
         if !config.enabled {
             self.input_gain = 1.0;
@@ -48,28 +50,41 @@ impl DspChain {
         self.output_gain = db_to_gain(config.output_gain_db.clamp(MIN_GAIN_DB, MAX_GAIN_DB));
 
         if config.equalizer.enabled {
-            self.configure_bands(&config.equalizer);
+            self.configure_bands(&config.equalizer, &mut previous);
         }
 
         if config.limiter.enabled {
-            self.limiter = Some(LimiterRuntime::new(config.limiter, self.sample_rate));
+            let mut limiter = LimiterRuntime::new(config.limiter, self.sample_rate);
+            limiter.gain = limiter_gain.unwrap_or(1.0);
+            self.limiter = Some(limiter);
         }
 
         self.normalize_bypass_gains();
     }
 
-    fn configure_bands(&mut self, config: &EqualizerConfig) {
+    fn configure_bands(&mut self, config: &EqualizerConfig, previous: &mut [EqBandRuntime]) {
         let nyquist = self.sample_rate * 0.5;
         let max_freq = (nyquist * 0.95).max(MIN_FILTER_FREQ);
 
-        for band in config.bands.iter().take(MAX_EQ_BANDS) {
-            if let Some(runtime) = self.create_band_runtime(*band, max_freq) {
-                self.bands.push(runtime);
+        for (slot, band) in config.bands.iter().take(MAX_EQ_BANDS).enumerate() {
+            if let Some(coeffs) = self.band_coeffs(*band, max_freq) {
+                // Matched by config slot, not runtime position: flat bands are
+                // skipped, so positions shift as neighbours cross 0 dB.
+                let states = previous
+                    .iter_mut()
+                    .find(|band| band.slot == slot)
+                    .map(|band| std::mem::take(&mut band.states))
+                    .unwrap_or_else(|| vec![BiquadState::default(); self.channels]);
+                self.bands.push(EqBandRuntime {
+                    slot,
+                    coeffs,
+                    states,
+                });
             }
         }
     }
 
-    fn create_band_runtime(&self, band: EqualizerBand, max_freq: f32) -> Option<EqBandRuntime> {
+    fn band_coeffs(&self, band: EqualizerBand, max_freq: f32) -> Option<BiquadCoeffs> {
         if !band.enabled {
             return None;
         }
@@ -81,7 +96,7 @@ impl DspChain {
 
         let frequency = band.frequency.clamp(MIN_FILTER_FREQ, max_freq);
         let q = band.q.clamp(MIN_Q, MAX_Q);
-        let coeffs = match band.filter_type {
+        Some(match band.filter_type {
             EqualizerFilterType::Peaking => {
                 BiquadCoeffs::peaking(self.sample_rate, frequency, q, gain_db)
             }
@@ -91,9 +106,7 @@ impl DspChain {
             EqualizerFilterType::HighShelf => {
                 BiquadCoeffs::high_shelf(self.sample_rate, frequency, q, gain_db)
             }
-        };
-
-        Some(EqBandRuntime::new(coeffs, self.channels))
+        })
     }
 
     fn normalize_bypass_gains(&mut self) {
@@ -145,13 +158,17 @@ fn apply_gain(samples: &mut [f32], gain: f32) {
 }
 
 struct EqBandRuntime {
+    /// Index of this band in the config it was built from.
+    slot: usize,
     coeffs: BiquadCoeffs,
     states: Vec<BiquadState>,
 }
 
 impl EqBandRuntime {
+    #[cfg(test)]
     fn new(coeffs: BiquadCoeffs, channels: usize) -> Self {
         Self {
+            slot: 0,
             coeffs,
             states: vec![BiquadState::default(); channels],
         }
@@ -426,6 +443,48 @@ mod tests {
         assert!(samples.iter().all(|sample| sample.is_finite()));
         assert!(samples[0].abs() <= 0.502);
         assert!(samples[1].abs() <= 0.502);
+    }
+
+    #[test]
+    fn reapplying_a_config_keeps_filter_and_limiter_history() {
+        let config = DspConfig {
+            enabled: true,
+            input_gain_db: 0.0,
+            equalizer: EqualizerConfig {
+                enabled: true,
+                preamp_db: 0.0,
+                bands: vec![
+                    // Flat, so skipped: the live band's runtime position (0)
+                    // differs from its config slot (1).
+                    EqualizerBand {
+                        gain_db: 0.0,
+                        ..equalizer_with_band(0.0).bands[0]
+                    },
+                    equalizer_with_band(12.0).bands[0],
+                ],
+            },
+            output_gain_db: 6.0,
+            limiter: LimiterConfig {
+                enabled: true,
+                threshold_db: -6.0,
+                ceiling_db: -6.0,
+                release_ms: 200.0,
+            },
+        };
+        let mut steady = DspChain::new(48_000, 2);
+        let mut reconfigured = DspChain::new(48_000, 2);
+        steady.set_dsp(&config);
+        reconfigured.set_dsp(&config);
+        let mut expected = test_signal(2_048);
+        let mut actual = expected.clone();
+
+        steady.process_interleaved(&mut expected[..1_024]);
+        reconfigured.process_interleaved(&mut actual[..1_024]);
+        reconfigured.set_dsp(&config);
+        steady.process_interleaved(&mut expected[1_024..]);
+        reconfigured.process_interleaved(&mut actual[1_024..]);
+
+        assert_eq!(actual, expected);
     }
 
     // The pre-specialization loop is kept as an independent numerical reference.

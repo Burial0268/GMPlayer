@@ -29,9 +29,10 @@ import {
 } from "@applemusic-like-lyrics/core";
 import { animateMini } from "motion-v";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
-import { prepareLyricSegments } from "@/utils/lyricSegmenter";
+import { prepareLyricSegments, holdLyricSegmenter } from "@/utils/lyricSegmenter";
 import type { LyricShareOrigin } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
+import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
 import { getLyricPresentationTimeSeconds, onAudioUiDelayChange } from "@/utils/tauri/audio/uiDelay";
 import "@applemusic-like-lyrics/core/style.css";
 
@@ -70,11 +71,6 @@ const lyricStyles = computed(() => ({
   "-webkit-tap-highlight-color": "transparent",
 }));
 
-type SyncableSound = {
-  seek?: () => unknown;
-  duration?: () => unknown;
-};
-
 const emit = defineEmits<{
   "line-click": [evt: LyricLineMouseEvent];
   lrcTextClick: [time: number];
@@ -95,10 +91,6 @@ function lineClickStartTime(evt: LyricLineMouseEvent): number | undefined {
   return undefined;
 }
 
-function getWindowPlayer(): SyncableSound | undefined {
-  return (window as Window & { $player?: SyncableSound }).$player;
-}
-
 function lyricPresentationTimeMs(playbackTime: number): number {
   return Math.round(
     getLyricPresentationTimeSeconds(playbackTime, setting.lyricTimeOffset ?? 0) * 1000,
@@ -106,16 +98,14 @@ function lyricPresentationTimeMs(playbackTime: number): number {
 }
 
 function readPlaybackPosition(): number {
-  const player = getWindowPlayer();
-  const seekValue = player?.seek?.();
-  return typeof seekValue === "number" && Number.isFinite(seekValue)
-    ? seekValue
+  const position = activeSound.value?.position;
+  return typeof position === "number" && Number.isFinite(position)
+    ? position
     : music.getPlaySongPlaybackCurrentTime();
 }
 
 function readCurrentPlaybackTime(): { currentTime: number; duration: number } {
-  const player = getWindowPlayer();
-  const durationValue = player?.duration?.();
+  const durationValue = activeSound.value?.duration();
   const currentTime = readPlaybackPosition();
   const duration =
     typeof durationValue === "number" && Number.isFinite(durationValue)
@@ -357,6 +347,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  releaseSegmenter?.();
   stopDelayWatch?.();
   stopDelayWatch = null;
   window.removeEventListener("focus", scheduleCurrentTimeSync);
@@ -392,6 +383,17 @@ watch(
   (visible) => {
     if (visible) scheduleCurrentTimeSync();
   },
+);
+
+// On screen the segmenter stays up, so a track change is cut as fast as it ever was.
+let releaseSegmenter: (() => void) | undefined;
+watch(
+  () => music.showBigPlayer,
+  (visible) => {
+    releaseSegmenter?.();
+    releaseSegmenter = visible ? holdLyricSegmenter() : undefined;
+  },
+  { immediate: true },
 );
 
 watch(

@@ -518,7 +518,7 @@ import { coverUrl } from "@/utils/coverUrl";
 import { useRouter } from "vue-router";
 import { setCloudDel } from "@/api/user";
 import { NIcon, NVirtualList, useThemeVars } from "naive-ui";
-import { soundStop } from "@/utils/AudioContext";
+import { stopActiveSound } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
 import SmallSongData from "./SmallSongData.vue";
@@ -1119,7 +1119,11 @@ const cssPx = (name) => {
  */
 const pageInsets = () => {
   let top = cssPx("--content-sticky-top");
-  for (let el = datalistsRootRef.value?.previousElementSibling; el; el = el.previousElementSibling) {
+  for (
+    let el = datalistsRootRef.value?.previousElementSibling;
+    el;
+    el = el.previousElementSibling
+  ) {
     const style = getComputedStyle(el);
     if (style.position !== "sticky") continue;
     top = Math.max(top, (parseFloat(style.top) || 0) + el.getBoundingClientRect().height);
@@ -1149,8 +1153,7 @@ const isRowInView = (index) => {
 
 const updateLocatePill = () => {
   const index = playingIndex.value;
-  showLocatePill.value =
-    locateListening && index >= 0 && (locating.value || !isRowInView(index));
+  showLocatePill.value = locateListening && index >= 0 && (locating.value || !isRowInView(index));
 };
 
 const scheduleLocateUpdate = () => {
@@ -1693,8 +1696,8 @@ const playSong = async (data, song) => {
   console.log(data, song);
   // 先取队列再动播放状态，免得 setPlayState 在旧队列上先起播。
   const queue = await resolveQueue(data);
-  if (music.getPersonalFmMode && typeof $player !== "undefined") {
-    soundStop($player);
+  if (music.getPersonalFmMode) {
+    stopActiveSound();
     music.setPersonalFmMode(false);
   }
   music.setPlayState(true);

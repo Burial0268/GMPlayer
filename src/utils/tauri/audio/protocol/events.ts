@@ -6,7 +6,12 @@
  * every envelope carries a `seq` for dedup across a transport switch.
  */
 import type { SongData } from "./messages";
-import type { NativeFmSnapshot, NativePlannerStatus, TrackIdentity } from "./manifest";
+import type {
+  NativeFmSnapshot,
+  NativePlannerStatus,
+  PlaybackPhase,
+  TrackIdentity,
+} from "./manifest";
 
 export interface AudioThreadEventMessage<T> {
   callbackId: string;
@@ -103,10 +108,33 @@ export type AudioThreadEvent =
       };
     }
   | {
+      /**
+       * The one track-change edge: once per timeline that starts a track,
+       * ahead of the `loadAudio` / `syncStatus` / `nativePlannerAdvanced` /
+       * `automixCrossfadeComplete` describing the same change, and complete on
+       * its own. `loadRequestId` is set only for a load this frontend asked for.
+       */
+      type: "trackChanged";
+      data: {
+        timelineEpoch: number;
+        musicId: string;
+        identity?: TrackIdentity | null;
+        currentPlayIndex: number;
+        musicInfo: DisplayAudioInfo;
+        quality: AudioQuality;
+        isPlaying: boolean;
+        loadRequestId?: number | null;
+      };
+    }
+  | {
       type: "loadingAudio";
       data: { musicId: string; currentPlayIndex: number; loadRequestId?: number | null };
     }
   | { type: "buffering"; data: { musicId: string; isBuffering: boolean } }
+  | {
+      type: "playbackPhaseChanged";
+      data: { phase: PlaybackPhase; identity?: TrackIdentity | null; timelineEpoch: number };
+    }
   | { type: "audioPlayFinished"; data: { musicId: string } }
   | {
       type: "syncStatus";

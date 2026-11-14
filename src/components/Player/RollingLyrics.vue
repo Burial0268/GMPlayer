@@ -25,7 +25,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref, watchEffect } from "vue";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore } from "../../store";
 import LyricPlayer from "../../libs/apple-music-like/LyricPlayer.vue";
@@ -62,12 +62,21 @@ const credit = computed(() => {
   return kind ? { kind, names: credits[kind] } : null;
 });
 
+// Hidden only until the playing song's lyrics are first revealed. Loading can flicker after that
+// (a track that loaded paused reports "loading" again until audio is heard; a stream rebuffers),
+// and every flicker used to blank the lyrics already on screen.
+const songId = computed(() => music.getPlaySongData?.id ?? null);
+const revealedSongId = ref<unknown>(null);
+watchEffect(() => {
+  if (!music.isLoadingSong) revealedSongId.value = songId.value;
+});
+
 // 计算歌词容器的类名
 const lyricClasses = computed(() => ({
   "lyric-am": true,
   "lyric-left": setting.lyricsPosition === "left",
   "lyric-center": setting.lyricsPosition === "center",
-  loading: music.isLoadingSong,
+  loading: music.isLoadingSong && revealedSongId.value !== songId.value,
 }));
 </script>
 

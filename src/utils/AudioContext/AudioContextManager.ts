@@ -8,7 +8,10 @@
  * - Automatic resume on user interaction
  */
 
-import { resetPCMWorkletRegistration, registerPCMCaptureWorklet } from "./pcm-capture-worklet";
+import {
+  resetPCMWorkletRegistration,
+  registerPCMCaptureWorklet,
+} from "./analysis/pcm-capture-worklet";
 
 type AudioContextState = "suspended" | "running" | "closed" | "interrupted";
 

@@ -190,6 +190,7 @@ impl AudioPlayer {
                     play_index,
                     initial_position,
                     load_request_id,
+                    autoplay,
                 } => {
                     if self.personal_fm.is_some() {
                         return self.finish_message(msg).await;
@@ -238,6 +239,13 @@ impl AudioPlayer {
                         })
                         .await;
                     if should_start {
+                        if let Some(play) = autoplay {
+                            self.playback_intent = if *play {
+                                PlaybackIntent::Playing
+                            } else {
+                                PlaybackIntent::Paused
+                            };
+                        }
                         self.start_playing_song(true, *initial_position, *load_request_id)
                             .await?;
                         // The frontend chose this track. Its identity is not
@@ -327,9 +335,28 @@ impl AudioPlayer {
                     current_index,
                     next_index,
                     next_song,
+                    current_identity,
+                    next_identity,
                     transition_id,
                 } => {
                     if self.personal_fm.is_some() {
+                        return self.finish_message(msg).await;
+                    }
+                    if !self.native_prepare_matches_current(current_identity.as_ref()) {
+                        info!(
+                            "AutoMix stale preparation ignored: request_index={}, backend_index={}",
+                            current_index, self.current_play_index
+                        );
+                        self.sync_ui().await;
+                        return self.finish_message(msg).await;
+                    }
+                    let next_identity = next_identity
+                        .clone()
+                        .or_else(|| super::automix_runtime::local_identity(next_song));
+                    if self
+                        .resume_native_mix(*next_index, next_identity.as_ref(), *transition_id)
+                        .await
+                    {
                         return self.finish_message(msg).await;
                     }
                     info!(
@@ -351,6 +378,7 @@ impl AudioPlayer {
                         current_duration,
                         current_source_path,
                         next_song.clone(),
+                        next_identity,
                     );
                     if let Some(request) = request {
                         self.spawn_automix_prepare_task(request);
@@ -372,7 +400,12 @@ impl AudioPlayer {
                     if self.native_crossfade_active {
                         return self.finish_message(msg).await;
                     }
-                    if let Err(err) = self.start_native_automix_crossfade().await {
+                    if !self.native_automix_incoming_ready() {
+                        self.schedule_native_automix_ready_retry(self.native_crossfade_gen());
+                        return self.finish_message(msg).await;
+                    }
+                    if let Err(err) = self.start_native_automix_crossfade(false).await {
+                        self.cancel_native_automix_runtime().await;
                         let events = self
                             .automix
                             .mark_failed(err.to_string(), self.current_play_index);
@@ -387,8 +420,10 @@ impl AudioPlayer {
                     if *generation != self.native_crossfade_gen() {
                         return self.finish_message(msg).await;
                     }
-                    self.complete_native_automix(*current_index, *position)
-                        .await;
+                    if self.native_mix.is_none() {
+                        self.complete_native_automix(*current_index, *position, None)
+                            .await;
+                    }
                 }
                 AudioThreadMessage::SetNativeManifest { manifest } => {
                     self.apply_native_manifest(manifest.clone()).await;

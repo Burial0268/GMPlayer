@@ -446,6 +446,7 @@ impl AudioPlayer {
                     // adoption fallback fires, the JS path starts its own track,
                     // and the late backend load overrides what the user hears.
                     self.load_in_flight = true;
+                    self.publish_playback_phase().await;
                     let _ = self
                         .emitter()
                         .emit(AudioThreadEvent::LoadingAudio {

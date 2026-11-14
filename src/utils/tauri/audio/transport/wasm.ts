@@ -1,16 +1,13 @@
-import { Channel, invoke } from "@tauri-apps/api/core";
-
 import type {
   AudioThreadEvent,
   AudioThreadEventCallback,
   AudioThreadEventMessage,
   AudioThreadMessage,
 } from "../protocol";
-import { audioSendMsg, listenPlayerEvents } from "../bridge";
-import { isTauri } from "../../core/runtime";
 import type { AudioBackendTransport } from "./types";
 
-const WASM_ANALYSIS_INTERVAL_MS = 66;
+// Keep the PCM windows overlapping, matching native analysis.rs's FFT_HOP.
+const WASM_ANALYSIS_INTERVAL_MS = 16;
 // Drive the UI position from the real <audio> clock at a few Hz. The element
 // clock is the ground truth and lives on this thread, so we dispatch locally
 // instead of round-tripping every heartbeat through the worker. A fast cadence
@@ -22,175 +19,6 @@ const WASM_POSITION_DISPATCH_INTERVAL_MS = 200;
 const WASM_WORKER_POSITION_SYNC_INTERVAL_MS = 1000;
 
 export type { AudioBackendTransport } from "./types";
-
-class TauriInvokeAudioIpc implements AudioBackendTransport {
-  private _listeners: Set<AudioThreadEventCallback> = new Set();
-  private _unlisten: (() => void) | null = null;
-  private _connectPromise: Promise<void> | null = null;
-
-  connect(): Promise<void> {
-    if (this._unlisten) return Promise.resolve();
-    if (this._connectPromise) return this._connectPromise;
-
-    this._connectPromise = listenPlayerEvents((event, seq) => {
-      this._dispatch(event, seq);
-    })
-      .then((unlisten) => {
-        this._unlisten = unlisten;
-      })
-      .finally(() => {
-        this._connectPromise = null;
-      });
-
-    return this._connectPromise;
-  }
-
-  subscribe(listener: AudioThreadEventCallback): () => void {
-    this._listeners.add(listener);
-    return () => {
-      this._listeners.delete(listener);
-    };
-  }
-
-  sendOrQueue(msg: AudioThreadMessage): boolean {
-    void audioSendMsg(msg);
-    return true;
-  }
-
-  shutdown(): void {
-    if (this._unlisten) {
-      this._unlisten();
-      this._unlisten = null;
-    }
-    this._listeners.clear();
-  }
-
-  private _dispatch(event: AudioThreadEvent, seq?: number): void {
-    for (const listener of this._listeners) {
-      try {
-        listener(event, seq);
-      } catch {
-        /* listener errors should not break dispatch */
-      }
-    }
-  }
-}
-
-/**
- * Primary Tauri transport: a `Channel` carries the Rust → frontend event
- * stream (FFT / status / position); control commands go out over the existing
- * `audio_send_msg` invoke. The Channel rides the webview's native IPC, so it
- * behaves identically on WebView2 / WebKitGTK / WKWebView / Android WebView —
- * unlike the retired local WebSocket, which WebKitGTK could not consume on
- * Linux (playback never started while the UI showed an optimistic "playing").
- *
- * `connect()` rejects if `audio_subscribe_events` fails so the hybrid can fall
- * back to `TauriInvokeAudioIpc` (global `audio-player://event` emit), which the
- * Rust forwarder targets whenever no channel is registered.
- */
-class TauriChannelAudioIpc implements AudioBackendTransport {
-  private _listeners: Set<AudioThreadEventCallback> = new Set();
-  private _channel: Channel<AudioThreadEventMessage<AudioThreadEvent>> | null = null;
-  private _connectPromise: Promise<void> | null = null;
-
-  connect(): Promise<void> {
-    if (this._channel) return Promise.resolve();
-    if (this._connectPromise) return this._connectPromise;
-
-    const channel = new Channel<AudioThreadEventMessage<AudioThreadEvent>>();
-    channel.onmessage = (envelope) => {
-      if (envelope && envelope.data) {
-        this._dispatch(envelope.data, envelope.seq);
-      }
-    };
-
-    this._connectPromise = invoke<void>("audio_subscribe_events", { channel })
-      .then(() => {
-        this._channel = channel;
-      })
-      .finally(() => {
-        this._connectPromise = null;
-      });
-
-    return this._connectPromise;
-  }
-
-  subscribe(listener: AudioThreadEventCallback): () => void {
-    this._listeners.add(listener);
-    return () => {
-      this._listeners.delete(listener);
-    };
-  }
-
-  sendOrQueue(msg: AudioThreadMessage): boolean {
-    void audioSendMsg(msg);
-    return true;
-  }
-
-  shutdown(): void {
-    this._channel = null;
-    this._listeners.clear();
-  }
-
-  private _dispatch(event: AudioThreadEvent, seq?: number): void {
-    for (const listener of this._listeners) {
-      try {
-        listener(event, seq);
-      } catch {
-        /* listener errors should not break dispatch */
-      }
-    }
-  }
-}
-
-class TauriHybridAudioIpc implements AudioBackendTransport {
-  private _active: AudioBackendTransport | null = null;
-  private _fallback: TauriInvokeAudioIpc | null = null;
-
-  async connect(): Promise<void> {
-    if (this._active) {
-      await this._active.connect();
-      return;
-    }
-
-    const channel = new TauriChannelAudioIpc();
-    try {
-      await channel.connect();
-      this._active = channel;
-      return;
-    } catch (err) {
-      console.warn(
-        "[audioIpc] Tauri Channel transport unavailable, falling back to global events",
-        err,
-      );
-    }
-
-    this._fallback = new TauriInvokeAudioIpc();
-    await this._fallback.connect();
-    this._active = this._fallback;
-  }
-
-  subscribe(listener: AudioThreadEventCallback): () => void {
-    if (!this._active) {
-      throw new Error("Audio backend transport is not connected");
-    }
-    return this._active.subscribe(listener);
-  }
-
-  sendOrQueue(msg: AudioThreadMessage): boolean {
-    if (!this._active) {
-      void this.connect().then(() => this._active?.sendOrQueue(msg));
-      return false;
-    }
-    return this._active.sendOrQueue(msg);
-  }
-
-  shutdown(): void {
-    this._active?.shutdown?.();
-    this._active = null;
-    this._fallback = null;
-  }
-}
 
 type WasmEffect =
   | {
@@ -420,6 +248,7 @@ type WasmAnalysisWorkerRequest =
       initialPosition: number;
     }
   | { id: number; type: "process"; position: number; deltaMs: number }
+  | { id: number; type: "seek"; position: number }
   | { id: number; type: "setFreqRange"; fromFreq: number; toFreq: number }
   | { id: number; type: "setFFT"; enabled: boolean }
   | { id: number; type: "shutdown" };
@@ -476,6 +305,10 @@ class WasmAudioAnalysisWorkerHost {
 
   processFrame(position: number, deltaMs: number): Promise<WasmReply> {
     return this._callReply({ type: "process", position, deltaMs });
+  }
+
+  seek(position: number): Promise<WasmReply> {
+    return this._callReply({ type: "seek", position });
   }
 
   setFreqRange(fromFreq: number, toFreq: number): Promise<WasmReply> {
@@ -557,6 +390,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _analysisFftEnabled = true;
   private _analysisFreqRange: { fromFreq: number; toFreq: number } | null = null;
   private _analysisGeneration = 0;
+  private _analysisEpoch = 0;
   private _analysisReady = false;
   private _lastAnalysisAt = 0;
   private _currentVolume = 1;
@@ -816,8 +650,10 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     const next = Number.isFinite(position) ? Math.max(0, position) : 0;
     try {
       audio.currentTime = next;
+      this._analysisEpoch++;
       this._lastAnalysisAt = 0;
       this._resetLowFreq();
+      this._handleAnalysisReplyPromise(this._analysisWorker?.seek(next));
       this._handleReplyPromise(this._backend?.applyPlayPosition(next));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -902,8 +738,8 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
 
   private _resetLowFreq(): void {
     this._dispatch({
-      type: "lowFrequencyVolume",
-      data: { volume: 0 },
+      type: "lowFreqBins",
+      data: { bins: [0, 0] },
     });
   }
 
@@ -960,6 +796,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   }
 
   private _stopAnalysisTimer(): void {
+    this._analysisEpoch++;
     if (this._analysisTimer !== null) {
       clearInterval(this._analysisTimer);
       this._analysisTimer = null;
@@ -979,6 +816,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
       this._lastAnalysisAt > 0 ? now - this._lastAnalysisAt : WASM_ANALYSIS_INTERVAL_MS;
     this._lastAnalysisAt = now;
     const generation = this._analysisGeneration;
+    const epoch = this._analysisEpoch;
     this._analysisFrameInFlight = true;
     void analysisWorker
       .processFrame(audio.currentTime, deltaMs)
@@ -987,6 +825,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
           this._analysisWorker === analysisWorker &&
           this._audio === audio &&
           this._analysisGeneration === generation &&
+          this._analysisEpoch === epoch &&
           this._analysisEnabled &&
           this._analysisReady
         ) {
@@ -999,7 +838,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
         }
       })
       .finally(() => {
-        this._analysisFrameInFlight = false;
+        if (this._analysisWorker === analysisWorker) this._analysisFrameInFlight = false;
       });
   }
 
@@ -1147,23 +986,6 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   }
 }
 
-let _tauriTransport: TauriHybridAudioIpc | null = null;
-let _wasmTransport: WasmAudioBackendIpc | null = null;
-
 export function createWasmAudioBackendTransport(): AudioBackendTransport {
   return new WasmAudioBackendIpc();
-}
-
-export function getAudioBackendTransport(): AudioBackendTransport {
-  if (isTauri()) {
-    if (_tauriTransport === null) {
-      _tauriTransport = new TauriHybridAudioIpc();
-    }
-    return _tauriTransport;
-  }
-
-  if (_wasmTransport === null) {
-    _wasmTransport = new WasmAudioBackendIpc();
-  }
-  return _wasmTransport;
 }

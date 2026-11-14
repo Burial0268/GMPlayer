@@ -16,17 +16,9 @@ use tauri::{AppHandle, Runtime};
 use super::model::{LocalSource, LocalTrack, ScanProgress, SourceKind};
 use super::LocalLibraryState;
 
-/// Extensions the native decoder can actually play.
-///
-/// The authoritative list, deliberately narrower than the SAF plugin's
-/// prefilter: symphonia is built here with mp3/aac/alac/flac/vorbis/pcm/isomp4/
-/// ogg/wav, so indexing an `.ape` or a `.wma` would put a row in the library
-/// that fails the moment it is pressed. Widening this means widening
-/// `audio-backend`'s symphonia features in the same commit.
-pub const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "wav", "wave", "m4a", "m4b", "mp4", "aac", "ogg", "oga", "opus", "aif", "aiff",
-    "aifc", "alac", "caf", "mka",
-];
+/// Picker candidates shared with the native decoder. A successful metadata and
+/// decoder probe is still required before a candidate becomes a library row.
+pub use gmplayer_audio_backend::AUDIO_EXTENSIONS;
 
 /// Sidecar lyric files, paired with a track during the same walk.
 pub const LYRIC_EXTENSIONS: &[&str] = &["lrc", "ttml"];
@@ -116,7 +108,10 @@ fn lyric_pair_key(relative_dir: &str, stem: &str) -> String {
 // ── Listing ──────────────────────────────────────────────────────
 
 /// List the files under `source`.
-pub fn list_candidates<R: Runtime>(app: &AppHandle<R>, source: &LocalSource) -> Result<Listing, String> {
+pub fn list_candidates<R: Runtime>(
+    app: &AppHandle<R>,
+    source: &LocalSource,
+) -> Result<Listing, String> {
     match source.kind {
         SourceKind::Files => Ok(list_picked_files(source)),
         SourceKind::Directory => {
@@ -540,15 +535,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_decodable_extensions_are_indexed() {
+    fn file_picker_candidates_include_native_ffmpeg_formats() {
         assert!(is_audio_file("a.flac"));
         assert!(is_audio_file("A.FLAC"));
         assert!(is_audio_file("song.m4a"));
-        // Symphonia is not built with these; indexing them would put rows in the
-        // library that fail the moment they are pressed.
-        assert!(!is_audio_file("a.ape"));
-        assert!(!is_audio_file("a.wma"));
-        assert!(!is_audio_file("a.dsf"));
+        assert!(is_audio_file("a.ape"));
+        assert!(is_audio_file("a.wma"));
+        assert!(is_audio_file("a.dsf"));
+        assert!(is_audio_file("a.opus"));
+        assert!(!is_audio_file("a.av3a"));
         assert!(!is_audio_file("cover.jpg"));
         assert!(!is_audio_file("noextension"));
     }
@@ -623,7 +618,7 @@ mod tests {
         // other half of the contract: an undecodable file must not be indexed.
         assert!(
             probe_candidate(&source, &listing.audio[0], &listing, dir.path()).is_none(),
-            "a file symphonia cannot open must not become a library row"
+            "a file neither decoder can open must not become a library row"
         );
     }
 

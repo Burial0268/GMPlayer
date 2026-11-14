@@ -30,6 +30,9 @@
 *.flac binary
 *.m4a binary
 *.ogg binary
+*.opus binary
+*.wma binary
+*.wv binary
 *.mp4 binary
 *.webm binary
 *.wasm binary

@@ -38,6 +38,7 @@ type AnalysisWorkerRequest =
       initialPosition: number;
     }
   | { id: number; type: "process"; position: number; deltaMs: number }
+  | { id: number; type: "seek"; position: number }
   | { id: number; type: "setFreqRange"; fromFreq: number; toFreq: number }
   | { id: number; type: "setFFT"; enabled: boolean }
   | { id: number; type: "shutdown" };
@@ -127,6 +128,9 @@ async function handleRequest(request: AnalysisWorkerRequest): Promise<AnalysisWo
         ok: true,
         reply: parseReply(wasmBackend.processAnalysisFrame(request.position, request.deltaMs)),
       };
+    case "seek":
+      sendMessage(wasmBackend, { type: "seekAudio", position: request.position });
+      return { id: request.id, ok: true };
     case "setFreqRange":
       return {
         id: request.id,
@@ -255,5 +259,3 @@ self.onmessage = (event: MessageEvent<AnalysisWorkerRequest>) => {
       (self as unknown as Worker).postMessage(response);
     });
 };
-
-export {};

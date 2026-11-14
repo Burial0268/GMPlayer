@@ -189,6 +189,7 @@
                       :min="0"
                       :max="music.getPlaySongTime.duration || 1"
                       :is-playing="music.getPlayState"
+                      :buffered="music.bufferedTime"
                       @update:value="handleProgressSeek"
                     />
                     <div class="time-display">
@@ -333,8 +334,6 @@ import PlayerQueueList from "./PlayerQueueList.vue";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { useQualityText } from "@/composables/useQualityText";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
-
-declare const $player: any;
 
 type Artist = { name: string };
 type StaticStyleRecord = Record<string, string | number | undefined>;

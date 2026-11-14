@@ -142,6 +142,13 @@ impl Progress {
         s.covered_end(pos).map_or(0, |end| end - pos)
     }
 
+    /// End of the landed run the reader is in, or the reader's own position when
+    /// it sits in a gap (a seek past everything that has arrived).
+    pub(crate) fn buffered_end(&self) -> u64 {
+        let pos = self.read_pos.load(Ordering::Relaxed);
+        self.lock().covered_end(pos).unwrap_or(pos)
+    }
+
     /// The reader's interval runs to the end of the file, so waiting for more
     /// lead would wait on bytes that do not exist (a seek near the tail while
     /// the head writer is still far from done).
@@ -155,6 +162,12 @@ impl Progress {
     pub(crate) fn is_finished(&self) -> bool {
         let s = self.lock();
         s.done || s.error.is_some() || self.is_cancelled()
+    }
+
+    /// The whole declared file has landed, as opposed to merely no longer growing.
+    pub(crate) fn is_complete(&self) -> bool {
+        let s = self.lock();
+        s.done && s.covered.len() == 1 && s.covered[0] == (0, self.total)
     }
 
     /// Block until a writer makes progress or `timeout` passes.
@@ -387,6 +400,17 @@ pub(crate) fn lookup(path: &Path) -> Option<Arc<Progress>> {
 /// guard's lifetime, not the writer's, for exactly that reason.
 pub fn expected_len(path: &Path) -> Option<u64> {
     lookup(path).map(|p| p.total())
+}
+
+/// `(landed up to, declared size)` in bytes for a registered download, measured
+/// from where its reader is. `None`: not one of ours.
+pub fn buffered_bytes(path: &Path) -> Option<(u64, u64)> {
+    lookup(path).map(|p| (p.buffered_end(), p.total()))
+}
+
+/// Whether a registered download has landed in full. `None`: not one of ours.
+pub fn is_complete(path: &Path) -> Option<bool> {
+    lookup(path).map(|p| p.is_complete())
 }
 
 // ── Reader ───────────────────────────────────────────────────────

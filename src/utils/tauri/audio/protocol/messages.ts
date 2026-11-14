@@ -92,6 +92,7 @@ export type AudioThreadMessage =
       playIndex?: number;
       initialPosition?: number;
       loadRequestId?: number;
+      autoplay?: boolean;
     }
   | { type: "setVolume"; volume: number }
   | { type: "setVolumeRelative"; volume: number }
@@ -111,6 +112,8 @@ export type AudioThreadMessage =
       currentIndex: number;
       nextIndex: number;
       nextSong: SongData;
+      currentIdentity?: TrackIdentity | null;
+      nextIdentity?: TrackIdentity | null;
       transitionId?: number | null;
     }
   | { type: "automixCancel" }

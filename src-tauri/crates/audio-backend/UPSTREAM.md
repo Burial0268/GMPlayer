@@ -1,0 +1,334 @@
+# Audio engine references
+
+The CoreAudio device watcher in `src/output/device_watcher/macos.rs` adapts the
+property-listener approach and output-property coverage from
+[SPlayer-Next](https://github.com/SPlayer-Dev/SPlayer-Next), by the SPlayer-Dev
+contributors, under the GNU Affero General Public License version 3. The license
+is available in this repository's root `LICENSE`.
+
+Reference revision: `a8716df8f1a2cd08db3307ad592669df24bc05f4`.
+
+Reference source:
+[`native/audio-engine/src/output/device_watcher/macos.rs`](https://github.com/SPlayer-Dev/SPlayer-Next/blob/a8716df8f1a2cd08db3307ad592669df24bc05f4/native/audio-engine/src/output/device_watcher/macos.rs).
+
+GMPlayer's adaptation uses its existing `coreaudio-rs` bindings. Callbacks look up
+a context id, accumulate atomic change flags and wake the registration worker.
+Device-list changes update registrations by device id; ordinary property changes
+do not re-register every device. The player consumes hints through its existing
+output refresh path, independently of JS. Retired context ids are removed from
+the registry, so a late CoreAudio callback cannot dereference released data or
+signal a newer watcher.
+
+The platform split and distinction between default-output and device-list events
+also follow SPlayer-Next's watcher design. GMPlayer accumulates both event kinds
+rather than sending a boolean through a one-slot channel: a list notification
+must not hide a subsequent default-output change.
+
+Linux uses the `pulseaudio` crate's public protocol API and subscription example
+(the crate is already a CPAL dependency), rather than SPlayer-Next's PipeWire
+backend. It works with PulseAudio and pipewire-pulse without adding native
+PipeWire development dependencies. Authentication is bounded, idle listening
+blocks on the socket, teardown shuts that socket down, and a disconnected
+listener retries after five seconds. Existing device polling remains the
+fallback on all platforms, including ALSA-only hosts. Windows retains its
+existing MMDevAPI registration, concrete endpoint resolution and COM policy.
+All registrations now live in `output/device_watcher/` behind the same statically
+selected `PlatformBackend` contract. Windows retains process lifetime; Linux and
+macOS retain their owned worker lifetimes. `output/platform/` only resolves and
+configures devices. The common watcher drains atomic events without OS branches.
+
+## Validation
+
+From `src-tauri`:
+
+```sh
+cargo check -p gmplayer-audio-backend
+cargo test -p gmplayer-audio-backend --lib output::device_watcher
+```
+
+For a real Linux server and CPAL output test, install `pulseaudio` and
+`pulseaudio-utils`, then run from the repository root:
+
+```sh
+bash scripts/test-audio-device-watch.sh
+```
+
+The script starts its own server with virtual sinks and removes it on exit. It
+checks default-output notifications, resolved output identities, stream opening,
+and a device-list change that leaves the default unchanged. It also breaks the
+listener's connection and verifies reconnection and subsequent default changes.
+Ordinary unit tests use paired Unix sockets to exercise the actual subscription
+handshake, fragmented events, disconnects, cancellation and handshake timeout
+without a running server.
+
+macOS still requires validation on a Mac: switch the default output while playing
+and paused, add/remove a USB output, change the selected output's sample rate,
+and verify that a named selection does not follow an unrelated default change.
+
+## AutoMix worker boundaries
+
+Reviewed SPlayer-Next's
+[`native/automix-worker`](https://github.com/SPlayer-Dev/SPlayer-Next/tree/a8716df8f1a2cd08db3307ad592669df24bc05f4/native/automix-worker)
+at the same AGPL-3.0 reference revision above. It separates inference from playback,
+uses bounded beat/Demucs windows, transports PCM through FP32 files rather than
+JSON arrays, and returns compact beat/level results plus file paths. Its spectral
+transforms reuse FFT plans and scratch buffers. This refactor borrows the ownership
+boundary; it imports no ONNX inference code or models.
+
+GMPlayer's PCM algorithms and serialized results now live in
+[`../automix-analysis`](../automix-analysis/README.md), which depends only on Serde
+and RustFFT and builds for native and WASM. The backend keeps source I/O,
+preparation generations, scheduling, caches and crossfade policy. Its existing
+public analysis API re-exports the shared implementation. The WASM section wrapper
+continues feeding the same extractor in bounded chunks. Native file analysis now
+uses the same PCM algorithms through `MonoPcm` reads and fixed windows. Its scratch
+adapter keeps up to 4 MiB in memory, then spills exact mono f32 samples into an
+unnamed file in the app cache. No compressed-source seeks or repeated decodes are
+needed, so filter warm-up, global downsample indices and absolute beat positions
+remain those of the original decoded signal.
+
+`decoder/input.rs` chooses Symphonia or FFmpeg once for both playback and native
+file analysis. Their consumers retain concrete sources in the PCM loops. Analysis
+uses `source::open`, never `source::open_playback`, and still latches real I/O
+errors so an interrupted read cannot be accepted as a shorter complete analysis.
+Byte-based analysis keeps its existing Rodio adapter. Metadata consumers now call
+`metadata` directly instead of routing through a decoder compatibility wrapper.
+HTTP download ownership also moves to `source`, removing its reverse decoder
+dependency without changing the growing-file protocol.
+
+Model inference would additionally need model assets, a runtime and
+platform-specific worker deployment; the shared PCM crate supplies a dependency
+boundary without putting that work in the playback engine. The existing encoded-
+byte analysis adapter still collects mono PCM; the bounded path is the native file
+API used by AutoMix.
+
+Bounded analysis retains the existing thresholds and result schema. Tests compare
+every serialized field against the array path at 8–192 kHz, fractional
+seconds, inaccurate duration hints, short/silent audio and a silent tail longer
+than the outro window. Native tests compare Opus, WMA and WavPack against full PCM
+and cover cancellation both while decoding and after decoding finishes. Real
+source I/O failures remain errors before analysis begins. Scratch read/write
+failures abort analysis and let the existing playback planner fall back.
+
+To profile a real input, build the ignored `profile_file_analysis` test with
+`cargo test --locked -p gmplayer-audio-backend --lib --no-run`. Run the emitted test
+executable directly under an RSS profiler, with `AUTOMIX_PROFILE_FILE` set to the
+input and `AUTOMIX_PROFILE_CACHE` set to a storage-backed scratch directory. Pass
+`profile_file_analysis --ignored --nocapture`; `AUTOMIX_PROFILE_JSON` optionally
+saves the complete result for exact comparisons. Profiling `cargo test` itself
+would include compiler memory.
+
+On this Linux machine, a generated ten-minute 48 kHz stereo WAV with pulses,
+changing sections and 3.17 seconds of tail silence was compared against the
+pre-change executable (`1dd07a9`, debug builds, fresh test processes):
+
+| Native file analysis | Peak RSS | Elapsed | User CPU |
+| --- | ---: | ---: | ---: |
+| Full mono vector | 152.4 MiB | 19.16 s | 19.00 s |
+| Bounded PCM, storage-backed app cache | 35.9 MiB | 19.87 s | 19.35 s |
+
+The complete serialized analysis was byte-identical. RSS dropped about 76%; the
+extra scratch I/O used about 110 MiB temporarily, and left no PCM file afterward.
+These are one-machine debug measurements, not Android throughput claims. Short
+inputs stay below the 4 MiB spill threshold and need no disk file.
+
+## Native codec fallback
+
+Native playback keeps Symphonia for supported streams and selects FFmpeg when
+that decoder cannot open the audio. Selection happens before creating a concrete
+worker, so both decoders use the same block converter, mixer, DSP, output and
+clock without per-sample dynamic dispatch. FFmpeg only converts its decoded
+sample representation to interleaved f32; the existing converter owns output
+sample-rate and channel conversion.
+
+The Rust wrapper is adapted from
+[SPlayer-Dev/ffmpeg-audio](https://github.com/SPlayer-Dev/ffmpeg-audio), revision
+`fe78660bd7e3a231f70222f3da5f1eadc0db87ba`. Its GPL-3.0-only license and local
+changes are documented in [`../ffmpeg-audio/VENDORING.md`](../ffmpeg-audio/VENDORING.md).
+The sys crate compiles an audio-only FFmpeg source bundle statically; playback
+does not spawn a process, download binaries at runtime or require system FFmpeg.
+The wrapper's HTTP feature is removed: every reader still uses `source::open` or
+`source::open_playback`, including growing downloads and Android SAF descriptors.
+The browser's `wasm32-unknown-unknown` backend keeps Symphonia.
+
+Native metadata and file AutoMix analysis also fall back to FFmpeg. File-picker
+candidates live in `src/formats.rs` and are shared with the local scanner. Added
+candidates include APE, WMA, WavPack, TTA, TAK, Musepack, DSF, AC-3/E-AC-3, DTS,
+AMR, AU and Wave64; Opus is now decodable rather than merely listed. Extensions
+are a prefilter: the actual codec must still probe successfully.
+
+The build requires Rust 1.88+, a C compiler and libclang. Linux CI installs
+`libclang-dev`; Windows installs LLVM for bindgen; macOS and Android reuse their
+LLVM setup. The Android NDK/bindgen environment remains supplied by
+`scripts/tauri.mjs`. The C bundle and its architecture configurations are pinned
+together by the sys crate revision.
+
+Codec tests use generated, two-second Opus/WMA/WavPack tone files with tags. They
+verify unsupported Symphonia inputs, finite PCM, exact sample counts for Opus and
+WavPack, seek alignment, metadata, block conversion and native file AutoMix.
+The wrapper also retains its upstream timeline/cursor unit tests.
+
+```sh
+cd src-tauri
+cargo test -p gmplayer-ffmpeg-audio --lib
+cargo test -p gmplayer-audio-backend -p gmplayer-automix-analysis --lib
+cargo check
+cargo check -p gmplayer-audio-backend --target wasm32-unknown-unknown
+```
+
+### AV3A / Audio Vivid
+
+AV3A is not included. Standard FFmpeg and the selected audio-only configuration
+have no AV3A audio decoder. FFmpeg's `libuavs3d` decodes AVS3 **video**, which does
+not add Audio Vivid support.
+
+A concrete source candidate is
+[MOLAN-AV3A](https://github.com/baiji6/MOLAN-AV3A). Its
+[license](https://github.com/baiji6/MOLAN-AV3A/blob/main/LICENSE) explicitly says the
+decoder and wrapper are governed by the UWA Code Sharing Policy and carry no
+separate open-source license. That is a different integration decision from
+using GPL FFmpeg; this change does not establish permission to redistribute it
+with GMPlayer. Other inspected projects distribute platform binaries or use an
+emulated Android decoder, which does not provide the portable source-backed
+codec needed here.
+
+If an appropriate AV3A implementation is obtained, it will additionally need MP4
+`av3a` sample-entry/raw-stream demuxing, state reset and pre-roll for seek, and an
+explicit channel layout/downmix policy. Decoding a 7.1.4 bed to PCM alone does not
+implement Audio Vivid object rendering or binaural spatial audio.
+
+## Native beat matching experiment
+
+The first native implementation borrows the bounded-stretch and source-sample
+accounting approach from [SPlayer-Next PR #429](https://github.com/SPlayer-Dev/SPlayer-Next/pull/429),
+revision `ae4d3255de854ed36e8eeaa447d03f0aa0589cd2`. The reference is AGPL-3.0;
+Signalsmith Stretch's Rust wrapper is an MIT dependency.
+
+`../automix-analysis/src/beats.rs` measures spectral-flux onset peaks in the first and last
+40 seconds. It fits observed stable runs of at least eight pulses and three
+seconds, requires 90% of the pulses to fit, and never extrapolates the grid beyond
+its measured interval. The existing global BPM result remains available to the
+legacy structure planner; the new pair planner uses the local periods and phases
+instead. Four-pulse grouping is a conservative phrase-length heuristic, not a
+claim that a downbeat model has identified the meter.
+
+`player/automix/beat_plan.rs` tests half/double-time folds and permits at most
+±4% stretch of the outgoing A track. B starts at its original beginning and
+remains at its original speed. A cue is chosen so the observed pulse phases
+meet; the complete overlap must fit both stable runs and the configured duration
+budget. Missing evidence, an unsafe tempo ratio or insufficient preparation lead
+retains ordinary crossfade. Pair fitting runs before the legacy end clamp so a
+slightly earlier real pulse can recover an otherwise shortened overlap.
+
+The Signalsmith processor is constructed on a prepare thread and applied in the
+decoder only from the future source cue. Its look-ahead and output pre-roll are
+accounted separately; draining synthetic zeros never adds source time. A unity
+rate takes the ordinary decode path. `PcmPosition` follows source position and
+rate through deck blocks. The mixer splits at the planned cue and handoff frame,
+and submits sparse timeline markers with PCM. Only consumption by the device
+callback publishes the markers. `PlayerClock` binds them by playback id and
+retains the outgoing mapping until B is adopted. Native completion no longer
+uses a wall-clock timer, so pausing cannot finish a fade that has not rendered.
+
+Native frontend preparation survives pauses. The old frontend wall-time watchdog
+is removed, retired async URL resolutions cannot publish a later prepare, and
+track adoption retires old local readiness flags without cancelling the backend's
+already playing sound. Reconfiguration clears a previous failed attempt instead
+of replaying its failure into the next attempt. Adoption also updates the source
+locator alongside the decoder/local path, so returning to A cannot reuse B's
+cached file. Repeated preparation from a recreated WebView attaches to
+the same active pair by stable identity instead of resetting its decks; a signed
+URL is never used as a cross-resolver identity.
+
+Seek and output rebuild cancellation carry the retired transition id on the idle
+event. The frontend clears matching preparation/readiness and can prepare again;
+anonymous configuration snapshots and cancelled older attempts cannot retire a
+new attempt. Silence scans use the last audible window, including a partial
+window at the start, without inferring the ending from the first second.
+
+`player/automix.rs` owns state and prepared resources. Its child modules separate
+pure planning (`plan.rs`, `beat_plan.rs`), blocking source/metadata preparation
+(`prepare.rs`) and the bounded analysis cache (`cache.rs`). `automix_runtime.rs`
+continues to own decks and rendered handoff. Preparation logs include the build
+profile, attempt id, elapsed time, source durations, silence and the final plan;
+armed and rendered events identify the same transition. No source URLs are added
+to these diagnostics.
+
+For a local pair, the ignored diagnostic below prints the analyses and plan.
+`AUTOMIX_CURRENT_FILE` and `AUTOMIX_NEXT_FILE` must name complete audio files;
+optional `AUTOMIX_PAIR_OUTPUT` names an existing directory for analysis JSON.
+Use the same files and configuration when comparing debug and release builds.
+
+```sh
+cargo test -p gmplayer-audio-backend inspect_real_pair -- --ignored --nocapture
+```
+
+Validation:
+
+```sh
+pnpm test:automix-native
+cd src-tauri
+cargo test --locked -p gmplayer-audio-backend -p gmplayer-automix-analysis --lib
+```
+
+The deterministic callback harness checks exact cue/handoff frames for mono,
+stereo and six channels, missing incoming audio, pause/resume, cancellation,
+source-sample totals, pitch preservation and seek/epoch clock guards. The isolated
+PulseAudio test exercises the real player, decoder, mixer and CPAL callback:
+
+```sh
+bash scripts/test-audio-device-watch.sh live_native_automix
+```
+
+It uses generated local pulses, pauses mid-overlap, repeats preparation with a
+rotated URL to simulate page recreation, rejects a retired track's request, and
+rebuilds output at the handoff while verifying B's actual source position, and
+returns to A to verify the source-cache binding. A moved logical playlist index
+is retained through the same transition.
+PulseAudio's virtual-sink default can deliver large callback
+batches, so this test allows a broad wall-time deadline; the deterministic harness
+checks the frame boundaries independently.
+
+A standalone release harness using this exact processor measured 30 seconds of
+48 kHz stereo at 0.97x in 857 ms and at 1.03x in 775 ms (35x/39x realtime on the
+measuring Linux machine). Processor setup took 0.7–1.6 ms and occurs off the audio
+workers. Reproduce the benchmark with:
+
+```sh
+cd src-tauri
+cargo test --release -p gmplayer-audio-backend benchmark_automix_tempo -- --ignored --nocapture
+```
+
+The Android C++ runtime is handled by Tauri's `cargo-mobile2` library staging:
+`android::target::Target::symlink_libs` detects `libc++_shared.so` in the produced
+library and stages the matching NDK runtime. No global C++ runtime override is
+introduced. The backend was cross-built and linked for `aarch64-linux-android`
+with NDK r27c and API 26; its ELF dependencies include `libc++_shared.so`.
+Full APK installation/listening, other Android ABIs, macOS and Windows still need
+their own validation. The measurements above do not establish mobile CPU or audio
+quality.
+
+Scope limits: this is native pulse matching, without Beat This!/Demucs or object
+separation. The browser keeps its existing transition path. Frontend/system-media
+effective-rate reporting is not expanded here; their existing position-anchor
+updates remain in use. Starting each new preparation still originates in the
+existing frontend lifecycle, so this does not promise repeated unattended AutoMix
+when Android freezes or destroys the WebView. That ownership change is separate
+from preserving an already prepared or active native transition.
+
+## Other upstream candidates
+
+These remain separate from device notifications:
+
+- The remaining general playback-speed/pitch controls in `dsp/tempo.rs` are
+  separate from the AutoMix-only processor now adopted. They would need a user
+  workflow and effective-rate propagation across all display surfaces.
+- `output/wasapi/`: a reference for Windows exclusive output, format negotiation
+  and PCM conversion. Adopting it needs a defined user setting, shared-mode
+  fallback behavior and validation on Windows hardware. The existing shared
+  output and its COM policy stay the baseline.
+- `dsp/equalizer.rs` and `dsp/limiter.rs`: no replacement is planned. GMPlayer
+  already supports configurable peaking/shelf bands, sample-rate-based limiter
+  release and a block-level bypass.
+
+No performance improvement is claimed from the source comparison alone.

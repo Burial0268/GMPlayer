@@ -234,7 +234,7 @@ impl AudioPlayer {
         // `file_path` (how every streamed track arrives) is never one.
         let allow_path_fallback = self.current_song.as_ref().is_some_and(|song| {
             song.file_path().is_some_and(|path| {
-                !crate::decoder::is_http_url(path) && self.current_temp_file.is_none()
+                !crate::source::is_http_url(path) && self.current_temp_file.is_none()
             })
         });
         let tag_or_path = |tagged: &str| -> Option<String> {
