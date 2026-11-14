@@ -108,6 +108,25 @@ export type AudioThreadEvent =
       };
     }
   | {
+      /**
+       * The one track-change edge: once per timeline that starts a track,
+       * ahead of the `loadAudio` / `syncStatus` / `nativePlannerAdvanced` /
+       * `automixCrossfadeComplete` describing the same change, and complete on
+       * its own. `loadRequestId` is set only for a load this frontend asked for.
+       */
+      type: "trackChanged";
+      data: {
+        timelineEpoch: number;
+        musicId: string;
+        identity?: TrackIdentity | null;
+        currentPlayIndex: number;
+        musicInfo: DisplayAudioInfo;
+        quality: AudioQuality;
+        isPlaying: boolean;
+        loadRequestId?: number | null;
+      };
+    }
+  | {
       type: "loadingAudio";
       data: { musicId: string; currentPlayIndex: number; loadRequestId?: number | null };
     }

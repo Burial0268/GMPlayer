@@ -479,6 +479,29 @@ pub enum AudioThreadEvent {
         #[serde(default)]
         timeline_epoch: u64,
     },
+    /// The one track-change edge: a different source has just become the
+    /// playing one, described whole.
+    ///
+    /// Emitted exactly once per `timeline_epoch` that starts a track, *before*
+    /// the `LoadAudio` / `AutomixCrossfadeComplete` / `SyncStatus` /
+    /// `NativePlannerAdvanced` that follow it. Those used to be the only
+    /// record of a change, so a subscriber rebuilt "the track changed" from
+    /// three partial events with flags armed in between, and announced it once
+    /// per event. Everything needed to adopt the track is here, so a subscriber
+    /// reads no other event and no earlier state.
+    ///
+    /// `load_request_id` is `Some` only for a load the frontend asked for.
+    #[serde(rename_all = "camelCase")]
+    TrackChanged {
+        timeline_epoch: u64,
+        music_id: String,
+        identity: Option<TrackIdentity>,
+        current_play_index: usize,
+        music_info: DisplayAudioInfo,
+        quality: AudioQuality,
+        is_playing: bool,
+        load_request_id: Option<u64>,
+    },
     #[serde(rename_all = "camelCase")]
     LoadingAudio {
         music_id: String,
@@ -1358,6 +1381,22 @@ mod tests {
         assert_eq!(edge["type"], "playbackPhaseChanged");
         assert_eq!(edge["data"]["phase"], "loading");
         assert_eq!(edge["data"]["timelineEpoch"], 3);
+        let change = serde_json::to_value(AudioThreadEvent::TrackChanged {
+            timeline_epoch: 4,
+            music_id: "local:a".into(),
+            identity: Some(TrackIdentity::Netease { id: "7".into() }),
+            current_play_index: 2,
+            music_info: DisplayAudioInfo::default(),
+            quality: AudioQuality::default(),
+            is_playing: true,
+            load_request_id: None,
+        })
+        .expect("serialize");
+        assert_eq!(change["type"], "trackChanged");
+        assert_eq!(change["data"]["timelineEpoch"], 4);
+        assert_eq!(change["data"]["currentPlayIndex"], 2);
+        assert_eq!(change["data"]["identity"]["id"], "7");
+        assert!(change["data"]["loadRequestId"].is_null());
 
         for key in [
             "hasTrack",

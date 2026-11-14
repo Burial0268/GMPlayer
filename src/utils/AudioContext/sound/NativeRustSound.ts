@@ -47,8 +47,6 @@ const LOAD_TIMEOUT_MS = 10_000;
 const FFT_LOG_INTERVAL_MS = 1000;
 const NO_FFT_WARN_MS = 5000;
 const SEEN_EVENT_SEQ_LIMIT = 512;
-const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
-const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
 const SEEK_REQUEST_ID_MODULO = 1000;
 /** After AudioPlayFinished, how long to wait for the backend queue window to
  * confirm it is advancing (LoadingAudio) before falling back to the JS-driven
@@ -218,25 +216,9 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
    * advance until it is cleared or exhausted. */
   private _nativePlannerActive: boolean = false;
   private _nativePlannerStatus: NativePlannerStatus | null = null;
-  /** Identity + index of the most recent backend-initiated planner advance,
-   * retained until adoption consumes it. This is the only reliable key for
-   * reconciling a planner advance: the backend resolves its own URLs, so the
-   * `local:<url>` prefill registry cannot map them back to a song. */
-  private _lastPlannerAdvance: {
-    identity: TrackIdentity;
-    playlistIndex: number;
-  } | null = null;
   /**
    * Stable identity of the track the backend currently has loaded, as reported
-   * on every `syncStatus` / `loadAudio`.
-   *
-   * Unlike `_lastPlannerAdvance` this is not consumed: a single backend track
-   * change produces several adoption events (the load's own, then the sync that
-   * follows it, then any audit sync), and only the first of them could read a
-   * one-shot value. The later ones then fell back to the index — which is how a
-   * stale AutoMix transition target dragged the store back onto a song the
-   * backend had already left, and, once republished as a manifest cursor, took
-   * the media session's metadata with it.
+   * on every `trackChanged` / `syncStatus` / `loadAudio`.
    */
   private _backendIdentity: TrackIdentity | null = null;
   /**
@@ -637,7 +619,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         this._recordTimelineEpoch(d.timelineEpoch);
         const backendTrackChanged =
           timelineChanged || adoptedBackendTrack || this._isBackendTrackChange(d.identity);
-        const pendingNativeAutoMixIndex = this._state.currentPlayIndex;
         const acceptedPosition = backendTrackChanged
           ? this._beginTrackTimeline(d.position, d.duration)
           : this._acceptIncomingPosition(this._coerceIncomingPosition(d.position));
@@ -662,29 +643,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
           this._syncTimelineClock();
         }
         this._resolvePendingSyncs();
-        const shouldNotifyNativeAutoMixSync =
-          // A boot attach already reconciled the store from the session
-          // snapshot before this controller existed; re-announcing it as a
-          // backend-initiated transition would re-enter the adoption path.
-          !allowInitialTauriAttach &&
-          (this._nativeAutoMixSyncPending
-            ? adoptedBackendTrack || d.currentPlayIndex === pendingNativeAutoMixIndex
-            : (expectingNativeAutoMixAdoption || this._isActiveController()) &&
-              adoptedBackendTrack);
-        if (shouldNotifyNativeAutoMixSync) {
-          this._nativeAutoMixSyncPending = false;
-          window.dispatchEvent(
-            new CustomEvent(NATIVE_AUTOMIX_SYNC_EVENT, {
-              detail: {
-                currentIndex: d.currentPlayIndex,
-                musicId: d.musicId,
-                identity: this._backendIdentity,
-                position: acceptedPosition,
-                duration: d.duration,
-              },
-            }),
-          );
-        }
         // Outside the Tauri initial re-attach path above, do not update
         // `_playbackState` from syncStatus. State transitions belong to
         // `PlayStatus` events only. SyncStatus can be emitted while a follow-on
@@ -693,35 +651,25 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         break;
       }
 
+      case "trackChanged": {
+        const d = evt.data;
+        // A load this frontend asked for is answered by its own `loadAudio`.
+        if (d.loadRequestId !== undefined && d.loadRequestId !== null) break;
+        // shortcut: the WASM backend never starts a track by itself and does not
+        // emit this; drop the `isTauri()` gate if it ever does.
+        if (!isTauri() || !this._isActiveController()) break;
+        // Mid-load this controller answers only to the load it asked for.
+        if (this._pendingLoad) break;
+        // Once per timeline, whatever repeats the same change afterwards.
+        if (this._backendTimelineEpoch === d.timelineEpoch) break;
+        this._adoptBackendTrack(d);
+        break;
+      }
+
       case "loadAudio": {
         if (!this._matchesPendingLoadRequest(evt.data.loadRequestId)) break;
-        const wasAdvancePending = this._nativeAdvancePending;
-        // A load this frontend never asked for (no `loadRequestId`) is the
-        // backend starting a track by itself: a planner advance driven by the
-        // OS media-session buttons, a natural end, a native AutoMix hand-off,
-        // or a repeat-one restart. It has just anchored its own clock at
-        // `musicInfo.position`, and that anchor is the authority — this side
-        // only extrapolates between anchors, so it adopts rather than
-        // reconciles. Running it through the intra-track reconciler instead is
-        // what made the frontend read `old elapsed + new elapsed`: a fresh
-        // track's 0 looks exactly like a stale pre-seek packet.
-        const requestedByFrontend =
-          evt.data.loadRequestId !== undefined && evt.data.loadRequestId !== null;
-        const backendInitiated = isTauri() && !requestedByFrontend && this._isActiveController();
-        // The load starts a new timeline, and the backend says so outright.
-        // Everything below is the fallback for a backend that did not stamp
-        // one: its own arming event (`NativePlannerAdvanced`) is emitted only
-        // *after* this one and after the `SyncStatus` behind it, so waiting for
-        // the flag dropped both authoritative snapshots of the new track and
-        // left the next periodic audit sync — up to two seconds later — to
-        // reconcile a track that was already playing.
-        const timelineChanged = this._isNewTimeline(evt.data.timelineEpoch);
-        const trackChanged =
-          backendInitiated &&
-          (timelineChanged ||
-            this._isBackendTrackChange(evt.data.identity) ||
-            (!!evt.data.musicId && evt.data.musicId !== this._expectedMusicId));
-        if (trackChanged) this._adoptNextBackendMusicId = true;
+        // A backend-initiated load was already adopted from the `trackChanged`
+        // ahead of it; this only refreshes what that snapshot carried.
         if (this._acceptMusicId(evt.data.musicId)) {
           this._recordTimelineEpoch(evt.data.timelineEpoch);
           this._musicInfo = evt.data.musicInfo;
@@ -731,19 +679,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
           this._timeline.setDuration(evt.data.musicInfo.duration);
           this._backendTrackReady = true;
           this._resolvePendingLoad();
-          if (wasAdvancePending || trackChanged) {
-            this._completeNativeAdvanceAdoption(
-              evt.data.musicId,
-              evt.data.currentPlayIndex,
-              evt.data.musicInfo.duration,
-              evt.data.musicInfo.position,
-            );
-          } else if (backendInitiated) {
-            // Same track, and the backend restarted it (repeat-one) or reopened
-            // the decoder behind it (output-device rebuild). No store adoption
-            // is due, but the clock still has to follow the new anchor.
-            this._beginTrackTimeline(evt.data.musicInfo.position, evt.data.musicInfo.duration);
-          }
         }
         break;
       }
@@ -869,24 +804,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         break;
       }
 
-      case "nativePlannerAdvanced": {
-        // The backend picked and started the next track by itself. Adoption
-        // still runs through the existing loadAudio/syncStatus path — this
-        // event carries the stable identity that path cannot infer from a
-        // re-resolved CDN URL, so retain it: the `local:<url>` prefill
-        // registry can never match a URL the Rust resolver produced, which
-        // would otherwise leave the reported index as the only (unverified)
-        // reconciliation key.
-        this._adoptNextBackendMusicId = true;
-        this._nativeAutoMixSyncPending = true;
-        this._state.currentPlayIndex = evt.data.playlistIndex;
-        this._lastPlannerAdvance = {
-          identity: evt.data.identity,
-          playlistIndex: evt.data.playlistIndex,
-        };
-        break;
-      }
-
       case "nativePlannerExhausted": {
         // Every candidate failed. Stop suppressing 'end' so the JS-driven path
         // takes over and the user sees a real stop rather than silence.
@@ -896,41 +813,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
             `[NativeRustSound] planner exhausted after ${evt.data.attempted} attempts: ${evt.data.reason}`,
           );
         }
-        break;
-      }
-
-      case "automixCrossfadeComplete": {
-        this._adoptNextBackendMusicId = true;
-        this._nativeAutoMixSyncPending = true;
-        this._state.currentPlayIndex = evt.data.currentIndex;
-        if (evt.data.musicId) {
-          if (this._acceptMusicId(evt.data.musicId)) {
-            this._state.musicId = evt.data.musicId;
-          }
-          this._adoptNextBackendMusicId = false;
-        }
-        if (typeof evt.data.duration === "number" && evt.data.duration > 0) {
-          this._state.duration = evt.data.duration;
-          this._timeline.setDuration(evt.data.duration);
-          if (this._musicInfo) {
-            this._musicInfo = { ...this._musicInfo, duration: evt.data.duration };
-          }
-        }
-        if (typeof evt.data.position === "number" && evt.data.position >= 0) {
-          this._setLocalPosition(evt.data.position);
-        }
-        this._sendCommand({ type: "syncStatus" });
-        window.dispatchEvent(
-          new CustomEvent(NATIVE_AUTOMIX_COMPLETE_EVENT, {
-            detail: {
-              currentIndex: evt.data.currentIndex,
-              musicId: evt.data.musicId,
-              position: evt.data.position,
-              duration: evt.data.duration,
-              transitionId: evt.data.transitionId,
-            },
-          }),
-        );
         break;
       }
 
@@ -1024,6 +906,9 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         break;
       }
 
+      // Both describe a change `trackChanged` has already delivered whole.
+      case "nativePlannerAdvanced":
+      case "automixCrossfadeComplete":
       case "playListChanged":
       case "loadProgress":
       case "automixStatus":
@@ -1330,58 +1215,43 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     return this._nativePlannerStatus;
   }
 
-  /**
-   * Take the pending planner-advance identity, clearing it.
-   *
-   * Consuming rather than peeking is deliberate: a retained identity must not
-   * be reused to reconcile a *later* transition that the planner did not
-   * drive (manual selection, AutoMix, JS-driven end), which would reintroduce
-   * the same displayed-vs-playing mismatch in the opposite direction.
-   */
-  takePlannerAdvance(): { identity: TrackIdentity; playlistIndex: number } | null {
-    const advance = this._lastPlannerAdvance;
-    this._lastPlannerAdvance = null;
-    return advance;
-  }
-
   private _beginNativeAdvanceAdoption(): void {
     this._nativeAdvancePending = true;
     this._adoptNextBackendMusicId = true;
     this._armNativeAdvanceFallback(NATIVE_ADVANCE_START_TIMEOUT_MS);
   }
 
-  private _completeNativeAdvanceAdoption(
-    musicId: string,
-    currentPlayIndex: number,
-    duration: number,
-    position = 0,
+  /**
+   * Move this controller onto a track the backend started by itself, then say
+   * so once. Everything comes from the one snapshot, so no flag has to be armed
+   * beforehand and nothing later in the stream can announce the change again.
+   */
+  private _adoptBackendTrack(
+    change: Extract<AudioThreadEvent, { type: "trackChanged" }>["data"],
   ): void {
     this._nativeAdvancePending = false;
-    // Repeat-one adoption keeps the same musicId, so `_acceptMusicId`'s
-    // early-return never consumed the adopt flag — clear it explicitly.
-    this._adoptNextBackendMusicId = false;
+    this._nativeAutoMixSyncPending = false;
     this._clearNativeAdvanceFallback();
-    this._state.musicId = musicId || this._expectedMusicId;
-    this._state.currentPlayIndex = currentPlayIndex;
-    if (duration > 0) {
-      this._state.duration = duration;
-      this._timeline.setDuration(duration);
-    }
-    // The backend's own anchor for the adopted track, not a blind zero: a
-    // planner advance starts at 0, but the same funnel serves hand-offs that
-    // start elsewhere, and the store is seeded from what this reports.
-    const startPosition = this._beginTrackTimeline(position, duration);
-    window.dispatchEvent(
-      new CustomEvent(NATIVE_AUTOMIX_SYNC_EVENT, {
-        detail: {
-          currentIndex: currentPlayIndex,
-          musicId: this._state.musicId,
-          identity: this._backendIdentity,
-          position: startPosition,
-          duration: this.duration(),
-        },
-      }),
-    );
+    this._adoptMusicId(change.musicId);
+    // Repeat-one keeps the same musicId, which `_adoptMusicId` treats as nothing to do.
+    this._adoptNextBackendMusicId = false;
+    this._recordTimelineEpoch(change.timelineEpoch);
+    this._musicInfo = change.musicInfo;
+    this._quality = change.quality;
+    this._backendIdentity = change.identity ?? null;
+    this._state.musicId = this._expectedMusicId;
+    this._state.currentPlayIndex = change.currentPlayIndex;
+    this._backendTrackReady = true;
+    // The backend's own anchor for the new track, taken verbatim.
+    const position = this._beginTrackTimeline(change.musicInfo.position, change.musicInfo.duration);
+    this._emit("trackchange", {
+      timelineEpoch: change.timelineEpoch,
+      identity: this._backendIdentity,
+      musicId: this._state.musicId,
+      playlistIndex: change.currentPlayIndex,
+      position,
+      duration: this.duration(),
+    });
   }
 
   private _abandonNativeAdvanceAdoption(): void {
@@ -1670,7 +1540,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     this._nativeAdvancePending = false;
     this._nativeAdvanceWindowApplied = false;
     this._nativePlannerActive = false;
-    this._lastPlannerAdvance = null;
     this._backendIdentity = null;
     this._backendTimelineEpoch = null;
     this._clearNoFFTWarning();

@@ -56,6 +56,38 @@ impl AudioPlayer {
             .await;
     }
 
+    /// Announce the track that has just become the playing one.
+    ///
+    /// Call once, right after `begin_timeline` and the anchor behind it, when
+    /// every field below already describes the new track. It reads them in one
+    /// place so the two paths that start a track cannot describe it differently.
+    pub(super) async fn emit_track_changed(
+        &self,
+        timeline_epoch: u64,
+        load_request_id: Option<u64>,
+    ) {
+        let music_info = self.current_audio_info.read().await.clone();
+        let quality = self.current_audio_quality.read().await.clone();
+        let is_playing = self.clock.lock().is_playing();
+        let _ = self
+            .emitter()
+            .emit(AudioThreadEvent::TrackChanged {
+                timeline_epoch,
+                music_id: self
+                    .current_song
+                    .as_ref()
+                    .map(|s| s.get_id())
+                    .unwrap_or_default(),
+                identity: self.current_identity.clone(),
+                current_play_index: self.current_play_index,
+                music_info,
+                quality,
+                is_playing,
+                load_request_id,
+            })
+            .await;
+    }
+
     /// Mark the session as carrying no track. Called when playback finishes and
     /// nothing has taken over yet, so a frontend booting in that window falls
     /// back to its own startup path instead of adopting a retired track.

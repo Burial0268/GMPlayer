@@ -35,7 +35,12 @@ import { syncNativeResolverConfig } from "./native/NativeResolverConfigSync";
 import { publishSessionControls } from "./native/NativeSessionControlsSync";
 import { clearSpectrumFrame, setSpectrumFrame } from "./analysis/SpectrumFrame";
 import { publishLowFreqVolume, resetLowFreqVolume } from "./analysis/lowFreqVolume";
-import { isBackendSound, type BackendSound, type ISound } from "./sound/types";
+import {
+  isBackendSound,
+  type BackendSound,
+  type BackendTrackChange,
+  type ISound,
+} from "./sound/types";
 import { NativeRustSound } from "./sound/NativeRustSound";
 import {
   isAudioBackendRuntimeAvailable,
@@ -52,8 +57,6 @@ import {
 } from "../neteaseClient";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
-const NATIVE_AUTOMIX_COMPLETE_EVENT = "gmplayer:native-automix-complete";
-const NATIVE_AUTOMIX_SYNC_EVENT = "gmplayer:native-automix-sync";
 /** How long a backend-initiated transition (native advance / AutoMix adoption)
  * shields the adopted song from being torn down and re-created by the debounced
  * `getPlaySongData` watcher. Covers the 500ms debounce plus async settling. */
@@ -314,18 +317,14 @@ const scheduleScrobble = (reason: string): void => {
   }, SCROBBLE_DELAY_MS);
 };
 
-const applyNativeAutoMixCompletion = (
-  currentIndex: number,
-  playback?: {
-    position?: number;
-    duration?: number;
-    musicId?: string;
-    identity?: TrackIdentity | null;
-  },
-): void => {
+/**
+ * Adopt a backend-initiated track change into the store. Subscribed to the
+ * sound's `trackchange`, which fires once per change with the whole snapshot.
+ */
+const applyNativeAutoMixCompletion = (sound: BackendSound, playback: BackendTrackChange): void => {
   const music = musicStore();
-  const sound = getActiveNativeSound();
-  if (!sound) return;
+  if (SoundManager.getCurrentSound() !== sound) return;
+  const currentIndex = playback.playlistIndex;
 
   const playlists = music.persistData.playlists;
   if (!Number.isInteger(currentIndex) || currentIndex < 0) {
@@ -344,24 +343,7 @@ const applyNativeAutoMixCompletion = (
   // advancing on and the current store playlist (edits, random reshuffle)
   // then surfaces as "displayed song is not the playing song", and it
   // accumulates over a long session. Identity always wins over index.
-  //
-  // `playback.identity` is what the backend reports for the track it has
-  // loaded, on *every* sync — and one backend track change produces several
-  // adoption events (the load's own, the sync behind it, the periodic audit
-  // sync). `takePlannerAdvance()` is one-shot by design, so only the first of
-  // them could ever read it; the rest fell through to `resolvedIndex`, which a
-  // lingering AutoMix transition target pins to a song the backend has already
-  // left. That silently walked the store *backwards* mid-session, and because
-  // the manifest cursor is derived from it the stale cursor then went back to
-  // Rust and took the media-session metadata with it. So prefer the live
-  // identity, and keep the one-shot value only as its fallback.
-  const plannerAdvance = sound.takePlannerAdvance?.() ?? null;
-  const backendIdentity =
-    playback?.identity?.provider === "netease"
-      ? playback.identity
-      : plannerAdvance?.identity?.provider === "netease"
-        ? plannerAdvance.identity
-        : null;
+  const backendIdentity = playback.identity?.provider === "netease" ? playback.identity : null;
   if (backendIdentity) {
     const advancedSongId = Number(backendIdentity.id);
     if (Number.isFinite(advancedSongId) && playlists[resolvedIndex]?.id !== advancedSongId) {
@@ -383,7 +365,7 @@ const applyNativeAutoMixCompletion = (
   // Cross-check the backend-reported track identity against the prefill
   // registry: if the playlist was edited while the backend advanced, the
   // index may point at a different song — identity wins over index.
-  const registryEntry = getNativeQueueRegistryEntry(playback?.musicId);
+  const registryEntry = getNativeQueueRegistryEntry(playback.musicId);
   if (registryEntry && playlists[resolvedIndex]?.id !== registryEntry.songId) {
     const indexBySongId = playlists.findIndex((song) => song.id === registryEntry.songId);
     if (indexBySongId >= 0) resolvedIndex = indexBySongId;
@@ -403,8 +385,8 @@ const applyNativeAutoMixCompletion = (
   );
 
   const changed = music.persistData.playSongIndex !== resolvedIndex;
-  const position = playback?.position;
-  const duration = playback?.duration;
+  const position = playback.position;
+  const duration = playback.duration;
   const hasPlaybackPosition =
     typeof position === "number" && position >= 0 && typeof duration === "number" && duration > 0;
   if (changed) {
@@ -546,37 +528,6 @@ if (typeof document !== "undefined") {
       }
       stopBackgroundMonitor();
     }
-  });
-}
-
-if (typeof window !== "undefined") {
-  window.addEventListener(NATIVE_AUTOMIX_COMPLETE_EVENT, (event) => {
-    const detail =
-      (
-        event as CustomEvent<{
-          currentIndex?: number;
-          musicId?: string;
-          identity?: TrackIdentity | null;
-          position?: number;
-          duration?: number;
-        }>
-      ).detail ?? {};
-    const currentIndex = Number(detail.currentIndex);
-    applyNativeAutoMixCompletion(currentIndex, detail);
-  });
-  window.addEventListener(NATIVE_AUTOMIX_SYNC_EVENT, (event) => {
-    const detail =
-      (
-        event as CustomEvent<{
-          currentIndex?: number;
-          musicId?: string;
-          identity?: TrackIdentity | null;
-          position?: number;
-          duration?: number;
-        }>
-      ).detail ?? {};
-    const currentIndex = Number(detail.currentIndex);
-    applyNativeAutoMixCompletion(currentIndex, detail);
   });
 }
 
@@ -789,6 +740,8 @@ const setupNativeSound = (
    * guards the *load race* below, which is what it is actually for.
    */
   const isActiveBoundSound = (): boolean => SoundManager.getCurrentSound() === sound;
+
+  sound.on("trackchange", (change) => applyNativeAutoMixCompletion(sound, change));
 
   const isCurrentLoadOwner = (): boolean =>
     loadAttempt === soundLoadAttempt &&

@@ -706,8 +706,9 @@ impl AudioPlayer {
         self.clock.lock().set_duration(incoming_duration);
         // The incoming deck is a different source with its own timeline, even
         // though no `LoadAudio` announced it — the crossfade started it.
-        self.begin_timeline();
+        let timeline_epoch = self.begin_timeline();
         self.publish_position_anchor(is_playing, position).await;
+        self.emit_track_changed(timeline_epoch, None).await;
 
         let music_id = self
             .current_song

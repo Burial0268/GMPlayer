@@ -85,6 +85,8 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         let deadline = Instant::now() + Duration::from_secs(45);
         eprintln!("armed status: {:?}, position={}", player.automix.status(0), player.clock_position());
         let mut started = false;
+        let mut track_epochs: Vec<u64> = Vec::new();
+        let mut last_change_requested = true;
         let mut completed = false;
         let mut paused = false;
         let mut rebuilt = false;
@@ -118,7 +120,13 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
                         let anchor = player.output.writer().render_clock().anchor().unwrap();
                         assert!((1.01..=1.04).contains(&anchor.anchor.source.rate), "tempo plan did not engage: {anchor:?}");
                     }
+                    Some(AudioThreadEvent::TrackChanged { timeline_epoch, load_request_id, .. }) => {
+                        assert!(!track_epochs.contains(&timeline_epoch), "one edge per timeline");
+                        track_epochs.push(timeline_epoch);
+                        last_change_requested = load_request_id.is_some();
+                    }
                     Some(AudioThreadEvent::AutomixCrossfadeComplete { position, transition_id, .. }) => {
+                        assert!(track_epochs.len() >= 2 && !last_change_requested, "the hand-off's TrackChanged precedes its completion");
                         assert_eq!(transition_id, Some(78));
                         assert!(position >= fade_duration - 0.01 && position < fade_duration + 1.2, "B position={position}, fade={fade_duration}");
                         completed = true;

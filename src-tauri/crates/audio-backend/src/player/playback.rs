@@ -493,6 +493,8 @@ impl AudioPlayer {
         // session was showing as "buffering" is now real playback.
         self.load_in_flight = false;
         self.first_audio_mark = self.output.writer().render_clock().rendered_samples();
+        self.emit_track_changed(timeline_epoch, load_request_id)
+            .await;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadAudio {

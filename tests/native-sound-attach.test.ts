@@ -252,3 +252,80 @@ test("a backend on another track is not adopted and the track loads normally", a
   assert.equal(restart.playIndex, 0);
   assert.equal(restart.initialPosition, 30);
 });
+
+test("one backend track change is announced once, whole, however many events describe it", async () => {
+  const env = environment(session(), 20);
+  const { sound } = await attach(env, 0);
+  const changes: any[] = [];
+  sound.on("trackchange", (change) => changes.push(change));
+
+  const next = session({
+    musicId: "local:https://cdn.example/track-2002.mp3?token=rust",
+    identity: otherIdentity,
+    playlistIndex: 4,
+    position: 0,
+    duration: 200,
+  });
+  const info = (statusFor(next, 0) as any).data.musicInfo;
+  const quality = { bitrate: 320, sampleRate: 44100, channels: 2 };
+  const changed: AudioThreadEvent = {
+    type: "trackChanged",
+    data: {
+      timelineEpoch: 13,
+      musicId: next.musicId,
+      identity: next.identity,
+      currentPlayIndex: next.playlistIndex,
+      musicInfo: info,
+      quality,
+      isPlaying: true,
+    },
+  };
+  const status = statusFor(next, 0) as any;
+  status.data.timelineEpoch = 13;
+
+  // The order the backend emits a planner advance in, plus a duplicate edge.
+  env.emit(changed);
+  env.emit(changed);
+  env.emit({
+    type: "loadAudio",
+    data: {
+      musicId: next.musicId,
+      musicInfo: info,
+      quality,
+      currentPlayIndex: next.playlistIndex,
+      identity: next.identity,
+      timelineEpoch: 13,
+    },
+  });
+  env.emit(status);
+  env.emit({
+    type: "nativePlannerAdvanced",
+    data: {
+      manifestRevision: 7,
+      identity: otherIdentity,
+      playlistIndex: next.playlistIndex,
+      musicId: next.musicId,
+    },
+  } as AudioThreadEvent);
+  env.emit(status);
+
+  assert.equal(changes.length, 1);
+  assert.deepEqual(
+    { ...changes[0], position: Math.round(changes[0].position) },
+    {
+      timelineEpoch: 13,
+      identity: otherIdentity,
+      musicId: next.musicId,
+      playlistIndex: 4,
+      position: 0,
+      duration: 200,
+    },
+  );
+  // The new track's clock, not the old track's elapsed time carried over.
+  assert.ok(sound.position < 5, `position ${sound.position}`);
+  assert.equal(sound.duration(), 200);
+
+  // A load the frontend asked for is not a backend-initiated change.
+  env.emit({ ...changed, data: { ...(changed as any).data, timelineEpoch: 14, loadRequestId: 9 } });
+  assert.equal(changes.length, 1);
+});

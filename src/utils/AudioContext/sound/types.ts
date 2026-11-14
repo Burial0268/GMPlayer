@@ -34,6 +34,22 @@ export interface SoundEventMap {
   stalled: [];
   waiting: [];
   resumed: [];
+  /** The backend started a track this frontend did not ask for. */
+  trackchange: [change: BackendTrackChange];
+}
+
+/**
+ * A backend-initiated track change, whole: a subscriber adopts it from these
+ * fields alone and reads nothing back from the sound. Emitted once per backend
+ * timeline, after the sound itself is anchored on the new track.
+ */
+export interface BackendTrackChange {
+  timelineEpoch: number;
+  identity: TrackIdentity | null;
+  musicId: string;
+  playlistIndex: number;
+  position: number;
+  duration: number;
 }
 
 export type SoundEventType = keyof SoundEventMap;
@@ -50,6 +66,7 @@ export const SOUND_EVENTS = [
   "stalled",
   "waiting",
   "resumed",
+  "trackchange",
 ] as const satisfies readonly SoundEventType[];
 
 export type SoundEventCallback<E extends SoundEventType = SoundEventType> = (
@@ -128,7 +145,6 @@ export interface BackendSound extends ISound {
   setNativePlannerEnabled(enabled: boolean): void;
   isNativePlannerActive(): boolean;
   getNativePlannerStatus(): NativePlannerStatus | null;
-  takePlannerAdvance(): { identity: TrackIdentity; playlistIndex: number } | null;
   applyNativeQueueWindow(songs: SongData[], options: { windowed: boolean }): boolean;
   clearPlaybackQueue(): void;
   setListenTogetherRoom(roomId: string | null): boolean;
