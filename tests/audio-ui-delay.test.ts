@@ -206,3 +206,11 @@ test("the hold is armed by the seek funnel with the position actually seeked to"
   assert.match(lyricPlayer, /emit\("lrcTextClick", time \/ 1000\)/);
   assert.doesNotMatch(lyricPlayer, /armLyricSeekPresentationHold/);
 });
+
+test("the lyric view reads the sound's own clock, not the store's", () => {
+  // The store still holds the previous track's elapsed time for a moment after a
+  // track change; reading it scrolled the fresh lines away and back (a flash).
+  const lyricPlayer = readFileSync("src/libs/apple-music-like/LyricPlayer.vue", "utf8");
+  assert.match(lyricPlayer, /activeSound\.value\?\.position/);
+  assert.doesNotMatch(lyricPlayer, /\.seek\?\.\(/);
+});

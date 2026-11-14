@@ -71,11 +71,6 @@ const lyricStyles = computed(() => ({
   "-webkit-tap-highlight-color": "transparent",
 }));
 
-type SyncableSound = {
-  seek?: () => unknown;
-  duration?: () => unknown;
-};
-
 const emit = defineEmits<{
   "line-click": [evt: LyricLineMouseEvent];
   lrcTextClick: [time: number];
@@ -103,16 +98,14 @@ function lyricPresentationTimeMs(playbackTime: number): number {
 }
 
 function readPlaybackPosition(): number {
-  const player: SyncableSound | undefined = activeSound.value;
-  const seekValue = player?.seek?.();
-  return typeof seekValue === "number" && Number.isFinite(seekValue)
-    ? seekValue
+  const position = activeSound.value?.position;
+  return typeof position === "number" && Number.isFinite(position)
+    ? position
     : music.getPlaySongPlaybackCurrentTime();
 }
 
 function readCurrentPlaybackTime(): { currentTime: number; duration: number } {
-  const player: SyncableSound | undefined = activeSound.value;
-  const durationValue = player?.duration?.();
+  const durationValue = activeSound.value?.duration();
   const currentTime = readPlaybackPosition();
   const duration =
     typeof durationValue === "number" && Number.isFinite(durationValue)
@@ -354,7 +347,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
-  holdLyricSegmenter(false);
+  releaseSegmenter?.();
   stopDelayWatch?.();
   stopDelayWatch = null;
   window.removeEventListener("focus", scheduleCurrentTimeSync);
@@ -393,7 +386,15 @@ watch(
 );
 
 // On screen the segmenter stays up, so a track change is cut as fast as it ever was.
-watch(() => music.showBigPlayer, holdLyricSegmenter, { immediate: true });
+let releaseSegmenter: (() => void) | undefined;
+watch(
+  () => music.showBigPlayer,
+  (visible) => {
+    releaseSegmenter?.();
+    releaseSegmenter = visible ? holdLyricSegmenter() : undefined;
+  },
+  { immediate: true },
+);
 
 watch(
   () => [
