@@ -817,6 +817,27 @@ html.has-floating-titlebar {
   }
 }
 
+// AutoMix 转场：下一首叠在当前这首上，按混音进度淡入（`useAutoMixVisual` 每帧写
+// `--automix-mix`）。opacity 挂在层自己身上，不挂祖先，否则会隔断 plus-lighter 混合。
+.automix-stack {
+  display: grid;
+  min-width: 0;
+
+  > * {
+    grid-area: 1 / 1;
+    min-width: 0;
+  }
+}
+
+.automix-out {
+  opacity: calc(1 - var(--automix-mix, 0));
+}
+
+.automix-in {
+  opacity: var(--automix-mix, 0);
+  pointer-events: none;
+}
+
 // 响应式布局
 @mixin changeWidth($padding: 28px) {
   .n-layout-header {
