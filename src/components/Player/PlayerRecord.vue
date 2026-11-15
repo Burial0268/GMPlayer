@@ -98,13 +98,13 @@
             :max="music.getPlaySongTime.duration || 1"
             :is-playing="music.getPlayState"
             :buffered="music.bufferedTime"
-            :indeterminate="autoMixTransitioning"
+            :transition-phase="autoMixBarPhase"
             @update:value="handleProgressSeek"
           />
         </div>
         <div class="time-info">
           <span class="time-text">{{ elapsedLabel }}</span>
-          <span class="time-text">{{ autoMixTransitioning ? "∞" : remainingTime }}</span>
+          <span class="time-text">{{ remainingTime }}</span>
         </div>
       </div>
       <div class="buttons">
@@ -182,7 +182,11 @@ import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
 import IconPause from "./icons/IconPause.vue";
 import { musicStore, settingStore, userStore } from "@/store";
-import { useAutoMixElapsed, useAutoMixTransition } from "@/composables/useAutoMixTransition";
+import {
+  useAutoMixBarPhase,
+  useAutoMixElapsed,
+  useAutoMixTransition,
+} from "@/composables/useAutoMixTransition";
 import { coverUrl } from "@/utils/coverUrl";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
@@ -198,7 +202,8 @@ import { getDesktopPlayerSharedLayoutIds } from "./desktopSharedLayout";
 const navigation = useLayerNavigation();
 defineEmits(["openComments"]);
 const music = musicStore();
-const autoMixTransitioning = useAutoMixTransition();
+const autoMixBarPhase = useAutoMixBarPhase();
+const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 const user = userStore();
 const setting = settingStore();

@@ -1,6 +1,6 @@
 <template>
   <Motion
-    :class="['bouncing-slider', { indeterminate, leaving }]"
+    :class="['bouncing-slider', { transitioning: transitionPhase === 'active', leaving }]"
     :style="{ x: bounceXSpring }"
     :onPanStart="handlePanStart"
     :onPan="handlePan"
@@ -21,8 +21,10 @@
         />
         <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
         <div
-          class="flow"
+          v-if="leaving"
+          class="ghost"
           aria-hidden="true"
+          :style="{ transform: `scaleX(${ghostScale})` }"
           @animationend="leaving = false"
           @animationcancel="leaving = false"
         />
@@ -54,15 +56,16 @@ const props = withDefaults(
     /** How far the track is buffered, in the units of `value`. */
     buffered?: number;
     /**
-     * An AutoMix transition: the bar fills, glows and runs a light forward instead of showing a
-     * position, and takes no seeks — there is no single track for one to land in.
+     * An AutoMix transition. `active` highlights the bar, which keeps moving and stays seekable;
+     * `committed` (the next song taking over) plays the hand-off. Back to `none` without a commit
+     * — an interrupted transition — only drops the highlight.
      */
-    indeterminate?: boolean;
+    transitionPhase?: "none" | "active" | "committed";
   }>(),
   {
     isPlaying: false,
     changeOnDrag: false,
-    indeterminate: false,
+    transitionPhase: "none",
   },
 );
 
@@ -118,9 +121,14 @@ const clipPath = useMotionTemplate`inset(${insetMv}px 0px round 100px)`;
 
 const bounceXSpring = useSpring(0, { damping: 12, stiffness: 300 });
 
-// Leaving the transition the full bar fades down to the next song's segment, which then flashes and
-// settles, instead of the fill shrinking back from the end. Cleared when that sequence ends.
+// At the hand-off the outgoing song's fill stays as a ghost and fades down to the next song's
+// segment, which then flashes and settles, instead of the fill shrinking back from the end.
+// Cleared when that sequence ends.
 const leaving = ref(false);
+const ghostScale = ref(1);
+// The outgoing song's progress, recorded while the transition is active: by the time the commit is
+// seen, the value may already be the incoming song's.
+let activeProgress = 1;
 
 const progressOf = (time: number) => {
   const range = props.max - props.min;
@@ -128,11 +136,12 @@ const progressOf = (time: number) => {
 };
 
 watch(
-  () => props.indeterminate,
+  () => props.transitionPhase,
   (now, was) => {
-    leaving.value = was && !now;
+    leaving.value = was === "active" && now === "committed";
     if (!leaving.value) return;
-    // The jump to the new song is not a seek: show where it is, under the leaving bar.
+    ghostScale.value = activeProgress;
+    // The jump to the new song is not a seek: show where it is, under the ghost.
     seekAnimControl?.stop();
     seekAnimControl = null;
     progressMv.set(progressOf(localTime));
@@ -167,6 +176,7 @@ watch(
     // Detect a seek: value jumped by more than 1.5s or min/max changed
     const oldVal = oldArr ? (oldArr[0] as number) : v;
     const jumped = Math.abs(v - oldVal) > 1.5;
+    if (props.transitionPhase === "active") activeProgress = p;
     if (jumped && !leaving.value) {
       animateProgressTo(p);
     } else {
@@ -188,6 +198,7 @@ useAnimationFrame((_time: number, delta: number) => {
     const range = props.max - props.min;
     const p = range > 0 ? Math.max(0, Math.min(1, (localTime - props.min) / range)) : 0;
     progressMv.set(p);
+    if (props.transitionPhase === "active") activeProgress = p;
   }
 });
 
@@ -317,11 +328,7 @@ const handleClick = (event: MouseEvent) => {
   transition: filter 0.8s ease;
 }
 
-.indeterminate {
-  pointer-events: none;
-}
-
-.indeterminate .inner-wrapper {
+.transitioning .inner-wrapper {
   filter: drop-shadow(0 0 6px rgb(255 255 255 / 55%));
   transition-duration: 0.7s;
 }
@@ -360,53 +367,30 @@ const handleClick = (event: MouseEvent) => {
   transition: opacity 0.25s ease;
 }
 
-.indeterminate .thumb,
-.indeterminate .buffered {
-  opacity: 0;
+.transitioning .thumb {
+  opacity: 0.85;
+  transition-duration: 0.7s;
 }
 
-/* The full bar of the transition state; idle and invisible otherwise. */
-.flow {
+/* The outgoing song's fill at the hand-off. Highlighted like the active thumb, it fades out over
+   the next song's segment, which is bright underneath and so is what stays behind; the segment
+   then flashes and settles to its resting 0.4. One timeline for both, so the ghost's end clears
+   the state only once the thumb has settled. */
+.ghost {
   position: absolute;
   inset: 0;
-  opacity: 0;
-  /* A bright band on the filled bar, tiled so the loop has no seam; moving the background one
-     tile per cycle carries it forward at a constant speed. */
-  background-image: linear-gradient(
-    90deg,
-    rgb(255 255 255 / 60%) 0%,
-    rgb(255 255 255 / 60%) 30%,
-    rgb(255 255 255 / 100%) 50%,
-    rgb(255 255 255 / 60%) 70%,
-    rgb(255 255 255 / 60%) 100%
-  );
-  background-size: 200% 100%;
+  background-color: white;
+  transform-origin: left center;
+  animation: slider-leave-ghost 1.5s forwards;
 }
 
-.indeterminate .flow {
-  opacity: 1;
-  transition: opacity 0.25s ease;
-  animation: slider-flow 2s linear infinite;
-}
-
-/* One timeline for both, so the fade's end clears the state only once the thumb has settled. */
-.leaving .flow {
-  opacity: 1;
-  /* The light keeps running: an animation still listed carries on rather than restarting. */
-  animation:
-    slider-flow 2s linear infinite,
-    slider-leave-flow 1.5s forwards;
-}
-
-/* Bright under the fading bar, so the next song's segment is what stays behind; then a flash, then
-   back to the resting 0.4. A stale full-length thumb for a frame or two is hidden by the bar. */
 .leaving .thumb {
   animation: slider-leave-thumb 1.5s forwards;
 }
 
-@keyframes slider-leave-flow {
+@keyframes slider-leave-ghost {
   0% {
-    opacity: 1;
+    opacity: 0.85;
     animation-timing-function: ease;
   }
 
@@ -419,7 +403,7 @@ const handleClick = (event: MouseEvent) => {
 @keyframes slider-leave-thumb {
   0%,
   47% {
-    opacity: 0.9;
+    opacity: 0.85;
     animation-timing-function: ease-out;
   }
 
@@ -433,25 +417,7 @@ const handleClick = (event: MouseEvent) => {
   }
 }
 
-@keyframes slider-flow {
-  from {
-    background-position: 200% 0;
-  }
-
-  to {
-    background-position: 0 0;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .indeterminate .flow {
-    animation: none;
-  }
-
-  .leaving .flow {
-    animation: slider-leave-flow 1.5s forwards;
-  }
-
   .leaving .thumb {
     animation: none;
   }

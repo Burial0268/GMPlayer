@@ -6,28 +6,38 @@ import { getSongPlayingTime } from "@/utils/timeTools";
 // own time: waiting for the audio overlap itself started it too late to read as a lead-in.
 const LEAD_SECONDS = 15;
 
+/** Where the player bar is in an AutoMix transition. */
+export type AutoMixBarPhase = "none" | "active" | "committed";
+
 /**
- * Whether the Apple Music style AutoMix transition state is on: the progress bar fills and runs a
- * forward light, the quality tag gives way to "过渡" and the remaining time reads ∞.
+ * The AutoMix transition state of the player bar: `active` highlights it (the bar keeps moving and
+ * stays seekable) and swaps the quality tag for "过渡"; `committed` is the incoming song taking
+ * over, which the bar answers with its hand-off animation. A transition that is cancelled (a seek,
+ * a failure) goes straight back to `none`, so nothing announces a song change that did not happen.
  *
- * It starts once a transition is scheduled, its incoming audio is buffered and the outgoing song is
- * within `LEAD_SECONDS` of its crossfade, and ends when the store commits the incoming song
- * (`finishing`) — after the mix, on both paths — which is the same instant the title and cover
- * switch. Waiting for the buffer keeps a mix that is about to fail from lighting up first.
+ * `active` starts once a transition is scheduled, its incoming audio is buffered and the outgoing
+ * song is within `LEAD_SECONDS` of its crossfade; `committed` lasts the finishing hold, which on
+ * both paths begins at the instant the title and cover switch.
  */
-export function useAutoMixTransition() {
+export function useAutoMixBarPhase() {
   const music = musicStore();
-  return computed(() => {
+  return computed<AutoMixBarPhase>(() => {
     const { phase, incomingSongId, incomingReady, crossfadeStartTime } = music.autoMixState;
-    if (phase === "crossfading") return true;
-    return (
+    if (phase === "crossfading") return "active";
+    if (phase === "finishing") return "committed";
+    const leadIn =
       phase === "waiting" &&
       incomingReady &&
       incomingSongId !== null &&
       crossfadeStartTime > 0 &&
-      (music.getPlaySongTime.currentTime || 0) >= crossfadeStartTime - LEAD_SECONDS
-    );
+      (music.getPlaySongTime.currentTime || 0) >= crossfadeStartTime - LEAD_SECONDS;
+    return leadIn ? "active" : "none";
   });
+}
+
+/** Whether the transition state is on: the bar is highlighted and the tag reads "过渡". */
+export function useAutoMixTransition(phase: Ref<AutoMixBarPhase> = useAutoMixBarPhase()) {
+  return computed(() => phase.value === "active");
 }
 
 const ELAPSED_TICK_MS = 250;

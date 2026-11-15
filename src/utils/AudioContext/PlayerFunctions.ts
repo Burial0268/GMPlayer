@@ -1377,6 +1377,10 @@ export const setVolume = (sound: ISound | undefined, volume: number): void => {
  */
 export const setSeek = (sound: ISound | undefined, seek: number): void => {
   const music = musicStore();
+  // First, so the target is resolved after an uncommitted web mix has reverted to the outgoing
+  // sound — the one the bar was showing.
+  const autoMix = getAutoMixEngine();
+  autoMix.interruptForSeek();
   const target = resolveSeekTarget(sound);
   if (!target) {
     if (IS_DEV) {
@@ -1396,11 +1400,6 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
     soundDuration,
     music.getPlaySongPlaybackCurrentTime(),
   );
-  // Cancel AutoMix crossfade on seek
-  const autoMix = getAutoMixEngine();
-  if (autoMix.isCrossfading()) {
-    autoMix.cancelCrossfade();
-  }
   target.seekTo(currentTime);
   // The lyric clock runs behind the playback clock on mobile; pin it at the
   // target before the store update below recomputes the lyric index from it.

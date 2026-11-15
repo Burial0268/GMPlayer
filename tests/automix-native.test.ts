@@ -49,6 +49,7 @@ function environment(deferResolution = false) {
     setPlaySongLyric(lyric: unknown) {
       shownLyrics.push(lyric);
     },
+    songLyric: null as unknown,
   };
   const prefetched: number[] = [];
   const cachedLyrics = new Map<number, unknown>();
@@ -197,9 +198,38 @@ test("the incoming lyrics are prefetched with the plan and shown at the commit",
   const lyric = { lrc: [{ time: 0, content: "B" }] };
   env.cachedLyrics.set(2, lyric);
   env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.deepEqual(env.shownLyrics, [null], "the outgoing lyrics leave once B is audible");
   env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
   assert.deepEqual(env.commits, [1]);
-  assert.deepEqual(env.shownLyrics, [lyric], "no empty panel in between");
+  assert.deepEqual(env.shownLyrics, [null, lyric]);
+});
+
+test("a transition called off after B entered puts the outgoing lyrics back", () => {
+  const env = environment();
+  const outgoing = { lrc: [{ time: 0, content: "A" }] };
+  env.music.songLyric = outgoing;
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  env.event("automixError", { error: "AutoMix incoming audio missed its scheduled beat" });
+  assert.equal(env.state.getState(), "idle");
+  assert.deepEqual(env.shownLyrics, [null, outgoing]);
+});
+
+test("a seek interrupts an uncommitted transition but not a committed one", () => {
+  const env = environment();
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  env.state.interruptForSeek();
+  assert.equal(env.state.getState(), "idle");
+  assert.ok(env.sent.some((msg: any) => msg.type === "automixCancel"));
+
+  const committed = environment();
+  committed.event("automixCrossfadeStarted", { duration: 8, transitionId: committed.transitionId });
+  committed.event("automixCrossfadeComplete", {
+    currentIndex: 1,
+    transitionId: committed.transitionId,
+  });
+  committed.state.interruptForSeek();
+  assert.equal(committed.state.getState(), "finishing", "the seek belongs to the new song");
+  assert.ok(!committed.sent.some((msg: any) => msg.type === "automixCancel"));
 });
 
 test("pausing just before a native cue preserves it until playback reaches it after resume", () => {

@@ -166,6 +166,9 @@ export class TransitionStateMachine {
     null;
   private _transitionSeq: number = 0;
   private _activeTransition: ActiveAutoMixTransition | null = null;
+  // The outgoing song's lyrics, taken off screen once the incoming audio enters (they would keep
+  // scrolling through the mix) and put back if the transition is called off before its commit.
+  private _heldLyric: unknown = null;
 
   // Pause state during crossfade
   private _isPaused: boolean = false;
@@ -223,6 +226,18 @@ export class TransitionStateMachine {
     return this._state === "crossfading" || this._state === "finishing";
   }
 
+  /**
+   * A seek ends a transition that has not committed: the bar shows the outgoing song, so that is
+   * the song the seek is about, and on the web path the incoming sound is already current until
+   * the cancel reverts it. Called before the seek target is resolved. After the commit the seek
+   * belongs to the incoming song, and cancelling then would revert it.
+   */
+  interruptForSeek(): void {
+    if (this._state === "analyzing" || this._state === "waiting" || this._state === "crossfading") {
+      this.cancelCrossfade();
+    }
+  }
+
   isHandoffActive(): boolean {
     return (
       this.isCrossfading() ||
@@ -274,7 +289,8 @@ export class TransitionStateMachine {
 
   /** The committed song's prefetched lyrics if they landed, else an empty panel until they do. */
   private _showCommittedLyric(music: any): void {
-    const song = music.persistData?.playlists?.[music.persistData.playSongIndex];
+    this._heldLyric = null;
+    const song = this._currentStoreSong(music);
     const lyric = song && !song.local?.uri ? lyricFetcher.peek(Number(song.id)) : null;
     if (lyric) music.setPlaySongLyric(lyric);
     else music.resetSongLyricState();
@@ -350,7 +366,33 @@ export class TransitionStateMachine {
 
   private _clearTransition(id?: number): void {
     if (id !== undefined && !this._isTransitionActive(id)) return;
+    const active = this._activeTransition;
     this._activeTransition = null;
+    // Called off before its commit: the outgoing song plays on, so its lyrics come back — unless
+    // the store has already moved to another song, whose own lyrics are on their way.
+    const held = this._heldLyric;
+    this._heldLyric = null;
+    const music = this._musicStoreRef;
+    if (
+      held &&
+      music &&
+      active &&
+      this._getSongId(this._currentStoreSong(music)) === active.fromSongId
+    ) {
+      music.setPlaySongLyric(held);
+    }
+  }
+
+  private _currentStoreSong(music: any): any {
+    return music.persistData?.playlists?.[music.persistData.playSongIndex];
+  }
+
+  /** The incoming audio has entered: the outgoing song's lyrics leave the screen until the commit. */
+  private _holdOutgoingLyric(): void {
+    const music = this._musicStoreRef;
+    if (!music || this._heldLyric) return;
+    this._heldLyric = music.songLyric ?? null;
+    music.resetSongLyricState();
   }
 
   // ─── Store loading (lazy, one-time) ────────────────────────────
@@ -758,6 +800,7 @@ export class TransitionStateMachine {
         }
         this._crossfadeDuration = event.data.duration || this._crossfadeDuration;
         this._state = "crossfading";
+        this._holdOutgoingLyric();
         this._updateStoreState();
         break;
       case "automixCrossfadeComplete":
@@ -1747,6 +1790,7 @@ export class TransitionStateMachine {
     SoundManager.beginTransition(incomingSound, nextSong.id);
     incomingSound.play();
     this._pendingWebCommit = { transitionId, sound: incomingSound, nextIndex };
+    this._holdOutgoingLyric();
 
     const volume = music.persistData.playVolume;
     const params = this._finalizeCrossfadeParams(volume, outgoingSound);

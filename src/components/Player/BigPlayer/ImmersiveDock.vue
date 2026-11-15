@@ -50,12 +50,12 @@
           :min="0"
           :max="music.getPlaySongTime.duration || 1"
           :is-playing="music.getPlayState"
-          :indeterminate="autoMixTransitioning"
+          :transition-phase="autoMixBarPhase"
           @update:value="handleProgressSeek"
         />
         <div class="dock-time">
           <span>{{ elapsedLabel }}</span>
-          <span>{{ autoMixTransitioning ? "∞" : remainingTime }}</span>
+          <span>{{ remainingTime }}</span>
         </div>
       </div>
 
@@ -162,7 +162,11 @@ import type { LocationQueryRaw } from "vue-router";
 import { musicStore, settingStore, userStore } from "@/store";
 // Aliased: this file already exposes a `coverUrl` computed of its own.
 import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
-import { useAutoMixElapsed, useAutoMixTransition } from "@/composables/useAutoMixTransition";
+import {
+  useAutoMixBarPhase,
+  useAutoMixElapsed,
+  useAutoMixTransition,
+} from "@/composables/useAutoMixTransition";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import BouncingSlider from "../BouncingSlider.vue";
@@ -181,7 +185,8 @@ const emit = defineEmits<{
 
 const navigation = useLayerNavigation();
 const music = musicStore();
-const autoMixTransitioning = useAutoMixTransition();
+const autoMixBarPhase = useAutoMixBarPhase();
+const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 const user = userStore();
 const setting = settingStore();

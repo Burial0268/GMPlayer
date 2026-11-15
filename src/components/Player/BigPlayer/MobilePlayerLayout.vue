@@ -190,7 +190,7 @@
                       :max="music.getPlaySongTime.duration || 1"
                       :is-playing="music.getPlayState"
                       :buffered="music.bufferedTime"
-                      :indeterminate="autoMixTransitioning"
+                      :transition-phase="autoMixBarPhase"
                       @update:value="handleProgressSeek"
                     />
                     <div class="time-display">
@@ -202,7 +202,9 @@
                             key="automix"
                             class="quality-badge automix-tag"
                           >
-                            {{ $t("player.autoMixTransition") }}
+                            <span class="automix-tag-text">
+                              {{ $t("player.autoMixTransition") }}
+                            </span>
                           </span>
                           <span v-else key="quality" class="quality-badge">
                             <n-icon :component="IconLossless" />
@@ -210,7 +212,7 @@
                           </span>
                         </Transition>
                       </span>
-                      <span>{{ autoMixTransitioning ? "∞" : `-${remainingTime}` }}</span>
+                      <span>-{{ remainingTime }}</span>
                     </div>
                   </div>
                   <!-- 控制按钮 + 音量 -->
@@ -344,7 +346,11 @@ import OutputDeviceButton from "./OutputDeviceButton.vue";
 import PlayerQueueList from "./PlayerQueueList.vue";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { useQualityText } from "@/composables/useQualityText";
-import { useAutoMixElapsed, useAutoMixTransition } from "@/composables/useAutoMixTransition";
+import {
+  useAutoMixBarPhase,
+  useAutoMixElapsed,
+  useAutoMixTransition,
+} from "@/composables/useAutoMixTransition";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 type Artist = { name: string };
@@ -432,7 +438,8 @@ const queueTouch = ref<{
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
 const qualityText = useQualityText();
-const autoMixTransitioning = useAutoMixTransition();
+const autoMixBarPhase = useAutoMixBarPhase();
+const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 // The output menu drives the native backend; the web player has no device list to offer.
 const nativeOutput = isTauri();

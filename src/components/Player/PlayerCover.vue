@@ -102,7 +102,7 @@
             :max="music.getPlaySongTime.duration || 1"
             :is-playing="music.getPlayState"
             :buffered="music.bufferedTime"
-            :indeterminate="autoMixTransitioning"
+            :transition-phase="autoMixBarPhase"
             @update:value="handleProgressSeek"
           />
         </div>
@@ -113,7 +113,7 @@
           <div v-if="qualityText || autoMixTransitioning" class="automix-tag-slot">
             <Transition name="automix-tag-swap">
               <div v-if="autoMixTransitioning" key="automix" class="quality-badge automix-tag">
-                {{ $t("player.autoMixTransition") }}
+                <span class="automix-tag-text">{{ $t("player.autoMixTransition") }}</span>
               </div>
               <div v-else key="quality" class="quality-badge">
                 <n-icon :component="IconLossless" />
@@ -121,7 +121,7 @@
               </div>
             </Transition>
           </div>
-          <span class="time-text">{{ autoMixTransitioning ? "∞" : remainingTime }}</span>
+          <span class="time-text">{{ remainingTime }}</span>
         </div>
       </div>
       <div class="buttons">
@@ -205,7 +205,11 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 import { useQualityText } from "@/composables/useQualityText";
-import { useAutoMixElapsed, useAutoMixTransition } from "@/composables/useAutoMixTransition";
+import {
+  useAutoMixBarPhase,
+  useAutoMixElapsed,
+  useAutoMixTransition,
+} from "@/composables/useAutoMixTransition";
 import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
@@ -297,7 +301,8 @@ const handleMoreSelect = (key) => {
 };
 
 const qualityText = useQualityText();
-const autoMixTransitioning = useAutoMixTransition();
+const autoMixBarPhase = useAutoMixBarPhase();
+const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 
 // 剩余时间（负数格式）
