@@ -231,6 +231,24 @@ function generateEntry() {
     "util.generateDeviceId = installDeviceId;",
     "globalThis.deviceId = installDeviceId();",
     "",
+    // The desktop client's clientSign, which the NCBL scrobble carries and
+    // upstream leaves empty. Kept per install like the deviceId. Upstream's own
+    // generator, but always from a random MAC: the real one is the user's
+    // hardware identity and nothing here needs it to be genuine.
+    'const ClientSign = require("./util/client-sign.js");',
+    "const installClientSign = () => {",
+    "  let sign = globalThis.__ncm_host.stateRead('client_sign');",
+    "  if (!sign) {",
+    "    sign = ClientSign.generateWithCustomDeviceId(",
+    "      ClientSign.generateRandomMac(),",
+    "      ClientSign.generateRandomDeviceId()",
+    "    );",
+    "    globalThis.__ncm_host.stateWrite('client_sign', sign);",
+    "  }",
+    "  return sign;",
+    "};",
+    "const clientSign = installClientSign();",
+    "",
     // Endpoint modules load on first call, never at startup. Two reasons:
     //
     //  1. Some modules run code at import time (`voice_upload` does
@@ -299,8 +317,10 @@ function generateEntry() {
     "    const cookie =",
     "      typeof q.cookie === 'string' ? cookieToJson(q.cookie) : q.cookie || {};",
     // Modules that read the cookie raw (`scrobble_v1`'s NCBL context) never pass
-    // through `request.js`, which is what falls back to the global id.
+    // through `request.js`, which is what falls back to the global id, and
+    // nothing upstream supplies a clientSign at all.
     "    if (!cookie.deviceId) cookie.deviceId = globalThis.deviceId;",
+    "    if (!cookie.clientSign) cookie.clientSign = clientSign;",
     "    try {",
     "      // load() is inside the try: a module that throws while being",
     "      // evaluated (an unavailable dependency at import time) must report",

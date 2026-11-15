@@ -40,6 +40,11 @@ rand = "0.8"
 getrandom = "0.2"
 
 flate2 = "1"
+# zstd for the NCBL scrobble payload, which the desktop client compresses with
+# zstd and whose header carries no codec flag: a gzip body is stored by the
+# upload endpoint and then never counted. Default features (legacy formats,
+# dictionary builder) are not needed.
+zstd = { version = "0.13", default-features = false }
 
 # Async HTTP. reqwest/hyper is already in the binary via tauri-plugin-http and
 # tauri itself, so this costs nothing in size — and unlike a blocking client it

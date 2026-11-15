@@ -361,6 +361,17 @@ fn op_gzip<'js>(ctx: Ctx<'js>, v: Value<'js>) -> JsResult<TypedArray<'js, u8>> {
     }
 }
 
+/// Node's `zstdCompressSync` default level.
+const ZSTD_LEVEL: i32 = 3;
+
+fn op_zstd<'js>(ctx: Ctx<'js>, v: Value<'js>) -> JsResult<TypedArray<'js, u8>> {
+    let b = bytes_in(&ctx, &v, "zstd")?;
+    match zstd::bulk::compress(&b, ZSTD_LEVEL) {
+        Ok(out) => bytes_out(&ctx, &out),
+        Err(_) => throw(&ctx, "zstd: compression failed"),
+    }
+}
+
 fn op_inflate<'js>(ctx: Ctx<'js>, v: Value<'js>) -> JsResult<TypedArray<'js, u8>> {
     use std::io::Read;
     let b = bytes_in(&ctx, &v, "inflate")?;
@@ -571,6 +582,7 @@ pub(crate) fn install(
 
     host.set("gunzip", Func::from(op_gunzip))?;
     host.set("gzip", Func::from(op_gzip))?;
+    host.set("zstd", Func::from(op_zstd))?;
     host.set("inflate", Func::from(op_inflate))?;
     host.set("deflate", Func::from(op_deflate))?;
 

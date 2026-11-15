@@ -44,12 +44,14 @@ pub struct StateStore {
 /// Keys the protocol layer is allowed to persist. An allowlist rather than a
 /// sanitizer: `node-fs.js` derives the key from a path basename, and this is
 /// the boundary that keeps a surprising path from becoming a file write.
-const PERSISTED: [&str; 4] = [
+const PERSISTED: [&str; 5] = [
     "anonymous_token",
     "xeapi_public_key",
     BOOTSTRAP_VERSION,
-    // This install's Netease deviceId; see the device id note in `build-ncm-protocol.mjs`.
+    // This install's Netease deviceId and clientSign; see the device id note in
+    // `build-ncm-protocol.mjs`.
     "device_id",
+    "client_sign",
 ];
 
 impl StateStore {

@@ -796,8 +796,8 @@ mod tests {
             .expect("eval failed")
     }
 
-    /// The deviceId on the wire, from every cookie a stubbed transport saw.
-    async fn device_ids_sent(core: &NcmCore) -> Vec<String> {
+    /// Every Cookie header a stubbed transport saw for an eapi call and a scrobble.
+    async fn cookies_sent(core: &NcmCore) -> Vec<String> {
         eval(
             core,
             r#"(()=>{
@@ -818,18 +818,15 @@ mod tests {
                 r#"{"id":"1","time":30,"cookie":"MUSIC_U=x; __csrf=y"}"#,
             )
             .await;
-        let cookies: Vec<String> =
-            serde_json::from_str(&eval(core, "JSON.stringify(globalThis.__cookies)").await)
-                .unwrap();
-        cookies
-            .iter()
-            .map(|c| {
-                c.split("; ")
-                    .find_map(|kv| kv.strip_prefix("deviceId="))
-                    .unwrap_or("<missing>")
-                    .to_string()
-            })
-            .collect()
+        serde_json::from_str(&eval(core, "JSON.stringify(globalThis.__cookies)").await).unwrap()
+    }
+
+    fn cookie_field(cookie: &str, key: &str) -> String {
+        cookie
+            .split("; ")
+            .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='))
+            .unwrap_or("<missing>")
+            .to_string()
     }
 
     /// Upstream keeps the deviceId only in memory, minted by a handshake that runs once per
@@ -840,18 +837,81 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("ncm-device-id-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
-        let first = device_ids_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
-        let again = device_ids_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
+        let first = cookies_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
+        let again = cookies_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
         let _ = std::fs::remove_dir_all(&dir);
 
         assert_eq!(first.len(), 2, "{first:?}");
-        let id = &first[0];
+        let ids: Vec<String> = first.iter().map(|c| cookie_field(c, "deviceId")).collect();
+        let id = &ids[0];
         assert!(
             id.len() == 52 && id.chars().all(|c| c.is_ascii_hexdigit()),
             "not a minted deviceId: {id:?}"
         );
-        assert!(first.iter().all(|sent| sent == id), "{first:?}");
-        assert_eq!(again, first, "a restart must keep the device");
+        assert!(ids.iter().all(|sent| sent == id), "{ids:?}");
+
+        // The NCBL scrobble's clientSign: `MAC@@@HEX(id)@@@@@@sha256`, upstream's shape.
+        let sign = cookie_field(&first[1], "clientSign");
+        let (info, hash) = sign.split_once("@@@@@@").expect("no clientSign");
+        let (mac, _) = info.split_once("@@@").expect("malformed clientSign");
+        assert_eq!(mac.len(), 17, "not a MAC: {mac:?}");
+        assert_eq!(hash.len(), 64, "not a sha256: {hash:?}");
+
+        for key in ["deviceId", "clientSign"] {
+            assert_eq!(
+                cookie_field(&again[1], key),
+                cookie_field(&first[1], key),
+                "a restart must keep {key}"
+            );
+        }
+    }
+
+    /// The desktop client compresses the NCBL body with zstd and the header has no codec flag,
+    /// so the gzip fallback `util/ncbl.js` takes without `zstdCompressSync` was stored by the
+    /// endpoint and never counted.
+    #[tokio::test]
+    async fn the_ncbl_body_is_compressed_with_zstd() {
+        let core = NcmCore::offline().await.expect("isolate");
+        eval(
+            &core,
+            r#"(()=>{
+              const h = globalThis.__ncm_host;
+              globalThis.__codecs = [];
+              for (const name of ["zstd", "gzip"]) {
+                const op = h[name];
+                h[name] = (bytes) => (globalThis.__codecs.push(name), op(bytes));
+              }
+              h.httpRequest = (cfg) => {
+                const name = /filename="([^"]+)"/.exec(Buffer.from(cfg.body.subarray(0, 400)).toString("latin1"));
+                const body = JSON.stringify({ code: 200, data: { successfiles: [name ? name[1] : ""] } });
+                return Promise.resolve({ status: 200, headers: {}, body: Buffer.from(body) });
+              };
+              return "ok";
+            })()"#,
+        )
+        .await;
+        let out = core
+            .call(
+                "scrobble_v1",
+                r#"{"id":"347230","time":30,"total":268,"cookie":"MUSIC_U=x"}"#,
+            )
+            .await
+            .expect("call failed");
+        assert!(out.contains(r#""code":200"#), "scrobble_v1 failed: {out}");
+        assert_eq!(
+            eval(&core, "JSON.stringify(globalThis.__codecs)").await,
+            r#"["zstd","zstd"]"#,
+            "PLV and PLD bodies"
+        );
+        // A real zstd frame, not a passthrough.
+        assert_eq!(
+            eval(
+                &core,
+                r#"Array.from(globalThis.__ncm_host.zstd(Buffer.from("x".repeat(64))).subarray(0, 4)).join(",")"#
+            )
+            .await,
+            "40,181,47,253"
+        );
     }
 
     /// The form encoding produced by the `URLSearchParams` shim goes on the
