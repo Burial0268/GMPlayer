@@ -185,10 +185,13 @@ export class TransitionStateMachine {
     null;
   private _transitionSeq: number = 0;
   private _activeTransition: ActiveAutoMixTransition | null = null;
-  // The outgoing song's lyrics are hidden once the incoming audio enters, so they do not scroll on
+  // The outgoing song's lyric, hidden once the incoming audio enters so it does not scroll on
   // through the mix. Hidden rather than emptied: an empty lyric would switch the player to its
-  // no-lyrics layout for the length of the mix.
-  private _outgoingLyricHidden: boolean = false;
+  // no-lyrics layout. It stays hidden for as long as the store holds this very lyric, so past the
+  // commit it gives way exactly when the next song's is set, however long that takes.
+  private _hiddenLyric: object | null = null;
+  // Committed: the outgoing lyric must not come back, even if the transition is cleared.
+  private _hiddenUntilReplaced: boolean = false;
 
   // Pause state during crossfade
   private _isPaused: boolean = false;
@@ -309,13 +312,21 @@ export class TransitionStateMachine {
     return id;
   }
 
-  /** The committed song's prefetched lyrics if they landed, else an empty panel until they do. */
+  /**
+   * The committed song's prefetched lyrics if they landed. Otherwise (a slow fetch, a local file)
+   * the outgoing lyric stays hidden in place until the player sets the committed song's.
+   */
   private _showCommittedLyric(music: any): void {
-    this._outgoingLyricHidden = false;
     const song = this._currentStoreSong(music);
     const lyric = song && !song.local?.uri ? lyricFetcher.peek(Number(song.id)) : null;
-    if (lyric) music.setPlaySongLyric(lyric);
-    else music.resetSongLyricState();
+    if (lyric) {
+      music.setPlaySongLyric(lyric);
+      this._hiddenLyric = null;
+    } else if (this._hiddenLyric) {
+      this._hiddenUntilReplaced = true;
+    } else {
+      music.resetSongLyricState();
+    }
   }
 
   private _getSongId(song: any): number | null {
@@ -390,8 +401,8 @@ export class TransitionStateMachine {
     if (id !== undefined && !this._isTransitionActive(id)) return;
     this._activeTransition = null;
     // Called off before its commit: the outgoing song plays on, and its lyrics never left.
-    if (this._outgoingLyricHidden) {
-      this._outgoingLyricHidden = false;
+    if (this._hiddenLyric && !this._hiddenUntilReplaced) {
+      this._hiddenLyric = null;
       this._updateStoreState();
     }
   }
@@ -402,8 +413,9 @@ export class TransitionStateMachine {
 
   /** The incoming audio has entered: the outgoing song's lyrics leave the screen until the commit. */
   private _hideOutgoingLyric(): void {
-    if (this._outgoingLyricHidden) return;
-    this._outgoingLyricHidden = true;
+    if (this._hiddenLyric && !this._hiddenUntilReplaced) return;
+    this._hiddenLyric = this._musicStoreRef?.songLyric ?? null;
+    this._hiddenUntilReplaced = false;
     this._updateStoreState();
   }
 
@@ -2488,7 +2500,7 @@ export class TransitionStateMachine {
       incomingSongId,
       incomingReady: activeTransition?.mode !== "native" || this._nativeIncomingReady,
       leadInStart,
-      hideLyrics: this._outgoingLyricHidden,
+      hiddenLyric: this._hiddenLyric,
     };
   }
 

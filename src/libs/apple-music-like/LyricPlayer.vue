@@ -1,6 +1,6 @@
 <template>
   <div
-    :class="['lyric-player-wrapper', { 'outgoing-hidden': music.autoMixState?.hideLyrics }]"
+    :class="['lyric-player-wrapper', { 'outgoing-hidden': music.autoMixHidesLyrics }]"
     :style="lyricStyles"
     ref="playerEl"
     @wheel.self="passToPlayer"

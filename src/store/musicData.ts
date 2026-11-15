@@ -1,5 +1,5 @@
 import { defineStore, acceptHMRUpdate, storeToRefs } from "pinia";
-import { nextTick, h } from "vue";
+import { nextTick, h, toRaw } from "vue";
 import { getSongTime, getDailySongsDate } from "@/utils/timeTools";
 import { getPersonalFm, setFmTrash } from "@/api/home";
 import { getLikelist, setLikeSong } from "@/api/user";
@@ -123,9 +123,9 @@ interface AutoMixStateData {
   // Where the transition state starts, in the outgoing song's seconds: its outro, bounded by the
   // crossfade. 0 while nothing is scheduled.
   leadInStart: number;
-  // The incoming song is audible in the mix: the outgoing song's lyrics are hidden, not emptied,
-  // so the player keeps its lyric layout.
-  hideLyrics: boolean;
+  // The incoming song is audible in the mix: the outgoing song's lyric, hidden rather than emptied
+  // so the player keeps its lyric layout. Read it through `autoMixHidesLyrics`.
+  hiddenLyric: object | null;
 }
 
 interface MusicDataState {
@@ -219,7 +219,7 @@ const useMusicDataStore = defineStore("musicData", {
         incomingSongId: null,
         incomingReady: false,
         leadInStart: 0,
-        hideLyrics: false,
+        hiddenLyric: null,
       },
       playSongTime: playSongTime as unknown as PlaySongTime,
       persistData: persistedStore.persistData,
@@ -273,6 +273,11 @@ const useMusicDataStore = defineStore("musicData", {
     },
     getPlaySongTime(state): PlaySongTime {
       return state.playSongTime;
+    },
+    /** An AutoMix hides the lyrics on screen: those of the song it is mixing out of. */
+    autoMixHidesLyrics(state): boolean {
+      const hidden = state.autoMixState.hiddenLyric;
+      return hidden !== null && toRaw(hidden) === toRaw(state.songLyric);
     },
     getPlayState(state): boolean {
       return state.playState;

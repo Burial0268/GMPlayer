@@ -43,13 +43,16 @@ function environment(deferResolution = false) {
       commits.push(index);
       this.persistData.playSongIndex = index;
     },
+    songLyric: { lrc: [{ time: 0, content: "A" }] } as unknown,
     resetSongLyricState() {
       shownLyrics.push(null);
+      this.songLyric = { lrc: [] };
     },
     setPlaySongLyric(lyric: unknown) {
       shownLyrics.push(lyric);
+      this.songLyric = lyric;
     },
-  };
+  } as any;
   const prefetched: number[] = [];
   const cachedLyrics = new Map<number, unknown>();
   const shownLyrics: unknown[] = [];
@@ -141,6 +144,11 @@ function environment(deferResolution = false) {
     prefetched,
     cachedLyrics,
     shownLyrics,
+    /** Mirrors the store's `autoMixHidesLyrics`. */
+    hidesLyrics() {
+      const hidden = music.autoMixState?.hiddenLyric ?? null;
+      return hidden !== null && hidden === music.songLyric;
+    },
     resolveNext() {
       resolutions.shift()?.({ url: "https://example.test/next.mp3", source: "test" });
     },
@@ -197,25 +205,35 @@ test("the incoming lyrics are prefetched with the plan and shown at the commit",
   const lyric = { lrc: [{ time: 0, content: "B" }] };
   env.cachedLyrics.set(2, lyric);
   env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
-  assert.equal(
-    env.music.autoMixState.hideLyrics,
-    true,
-    "the outgoing lyrics leave once B is audible",
-  );
+  assert.equal(env.hidesLyrics(), true, "the outgoing lyrics leave once B is audible");
   assert.deepEqual(env.shownLyrics, [], "hidden, not emptied: the layout keeps its lyrics");
   env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
   assert.deepEqual(env.commits, [1]);
   assert.deepEqual(env.shownLyrics, [lyric]);
-  assert.equal(env.music.autoMixState.hideLyrics, false);
+  assert.equal(env.hidesLyrics(), false);
+});
+
+test("lyrics not cached at the commit keep the outgoing ones hidden until the player sets B's", () => {
+  const env = environment();
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
+  assert.deepEqual(env.commits, [1]);
+  assert.deepEqual(env.shownLyrics, [], "not emptied: the lyric layout holds");
+  assert.equal(env.hidesLyrics(), true);
+  env.state.cancelCrossfade();
+  assert.equal(env.hidesLyrics(), true, "a cleared transition must not bring A's back under B");
+  const lyric = { lrc: [{ time: 0, content: "B" }] };
+  env.music.setPlaySongLyric(lyric);
+  assert.equal(env.hidesLyrics(), false, "B's lyrics show as soon as they are set");
 });
 
 test("a transition called off after B entered shows the outgoing lyrics again", () => {
   const env = environment();
   env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
-  assert.equal(env.music.autoMixState.hideLyrics, true);
+  assert.equal(env.hidesLyrics(), true);
   env.event("automixError", { error: "AutoMix incoming audio missed its scheduled beat" });
   assert.equal(env.state.getState(), "idle");
-  assert.equal(env.music.autoMixState.hideLyrics, false);
+  assert.equal(env.hidesLyrics(), false);
   assert.deepEqual(env.shownLyrics, [], "they never left the store");
 });
 
@@ -355,12 +373,12 @@ test("a backend seek cancellation allows the same track to prepare again", () =>
 test("a backend seek cancelling a running crossfade returns to the outgoing song", () => {
   const env = environment();
   env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
-  assert.equal(env.music.autoMixState.hideLyrics, true);
+  assert.equal(env.hidesLyrics(), true);
   env.event("automixStatus", {
     status: { state: "idle", enabled: true, currentIndex: 0, transitionId: env.transitionId },
   });
   assert.equal(env.state.getState(), "idle", "the OS seek cancelled the mix before its handoff");
-  assert.equal(env.music.autoMixState.hideLyrics, false);
+  assert.equal(env.hidesLyrics(), false);
   assert.deepEqual(env.commits, []);
   assert.ok(!env.sent.some((msg: any) => msg.type === "automixCancel"));
 });

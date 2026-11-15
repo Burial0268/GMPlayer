@@ -398,7 +398,7 @@ const MINI_OPEN_FLING_VELOCITY = -0.42;
 const miniLyricLine = computed(() => {
   const lyric = music.getPlaySongLyric;
   const index = music.getPlaySongLyricIndex;
-  if (!lyric?.lrc?.length || index === -1 || music.autoMixState.hideLyrics) return null;
+  if (!lyric?.lrc?.length || index === -1 || music.autoMixHidesLyrics) return null;
 
   // 逐字与否按整首歌定：index 此时索引的就是 yrc，不能退回按同一个 index 去读 lrc
   if (setting.showYrc && lyric.hasYrc) {
@@ -1145,7 +1145,7 @@ watch(
 );
 
 // Tauri: broadcast lyric data when songLyric changes, or when an AutoMix hides the outgoing lyrics
-watch([() => music.songLyric, () => music.autoMixState?.hideLyrics], () => {
+watch([() => music.songLyric, () => music.autoMixHidesLyrics], () => {
   broadcastPlayerLyrics(true);
   broadcastPlayerTime(true);
 });
