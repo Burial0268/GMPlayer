@@ -1,6 +1,6 @@
 <template>
   <Motion
-    :class="['bouncing-slider', { indeterminate }]"
+    :class="['bouncing-slider', { indeterminate, leaving }]"
     :style="{ x: bounceXSpring }"
     :onPanStart="handlePanStart"
     :onPan="handlePan"
@@ -20,7 +20,12 @@
           :style="{ transform: `scaleX(${bufferedScale})` }"
         />
         <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
-        <div class="flow" aria-hidden="true" />
+        <div
+          class="flow"
+          aria-hidden="true"
+          @animationend="leaving = false"
+          @animationcancel="leaving = false"
+        />
       </Motion>
     </div>
     <slot name="after-icon" />
@@ -113,6 +118,27 @@ const clipPath = useMotionTemplate`inset(${insetMv}px 0px round 100px)`;
 
 const bounceXSpring = useSpring(0, { damping: 12, stiffness: 300 });
 
+// Leaving the transition the full bar runs on out to the right, uncovering the next song's
+// segment, instead of the fill shrinking back from the end. Cleared when the run-out ends.
+const leaving = ref(false);
+
+const progressOf = (time: number) => {
+  const range = props.max - props.min;
+  return range > 0 ? Math.max(0, Math.min(1, (time - props.min) / range)) : 0;
+};
+
+watch(
+  () => props.indeterminate,
+  (now, was) => {
+    leaving.value = was && !now;
+    if (!leaving.value) return;
+    // The jump to the new song is not a seek: show where it is, under the leaving bar.
+    seekAnimControl?.stop();
+    seekAnimControl = null;
+    progressMv.set(progressOf(localTime));
+  },
+);
+
 // Animate progress to a target value with bezier easing (for seeks)
 const animateProgressTo = (p: number) => {
   seekAnimControl?.stop();
@@ -141,7 +167,7 @@ watch(
     // Detect a seek: value jumped by more than 1.5s or min/max changed
     const oldVal = oldArr ? (oldArr[0] as number) : v;
     const jumped = Math.abs(v - oldVal) > 1.5;
-    if (jumped) {
+    if (jumped && !leaving.value) {
       animateProgressTo(p);
     } else {
       // Normal playback tick — set directly (no animation)
@@ -344,7 +370,6 @@ const handleClick = (event: MouseEvent) => {
   position: absolute;
   inset: 0;
   opacity: 0;
-  transition: opacity 0.25s ease;
   /* A bright band on the filled bar, tiled so the loop has no seam; moving the background one
      tile per cycle carries it forward at a constant speed. */
   background-image: linear-gradient(
@@ -360,7 +385,28 @@ const handleClick = (event: MouseEvent) => {
 
 .indeterminate .flow {
   opacity: 1;
+  transition: opacity 0.25s ease;
   animation: slider-flow 2s linear infinite;
+}
+
+/* Out to the right; `.inner`'s clip trims it at the rounded end. */
+.leaving .flow {
+  opacity: 1;
+  /* The light keeps running: an animation still listed carries on rather than restarting. */
+  animation:
+    slider-flow 2s linear infinite,
+    slider-flow-leave 0.6s cubic-bezier(0.5, 0, 0.75, 0) forwards;
+}
+
+/* The thumb may still hold the last song's end for a frame or two; let the bar clear first. */
+.leaving .thumb {
+  transition-delay: 0.15s;
+}
+
+@keyframes slider-flow-leave {
+  to {
+    transform: translateX(100%);
+  }
 }
 
 @keyframes slider-flow {
@@ -376,6 +422,16 @@ const handleClick = (event: MouseEvent) => {
 @media (prefers-reduced-motion: reduce) {
   .indeterminate .flow {
     animation: none;
+  }
+
+  .leaving .flow {
+    animation: slider-flow-fade 0.25s ease forwards;
+  }
+}
+
+@keyframes slider-flow-fade {
+  to {
+    opacity: 0;
   }
 }
 
