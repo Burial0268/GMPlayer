@@ -49,7 +49,6 @@ function environment(deferResolution = false) {
     setPlaySongLyric(lyric: unknown) {
       shownLyrics.push(lyric);
     },
-    songLyric: null as unknown,
   };
   const prefetched: number[] = [];
   const cachedLyrics = new Map<number, unknown>();
@@ -198,20 +197,26 @@ test("the incoming lyrics are prefetched with the plan and shown at the commit",
   const lyric = { lrc: [{ time: 0, content: "B" }] };
   env.cachedLyrics.set(2, lyric);
   env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
-  assert.deepEqual(env.shownLyrics, [null], "the outgoing lyrics leave once B is audible");
+  assert.equal(
+    env.music.autoMixState.hideLyrics,
+    true,
+    "the outgoing lyrics leave once B is audible",
+  );
+  assert.deepEqual(env.shownLyrics, [], "hidden, not emptied: the layout keeps its lyrics");
   env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
   assert.deepEqual(env.commits, [1]);
-  assert.deepEqual(env.shownLyrics, [null, lyric]);
+  assert.deepEqual(env.shownLyrics, [lyric]);
+  assert.equal(env.music.autoMixState.hideLyrics, false);
 });
 
-test("a transition called off after B entered puts the outgoing lyrics back", () => {
+test("a transition called off after B entered shows the outgoing lyrics again", () => {
   const env = environment();
-  const outgoing = { lrc: [{ time: 0, content: "A" }] };
-  env.music.songLyric = outgoing;
   env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.equal(env.music.autoMixState.hideLyrics, true);
   env.event("automixError", { error: "AutoMix incoming audio missed its scheduled beat" });
   assert.equal(env.state.getState(), "idle");
-  assert.deepEqual(env.shownLyrics, [null, outgoing]);
+  assert.equal(env.music.autoMixState.hideLyrics, false);
+  assert.deepEqual(env.shownLyrics, [], "they never left the store");
 });
 
 test("a seek interrupts an uncommitted transition but not a committed one", () => {
