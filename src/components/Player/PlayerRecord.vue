@@ -103,7 +103,7 @@
           />
         </div>
         <div class="time-info">
-          <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
+          <span class="time-text">{{ elapsedLabel }}</span>
           <span class="time-text">{{ autoMixTransitioning ? "∞" : remainingTime }}</span>
         </div>
       </div>
@@ -182,7 +182,7 @@ import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
 import IconPause from "./icons/IconPause.vue";
 import { musicStore, settingStore, userStore } from "@/store";
-import { useAutoMixTransition } from "@/composables/useAutoMixTransition";
+import { useAutoMixElapsed, useAutoMixTransition } from "@/composables/useAutoMixTransition";
 import { coverUrl } from "@/utils/coverUrl";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
@@ -199,6 +199,7 @@ const navigation = useLayerNavigation();
 defineEmits(["openComments"]);
 const music = musicStore();
 const autoMixTransitioning = useAutoMixTransition();
+const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 const user = userStore();
 const setting = settingStore();
 const { persistData } = storeToRefs(music);

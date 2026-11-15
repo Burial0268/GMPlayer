@@ -107,7 +107,7 @@
           />
         </div>
         <div class="time-info">
-          <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
+          <span class="time-text">{{ elapsedLabel }}</span>
           <!-- "过渡" replaces the whole quality badge in one centred slot, so it is centred
                whatever the quality badge's width (global `.automix-tag-slot`). -->
           <div v-if="qualityText || autoMixTransitioning" class="automix-tag-slot">
@@ -205,7 +205,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 import { useQualityText } from "@/composables/useQualityText";
-import { useAutoMixTransition } from "@/composables/useAutoMixTransition";
+import { useAutoMixElapsed, useAutoMixTransition } from "@/composables/useAutoMixTransition";
 import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
@@ -298,6 +298,7 @@ const handleMoreSelect = (key) => {
 
 const qualityText = useQualityText();
 const autoMixTransitioning = useAutoMixTransition();
+const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {
