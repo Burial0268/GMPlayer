@@ -18,6 +18,12 @@ const DECK_QUEUE_BLOCKS: usize = 48;
 #[cfg(not(any(target_os = "android", target_os = "linux")))]
 const DECK_QUEUE_BLOCKS: usize = 8;
 const DECK_RECYCLE_QUEUE_BLOCKS: usize = DECK_QUEUE_BLOCKS + 4;
+
+/// Samples a deck's queue reliably holds once full: one block short of capacity, since the last
+/// block of a run can be partial. Decoder and mix blocks are both `MIX_BLOCK_FRAMES`.
+pub(super) fn deck_queue_full_samples(channels: u16) -> usize {
+    (DECK_QUEUE_BLOCKS - 1) * MIX_BLOCK_FRAMES * channels as usize
+}
 const MIX_BLOCK_FRAMES: usize = 512;
 const CROSSFADE_RAMP_FRAMES: usize = 64;
 // Both decks paused means no deadline at all: the worker has nothing to render
@@ -651,6 +657,11 @@ impl DeckRuntime {
         self.accepted_generation = generation;
         self.accepted_flush_epoch = flush_epoch;
         self.queued_samples.store(0, Ordering::Release);
+        // Drain what was queued before the clear now, keeping the first block of the new
+        // generation if one is already there. A deck that is mixed drops these within a block
+        // anyway, but AutoMix's incoming deck is not read until its cue, and a full queue of
+        // stale blocks would hold its new decoder off until the cue found nothing to play.
+        self.current_samples();
     }
 
     fn current_samples(&mut self) -> &[f32] {
@@ -1667,6 +1678,38 @@ mod tests {
         assert_eq!(written, 2);
         assert_eq!(consumed, 2);
         assert_eq!(dst, vec![0.1, 0.2]);
+    }
+
+    #[test]
+    fn clearing_a_deck_nobody_reads_makes_room_for_its_next_decoder() {
+        // AutoMix's incoming deck is not read until its cue. A preload that filled it and was
+        // then cancelled left its blocks queued; the next preload's decoder found the queue full
+        // and waited until the cue drained it, leaving nothing to play there.
+        let (tx, rx) = mpsc::sync_channel(4);
+        let (recycle_tx, _recycle_rx) = mpsc::sync_channel(16);
+        let block = |generation| DeckBlock {
+            samples: vec![0.5, 0.5],
+            generation,
+            flush_epoch: generation,
+            position: None,
+        };
+        for _ in 0..4 {
+            tx.send(block(0)).unwrap();
+        }
+        let mut deck = DeckRuntime::new(
+            rx,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+            recycle_tx,
+            0.0,
+        );
+
+        deck.clear(1, 1);
+
+        for _ in 0..4 {
+            assert!(tx.try_send(block(1)).is_ok(), "stale blocks still fill the queue");
+        }
+        assert_eq!(deck.current_samples(), &[0.5, 0.5]);
     }
 
     #[test]
