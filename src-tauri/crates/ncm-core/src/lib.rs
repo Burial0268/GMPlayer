@@ -203,6 +203,9 @@ impl NcmCore {
         let cold = match store.lock() {
             Ok(s) => {
                 s.get("xeapi_public_key").is_none()
+                    // The anonymous token is bound to the deviceId it was registered under,
+                    // and installs from before the id was kept have neither.
+                    || s.get("device_id").is_none()
                     || s.get(StateStore::BOOTSTRAP_VERSION).as_deref() != Some(protocol_build().as_str())
             }
             Err(_) => true,
@@ -791,6 +794,64 @@ mod tests {
             })
             .await
             .expect("eval failed")
+    }
+
+    /// The deviceId on the wire, from every cookie a stubbed transport saw.
+    async fn device_ids_sent(core: &NcmCore) -> Vec<String> {
+        eval(
+            core,
+            r#"(()=>{
+              globalThis.__cookies = [];
+              globalThis.__ncm_host.httpRequest = (cfg) => {
+                globalThis.__cookies.push(String(cfg.headers.Cookie || ""));
+                return Promise.resolve({ status: 200, headers: {}, body: Buffer.from('{"code":200}') });
+              };
+              return "ok";
+            })()"#,
+        )
+        .await;
+        // An eapi call (what login is) and the NCBL scrobble, which reads the cookie raw.
+        let _ = core.call("login_qr_key", r#"{"cookie":"MUSIC_U=x"}"#).await;
+        let _ = core
+            .call(
+                "scrobble_v1",
+                r#"{"id":"1","time":30,"cookie":"MUSIC_U=x; __csrf=y"}"#,
+            )
+            .await;
+        let cookies: Vec<String> =
+            serde_json::from_str(&eval(core, "JSON.stringify(globalThis.__cookies)").await)
+                .unwrap();
+        cookies
+            .iter()
+            .map(|c| {
+                c.split("; ")
+                    .find_map(|kv| kv.strip_prefix("deviceId="))
+                    .unwrap_or("<missing>")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    /// Upstream keeps the deviceId only in memory, minted by a handshake that runs once per
+    /// bundle, so every later launch sent `deviceId=undefined` — at login too, which left the
+    /// session off the account's device list — and the scrobble an empty one.
+    #[tokio::test]
+    async fn every_call_carries_one_device_id_that_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("ncm-device-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let first = device_ids_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
+        let again = device_ids_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(first.len(), 2, "{first:?}");
+        let id = &first[0];
+        assert!(
+            id.len() == 52 && id.chars().all(|c| c.is_ascii_hexdigit()),
+            "not a minted deviceId: {id:?}"
+        );
+        assert!(first.iter().all(|sent| sent == id), "{first:?}");
+        assert_eq!(again, first, "a restart must keep the device");
     }
 
     /// The form encoding produced by the `URLSearchParams` shim goes on the
