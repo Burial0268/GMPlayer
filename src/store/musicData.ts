@@ -1087,10 +1087,14 @@ const useMusicDataStore = defineStore("musicData", {
       // 网易 id，照常提示歌词/详情，切过去就是 0 请求。
       if (this.persistData.playSongMode === "single") return;
 
-      const AHEAD = 2;
+      const n = playlist.length;
+      // The next song, the one in-app "previous" goes back to, then the one after next — last,
+      // since a hint that finds no permit is dropped and that one is hinted again as the next.
+      const indices = new Set([1, -1, 2].map((step) => (currentIndex + step + n) % n));
+      indices.delete(currentIndex);
       const ids: Array<number | string> = [];
-      for (let i = 1; i <= AHEAD; i++) {
-        const song = playlist[(currentIndex + i) % playlist.length];
+      for (const index of indices) {
+        const song = playlist[index];
         // 本地曲目没有网易 id，提示它等于让协议层去查一首不存在的歌。
         if (song?.local?.uri) continue;
         if (song?.id !== undefined) ids.push(song.id);
