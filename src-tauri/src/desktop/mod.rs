@@ -85,6 +85,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
             shared::desktop_environment,
+            shared::device_name,
             // Window management commands
             window::commands::create_window,
             window::commands::create_custom_window,

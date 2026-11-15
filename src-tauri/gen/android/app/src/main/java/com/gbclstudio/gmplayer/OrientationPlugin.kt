@@ -8,7 +8,10 @@ import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.Plugin
+import android.os.Build
+import android.provider.Settings
 import android.view.WindowManager
+import app.tauri.plugin.JSObject
 import java.lang.ref.WeakReference
 
 @InvokeArg
@@ -104,6 +107,17 @@ class OrientationPlugin(private val activity: Activity) : Plugin(activity) {
         val args = invoke.parseArgs(SetKeepScreenOnArgs::class.java)
         ScreenAwake.set(args.enabled)
         invoke.resolve()
+    }
+
+    /** The name the user sees for this phone (Settings → About), else its maker and model. */
+    @Command
+    fun deviceName(invoke: Invoke) {
+        val named = Settings.Global.getString(
+            activity.applicationContext.contentResolver,
+            Settings.Global.DEVICE_NAME,
+        )
+        val name = named?.takeIf { it.isNotBlank() } ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+        invoke.resolve(JSObject().put("name", name))
     }
 
     private companion object {

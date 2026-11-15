@@ -101,6 +101,17 @@ export const login = {
       url: "/logout",
       params: { timestamp: Date.now() },
     }),
+
+  /**
+   * 设置当前登录设备在「登录设备管理」里显示的名称（官方 PC 端登录后也会调用）
+   */
+  uploadDeviceName: (deviceName: string) =>
+    request<any>({
+      method: "GET",
+      hiddenBar: true,
+      url: "/deviceinfo/center/upload",
+      params: { deviceName, timestamp: Date.now() },
+    }),
 };
 
 export default login;
@@ -113,5 +124,6 @@ export const toLogin = login.byPhone;
 export const sentCaptcha = login.sendCaptcha;
 export const verifyCaptcha = login.verifyCaptcha;
 export const getLoginState = login.getStatus;
+export const uploadDeviceName = login.uploadDeviceName;
 export const refreshLogin = login.refresh;
 export const userLogOut = login.logout;

@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-device-name"
+description = "Enables the deviceName command without any pre-configured scope."
+commands.allow = ["deviceName"]

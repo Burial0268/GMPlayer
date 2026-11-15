@@ -24,6 +24,7 @@
     "media-session:default",
     "orientation:allow-set-screen-orientation",
     "orientation:allow-set-keep-screen-on",
+    "orientation:allow-device-name",
     "pinia:default"
   ]
 }

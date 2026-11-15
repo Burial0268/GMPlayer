@@ -84,7 +84,16 @@
 
 <script setup lang="ts">
 import { userStore, musicStore, settingStore } from "@/store";
-import { getLoginState, getQrKey, checkQr, toLogin, sentCaptcha, verifyCaptcha } from "@/api/login";
+import {
+  getLoginState,
+  getQrKey,
+  checkQr,
+  toLogin,
+  sentCaptcha,
+  verifyCaptcha,
+  uploadDeviceName,
+} from "@/api/login";
+import { getDeviceName } from "@/utils/tauri/platform/deviceName";
 import { useRoute, useRouter } from "vue-router";
 import { useLayerNavigation } from "@/utils/navigation";
 import type { RootEntry } from "@/utils/navigation/layers";
@@ -212,6 +221,10 @@ const saveLoginData = async (data, sessionId?: number) => {
       stopQrPolling();
       user.setUserData(res.data.profile);
       user.userLogin = true;
+      // Name this login among the account's devices after the real device, as the official client does.
+      void getDeviceName()
+        .then((name) => name && uploadDeviceName(name))
+        .catch((err) => console.warn("[Login] Failed to name this device:", err));
       loginStatus.value = t("login.loginStatus4");
       $message.success(t("login.loginStatus4"));
       // 自动签到
