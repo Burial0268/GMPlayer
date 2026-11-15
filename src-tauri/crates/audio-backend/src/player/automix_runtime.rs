@@ -296,6 +296,19 @@ impl AudioPlayer {
             return;
         }
         if anchor.anchor.phase == 3 {
+            // The mixer found the incoming deck empty at the cue. Queued samples here mean blocks
+            // were pushed but rejected as a stale generation; none means the decoder lagged.
+            let incoming = match self.inactive_deck() {
+                DeckId::Primary => self.deck_mixer.primary_writer(),
+                DeckId::Secondary => self.deck_mixer.secondary_writer(),
+            };
+            warn!(
+                queued_samples = incoming.deck_queued_samples(),
+                deck_generation = incoming.generation(),
+                decoder_alive = self.secondary_decoder_handle.is_some(),
+                secondary_playback_id = ?self.secondary_playback_id,
+                "AutoMix incoming deck empty at the cue"
+            );
             self.cancel_native_automix_runtime().await;
             let events = self.automix.mark_failed(
                 "AutoMix incoming audio missed its scheduled beat".into(),

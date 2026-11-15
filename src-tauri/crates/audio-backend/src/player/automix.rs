@@ -176,6 +176,8 @@ impl AutoMixManager {
     }
 
     pub fn mark_failed(&mut self, error: String, current_index: usize) -> Vec<AudioThreadEvent> {
+        // Every native AutoMix failure funnels through here; the frontend only logs it in dev.
+        warn!("AutoMix failed: {error}");
         self.prepared = None;
         self.state = AutoMixNativeState::Failed;
         self.active_transition_id = None;

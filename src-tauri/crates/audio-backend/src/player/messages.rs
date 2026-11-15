@@ -386,6 +386,9 @@ impl AudioPlayer {
                     self.emit_many(events).await;
                 }
                 AudioThreadMessage::AutomixCancel => {
+                    if self.native_crossfade_active {
+                        info!("AutoMix cancelled by the frontend while armed");
+                    }
                     self.bump_automix_prepare_gen();
                     self.cancel_native_automix_runtime().await;
                     let events = self.automix.cancel(self.current_play_index);
