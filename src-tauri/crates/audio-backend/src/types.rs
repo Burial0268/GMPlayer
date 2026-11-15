@@ -612,6 +612,10 @@ pub enum AudioThreadEvent {
         next_id: String,
         transition_id: Option<u64>,
     },
+    /// The armed mix's incoming deck holds audio, so the cue can start it. Once per mix, and
+    /// again when a recreated page re-attaches.
+    #[serde(rename_all = "camelCase")]
+    AutomixIncomingReady { transition_id: Option<u64> },
     #[serde(rename_all = "camelCase")]
     AutomixCrossfadeStarted {
         from_id: String,

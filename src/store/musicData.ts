@@ -117,6 +117,9 @@ interface AutoMixStateData {
   crossfadeProgress: number;
   incomingSongName: string | null;
   incomingSongId: number | null;
+  // The incoming audio is buffered and the cue can start the mix. Native says so itself; the web
+  // path loads its incoming sound before it schedules anything.
+  incomingReady: boolean;
 }
 
 interface MusicDataState {
@@ -208,6 +211,7 @@ const useMusicDataStore = defineStore("musicData", {
         crossfadeProgress: -1,
         incomingSongName: null,
         incomingSongId: null,
+        incomingReady: false,
       },
       playSongTime: playSongTime as unknown as PlaySongTime,
       persistData: persistedStore.persistData,

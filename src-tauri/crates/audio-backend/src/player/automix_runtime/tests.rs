@@ -85,6 +85,7 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         let deadline = Instant::now() + Duration::from_secs(45);
         eprintln!("armed status: {:?}, position={}", player.automix.status(0), player.clock_position());
         let mut started = false;
+        let mut incoming_ready = false;
         let mut track_epochs: Vec<u64> = Vec::new();
         let mut last_change_requested = true;
         let mut completed = false;
@@ -114,7 +115,9 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
             }
             while let Ok(event) = event_rx.try_recv() {
                 match event.data {
+                    Some(AudioThreadEvent::AutomixIncomingReady { .. }) => incoming_ready = true,
                     Some(AudioThreadEvent::AutomixCrossfadeStarted { duration, .. }) => {
+                        assert!(incoming_ready, "readiness is announced before the mix starts");
                         started = true;
                         fade_duration = duration;
                         let anchor = player.output.writer().render_clock().anchor().unwrap();

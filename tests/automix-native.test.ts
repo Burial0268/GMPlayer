@@ -160,6 +160,20 @@ test("a native crossfade survives a long pause and accepts the backend's eventua
   assert.equal(env.state.getState(), "finishing");
 });
 
+test("the native lead-in waits for the backend to report the incoming deck buffered", () => {
+  const env = environment();
+  env.state._updateStoreState();
+  assert.equal(env.music.autoMixState.incomingReady, false);
+  env.event("automixIncomingReady", { transitionId: env.transitionId + 1 });
+  assert.equal(env.music.autoMixState.incomingReady, false, "another transition's deck");
+  env.event("automixIncomingReady", { transitionId: env.transitionId });
+  assert.equal(env.music.autoMixState.incomingReady, true);
+  env.event("automixError", { error: "AutoMix incoming audio missed its scheduled beat" });
+  assert.equal(env.state.getState(), "idle");
+  assert.equal(env.music.autoMixState.incomingReady, true, "idle: no transition left to wait on");
+  assert.equal(env.state._nativeIncomingReady, false);
+});
+
 test("pausing just before a native cue preserves it until playback reaches it after resume", () => {
   const env = environment();
   env.state._crossfadeStartTime = 92;

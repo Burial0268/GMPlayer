@@ -192,6 +192,7 @@ export type AudioThreadEvent =
       type: "automixAnalysisReady";
       data: { currentId: string; nextId: string; transitionId?: number | null };
     }
+  | { type: "automixIncomingReady"; data: { transitionId?: number | null } }
   | {
       type: "automixCrossfadeStarted";
       data: { fromId: string; toId: string; duration: number; transitionId?: number | null };

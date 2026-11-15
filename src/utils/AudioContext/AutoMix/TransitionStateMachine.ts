@@ -182,6 +182,8 @@ export class TransitionStateMachine {
   private _nativeNextIndex: number = -1;
   private _nativeUnsubscribe: (() => void) | null = null;
   private _nativeForceStartSent: boolean = false;
+  // Rust reports the incoming deck holds audio; until then the cue may still find it empty.
+  private _nativeIncomingReady: boolean = false;
   private _nativeHandoffHoldUntil: number = 0;
 
   // Store references (loaded once lazily)
@@ -519,6 +521,7 @@ export class TransitionStateMachine {
     this._crossfadeStartTime = Math.max(0, duration - effectiveDuration);
     this._nativeNextIndex = nextIndex;
     this._nativeForceStartSent = false;
+    this._nativeIncomingReady = false;
     this._nativeAutoMixPreparing = true;
     this._state = "analyzing";
     this._updateStoreState();
@@ -696,6 +699,7 @@ export class TransitionStateMachine {
           this._nativeAutoMixPreparing = false;
           this._nativeAutoMixReady = false;
           this._nativeForceStartSent = false;
+          this._nativeIncomingReady = false;
           this._nativeNextIndex = -1;
           this._clearTransition(status.transitionId);
           this._state = "idle";
@@ -721,6 +725,11 @@ export class TransitionStateMachine {
           this._state = "waiting";
           this._updateStoreState();
         }
+        break;
+      case "automixIncomingReady":
+        if (!this._acceptNativeTransitionEvent(event.data.transitionId)) return;
+        this._nativeIncomingReady = true;
+        this._updateStoreState();
         break;
       case "automixCrossfadeStarted":
         if (!this._acceptNativeTransitionEvent(event.data.transitionId)) return;
@@ -755,6 +764,7 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
     this._clearTransition();
     if (this._state === "analyzing" || this._state === "waiting" || this._state === "crossfading") {
@@ -795,6 +805,7 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
 
     if (this._finishingTimerId !== null) {
@@ -2064,6 +2075,7 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
     this._nativeHandoffHoldUntil = 0;
     this._clearTransition();
@@ -2227,6 +2239,7 @@ export class TransitionStateMachine {
       this._nativeAutoMixPreparing = false;
       this._nativeAutoMixReady = false;
       this._nativeForceStartSent = false;
+      this._nativeIncomingReady = false;
       this._nativeNextIndex = -1;
       if (this._isNativeTransitionActive()) this._clearTransition();
     }
@@ -2377,6 +2390,7 @@ export class TransitionStateMachine {
       crossfadeProgress: progress,
       incomingSongName,
       incomingSongId,
+      incomingReady: activeTransition?.mode !== "native" || this._nativeIncomingReady,
     };
   }
 

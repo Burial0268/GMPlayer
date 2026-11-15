@@ -28,6 +28,7 @@ pub(super) struct NativeMix {
     to_id: String,
     duration: f64,
     pub(super) started: bool,
+    incoming_ready: bool,
     pub(super) outgoing_finished: bool,
     playback_id: u64,
     incoming_identity: Option<TrackIdentity>,
@@ -226,6 +227,9 @@ impl AudioPlayer {
             return false;
         }
         mix.next_index = next_index;
+        let ready = mix
+            .incoming_ready
+            .then_some(AudioThreadEvent::AutomixIncomingReady { transition_id });
         let started = mix
             .started
             .then(|| AudioThreadEvent::AutomixCrossfadeStarted {
@@ -242,7 +246,7 @@ impl AudioPlayer {
                 status: self.automix.status(self.current_play_index),
             })
             .await;
-        if let Some(event) = started {
+        for event in [ready, started].into_iter().flatten() {
             let _ = self.emitter().emit(event).await;
         }
         info!("AutoMix attached to active native pair: next_index={next_index}, transition_id={transition_id:?}");
@@ -285,6 +289,19 @@ impl AudioPlayer {
             self.native_mix = None;
             return;
         }
+        // Before the cue the anchor still belongs to the outgoing track, so this goes first.
+        if !mix.started && !mix.incoming_ready && self.native_automix_incoming_ready() {
+            if let Some(mix) = self.native_mix.as_mut() {
+                mix.incoming_ready = true;
+            }
+            let event = AudioThreadEvent::AutomixIncomingReady {
+                transition_id: self.native_crossfade_transition_id,
+            };
+            let _ = self.emitter().emit(event).await;
+        }
+        let Some(mix) = self.native_mix.as_ref() else {
+            return;
+        };
         let render_clock = self.output.writer().render_clock();
         let Some(anchor) = render_clock.anchor() else {
             return;
@@ -596,6 +613,7 @@ impl AudioPlayer {
             to_id: prepared.song.get_id(),
             duration,
             started: false,
+            incoming_ready: false,
             outgoing_finished: false,
             playback_id: self.decoder_playback_id,
             incoming_identity: prepared
