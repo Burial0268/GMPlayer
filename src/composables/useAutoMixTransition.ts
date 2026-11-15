@@ -4,7 +4,7 @@ import { getSongPlayingTime } from "@/utils/timeTools";
 
 // How far ahead of the scheduled crossfade the transition state starts, in the outgoing song's
 // own time: waiting for the audio overlap itself started it too late to read as a lead-in.
-const LEAD_SECONDS = 5;
+const LEAD_SECONDS = 15;
 
 /**
  * Whether the Apple Music style AutoMix transition state is on: the progress bar fills and runs a
