@@ -5,6 +5,7 @@ Default permissions for the orientation plugin
 #### This default permission set includes the following:
 
 - `allow-set-screen-orientation`
+- `allow-set-keep-screen-on`
 
 ## Permission Table
 
@@ -14,6 +15,19 @@ Default permissions for the orientation plugin
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`orientation:allow-set-keep-screen-on`
+
+</td>
+<td>
+
+Enables the setKeepScreenOn command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>

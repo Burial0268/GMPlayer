@@ -84,6 +84,7 @@ interface SettingDataState {
   songVolumeFade: boolean;
   listNumber: number;
   memoryLastPlaybackPosition: boolean;
+  keepScreenOnLyrics: boolean;
   language: string;
   bottomClick: boolean;
   immersivePlayer: boolean;
@@ -280,6 +281,7 @@ const useSettingDataStore = defineStore("settingData", {
       songVolumeFade: true,
       listNumber: 30,
       memoryLastPlaybackPosition: true,
+      keepScreenOnLyrics: false,
       language: "zh-CN",
       bottomClick: false,
       immersivePlayer: false,

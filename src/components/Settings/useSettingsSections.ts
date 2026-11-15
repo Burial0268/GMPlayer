@@ -13,7 +13,7 @@ import {
   InfoRound,
 } from "@vicons/material";
 import { settingStore, userStore } from "@/store";
-import { isTauri } from "@/utils/tauri";
+import { isTauri, isMobileDevice } from "@/utils/tauri";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import type { SettingsSection } from "./types";
@@ -302,6 +302,13 @@ export function useSettingsSections() {
       icon: SubtitlesRound,
       searchText: "YRC TTML AMLL lyric",
       items: [
+        {
+          key: "keepScreenOnLyrics",
+          label: "setting.keepScreenOnLyrics",
+          tip: "setting.keepScreenOnLyricsTip",
+          control: "switch",
+          show: () => isTauri() && isMobileDevice(),
+        },
         {
           key: "useTTMLRepo",
           label: "setting.useTTMLRepo",

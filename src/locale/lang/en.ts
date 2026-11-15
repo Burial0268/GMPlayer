@@ -508,6 +508,9 @@ const messages: Record<string, unknown> = {
     songVolumeFadeTip: "Gradually fade in/out volume when stopping/starting playback",
     memoryLastPlaybackPosition: "Remember Playback Position",
     memoryLastPlaybackPositionTip: "Resume last playback progress after refreshing the page",
+    keepScreenOnLyrics: "Keep Screen On in Lyrics",
+    keepScreenOnLyricsTip:
+      "Stop the screen from turning off while the player's lyrics are open and playing",
     songLevel: "Song Quality",
     songLevelTip: "Lossless quality and above require a Black Vinyl Club membership",
     standard: "Standard",

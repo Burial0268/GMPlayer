@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-set-keep-screen-on"
+description = "Enables the setKeepScreenOn command without any pre-configured scope."
+commands.allow = ["setKeepScreenOn"]

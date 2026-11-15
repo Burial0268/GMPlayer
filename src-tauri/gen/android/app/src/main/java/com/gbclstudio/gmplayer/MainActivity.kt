@@ -58,6 +58,7 @@ class MainActivity : TauriActivity() {
         // 启用全屏设计
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        ScreenAwake.attach(this)
 
         val rootView = findViewById<View>(R.id.main) ?: findViewById<View>(android.R.id.content)
 

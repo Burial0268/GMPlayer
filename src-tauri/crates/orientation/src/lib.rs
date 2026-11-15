@@ -13,6 +13,13 @@ fn set_orientation(_orientation: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Keep the screen on. Same Android rule as [`set_orientation`].
+#[cfg(not(target_os = "android"))]
+#[tauri::command(rename = "setKeepScreenOn")]
+fn set_keep_screen_on(_enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
 /// Inline Tauri plugin that delegates screen-orientation control to the
 /// Android Kotlin side (`OrientationPlugin`).
 ///
@@ -27,7 +34,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     let builder = Builder::new("orientation");
 
     #[cfg(not(target_os = "android"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![set_orientation]);
+    let builder = builder.invoke_handler(tauri::generate_handler![set_orientation, set_keep_screen_on]);
 
     builder
         .setup(|_app, _api| {

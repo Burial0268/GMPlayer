@@ -508,6 +508,8 @@ const messages: Record<string, unknown> = {
     songVolumeFadeTip: "是否在歌曲暂停 / 播放时渐入渐出",
     memoryLastPlaybackPosition: "记忆播放位置",
     memoryLastPlaybackPositionTip: "是否在刷新后恢复上次播放进度",
+    keepScreenOnLyrics: "歌词页屏幕常亮",
+    keepScreenOnLyricsTip: "打开播放器歌词页并正在播放时，屏幕不会自动熄灭",
     songLevel: "歌曲音质",
     songLevelTip: "无损音质及以上需要您为黑胶会员",
     standard: "标准",
