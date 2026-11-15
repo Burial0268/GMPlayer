@@ -2,10 +2,6 @@ import { computed, onScopeDispose, ref, watch, type Ref } from "vue";
 import { musicStore } from "@/store";
 import { getSongPlayingTime } from "@/utils/timeTools";
 
-// How far ahead of the scheduled crossfade the transition state starts, in the outgoing song's
-// own time: waiting for the audio overlap itself started it too late to read as a lead-in.
-const LEAD_SECONDS = 15;
-
 /** Where the player bar is in an AutoMix transition. */
 export type AutoMixBarPhase = "none" | "active" | "committed";
 
@@ -16,13 +12,14 @@ export type AutoMixBarPhase = "none" | "active" | "committed";
  * a failure) goes straight back to `none`, so nothing announces a song change that did not happen.
  *
  * `active` starts once a transition is scheduled, its incoming audio is buffered and the outgoing
- * song is within `LEAD_SECONDS` of its crossfade; `committed` lasts the finishing hold, which on
- * both paths begins at the instant the title and cover switch.
+ * song has reached `leadInStart` (its analysed outro, bounded by the crossfade); `committed` lasts
+ * the finishing hold, which on both paths begins at the instant the title and cover switch.
  */
 export function useAutoMixBarPhase() {
   const music = musicStore();
   return computed<AutoMixBarPhase>(() => {
-    const { phase, incomingSongId, incomingReady, crossfadeStartTime } = music.autoMixState;
+    const { phase, incomingSongId, incomingReady, crossfadeStartTime, leadInStart } =
+      music.autoMixState;
     if (phase === "crossfading") return "active";
     if (phase === "finishing") return "committed";
     const leadIn =
@@ -30,7 +27,7 @@ export function useAutoMixBarPhase() {
       incomingReady &&
       incomingSongId !== null &&
       crossfadeStartTime > 0 &&
-      (music.getPlaySongTime.currentTime || 0) >= crossfadeStartTime - LEAD_SECONDS;
+      (music.getPlaySongTime.currentTime || 0) >= leadInStart;
     return leadIn ? "active" : "none";
   });
 }

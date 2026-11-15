@@ -201,6 +201,9 @@ pub struct AutoMixStatus {
     pub next_id: Option<String>,
     pub crossfade_start: Option<f64>,
     pub crossfade_duration: Option<f64>,
+    /// Where the outgoing song's outro begins, in its own seconds; the UI enters its transition
+    /// state there. `None` without an analysis of the outgoing song.
+    pub outro_start: Option<f64>,
     pub error: Option<String>,
 }
 

@@ -66,6 +66,8 @@ export interface AutoMixNativeStatus {
   nextId?: string | null;
   crossfadeStart?: number | null;
   crossfadeDuration?: number | null;
+  /** Where the outgoing song's outro begins; the transition state starts there. */
+  outroStart?: number | null;
   error?: string | null;
 }
 

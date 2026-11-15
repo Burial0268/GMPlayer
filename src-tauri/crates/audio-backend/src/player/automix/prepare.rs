@@ -44,6 +44,28 @@ impl PrepareCancel {
 
 const SUPERSEDED: &str = "AutoMix prepare superseded";
 
+/// Where a song's outro begins, for the UI's transition lead-in: the last section the section
+/// analysis calls an outro, else the classifier's distinct outro section, else where the energy
+/// last drops. Mirrored by `outroStartOf` in TransitionStateMachine.ts; keep the two in step.
+pub(in crate::player) fn outro_start_of(analysis: &crate::automix::TrackAnalysis) -> f64 {
+    let from_sections = analysis.sections.as_ref().and_then(|sections| {
+        sections
+            .sections
+            .iter()
+            .rev()
+            .find(|section| matches!(section.section_type, crate::automix::SongSectionKind::Outro))
+            .map(|section| section.start)
+    });
+    let from_classifier = analysis
+        .outro
+        .as_ref()
+        .and_then(|outro| outro.outro_section_start);
+    from_sections
+        .or(from_classifier)
+        .unwrap_or(analysis.duration - analysis.energy.outro_start_offset)
+        .max(0.0) as f64
+}
+
 pub(in crate::player) struct AutoMixPrepareResult {
     pub generation: u64,
     pub transition_id: Option<u64>,
@@ -199,6 +221,7 @@ fn prepare_track_blocking(
         _temp_file: temp_file,
         duration,
         plan,
+        outro_start: current_analysis.as_ref().map(outro_start_of),
         display_info,
         quality,
         next_index: 0,

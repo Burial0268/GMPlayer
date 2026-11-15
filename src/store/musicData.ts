@@ -120,6 +120,9 @@ interface AutoMixStateData {
   // The incoming audio is buffered and the cue can start the mix. Native says so itself; the web
   // path loads its incoming sound before it schedules anything.
   incomingReady: boolean;
+  // Where the transition state starts, in the outgoing song's seconds: its outro, bounded by the
+  // crossfade. 0 while nothing is scheduled.
+  leadInStart: number;
   // The incoming song is audible in the mix: the outgoing song's lyrics are hidden, not emptied,
   // so the player keeps its lyric layout.
   hideLyrics: boolean;
@@ -215,6 +218,7 @@ const useMusicDataStore = defineStore("musicData", {
         incomingSongName: null,
         incomingSongId: null,
         incomingReady: false,
+        leadInStart: 0,
         hideLyrics: false,
       },
       playSongTime: playSongTime as unknown as PlaySongTime,

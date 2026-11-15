@@ -73,6 +73,25 @@ const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
 
 type AutoMixTransitionMode = "web" | "native";
+
+// The longest lead-in an outro may give the transition state: the energy outro looks back 45 s.
+const MAX_LEAD_IN = 45;
+
+/**
+ * Where a song's outro begins: the last section the section analysis calls an outro, else the
+ * classifier's distinct outro section, else where the energy last drops. Mirrors Rust's
+ * `outro_start_of` (automix/prepare.rs); keep the two in step.
+ */
+export function outroStartOf(analysis: TrackAnalysis | null | undefined): number | null {
+  if (!analysis) return null;
+  const sections = analysis.sections?.sections ?? [];
+  for (let i = sections.length - 1; i >= 0; i--) {
+    if (sections[i].sectionType === "outro") return Math.max(0, sections[i].start);
+  }
+  const start =
+    analysis.outro?.outroSectionStart ?? analysis.duration - analysis.energy.outroStartOffset;
+  return Math.max(0, start);
+}
 type AutoMixTransitionPhase = "preparing" | "waiting" | "crossfading" | "finishing" | "committed";
 
 interface ActiveAutoMixTransition {
@@ -189,6 +208,8 @@ export class TransitionStateMachine {
   private _nativeForceStartSent: boolean = false;
   // Rust reports the incoming deck holds audio; until then the cue may still find it empty.
   private _nativeIncomingReady: boolean = false;
+  // Where Rust's analysis puts the outgoing song's outro; null without an analysis.
+  private _nativeOutroStart: number | null = null;
   private _nativeHandoffHoldUntil: number = 0;
 
   // Store references (loaded once lazily)
@@ -571,6 +592,7 @@ export class TransitionStateMachine {
     this._crossfadeStartTime = Math.max(0, duration - effectiveDuration);
     this._nativeNextIndex = nextIndex;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
     this._nativeIncomingReady = false;
     this._nativeAutoMixPreparing = true;
     this._state = "analyzing";
@@ -728,6 +750,9 @@ export class TransitionStateMachine {
         if (status.crossfadeDuration !== undefined && status.crossfadeDuration !== null) {
           this._crossfadeDuration = status.crossfadeDuration;
         }
+        if (status.outroStart !== undefined) {
+          this._nativeOutroStart = status.outroStart;
+        }
         if (status.state === "waiting" && this._state === "analyzing") {
           this._nativeAutoMixReady = true;
           if (status.transitionId !== undefined && status.transitionId !== null) {
@@ -749,6 +774,7 @@ export class TransitionStateMachine {
           this._nativeAutoMixPreparing = false;
           this._nativeAutoMixReady = false;
           this._nativeForceStartSent = false;
+          this._nativeOutroStart = null;
           this._nativeIncomingReady = false;
           this._nativeNextIndex = -1;
           this._clearTransition(status.transitionId);
@@ -815,6 +841,7 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
     this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
     this._clearTransition();
@@ -854,6 +881,7 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
     this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
 
@@ -2121,6 +2149,7 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
     this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
     this._nativeHandoffHoldUntil = 0;
@@ -2285,6 +2314,7 @@ export class TransitionStateMachine {
       this._nativeAutoMixPreparing = false;
       this._nativeAutoMixReady = false;
       this._nativeForceStartSent = false;
+      this._nativeOutroStart = null;
       this._nativeIncomingReady = false;
       this._nativeNextIndex = -1;
       if (this._isNativeTransitionActive()) this._clearTransition();
@@ -2427,6 +2457,22 @@ export class TransitionStateMachine {
       }
     }
 
+    const outroStart =
+      activeTransition?.mode === "native"
+        ? this._nativeOutroStart
+        : outroStartOf(this._currentAnalysis?.analysis);
+    const crossfadeStart = this._crossfadeStartTime;
+    // The outro, but never after the mix itself nor more than MAX_LEAD_IN before it; without an
+    // analysis, one crossfade length ahead.
+    const leadInStart =
+      crossfadeStart > 0
+        ? Math.max(
+            0,
+            crossfadeStart - MAX_LEAD_IN,
+            Math.min(crossfadeStart, outroStart ?? crossfadeStart - this._crossfadeDuration),
+          )
+        : 0;
+
     this._musicStoreRef.autoMixState = {
       phase: this._state,
       outroType: this._outroType ?? null,
@@ -2437,6 +2483,7 @@ export class TransitionStateMachine {
       incomingSongName,
       incomingSongId,
       incomingReady: activeTransition?.mode !== "native" || this._nativeIncomingReady,
+      leadInStart,
       hideLyrics: this._outgoingLyricHidden,
     };
   }

@@ -237,6 +237,30 @@ test("a seek interrupts an uncommitted transition but not a committed one", () =
   assert.ok(!committed.sent.some((msg: any) => msg.type === "automixCancel"));
 });
 
+test("the transition state starts at the outgoing song's outro, bounded by the crossfade", () => {
+  const leadIn = (outroStart: number | null | undefined) => {
+    const env = environment();
+    env.state._state = "analyzing";
+    env.event("automixStatus", {
+      status: {
+        state: "waiting",
+        enabled: true,
+        transitionId: env.transitionId,
+        currentIndex: 0,
+        nextIndex: 1,
+        crossfadeStart: 250,
+        crossfadeDuration: 8,
+        outroStart,
+      },
+    });
+    return env.music.autoMixState.leadInStart;
+  };
+  assert.equal(leadIn(230), 230);
+  assert.equal(leadIn(100), 205, "no more than 45 s ahead of the mix");
+  assert.equal(leadIn(260), 250, "never after the mix starts");
+  assert.equal(leadIn(null), 242, "without an analysis, one crossfade length ahead");
+});
+
 test("pausing just before a native cue preserves it until playback reaches it after resume", () => {
   const env = environment();
   env.state._crossfadeStartTime = 92;

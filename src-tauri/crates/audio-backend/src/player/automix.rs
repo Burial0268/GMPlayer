@@ -28,6 +28,7 @@ pub(super) struct PreparedTrack {
     _temp_file: Option<crate::source::TempGuard>,
     duration: f64,
     plan: Option<CrossfadePlan>,
+    outro_start: Option<f64>,
     display_info: DisplayAudioInfo,
     quality: AudioQuality,
     next_index: usize,
@@ -320,6 +321,7 @@ impl AutoMixManager {
             next_id: prepared.map(|p| p.song.get_id()),
             crossfade_start: prepared.and_then(|p| p.plan.as_ref().map(|plan| plan.start_time)),
             crossfade_duration: prepared.and_then(|p| p.plan.as_ref().map(|plan| plan.duration)),
+            outro_start: prepared.and_then(|p| p.outro_start),
             error: self.last_error.clone(),
         }
     }
