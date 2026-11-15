@@ -182,3 +182,16 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         assert_eq!(player.current_local_path.as_deref(), Some(Path::new(a.file_path().unwrap())), "previous must reopen A rather than reusing B's decoded source");
     });
 }
+
+#[test]
+fn a_full_deck_queue_counts_as_a_preloaded_incoming_deck() {
+    // 0.25 s exceeded the whole Windows/macOS queue, so readiness never came on there.
+    for (rate, channels) in [(44_100, 2), (48_000, 2), (96_000, 2), (48_000, 1)] {
+        let full = super::super::mixer::deck_queue_full_samples(channels);
+        assert!(
+            min_incoming_samples(rate, channels) <= full,
+            "{rate} Hz × {channels}"
+        );
+        assert!(min_incoming_samples(rate, channels) > 0);
+    }
+}

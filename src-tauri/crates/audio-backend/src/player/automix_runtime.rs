@@ -139,10 +139,8 @@ impl AudioPlayer {
             DeckId::Secondary => self.deck_mixer.secondary_writer(),
         };
         let config = self.output.config();
-        let minimum = (config.sample_rate as f64
-            * config.channels as f64
-            * AUTOMIX_MIN_INCOMING_BUFFER_SECS) as usize;
-        incoming_writer.deck_queued_samples() >= minimum
+        incoming_writer.deck_queued_samples()
+            >= min_incoming_samples(config.sample_rate, config.channels)
     }
 
     fn inactive_deck(&self) -> DeckId {
@@ -767,6 +765,13 @@ impl AudioPlayer {
         self.emit_many(events).await;
         self.sync_ui().await;
     }
+}
+
+/// What counts as a preloaded incoming deck. Capped at a full queue: a Windows/macOS deck holds 8
+/// blocks (~85 ms), so 0.25 s could never be met there, and a preloaded mix never read as ready.
+fn min_incoming_samples(sample_rate: u32, channels: u16) -> usize {
+    ((sample_rate as f64 * channels as f64 * AUTOMIX_MIN_INCOMING_BUFFER_SECS) as usize)
+        .min(super::mixer::deck_queue_full_samples(channels))
 }
 
 pub(super) fn local_identity(song: &SongData) -> Option<TrackIdentity> {
