@@ -195,17 +195,20 @@
                     />
                     <div class="time-display">
                       <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                      <span
-                        v-if="qualityText || autoMixTransitioning"
-                        :class="['automix-tag-slot', { transitioning: autoMixTransitioning }]"
-                      >
-                        <span v-if="qualityText" class="quality-badge">
-                          <n-icon :component="IconLossless" />
-                          <span class="quality-label">{{ qualityText }}</span>
-                        </span>
-                        <span class="quality-badge automix-tag">
-                          {{ $t("player.autoMixTransition") }}
-                        </span>
+                      <span v-if="qualityText || autoMixTransitioning" class="automix-tag-slot">
+                        <Transition name="automix-tag-swap">
+                          <span
+                            v-if="autoMixTransitioning"
+                            key="automix"
+                            class="quality-badge automix-tag"
+                          >
+                            {{ $t("player.autoMixTransition") }}
+                          </span>
+                          <span v-else key="quality" class="quality-badge">
+                            <n-icon :component="IconLossless" />
+                            <span class="quality-label">{{ qualityText }}</span>
+                          </span>
+                        </Transition>
                       </span>
                       <span>{{ autoMixTransitioning ? "∞" : `-${remainingTime}` }}</span>
                     </div>

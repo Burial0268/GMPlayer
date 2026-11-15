@@ -737,7 +737,8 @@ html.has-floating-titlebar {
 }
 
 // AutoMix 转场（Apple Music 式）：音质标签整个让位给「过渡」标签，见 useAutoMixTransition。
-// 两个标签叠在同一个居中的格子里交叉淡入淡出，「过渡」因此总是居中，不随音质标签的宽度偏移。
+// 「过渡」整个替换音质标签：同一个居中的格子里，Vue <Transition> 交叉淡入淡出时两者短暂叠放，
+// 平时只渲染其中一个。「过渡」因此总是居中，不随音质标签的宽度偏移。
 // 高亮用 box-shadow 叠一层，不碰各组件 scoped 里 `.quality-badge` 的背景色。
 .automix-tag-slot {
   display: grid;
@@ -748,27 +749,25 @@ html.has-floating-titlebar {
   > * {
     grid-area: 1 / 1;
     max-width: 100%;
-    transition: opacity 0.25s ease;
   }
 
   > .automix-tag {
-    opacity: 0;
     font-weight: 600;
     box-shadow:
       inset 0 0 0 100vmax rgb(255 255 255 / 14%),
       0 0 12px rgb(255 255 255 / 30%);
+    animation: automix-tag-glow 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
   }
+}
 
-  &.transitioning {
-    > :not(.automix-tag) {
-      opacity: 0;
-    }
+.automix-tag-swap-enter-active,
+.automix-tag-swap-leave-active {
+  transition: opacity 0.25s ease;
+}
 
-    > .automix-tag {
-      opacity: 1;
-      animation: automix-tag-glow 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-    }
-  }
+.automix-tag-swap-enter-from,
+.automix-tag-swap-leave-to {
+  opacity: 0;
 }
 
 @keyframes automix-tag-glow {
@@ -783,7 +782,7 @@ html.has-floating-titlebar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .automix-tag-slot.transitioning > .automix-tag {
+  .automix-tag-slot > .automix-tag {
     animation: none;
   }
 }

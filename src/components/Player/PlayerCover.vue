@@ -108,17 +108,18 @@
         </div>
         <div class="time-info">
           <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
-          <!-- Two whole badges in one centred slot, so "过渡" is centred whatever the quality
-               badge's width; they cross-fade (global `.automix-tag-slot`). -->
-          <div
-            v-if="qualityText || autoMixTransitioning"
-            :class="['automix-tag-slot', { transitioning: autoMixTransitioning }]"
-          >
-            <div v-if="qualityText" class="quality-badge">
-              <n-icon :component="IconLossless" />
-              <span class="quality-label">{{ qualityText }}</span>
-            </div>
-            <div class="quality-badge automix-tag">{{ $t("player.autoMixTransition") }}</div>
+          <!-- "过渡" replaces the whole quality badge in one centred slot, so it is centred
+               whatever the quality badge's width (global `.automix-tag-slot`). -->
+          <div v-if="qualityText || autoMixTransitioning" class="automix-tag-slot">
+            <Transition name="automix-tag-swap">
+              <div v-if="autoMixTransitioning" key="automix" class="quality-badge automix-tag">
+                {{ $t("player.autoMixTransition") }}
+              </div>
+              <div v-else key="quality" class="quality-badge">
+                <n-icon :component="IconLossless" />
+                <span class="quality-label">{{ qualityText }}</span>
+              </div>
+            </Transition>
           </div>
           <span class="time-text">{{ autoMixTransitioning ? "∞" : remainingTime }}</span>
         </div>
@@ -563,7 +564,6 @@ onUnmounted(() => {
           min-width: 0;
           background-color: rgba(255, 255, 255, 0.1);
           color: var(--main-cover-mix-color, rgb(239, 239, 239));
-          opacity: 1;
           font-size: 0.75rem;
           padding: 2px 8px;
           border-radius: var(--radius-xs);
