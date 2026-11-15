@@ -118,8 +118,8 @@ const clipPath = useMotionTemplate`inset(${insetMv}px 0px round 100px)`;
 
 const bounceXSpring = useSpring(0, { damping: 12, stiffness: 300 });
 
-// Leaving the transition the full bar runs on out to the right, uncovering the next song's
-// segment, instead of the fill shrinking back from the end. Cleared when the run-out ends.
+// Leaving the transition the full bar fades down to the next song's segment, which then flashes and
+// settles, instead of the fill shrinking back from the end. Cleared when that sequence ends.
 const leaving = ref(false);
 
 const progressOf = (time: number) => {
@@ -389,23 +389,47 @@ const handleClick = (event: MouseEvent) => {
   animation: slider-flow 2s linear infinite;
 }
 
-/* Out to the right; `.inner`'s clip trims it at the rounded end. */
+/* One timeline for both, so the fade's end clears the state only once the thumb has settled. */
 .leaving .flow {
   opacity: 1;
   /* The light keeps running: an animation still listed carries on rather than restarting. */
   animation:
     slider-flow 2s linear infinite,
-    slider-flow-leave 0.6s cubic-bezier(0.5, 0, 0.75, 0) forwards;
+    slider-leave-flow 1.5s forwards;
 }
 
-/* The thumb may still hold the last song's end for a frame or two; let the bar clear first. */
+/* Bright under the fading bar, so the next song's segment is what stays behind; then a flash, then
+   back to the resting 0.4. A stale full-length thumb for a frame or two is hidden by the bar. */
 .leaving .thumb {
-  transition-delay: 0.15s;
+  animation: slider-leave-thumb 1.5s forwards;
 }
 
-@keyframes slider-flow-leave {
-  to {
-    transform: translateX(100%);
+@keyframes slider-leave-flow {
+  0% {
+    opacity: 1;
+    animation-timing-function: ease;
+  }
+
+  47%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes slider-leave-thumb {
+  0%,
+  47% {
+    opacity: 0.9;
+    animation-timing-function: ease-out;
+  }
+
+  60% {
+    opacity: 1;
+    animation-timing-function: ease-in-out;
+  }
+
+  100% {
+    opacity: 0.4;
   }
 }
 
@@ -425,13 +449,11 @@ const handleClick = (event: MouseEvent) => {
   }
 
   .leaving .flow {
-    animation: slider-flow-fade 0.25s ease forwards;
+    animation: slider-leave-flow 1.5s forwards;
   }
-}
 
-@keyframes slider-flow-fade {
-  to {
-    opacity: 0;
+  .leaving .thumb {
+    animation: none;
   }
 }
 
