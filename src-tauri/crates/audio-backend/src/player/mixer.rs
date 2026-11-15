@@ -118,6 +118,26 @@ pub struct DeckWriter {
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
     recycle_rx: Arc<Mutex<mpsc::Receiver<Vec<f32>>>>,
+    stale: Arc<StaleBlocks>,
+}
+
+/// What the mixer discarded from a deck as stale (generation or flush epoch it no longer accepts).
+/// Written only on a discard, read when an AutoMix cue finds the deck empty with audio queued.
+#[derive(Default)]
+pub(super) struct StaleBlocks {
+    count: AtomicU64,
+    /// (generation << 32) | flush_epoch of the last block discarded…
+    block: AtomicU64,
+    /// …and of what the deck accepted at that moment.
+    accepted: AtomicU64,
+}
+
+fn pack_epochs(generation: u64, flush_epoch: u64) -> u64 {
+    (generation << 32) | (flush_epoch & 0xffff_ffff)
+}
+
+fn unpack_epochs(packed: u64) -> (u64, u64) {
+    (packed >> 32, packed & 0xffff_ffff)
 }
 
 struct DeckBlock {
@@ -268,6 +288,20 @@ impl PlaybackSink for DeckWriter {
 }
 
 impl DeckWriter {
+    /// Discarded-block count, the last discarded block's (generation, flush epoch), what the deck
+    /// accepted then, and this writer's current pair.
+    pub(super) fn stale_blocks(&self) -> (u64, (u64, u64), (u64, u64), (u64, u64)) {
+        (
+            self.stale.count.load(Ordering::Relaxed),
+            unpack_epochs(self.stale.block.load(Ordering::Relaxed)),
+            unpack_epochs(self.stale.accepted.load(Ordering::Relaxed)),
+            (
+                self.generation.load(Ordering::Acquire),
+                self.flush_epoch.load(Ordering::Acquire),
+            ),
+        )
+    }
+
     /// This deck's own queue, excluding what the shared output already holds.
     pub(super) fn deck_queued_samples(&self) -> usize {
         self.queued_samples.load(Ordering::Acquire)
@@ -325,6 +359,8 @@ impl DeckMixer {
         let secondary_flush_epoch = Arc::new(AtomicU64::new(0));
         let primary_queued = Arc::new(AtomicUsize::new(0));
         let secondary_queued = Arc::new(AtomicUsize::new(0));
+        let primary_stale = Arc::new(StaleBlocks::default());
+        let secondary_stale = Arc::new(StaleBlocks::default());
         let control_epoch = Arc::new(AtomicU64::new(0));
         let worker: WorkerHandle = Arc::new(OnceLock::new());
         let samples_per_sec = stream_samples_per_sec(output_sample_rate, output_channels);
@@ -342,6 +378,7 @@ impl DeckMixer {
             flush_epoch: Arc::clone(&primary_flush_epoch),
             queued_samples: Arc::clone(&primary_queued),
             recycle_rx: Arc::new(Mutex::new(primary_recycle_rx)),
+            stale: Arc::clone(&primary_stale),
         };
 
         let secondary = DeckWriter {
@@ -357,6 +394,7 @@ impl DeckMixer {
             flush_epoch: Arc::clone(&secondary_flush_epoch),
             queued_samples: Arc::clone(&secondary_queued),
             recycle_rx: Arc::new(Mutex::new(secondary_recycle_rx)),
+            stale: Arc::clone(&secondary_stale),
         };
 
         let mixer_stop = Arc::clone(&stop_flag);
@@ -380,20 +418,26 @@ impl DeckMixer {
                 let mut worker = MixerWorker {
                     output,
                     output_channels: output_channels.max(1) as usize,
-                    primary: DeckRuntime::new(
-                        primary_rx,
-                        primary_queued,
-                        primary_paused,
-                        primary_recycle_tx,
-                        1.0,
-                    ),
-                    secondary: DeckRuntime::new(
-                        secondary_rx,
-                        secondary_queued,
-                        secondary_paused,
-                        secondary_recycle_tx,
-                        0.0,
-                    ),
+                    primary: DeckRuntime {
+                        stale: primary_stale,
+                        ..DeckRuntime::new(
+                            primary_rx,
+                            primary_queued,
+                            primary_paused,
+                            primary_recycle_tx,
+                            1.0,
+                        )
+                    },
+                    secondary: DeckRuntime {
+                        stale: secondary_stale,
+                        ..DeckRuntime::new(
+                            secondary_rx,
+                            secondary_queued,
+                            secondary_paused,
+                            secondary_recycle_tx,
+                            0.0,
+                        )
+                    },
                     crossfade: None,
                     scheduled: None,
                     transition: 0,
@@ -573,6 +617,7 @@ struct DeckRuntime {
     recycle_tx: mpsc::SyncSender<Vec<f32>>,
     gain: f32,
     position: Option<crate::output::PcmPosition>,
+    stale: Arc<StaleBlocks>,
 }
 
 impl DeckRuntime {
@@ -594,6 +639,7 @@ impl DeckRuntime {
             recycle_tx,
             gain,
             position: None,
+            stale: Arc::default(),
         }
     }
 
@@ -615,6 +661,15 @@ impl DeckRuntime {
             if block.generation != self.accepted_generation
                 || block.flush_epoch != self.accepted_flush_epoch
             {
+                self.stale.count.fetch_add(1, Ordering::Relaxed);
+                self.stale.block.store(
+                    pack_epochs(block.generation, block.flush_epoch),
+                    Ordering::Relaxed,
+                );
+                self.stale.accepted.store(
+                    pack_epochs(self.accepted_generation, self.accepted_flush_epoch),
+                    Ordering::Relaxed,
+                );
                 recycle_deck_buffer(&self.recycle_tx, block.samples);
                 continue;
             }

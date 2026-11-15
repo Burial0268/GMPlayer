@@ -319,9 +319,15 @@ impl AudioPlayer {
                 DeckId::Primary => self.deck_mixer.primary_writer(),
                 DeckId::Secondary => self.deck_mixer.secondary_writer(),
             };
+            let (stale_blocks, stale_block, stale_accepted, writer) = incoming.stale_blocks();
             warn!(
                 queued_samples = incoming.deck_queued_samples(),
                 deck_generation = incoming.generation(),
+                stale_blocks,
+                stale_block = ?stale_block,
+                stale_accepted = ?stale_accepted,
+                writer = ?writer,
+                deck = ?self.inactive_deck(),
                 decoder_alive = self.secondary_decoder_handle.is_some(),
                 secondary_playback_id = ?self.secondary_playback_id,
                 "AutoMix incoming deck empty at the cue"
