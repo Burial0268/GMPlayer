@@ -159,6 +159,10 @@ export class TransitionStateMachine {
   // Pending store update: next playlist index to set after crossfade.
   // Used as fallback in _onCrossfadeComplete when _waitForPlayStart is delayed (background tabs).
   private _pendingNextIndex: number = -1;
+  // The web mix plays the incoming song from its start, but the store follows it only when the
+  // mix is over, as the native path does: title, cover and lyrics switch after the transition.
+  private _pendingWebCommit: { transitionId: number; sound: ISound; nextIndex: number } | null =
+    null;
   private _transitionSeq: number = 0;
   private _activeTransition: ActiveAutoMixTransition | null = null;
 
@@ -1716,7 +1720,7 @@ export class TransitionStateMachine {
 
     SoundManager.beginTransition(incomingSound, nextSong.id);
     incomingSound.play();
-    this._commitWebTransition(transitionId, incomingSound, nextIndex);
+    this._pendingWebCommit = { transitionId, sound: incomingSound, nextIndex };
 
     const volume = music.persistData.playVolume;
     const params = this._finalizeCrossfadeParams(volume, outgoingSound);
@@ -1971,6 +1975,10 @@ export class TransitionStateMachine {
       }
     }
 
+    const commit = this._pendingWebCommit;
+    this._pendingWebCommit = null;
+    if (commit) this._commitWebTransition(commit.transitionId, commit.sound, commit.nextIndex);
+
     // Fallback: if _waitForPlayStart was delayed (background tab), the normal
     // _doCrossfade path may not have updated the store yet. Apply pending updates
     // so the debounced watcher in Player/index.vue sees isCrossfading()=true.
@@ -2094,6 +2102,7 @@ export class TransitionStateMachine {
     this._nextAnalysis = null;
     this._lastStrategy = null;
     this._pendingNextIndex = -1;
+    this._pendingWebCommit = null;
     this._isPaused = false;
     this._activeGainAdjustment = 1;
     this._phraseMixOutTime = null;
