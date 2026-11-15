@@ -352,6 +352,19 @@ test("a backend seek cancellation allows the same track to prepare again", () =>
   }
 });
 
+test("a backend seek cancelling a running crossfade returns to the outgoing song", () => {
+  const env = environment();
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.equal(env.music.autoMixState.hideLyrics, true);
+  env.event("automixStatus", {
+    status: { state: "idle", enabled: true, currentIndex: 0, transitionId: env.transitionId },
+  });
+  assert.equal(env.state.getState(), "idle", "the OS seek cancelled the mix before its handoff");
+  assert.equal(env.music.autoMixState.hideLyrics, false);
+  assert.deepEqual(env.commits, []);
+  assert.ok(!env.sent.some((msg: any) => msg.type === "automixCancel"));
+});
+
 test("configuration idle snapshots and retired cancellations preserve a new prepare", () => {
   const env = environment();
   env.state._state = "analyzing";

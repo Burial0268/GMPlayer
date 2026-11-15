@@ -768,7 +768,11 @@ export class TransitionStateMachine {
           status.state === "idle" &&
           status.transitionId !== undefined &&
           status.transitionId !== null &&
-          (this._state === "analyzing" || this._state === "waiting")
+          (this._state === "analyzing" ||
+            this._state === "waiting" ||
+            // A seek the frontend did not start (the OS media controls) cancelled a running mix
+            // before its handoff: the outgoing song is still current.
+            (this._state === "crossfading" && status.currentIndex !== this._nativeNextIndex))
         ) {
           // Seek/output rebuild cancelled this attempt. Anonymous configure snapshots do not.
           this._nativeAutoMixPreparing = false;
