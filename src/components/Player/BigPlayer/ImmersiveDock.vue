@@ -6,13 +6,12 @@
     <div class="dock-content">
       <div class="dock-head">
         <div class="dock-text">
-          <span class="dock-name automix-stack">
-            <OverflowMarquee :class="{ 'automix-out': mixIncoming }" :speed="36">
-              {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
-            </OverflowMarquee>
-            <OverflowMarquee v-if="mixIncoming" class="automix-in" :speed="36">
-              {{ mixIncoming.name }}
-            </OverflowMarquee>
+          <span class="dock-name">
+            <Transition name="automix-meta" mode="out-in">
+              <OverflowMarquee :key="music.getPlaySongData?.id" :speed="36">
+                {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+              </OverflowMarquee>
+            </Transition>
           </span>
           <span v-if="artistList.length" class="dock-artists">
             <OverflowMarquee>
@@ -170,7 +169,6 @@ import {
   useAutoMixElapsed,
   useAutoMixTransition,
 } from "@/composables/useAutoMixTransition";
-import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import BouncingSlider from "../BouncingSlider.vue";
@@ -192,7 +190,6 @@ const music = musicStore();
 const autoMixBarPhase = useAutoMixBarPhase();
 const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
-const { incoming: mixIncoming } = useAutoMixVisual();
 const user = userStore();
 const setting = settingStore();
 const { persistData } = storeToRefs(music);

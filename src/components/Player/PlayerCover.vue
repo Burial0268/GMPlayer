@@ -48,13 +48,12 @@
             :layout-id="sharedLayoutIds.title"
             :transition="sharedContentTransition"
           >
-            <span class="name automix-stack">
-              <OverflowMarquee :class="{ 'automix-out': mixIncoming }" :speed="36">
-                {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
-              </OverflowMarquee>
-              <OverflowMarquee v-if="mixIncoming" class="automix-in" :speed="36">
-                {{ mixIncoming.name }}
-              </OverflowMarquee>
+            <span class="name">
+              <Transition name="automix-meta" mode="out-in">
+                <OverflowMarquee :key="music.getPlaySongData?.id" :speed="36">
+                  {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+                </OverflowMarquee>
+              </Transition>
             </span>
           </Motion>
           <Motion
@@ -64,21 +63,22 @@
             :layout-id="sharedLayoutIds.artists"
             :transition="sharedContentTransition"
           >
-            <span class="artists automix-stack">
-              <OverflowMarquee v-if="mixIncoming" class="automix-in">
-                {{ artistNames(mixIncoming) }}
-              </OverflowMarquee>
-              <OverflowMarquee :class="{ 'automix-out': mixIncoming }">
-                <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
-                  <span
-                    v-button
-                    class="artist-name"
-                    @click="routerJump('/artist', { id: ar.id })"
-                    >{{ ar.name }}</span
-                  >
-                  <span v-if="index < music.getPlaySongData.artist.length - 1">&nbsp;/&nbsp;</span>
-                </span>
-              </OverflowMarquee>
+            <span class="artists">
+              <Transition name="automix-meta" mode="out-in">
+                <OverflowMarquee :key="music.getPlaySongData?.id">
+                  <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
+                    <span
+                      v-button
+                      class="artist-name"
+                      @click="routerJump('/artist', { id: ar.id })"
+                      >{{ ar.name }}</span
+                    >
+                    <span v-if="index < music.getPlaySongData.artist.length - 1"
+                      >&nbsp;/&nbsp;</span
+                    >
+                  </span>
+                </OverflowMarquee>
+              </Transition>
             </span>
           </Motion>
         </div>
@@ -321,7 +321,6 @@ const autoMixBarPhase = useAutoMixBarPhase();
 const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 const { incoming: mixIncoming } = useAutoMixVisual();
-const artistNames = (song) => (song.artist ?? []).map((ar) => ar.name).join(" / ");
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {

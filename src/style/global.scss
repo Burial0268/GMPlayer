@@ -817,25 +817,22 @@ html.has-floating-titlebar {
   }
 }
 
-// AutoMix 转场：下一首叠在当前这首上，按混音进度淡入（`useAutoMixVisual` 每帧写
+// AutoMix 转场：下一首的封面叠在当前这首上，按混音进度淡入（`useAutoMixVisual` 每帧写
 // `--automix-mix`）。opacity 挂在层自己身上，不挂祖先，否则会隔断 plus-lighter 混合。
-.automix-stack {
-  display: grid;
-  min-width: 0;
-
-  > * {
-    grid-area: 1 / 1;
-    min-width: 0;
-  }
-}
-
-.automix-out {
-  opacity: calc(1 - var(--automix-mix, 0));
-}
-
 .automix-in {
   opacity: var(--automix-mix, 0);
   pointer-events: none;
+}
+
+// 歌名/歌手不叠：两串字夹在一起读不了。切歌时先淡出旧的再淡入新的（`mode="out-in"`）。
+.automix-meta-enter-active,
+.automix-meta-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.automix-meta-enter-from,
+.automix-meta-leave-to {
+  opacity: 0;
 }
 
 // 响应式布局

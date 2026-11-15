@@ -35,18 +35,12 @@
               />
             </div>
             <div class="name">
-              <div
-                v-button
-                class="song automix-stack"
-                data-mobile-player-title
-                @click.stop="openSongDetail"
-              >
-                <OverflowMarquee :class="{ 'automix-out': mixIncoming }" :speed="36">
-                  {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
-                </OverflowMarquee>
-                <OverflowMarquee v-if="mixIncoming" class="automix-in" :speed="36">
-                  {{ mixIncoming.name }}
-                </OverflowMarquee>
+              <div v-button class="song" data-mobile-player-title @click.stop="openSongDetail">
+                <Transition name="automix-meta" mode="out-in">
+                  <OverflowMarquee :key="music.getPlaySongData?.id" :speed="36">
+                    {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+                  </OverflowMarquee>
+                </Transition>
               </div>
               <!-- 显示歌手或歌词 -->
               <div class="artisrOrLrc" v-if="music.getPlaySongData">
