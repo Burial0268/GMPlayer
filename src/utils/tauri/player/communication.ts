@@ -304,6 +304,19 @@ function buildPlayerLyricPayload(force = false): PlayerLyricPayload | null {
     return null;
   }
 
+  // An AutoMix has the incoming song audible: the lyric windows show none rather than the outgoing
+  // song's, like the main view. Not cached, so the end of the mix rebuilds the real payload.
+  if (music.autoMixState?.hideLyrics) {
+    return {
+      songId: songData.id,
+      lrc: [],
+      amllLines: [],
+      hasYrc: false,
+      hasLrcTran: false,
+      hasLrcRoma: false,
+    };
+  }
+
   const settingsKey = lyricSettingsKey(setting);
   if (
     !force &&

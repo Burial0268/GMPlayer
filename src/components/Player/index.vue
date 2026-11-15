@@ -1144,14 +1144,11 @@ watch(
   },
 );
 
-// Tauri: broadcast lyric data when songLyric changes
-watch(
-  () => music.songLyric,
-  () => {
-    broadcastPlayerLyrics(true);
-    broadcastPlayerTime(true);
-  },
-);
+// Tauri: broadcast lyric data when songLyric changes, or when an AutoMix hides the outgoing lyrics
+watch([() => music.songLyric, () => music.autoMixState?.hideLyrics], () => {
+  broadcastPlayerLyrics(true);
+  broadcastPlayerTime(true);
+});
 
 // Queue emptied: no track is live any more, so let the lyric cache drop the
 // processed-line graph it keeps warm for the playing song. Deliberately keyed
