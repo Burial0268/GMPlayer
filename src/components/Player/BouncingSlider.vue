@@ -20,7 +20,7 @@
           :style="{ transform: `scaleX(${bufferedScale})` }"
         />
         <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
-        <div v-if="indeterminate" class="sweep" />
+        <div class="flow" aria-hidden="true" />
       </Motion>
     </div>
     <slot name="after-icon" />
@@ -49,8 +49,8 @@ const props = withDefaults(
     /** How far the track is buffered, in the units of `value`. */
     buffered?: number;
     /**
-     * No position to show (an AutoMix crossfade): the bar glows, a light sweeps across it, and it
-     * takes no seeks — there is no single track for one to land in.
+     * An AutoMix transition: the bar fills, glows and runs a light forward instead of showing a
+     * position, and takes no seeks — there is no single track for one to land in.
      */
     indeterminate?: boolean;
   }>(),
@@ -339,29 +339,42 @@ const handleClick = (event: MouseEvent) => {
   opacity: 0;
 }
 
-.sweep {
+/* The full bar of the transition state; idle and invisible otherwise. */
+.flow {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 40%;
-  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 85%), transparent);
-  /* -100% → 250% of its own 40% width: enters fully off the left edge, leaves off the right. */
-  animation: slider-sweep 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  /* A bright band on the filled bar, tiled so the loop has no seam; moving the background one
+     tile per cycle carries it forward at a constant speed. */
+  background-image: linear-gradient(
+    90deg,
+    rgb(255 255 255 / 60%) 0%,
+    rgb(255 255 255 / 60%) 30%,
+    rgb(255 255 255 / 100%) 50%,
+    rgb(255 255 255 / 60%) 70%,
+    rgb(255 255 255 / 60%) 100%
+  );
+  background-size: 200% 100%;
 }
 
-@keyframes slider-sweep {
+.indeterminate .flow {
+  opacity: 1;
+  animation: slider-flow 2s linear infinite;
+}
+
+@keyframes slider-flow {
   from {
-    transform: translateX(-100%);
+    background-position: 200% 0;
   }
 
   to {
-    transform: translateX(250%);
+    background-position: 0 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sweep {
-    width: 100%;
-    opacity: 0.5;
+  .indeterminate .flow {
     animation: none;
   }
 }

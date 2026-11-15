@@ -736,44 +736,42 @@ html.has-floating-titlebar {
   word-break: break-all;
 }
 
-// AutoMix 转场（Apple Music 式）：混音期间音质标签读作「过渡」并发光，见 useAutoMixTransition。
-// 高亮用 box-shadow 叠一层，不碰各组件 scoped 里的背景色。
-.automix-badge {
-  transition: box-shadow 0.8s ease;
+// AutoMix 转场（Apple Music 式）：音质标签整个让位给「过渡」标签，见 useAutoMixTransition。
+// 两个标签叠在同一个居中的格子里交叉淡入淡出，「过渡」因此总是居中，不随音质标签的宽度偏移。
+// 高亮用 box-shadow 叠一层，不碰各组件 scoped 里 `.quality-badge` 的背景色。
+.automix-tag-slot {
+  display: grid;
+  justify-items: center;
+  align-items: center;
+  min-width: 0;
 
-  .automix-badge-labels {
-    display: grid;
-    min-width: 0;
-
-    > * {
-      grid-area: 1 / 1;
-      min-width: 0;
-      transition: opacity 0.25s ease;
-    }
+  > * {
+    grid-area: 1 / 1;
+    max-width: 100%;
+    transition: opacity 0.25s ease;
   }
 
-  .automix-badge-transition {
+  > .automix-tag {
     opacity: 0;
-  }
-
-  &.transitioning {
+    font-weight: 600;
     box-shadow:
       inset 0 0 0 100vmax rgb(255 255 255 / 14%),
       0 0 12px rgb(255 255 255 / 30%);
-    transition-duration: 0.7s;
+  }
 
-    .automix-badge-quality {
+  &.transitioning {
+    > :not(.automix-tag) {
       opacity: 0;
     }
 
-    .automix-badge-transition {
+    > .automix-tag {
       opacity: 1;
-      animation: automix-badge-glow 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+      animation: automix-tag-glow 3s cubic-bezier(0.45, 0, 0.55, 1) infinite;
     }
   }
 }
 
-@keyframes automix-badge-glow {
+@keyframes automix-tag-glow {
   0%,
   100% {
     text-shadow: 0 0 2px currentColor;
@@ -785,7 +783,7 @@ html.has-floating-titlebar {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .automix-badge.transitioning .automix-badge-transition {
+  .automix-tag-slot.transitioning > .automix-tag {
     animation: none;
   }
 }

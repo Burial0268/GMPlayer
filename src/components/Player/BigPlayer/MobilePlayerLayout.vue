@@ -197,18 +197,14 @@
                       <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
                       <span
                         v-if="qualityText || autoMixTransitioning"
-                        :class="[
-                          'quality-badge',
-                          'automix-badge',
-                          { transitioning: autoMixTransitioning },
-                        ]"
+                        :class="['automix-tag-slot', { transitioning: autoMixTransitioning }]"
                       >
-                        <n-icon :component="IconLossless" />
-                        <span class="automix-badge-labels">
-                          <span class="quality-label automix-badge-quality">{{ qualityText }}</span>
-                          <span class="automix-badge-transition">
-                            {{ $t("player.autoMixTransition") }}
-                          </span>
+                        <span v-if="qualityText" class="quality-badge">
+                          <n-icon :component="IconLossless" />
+                          <span class="quality-label">{{ qualityText }}</span>
+                        </span>
+                        <span class="quality-badge automix-tag">
+                          {{ $t("player.autoMixTransition") }}
                         </span>
                       </span>
                       <span>{{ autoMixTransitioning ? "∞" : `-${remainingTime}` }}</span>
