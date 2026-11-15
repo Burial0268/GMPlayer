@@ -43,9 +43,23 @@ function environment(deferResolution = false) {
       commits.push(index);
       this.persistData.playSongIndex = index;
     },
-    resetSongLyricState() {},
+    resetSongLyricState() {
+      shownLyrics.push(null);
+    },
+    setPlaySongLyric(lyric: unknown) {
+      shownLyrics.push(lyric);
+    },
   };
+  const prefetched: number[] = [];
+  const cachedLyrics = new Map<number, unknown>();
+  const shownLyrics: unknown[] = [];
   const imports: Record<string, unknown> = {
+    "../../lyricFetcher": {
+      lyricFetcher: {
+        prefetch: (id: number) => prefetched.push(id),
+        peek: (id: number) => cachedLyrics.get(id) ?? null,
+      },
+    },
     "../sound/SoundManager": { SoundManager: { getCurrentSound: () => sound } },
     "../sound/types": { isBackendSound: (s: any) => s?.kind === "backend" },
     "../PlayerFunctions": { syncNativeAutoMixCurrentSound: async () => {} },
@@ -124,6 +138,9 @@ function environment(deferResolution = false) {
     sent,
     commits,
     transitionId,
+    prefetched,
+    cachedLyrics,
+    shownLyrics,
     resolveNext() {
       resolutions.shift()?.({ url: "https://example.test/next.mp3", source: "test" });
     },
@@ -172,6 +189,17 @@ test("the native lead-in waits for the backend to report the incoming deck buffe
   assert.equal(env.state.getState(), "idle");
   assert.equal(env.music.autoMixState.incomingReady, true, "idle: no transition left to wait on");
   assert.equal(env.state._nativeIncomingReady, false);
+});
+
+test("the incoming lyrics are prefetched with the plan and shown at the commit", () => {
+  const env = environment();
+  assert.deepEqual(env.prefetched, [2]);
+  const lyric = { lrc: [{ time: 0, content: "B" }] };
+  env.cachedLyrics.set(2, lyric);
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
+  assert.deepEqual(env.commits, [1]);
+  assert.deepEqual(env.shownLyrics, [lyric], "no empty panel in between");
 });
 
 test("pausing just before a native cue preserves it until playback reaches it after resume", () => {

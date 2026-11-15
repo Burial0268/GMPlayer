@@ -36,6 +36,7 @@ import {
   syncNativeAutoMixCurrentSound,
 } from "../PlayerFunctions";
 import { resolveSongUrl } from "../resolveSongUrl";
+import { lyricFetcher } from "../../lyricFetcher";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
 import { audioSendMsg } from "../../tauri/audio/bridge";
 import { isNativeAudioBackendAvailable } from "../../tauri/audio/backendRuntime";
@@ -260,7 +261,23 @@ export class TransitionStateMachine {
       committed: false,
       holdUntil: 0,
     };
+    // Ready by the commit, so the lyric panel switches with the title instead of going empty
+    // through Player's song debounce and the fetch. Local files read theirs from disk.
+    if (toSong?.id !== undefined && !toSong.local?.uri) {
+      lyricFetcher.prefetch(Number(toSong.id), {
+        name: toSong.name,
+        artists: (toSong.artist ?? []).map((artist: any) => artist?.name).filter(Boolean),
+      });
+    }
     return id;
+  }
+
+  /** The committed song's prefetched lyrics if they landed, else an empty panel until they do. */
+  private _showCommittedLyric(music: any): void {
+    const song = music.persistData?.playlists?.[music.persistData.playSongIndex];
+    const lyric = song && !song.local?.uri ? lyricFetcher.peek(Number(song.id)) : null;
+    if (lyric) music.setPlaySongLyric(lyric);
+    else music.resetSongLyricState();
   }
 
   private _getSongId(song: any): number | null {
@@ -781,9 +798,7 @@ export class TransitionStateMachine {
     );
     if (nextIndex >= 0 && this._musicStoreRef) {
       this._musicStoreRef.commitPlaySongIndex(nextIndex);
-      if (typeof this._musicStoreRef.resetSongLyricState === "function") {
-        this._musicStoreRef.resetSongLyricState();
-      }
+      this._showCommittedLyric(this._musicStoreRef);
     }
 
     this._isPaused = false;
@@ -1884,9 +1899,7 @@ export class TransitionStateMachine {
       if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
         music.commitPlaySongIndex(resolvedNextIndex);
       }
-      if (typeof music.resetSongLyricState === "function") {
-        music.resetSongLyricState();
-      }
+      this._showCommittedLyric(music);
     }
 
     adoptIncomingSound(incomingSound);
@@ -1998,9 +2011,7 @@ export class TransitionStateMachine {
       const resolvedNextIndex = this.resolveActiveTransitionTargetIndex(this._pendingNextIndex);
       if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
         music.commitPlaySongIndex(resolvedNextIndex);
-        if (typeof music.resetSongLyricState === "function") {
-          music.resetSongLyricState();
-        }
+        this._showCommittedLyric(music);
         if (IS_DEV) {
           console.log("TransitionStateMachine: Applied pending playSongIndex (bg tab fallback)");
         }
