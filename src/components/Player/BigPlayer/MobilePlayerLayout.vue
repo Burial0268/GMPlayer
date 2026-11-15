@@ -270,12 +270,15 @@
           aria-hidden="true"
           :style="titleFrameStyle"
         >
-          <div class="title-name">
-            <OverflowMarquee v-if="!textTravelling" class="title-marquee" :speed="36">
-              <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
-            </OverflowMarquee>
-            <template v-else>{{ songName || $t("other.noSong") }}</template>
-          </div>
+          <!-- A song change (an AutoMix switch included) fades the old name out, then the new in. -->
+          <Transition name="automix-meta" mode="out-in">
+            <div :key="songName" class="title-name">
+              <OverflowMarquee v-if="!textTravelling" class="title-marquee" :speed="36">
+                <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
+              </OverflowMarquee>
+              <template v-else>{{ songName || $t("other.noSong") }}</template>
+            </div>
+          </Transition>
         </Motion>
 
         <!-- 歌手行同理，只在 mini 条显示的是歌手（不是歌词）时共享。 -->
@@ -285,10 +288,12 @@
           aria-hidden="true"
           :style="artistsFrameStyle"
         >
-          <div class="artists-line">
-            <OverflowMarquee v-if="!textTravelling">{{ artistNames }}</OverflowMarquee>
-            <template v-else>{{ artistNames }}</template>
-          </div>
+          <Transition name="automix-meta" mode="out-in">
+            <div :key="artistNames" class="artists-line">
+              <OverflowMarquee v-if="!textTravelling">{{ artistNames }}</OverflowMarquee>
+              <template v-else>{{ artistNames }}</template>
+            </div>
+          </Transition>
         </Motion>
       </div>
     </div>
