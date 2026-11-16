@@ -21,6 +21,7 @@ import { TransitionEffects } from "./TransitionEffects";
 import { getOutroTypeCrossfadeProfile } from "./types";
 import { analyzeTrack, type OutroType, type TrackAnalysis } from "./TrackAnalyzer";
 import { findNearestBeat } from "./BPMDetector";
+import { pairShapeScale } from "./curves";
 import {
   planEmotionalArc,
   sectionMixOutCue,
@@ -149,11 +150,9 @@ export class TransitionStateMachine {
   // Settings cache (refreshed from store)
   private _enabled: boolean = false;
   private _settingsCrossfadeDuration: number = 8;
-  private _settingsCurve: CrossfadeCurve = "equalPower";
   private _settingsBpmMatch: boolean = true;
   private _settingsBeatAlign: boolean = true;
   private _settingsVolumeNorm: boolean = true;
-  private _settingsSmartCurve: boolean = true;
   private _settingsTransitionEffects: boolean = true;
   private _settingsVocalGuard: boolean = true;
   private _settingsPhraseAlign: boolean = true;
@@ -439,11 +438,9 @@ export class TransitionStateMachine {
     if (!this._settingStoreRef) return;
     this._enabled = this._settingStoreRef.autoMixEnabled ?? false;
     this._settingsCrossfadeDuration = this._settingStoreRef.autoMixCrossfadeDuration ?? 8;
-    this._settingsCurve = this._settingStoreRef.autoMixTransitionStyle ?? "equalPower";
     this._settingsBpmMatch = this._settingStoreRef.autoMixBpmMatch ?? true;
     this._settingsBeatAlign = this._settingStoreRef.autoMixBeatAlign ?? true;
     this._settingsVolumeNorm = this._settingStoreRef.autoMixVolumeNorm ?? true;
-    this._settingsSmartCurve = this._settingStoreRef.autoMixSmartCurve ?? true;
     this._settingsTransitionEffects = this._settingStoreRef.autoMixTransitionEffects ?? true;
     this._settingsVocalGuard = this._settingStoreRef.autoMixVocalGuard ?? true;
     this._settingsPhraseAlign = this._settingStoreRef.autoMixPhraseAlign ?? true;
@@ -700,8 +697,6 @@ export class TransitionStateMachine {
         bpmMatch: this._settingsBpmMatch,
         beatAlign: this._settingsBeatAlign,
         volumeNorm: this._settingsVolumeNorm,
-        smartCurve: this._settingsSmartCurve,
-        transitionStyle: this._settingsCurve,
         transitionEffects: this._settingsTransitionEffects,
         vocalGuard: this._settingsVocalGuard,
         emotionalTransition: this._settingsEmotionalTransition,
@@ -1353,6 +1348,46 @@ export class TransitionStateMachine {
     return clamp(headroom, -2.8, 0);
   }
 
+  /** Vocal share and mean energy of A's overlap and B's opening, through `pairShapeScale`. */
+  private _pairShapeScale(start: number, duration: number, effectiveEnd: number): [number, number] {
+    const current = this._currentAnalysis?.analysis;
+    const next = this._nextAnalysis?.analysis;
+    if (!current || !next) return [1, 1];
+    const vocalShare = (
+      bands: { low: number[]; mid: number[]; high: number[] } | null | undefined,
+      origin: number,
+      from: number,
+      to: number,
+    ): number | null => {
+      if (!bands) return null;
+      const first = Math.max(0, Math.floor((from - origin) / 0.25));
+      const last = Math.min(bands.mid.length, Math.ceil((to - origin) / 0.25));
+      if (last <= first) return null;
+      let active = 0;
+      for (let i = first; i < last; i++) {
+        if (this._vocalGuard.isVocalActive(bands, i)) active++;
+      }
+      return active / (last - first);
+    };
+    const meanEnergy = (perSecond: number[], from: number, to: number): number | null => {
+      const first = Math.max(0, Math.floor(from));
+      const last = Math.min(perSecond.length, Math.ceil(to));
+      if (last <= first) return null;
+      let sum = 0;
+      for (let i = first; i < last; i++) sum += perSecond[i];
+      return sum / (last - first);
+    };
+    const outroBands = current.outro?.multibandEnergy;
+    // Outro windows are 0.25 s each and end at the content end.
+    const outroOrigin = effectiveEnd - (outroBands?.mid.length ?? 0) * 0.25;
+    return pairShapeScale(
+      vocalShare(outroBands, outroOrigin, start, start + duration),
+      vocalShare(next.intro?.multibandEnergy, 0, 0, duration),
+      meanEnergy(current.energy.energyPerSecond, start, start + duration),
+      meanEnergy(next.energy.energyPerSecond, 0, duration),
+    );
+  }
+
   // ─── Consolidated crossfade parameter finalization ──────────────
 
   private _finalizeCrossfadeParams(volume: number, outgoingSound: ISound): CrossfadeParams {
@@ -1365,7 +1400,7 @@ export class TransitionStateMachine {
     // At a section cue the song has not reached its own ending yet, so neither
     // "the outgoing fades by itself" nor the outro-type profile applies.
     const cueUsed = this._emotionalCue !== null;
-    let effectiveCurve: CrossfadeCurve = this._settingsCurve;
+    let effectiveCurve: CrossfadeCurve = "equalPower";
     let effectiveFadeInOnly =
       !cueUsed && (this._outroType === "fadeOut" || this._outroType === "loopFade");
     let effectiveInShape = 1;
@@ -1373,7 +1408,7 @@ export class TransitionStateMachine {
 
     const outroConfidence = this._currentAnalysis?.analysis.outro?.outroConfidence ?? 0;
     const outroConfident = !cueUsed && outroConfidence >= 0.75;
-    if (this._settingsSmartCurve && this._outroType && outroConfident) {
+    if (this._outroType && outroConfident) {
       const profile = getOutroTypeCrossfadeProfile(this._outroType);
       effectiveCurve = profile.curve;
       effectiveFadeInOnly = profile.fadeInOnly;
@@ -1464,7 +1499,7 @@ export class TransitionStateMachine {
     // Filter sweep replaces spectral EQ (both serve frequency-domain smoothing;
     // filter sweep is far more aggressive for truly incompatible tracks)
     let spectralCrossfade: SpectralCrossfadeData | false = false;
-    if (this._settingsSmartCurve && !effectiveFadeInOnly && !strategy.useFilterSweep) {
+    if (!effectiveFadeInOnly && !strategy.useFilterSweep) {
       spectralCrossfade = this._computeSpectralCrossfadeData();
     }
 
@@ -1500,6 +1535,11 @@ export class TransitionStateMachine {
         strategy.useEffects = strategy.useReverbTail || strategy.useFilterSweep;
       }
     }
+
+    // Auto-curve from what overlaps (vocals, energy); scales whatever was chosen above.
+    const [inScale, outScale] = this._pairShapeScale(outgoingNow, crossfadeDuration, effectiveEnd);
+    if (inScale !== 1) effectiveInShape = clamp(effectiveInShape * inScale, 0.7, 1.3);
+    if (outScale !== 1) effectiveOutShape = clamp(effectiveOutShape * outScale, 0.7, 1.3);
 
     if (IS_DEV) {
       console.log(

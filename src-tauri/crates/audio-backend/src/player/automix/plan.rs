@@ -3,10 +3,18 @@
 use super::beat_plan;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
+use crate::player::mixer::BassSwap;
 use crate::types::{AutoMixConfig, CrossfadeCurve};
 
 const MIN_CROSSFADE_DURATION: f64 = 2.0;
 const DEFAULT_OVERLAP_HEADROOM_DB: f64 = -1.2;
+/// Share of an overlap's vocal windows that makes a side "singing" / "clear".
+const VOCAL_BUSY: f32 = 0.5;
+const VOCAL_CLEAR: f32 = 0.25;
+/// `VocalActivityAnalysis` risk at which a window counts as vocal.
+const VOCAL_WINDOW_ACTIVE: f32 = 0.55;
+/// Mean low-band level both sides need before two basslines would stack.
+const BASS_PRESENT: f32 = 0.01;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -23,6 +31,7 @@ pub struct CrossfadePlan {
     pub section_cue: Option<f64>,
     pub outgoing_rate: f64,
     pub beat_synced: bool,
+    pub bass_swap: Option<BassSwap>,
 }
 
 pub(super) fn build_time_based_plan(
@@ -40,13 +49,14 @@ pub(super) fn build_time_based_plan(
         duration,
         incoming_gain_adjustment: 1.0,
         overlap_headroom_db: DEFAULT_OVERLAP_HEADROOM_DB,
-        curve: config.transition_style,
+        curve: CrossfadeCurve::EqualPower,
         in_shape: 1.0,
         out_shape: 1.0,
         arc: EmotionalArc::Neutral,
         section_cue: None,
         outgoing_rate: 1.0,
         beat_synced: false,
+        bass_swap: None,
     }
 }
 
@@ -77,7 +87,7 @@ pub(super) fn build_analysis_backed_plan(
     }
 
     plan.duration = choose_analysis_duration(config, current, effective_end);
-    plan.curve = choose_analysis_curve(config, current);
+    plan.curve = choose_analysis_curve(current);
     plan.overlap_headroom_db = choose_overlap_headroom(current_analysis, next_analysis);
 
     let baseline_start =
@@ -112,16 +122,139 @@ pub(super) fn build_analysis_backed_plan(
 
     // Fit the pair before the legacy clamp shortens a late candidate: a real
     // pulse may move it earlier and recover the configured overlap budget.
-    if config.bpm_match && config.beat_align && !skip_native_beat_align(current) {
-        if let Some(next) = next_analysis {
-            if let Some(aligned) =
-                beat_plan::align(&plan, current, next, effective_end, config.bpm_match)
-            {
-                return aligned;
-            }
+    // No outro-type skip here: a fade-out usually keeps its drums, and the pair
+    // fit already refuses an overlap A's measured grid does not cover.
+    let aligned = next_analysis
+        .filter(|_| config.bpm_match && config.beat_align)
+        .and_then(|next| beat_plan::align(&plan, current, next, effective_end, config.bpm_match));
+    let mut plan = aligned.unwrap_or_else(|| clamp_plan_to_content(plan, effective_end));
+    if let Some(next) = next_analysis {
+        shape_for_pair(&mut plan, current, next);
+    }
+    plan
+}
+
+/// Auto-curve from what actually overlaps: two vocals hand over quickly, a
+/// singer arriving clears the old song first, a quiet opening comes in early,
+/// and two basslines swap instead of stacking. Exponents compose, so this
+/// scales whatever the outro or arc chose.
+fn shape_for_pair(
+    plan: &mut CrossfadePlan,
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+) {
+    let outgoing = (plan.start_time, plan.start_time + plan.duration * plan.outgoing_rate);
+    let incoming = (0.0, plan.duration);
+    let (in_scale, out_scale) = pair_shape_scale(
+        vocal_share(current, outgoing),
+        vocal_share(next, incoming),
+        mean_energy(current, outgoing),
+        mean_energy(next, incoming),
+    );
+    if in_scale != 1.0 {
+        plan.in_shape = (plan.in_shape * in_scale).clamp(0.7, 1.3);
+    }
+    if out_scale != 1.0 {
+        plan.out_shape = (plan.out_shape * out_scale).clamp(0.7, 1.3);
+    }
+    plan.bass_swap = choose_bass_swap(plan, current, next, outgoing, incoming);
+}
+
+/// (incoming, outgoing) exponent scales. Mirrored by `pairShapeScale` in
+/// `AutoMix/curves.ts`; keep the thresholds in step.
+fn pair_shape_scale(
+    vocal_out: Option<f32>,
+    vocal_in: Option<f32>,
+    energy_out: Option<f32>,
+    energy_in: Option<f32>,
+) -> (f64, f64) {
+    let (mut in_scale, mut out_scale) = (1.0, 1.0);
+    if let (Some(a), Some(b)) = (vocal_out, vocal_in) {
+        if a >= VOCAL_BUSY && b >= VOCAL_BUSY {
+            in_scale *= 1.2;
+            out_scale *= 1.2;
+        } else if b >= VOCAL_BUSY && a < VOCAL_CLEAR {
+            out_scale *= 1.2;
+        } else if a >= VOCAL_BUSY && b < VOCAL_CLEAR {
+            in_scale *= 0.85;
         }
     }
-    clamp_plan_to_content(plan, effective_end)
+    if let (Some(a), Some(b)) = (energy_out, energy_in) {
+        let ratio = b / a.max(1e-3);
+        if ratio < 0.5 {
+            in_scale *= 0.85;
+        } else if ratio > 2.0 {
+            in_scale *= 1.15;
+        }
+    }
+    (in_scale, out_scale)
+}
+
+fn vocal_share(track: &automix_analysis::TrackAnalysis, (from, to): (f64, f64)) -> Option<f32> {
+    let vocal = track.vocal_activity.as_ref()?;
+    let width = f64::from(vocal.window_duration);
+    if width <= 0.0 {
+        return None;
+    }
+    let first = (from / width).max(0.0) as usize;
+    let last = ((to / width).ceil() as usize).min(vocal.risk.len());
+    let windows = vocal.risk.get(first..last).filter(|w| !w.is_empty())?;
+    let active = windows.iter().filter(|risk| **risk >= VOCAL_WINDOW_ACTIVE).count();
+    Some(active as f32 / windows.len() as f32)
+}
+
+fn mean_energy(track: &automix_analysis::TrackAnalysis, (from, to): (f64, f64)) -> Option<f32> {
+    let seconds = &track.energy.energy_per_second;
+    let first = from.max(0.0) as usize;
+    let last = (to.ceil() as usize).min(seconds.len());
+    let span = seconds.get(first..last).filter(|s| !s.is_empty())?;
+    Some(span.iter().sum::<f32>() / span.len() as f32)
+}
+
+/// Swap the low band when both sides carry one. A beat-synced pair swaps over
+/// the beat leading into B's pulse nearest the middle, so the change lands on
+/// a kick; otherwise over the middle fifth, as the Web path does.
+fn choose_bass_swap(
+    plan: &CrossfadePlan,
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+    (out_from, out_to): (f64, f64),
+    (in_from, in_to): (f64, f64),
+) -> Option<BassSwap> {
+    let outro = current.outro.as_ref()?;
+    let low = &outro.multiband_energy.low;
+    // Outro windows end at the content end, 0.25 s each.
+    let origin = f64::from(current.duration - current.energy.trailing_silence) - low.len() as f64 * 0.25;
+    let a_low = mean_window(low, (out_from - origin) / 0.25, (out_to - origin) / 0.25)?;
+    let intro = next.intro.as_ref()?.multiband_energy.as_ref()?;
+    let b_low = mean_window(&intro.low, in_from / 0.25, in_to / 0.25)?;
+    if a_low < BASS_PRESENT || b_low < BASS_PRESENT {
+        return None;
+    }
+    let beat = plan
+        .beat_synced
+        .then(|| next.bpm.as_ref()?.head.as_ref())
+        .flatten()
+        .and_then(|grid| {
+            let middle = plan.duration * 0.5;
+            let pulse = grid
+                .beats
+                .iter()
+                .map(|t| f64::from(*t))
+                .filter(|t| *t >= plan.duration * 0.3 && *t <= plan.duration * 0.8)
+                .min_by(|a, b| (a - middle).abs().total_cmp(&(b - middle).abs()))?;
+            let end = pulse / plan.duration;
+            let start = (pulse - f64::from(grid.period)) / plan.duration;
+            Some(BassSwap { start: start as f32, end: end as f32 })
+        });
+    Some(beat.unwrap_or(BassSwap { start: 0.4, end: 0.6 }))
+}
+
+fn mean_window(values: &[f32], from: f64, to: f64) -> Option<f32> {
+    let first = from.max(0.0) as usize;
+    let last = (to.ceil().max(0.0) as usize).min(values.len());
+    let span = values.get(first..last).filter(|s| !s.is_empty())?;
+    Some(span.iter().sum::<f32>() / span.len() as f32)
 }
 
 /// Longest fade the user's setting allows for content ending at `effective_end`.
@@ -157,7 +290,7 @@ fn apply_section_cue(
     plan.start_time = cue;
     plan.section_cue = Some(cue);
     plan.duration = configured_duration(config, effective_end);
-    plan.curve = config.transition_style;
+    plan.curve = CrossfadeCurve::EqualPower;
 }
 
 fn apply_emotional_arc(
@@ -193,10 +326,6 @@ fn choose_analysis_duration(
     effective_end: f64,
 ) -> f64 {
     let configured = configured_duration(config, effective_end);
-
-    if !config.smart_curve {
-        return configured;
-    }
 
     let Some(outro) = current.outro.as_ref() else {
         return configured;
@@ -243,19 +372,12 @@ fn adjusted_mix_score(
     }
 }
 
-fn choose_analysis_curve(
-    config: &AutoMixConfig,
-    current: &automix_analysis::TrackAnalysis,
-) -> CrossfadeCurve {
-    if !config.smart_curve {
-        return config.transition_style;
-    }
-
+fn choose_analysis_curve(current: &automix_analysis::TrackAnalysis) -> CrossfadeCurve {
     let Some(outro) = current.outro.as_ref() else {
-        return config.transition_style;
+        return CrossfadeCurve::EqualPower;
     };
     if outro.outro_confidence < 0.6 {
-        return config.transition_style;
+        return CrossfadeCurve::EqualPower;
     }
 
     match outro.outro_type.as_str() {
@@ -385,4 +507,26 @@ fn clamp_plan_to_content(mut plan: CrossfadePlan, effective_end: f64) -> Crossfa
     }
     plan.duration = plan.duration.max(0.5);
     plan
+}
+
+#[cfg(test)]
+mod pair_shape_tests {
+    use super::*;
+
+    #[test]
+    fn two_singers_hand_over_quickly_and_one_arriving_clears_the_way() {
+        assert_eq!(pair_shape_scale(Some(0.8), Some(0.7), None, None), (1.2, 1.2));
+        assert_eq!(pair_shape_scale(Some(0.1), Some(0.7), None, None), (1.0, 1.2));
+        assert_eq!(pair_shape_scale(Some(0.7), Some(0.1), None, None), (0.85, 1.0));
+        // In between neither side is clearly singing or clear: leave it alone.
+        assert_eq!(pair_shape_scale(Some(0.4), Some(0.4), None, None), (1.0, 1.0));
+        assert_eq!(pair_shape_scale(None, None, None, None), (1.0, 1.0));
+    }
+
+    #[test]
+    fn a_quiet_opening_comes_in_early_and_a_loud_one_is_held_back() {
+        assert_eq!(pair_shape_scale(None, None, Some(0.8), Some(0.3)), (0.85, 1.0));
+        assert_eq!(pair_shape_scale(None, None, Some(0.3), Some(0.8)), (1.15, 1.0));
+        assert_eq!(pair_shape_scale(None, None, Some(0.6), Some(0.7)), (1.0, 1.0));
+    }
 }

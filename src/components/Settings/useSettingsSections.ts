@@ -500,25 +500,6 @@ export function useSettingsSections() {
           show: () => setting.autoMixEnabled,
         },
         {
-          key: "autoMixTransitionStyle",
-          label: "setting.autoMixTransitionStyle",
-          tip: "setting.autoMixTransitionStyleTip",
-          control: "select",
-          show: () => setting.autoMixEnabled,
-          options: [
-            { label: "setting.autoMixEqualPower", value: "equalPower" },
-            { label: "setting.autoMixLinear", value: "linear" },
-            { label: "setting.autoMixSCurve", value: "sCurve" },
-          ],
-        },
-        {
-          key: "autoMixSmartCurve",
-          label: "setting.autoMixSmartCurve",
-          tip: "setting.autoMixSmartCurveTip",
-          control: "switch",
-          show: () => setting.autoMixEnabled,
-        },
-        {
           key: "autoMixEmotionalTransition",
           label: "setting.autoMixEmotionalTransition",
           tip: "setting.autoMixEmotionalTransitionTip",

@@ -47,8 +47,6 @@ pub struct AutoMixConfig {
     pub bpm_match: bool,
     pub beat_align: bool,
     pub volume_norm: bool,
-    pub smart_curve: bool,
-    pub transition_style: CrossfadeCurve,
     pub transition_effects: bool,
     pub vocal_guard: bool,
     /// Hand over after the last chorus and shape the blend by the energy of
@@ -65,8 +63,6 @@ impl Default for AutoMixConfig {
             bpm_match: true,
             beat_align: true,
             volume_norm: true,
-            smart_curve: true,
-            transition_style: CrossfadeCurve::EqualPower,
             transition_effects: true,
             vocal_guard: true,
             emotional_transition: true,
@@ -232,6 +228,9 @@ pub struct AudioInfo {
     pub codec: String,
     pub sample_rate: u32,
     pub channels: u16,
+    /// Valid bits per decoded sample (16, 24, …), when the codec has such a thing: lossless and
+    /// PCM do, lossy codecs do not.
+    pub bits_per_sample: Option<u32>,
     pub duration_secs: f64,
     pub bitrate_bps: Option<u64>,
     pub total_frames: Option<u64>,
@@ -1299,6 +1298,10 @@ pub struct AudioQuality {
     pub bitrate: u32,
     pub sample_rate: u32,
     pub channels: u16,
+    /// Lowercase codec name (`flac`, `mp3`, `pcm_s24le`…); empty when unknown. With
+    /// `bits_per_sample` this is what tells lossless from lossy, which a bitrate cannot.
+    pub codec: String,
+    pub bits_per_sample: Option<u32>,
 }
 
 impl Default for AudioQuality {
@@ -1307,6 +1310,20 @@ impl Default for AudioQuality {
             bitrate: 0,
             sample_rate: 44100,
             channels: 2,
+            codec: String::new(),
+            bits_per_sample: None,
+        }
+    }
+}
+
+impl From<&AudioInfo> for AudioQuality {
+    fn from(info: &AudioInfo) -> Self {
+        Self {
+            bitrate: info.bitrate_bps.map(|b| b as u32).unwrap_or_default(),
+            sample_rate: info.sample_rate,
+            channels: info.channels,
+            codec: info.codec.clone(),
+            bits_per_sample: info.bits_per_sample,
         }
     }
 }

@@ -753,13 +753,6 @@ const messages: Record<string, unknown> = {
     autoMixBeatAlignTip: "将过渡时间点对齐到歌曲节拍",
     autoMixVolumeNorm: "音量标准化",
     autoMixVolumeNormTip: "自动调节音量，使歌曲之间响度一致",
-    autoMixTransitionStyle: "过渡曲线",
-    autoMixTransitionStyleTip: "过渡音量变化的曲线类型",
-    autoMixLinear: "线性",
-    autoMixEqualPower: "等功率",
-    autoMixSCurve: "S 曲线",
-    autoMixSmartCurve: "智能曲线覆盖",
-    autoMixSmartCurveTip: "根据检测到的歌曲结尾类型自动选择最佳过渡曲线",
     autoMixEmotionalTransition: "情绪过渡",
     autoMixEmotionalTransitionTip:
       "识别前奏、主歌、副歌等段落，在最后一段副歌结束处切歌，并按两首歌衔接处的情绪起伏决定过渡的快慢与曲线",

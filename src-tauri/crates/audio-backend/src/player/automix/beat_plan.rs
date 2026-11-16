@@ -29,9 +29,9 @@ pub(super) fn align(
     } else {
         1.0
     };
+    // B still starts at 0; a drumless intro just puts its first pulse later in the overlap.
     let incoming_beat = *b.beats.first()? as f64;
-    // Preserve all of B's opening, including vocals before its first pulse.
-    if incoming_beat > 2.0 || incoming_beat < 0.0 {
+    if incoming_beat < 0.0 {
         return None;
     }
     let beat = (a.period as f64 / rate).max(b.period as f64);
@@ -47,7 +47,12 @@ pub(super) fn align(
         }
         for groups in (1..=max_groups).rev() {
             let duration = groups as f64 * group;
-            if duration < 2.0 || start + duration * rate > a_end || duration > b_end {
+            // At least a bar of B's pulses has to meet A's, or there is nothing to align.
+            if duration < 2.0
+                || duration < incoming_beat + group
+                || start + duration * rate > a_end
+                || duration > b_end
+            {
                 continue;
             }
             let cost = (duration - baseline.duration).abs() + (start - baseline.start_time).abs();
@@ -103,7 +108,6 @@ mod tests {
             enabled: true,
             crossfade_duration: 4.0,
             emotional_transition: false,
-            smart_curve: false,
             volume_norm: false,
             ..Default::default()
         };
@@ -136,5 +140,19 @@ mod tests {
         assert!(align(&base, &a, &b, 100.0, false).is_none());
         b.bpm = Some(evidence(0.4, 0.17, 70));
         assert!(align(&base, &a, &b, 100.0, true).is_none());
+    }
+
+    #[test]
+    fn a_drumless_intro_on_b_still_lands_its_first_pulse_on_a_pulse_of_a() {
+        let config = crate::types::AutoMixConfig::default();
+        let base = super::super::plan::build_time_based_plan(&config, 100.0);
+        let mut a = crate::automix::analyze_mono_samples(&vec![0.1; 48_000], 48_000, 1.0, false);
+        let mut b = a.clone();
+        a.bpm = Some(evidence(0.5, 60.13, 80));
+        b.bpm = Some(evidence(0.5, 4.21, 70));
+        let plan = align(&base, &a, &b, 100.0, true).unwrap();
+        assert!(plan.duration >= 4.21 + 2.0);
+        let phase = (plan.start_time + 4.21 - 60.13).rem_euclid(0.5);
+        assert!(phase.min(0.5 - phase) < 1e-4);
     }
 }

@@ -362,6 +362,7 @@ impl WasmAudioBackend {
             bitrate,
             sample_rate,
             channels,
+            ..Default::default()
         };
 
         let mut events = vec![AudioThreadEvent::LoadAudio {
@@ -417,6 +418,7 @@ impl WasmAudioBackend {
             bitrate: 0,
             sample_rate: decoded.sample_rate.max(1),
             channels: decoded.channels.max(1),
+            ..Default::default()
         };
         self.analysis = Some(AnalysisState::new(
             decoded,
