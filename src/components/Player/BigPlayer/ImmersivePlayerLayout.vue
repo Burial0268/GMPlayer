@@ -3,13 +3,22 @@
     <!-- 全幅封面：铺满左栏（上下出血 + object-fit: cover），右缘按椭圆弧线融进播放背景。
          无歌词时整窗铺满。几何只随「有无歌词」变化，切歌只做纯交叉淡入。 -->
     <div :class="['immersive-artwork', { dimmed: commentsOpen }]" aria-hidden="true">
-      <Transition name="immersive-art">
+      <!-- AutoMix: the incoming cover fades in over the outgoing one with the mix
+           (--automix-mix); the base then switches underneath it without a second fade. -->
+      <Transition :name="mixIncoming ? 'automix-cut' : 'immersive-art'">
         <img :key="coverUrl" class="immersive-artwork-image" :src="coverUrl" alt="" />
       </Transition>
+      <img
+        v-if="incomingCoverUrl"
+        class="immersive-artwork-image automix-in"
+        :src="incomingCoverUrl"
+        alt=""
+      />
       <div class="immersive-artwork-veil">
-        <Transition name="immersive-art">
+        <Transition :name="mixIncoming ? 'automix-cut' : 'immersive-art'">
           <img :key="coverUrl" class="veil-image" :src="coverUrl" alt="" />
         </Transition>
+        <img v-if="incomingCoverUrl" class="veil-image automix-in" :src="incomingCoverUrl" alt="" />
       </div>
     </div>
 
@@ -98,13 +107,10 @@ const commentStageTransition = {
   opacity: { type: "tween", duration: 0.62, ease: [0.16, 1, 0.3, 1], delay: 0.1 },
 } as const;
 
-// Switches at the equal-power point of an AutoMix crossfade, like the background (useBigPlayerCommon).
-const mix = useAutoMixVisual();
-const coverUrl = computed(() =>
-  toCoverUrl(
-    ((mix.pastMidpoint.value && mix.incoming.value) || music.getPlaySongData)?.album?.picUrl,
-    1024,
-  ),
+const { incoming: mixIncoming } = useAutoMixVisual();
+const coverUrl = computed(() => toCoverUrl(music.getPlaySongData?.album?.picUrl, 1024));
+const incomingCoverUrl = computed(() =>
+  mixIncoming.value ? toCoverUrl(mixIncoming.value.album?.picUrl, 1024) : null,
 );
 </script>
 
@@ -142,8 +148,6 @@ const coverUrl = computed(() =>
   --immersive-anchor-x: calc(var(--immersive-art-width) / 2);
   --close-handle-x: var(--immersive-anchor-x);
   --close-handle-y: calc(var(--app-safe-area-top, 0px) + 2.5rem);
-  // 控制卡的定位也提到变量里：ImmersiveDock 内部要拿它反推「假玻璃」那张模糊副本
-  // 相对封面的偏移（见 .dock-glass），两边必须同源。
   --immersive-dock-left: max(
     calc(var(--app-safe-area-left, 0px) + 1rem),
     calc(var(--immersive-anchor-x) - var(--immersive-dock-width) / 2)
@@ -232,7 +236,7 @@ const coverUrl = computed(() =>
     rgb(0 0 0 / 0.5) clamp(80px, 12vh, 165px),
     rgb(0 0 0 / 0) clamp(150px, 22vh, 300px),
     rgb(0 0 0 / 0) calc(100% - clamp(240px, 40vh, 500px)),
-    rgb(0 0 0 / 0.55) calc(100% - clamp(120px, 20vh, 250px)),
+    rgb(0 0 0 / 0.9) calc(100% - clamp(120px, 20vh, 250px)),
     rgb(0 0 0 / 1) 100%
   );
   -webkit-mask-image: linear-gradient(
@@ -241,7 +245,7 @@ const coverUrl = computed(() =>
     rgb(0 0 0 / 0.5) clamp(80px, 12vh, 165px),
     rgb(0 0 0 / 0) clamp(150px, 22vh, 300px),
     rgb(0 0 0 / 0) calc(100% - clamp(240px, 40vh, 500px)),
-    rgb(0 0 0 / 0.55) calc(100% - clamp(120px, 20vh, 250px)),
+    rgb(0 0 0 / 0.9) calc(100% - clamp(120px, 20vh, 250px)),
     rgb(0 0 0 / 1) 100%
   );
 }
@@ -274,8 +278,8 @@ const coverUrl = computed(() =>
     ),
     linear-gradient(
       to top,
-      rgb(0 0 0 / 0.62) 0,
-      rgb(0 0 0 / 0.24) clamp(120px, 20vh, 250px),
+      rgb(0 0 0 / 0.66) 0,
+      rgb(0 0 0 / 0.4) clamp(120px, 20vh, 250px),
       rgb(0 0 0 / 0) clamp(250px, 41vh, 510px)
     );
 }

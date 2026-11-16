@@ -1,8 +1,5 @@
 <template>
   <div class="immersive-dock">
-    <div class="dock-surface" aria-hidden="true">
-      <img class="dock-glass" :src="coverUrl" alt="" />
-    </div>
     <div class="dock-content">
       <div class="dock-head">
         <div class="dock-text">
@@ -162,8 +159,6 @@ import { useI18n } from "vue-i18n";
 import { useLayerNavigation } from "@/utils/navigation";
 import type { LocationQueryRaw } from "vue-router";
 import { musicStore, settingStore, userStore } from "@/store";
-// Aliased: this file already exposes a `coverUrl` computed of its own.
-import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
 import {
   useAutoMixBarPhase,
   useAutoMixElapsed,
@@ -198,8 +193,6 @@ const { t } = useI18n();
 const isTauriEnv = ref(typeof window !== "undefined" && "__TAURI__" in window);
 
 const artistList = computed(() => music.getPlaySongData?.artist ?? []);
-// 「假玻璃」用的封面副本，和 ImmersivePlayerLayout 的全幅封面同一张同一尺寸
-const coverUrl = computed(() => toCoverUrl(music.getPlaySongData?.album?.picUrl, 1024));
 const isLiked = computed(
   () => !!music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id),
 );
@@ -283,61 +276,18 @@ const routerJump = (url: string, query: LocationQueryRaw) => {
 </script>
 
 <style lang="scss" scoped>
-// 沉浸模式的浮动控制卡，刻意拆成「材质层 + 内容层」两个兄弟节点：
-//
-// 材质层 .dock-surface 负责磨砂 —— 卡片压在整幅封面上，没有这层就完全分不出层级
-// （封面的线条、文字会直接穿过卡片）。
-// 内容层 .dock-content 负责 plus-lighter，和右下角无底的开关保持同一套观感。
-//
-// 两者必须分开：mix-blend-mode 会让所在节点成为 backdrop root，
-// 一旦把它挂在 .immersive-dock 上，后代就拿不到可用的 backdrop。
-// 因此 .immersive-dock 本身保持「干净」：不带 blend / filter / opacity / mask。
+// 沉浸模式的浮动控制：没有卡片底，控件直接浮在封面底部的虚化带上
+// （ImmersivePlayerLayout 的 .immersive-artwork-veil 负责模糊 + 压暗）。
+// 曾经用一张对齐的模糊封面副本做「假玻璃」，但它没有封面右缘的椭圆渐隐、
+// 不跟封面缩放、也不随 AutoMix 换图，叠在已经糊过的虚化带上只像一块暗盒子。
+// .dock-content 的 plus-lighter 要混到身下的封面上，所以本节点不能带
+// blend / filter / opacity / mask 之类的层叠隔断。
 .immersive-dock {
   // 宽度/定位由 .immersive-dock-slot 统一负责（纯 vw，无上下限）。
-  // 内部字号、图标、间距同样按 vw 缩放并各自 clamp，
-  // 这样卡片没有「宽度下限」也不会在窄窗口挤爆，宽屏下则整体一起长。
+  // 内部字号、图标、间距同样按 vw 缩放并各自 clamp。
   position: relative;
   width: 100%;
   box-sizing: border-box;
-}
-
-// 磨砂不用 backdrop-filter，改成「再画一张对齐的模糊封面副本」。
-// backdrop-filter 的 backdrop root 是整个 .bplayer，而这棵树里到处是
-// mix-blend-mode: plus-lighter（右下角开关、歌词、本卡片的内容层）——
-// 其中任何一个因 hover 重绘都会让整个 backdrop root 失效、滤镜重跑，
-// 表现为卡片上的 GPU 绘制 glitch。模糊副本是纯合成，谁重绘都不牵连它。
-.dock-surface {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  box-sizing: border-box;
-  border: 1px solid rgb(255 255 255 / 0.16);
-  border-radius: var(--radius-panel);
-  box-shadow: 0 18px 48px rgb(0 0 0 / 0.28);
-
-  // 玻璃自身的高光：压在模糊副本之上，卡片才有「一块玻璃」的厚度感
-  &::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(to bottom, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.04));
-  }
-}
-
-// 与 .immersive-artwork 同框的副本：盒子尺寸一致（--immersive-art-width × 100vh、
-// object-fit: cover），再按控制卡自身的 left/bottom 反向偏移，画面就和身下的封面对齐。
-// 高度多出 160px 并把 bottom 一起下移：blur 在图片自身边缘会采样到透明，
-// 把这条软边推到裁切之外，卡片下沿才不会透出一道虚边。
-.dock-glass {
-  position: absolute;
-  left: calc(-1 * var(--immersive-dock-left, 0px));
-  bottom: calc(-160px - var(--immersive-dock-bottom, 0px));
-  width: var(--immersive-art-width, 52vw);
-  height: calc(100vh + 160px);
-  display: block;
-  object-fit: cover;
-  // 比虚化带更狠一档 + 压暗，卡片才从已经被虚化带糊过的底子上浮出来
-  filter: blur(30px) saturate(1.5) brightness(0.62);
 }
 
 .dock-content {
