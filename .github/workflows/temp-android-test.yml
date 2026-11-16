@@ -1,0 +1,186 @@
+# TEMPORARY — delete once the Android ndk-context fix is validated on a device.
+#
+# Builds an installable arm64 APK of this branch and uploads it as a run
+# artifact; it publishes no release. Mirrors `build-app.yml`'s Android job, cut
+# to the one ABI. The APK gets the application id suffix `.citest` and a
+# throwaway signature, so it installs beside an existing GMPlayer instead of
+# demanding an uninstall (which would wipe that copy's data).
+name: 临时 Android 验证构建 (arm64)
+on:
+  push:
+    branches:
+      - fix/player-ui-polish
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android-arm64:
+    name: 构建可安装的 arm64 APK
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_API_LEVEL: "26"
+      ANDROID_NDK_VERSION: "27.2.12479018"
+      ANDROID_BUILD_TOOLS: "35.0.0"
+      OPENSSL_VERSION: "3.4.1"
+      ANDROID_OPENSSL_DIR: ${{ github.workspace }}/.android-openssl
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@v1
+        with:
+          toolchain: stable
+          targets: "x86_64-unknown-linux-gnu,aarch64-linux-android,wasm32-unknown-unknown"
+
+      - name: 安装 wasm-pack
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.13.1/wasm-pack-v0.13.1-x86_64-unknown-linux-musl.tar.gz \
+            | tar xz --strip-components=1 -C "$RUNNER_TEMP" wasm-pack-v0.13.1-x86_64-unknown-linux-musl/wasm-pack
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> target
+          key: android-arm64-test
+
+      - uses: android-actions/setup-android@v4
+
+      - name: 安装 NDK 与 build-tools
+        run: |
+          sdkmanager --install "ndk;${ANDROID_NDK_VERSION}" "build-tools;${ANDROID_BUILD_TOOLS}"
+          NDK_PATH="${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}"
+          echo "ANDROID_NDK_HOME=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=${NDK_PATH}" >> "$GITHUB_ENV"
+          echo "NDK_HOME=${NDK_PATH}" >> "$GITHUB_ENV"
+        env:
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
+
+      - uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20"
+
+      # Same as build-app.yml: rquickjs-sys needs bindgen on Android, with the
+      # NDK's sysroot and the resource dir of the LLVM whose libclang is loaded.
+      - name: 配置 ncm-core (QuickJS) 的 Android bindgen 环境
+        shell: bash
+        run: |
+          set -euo pipefail
+          NDK_LLVM="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/linux-x86_64"
+          SYSROOT="${NDK_LLVM}/sysroot"
+          LIBCLANG_DIR=""
+          CLANG_BIN=""
+          for root in "${LLVM_PATH:-}" "${NDK_LLVM}"; do
+            [[ -n "${root}" && -x "${root}/bin/clang" ]] || continue
+            for dir in "${root}/lib" "${root}/lib64"; do
+              if ls "${dir}"/libclang.so* > /dev/null 2>&1; then
+                LIBCLANG_DIR="${dir}"
+                CLANG_BIN="${root}/bin/clang"
+                break 2
+              fi
+            done
+          done
+          if [[ -z "${LIBCLANG_DIR}" ]]; then
+            echo "libclang not found; bindgen cannot run" >&2
+            exit 1
+          fi
+          RESOURCE_INCLUDE="$("${CLANG_BIN}" -print-resource-dir)/include"
+          echo "LIBCLANG_PATH=${LIBCLANG_DIR}" >> "$GITHUB_ENV"
+          echo "BINDGEN_EXTRA_CLANG_ARGS_aarch64_linux_android=--target=aarch64-linux-android${ANDROID_API_LEVEL} --sysroot=${SYSROOT} -I${RESOURCE_INCLUDE}" >> "$GITHUB_ENV"
+
+      - name: 缓存 Android OpenSSL (arm64)
+        id: cache-android-openssl
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.ANDROID_OPENSSL_DIR }}
+          key: android-openssl-arm64-${{ env.OPENSSL_VERSION }}-ndk-${{ env.ANDROID_NDK_VERSION }}-api-${{ env.ANDROID_API_LEVEL }}
+
+      - name: 构建 Android OpenSSL (arm64)
+        if: steps.cache-android-openssl.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export ANDROID_NDK_ROOT="${ANDROID_NDK_HOME}"
+          export PATH="${ANDROID_NDK_ROOT}/toolchains/llvm/prebuilt/linux-x86_64/bin:${PATH}"
+          work_dir="${RUNNER_TEMP}/openssl-android"
+          mkdir -p "${work_dir}" "${ANDROID_OPENSSL_DIR}"
+          curl -fsSL "https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz" \
+            | tar -xz -C "${work_dir}"
+          cd "${work_dir}/openssl-${OPENSSL_VERSION}"
+          install_dir="${ANDROID_OPENSSL_DIR}/aarch64-linux-android"
+          ./Configure android-arm64 -D__ANDROID_API__="${ANDROID_API_LEVEL}" no-shared no-tests no-ui-console \
+            --prefix="${install_dir}" --openssldir="${install_dir}/ssl"
+          make -j"$(nproc)"
+          make install_sw
+
+      - name: 配置 Android OpenSSL
+        run: |
+          {
+            echo "OPENSSL_STATIC=1"
+            echo "OPENSSL_NO_PKG_CONFIG=1"
+            echo "AARCH64_LINUX_ANDROID_OPENSSL_DIR=${ANDROID_OPENSSL_DIR}/aarch64-linux-android"
+          } >> "$GITHUB_ENV"
+
+      - name: 安装依赖并构建前端
+        run: |
+          pnpm build:wasm
+          pnpm install
+          node ./scripts/gen-dev-version.mjs
+          pnpm build
+
+      # CI-only edit, never committed: a separate application id so this APK
+      # installs next to the user's own GMPlayer.
+      - name: 测试包使用独立的 applicationId (.citest)
+        run: |
+          sed -i 's/getByName("release") {/getByName("release") {\n            applicationIdSuffix = ".citest"/' \
+            src-tauri/gen/android/app/build.gradle.kts
+          grep -n 'applicationIdSuffix' src-tauri/gen/android/app/build.gradle.kts
+
+      - name: 构建 arm64 APK
+        env:
+          CARGO_NDK_ANDROID_PLATFORM: ${{ env.ANDROID_API_LEVEL }}
+        run: |
+          export JAVA_HOME=$JAVA_HOME_17_X64
+          pnpm add -g @tauri-apps/cli@latest
+          pnpm tauri android build --target aarch64 --split-per-abi --apk
+
+      # The release build type has no signing config; an unsigned APK will not
+      # install. A throwaway key is enough for a side-by-side test build.
+      - name: 签名 APK (临时密钥)
+        run: |
+          set -euo pipefail
+          BT="${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}"
+          APK=$(ls src-tauri/gen/android/app/build/outputs/apk/*/release/*.apk | head -1)
+          echo "unsigned: ${APK}"
+          "$JAVA_HOME_17_X64/bin/keytool" -genkeypair -keystore "$RUNNER_TEMP/ci.jks" \
+            -storepass citest -keypass citest -alias ci -keyalg RSA -keysize 2048 \
+            -validity 30 -dname "CN=GMPlayer CI test"
+          "$BT/zipalign" -p -f 4 "$APK" "$RUNNER_TEMP/aligned.apk"
+          mkdir -p build-dist
+          "$BT/apksigner" sign --ks "$RUNNER_TEMP/ci.jks" --ks-pass pass:citest --key-pass pass:citest \
+            --out "build-dist/GMPlayer-citest-arm64-${GITHUB_SHA::7}.apk" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" verify build-dist/*.apk
+          ls -l build-dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GMPlayer-citest-arm64
+          path: build-dist/*.apk
+          retention-days: 7
