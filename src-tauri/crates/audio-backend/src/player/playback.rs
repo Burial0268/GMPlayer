@@ -468,11 +468,7 @@ impl AudioPlayer {
             ..Default::default()
         };
 
-        let quality = AudioQuality {
-            sample_rate: audio_info.sample_rate,
-            channels: audio_info.channels,
-            bitrate: audio_info.bitrate_bps.map(|b| b as u32).unwrap_or_default(),
-        };
+        let quality = AudioQuality::from(&audio_info);
 
         *self.current_audio_info.write().await = display_info.clone();
         *self.current_audio_quality.write().await = quality.clone();

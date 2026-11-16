@@ -34,6 +34,10 @@ export interface AudioQuality {
   bitrate: number;
   sampleRate: number;
   channels: number;
+  /** Lowercase decoder name (`flac`, `mp3`, `pcm_s24le`…); empty or absent when unknown. */
+  codec?: string;
+  /** Valid bits per sample for lossless/PCM codecs; absent for lossy ones. */
+  bitsPerSample?: number | null;
 }
 
 export interface DisplayAudioInfo {

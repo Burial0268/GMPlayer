@@ -57,6 +57,9 @@ pub(super) fn extract_track_tags(
             .unwrap_or_else(|| extension.clone()),
         sample_rate: sample_rate.get(),
         channels: channels.get(),
+        bits_per_sample: u32::try_from(source_info.bits_per_sample)
+            .ok()
+            .filter(|bits| *bits > 0),
         duration_secs,
         bitrate_bps: u64::try_from(source_info.bit_rate)
             .ok()

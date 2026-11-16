@@ -146,11 +146,7 @@ fn prepare_track_blocking(
     let audio_info = crate::metadata::extract_metadata_only(&local_path)
         .map_err(|e| format!("read next track metadata: {e}"))?;
     let display_info = build_display_info(&audio_info, &source);
-    let quality = AudioQuality {
-        sample_rate: audio_info.sample_rate,
-        channels: audio_info.channels,
-        bitrate: audio_info.bitrate_bps.map(|b| b as u32).unwrap_or_default(),
-    };
+    let quality = AudioQuality::from(&audio_info);
     // Analyze the current + next tracks so the crossfade plan is driven by real
     // outro classification, mix-point selection, curve shaping, and loudness
     // matching instead of a blind "fade the last N seconds" plan.
