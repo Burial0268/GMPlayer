@@ -138,8 +138,11 @@ const progressOf = (time: number) => {
 watch(
   () => props.transitionPhase,
   (now, was) => {
-    leaving.value = was === "active" && now === "committed";
-    if (!leaving.value) return;
+    // The finishing hold (`committed`) ends after 0.8 s, well before the hand-off does, so only
+    // a new transition cuts it short.
+    if (now === "active") leaving.value = false;
+    if (was !== "active" || now !== "committed") return;
+    leaving.value = true;
     ghostScale.value = activeProgress;
     // The jump to the new song is not a seek: show where it is, under the ghost.
     seekAnimControl?.stop();
@@ -374,18 +377,23 @@ const handleClick = (event: MouseEvent) => {
 
 /* The outgoing song's fill at the hand-off. Highlighted like the active thumb, it fades out over
    the next song's segment, which is bright underneath and so is what stays behind; the segment
-   then flashes and settles to its resting 0.4. One timeline for both, so the ghost's end clears
-   the state only once the thumb has settled. */
+   flashes, stays highlighted (glow included) for a while on the new song, then settles to its
+   resting 0.4. One duration for all three, so the ghost's end clears the state only once the
+   thumb has settled. */
 .ghost {
   position: absolute;
   inset: 0;
   background-color: white;
   transform-origin: left center;
-  animation: slider-leave-ghost 1.5s forwards;
+  animation: slider-leave-ghost 3.2s forwards;
 }
 
 .leaving .thumb {
-  animation: slider-leave-thumb 1.5s forwards;
+  animation: slider-leave-thumb 3.2s forwards;
+}
+
+.leaving .inner-wrapper {
+  animation: slider-leave-glow 3.2s forwards;
 }
 
 @keyframes slider-leave-ghost {
@@ -394,7 +402,7 @@ const handleClick = (event: MouseEvent) => {
     animation-timing-function: ease;
   }
 
-  47%,
+  22%,
   100% {
     opacity: 0;
   }
@@ -402,18 +410,36 @@ const handleClick = (event: MouseEvent) => {
 
 @keyframes slider-leave-thumb {
   0%,
-  47% {
+  22% {
     opacity: 0.85;
     animation-timing-function: ease-out;
   }
 
-  60% {
+  28% {
     opacity: 1;
+    animation-timing-function: ease-in-out;
+  }
+
+  38%,
+  65% {
+    opacity: 0.85;
     animation-timing-function: ease-in-out;
   }
 
   100% {
     opacity: 0.4;
+  }
+}
+
+@keyframes slider-leave-glow {
+  0%,
+  65% {
+    filter: drop-shadow(0 0 6px rgb(255 255 255 / 55%));
+    animation-timing-function: ease-in-out;
+  }
+
+  100% {
+    filter: drop-shadow(0 0 6px rgb(255 255 255 / 0%));
   }
 }
 
