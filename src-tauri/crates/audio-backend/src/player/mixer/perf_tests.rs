@@ -76,7 +76,7 @@ fn ramp(outgoing: DeckId, active_frames: usize) -> CrossfadeBlockRamp {
         incoming_step: 0.017,
         outgoing_final: 0.0,
         incoming_final: 1.2,
-        bass: None,
+        filters: None,
     }
 }
 
@@ -134,7 +134,7 @@ fn segmented_mixing_matches_per_sample_reference() {
                                 64,
                                 paused,
                                 ramp,
-                                &mut PassLowBand,
+                                &mut NoFilter,
                             );
                             let ref_consumed = mix_segment_reference(
                                 &mut ref_primary,
@@ -208,7 +208,7 @@ fn segmented_mixing_recycles_stale_and_empty_blocks() {
         4,
         (false, false),
         None,
-        &mut PassLowBand,
+        &mut NoFilter,
     );
     assert_eq!(output, [0.5, -0.25, 0.25, -0.5, 0.0, 0.0, 0.0, 0.0]);
     assert_eq!(consumed, (4, 0));
@@ -234,7 +234,7 @@ fn segmented_mixing_recycles_stale_and_empty_blocks() {
             1,
             (false, false),
             None,
-            &mut PassLowBand,
+            &mut NoFilter,
         ),
         (2, 0)
     );
@@ -281,7 +281,7 @@ fn benchmark_mixing() {
                             CROSSFADE_RAMP_FRAMES,
                             (false, false),
                             black_box(ramp),
-                            &mut PassLowBand,
+                            &mut NoFilter,
                         )
                     };
                     black_box(consumed);

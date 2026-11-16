@@ -218,17 +218,28 @@ legacy structure planner; the new pair planner uses the local periods and phases
 instead. Four-pulse grouping is a conservative phrase-length heuristic, not a
 claim that a downbeat model has identified the meter.
 
-`player/automix/beat_plan.rs` tests half/double-time folds and permits at most
-±4% stretch of the outgoing A track. B starts at its original beginning and
-remains at its original speed; a drumless intro only moves its first pulse later
-into the overlap, which must still contain a bar of B's pulses. The pair fit no
-longer skips fade-out endings — it already refuses an overlap A's grid does not
-cover. When both sides carry a low band the mixer swaps it with a low shelf
-(`BassSwap`, 180 Hz, -24 dB), over the beat leading into B's pulse nearest the
-middle for a synced pair, otherwise over the middle fifth. A cue is chosen so the observed pulse phases
-meet; the complete overlap must fit both stable runs and the configured duration
-budget. Missing evidence, an unsafe tempo ratio or insufficient preparation lead
-retains ordinary crossfade. Pair fitting runs before the legacy end clamp so a
+`player/automix/beat_plan.rs` plans the pair in bars, following
+[HyPlayer-Nextgen's AutoMix planner](https://github.com/Gaimoydev/HyPlayer-Nextgen/tree/develop/HyPlayer/Services/Playback/AutoMix)
+(GPL-3.0; the ideas are re-derived, no code is copied). Half/double-time folds
+are tried; within ±4% the outgoing A is stretched and the pair **beat-mixes**:
+16, 8, 4, 3 or 2 bars (at most 40 s, no longer capped by the crossfade setting),
+A leaving on the latest bar start that fits, preferably a four-bar phrase from
+its outro. B enters on its first downbeat — or, when its first line is far off,
+on the bar one overlap before it — so the decoder opens B there and its clock
+starts from that position. B rises to full by the handoff while A holds full,
+then A releases; the low band swaps at the handoff. The handoff is 0.5 unless
+A's last vocal line runs later (up to 0.9), always on a bar line. A bar count
+whose overlap would put both singers together for more than a second is
+skipped. Outside the stretch range (or with BPM matching off) the pair
+**filter-cuts** at native speed: A is high-passed from 300 Hz to 18 kHz, holds
+until 70%, and B enters halfway. Both styles hold the decks near full volume,
+so the mixer limits the sum (-0.26 dB, 120 ms release) until the limiter has
+released. An unsynced fade whose A still sings inside it holds A until the last
+line with B at 0.6 underneath. The bar comes from `BeatRegion::downbeat`, the
+pulse phase whose low band hits hardest; a kick on 1 and 3 alike leaves it
+unknown, and every pulse may then anchor. B is still not stretched, and its
+tempo is not ramped back after the overlap (HyPlayer stretches B instead).
+Pair fitting runs before the legacy end clamp so a
 slightly earlier real pulse can recover an otherwise shortened overlap.
 
 The Signalsmith processor is constructed on a prepare thread and applied in the

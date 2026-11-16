@@ -35,6 +35,7 @@ pub(super) fn window_region(
     let mut buffer = vec![Complex::default(); WINDOW];
     let mut previous = vec![0.0f32; WINDOW / 2];
     let mut flux = Vec::with_capacity(len / HOP);
+    let mut low_flux = Vec::with_capacity(len / HOP);
     for at in (0..=len - WINDOW).step_by(HOP) {
         for (i, slot) in buffer.iter_mut().enumerate() {
             let source = (at + i) as f64 * sample_rate as f64 / RATE as f64;
@@ -46,17 +47,25 @@ pub(super) fn window_region(
             *slot = Complex::new(sample * window, 0.0);
         }
         fft.process_with_scratch(&mut buffer, &mut scratch);
-        let mut novelty = 0.0;
+        let (mut novelty, mut low) = (0.0, 0.0);
         for bin in 3..WINDOW / 2 {
             let magnitude = buffer[bin].norm();
-            novelty += (magnitude - previous[bin]).max(0.0);
+            let rise = (magnitude - previous[bin]).max(0.0);
+            novelty += rise;
+            if bin <= LOW_BINS {
+                low += rise;
+            }
             previous[bin] = magnitude;
         }
         flux.push(novelty);
+        low_flux.push(low);
     }
     let start_seconds = start as f64 / sample_rate as f64 + (WINDOW / 2) as f64 / RATE as f64;
-    grid(&flux, start_seconds, tail)
+    grid(&flux, &low_flux, start_seconds, tail)
 }
+
+/// Bins up to ~215 Hz at 11 025 Hz / 1024: kick and bass.
+const LOW_BINS: usize = 20;
 
 /// On-phase over off-phase strength that marks the beat level (measured split 1.6 / 2.9).
 const BEAT_CONTRAST: f32 = 2.2;
@@ -66,22 +75,21 @@ const FRAME: f64 = HOP as f64 / RATE as f64;
 /// Fits one fixed grid to the onset envelope. Extra onsets (hats, ghost notes)
 /// and a few missed beats do not break it, which a run of equal peak-to-peak
 /// intervals cannot survive on a real groove.
-fn grid(flux: &[f32], offset: f64, tail: bool) -> Option<BeatRegion> {
+fn grid(flux: &[f32], low_flux: &[f32], offset: f64, tail: bool) -> Option<BeatRegion> {
     let n = flux.len();
     let (min_lag, max_lag) = ((0.29 / FRAME).ceil() as usize, (1.05 / FRAME) as usize);
     if n < max_lag * 4 || flux.iter().all(|v| *v < 1e-6) {
         return None;
     }
-    // Flux above its ~0.25 s local mean, so a loudness swell does not read as a beat.
-    let onset: Vec<f32> = (0..n)
-        .map(|i| {
-            let local = &flux[i.saturating_sub(20)..(i + 21).min(n)];
-            (flux[i] - local.iter().sum::<f32>() / local.len() as f32).max(0.0)
-        })
-        .collect();
+    let onset = local_rise(flux);
     // Coarse tempo: autocorrelation weighted towards 120 BPM, one octave of spread.
     let score = |lag: usize| {
-        let ac = onset[lag..].iter().zip(&onset).map(|(a, b)| a * b).sum::<f32>() / (n - lag) as f32;
+        let ac = onset[lag..]
+            .iter()
+            .zip(&onset)
+            .map(|(a, b)| a * b)
+            .sum::<f32>()
+            / (n - lag) as f32;
         let octaves = (lag as f64 * FRAME / 0.5).log2();
         ac as f64 * (-0.5 * octaves * octaves).exp()
     };
@@ -89,7 +97,11 @@ fn grid(flux: &[f32], offset: f64, tail: bool) -> Option<BeatRegion> {
     // Fine period: a 0.02-frame error would already drift ~20 ms across 40 s.
     let mut period = (0..=100)
         .map(|step| lag as f64 - 1.0 + step as f64 * 0.02)
-        .max_by(|a, b| best_phase(&onset, *a).1.total_cmp(&best_phase(&onset, *b).1))?;
+        .max_by(|a, b| {
+            best_phase(&onset, *a)
+                .1
+                .total_cmp(&best_phase(&onset, *b).1)
+        })?;
     // Metrical level: the beat's "and" carries only hats, so its on-phase beats its
     // off-phase ~3-7x; a half-bar's off-phase is the snare against the kick, ~1.6x.
     while period * 2.0 <= max_lag as f64 && contrast(&onset, period * 2.0) >= BEAT_CONTRAST {
@@ -152,7 +164,10 @@ fn grid(flux: &[f32], offset: f64, tail: bool) -> Option<BeatRegion> {
         .iter()
         .map(|(i, f)| (i - mean_index) * (f - mean_frame))
         .sum::<f64>()
-        / observed.iter().map(|(i, _)| (i - mean_index).powi(2)).sum::<f64>();
+        / observed
+            .iter()
+            .map(|(i, _)| (i - mean_index).powi(2))
+            .sum::<f64>();
     let origin = mean_frame - mean_index * slope;
     let fitting = observed
         .iter()
@@ -162,11 +177,48 @@ fn grid(flux: &[f32], offset: f64, tail: bool) -> Option<BeatRegion> {
     Some(BeatRegion {
         period: (slope * FRAME) as f32,
         stability: (fitting as f64 / beats as f64) as f32,
+        downbeat: downbeat(&local_rise(low_flux), origin, slope, beats),
         beats: (0..beats)
             .map(|i| (offset + (origin + i as f64 * slope) * FRAME) as f32)
             .collect(),
     })
 }
+
+/// Flux above its ~0.25 s local mean, so a loudness swell does not read as a beat.
+fn local_rise(flux: &[f32]) -> Vec<f32> {
+    let n = flux.len();
+    (0..n)
+        .map(|i| {
+            let local = &flux[i.saturating_sub(20)..(i + 21).min(n)];
+            (flux[i] - local.iter().sum::<f32>() / local.len() as f32).max(0.0)
+        })
+        .collect()
+}
+
+/// The beat phase (0..4) whose low band hits hardest. A kick on 1 and 3 alike,
+/// or no low band, leaves it undecided rather than guessing half a bar wrong.
+fn downbeat(low: &[f32], origin: f64, period: f64, beats: usize) -> Option<u8> {
+    if beats < 8 {
+        return None;
+    }
+    let mut strength = [0.0f32; 4];
+    for i in 0..beats {
+        let at = (origin + i as f64 * period).round() as usize;
+        if at + 1 < low.len() {
+            strength[i % 4] += low[at.saturating_sub(1)..=at + 1]
+                .iter()
+                .copied()
+                .fold(0.0, f32::max);
+        }
+    }
+    let mut order = [0usize, 1, 2, 3];
+    order.sort_by(|a, b| strength[*b].total_cmp(&strength[*a]));
+    (strength[order[0]] > 0.0 && strength[order[0]] >= strength[order[1]] * DOWNBEAT_MARGIN)
+        .then_some(order[0] as u8)
+}
+
+/// How much harder the downbeat's low band must hit than any other phase.
+const DOWNBEAT_MARGIN: f32 = 1.15;
 
 /// Mean onset strength on the grid `phase + k * period`, allowing ±1 frame.
 fn comb(onset: &[f32], period: f64, phase: f64) -> f32 {
@@ -174,7 +226,10 @@ fn comb(onset: &[f32], period: f64, phase: f64) -> f32 {
     let mut at = phase;
     while at.round() as usize + 1 < onset.len() {
         let i = at.round() as usize;
-        sum += onset[i.saturating_sub(1)..=i + 1].iter().copied().fold(0.0, f32::max);
+        sum += onset[i.saturating_sub(1)..=i + 1]
+            .iter()
+            .copied()
+            .fold(0.0, f32::max);
         count += 1;
         at += period;
     }
@@ -259,6 +314,17 @@ mod drum_probe {
     /// Kick on 1, 3 and the "and" of 3, snare on 2/4, closed hats on every
     /// eighth, a sustained pad underneath: what a pop/EDM groove looks like.
     pub(super) fn groove(bpm: f64, offset: f64, seconds: usize, rate: usize) -> Vec<f32> {
+        groove_with(bpm, offset, seconds, rate, 1.0)
+    }
+
+    /// `third` scales the beat-3 kick; below 1 the bar's first kick is the accent.
+    pub(super) fn groove_with(
+        bpm: f64,
+        offset: f64,
+        seconds: usize,
+        rate: usize,
+        third: f32,
+    ) -> Vec<f32> {
         let beat = 60.0 / bpm;
         let mut data: Vec<f32> = (0..rate * seconds)
             .map(|i| {
@@ -276,7 +342,9 @@ mod drum_probe {
             let start = (at * rate as f64) as usize;
             let len = rate / if kind == 2 { 30 } else { 8 };
             for i in 0..len {
-                let Some(slot) = data.get_mut(start + i) else { break };
+                let Some(slot) = data.get_mut(start + i) else {
+                    break;
+                };
                 let t = i as f32 / rate as f32;
                 let env = (-t * if kind == 2 { 60.0 } else { 18.0 }).exp();
                 let s = match kind {
@@ -293,7 +361,7 @@ mod drum_probe {
             let step = n % 8; // eighths within a bar
             hit(&mut data, at, 2, if n % 2 == 0 { 0.8 } else { 0.5 });
             if matches!(step, 0 | 4 | 5) {
-                hit(&mut data, at, 0, 1.0);
+                hit(&mut data, at, 0, if step == 4 { third } else { 1.0 });
             }
             if matches!(step, 2 | 6) {
                 hit(&mut data, at, 1, 0.9);
@@ -310,12 +378,48 @@ mod drum_probe {
             for tail in [false, true] {
                 let grid = region(&data, 22_050, tail).expect("a groove has a grid");
                 let found = 60.0 / grid.period as f64;
-                assert!((found / bpm - 1.0).abs() < 0.003, "bpm={bpm} tail={tail} found={found}");
-                assert!(grid.stability >= 0.9 && grid.beats.len() >= 30, "bpm={bpm} tail={tail}");
+                assert!(
+                    (found / bpm - 1.0).abs() < 0.003,
+                    "bpm={bpm} tail={tail} found={found}"
+                );
+                assert!(
+                    grid.stability >= 0.9 && grid.beats.len() >= 30,
+                    "bpm={bpm} tail={tail}"
+                );
                 let beat = 60.0 / bpm;
                 let phase = (grid.beats[0] as f64 - 0.31).rem_euclid(beat);
-                assert!(phase.min(beat - phase) < 0.02, "bpm={bpm} tail={tail} phase={phase}");
+                assert!(
+                    phase.min(beat - phase) < 0.02,
+                    "bpm={bpm} tail={tail} phase={phase}"
+                );
             }
+        }
+    }
+
+    #[test]
+    fn the_accented_kick_marks_the_bar_and_an_even_one_stays_undecided() {
+        for bpm in [122.0, 128.0, 174.0] {
+            let beat = 60.0 / bpm;
+            let data = groove_with(bpm, 0.31, 60, 22_050, 0.5);
+            for tail in [false, true] {
+                let grid = region(&data, 22_050, tail).unwrap();
+                let first = grid.beats[grid.downbeat.expect("accented bar") as usize] as f64;
+                let bars = (first - 0.31) / (beat * 4.0);
+                assert!(
+                    (bars - bars.round()).abs() < 0.05,
+                    "bpm={bpm} tail={tail} bars={bars}"
+                );
+            }
+        }
+        // Kicks on 1 and 3 alike: whatever it claims must at least be a kick.
+        let beat = 60.0 / 122.0;
+        let even = region(&groove(122.0, 0.31, 60, 22_050), 22_050, false).unwrap();
+        if let Some(d) = even.downbeat {
+            let beats = (even.beats[d as usize] as f64 - 0.31) / beat;
+            assert!(
+                (beats / 2.0 - (beats / 2.0).round()).abs() < 0.05,
+                "beats={beats}"
+            );
         }
     }
 }

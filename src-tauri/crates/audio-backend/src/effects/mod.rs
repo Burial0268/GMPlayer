@@ -208,15 +208,15 @@ impl EqBandRuntime {
     }
 }
 
-struct LimiterRuntime {
+pub(crate) struct LimiterRuntime {
     threshold_gain: f32,
     ceiling_gain: f32,
     release_coeff: f32,
-    gain: f32,
+    pub(crate) gain: f32,
 }
 
 impl LimiterRuntime {
-    fn new(config: LimiterConfig, sample_rate: f32) -> Self {
+    pub(crate) fn new(config: LimiterConfig, sample_rate: f32) -> Self {
         let ceiling_db = config.ceiling_db.clamp(MIN_GAIN_DB, 0.0);
         let threshold_db = config.threshold_db.clamp(MIN_GAIN_DB, ceiling_db);
         let release_ms = config.release_ms.clamp(5.0, 2_000.0);
@@ -232,7 +232,7 @@ impl LimiterRuntime {
     }
 
     #[inline]
-    fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
+    pub(crate) fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
         for frame in samples.chunks_exact_mut(channels) {
             let mut peak = 0.0f32;
             for sample in frame.iter() {
@@ -316,6 +316,22 @@ impl BiquadCoeffs {
         let a2 = (a + 1.0) - (a - 1.0) * cos - beta * sin;
 
         Self::normalize(b0, b1, b2, a0, a1, a2)
+    }
+
+    pub(crate) const IDENTITY: Self = Self {
+        b0: 1.0,
+        b1: 0.0,
+        b2: 0.0,
+        a1: 0.0,
+        a2: 0.0,
+    };
+
+    pub(crate) fn high_pass(sample_rate: f32, frequency: f32, q: f32) -> Self {
+        let omega = std::f32::consts::TAU * frequency / sample_rate;
+        let (sin, cos) = omega.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let b0 = (1.0 + cos) / 2.0;
+        Self::normalize(b0, -(1.0 + cos), b0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha)
     }
 
     fn normalize(b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32) -> Self {

@@ -41,6 +41,7 @@ fn worker(
     let output = TestOutput::new(channels as u16, 48_000, 8);
     let (_, rx) = mpsc::channel();
     let worker = MixerWorker {
+        overlap_limiter: None,
         output: output.writer.clone(),
         output_channels: channels,
         primary,
