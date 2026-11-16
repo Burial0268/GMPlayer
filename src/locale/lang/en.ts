@@ -776,14 +776,6 @@ const messages: Record<string, unknown> = {
     autoMixBeatAlignTip: "Align transition point to the beat of the song",
     autoMixVolumeNorm: "Volume Normalization",
     autoMixVolumeNormTip: "Automatically adjust volume for consistent loudness between songs",
-    autoMixTransitionStyle: "Transition Curve",
-    autoMixTransitionStyleTip: "The type of volume curve used during transitions",
-    autoMixLinear: "Linear",
-    autoMixEqualPower: "Equal Power",
-    autoMixSCurve: "S-Curve",
-    autoMixSmartCurve: "Smart Curve Override",
-    autoMixSmartCurveTip:
-      "Automatically select the best crossfade curve based on detected song ending type",
     autoMixEmotionalTransition: "Emotional Transitions",
     autoMixEmotionalTransitionTip:
       "Detect intro, verse, chorus and other sections, hand over after the last chorus, and pace the blend by how the energy rises or falls where the two songs meet",

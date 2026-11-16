@@ -161,15 +161,8 @@ fn prepare_track_blocking(
     // Analyze with the same BPM policy as a "current" track so this result can be
     // reused straight from the cache when the next track later becomes current,
     // avoiding a second full decode of the same file.
-    let next_analysis = if config.beat_align
-        || config.volume_norm
-        || config.smart_curve
-        || config.emotional_transition
-    {
-        analyze_cached("next", &local_path, analyze_current_bpm, cancel)
-    } else {
-        None
-    };
+    // The curve is always chosen from what overlaps, so B is always analysed.
+    let next_analysis = analyze_cached("next", &local_path, analyze_current_bpm, cancel);
     if cancel.is_cancelled() {
         return Err(SUPERSEDED.into());
     }

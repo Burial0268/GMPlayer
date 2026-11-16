@@ -69,7 +69,7 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         })).await.unwrap();
         player.process_message(message(AudioThreadMessage::AutomixConfigure {
             config: AutoMixConfig {
-                enabled: true, crossfade_duration: 4.0, smart_curve: false,
+                enabled: true, crossfade_duration: 4.0,
                 emotional_transition: false, volume_norm: false, transition_effects: false,
                 vocal_guard: false, ..AutoMixConfig::default()
             },

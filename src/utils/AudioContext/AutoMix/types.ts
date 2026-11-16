@@ -33,7 +33,7 @@ export interface CrossfadeParams {
    *  The song's own audio content is already fading, so only the incoming ramps up. */
   fadeInOnly?: boolean;
   /** Classification of the outgoing track's ending. Used by getOutroTypeCrossfadeProfile()
-   *  to select per-type curve profiles when autoMixSmartCurve is enabled. */
+   *  to select per-type curve profiles. */
   outroType?: OutroType;
   /** Exponent for incoming volume curve. <1 = fast rise, >1 = slow rise. Default 1.0 */
   inShape?: number;
@@ -130,7 +130,7 @@ export interface TransitionStrategy {
 
 /**
  * Returns recommended crossfade profile for a given outro type.
- * Used when autoMixSmartCurve is enabled and outroConfidence >= 0.7.
+ * Used when outroConfidence >= 0.75.
  */
 export function getOutroTypeCrossfadeProfile(outroType: OutroType): CrossfadeProfile {
   switch (outroType) {

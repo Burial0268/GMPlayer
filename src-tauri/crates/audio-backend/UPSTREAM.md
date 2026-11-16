@@ -204,17 +204,28 @@ accounting approach from [SPlayer-Next PR #429](https://github.com/SPlayer-Dev/S
 revision `ae4d3255de854ed36e8eeaa447d03f0aa0589cd2`. The reference is AGPL-3.0;
 Signalsmith Stretch's Rust wrapper is an MIT dependency.
 
-`../automix-analysis/src/beats.rs` measures spectral-flux onset peaks in the first and last
-40 seconds. It fits observed stable runs of at least eight pulses and three
-seconds, requires 90% of the pulses to fit, and never extrapolates the grid beyond
-its measured interval. The existing global BPM result remains available to the
+`../automix-analysis/src/beats.rs` measures spectral flux in the first and last
+40 seconds, takes the tempo from its autocorrelation (weighted towards 120 BPM)
+and the phase from a comb over the onset envelope, then picks the metrical level
+by on/off-phase contrast: a beat's "and" carries only hats (3-7x weaker), a
+half-bar's carries the snare (~1.6x). Predicted beats are matched to nearby
+onsets; a run may bridge two misses, needs eight hits over three seconds, and is
+refit by least squares. An earlier fit required consecutive equal peak-to-peak
+intervals, which one hat or ghost note broke — on a synthetic kick/snare/hat
+groove it found no grid at all at 122 BPM. The grid still never extrapolates
+beyond its measured interval. The existing global BPM result remains available to the
 legacy structure planner; the new pair planner uses the local periods and phases
 instead. Four-pulse grouping is a conservative phrase-length heuristic, not a
 claim that a downbeat model has identified the meter.
 
 `player/automix/beat_plan.rs` tests half/double-time folds and permits at most
 ±4% stretch of the outgoing A track. B starts at its original beginning and
-remains at its original speed. A cue is chosen so the observed pulse phases
+remains at its original speed; a drumless intro only moves its first pulse later
+into the overlap, which must still contain a bar of B's pulses. The pair fit no
+longer skips fade-out endings — it already refuses an overlap A's grid does not
+cover. When both sides carry a low band the mixer swaps it with a low shelf
+(`BassSwap`, 180 Hz, -24 dB), over the beat leading into B's pulse nearest the
+middle for a synced pair, otherwise over the middle fifth. A cue is chosen so the observed pulse phases
 meet; the complete overlap must fit both stable runs and the configured duration
 budget. Missing evidence, an unsafe tempo ratio or insufficient preparation lead
 retains ordinary crossfade. Pair fitting runs before the legacy end clamp so a

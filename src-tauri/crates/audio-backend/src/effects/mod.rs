@@ -261,7 +261,7 @@ impl LimiterRuntime {
 }
 
 #[derive(Clone, Copy)]
-struct BiquadCoeffs {
+pub(crate) struct BiquadCoeffs {
     b0: f32,
     b1: f32,
     b2: f32,
@@ -286,7 +286,7 @@ impl BiquadCoeffs {
         Self::normalize(b0, b1, b2, a0, a1, a2)
     }
 
-    fn low_shelf(sample_rate: f32, frequency: f32, q: f32, gain_db: f32) -> Self {
+    pub(crate) fn low_shelf(sample_rate: f32, frequency: f32, q: f32, gain_db: f32) -> Self {
         let a = db_to_gain(gain_db).sqrt();
         let omega = std::f32::consts::TAU * frequency / sample_rate;
         let (sin, cos) = omega.sin_cos();
@@ -335,14 +335,14 @@ impl BiquadCoeffs {
 }
 
 #[derive(Clone, Copy, Default)]
-struct BiquadState {
+pub(crate) struct BiquadState {
     z1: f32,
     z2: f32,
 }
 
 impl BiquadState {
     #[inline]
-    fn process(&mut self, coeffs: BiquadCoeffs, input: f32) -> f32 {
+    pub(crate) fn process(&mut self, coeffs: BiquadCoeffs, input: f32) -> f32 {
         let output = coeffs.b0 * input + self.z1;
         self.z1 = coeffs.b1 * input - coeffs.a1 * output + self.z2;
         self.z2 = coeffs.b2 * input - coeffs.a2 * output;

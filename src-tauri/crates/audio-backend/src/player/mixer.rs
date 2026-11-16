@@ -6,7 +6,7 @@ use std::time::Duration;
 use parking_lot::{Mutex, RwLock};
 
 use crate::decoder::PlaybackSink;
-use crate::effects::DspChain;
+use crate::effects::{BiquadCoeffs, BiquadState, DspChain};
 use crate::output::{stream_samples_per_sec, OutputWriter, ProducerWait, PushCancel};
 use crate::types::{CrossfadeCurve, DspConfig};
 
@@ -26,6 +26,11 @@ pub(super) fn deck_queue_full_samples(channels: u16) -> usize {
 }
 const MIX_BLOCK_FRAMES: usize = 512;
 const CROSSFADE_RAMP_FRAMES: usize = 64;
+/// Bass swap: a low shelf deep enough to take a kick and bassline out of the mix.
+const BASS_SWAP_HZ: f32 = 180.0;
+const BASS_SWAP_KILL_DB: f32 = -24.0;
+/// Layouts wider than this skip the swap rather than allocate filter state.
+const BASS_SWAP_MAX_CHANNELS: usize = 8;
 // Both decks paused means no deadline at all: the worker has nothing to render
 // until a control message arrives, so it blocks on the control channel instead
 // of polling. `DeckWriter::set_paused` pokes that channel, so resuming is
@@ -163,6 +168,24 @@ pub struct CrossfadeParams {
     pub in_shape: f32,
     /// Exponent on the outgoing curve: above 1 clears the outgoing sooner.
     pub out_shape: f32,
+    /// Hand the low band from outgoing to incoming over this progress window.
+    pub bass_swap: Option<BassSwap>,
+}
+
+/// Progress window (0..1 of the fade) over which the low band changes hands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BassSwap {
+    pub start: f32,
+    pub end: f32,
+}
+
+impl BassSwap {
+    /// Shelf gains (outgoing, incoming) in dB at `progress`.
+    fn shelf_db(self, progress: f32) -> (f32, f32) {
+        let x = ((progress - self.start) / (self.end - self.start).max(1e-6)).clamp(0.0, 1.0);
+        let s = x * x * (3.0 - 2.0 * x);
+        (BASS_SWAP_KILL_DB * s, BASS_SWAP_KILL_DB * (1.0 - s))
+    }
 }
 
 impl Default for CrossfadeParams {
@@ -174,6 +197,7 @@ impl Default for CrossfadeParams {
             overlap_headroom_db: -0.8,
             in_shape: 1.0,
             out_shape: 1.0,
+            bass_swap: None,
         }
     }
 }
@@ -810,6 +834,8 @@ struct CrossfadeRuntime {
     duration_samples: usize,
     elapsed_samples: usize,
     params: CrossfadeParams,
+    /// Low-shelf state, `[primary, secondary][channel]`; unused without a swap.
+    bass: [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
 }
 
 #[derive(Clone, Copy)]
@@ -822,6 +848,8 @@ struct CrossfadeBlockRamp {
     incoming_step: f32,
     outgoing_final: f32,
     incoming_final: f32,
+    /// Shelf coefficients for this segment, `[primary, secondary]`.
+    bass: Option<[BiquadCoeffs; 2]>,
 }
 
 impl CrossfadeBlockRamp {
@@ -1080,15 +1108,35 @@ impl MixerWorker {
             let segment_frames = (block_frames - mixed_frames).min(CROSSFADE_RAMP_FRAMES);
             let crossfade_ramp = self.crossfade_block_ramp(segment_frames);
 
-            let (primary, secondary) = mix_segment(
-                &mut self.primary,
-                &mut self.secondary,
-                block,
-                channels,
-                segment_frames,
-                (primary_paused, secondary_paused),
-                crossfade_ramp,
-            );
+            let paused = (primary_paused, secondary_paused);
+            let bass = crossfade_ramp
+                .and_then(|ramp| ramp.bass)
+                .zip(self.crossfade.as_mut());
+            let (primary, secondary) = match bass {
+                Some((coeffs, fade)) => mix_segment(
+                    &mut self.primary,
+                    &mut self.secondary,
+                    block,
+                    channels,
+                    segment_frames,
+                    paused,
+                    crossfade_ramp,
+                    &mut ShelvedLowBand {
+                        state: &mut fade.bass,
+                        coeffs,
+                    },
+                ),
+                None => mix_segment(
+                    &mut self.primary,
+                    &mut self.secondary,
+                    block,
+                    channels,
+                    segment_frames,
+                    paused,
+                    crossfade_ramp,
+                    &mut PassLowBand,
+                ),
+            };
             has_audio |= primary > 0 || secondary > 0;
             consumed_primary += primary;
             consumed_secondary += secondary;
@@ -1167,6 +1215,7 @@ impl MixerWorker {
             duration_samples: schedule.duration_samples.max(1),
             elapsed_samples: 0,
             params: schedule.params,
+            bass: Default::default(),
         });
     }
 
@@ -1377,6 +1426,20 @@ impl MixerWorker {
             incoming_step,
             outgoing_final: 0.0,
             incoming_final: fade.params.incoming_gain,
+            bass: fade
+                .params
+                .bass_swap
+                .filter(|_| self.output_channels <= BASS_SWAP_MAX_CHANNELS)
+                .map(|swap| {
+                    let (out_db, in_db) = swap.shelf_db(start_progress);
+                    let rate = self.sample_rate as f32;
+                    let out = BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db);
+                    let inc = BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db);
+                    match fade.outgoing {
+                        DeckId::Primary => [out, inc],
+                        DeckId::Secondary => [inc, out],
+                    }
+                }),
         })
     }
 
@@ -1415,7 +1478,8 @@ impl MixerWorker {
 
 // Queue and pause checks belong at contiguous PCM boundaries, not at every
 // sample. A missing deck contributes silence until the next run/64-frame segment.
-fn mix_segment(
+#[allow(clippy::too_many_arguments)]
+fn mix_segment<L: LowBand>(
     primary: &mut DeckRuntime,
     secondary: &mut DeckRuntime,
     block: &mut Vec<f32>,
@@ -1423,6 +1487,7 @@ fn mix_segment(
     frames: usize,
     paused: (bool, bool),
     ramp: Option<CrossfadeBlockRamp>,
+    bass: &mut L,
 ) -> (usize, usize) {
     let gains = (primary.gain, secondary.gain);
     let start = block.len();
@@ -1457,13 +1522,13 @@ fn mix_segment(
         let frame_offset = written / channels;
         match available {
             (true, true) => {
-                mix_pcm_run::<true, true>(p, s, output, channels, frame_offset, gains, ramp)
+                mix_pcm_run::<true, true, L>(p, s, output, channels, frame_offset, gains, ramp, bass)
             }
             (true, false) => {
-                mix_pcm_run::<true, false>(p, s, output, channels, frame_offset, gains, ramp)
+                mix_pcm_run::<true, false, L>(p, s, output, channels, frame_offset, gains, ramp, bass)
             }
             (false, true) => {
-                mix_pcm_run::<false, true>(p, s, output, channels, frame_offset, gains, ramp)
+                mix_pcm_run::<false, true, L>(p, s, output, channels, frame_offset, gains, ramp, bass)
             }
             (false, false) => break,
         }
@@ -1480,8 +1545,36 @@ fn mix_segment(
     consumed
 }
 
+/// The deck's low band before its gain: a no-op outside a bass swap, so the
+/// ordinary mix monomorphises to exactly what it was.
+trait LowBand {
+    fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32;
+}
+
+struct PassLowBand;
+
+impl LowBand for PassLowBand {
+    #[inline(always)]
+    fn apply(&mut self, _: usize, _: usize, sample: f32) -> f32 {
+        sample
+    }
+}
+
+struct ShelvedLowBand<'a> {
+    state: &'a mut [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
+    coeffs: [BiquadCoeffs; 2],
+}
+
+impl LowBand for ShelvedLowBand<'_> {
+    #[inline(always)]
+    fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32 {
+        self.state[deck][channel].process(self.coeffs[deck], sample)
+    }
+}
+
 #[inline]
-fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
+#[allow(clippy::too_many_arguments)]
+fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool, L: LowBand>(
     primary: &[f32],
     secondary: &[f32],
     output: &mut [f32],
@@ -1489,6 +1582,7 @@ fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
     frame_offset: usize,
     gains: (f32, f32),
     ramp: Option<CrossfadeBlockRamp>,
+    bass: &mut L,
 ) {
     for (frame_index, frame) in output.chunks_exact_mut(channels).enumerate() {
         let (primary_gain, secondary_gain) = match ramp {
@@ -1504,12 +1598,12 @@ fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
         let start = frame_index * channels;
         for (channel, sample) in frame.iter_mut().enumerate() {
             let p = if PRIMARY {
-                primary[start + channel]
+                bass.apply(0, channel, primary[start + channel])
             } else {
                 0.0
             };
             let s = if SECONDARY {
-                secondary[start + channel]
+                bass.apply(1, channel, secondary[start + channel])
             } else {
                 0.0
             };
@@ -1779,6 +1873,7 @@ mod tests {
                 incoming_step: (in_end - in_start) / denominator,
                 outgoing_final: 0.0,
                 incoming_final: params.incoming_gain,
+                bass: None,
             };
 
             for frame in 0..CROSSFADE_RAMP_FRAMES {
@@ -1789,6 +1884,32 @@ mod tests {
                 assert!((exact.1 - interpolated.1).abs() < 0.001);
             }
         }
+    }
+
+    #[test]
+    fn a_bass_swap_hands_the_low_band_over_and_leaves_the_highs() {
+        let swap = BassSwap { start: 0.4, end: 0.6 };
+        assert_eq!(swap.shelf_db(0.0), (0.0, BASS_SWAP_KILL_DB));
+        assert_eq!(swap.shelf_db(1.0), (BASS_SWAP_KILL_DB, 0.0));
+        // Steady-state level of a tone through the outgoing deck's shelf.
+        let level = |hz: f32, progress: f32| {
+            let rate = 48_000.0;
+            let coeffs = BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, swap.shelf_db(progress).0);
+            let mut state = [[BiquadState::default(); BASS_SWAP_MAX_CHANNELS]; 2];
+            let mut band = ShelvedLowBand { state: &mut state, coeffs: [coeffs, coeffs] };
+            let mut peak = 0.0f32;
+            for i in 0..48_000 {
+                let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
+                let y = band.apply(0, 0, x);
+                if i > 24_000 {
+                    peak = peak.max(y.abs());
+                }
+            }
+            20.0 * peak.log10()
+        };
+        assert!(level(50.0, 0.0).abs() < 0.1, "before the swap the bass is untouched");
+        assert!(level(50.0, 1.0) < -18.0, "after it the kick band is gone");
+        assert!(level(4_000.0, 1.0).abs() < 0.5, "the highs never move");
     }
 
     #[test]

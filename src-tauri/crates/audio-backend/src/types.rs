@@ -47,8 +47,6 @@ pub struct AutoMixConfig {
     pub bpm_match: bool,
     pub beat_align: bool,
     pub volume_norm: bool,
-    pub smart_curve: bool,
-    pub transition_style: CrossfadeCurve,
     pub transition_effects: bool,
     pub vocal_guard: bool,
     /// Hand over after the last chorus and shape the blend by the energy of
@@ -65,8 +63,6 @@ impl Default for AutoMixConfig {
             bpm_match: true,
             beat_align: true,
             volume_norm: true,
-            smart_curve: true,
-            transition_style: CrossfadeCurve::EqualPower,
             transition_effects: true,
             vocal_guard: true,
             emotional_transition: true,
