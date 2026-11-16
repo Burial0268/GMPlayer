@@ -1,28 +1,16 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 
 use serde::Serialize;
-use taskbar_lyric::TaskbarService;
+use taskbar_lyric::{Alignment, Embed, Taskbar, TaskbarEvent, TaskbarKind, TaskbarLayout};
 use tauri::{Emitter, Manager, Runtime};
 use tracing::warn;
-use windows::Win32::{
-    Foundation::HWND,
-    UI::WindowsAndMessaging::{SetWindowPos, HWND_TOP, SWP_NOZORDER},
-};
+use windows::Win32::Foundation::HWND;
 
 use crate::{mouse_forward, webview_finder};
 
-#[allow(dead_code)]
-pub struct TaskbarLyricWatchers {
-    pub uia: Option<taskbar_lyric::UiaWatcher>,
-    pub tray: Option<taskbar_lyric::TrayWatcher>,
-    pub reg: Option<taskbar_lyric::RegistryWatcher>,
-}
-
 #[derive(Default)]
 pub struct TaskbarLyricState {
-    pub service: Mutex<Option<taskbar_lyric::TaskbarService>>,
-    pub watchers: Mutex<Option<TaskbarLyricWatchers>>,
+    pub service: Mutex<Option<Taskbar>>,
     pub additional_browser_args: Option<String>,
 }
 
@@ -30,7 +18,6 @@ impl TaskbarLyricState {
     pub fn new(additional_browser_args: Option<String>) -> Self {
         Self {
             service: Mutex::default(),
-            watchers: Mutex::default(),
             additional_browser_args,
         }
     }
@@ -72,45 +59,56 @@ fn schedule_webview_hwnd_refresh(top_hwnd_ptr: usize) {
     });
 }
 
-fn with_taskbar_service<R, F>(app: &tauri::AppHandle<R>, f: F)
-where
-    R: Runtime,
-    F: FnOnce(&TaskbarService),
-{
-    let service = {
-        let Some(state) = app.try_state::<TaskbarLyricState>() else {
-            return;
-        };
-        let service = state.service.lock().unwrap().take();
-        service
-    };
-    let Some(service) = service else {
+fn apply_taskbar_layout<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    embed: &Embed,
+    layout: TaskbarLayout,
+) {
+    let Some(win) = app.get_webview_window("taskbar-lyric") else {
         return;
     };
 
-    f(&service);
+    let _ = win.emit(
+        "taskbar-layout-extra",
+        TaskbarLayoutExtraPayload {
+            is_centered: layout.alignment == Alignment::Center,
+            system_type: match layout.kind {
+                TaskbarKind::Modern => "Win11",
+                TaskbarKind::Legacy => "Win10",
+            }
+            .into(),
+        },
+    );
 
-    if app.get_webview_window("taskbar-lyric").is_none() {
+    let Some(rect) = layout.before.or(layout.after) else {
+        let _ = win.hide();
+        return;
+    };
+    if let Err(err) = embed.place(rect) {
+        warn!("failed to place taskbar-lyric window: {err}");
         return;
     }
 
-    if let Some(state) = app.try_state::<TaskbarLyricState>() {
-        let mut guard = state.service.lock().unwrap();
-        if guard.is_none() {
-            *guard = Some(service);
-        }
+    let _ = win.show();
+    let top_hwnd_ptr = embed.hwnd().0 as usize;
+    if let Some(webview_hwnd_ptr) = find_webview_hwnd_ptr(top_hwnd_ptr) {
+        mouse_forward::init_mouse_forwarding_state(
+            HWND(top_hwnd_ptr as _),
+            HWND(webview_hwnd_ptr as _),
+        );
+        mouse_forward::start_mouse_hook_thread();
     }
+    schedule_mouse_bounds_sync();
 }
 
 #[tauri::command]
 pub fn close_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
+    mouse_forward::stop_mouse_hook();
+    mouse_forward::clear_pointer_event_emitter();
+    if let Some(state) = app.try_state::<TaskbarLyricState>() {
+        let _ = state.service.lock().unwrap().take();
+    }
     if let Some(win) = app.get_webview_window("taskbar-lyric") {
-        mouse_forward::stop_mouse_hook();
-        mouse_forward::clear_pointer_event_emitter();
-        if let Some(state) = app.try_state::<TaskbarLyricState>() {
-            let _ = state.watchers.lock().unwrap().take();
-            let _ = state.service.lock().unwrap().take();
-        }
         let _ = win.destroy();
     }
 }
@@ -139,53 +137,6 @@ pub fn open_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
     }
 
     let app_clone = app.clone();
-    let service = TaskbarService::new(move |layout| {
-        if let Some(win) = app_clone.get_webview_window("taskbar-lyric") {
-            let left = layout.space.left;
-            let current_rect = if left.width > 0 {
-                left
-            } else {
-                layout.space.right
-            };
-
-            let _ = app_clone.emit(
-                "taskbar-layout-extra",
-                TaskbarLayoutExtraPayload {
-                    is_centered: layout.extra.is_centered,
-                    system_type: format!("{:?}", layout.extra.system_type),
-                },
-            );
-
-            if let Ok(hwnd) = win.hwnd() {
-                let top_hwnd_ptr = hwnd.0 as usize;
-                unsafe {
-                    let _ = SetWindowPos(
-                        HWND(hwnd.0),
-                        Some(HWND_TOP),
-                        current_rect.x,
-                        current_rect.y,
-                        current_rect.width,
-                        current_rect.height,
-                        SWP_NOZORDER,
-                    );
-                }
-                if let Some(webview_hwnd_ptr) = find_webview_hwnd_ptr(top_hwnd_ptr) {
-                    mouse_forward::init_mouse_forwarding_state(
-                        HWND(top_hwnd_ptr as _),
-                        HWND(webview_hwnd_ptr as _),
-                    );
-                    mouse_forward::start_mouse_hook_thread();
-                }
-                schedule_mouse_bounds_sync();
-            }
-        }
-    });
-
-    if let Some(state) = app.try_state::<TaskbarLyricState>() {
-        *state.service.lock().unwrap() = Some(service);
-    }
-
-    let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
         #[cfg(debug_assertions)]
         let url = tauri::WebviewUrl::External(
@@ -211,7 +162,7 @@ pub fn open_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
                     .resizable(false)
                     .maximizable(false)
                     .minimizable(false)
-                    .visible(true);
+                    .visible(false);
 
             if let Some(state) = app_clone.try_state::<TaskbarLyricState>() {
                 if let Some(args) = state.additional_browser_args.as_deref() {
@@ -231,91 +182,74 @@ pub fn open_taskbar_lyric<R: Runtime>(app: tauri::AppHandle<R>) {
                     Ok(hwnd) => hwnd.0 as usize,
                     Err(_) => {
                         warn!("failed to get hwnd for taskbar-lyric window");
+                        let _ = win.destroy();
                         return;
                     }
                 };
-                let hwnd_ptr = top_hwnd_ptr;
+
+                let (service, events) =
+                    match tauri::async_runtime::spawn_blocking(|| Taskbar::builder().build()).await
+                    {
+                        Ok(Ok(started)) => started,
+                        Ok(Err(err)) => {
+                            warn!("failed to start taskbar-lyric service: {err}");
+                            let _ = win.destroy();
+                            return;
+                        }
+                        Err(err) => {
+                            warn!("taskbar-lyric service task failed: {err}");
+                            let _ = win.destroy();
+                            return;
+                        }
+                    };
 
                 let pointer_app = app_clone.clone();
                 mouse_forward::set_pointer_event_emitter(move |payload| {
                     let _ = pointer_app.emit_to("taskbar-lyric", "taskbar-lyric:pointer", payload);
                 });
 
-                with_taskbar_service(&app_clone, |srv| {
-                    srv.embed_window_by_ptr(hwnd_ptr);
-                    srv.update(300);
-                });
+                let service_app = app_clone.clone();
+                // Embed installs a window subclass and must run on the window's UI thread.
+                if let Err(err) = win.run_on_main_thread(move || {
+                    let embed = match service.embed(HWND(top_hwnd_ptr as _)).and_then(|embed| {
+                        embed.attach_primary()?;
+                        Ok(embed)
+                    }) {
+                        Ok(embed) => embed,
+                        Err(err) => {
+                            warn!("failed to embed taskbar-lyric window: {err}");
+                            close_taskbar_lyric(service_app);
+                            return;
+                        }
+                    };
 
-                let mut webview_hwnd_ptr = find_webview_hwnd_ptr(top_hwnd_ptr);
-                for delay in [50, 100, 200, 400, 800] {
-                    if webview_hwnd_ptr.is_some() {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                    webview_hwnd_ptr = find_webview_hwnd_ptr(top_hwnd_ptr);
-                }
-
-                if let Some(webview_hwnd_ptr) = webview_hwnd_ptr {
-                    mouse_forward::init_mouse_forwarding_state(
-                        HWND(top_hwnd_ptr as _),
-                        HWND(webview_hwnd_ptr as _),
-                    );
-                    mouse_forward::start_mouse_hook_thread();
-                    mouse_forward::sync_cursor_position();
+                    let Some(state) = service_app.try_state::<TaskbarLyricState>() else {
+                        return;
+                    };
+                    *state.service.lock().unwrap() = Some(service);
                     schedule_webview_hwnd_refresh(top_hwnd_ptr);
-                } else {
-                    warn!("failed to find WebView hwnd");
-                    schedule_webview_hwnd_refresh(top_hwnd_ptr);
-                }
 
-                if let Some(state) = app_clone.try_state::<TaskbarLyricState>() {
-                    let mut watchers = state.watchers.lock().unwrap();
-
-                    let uia_counter = Arc::new(AtomicUsize::new(0));
-                    let win_clone = app_clone.clone();
-                    let uia_cb = Box::new(move || {
-                        let current = uia_counter.fetch_add(1, Ordering::SeqCst) + 1;
-                        let counter_clone = uia_counter.clone();
-                        let win_clone_inner = win_clone.clone();
-
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                            if counter_clone.load(Ordering::SeqCst) == current {
-                                with_taskbar_service(&win_clone_inner, |srv| srv.update(300));
+                    tauri::async_runtime::spawn_blocking(move || {
+                        for event in events {
+                            match event {
+                                TaskbarEvent::LayoutChanged { layout, .. }
+                                    if layout.monitor.is_primary =>
+                                {
+                                    apply_taskbar_layout(&service_app, &embed, layout);
+                                }
+                                TaskbarEvent::TaskbarRemoved { monitor } if monitor.is_primary => {
+                                    // Explorer destroys its child windows with the taskbar.
+                                    close_taskbar_lyric(service_app);
+                                    break;
+                                }
+                                _ => {}
                             }
-                        });
+                        }
                     });
-
-                    let win_clone2 = app_clone.clone();
-                    let tray_cb = Box::new(move || {
-                        with_taskbar_service(&win_clone2, |srv| srv.update(300));
-                    });
-
-                    let reg_counter = Arc::new(AtomicUsize::new(0));
-                    let win_clone3 = app_clone.clone();
-                    let reg_cb = Box::new(move || {
-                        let _ = win_clone3.emit("taskbar-lyric:fade-out", ());
-
-                        let current = reg_counter.fetch_add(1, Ordering::SeqCst) + 1;
-                        let counter_clone = reg_counter.clone();
-                        let win_clone_inner = win_clone3.clone();
-
-                        tauri::async_runtime::spawn(async move {
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                            if counter_clone.load(Ordering::SeqCst) == current {
-                                with_taskbar_service(&win_clone_inner, |srv| srv.update(300));
-                                let _ = win_clone_inner.emit("taskbar-lyric:fade-in", ());
-                            }
-                        });
-                    });
-
-                    *watchers = Some(TaskbarLyricWatchers {
-                        uia: taskbar_lyric::UiaWatcher::new(uia_cb).ok(),
-                        tray: taskbar_lyric::TrayWatcher::new(tray_cb).ok(),
-                        reg: taskbar_lyric::RegistryWatcher::new(reg_cb).ok(),
-                    });
-
-                    let _ = win.show();
+                }) {
+                    warn!("failed to schedule taskbar-lyric embedding: {err}");
+                    close_taskbar_lyric(app_clone);
+                    return;
                 }
             }
             Err(err) => {

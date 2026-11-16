@@ -97,7 +97,7 @@ mod imp {
         COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
     };
     use webview2_com::TrySuspendCompletedHandler;
-    use windows::core::{Interface, BOOL};
+    use windows_core::{Interface, BOOL};
 
     /// Labels believed to be on screen.
     ///
