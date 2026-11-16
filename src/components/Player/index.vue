@@ -48,15 +48,11 @@
                   <template v-if="setting.bottomLyricShow">
                     <Transition name="mini-lyric" mode="out-in">
                       <n-text v-if="miniLyricLine" :key="miniLyricLine.key" class="lrc" :depth="3">
-                        <OverflowMarquee class="mini-lrc-marquee" :speed="34">
-                          <span
-                            v-for="item in miniLyricLine.words"
-                            :key="item.key"
-                            class="lrc-word"
-                          >
-                            {{ item.content }}
-                          </span>
-                        </OverflowMarquee>
+                        <LyricScroll
+                          class="mini-lrc-scroll"
+                          :text="miniLyricLine.text"
+                          :progress="miniLyricProgress"
+                        />
                       </n-text>
                       <OverflowMarquee v-else key="artists" data-mobile-player-artists>
                         <AllArtists :artistsData="music.getPlaySongData.artist" />
@@ -332,6 +328,8 @@ import ListenTogetherModal from "@/components/DataModal/ListenTogetherModal.vue"
 import ListenTogetherStatus from "./ListenTogetherStatus.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
+import LyricScroll from "@/components/Lyric/LyricScroll.vue";
+import { getLyricPresentationTimeSeconds } from "@/utils/tauri/audio/uiDelay";
 import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import BigPlayer from "./BigPlayer/index.vue";
 import MiniPlayerProgress from "./MiniPlayerProgress.vue";
@@ -402,17 +400,26 @@ const miniLyricLine = computed(() => {
 
   // 逐字与否按整首歌定：index 此时索引的就是 yrc，不能退回按同一个 index 去读 lrc
   if (setting.showYrc && lyric.hasYrc) {
-    const text = lyric.yrc?.[index]?.TextContent;
-    return text ? { key: `yrc-${index}`, words: [{ key: index, content: text }] } : null;
+    const line = lyric.yrc?.[index];
+    if (!line?.TextContent) return null;
+    return { key: `yrc-${index}`, text: line.TextContent, start: line.time, end: line.endTime };
   }
 
-  const content = lyric.lrc?.[index]?.content;
-  if (!content) return null;
+  const line = lyric.lrc?.[index];
+  if (!line?.content) return null;
+  const end = lyric.lrc[index + 1]?.time ?? line.time + 5;
+  return { key: `lrc-${index}`, text: line.content, start: line.time, end };
+});
 
-  return {
-    key: `lrc-${index}`,
-    words: [{ key: index, content }],
-  };
+// 和桌面歌词同一套：溢出部分随这一行的播放进度滚出来，而不是固定速度循环
+const miniLyricProgress = computed(() => {
+  const line = miniLyricLine.value;
+  if (!line) return 0;
+  const now = getLyricPresentationTimeSeconds(
+    music.getPlaySongTime.playbackCurrentTime ?? music.getPlaySongTime.currentTime,
+    setting.lyricTimeOffset ?? 0,
+  );
+  return (now - line.start) / Math.max(0.8, line.end - line.start);
 });
 
 const getMiniSharedFrames = () => {
@@ -1645,23 +1652,9 @@ const applyLocalTrackChange = async (change) => {
             overflow: hidden;
             word-break: normal;
 
-            .mini-lrc-marquee {
-              width: 100%;
+            .mini-lrc-scroll {
               height: 1.3em;
               line-height: 1.3;
-              color: inherit;
-
-              :deep(.overflow-marquee__group) {
-                align-items: center;
-                height: 1.3em;
-                line-height: 1.3;
-                min-width: max-content;
-                white-space: nowrap;
-              }
-            }
-
-            .lrc-word {
-              display: inline;
             }
           }
         }
