@@ -92,14 +92,18 @@
           <button
             class="dock-button"
             type="button"
-            :class="{ loading: music.getLoadingState }"
-            :disabled="music.getLoadingState"
+            :class="{ loading: loadBlocksPlay }"
+            :aria-busy="music.getLoadingState"
             :aria-label="
               music.getPlayState ? $t('player.controls.pause') : $t('player.controls.play')
             "
-            @click.stop="music.setPlayState(!music.getPlayState)"
+            @click.stop="!loadBlocksPlay && music.setPlayState(!music.getPlayState)"
           >
-            <n-icon :component="music.getPlayState ? IconPause : IconPlay" />
+            <!-- Not :disabled — that dims to 0.2 and would hide the spinner. -->
+            <Transition name="fade" mode="out-in">
+              <n-spin v-if="music.getLoadingState" :size="22" stroke="currentColor" />
+              <n-icon v-else :component="music.getPlayState ? IconPause : IconPlay" />
+            </Transition>
           </button>
           <button
             class="dock-button skip"
@@ -195,6 +199,10 @@ const isTauriEnv = ref(typeof window !== "undefined" && "__TAURI__" in window);
 const artistList = computed(() => music.getPlaySongData?.artist ?? []);
 const isLiked = computed(
   () => !!music.getPlaySongData && music.getSongIsLike(music.getPlaySongData.id),
+);
+
+const loadBlocksPlay = computed(
+  () => music.getLoadingState && music.getLoadingStage !== "rebuffering",
 );
 
 // 剩余时间（负数格式，与封面模式一致）
@@ -447,7 +455,7 @@ const routerJump = (url: string, query: LocationQueryRaw) => {
     }
 
     &.loading {
-      opacity: 0.35;
+      pointer-events: none;
     }
   }
 }

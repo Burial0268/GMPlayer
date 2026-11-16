@@ -160,12 +160,18 @@
           :component="ThumbDownRound"
           @click="music.setFmDislike(music.getPersonalFmData.id)"
         />
-        <n-icon
+        <!-- Same as the mini player: a spinner while a track loads; pause stays clickable while
+             it only rebuffers. -->
+        <div
           class="button-icon"
-          :class="{ loading: music.getLoadingState }"
-          :component="music.getPlayState ? IconPause : IconPlay"
-          @click.stop="!music.getLoadingState && music.setPlayState(!music.getPlayState)"
-        />
+          :class="{ loading: loadBlocksPlay }"
+          @click.stop="!loadBlocksPlay && music.setPlayState(!music.getPlayState)"
+        >
+          <Transition name="fade" mode="out-in">
+            <n-spin v-if="music.getLoadingState" :size="26" stroke="currentColor" />
+            <n-icon v-else :component="music.getPlayState ? IconPause : IconPlay" />
+          </Transition>
+        </div>
         <n-icon
           class="button-icon skip-icon"
           :component="IconForward"
@@ -321,6 +327,10 @@ const autoMixBarPhase = useAutoMixBarPhase();
 const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 const { incoming: mixIncoming } = useAutoMixVisual();
+
+const loadBlocksPlay = computed(
+  () => music.getLoadingState && music.getLoadingStage !== "rebuffering",
+);
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {
@@ -641,7 +651,6 @@ onUnmounted(() => {
           }
         }
         &.loading {
-          opacity: 0.35;
           pointer-events: none;
         }
         &.active {
