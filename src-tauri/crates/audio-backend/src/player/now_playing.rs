@@ -185,6 +185,7 @@ impl AudioPlayer {
                     is_loading: true,
                     playlist_index: self.current_play_index,
                     controls: self.session_controls(),
+                    next_artwork_url: None,
                 };
             }
         }
@@ -292,6 +293,12 @@ impl AudioPlayer {
             is_loading: self.load_in_flight || self.stream_buffering,
             playlist_index: self.current_play_index,
             controls: self.session_controls(),
+            next_artwork_url: self
+                .planner
+                .upcoming(&self.manifest)
+                .and_then(|next| self.manifest.entry_at(next.position))
+                .and_then(|next| non_empty(next.artwork_url.as_ref()))
+                .map(str::to_string),
         }
     }
 }

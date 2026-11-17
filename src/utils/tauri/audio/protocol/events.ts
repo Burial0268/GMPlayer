@@ -280,6 +280,8 @@ export interface NowPlayingInfo {
   playlistIndex: number;
   /** Session controls carried with the projection — see [`SessionControls`]. */
   controls: SessionControls;
+  /** Cover of the planner's next track, for the OS session to prefetch. */
+  nextArtworkUrl: string | null;
 }
 
 export type AudioThreadEventCallback = (event: AudioThreadEvent, seq?: number) => void;

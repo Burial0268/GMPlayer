@@ -84,6 +84,9 @@ enum MediaCommand {
     /// their own schedule — a user cycling shuffle does not change the track —
     /// and a metadata rebuild costs an artwork re-download on Android.
     Controls(SessionControls),
+    /// Download the next track's cover now. Changes nothing visible, so
+    /// nothing supersedes it but a newer one — see [`coalesce`].
+    PrefetchArtwork(String),
     Clear,
 }
 
@@ -124,6 +127,8 @@ struct BridgeState {
     /// Controls the OS currently shows. Deduped like the play state: every push
     /// rebuilds the notification, and these arrive with every projection.
     anchored_controls: SessionControls,
+    /// Next-track cover last asked for, so each one is prefetched once.
+    prefetched_artwork: Option<String>,
 }
 
 impl BridgeState {
@@ -146,6 +151,8 @@ impl BridgeState {
             self.last = NowPlayingInfo::default();
             self.anchored_loading = false;
             self.force_metadata = false;
+            // The platform drops its prefetched cover with the session.
+            self.prefetched_artwork = None;
             return Some(MediaCommand::Clear);
         }
         // Rebuild metadata only when the *track* changed: on Android a metadata
@@ -249,6 +256,37 @@ impl BridgeState {
         })
     }
 
+    /// A cover the desktop push went out without has downloaded: push the track
+    /// again, but only if it is still the one showing.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn apply_cover_landed(&self, url: &str) -> Option<MediaCommand> {
+        if !self.last.has_track || self.last.artwork_url.as_deref() != Some(url) {
+            return None;
+        }
+        // `last` is the instant it was pushed, and macOS resets the elapsed
+        // time on every metadata push, so carry what the OS shows now.
+        let mut info = self.last.clone();
+        info.position = self.anchored_position;
+        info.is_playing = self.anchored_playing;
+        info.is_loading = self.anchored_loading;
+        info.controls = self.anchored_controls;
+        Some(MediaCommand::Metadata(Box::new(info)))
+    }
+
+    /// Prefetch the next track's cover once per URL, unless it is the one
+    /// already showing (single-track repeat, a one-song queue).
+    fn apply_next_artwork(&mut self, info: &NowPlayingInfo) -> Option<MediaCommand> {
+        let url = info.next_artwork_url.as_ref()?;
+        if !info.has_track
+            || info.artwork_url.as_ref() == Some(url)
+            || self.prefetched_artwork.as_ref() == Some(url)
+        {
+            return None;
+        }
+        self.prefetched_artwork = Some(url.clone());
+        Some(MediaCommand::PrefetchArtwork(url.clone()))
+    }
+
     fn apply_position(&mut self, position: f64) -> Option<MediaCommand> {
         if !self.last.has_track {
             return None;
@@ -297,10 +335,10 @@ impl MediaSessionBridge {
                     // regardless — the native side is fed through an ordered
                     // pipe at call time, not at completion.
                     let app = app.clone();
-                    let call =
-                        tauri::async_runtime::spawn(
-                            async move { platform::apply(&app, command).await },
-                        );
+                    let bridge = weak.clone();
+                    let call = tauri::async_runtime::spawn(async move {
+                        platform::apply(&app, command, &bridge).await
+                    });
                     let outcome = match tokio::time::timeout(APPLY_TIMEOUT, call).await {
                         Ok(Ok(result)) => result,
                         Ok(Err(err)) => Err(format!("media session task failed: {err}")),
@@ -348,6 +386,13 @@ impl MediaSessionBridge {
             .tx
             .send(MediaCommand::Metadata(Box::new(state.last.clone())));
     }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn cover_landed(&self, url: &str) {
+        if let Some(command) = self.state.lock().apply_cover_landed(url) {
+            let _ = self.tx.send(command);
+        }
+    }
 }
 
 /// Collapse a burst of commands into the smallest sequence with the same
@@ -366,6 +411,18 @@ impl MediaSessionBridge {
 ///   with it, so it subsumes anything queued before it — including a `Clear`,
 ///   whose release-and-recreate the metadata push would only undo.
 fn coalesce(batch: Vec<MediaCommand>) -> Vec<MediaCommand> {
+    // A prefetch is not part of the merged native state, so a `Metadata` or
+    // `Clear` must not drop it. Only the newest is wanted, and it goes last,
+    // behind the pushes the user is waiting to see.
+    let (prefetches, batch): (Vec<_>, Vec<_>) = batch
+        .into_iter()
+        .partition(|command| matches!(command, MediaCommand::PrefetchArtwork(_)));
+    let mut merged = coalesce_visible(batch);
+    merged.extend(prefetches.into_iter().last());
+    merged
+}
+
+fn coalesce_visible(batch: Vec<MediaCommand>) -> Vec<MediaCommand> {
     if batch.len() < 2 {
         return batch;
     }
@@ -416,9 +473,13 @@ impl PlayerEventSubscriber for MediaSessionBridge {
         // Any event is an opportunity to repair a push that did not land.
         self.reassert_if_stale();
 
-        let command = {
+        let (command, prefetch) = {
             let mut state = self.state.lock();
-            match event {
+            let prefetch = match event {
+                AudioThreadEvent::NowPlayingChanged { info } => state.apply_next_artwork(info),
+                _ => None,
+            };
+            let command = match event {
                 AudioThreadEvent::NowPlayingChanged { info } => state.apply_now_playing(info),
 
                 AudioThreadEvent::PlayStatus { is_playing } => state.apply_play_status(*is_playing),
@@ -444,10 +505,11 @@ impl PlayerEventSubscriber for MediaSessionBridge {
                 }
 
                 _ => None,
-            }
+            };
+            (command, prefetch)
         };
 
-        if let Some(command) = command {
+        for command in [command, prefetch].into_iter().flatten() {
             let _ = self.tx.send(command);
         }
     }
@@ -455,31 +517,94 @@ impl PlayerEventSubscriber for MediaSessionBridge {
 
 // ── Platform back-ends ───────────────────────────────────────────
 
+/// The Android notification's cover, as WebP from Netease's image CDN.
+///
+/// The CDN re-encodes on request, and at the same 512 px a WebP is 10-25x
+/// smaller than what `param=512y512` serves (some covers are ~500 KB PNGs).
+/// Android decodes WebP natively; Windows needs an optional codec, so desktop
+/// keeps the original. The first request for a cover in this form costs the
+/// CDN ~0.5-1.5 s to generate, which the prefetch hides.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn notification_artwork(url: &str) -> String {
+    match url.split_once('?') {
+        Some((base, "param=512y512")) if base.contains(".music.126.net/") => {
+            format!("{base}?imageView&thumbnail=512x512&type=webp")
+        }
+        _ => url.to_string(),
+    }
+}
+
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod platform {
-    use super::MediaCommand;
+    use super::{MediaCommand, MediaSessionBridge};
     use gmplayer_audio_backend::NativePlaybackMode;
     use gmplayer_now_playing_controls::RepeatMode;
+    use parking_lot::Mutex;
+    use std::sync::Weak;
     use tauri::{AppHandle, Manager, Runtime};
+
+    /// The last cover downloaded, and the one being downloaded.
+    struct Covers {
+        ready: Option<(String, Vec<u8>)>,
+        fetching: Option<String>,
+    }
+
+    static COVERS: Mutex<Covers> = Mutex::new(Covers {
+        ready: None,
+        fetching: None,
+    });
+
+    /// The cover for `url` if it is already here; otherwise start downloading it
+    /// and answer `None`.
+    ///
+    /// The metadata push must not wait for it: the drain is serial, so a
+    /// download in line delayed the title by a CDN round trip (up to 5 s), and
+    /// the next track's title behind that. The announcement and the loaded
+    /// track share a URL, so one entry is enough to download each cover once.
+    fn cover_for(url: &str, bridge: &Weak<MediaSessionBridge>) -> Option<Vec<u8>> {
+        let mut covers = COVERS.lock();
+        if let Some((cached, bytes)) = &covers.ready {
+            if cached == url {
+                return Some(bytes.clone());
+            }
+        }
+        if covers.fetching.as_deref() == Some(url) {
+            return None;
+        }
+        covers.fetching = Some(url.to_owned());
+        let (url, bridge) = (url.to_owned(), bridge.clone());
+        tauri::async_runtime::spawn_blocking(move || {
+            let bytes = gmplayer_now_playing_controls::fetch_cover_blocking(&url);
+            {
+                let mut covers = COVERS.lock();
+                // Superseded by a newer track's cover: nobody wants this one.
+                if covers.fetching.as_deref() != Some(&url) {
+                    return;
+                }
+                covers.fetching = None;
+                let Some(bytes) = bytes else { return };
+                covers.ready = Some((url.clone(), bytes));
+            }
+            if let Some(bridge) = bridge.upgrade() {
+                bridge.cover_landed(&url);
+            }
+        });
+        None
+    }
 
     pub(super) async fn apply<R: Runtime>(
         app: &AppHandle<R>,
         command: MediaCommand,
+        bridge: &Weak<MediaSessionBridge>,
     ) -> Result<(), String> {
         let state = app.state::<gmplayer_now_playing_controls::NowPlayingState>();
 
         match command {
             MediaCommand::Metadata(info) => {
-                // Artwork download is blocking I/O — off the drain task's thread.
-                let cover = match info.artwork_url.clone() {
-                    Some(url) => tauri::async_runtime::spawn_blocking(move || {
-                        gmplayer_now_playing_controls::fetch_cover_blocking(&url)
-                    })
-                    .await
-                    .ok()
-                    .flatten(),
-                    None => None,
-                };
+                let cover = info
+                    .artwork_url
+                    .as_deref()
+                    .and_then(|url| cover_for(url, bridge));
                 let track_id = info
                     .identity
                     .as_ref()
@@ -545,6 +670,9 @@ mod platform {
                     Some(true),
                 )
             }
+            // shortcut: desktop does not prefetch; its one-entry cover cache
+            // would evict the current cover. Extend `Covers` if it is wanted.
+            MediaCommand::PrefetchArtwork(_) => Ok(()),
             MediaCommand::Clear => {
                 state.clear_session();
                 Ok(())
@@ -574,6 +702,8 @@ mod platform {
     pub(super) async fn apply<R: Runtime>(
         app: &AppHandle<R>,
         command: MediaCommand,
+        // The plugin downloads artwork natively and off the push path.
+        _bridge: &std::sync::Weak<super::MediaSessionBridge>,
     ) -> Result<(), String> {
         let session = app.media_session();
         match command {
@@ -584,7 +714,7 @@ mod platform {
                         artist: Some(info.artist.clone()),
                         album: Some(info.album.clone()),
                         // The plugin downloads this natively (no CORS, no WebView).
-                        artwork_url: info.artwork_url.clone(),
+                        artwork_url: info.artwork_url.as_deref().map(super::notification_artwork),
                         duration: Some(info.duration),
                         position: Some(info.position),
                         is_playing: Some(info.is_playing),
@@ -651,6 +781,11 @@ mod platform {
                     })
                     .await
             }
+            MediaCommand::PrefetchArtwork(url) => {
+                session
+                    .prefetch_artwork(super::notification_artwork(&url))
+                    .await
+            }
             MediaCommand::Clear => session.clear().await,
         }
     }
@@ -664,6 +799,7 @@ mod platform {
     pub(super) async fn apply<R: Runtime>(
         _app: &AppHandle<R>,
         _command: MediaCommand,
+        _bridge: &std::sync::Weak<super::MediaSessionBridge>,
     ) -> Result<(), String> {
         // iOS is not wired up in either direction: nothing pushes state here,
         // so the Swift plugin never creates a session and its remote-command
@@ -822,6 +958,7 @@ mod tests {
             MediaCommand::Loading { .. } => "loading",
             MediaCommand::Timeline { .. } => "timeline",
             MediaCommand::Controls(_) => "controls",
+            MediaCommand::PrefetchArtwork(_) => "prefetch",
             MediaCommand::Clear => "clear",
         }
     }
@@ -867,6 +1004,74 @@ mod tests {
             is_playing: false,
             is_loading: true,
             ..Default::default()
+        }
+    }
+
+    /// A late cover re-pushes the track still showing, at the position the OS
+    /// shows now, and is dropped once the session has moved on.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    #[test]
+    fn a_late_cover_only_reaches_the_track_still_showing() {
+        let with_cover = |title: &str, url: &str| NowPlayingInfo {
+            artwork_url: Some(url.to_string()),
+            ..playing(title, 200.0)
+        };
+        let mut state = BridgeState::default();
+        state.apply_now_playing(&with_cover("a", "https://img/a"));
+        state.apply_position(42.0);
+
+        match state.apply_cover_landed("https://img/a") {
+            Some(MediaCommand::Metadata(info)) => {
+                assert_eq!(info.title, "a");
+                assert_eq!(info.position, 42.0);
+            }
+            _ => panic!("the showing track's cover must be re-pushed"),
+        }
+        assert!(state.apply_cover_landed("https://img/b").is_none());
+
+        state.apply_now_playing(&with_cover("b", "https://img/b"));
+        assert!(state.apply_cover_landed("https://img/a").is_none());
+    }
+
+    /// The next cover is prefetched once, survives the metadata push it was
+    /// queued with, and goes out after it.
+    #[test]
+    fn the_next_cover_is_prefetched_once_behind_the_visible_push() {
+        let info = |title: &str, next: &str| NowPlayingInfo {
+            artwork_url: Some(format!("https://img/{title}")),
+            next_artwork_url: Some(next.to_string()),
+            ..playing(title, 200.0)
+        };
+        let mut state = BridgeState::default();
+        let first = state.apply_next_artwork(&info("a", "https://img/b"));
+        assert!(matches!(&first, Some(MediaCommand::PrefetchArtwork(url)) if url == "https://img/b"));
+        assert!(state.apply_next_artwork(&info("a", "https://img/b")).is_none());
+        // Repeating one track: its next cover is the one showing.
+        assert!(state.apply_next_artwork(&info("c", "https://img/c")).is_none());
+
+        assert_eq!(
+            kinds(vec![
+                MediaCommand::PrefetchArtwork("old".into()),
+                metadata("a"),
+                MediaCommand::PrefetchArtwork("new".into()),
+                loading(false),
+            ]),
+            ["metadata", "loading", "prefetch"]
+        );
+    }
+
+    #[test]
+    fn only_a_netease_512_cover_is_asked_for_as_webp() {
+        assert_eq!(
+            notification_artwork("https://p2.music.126.net/x==/1.jpg?param=512y512"),
+            "https://p2.music.126.net/x==/1.jpg?imageView&thumbnail=512x512&type=webp"
+        );
+        for kept in [
+            "https://p2.music.126.net/x==/1.jpg?param=200y200",
+            "https://example.com/a.jpg?param=512y512",
+            "/data/covers/a.jpg",
+        ] {
+            assert_eq!(notification_artwork(kept), kept);
         }
     }
 

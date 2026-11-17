@@ -178,6 +178,19 @@ impl<R: Runtime> MediaSession<R> {
             .map_err(|e| format!("{e}"))
     }
 
+    /// Download a cover before the track that shows it starts, so the change
+    /// does not wait on the network. Changes nothing on screen.
+    pub async fn prefetch_artwork(&self, url: String) -> Result<(), String> {
+        #[derive(Serialize)]
+        struct Args {
+            url: String,
+        }
+        self.handle
+            .run_mobile_plugin_async("prefetchArtwork", Args { url })
+            .await
+            .map_err(|e| format!("{e}"))
+    }
+
     /// Clear the media session, dismiss the notification, and release resources.
     pub async fn clear(&self) -> Result<(), String> {
         self.handle

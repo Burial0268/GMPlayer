@@ -57,6 +57,11 @@ class UpdateTimelineArgs {
 }
 
 @InvokeArg
+class PrefetchArtworkArgs {
+    var url: String? = null
+}
+
+@InvokeArg
 class SetEventHandlerArgs {
     lateinit var handler: Channel
 }
@@ -127,6 +132,13 @@ class MediaSessionPlugin(activity: Activity) : Plugin(activity) {
             Log.e(TAG, "updateTimeline failed: ${e.message}", e)
             invoke.reject("media session timeline update failed: ${e.message}")
         }
+    }
+
+    @Command
+    fun prefetchArtwork(invoke: Invoke) {
+        val args = invoke.parseArgs(PrefetchArtworkArgs::class.java)
+        args.url?.let { MediaSessionController.prefetchArtwork(it) }
+        invoke.resolve()
     }
 
     @Command

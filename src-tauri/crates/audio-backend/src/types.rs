@@ -1084,6 +1084,10 @@ pub struct NowPlayingInfo {
     /// the OS session renders them next to the metadata and a subscriber that
     /// received one without the other would render a half-updated notification.
     pub controls: SessionControls,
+    /// Cover of the track the planner plays next, so the platform can download
+    /// it before the change instead of after. Not part of [`Self::same_metadata`]:
+    /// nothing on screen shows it.
+    pub next_artwork_url: Option<String>,
 }
 
 /// Session controls that are *not* audio state.
@@ -1176,6 +1180,7 @@ impl Default for NowPlayingInfo {
             is_loading: false,
             playlist_index: 0,
             controls: SessionControls::default(),
+            next_artwork_url: None,
         }
     }
 }
@@ -1572,6 +1577,7 @@ mod tests {
             is_loading: false,
             playlist_index: 3,
             controls: SessionControls::default(),
+            next_artwork_url: Some("https://img/next".into()),
         };
 
         let seeked = NowPlayingInfo {
@@ -1594,6 +1600,15 @@ mod tests {
         assert!(
             base.same_metadata(&buffering),
             "a load transition must not rebuild metadata"
+        );
+
+        let queue_edited = NowPlayingInfo {
+            next_artwork_url: Some("https://img/other".into()),
+            ..base.clone()
+        };
+        assert!(
+            base.same_metadata(&queue_edited),
+            "a different next track must not rebuild the current one"
         );
 
         let next_track = NowPlayingInfo {
