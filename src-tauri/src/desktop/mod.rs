@@ -82,6 +82,7 @@ pub fn run() {
     let app = builder
         .manage(MouseThroughState::default())
         .manage(HitRegionRegistry::default())
+        .manage(window::commands::PageFlushWaiters::default())
         .invoke_handler(tauri::generate_handler![
             shared::detect_desktop,
             shared::desktop_environment,
@@ -108,6 +109,7 @@ pub fn run() {
             window::commands::resize_window,
             window::commands::quit_app,
             window::commands::flush_persisted_state,
+            window::commands::page_flush_done,
             window::commands::get_cursor_position,
             window::commands::get_window_bounds,
             // Desktop lyrics commands
@@ -190,6 +192,8 @@ pub fn run() {
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
+            #[cfg(unix)]
+            window::commands::install_termination_flush(app_handle.clone());
             app.manage(commands::PlayerState::new(app_handle.clone()));
             // The isolate itself is built lazily on first request, so this only
             // records where its session state lives.

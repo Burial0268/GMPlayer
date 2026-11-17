@@ -1,6 +1,10 @@
 use serde::Serialize;
 use serde_json::Value;
-use tauri::{command, AppHandle, Manager};
+use std::time::Duration;
+
+use parking_lot::Mutex;
+use tauri::{command, AppHandle, Emitter, Manager, State};
+use tokio::sync::oneshot;
 use tauri_plugin_window_state::AppHandleExt;
 
 use crate::desktop::window::config::WindowConfig;
@@ -166,14 +170,85 @@ pub async fn resize_window(
     manager::resize_window(&app, &label, width, height)
 }
 
-/// Quit the application after saving window state.
+/// Exits waiting for the main page to confirm its own state is written.
+#[derive(Default)]
+pub struct PageFlushWaiters(Mutex<Vec<oneshot::Sender<()>>>);
+
+/// Long enough for a strict IndexedDB commit of a large queue, short enough
+/// that a hung page does not make quitting feel broken.
+const PAGE_FLUSH_TIMEOUT: Duration = Duration::from_millis(1500);
+
+/// Ask the main page to write out what only it holds — the play queue and the
+/// resume position live in its IndexedDB, out of Rust's reach — and wait for it.
+///
+/// `AppHandle::exit` tears the WebView down without `pagehide`, so without this
+/// a quit loses the throttled write window and every position since the last
+/// pause/seek/track change. Bounded: `emit_to` answers `Ok` even when no page is
+/// listening, so a dead or still-loading page is only told apart by the timeout.
+async fn flush_main_page(app: &AppHandle) {
+    let Some(waiters) = app.try_state::<PageFlushWaiters>() else {
+        return;
+    };
+    let (tx, rx) = oneshot::channel();
+    waiters.0.lock().push(tx);
+    if let Err(e) = app.emit_to("main", "app-exit-flush", ()) {
+        log::warn!("could not ask the main page to flush before exit: {e}");
+        return;
+    }
+    if tokio::time::timeout(PAGE_FLUSH_TIMEOUT, rx).await.is_err() {
+        log::warn!("main page did not confirm its state flush within {PAGE_FLUSH_TIMEOUT:?}");
+    }
+}
+
+/// The main page's answer to `app-exit-flush`.
+#[command]
+pub fn page_flush_done(waiters: State<'_, PageFlushWaiters>) {
+    for tx in waiters.0.lock().drain(..) {
+        let _ = tx.send(());
+    }
+}
+
+/// Quit the application after saving window state and the main page's state.
 /// Excludes VISIBLE flag so a previous hide-to-tray state is not restored as a
 /// hidden main window on next launch.
 #[command]
 pub async fn quit_app(app: AppHandle) -> Result<(), String> {
-    let _ = app.save_window_state(WINDOW_STATE_FLAGS);
-    app.exit(0);
+    exit_after_flush(&app).await;
     Ok(())
+}
+
+/// The one orderly way out: window state, the main page's own state, then exit.
+pub async fn exit_after_flush(app: &AppHandle) {
+    let _ = app.save_window_state(WINDOW_STATE_FLAGS);
+    flush_main_page(app).await;
+    app.exit(0);
+}
+
+/// Turn SIGTERM / SIGHUP / SIGINT into an orderly exit.
+///
+/// A Linux logout or `systemctl` stop ends the session with SIGTERM, whose
+/// default action kills the process outright — no `RunEvent`, nothing for the
+/// page. Taking the signal replaces that default, so this must always end in
+/// `exit`; `flush_main_page` is bounded, so a wedged page cannot keep us alive.
+#[cfg(unix)]
+pub fn install_termination_flush(app: AppHandle) {
+    use tokio::signal::unix::{signal, SignalKind};
+    tauri::async_runtime::spawn(async move {
+        let (Ok(mut term), Ok(mut hup), Ok(mut int)) = (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::hangup()),
+            signal(SignalKind::interrupt()),
+        ) else {
+            log::warn!("could not install termination signal handlers");
+            return;
+        };
+        tokio::select! {
+            _ = term.recv() => log::info!("SIGTERM received, flushing state before exit"),
+            _ = hup.recv() => log::info!("SIGHUP received, flushing state before exit"),
+            _ = int.recv() => log::info!("SIGINT received, flushing state before exit"),
+        }
+        exit_after_flush(&app).await;
+    });
 }
 
 /// Flush everything that is only persisted on exit.
@@ -196,6 +271,7 @@ pub async fn flush_persisted_state(app: AppHandle) -> Result<(), String> {
     log::info!("update prepared successfully, now try save the persisted state");
 
     let _ = app.save_window_state(WINDOW_STATE_FLAGS);
+    flush_main_page(&app).await;
     if let Err(e) = app.pinia().save_all_now() {
         // Best effort by design: a store that cannot be written is not a reason
         // to block the update, and the caller has nothing useful to do with it.

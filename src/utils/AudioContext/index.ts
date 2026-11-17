@@ -20,6 +20,7 @@ export {
   setPageVisible,
   ensureSpectrumUpdate,
   isNativeAdvanceHoldActiveFor,
+  persistPlaybackNow,
 } from "./PlayerFunctions";
 
 // Native queue-window prefill (Tauri background advance)

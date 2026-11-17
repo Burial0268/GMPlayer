@@ -10,6 +10,8 @@ import App from "@/App.vue";
 import router from "@/router/index";
 import { audioPreheat } from "@/utils/tauri/audio/bridge";
 import { isTauri } from "@/utils/tauri/core/runtime";
+import { windowManager } from "@/utils/tauri/window/manager";
+import { persistPlaybackNow } from "@/utils/AudioContext";
 import { installTauriPinia, startTauriPiniaStores } from "@/utils/tauri/store/piniaPersistence";
 import useSettingDataStore, { repairSettingData } from "@/store/settingData";
 import useSiteDataStore, { repairSiteData } from "@/store/siteData";
@@ -132,6 +134,8 @@ async function bootstrap() {
   app.mount("#app");
 
   if (isTauri()) {
+    // AppHandle::exit gives the page no pagehide; Rust asks for this instead.
+    void windowManager.onExitFlushRequested(persistPlaybackNow);
     void audioPreheat().catch((err) => {
       console.warn("[main] native audio preheat failed", err);
     });

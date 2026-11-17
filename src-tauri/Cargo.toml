@@ -64,8 +64,9 @@ tauri-plugin-window-state = "2"
 parking_lot = "0.12"
 # 媒体桥的有序命令队列 + 下载队列的文件写入。tokio 已经在 tauri 的依赖树里，这里
 # 只是显式取用：`fs`/`io-util` 给下载的异步落盘，`time` 给协议层调用的超时。按
-# ncm-core 那条教训，用到的 feature 一律自己声明，不从兄弟 crate 继承。
-tokio = { version = "1", features = ["sync", "fs", "io-util", "time"] }
+# ncm-core 那条教训，用到的 feature 一律自己声明，不从兄弟 crate 继承。`signal` 给
+# Linux 注销时的 SIGTERM 落盘（window::commands::install_termination_flush）。
+tokio = { version = "1", features = ["sync", "fs", "io-util", "time", "signal"] }
 log = "0.4"
 tauri-plugin-log = "2"
 # Vendored: upstream (solrmax) went closed-source after 0.2.4, so there is

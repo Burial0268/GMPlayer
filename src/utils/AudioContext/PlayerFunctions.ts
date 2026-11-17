@@ -11,6 +11,7 @@ import { songScrobbleV2, submitSongPlayState } from "@/api/song";
 // Import stores directly to avoid circular dependency through barrel exports
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
 import useMusicDataStore from "@/store/musicData";
+import { flushMusicPersist } from "@/store/musicPersistedData";
 import useSettingDataStore from "@/store/settingData";
 import useUserDataStore from "@/store/userData";
 
@@ -112,6 +113,16 @@ let lastBackendStateAuditAt = 0;
 let lastPlaybackPresentationAt = 0;
 
 const PLAYBACK_PRESENTATION_INTERVAL_MS = 1000 / 30;
+/**
+ * A crash, a killed process, Windows shutdown/logoff (`WM_ENDSESSION`) and
+ * macOS Cmd+Q/logout (`applicationWillTerminate`) give the page no usable exit
+ * hook — tao runs `RunEvent::Exit` synchronously on the thread the page would
+ * have to answer through, then ends the process — so the resume position is
+ * only as fresh as this. Cheap since the queue moved to IndexedDB: a checkpoint
+ * rewrites only the small `state` record.
+ */
+const PERIODIC_CHECKPOINT_MS = 5_000;
+let lastPeriodicCheckpointAt = 0;
 const SCROBBLE_DELAY_MS = 3000;
 const SCROBBLE_DUPLICATE_GUARD_MS = 10000;
 
@@ -180,6 +191,16 @@ const resetPlaySongTime = (music: ReturnType<typeof musicStore>): void => {
   music.resetPlaySongTime();
 };
 
+// Saves the store's own time rather than re-reading the sound: that path sets the
+// display time without the UI delay, which would nudge the lyrics every 15 s.
+const periodicCheckpoint = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
+  if (!sound.playing()) return;
+  const now = Date.now();
+  if (now - lastPeriodicCheckpointAt < PERIODIC_CHECKPOINT_MS) return;
+  lastPeriodicCheckpointAt = now;
+  music.checkpointPlaySongTime(true);
+};
+
 const checkpointActivePosition = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   const duration = getUsableDuration(sound.duration(), music.getPlaySongTime.duration);
   const position = normalizePlaybackPosition(
@@ -189,6 +210,17 @@ const checkpointActivePosition = (sound: ISound, music: ReturnType<typeof musicS
   );
   music.setPlaySongTime({ currentTime: position, duration, displayCurrentTime: position });
   music.checkpointPlaySongTime(true);
+};
+
+/**
+ * Checkpoint the playing position and write the whole queue store out now,
+ * resolving once it is committed. For the moments with no later chance: the
+ * page going to the background, and the Tauri exit handshake.
+ */
+export const persistPlaybackNow = (): Promise<void> => {
+  const sound = SoundManager.getCurrentSound();
+  if (sound) checkpointActivePosition(sound, musicStore());
+  return flushMusicPersist();
 };
 
 const getPlayStateSessionId = (key: string): string => {
@@ -428,7 +460,9 @@ const startBackgroundMonitor = (): void => {
     }
     const autoMix = getAutoMixEngine();
     autoMix.monitorPlayback(sound);
-    checkAudioTime(sound, musicStore());
+    const music = musicStore();
+    checkAudioTime(sound, music);
+    periodicCheckpoint(sound, music);
   }, 1000);
 };
 
@@ -461,6 +495,7 @@ const scheduleAudioTimePresentation = (
   generation: number,
 ): void => {
   if (!sound.playing()) return;
+  periodicCheckpoint(sound, music);
   if (isBackendSound(sound)) {
     const now = Date.now();
     if (now - lastBackendStateAuditAt >= 2000) {
@@ -524,8 +559,8 @@ if (typeof document !== "undefined") {
     isPageVisible = document.visibilityState === "visible";
     if (!isPageVisible) {
       disableActiveNativeAnalysis();
-      const sound = SoundManager.getCurrentSound();
-      if (sound) checkpointActivePosition(sound, musicStore());
+      // Android may kill a backgrounded process without another event.
+      void persistPlaybackNow();
       // RAF is paused while hidden; keep playback time and AutoMix monitoring
       // on a low-rate timer independent of visual spectrum settings.
       startBackgroundMonitor();
@@ -1775,6 +1810,9 @@ export const setPageVisible = (visible: boolean): void => {
   isPageVisible = visible;
   if (!visible) {
     disableActiveNativeAnalysis();
+    // Hidden to the tray is where a desktop session usually ends — by shutdown or
+    // logout, which give the page no exit hook (see `PERIODIC_CHECKPOINT_MS`).
+    void persistPlaybackNow();
     startBackgroundMonitor();
   } else if (visible) {
     requestNativeBackendSync();
