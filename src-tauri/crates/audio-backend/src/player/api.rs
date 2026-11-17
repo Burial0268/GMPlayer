@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 
 use tauri::ipc::Channel;
 use tauri::{Emitter, Runtime};
@@ -188,34 +189,19 @@ impl Player {
                 }
             };
 
+            // Outlives one burst: a frame held back by the pace goes with a later one.
+            let mut analysis = AnalysisPacer::default();
             while let Some(first_msg) = evt_rx.recv().await {
                 let mut realtime = Vec::new();
-                let mut latest_fft = None;
-                let mut latest_low_freq = None;
-
-                collect_forward_message(
-                    first_msg,
-                    &mut realtime,
-                    &mut latest_fft,
-                    &mut latest_low_freq,
-                );
-
+                analysis.collect(first_msg, &mut realtime);
                 while let Ok(next_msg) = evt_rx.try_recv() {
-                    collect_forward_message(
-                        next_msg,
-                        &mut realtime,
-                        &mut latest_fft,
-                        &mut latest_low_freq,
-                    );
+                    analysis.collect(next_msg, &mut realtime);
                 }
 
                 for evt_msg in realtime {
                     forward_msg(evt_msg);
                 }
-                if let Some(evt_msg) = latest_fft {
-                    forward_msg(evt_msg);
-                }
-                if let Some(evt_msg) = latest_low_freq {
+                if let Some(evt_msg) = analysis.take_due(Instant::now()) {
                     forward_msg(evt_msg);
                 }
             }
@@ -415,25 +401,70 @@ fn update_shared_from_event(shared: &Arc<PlayerShared>, event: &AudioThreadEvent
 fn is_analysis_frame(event: &AudioThreadEvent) -> bool {
     matches!(
         event,
-        AudioThreadEvent::FFTData { .. } | AudioThreadEvent::LowFreqBins { .. }
+        AudioThreadEvent::FFTData { .. }
+            | AudioThreadEvent::LowFreqBins { .. }
+            | AudioThreadEvent::AnalysisFrame { .. }
     )
 }
 
-fn collect_forward_message(
-    msg: AudioThreadEventMessage<AudioThreadEvent>,
-    realtime: &mut Vec<AudioThreadEventMessage<AudioThreadEvent>>,
-    latest_fft: &mut Option<AudioThreadEventMessage<AudioThreadEvent>>,
-    latest_low_freq: &mut Option<AudioThreadEventMessage<AudioThreadEvent>>,
-) {
-    let is_fft = matches!(&msg.data, Some(AudioThreadEvent::FFTData { .. }));
-    let is_low_freq = matches!(&msg.data, Some(AudioThreadEvent::LowFreqBins { .. }));
+/// How often analysis frames may reach the WebView: ~30 Hz.
+///
+/// Every forwarded message is one IPC crossing, and on WebView2 each crossing
+/// leaves memory behind that a garbage collection does not return (measured:
+/// ~100 MB over 8 minutes with the spectrum and low-frequency streams at
+/// ~60 Hz each). The frontend eases the spectrum between frames.
+const ANALYSIS_FORWARD_INTERVAL: Duration = Duration::from_millis(30);
 
-    if is_fft {
-        *latest_fft = Some(msg);
-    } else if is_low_freq {
-        *latest_low_freq = Some(msg);
-    } else {
-        realtime.push(msg);
+/// Keeps only the newest spectrum and low-frequency frame and releases them
+/// together, at most once per [`ANALYSIS_FORWARD_INTERVAL`]. A frame is
+/// superseded by the next one anyway, so nothing a consumer needs is lost.
+#[derive(Default)]
+struct AnalysisPacer {
+    fft: Option<Vec<f32>>,
+    bins: Option<Vec<f32>>,
+    callback_id: String,
+    last_sent: Option<Instant>,
+}
+
+impl AnalysisPacer {
+    /// Hold analysis frames back; everything else goes to `realtime` in order.
+    fn collect(
+        &mut self,
+        msg: AudioThreadEventMessage<AudioThreadEvent>,
+        realtime: &mut Vec<AudioThreadEventMessage<AudioThreadEvent>>,
+    ) {
+        match msg.data {
+            Some(AudioThreadEvent::FFTData { data }) => {
+                self.fft = Some(data);
+                self.callback_id = msg.callback_id;
+            }
+            Some(AudioThreadEvent::LowFreqBins { bins }) => {
+                self.bins = Some(bins);
+                self.callback_id = msg.callback_id;
+            }
+            _ => realtime.push(msg),
+        }
+    }
+
+    /// The merged frame, if one is waiting and the interval has passed.
+    fn take_due(&mut self, now: Instant) -> Option<AudioThreadEventMessage<AudioThreadEvent>> {
+        if self.fft.is_none() && self.bins.is_none() {
+            return None;
+        }
+        if self
+            .last_sent
+            .is_some_and(|last| now.duration_since(last) < ANALYSIS_FORWARD_INTERVAL)
+        {
+            return None;
+        }
+        self.last_sent = Some(now);
+        Some(AudioThreadEventMessage::new(
+            self.callback_id.clone(),
+            Some(AudioThreadEvent::AnalysisFrame {
+                fft: self.fft.take(),
+                bins: self.bins.take(),
+            }),
+        ))
     }
 }
 
@@ -517,6 +548,70 @@ mod tests {
     /// the only thing keeping ~30 Hz multi-kilobyte frames off the bus, so a new
     /// high-rate event that forgets to land here would silently start copying
     /// itself to every in-process consumer.
+    fn msg(event: AudioThreadEvent) -> AudioThreadEventMessage<AudioThreadEvent> {
+        AudioThreadEventMessage::new("cb".into(), Some(event))
+    }
+
+    #[test]
+    fn analysis_frames_are_merged_paced_and_never_delay_realtime_events() {
+        let mut pacer = AnalysisPacer::default();
+        let mut realtime = Vec::new();
+        pacer.collect(
+            msg(AudioThreadEvent::FFTData { data: vec![1.0] }),
+            &mut realtime,
+        );
+        pacer.collect(
+            msg(AudioThreadEvent::PlayStatus { is_playing: true }),
+            &mut realtime,
+        );
+        pacer.collect(
+            msg(AudioThreadEvent::FFTData { data: vec![2.0] }),
+            &mut realtime,
+        );
+        pacer.collect(
+            msg(AudioThreadEvent::LowFreqBins {
+                bins: vec![0.5, 0.25],
+            }),
+            &mut realtime,
+        );
+
+        // Realtime events pass straight through; analysis frames are held.
+        assert_eq!(realtime.len(), 1);
+        assert!(matches!(
+            realtime[0].data,
+            Some(AudioThreadEvent::PlayStatus { is_playing: true })
+        ));
+
+        // One merged message carrying only the newest of each.
+        let t0 = Instant::now();
+        let sent = pacer.take_due(t0).expect("first frame is due at once");
+        match sent.data {
+            Some(AudioThreadEvent::AnalysisFrame { fft, bins }) => {
+                assert_eq!(fft, Some(vec![2.0]));
+                assert_eq!(bins, Some(vec![0.5, 0.25]));
+            }
+            other => panic!("expected an analysis frame, got {other:?}"),
+        }
+        assert_eq!(sent.callback_id, "cb");
+        assert!(pacer.take_due(t0).is_none(), "nothing left to send");
+
+        // Inside the interval a new frame waits; past it, it goes.
+        pacer.collect(
+            msg(AudioThreadEvent::LowFreqBins { bins: vec![1.0] }),
+            &mut realtime,
+        );
+        assert!(pacer.take_due(t0 + ANALYSIS_FORWARD_INTERVAL / 2).is_none());
+        match pacer
+            .take_due(t0 + ANALYSIS_FORWARD_INTERVAL)
+            .and_then(|m| m.data)
+        {
+            Some(AudioThreadEvent::AnalysisFrame { fft: None, bins }) => {
+                assert_eq!(bins, Some(vec![1.0]));
+            }
+            other => panic!("expected a bins-only frame, got {other:?}"),
+        }
+    }
+
     #[test]
     fn only_fft_and_low_freq_count_as_analysis_frames() {
         assert!(is_analysis_frame(&AudioThreadEvent::FFTData {
@@ -524,6 +619,10 @@ mod tests {
         }));
         assert!(is_analysis_frame(&AudioThreadEvent::LowFreqBins {
             bins: vec![0.5; 2]
+        }));
+        assert!(is_analysis_frame(&AudioThreadEvent::AnalysisFrame {
+            fft: None,
+            bins: None
         }));
 
         // Everything a subscriber actually needs must pass through.

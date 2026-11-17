@@ -831,20 +831,14 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         this._nativeAutoMixSyncPending = false;
         break;
 
+      case "analysisFrame": {
+        if (evt.data.fft) this._acceptFFT(evt.data.fft);
+        if (evt.data.bins) this._lowFreqBins = evt.data.bins;
+        break;
+      }
+
       case "fftData": {
-        this._fftData = evt.data.data;
-        this._fftReceived = true;
-        this._clearNoFFTWarning();
-        if (IS_DEV) {
-          const now = Date.now();
-          if (now - this._lastFFTLogAt > FFT_LOG_INTERVAL_MS) {
-            this._lastFFTLogAt = now;
-            const first = this._fftData[0];
-            console.debug(
-              `[FFT recv] len=${this._fftData.length} first=${first !== undefined ? first.toFixed(4) : "?"}`,
-            );
-          }
-        }
+        this._acceptFFT(evt.data.data);
         break;
       }
 
@@ -918,6 +912,22 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
       // this controller to do with it.
       case "nowPlayingChanged":
         break;
+    }
+  }
+
+  private _acceptFFT(data: number[]): void {
+    this._fftData = data;
+    this._fftReceived = true;
+    this._clearNoFFTWarning();
+    if (IS_DEV) {
+      const now = Date.now();
+      if (now - this._lastFFTLogAt > FFT_LOG_INTERVAL_MS) {
+        this._lastFFTLogAt = now;
+        const first = this._fftData[0];
+        console.debug(
+          `[FFT recv] len=${this._fftData.length} first=${first !== undefined ? first.toFixed(4) : "?"}`,
+        );
+      }
     }
   }
 

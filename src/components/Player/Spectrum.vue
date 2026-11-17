@@ -8,6 +8,7 @@
 <script setup>
 import { ensureSpectrumUpdate } from "@/utils/AudioContext";
 import { getSpectrumFrame, getSpectrumVersion } from "@/utils/AudioContext/analysis/SpectrumFrame";
+import { createSpectrumEaser } from "@/utils/AudioContext/analysis/spectrumEasing";
 
 const props = defineProps({
   show: {
@@ -151,13 +152,15 @@ let lastDrawnVersion = -1;
 let hideParkTimer = null;
 const HIDE_PARK_DELAY_MS = 1000; // outlasts the 0.5s close transition
 
+const easer = createSpectrumEaser();
+
 const startDraw = () => {
   if (rafId) return;
-  const loop = () => {
+  const loop = (now = performance.now()) => {
     const version = getSpectrumVersion();
-    if (version !== lastDrawnVersion) {
+    if (version !== lastDrawnVersion || easer.easing(now)) {
       lastDrawnVersion = version;
-      drawSpectrum(getSpectrumFrame());
+      drawSpectrum(easer.frame(getSpectrumFrame(), now));
     }
     rafId = requestAnimationFrame(loop);
   };

@@ -193,6 +193,8 @@ export type AudioThreadEvent =
   | { type: "fftData"; data: { data: number[] } }
   | { type: "lowFrequencyVolume"; data: { volume: number } }
   | { type: "lowFreqBins"; data: { bins: number[] } }
+  /** The native backend's paced merge of the two above (~30 Hz). */
+  | { type: "analysisFrame"; data: { fft: number[] | null; bins: number[] | null } }
   | { type: "automixStatus"; data: { status: AutoMixNativeStatus } }
   | {
       type: "automixAnalysisReady";

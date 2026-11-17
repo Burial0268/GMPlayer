@@ -606,6 +606,14 @@ pub enum AudioThreadEvent {
     /// display frame, as AMLL does.
     #[serde(rename_all = "camelCase")]
     LowFreqBins { bins: Vec<f32> },
+    /// The latest `FFTData` and `LowFreqBins` merged into one message and paced
+    /// to the WebView (see `AnalysisPacer` in `player::api`). Each message is an
+    /// IPC crossing, and the two streams otherwise arrive at ~60 Hz each.
+    #[serde(rename_all = "camelCase")]
+    AnalysisFrame {
+        fft: Option<Vec<f32>>,
+        bins: Option<Vec<f32>>,
+    },
     #[serde(rename_all = "camelCase")]
     AutomixStatus { status: AutoMixStatus },
     #[serde(rename_all = "camelCase")]
