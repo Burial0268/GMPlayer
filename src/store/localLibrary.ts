@@ -75,11 +75,9 @@ const emptyScan = (): ScanState => ({
  * The local music library, as the UI sees it.
  *
  * **Deliberately not persisted.** Every field here is a cache of what Rust
- * already holds in `$APPDATA/local-library.bin`; `persistData` is localStorage
- * plus a throttled whole-object `JSON.stringify`, so a few thousand track rows
- * in it would turn every volume drag into a multi-megabyte serialization (the
- * reason `musicPersistedData` avoids `pinia-plugin-persistedstate` in the first
- * place).
+ * already holds in `$APPDATA/local-library.bin`; `persistData` is loaded whole
+ * at startup and re-serialized on change, so a few thousand track rows in it
+ * would be a second copy held in memory and on disk for nothing.
  *
  * It is also **not** registered with `destroyTauriPiniaStores`, and must not be:
  * that list is the account-state teardown, and local data is the one thing that

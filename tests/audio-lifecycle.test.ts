@@ -8,6 +8,7 @@ import { transformSync } from "esbuild";
 import { effectScope, nextTick, reactive, ref, toRaw, watch } from "vue";
 import { createPinia, defineStore } from "pinia";
 import { identityForSong } from "../src/utils/tauri/audio/identity";
+import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
 
 const require = createRequire(resolve("package.json"));
 
@@ -152,9 +153,8 @@ function queueEnvironment(native = true) {
   };
 }
 
-function hydrateQueue(saved: any) {
-  const scope = effectScope();
-  const useStore = sourceModule(
+function persistModule(window: any) {
+  return sourceModule(
     "src/store/musicPersistedData.ts",
     {
       pinia: { defineStore: (_id: string, setup: any) => setup },
@@ -163,15 +163,17 @@ function hydrateQueue(saved: any) {
       "./musicTypes": musicTypes,
       "@/utils/rawEntry": { asRawEntry: (song: any) => song },
     },
-    {
-      window: {
-        localStorage: { getItem: () => JSON.stringify({ persistData: saved }) },
-        addEventListener() {},
-      },
-      document: { addEventListener() {} },
-    },
-  ).default;
-  const store = scope.run(() => useStore());
+    { window: { addEventListener() {}, ...window }, document: { addEventListener() {} } },
+  );
+}
+
+async function hydrateQueue(saved: any) {
+  const scope = effectScope();
+  const mod = persistModule({
+    localStorage: { getItem: () => JSON.stringify({ persistData: saved }) },
+  });
+  await mod.loadMusicPersist();
+  const store = scope.run(() => mod.default());
   scope.stop();
   return store.persistData;
 }
@@ -329,12 +331,12 @@ test("manifest carries original identity order including local tracks, removals 
   );
 });
 
-test("legacy persisted queues migrate to an explicit completion or pending token", () => {
+test("legacy persisted queues migrate to an explicit completion or pending token", async () => {
   for (const pending of [null, 42]) {
     const saved: any = randomQueue();
     delete saved.shuffleState;
     saved.pendingReshuffleRevision = pending;
-    const persistData = hydrateQueue(saved);
+    const persistData = await hydrateQueue(saved);
     assert.equal(persistData.shuffleState.applied, pending === null);
     assert.equal("pendingReshuffleRevision" in persistData, false);
   }
@@ -353,21 +355,9 @@ test("persistence writes the applied token and its permutation in the same snaps
     },
   };
   const scope = effectScope();
-  const useStore = sourceModule(
-    "src/store/musicPersistedData.ts",
-    {
-      pinia: { defineStore: (_id: string, setup: any) => setup },
-      vue: { reactive, watch, toRaw: require("vue").toRaw },
-      "throttle-debounce": require("throttle-debounce"),
-      "./musicTypes": musicTypes,
-      "@/utils/rawEntry": { asRawEntry: (song: any) => song },
-    },
-    {
-      window: { localStorage, addEventListener() {} },
-      document: { addEventListener() {} },
-    },
-  ).default;
-  const persisted = scope.run(() => useStore());
+  const mod = persistModule({ localStorage });
+  await mod.loadMusicPersist();
+  const persisted = scope.run(() => mod.default());
   const env = queueEnvironment();
   env.restore(persisted.persistData);
   env.music.adoptBackendQueueOrder(identities([1, 2, 3, 4]), 10, { shuffleId: "landing" });
@@ -390,6 +380,219 @@ test("persistence writes the applied token and its permutation in the same snaps
     assert.equal(writes.length, 1);
   }
   stop();
+  scope.stop();
+});
+
+function memoryStorage(initial: Record<string, string> = {}) {
+  const map = new Map(Object.entries(initial));
+  return {
+    map,
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => void map.set(key, value),
+    removeItem: (key: string) => void map.delete(key),
+  };
+}
+
+async function bootPersist(indexedDB: any, localStorage: any) {
+  const scope = effectScope();
+  const mod = persistModule({ localStorage, indexedDB });
+  await mod.loadMusicPersist();
+  const store = scope.run(() => mod.default());
+  return { mod, persistData: store.persistData, stop: () => scope.stop() };
+}
+
+async function idbRecords(indexedDB: any) {
+  const db: any = await new Promise((resolve, reject) => {
+    const req = indexedDB.open("gmplayer-music", 1);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+  const out: Record<string, any> = {};
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction("persist");
+    for (const key of ["state", "queue", "history"]) {
+      const req = tx.objectStore("persist").get(key);
+      req.onsuccess = () =>
+        (out[key] = req.result === undefined ? undefined : JSON.parse(req.result));
+    }
+    tx.oncomplete = () => resolve();
+  });
+  db.close();
+  return out;
+}
+
+// IndexedDB commits after the microtask that issues the write; give it a macrotask.
+// `ms` past the 400 ms persist throttle lets a second write leave its trailing edge.
+const settle = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test("the localStorage queue migrates into IndexedDB once and the legacy copy is removed", async () => {
+  const idb = new IDBFactory();
+  const saved: any = randomQueue();
+  saved.playSongIndex = 2;
+  saved.playVolume = 0.3;
+  saved.playHistory = [{ id: 9, name: "9" }];
+  const localStorage = memoryStorage({ musicData: JSON.stringify({ persistData: saved }) });
+
+  const first = await bootPersist(idb, localStorage);
+  first.stop();
+  assert.equal(localStorage.map.has("musicData"), false);
+  const records = await idbRecords(idb);
+  assert.deepEqual(records.queue, saved.playlists);
+  assert.deepEqual(records.history, saved.playHistory);
+  assert.equal(records.state.playSongIndex, 2);
+  assert.equal("playlists" in records.state, false);
+
+  // Next launch: nothing left in localStorage, everything comes back from IndexedDB.
+  const second = await bootPersist(idb, memoryStorage());
+  assert.deepEqual(
+    Array.from(second.persistData.playlists, (song: any) => song.id),
+    [3, 1, 4, 2],
+  );
+  assert.equal(second.persistData.playSongIndex, 2);
+  assert.equal(second.persistData.playVolume, 0.3);
+  assert.deepEqual({ ...second.persistData.shuffleState }, { id: "saved-pass", applied: true });
+  assert.equal(second.persistData.playHistory[0].id, 9);
+  second.stop();
+});
+
+test("a localStorage queue left by a fallback session wins over an older IndexedDB copy", async () => {
+  const idb = new IDBFactory();
+  const older = await bootPersist(
+    idb,
+    memoryStorage({
+      musicData: JSON.stringify({ persistData: { ...randomQueue(), playSongIndex: 0 } }),
+    }),
+  );
+  older.stop();
+  const newer = { ...randomQueue(), playlists: [{ id: 7, name: "7" }], playSongIndex: 0 };
+  const localStorage = memoryStorage({ musicData: JSON.stringify({ persistData: newer }) });
+  const boot = await bootPersist(idb, localStorage);
+  assert.deepEqual(
+    Array.from(boot.persistData.playlists, (song: any) => song.id),
+    [7],
+  );
+  assert.deepEqual((await idbRecords(idb)).queue, newer.playlists);
+  assert.equal(localStorage.map.has("musicData"), false);
+  boot.stop();
+});
+
+test("without IndexedDB the queue stays in localStorage and keeps being written there", async () => {
+  const saved = randomQueue();
+  const localStorage = memoryStorage({ musicData: JSON.stringify({ persistData: saved }) });
+  const boot = await bootPersist(undefined, localStorage);
+  assert.equal(boot.persistData.playlists.length, 4);
+  boot.persistData.playVolume = 0.1;
+  await nextTick();
+  await settle();
+  assert.equal(JSON.parse(localStorage.map.get("musicData")!).persistData.playVolume, 0.1);
+  boot.stop();
+});
+
+test("a volume change rewrites only the small record; a reorder lands with its token", async () => {
+  const idb = new IDBFactory();
+  const seeded = await bootPersist(
+    idb,
+    memoryStorage({
+      musicData: JSON.stringify({
+        persistData: { ...randomQueue(), shuffleState: { id: "landing", applied: false } },
+      }),
+    }),
+  );
+  seeded.stop();
+  const boot = await bootPersist(idb, memoryStorage());
+  const realPut = IDBObjectStore.prototype.put;
+  const puts: string[] = [];
+  IDBObjectStore.prototype.put = function (value: any, key: any) {
+    puts.push(key);
+    return realPut.call(this, value, key);
+  };
+  try {
+    boot.persistData.playVolume = 0.2;
+    await nextTick();
+    await settle();
+    assert.deepEqual(puts, ["state"]);
+
+    puts.length = 0;
+    const env = queueEnvironment();
+    env.restore(boot.persistData);
+    env.music.adoptBackendQueueOrder(identities([1, 2, 3, 4]), 10, { shuffleId: "landing" });
+    await nextTick();
+    await settle(450);
+    assert.deepEqual(puts.sort(), ["queue", "state"], "queue and its token share one transaction");
+    const records = await idbRecords(idb);
+    assert.deepEqual(
+      records.queue.map((song: any) => song.id),
+      [1, 2, 3, 4],
+    );
+    assert.deepEqual(records.state.shuffleState, { id: "landing", applied: true });
+    assert.equal(records.state.playVolume, 0.2);
+
+    // A scalar touched before the list in the same tick must not leave on its own.
+    await settle(450);
+    puts.length = 0;
+    boot.persistData.playSongIndex = 1;
+    boot.persistData.playlists = [
+      { id: 5, name: "5" },
+      { id: 6, name: "6" },
+    ];
+    await nextTick();
+    await settle();
+    assert.deepEqual(puts.sort(), ["queue", "state"]);
+    const after = await idbRecords(idb);
+    assert.equal(after.state.playSongIndex, 1);
+    assert.deepEqual(
+      after.queue.map((song: any) => song.id),
+      [5, 6],
+    );
+  } finally {
+    IDBObjectStore.prototype.put = realPut;
+    boot.stop();
+  }
+});
+
+test("a flush commits a same-tick change inside the throttle window before it resolves", async () => {
+  const idb = new IDBFactory();
+  const seeded = await bootPersist(
+    idb,
+    memoryStorage({
+      musicData: JSON.stringify({ persistData: randomQueue() }),
+    }),
+  );
+  seeded.stop();
+  const boot = await bootPersist(idb, memoryStorage());
+  // Take the throttle's leading edge so the next ordinary write would wait 400 ms.
+  boot.persistData.playVolume = 0.4;
+  await nextTick();
+  await settle();
+  // As at exit: a checkpoint and a queue edit, then the flush in the same tick.
+  boot.persistData.playSongIndex = 3;
+  boot.persistData.playlists = [{ id: 8, name: "8" }];
+  await boot.mod.flushMusicPersist();
+  const records = await idbRecords(idb);
+  assert.equal(records.state.playSongIndex, 3);
+  assert.deepEqual(
+    records.queue.map((song: any) => song.id),
+    [8],
+  );
+  boot.stop();
+});
+
+test("a store instance without a preloaded snapshot never overwrites the saved queue", async () => {
+  const idb = new IDBFactory();
+  const seeded = await bootPersist(
+    idb,
+    memoryStorage({
+      musicData: JSON.stringify({ persistData: randomQueue() }),
+    }),
+  );
+  seeded.stop();
+  const scope = effectScope();
+  const mod = persistModule({ localStorage: memoryStorage(), indexedDB: idb });
+  const store = scope.run(() => mod.default());
+  store.persistData.playlists = [];
+  await nextTick();
+  await settle();
+  assert.equal((await idbRecords(idb)).queue.length, 4);
   scope.stop();
 });
 
@@ -449,12 +652,12 @@ test("web mode changes pin the playing track and restore natural order without n
   stop();
 });
 
-test("web refresh keeps a completed permutation, cursor and token across repeated hydrates", () => {
+test("web refresh keeps a completed permutation, cursor and token across repeated hydrates", async () => {
   const env = queueEnvironment(false);
   const saved = randomQueue();
   saved.playSongIndex = 2;
   for (let boot = 0; boot < 3; boot++) {
-    env.restore(hydrateQueue(JSON.parse(JSON.stringify(saved))));
+    env.restore(await hydrateQueue(JSON.parse(JSON.stringify(saved))));
     env.music.ensureShuffledInRandomMode();
     assert.equal(env.shuffleDraws, 0);
     assert.equal(env.music.getPlaySongData.id, 4);
@@ -467,11 +670,11 @@ test("web refresh keeps a completed permutation, cursor and token across repeate
   }
 });
 
-test("web migration preserves an already shuffled legacy queue without drawing again", () => {
+test("web migration preserves an already shuffled legacy queue without drawing again", async () => {
   const env = queueEnvironment(false);
   const saved: any = randomQueue();
   delete saved.shuffleState;
-  env.restore(hydrateQueue(saved));
+  env.restore(await hydrateQueue(saved));
   env.music.ensureShuffledInRandomMode();
   assert.equal(env.shuffleDraws, 0);
   assert.equal(env.music.persistData.shuffleState.applied, true);
@@ -486,20 +689,20 @@ test("web migration preserves an already shuffled legacy queue without drawing a
   );
 });
 
-test("web startup upgrades an unshuffled legacy queue once and pins the playing track", () => {
+test("web startup upgrades an unshuffled legacy queue once and pins the playing track", async () => {
   const env = queueEnvironment(false);
   const saved: any = randomQueue();
   delete saved.shuffleState;
   saved.playlists = [1, 2, 3, 4].map((id) => ({ id, name: String(id) }));
   saved.playSongIndex = 2;
   saved.preShuffleOrder = [];
-  env.restore(hydrateQueue(saved));
+  env.restore(await hydrateQueue(saved));
   env.music.ensureShuffledInRandomMode();
   assert.equal(env.shuffleDraws, 3);
   assert.equal(env.music.getPlaySongData.id, 3);
   assert.equal(env.music.persistData.shuffleState.applied, true);
   const completed = JSON.parse(JSON.stringify(env.music.persistData));
-  env.restore(hydrateQueue(completed));
+  env.restore(await hydrateQueue(completed));
   env.music.ensureShuffledInRandomMode();
   assert.equal(env.shuffleDraws, 3);
   assert.equal(env.music.persistData.shuffleState.id, completed.shuffleState.id);
@@ -509,7 +712,7 @@ test("web startup upgrades an unshuffled legacy queue once and pins the playing 
   );
 });
 
-test("web completes a persisted pending shuffle locally and retains its original order", () => {
+test("web completes a persisted pending shuffle locally and retains its original order", async () => {
   for (const legacy of [false, true]) {
     const env = queueEnvironment(false);
     const saved: any = randomQueue();
@@ -517,7 +720,7 @@ test("web completes a persisted pending shuffle locally and retains its original
       delete saved.shuffleState;
       saved.pendingReshuffleRevision = 42;
     } else saved.shuffleState = { id: "native-pending", applied: false };
-    env.restore(hydrateQueue(saved));
+    env.restore(await hydrateQueue(saved));
     const playing = env.music.getPlaySongData.id;
     env.music.ensureShuffledInRandomMode();
     assert.equal(env.shuffleDraws, 3);

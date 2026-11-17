@@ -90,6 +90,7 @@
     "@vitejs/plugin-vue": "^6.0.11",
     "crypto-js": "^4.2.0",
     "esbuild": "^0.27.7",
+    "fake-indexeddb": "^6.2.8",
     "naive-ui": "~2.43.2",
     "oxfmt": "^0.35.0",
     "oxlint": "^1.93.0",

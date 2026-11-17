@@ -14,6 +14,7 @@ import { installTauriPinia, startTauriPiniaStores } from "@/utils/tauri/store/pi
 import useSettingDataStore, { repairSettingData } from "@/store/settingData";
 import useSiteDataStore, { repairSiteData } from "@/store/siteData";
 import useUserDataStore from "@/store/userData";
+import { loadMusicPersist } from "@/store/musicPersistedData";
 import { installExternalLinkInterceptor } from "@/utils/openLink";
 import { setNcmTransport, setNcmCookieSource } from "@/utils/request";
 
@@ -53,7 +54,9 @@ if ("serviceWorker" in navigator) {
 async function bootstrap() {
   const pinia = createPinia();
   pinia.use(piniaPluginPersistedstate);
-  await installTauriPinia(pinia);
+  // 播放队列存在 IndexedDB（只有异步接口），必须在任何 store 实例化之前预载——
+  // `.use(router)` 就会触发首次导航和守卫。见 store/musicPersistedData。
+  await Promise.all([installTauriPinia(pinia), loadMusicPersist()]);
 
   // 顺序是硬约束：pinia.use() 在 `app.use(pinia)` 之前只是把插件挂进
   // toBeInstalled 队列（pinia 源码里 `use()` 判的是 `this._a`），要等安装到

@@ -64,8 +64,8 @@ interface DownloadStoreState {
  * **Deliberately not persisted.** Rust owns both halves — the settings live in
  * `$APPDATA/download.json` and the task table is in-memory there — so anything
  * kept here would be a second copy that can only be wrong. It also keeps a
- * possibly-large task list out of `persistData`, which is localStorage plus a
- * throttled whole-object `JSON.stringify`.
+ * possibly-large task list out of `persistData`, which is loaded whole into
+ * memory at startup and re-serialized as the queue changes.
  *
  * Every mutation is a command; the resulting state arrives back over the event
  * channel. That one-writer shape is what lets the queue keep running when this
