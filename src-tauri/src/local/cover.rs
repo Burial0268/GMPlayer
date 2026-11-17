@@ -24,14 +24,14 @@ use sha2::{Digest, Sha256};
 
 use gmplayer_audio_backend::CoverArt;
 
-/// Subdirectory of the app cache holding extracted covers.
+/// Subdirectory of the app *data* directory holding extracted and imported covers.
 ///
-/// Under the *cache* directory, not app data: these are derived files, and a
-/// system that reclaims the cache costs a re-scan of covers rather than the
-/// user's library. It is also the directory named in `tauri.conf.json`'s
-/// `assetProtocol.scope`, which is what lets `convertFileSrc` reach them —
-/// that scope is static and narrow on purpose, so no dynamic ACL (and therefore
-/// no `tauri-plugin-persisted-scope`) is involved.
+/// Not the cache: Android empties it on its own, a scan skips unchanged files so
+/// the covers never came back, and an imported cover has no other copy. It is
+/// also the directory named in `tauri.conf.json`'s `assetProtocol.scope`, which
+/// is what lets `convertFileSrc` reach them — move one and the other must
+/// follow, or every cover is denied. That scope is static and narrow on purpose,
+/// so no dynamic ACL (and therefore no `tauri-plugin-persisted-scope`) is involved.
 pub const COVER_DIR: &str = "local-covers";
 
 /// Where spooled `content://` bodies land. Same reasoning: derived, disposable.
