@@ -72,6 +72,15 @@ jobs:
           pnpm install
           node ./scripts/gen-dev-version.mjs
 
+      # CI-only, never committed: open the WebView2 debugging port on 127.0.0.1
+      # so `scripts/webview-memory-dump.mjs` can read memory-infra dumps from
+      # this release build (debug builds already open it).
+      - name: 测试包开启 WebView2 调试端口
+        shell: bash
+        run: |
+          sed -i 's|pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: &str = window_args!();|pub const DEFAULT_ADDITIONAL_WINDOW_ARGS: \&str = concat!(window_args!(), " --remote-debugging-port=9222");|' src-tauri/src/desktop/window/config.rs
+          grep -c 'concat!(window_args!(), " --remote-debugging-port=9222")' src-tauri/src/desktop/window/config.rs | grep -qx 2
+
       # The identifier override is CI-only, never committed.
       - name: 构建 exe (.citest)
         shell: bash
