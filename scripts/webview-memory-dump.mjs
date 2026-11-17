@@ -7,12 +7,14 @@
 // Needs the app started with `--remote-debugging-port=9222` (debug builds do;
 // see DEFAULT_ADDITIONAL_WINDOW_ARGS) and Node 22+ (global WebSocket).
 //
-//   node scripts/webview-memory-dump.mjs [port=9222] [intervalSeconds=60] [count=10]
+//   node scripts/webview-memory-dump.mjs [port=9222] [intervalSeconds=60] [count=10] [gc]
 //
 // Prints every process's allocators in MB at each dump, with the change since
-// the first one, largest first.
+// the first one, largest first. With `gc`, each dump is followed by a forced
+// garbage collection in every page and a second dump: what drops was garbage
+// waiting for a collection, what stays is retained.
 
-const [port = "9222", intervalArg = "60", countArg = "10"] = process.argv.slice(2);
+const [port = "9222", intervalArg = "60", countArg = "10", gcArg] = process.argv.slice(2);
 const interval = Number(intervalArg) * 1000;
 const count = Number(countArg);
 
@@ -84,11 +86,32 @@ async function dump() {
   return { names, perProcess };
 }
 
+// Full GC (V8 and Blink's heap together) in every page, each over its own target connection.
+async function collectGarbage() {
+  const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((r) => r.json());
+  for (const target of targets.filter((t) => t.type === "page" && t.webSocketDebuggerUrl)) {
+    const page = new WebSocket(target.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      page.onopen = resolve;
+      page.onerror = reject;
+    }).catch(() => null);
+    if (page.readyState !== WebSocket.OPEN) continue;
+    await new Promise((resolve) => {
+      page.onmessage = resolve;
+      page.send(JSON.stringify({ id: 1, method: "HeapProfiler.collectGarbage" }));
+    });
+    page.close();
+  }
+}
+
 let first = null;
-for (let i = 0; i < count; i++) {
+for (let i = 0; i < count * (gcArg === "gc" ? 2 : 1); i++) {
+  const afterGc = gcArg === "gc" && i % 2 === 1;
+  if (afterGc) await collectGarbage();
   const { names, perProcess } = await dump();
   first ??= perProcess;
-  console.log(`\n=== dump ${i + 1}/${count} at ${new Date().toLocaleTimeString()} ===`);
+  const round = gcArg === "gc" ? Math.floor(i / 2) : i;
+  console.log(`\n=== dump ${round + 1}/${count}${gcArg === "gc" ? (afterGc ? " after GC" : " before GC") : ""} at ${new Date().toLocaleTimeString()} ===`);
   for (const [pid, sizes] of Object.entries(perProcess)) {
     const footprint = sizes["(private footprint)"] ?? 0;
     console.log(`\n[pid ${pid}] ${(names[pid] ?? "").trim()}  private footprint ${footprint.toFixed(0)} MB`);
@@ -102,6 +125,7 @@ for (let i = 0; i < count; i++) {
       console.log(`  ${size.toFixed(1).padStart(8)} MB  ${name}${change}`);
     }
   }
-  if (i + 1 < count) await new Promise((resolve) => setTimeout(resolve, interval));
+  const lastRound = (gcArg === "gc" ? Math.floor(i / 2) : i) + 1 >= count;
+  if (!lastRound && (gcArg !== "gc" || afterGc)) await new Promise((resolve) => setTimeout(resolve, interval));
 }
 ws.close();
