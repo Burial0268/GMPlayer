@@ -269,7 +269,13 @@ const syncNativeAnalysisState = (
   settings = settingStore(),
 ): void => {
   if (!isBackendSound(sound)) return;
-  const analysisEnabled = isPageVisible && (settings.musicFrequency || settings.dynamicFlowSpeed);
+  // Both consumers (the spectrum and the background's flow speed) live in the big player. Every
+  // frame of this stream is one IPC crossing (~60/s each kind), and on WebView2 each crossing
+  // leaves memory behind that a GC does not fully return -- measured at ~100 MB per 8 minutes.
+  const analysisEnabled =
+    isPageVisible &&
+    musicStore().showBigPlayer &&
+    (settings.musicFrequency || settings.dynamicFlowSpeed);
   sound.setAnalysisEnabled(analysisEnabled);
   sound.setFFTEnabled(analysisEnabled && settings.musicFrequency);
 };
