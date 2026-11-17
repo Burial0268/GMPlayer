@@ -12,6 +12,9 @@ patchedDependencies:
   '@applemusic-like-lyrics/core@0.6.0':
     hash: fb36e5a3d286e3a2941e8064d8756979f053b55b9c05352015648cbd14febe2f
     path: patches/@applemusic-like-lyrics__core@0.6.0.patch
+  motion-v@1.10.3:
+    hash: 364565227f4fa3c4abd61222eedcf2e3f457dcf624c9ce770f5b9848856e4d73
+    path: patches/motion-v@1.10.3.patch
 
 importers:
 
@@ -130,7 +133,7 @@ importers:
         version: 14.3.3
       motion-v:
         specifier: ^1.10.3
-        version: 1.10.3(@vueuse/core@10.11.1(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3))
+        version: 1.10.3(patch_hash=364565227f4fa3c4abd61222eedcf2e3f457dcf624c9ce770f5b9848856e4d73)(@vueuse/core@10.11.1(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3))
       pinia:
         specifier: ^3.0.4
         version: 3.0.4(typescript@5.9.3)(vue@3.5.45(typescript@5.9.3))
@@ -8091,7 +8094,7 @@ snapshots:
 
   motion-utils@12.39.0: {}
 
-  motion-v@1.10.3(@vueuse/core@10.11.1(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3)):
+  motion-v@1.10.3(patch_hash=364565227f4fa3c4abd61222eedcf2e3f457dcf624c9ce770f5b9848856e4d73)(@vueuse/core@10.11.1(vue@3.5.45(typescript@5.9.3)))(vue@3.5.45(typescript@5.9.3)):
     dependencies:
       '@vueuse/core': 10.11.1(vue@3.5.45(typescript@5.9.3))
       framer-motion: 12.43.0

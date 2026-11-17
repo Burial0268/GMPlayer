@@ -122,7 +122,8 @@
       "@swc/wasm": "1.15.46"
     },
     "patchedDependencies": {
-      "@applemusic-like-lyrics/core@0.6.0": "patches/@applemusic-like-lyrics__core@0.6.0.patch"
+      "@applemusic-like-lyrics/core@0.6.0": "patches/@applemusic-like-lyrics__core@0.6.0.patch",
+      "motion-v@1.10.3": "patches/motion-v@1.10.3.patch"
     }
   },
   "github": "https://github.com/Burial0268/GMPlayer",

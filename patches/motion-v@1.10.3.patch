@@ -1,0 +1,141 @@
+diff --git a/dist/es/components/animate-presence/use-presence-container.mjs b/dist/es/components/animate-presence/use-presence-container.mjs
+index e80d2c15c7bf1d4579f26a8197ffa4c44d970d18..3ecbea9f10b58d0cfe3fe5bd28b9fab77d61b7a5 100644
+--- a/dist/es/components/animate-presence/use-presence-container.mjs
++++ b/dist/es/components/animate-presence/use-presence-container.mjs
+@@ -27,6 +27,17 @@ function usePresenceContainer(props) {
+       finalizeExit(containerState);
+     }
+   }
++  // GMPlayer patch: a Motion that is gone has to leave its container's sets, or a long-lived
++  // presence child keeps every Motion that ever mounted inside it.
++  function unregister(state) {
++    const containerState = containerStates.get(state.presenceContainer);
++    if (!containerState)
++      return;
++    containerState.motions.delete(state);
++    if (containerState.exitingMotions.delete(state) && containerState.exitingMotions.size === 0 && containerState.done) {
++      finalizeExit(containerState);
++    }
++  }
+   function registerPending(state) {
+     pendingStates.add(state);
+   }
+@@ -37,6 +48,7 @@ function usePresenceContainer(props) {
+     initial: props.initial,
+     custom: props.custom,
+     register,
++    unregister,
+     onMotionExitComplete,
+     registerPending,
+     unregisterPending
+@@ -71,6 +83,8 @@ function usePresenceContainer(props) {
+         state.unmount();
+       });
+       containerState.motions.clear();
++      // GMPlayer patch: the child is gone; its entry (keyed by that element) must go too.
++      containerStates.delete(containerState.el);
+     } else {
+       (_d = (_c = containerState.motions.values().next()) == null ? void 0 : _c.value) == null ? void 0 : _d.didUpdate();
+     }
+@@ -102,6 +116,8 @@ function usePresenceContainer(props) {
+     const containerState = containerStates.get(container);
+     const containerMotionState = mountedStates.get(container);
+     if ((!containerState || containerState.motions.size === 0) && !containerMotionState) {
++      // GMPlayer patch: nothing to animate; do not keep the leaving element as a key.
++      containerStates.delete(container);
+       done();
+       (_a = props.onExitComplete) == null ? void 0 : _a.call(props);
+       return;
+diff --git a/dist/es/components/motion/use-motion-state.mjs b/dist/es/components/motion/use-motion-state.mjs
+index ed035c31c3df77dfb3e8811a027123718b4af9fe..c55bc3de7461e53cd8b38bd0cae64d225019d733 100644
+--- a/dist/es/components/motion/use-motion-state.mjs
++++ b/dist/es/components/motion/use-motion-state.mjs
+@@ -9,6 +9,34 @@ import { warning, invariant } from "hey-listen";
+ import { ref, useAttrs, getCurrentInstance, onBeforeMount, onMounted, onBeforeUnmount, onUnmounted, onBeforeUpdate, onUpdated } from "vue";
+ import { useMotionConfig } from "../motion-config/context.mjs";
+ import { isMotionValue } from "../../external/.pnpm/motion-dom@12.24.11/external/motion-dom/dist/es/value/utils/is-motion-value.mjs";
++// GMPlayer patch: a Motion that leaves through a plain Vue <Transition> is still attached when
++// Vue unmounts it, and was then never unmounted at all -- its drag feature's window `resize`
++// listener and its projection node kept the element (and every subtree under it) alive for good.
++// Unmount it once it is actually detached instead.
++const pendingDetach = /* @__PURE__ */ new Map();
++let detachObserver = null;
++function whenDetached(el, run) {
++  if (!el || !el.isConnected) {
++    run();
++    return;
++  }
++  pendingDetach.set(el, run);
++  if (detachObserver)
++    return;
++  detachObserver = new MutationObserver(() => {
++    for (const [node, callback] of pendingDetach) {
++      if (!node.isConnected) {
++        pendingDetach.delete(node);
++        callback();
++      }
++    }
++    if (pendingDetach.size === 0) {
++      detachObserver.disconnect();
++      detachObserver = null;
++    }
++  });
++  detachObserver.observe(document, { childList: true, subtree: true });
++}
+ function useMotionState(props) {
+   var _a;
+   const parentState = injectMotion(null);
+@@ -116,9 +144,11 @@ function useMotionState(props) {
+       animatePresenceContext.unregisterPending(state);
+     }
+     const el = getMotionElement(instance.$el);
+-    if (!(el == null ? void 0 : el.isConnected)) {
++    whenDetached(el, () => {
+       state.unmount();
+-    }
++      if (animatePresenceContext.unregister)
++        animatePresenceContext.unregister(state);
++    });
+   });
+   onBeforeUpdate(() => {
+     state.beforeUpdate(getMotionProps());
+diff --git a/dist/es/external/.pnpm/framer-motion@12.25.0/external/framer-motion/dist/es/projection/node/create-projection-node.mjs b/dist/es/external/.pnpm/framer-motion@12.25.0/external/framer-motion/dist/es/projection/node/create-projection-node.mjs
+index 6d6d37da579076cd84624188a24ef6f73c7a39b4..6ec612f4a4d6d867cdb01d2284ea442859dfdde4 100644
+--- a/dist/es/external/.pnpm/framer-motion@12.25.0/external/framer-motion/dist/es/projection/node/create-projection-node.mjs
++++ b/dist/es/external/.pnpm/framer-motion@12.25.0/external/framer-motion/dist/es/projection/node/create-projection-node.mjs
+@@ -226,6 +226,11 @@ function createProjectionNode({ attachResizeListener, defaultParent, measureScro
+       this.root.nodes.remove(this);
+       const stack = this.getStack();
+       stack && stack.remove(this);
++      // GMPlayer patch: sharedNodes is never pruned, and an emptied stack keeps its last member as
++      // `lead`. Layout ids scoped to something unbounded (the player's are per song) then hold
++      // every past element forever. Drop a stack once nothing is left in it.
++      if (stack && stack.members.length === 0)
++        this.root.sharedNodes.delete(this.options.layoutId);
+       this.parent && this.parent.children.delete(this);
+       this.instance = void 0;
+       this.eventHandlers.clear();
+diff --git a/dist/es/state/motion-state.mjs b/dist/es/state/motion-state.mjs
+index c6443360d471df8163d1aff024d40f76654feabe..516fb62ea063967efbf9ad0a3a0539bf3ba800c7 100644
+--- a/dist/es/state/motion-state.mjs
++++ b/dist/es/state/motion-state.mjs
+@@ -76,6 +76,7 @@ class MotionState {
+       "Animation state must be mounted with valid Element"
+     );
+     this.element = element;
++    this.unmounted = false;
+     this.updateOptions(options);
+     this.featureManager.mount();
+     if (!notAnimate && this.options.animate) {
+@@ -104,6 +105,11 @@ class MotionState {
+   }
+   unmount() {
+     var _a, _b, _c;
++    // GMPlayer patch: idempotent -- an AnimatePresence exit (finalizeExit) and the deferred
++    // unmount in use-motion-state can both reach a state.
++    if (this.unmounted)
++      return;
++    this.unmounted = true;
+     (_b = (_a = this.parent) == null ? void 0 : _a.children) == null ? void 0 : _b.delete(this);
+     mountedStates.delete(this.element);
+     this.featureManager.unmount();
