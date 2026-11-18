@@ -19,6 +19,7 @@
         isMobile && mobileExiting ? 'mobile-exiting' : '',
         isMobile && mobileLayer === 2 ? 'layer2-active' : '',
         isMobile && mobileQueueOpen ? 'queue-active' : '',
+        !isMobile && !music.showBigPlayer && desktopCloseSettled ? 'desktop-parked' : '',
       ]"
       :style="{
         '--cover-bg': songPicGradient,
@@ -28,6 +29,7 @@
           : 'rgb(239, 239, 239)',
       }"
       @mousedown="handleDesktopWindowDrag"
+      @transitionend="handleDesktopTransitionEnd"
     >
       <!-- 移动端布局 -->
       <template v-if="isMobile">
@@ -297,6 +299,21 @@ const mobileOverlayVisible = computed(() =>
     ? music.showBigPlayer || mobileExiting.value || mobileTransitionActive.value
     : music.showBigPlayer,
 );
+// Closed on desktop the player is only translated off screen, so every 30 Hz time
+// update still restyled and laid out its whole subtree. Once the slide-down ends it
+// is parked (content-visibility: hidden) — state stays mounted, rendering stops.
+// The class also reads showBigPlayer, so opening unparks in the same render.
+const desktopCloseSettled = ref(!music.showBigPlayer);
+watch(
+  () => music.showBigPlayer,
+  (open) => {
+    if (open) desktopCloseSettled.value = false;
+  },
+);
+const handleDesktopTransitionEnd = (event: TransitionEvent) => {
+  if (event.target !== event.currentTarget || event.propertyName !== "transform") return;
+  if (!music.showBigPlayer) desktopCloseSettled.value = true;
+};
 const mobilePlayerOpened = computed(() =>
   isMobile.value ? music.showBigPlayer || mobileExiting.value : music.showBigPlayer,
 );
@@ -1814,6 +1831,10 @@ defineExpose({
     transition:
       border-radius var(--duration-200) var(--ease-out) 0.25s,
       transform var(--duration-500) cubic-bezier(0.25, 1, 0.5, 1);
+  }
+
+  &.desktop-parked {
+    content-visibility: hidden;
   }
 
   /* ═══════════════════════════════════════════════════════
