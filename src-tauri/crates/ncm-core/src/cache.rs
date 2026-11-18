@@ -644,7 +644,7 @@ fn deadline(at: SystemTime) -> Instant {
 /// outright rather than stripped — if a read-only endpoint is handing out a
 /// `MUSIC_U`, that is not a response to quietly keep half of.
 ///
-/// Dropping the cookies costs the caller nothing: `ncmLocalTransport.ts` reads
+/// Dropping the cookies costs the caller nothing: `ncm/localTransport.ts` reads
 /// `ok`, `status` and `body` and never looks at `cookie`, and the endpoints that
 /// genuinely carry a session — everything under `login` — are not cacheable.
 ///
@@ -1254,7 +1254,7 @@ mod tests {
     /// reads, and the only symptom is that the app is no faster.
     ///
     /// So the exact query pairs are pinned here. Left column is what
-    /// `src/utils/ncmPrefetch.ts` sends, right column is what the matching
+    /// `src/utils/ncm/prefetch.ts` sends, right column is what the matching
     /// `src/api/*.ts` function sends. Changing either side without the other
     /// breaks this.
     #[test]

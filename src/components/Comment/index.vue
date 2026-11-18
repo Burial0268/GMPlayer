@@ -69,7 +69,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import { getCommentTime, formatNumber } from "@/utils/timeTools";
 import { Local, Time, ThumbsUp } from "@icon-park/vue-next";
 import { userStore } from "@/store";

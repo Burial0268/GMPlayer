@@ -105,14 +105,14 @@ import { Download, Filter, MusicList, PlayOne, Time } from "@icon-park/vue-next"
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, useLocalLibraryStore } from "@/store";
-import { fuzzyFilterSongs } from "@/utils/fuzzySearch";
-import { DEFAULT_COVER } from "@/utils/coverUrl";
+import { fuzzyFilterSongs } from "@/utils/ui/fuzzySearch";
+import { DEFAULT_COVER } from "@/utils/ncm/coverUrl";
 import DataLists from "@/components/DataList/DataLists.vue";
 import RouteShadow from "@/components/Navigation/RouteShadow.vue";
 import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
 import { useContentIntro } from "@/composables/useContentIntro";
-import { localPlaylistExportM3u, localPlaylistRemoveTracks } from "@/utils/localLibrary";
-import { capabilitiesFor, queryForRef, refFromQuery } from "@/utils/playlistSource";
+import { localPlaylistExportM3u, localPlaylistRemoveTracks } from "@/utils/library/localLibrary";
+import { capabilitiesFor, queryForRef, refFromQuery } from "@/utils/library/playlistSource";
 import { isMobile } from "@/utils/tauri/platform/mobile";
 import type { SongData } from "@/store/musicTypes";
 
@@ -399,7 +399,11 @@ const resolveLocate = async () => {
   ) {
     return;
   }
-  while (mine === locateToken && locateIndex.value < 0 && songs.value.length < meta.value.trackCount) {
+  while (
+    mine === locateToken &&
+    locateIndex.value < 0 &&
+    songs.value.length < meta.value.trackCount
+  ) {
     const before = songs.value.length;
     await load(true);
     if (mine !== locateToken) return;

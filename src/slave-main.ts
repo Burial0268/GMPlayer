@@ -16,8 +16,8 @@ import { installTauriPinia, startTauriPiniaStores } from "@/utils/tauri/store/pi
 import useSettingDataStore, { repairSettingData } from "@/store/settingData";
 import useSiteDataStore, { repairSiteData } from "@/store/siteData";
 import useUserDataStore from "@/store/userData";
-import { setNcmCookieSource } from "@/utils/request";
-import { installExternalLinkInterceptor } from "@/utils/openLink";
+import { setNcmCookieSource } from "@/utils/ncm/request";
+import { installExternalLinkInterceptor } from "@/utils/app/openLink";
 import "@/style/global.scss";
 import "@/style/animate.scss";
 

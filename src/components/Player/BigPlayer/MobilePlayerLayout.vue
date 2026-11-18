@@ -335,7 +335,7 @@ import { MoreVertRound, StarBorderRound, StarRound } from "@vicons/material";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { animate, Motion, useMotionValue, useTransform, type MotionValue } from "motion-v";
 import { musicStore } from "@/store";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import { useLayerNavigation } from "@/utils/navigation";
 import { getRemainingTime } from "@/utils/timeTools";
 import { layerMotion } from "@/utils/navigation/motion";
@@ -360,7 +360,7 @@ import {
 } from "@/composables/useAutoMixTransition";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 
 type Artist = { name: string };
 type StaticStyleRecord = Record<string, string | number | undefined>;

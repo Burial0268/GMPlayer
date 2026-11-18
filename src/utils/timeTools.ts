@@ -1,4 +1,4 @@
-import getLanguageData from "./getLanguageData";
+import getLanguageData from "./app/languageData";
 import dayjs from "dayjs";
 import duration from "dayjs/plugin/duration";
 

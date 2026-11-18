@@ -2,7 +2,7 @@
  * Song API - 歌曲相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import { LyricService } from "@/utils/LyricsProcessor";
 import type { MusicLevel } from "./types";
 

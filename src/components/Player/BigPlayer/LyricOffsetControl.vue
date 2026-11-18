@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import { AddRound, RemoveRound, TranslateFilled } from "@vicons/material";
 import { useI18n } from "vue-i18n";
 import { LYRIC_OFFSET_STEP, useLyricControls } from "@/composables/useLyricControls";

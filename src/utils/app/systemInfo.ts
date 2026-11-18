@@ -1,7 +1,7 @@
 // 运行环境信息：应用版本、Tauri 版本、操作系统与渲染内核。
 // 版本号优先取 userAgentData 高熵值（Chromium 系可拿到精确的 platformVersion，
 // UA 字符串在 Windows / macOS 上已被冻结），不可用时回退到 UA 解析。
-import { appInfo } from "@/utils/appInfo";
+import { appInfo } from "@/utils/app/appInfo";
 import { getDesktopEnvironment, isMobileDevice, isTauri } from "@/utils/tauri";
 
 export type RuntimeKind = "desktop" | "mobile" | "web";

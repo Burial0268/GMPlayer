@@ -2,7 +2,7 @@
  * Comment API - 评论相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import type { CommentResourceType } from "./types";
 
 export const comment = {

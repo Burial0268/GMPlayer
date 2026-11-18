@@ -15,7 +15,7 @@ import { publishNativeManifest } from "@/utils/AudioContext/native/NativeManifes
 import { setNativeListenTogetherRoom } from "@/utils/AudioContext/native/NativeListenTogetherSync";
 import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
 import { asRawEntry } from "@/utils/rawEntry";
-import getLanguageData from "@/utils/getLanguageData";
+import getLanguageData from "@/utils/app/languageData";
 
 declare const $message: any;
 

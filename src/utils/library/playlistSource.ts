@@ -5,12 +5,12 @@
  * list*, and nothing else — no header, no cover, no description rendering. The
  * moment it tried to unify detail pages it would have to absorb Netease's
  * `creator` / `tags` / `subscribed` and its read-after-write reconciliation
- * (`utils/playlistMutations.ts`), which is why `PlayListView.vue` stays as it is
+ * (`utils/library/playlistMutations.ts`), which is why `PlayListView.vue` stays as it is
  * and the local list gets its own view. What the two genuinely share is
  * `DataLists.vue`, and that is the expensive part.
  */
 import type { SongData } from "@/store/musicTypes";
-import type { LocalLibraryQuery } from "@/utils/localLibrary";
+import type { LocalLibraryQuery } from "@/utils/library/localLibrary";
 
 export type PlaylistRef =
   | { kind: "netease"; id: number }

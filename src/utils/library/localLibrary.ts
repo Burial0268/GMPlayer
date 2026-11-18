@@ -18,7 +18,7 @@ import { Channel, convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { asRawEntry } from "@/utils/rawEntry";
 import { getSongTime } from "@/utils/timeTools";
-import { notifyLocalTracksChanged } from "@/utils/localLibraryMutations";
+import { notifyLocalTracksChanged } from "@/utils/library/localLibraryMutations";
 import type { SongData } from "@/store/musicTypes";
 
 // ── Wire types (mirror `src-tauri/src/local/`) ───────────────────

@@ -23,12 +23,12 @@ import {
 } from "@/utils/AudioContext";
 import { isBackendSound } from "@/utils/AudioContext/sound/types";
 import { isAudioBackendRuntimeAvailable } from "@/utils/tauri/audio/backendRuntime";
-import getLanguageData from "@/utils/getLanguageData";
+import getLanguageData from "@/utils/app/languageData";
 import {
   likedPlaylistId,
   notifyPlaylistNeedsReconcile,
   notifyTrackInPlaylist,
-} from "@/utils/playlistMutations";
+} from "@/utils/library/playlistMutations";
 import type { SongLyric } from "@/utils/LyricsProcessor";
 import useMusicLyricStore from "./musicLyric";
 import useMusicPersistedDataStore from "./musicPersistedData";
@@ -43,12 +43,12 @@ import {
   type SongData,
 } from "./musicTypes";
 import { asRawEntries, asRawEntry } from "@/utils/rawEntry";
-import { hintTracks } from "@/utils/ncmPrefetch";
+import { hintTracks } from "@/utils/ncm/prefetch";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import type { NativeFmSnapshot, PlaybackPhase, TrackIdentity } from "@/utils/tauri/audio/protocol";
 import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
-import { naturalQueueOrder } from "@/utils/playlistOrder";
+import { naturalQueueOrder } from "@/utils/library/playlistOrder";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/native/PersonalFmState";
 import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
 import {

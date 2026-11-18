@@ -1,5 +1,5 @@
 // Lyric word segmentation (patches Intl.Segmenter; see the module).
-import "@/utils/lyricSegmenter";
+import "@/utils/lyrics/segmenter";
 import { createApp, watch } from "vue";
 import { createPinia } from "pinia";
 import { useI18n } from "@/locale";
@@ -17,8 +17,8 @@ import useSettingDataStore, { repairSettingData } from "@/store/settingData";
 import useSiteDataStore, { repairSiteData } from "@/store/siteData";
 import useUserDataStore from "@/store/userData";
 import { loadMusicPersist } from "@/store/musicPersistedData";
-import { installExternalLinkInterceptor } from "@/utils/openLink";
-import { setNcmTransport, setNcmCookieSource } from "@/utils/request";
+import { installExternalLinkInterceptor } from "@/utils/app/openLink";
+import { setNcmTransport, setNcmCookieSource } from "@/utils/ncm/request";
 
 // 全局样式
 import "@/style/global.scss";
@@ -101,7 +101,7 @@ async function bootstrap() {
       watch(
         () => userData.cookie,
         (cookie) => {
-          void import("@/utils/download").then((m) =>
+          void import("@/utils/library/download").then((m) =>
             m.downloadSetCredentials(cookie || null).catch((err) => {
               console.warn("[main] could not push download credentials", err);
             }),

@@ -44,8 +44,8 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import type { Component } from "vue";
-import type { LocalGroup } from "@/utils/localLibrary";
-import { refToQuery, type PlaylistRef } from "@/utils/playlistSource";
+import type { LocalGroup } from "@/utils/library/localLibrary";
+import { refToQuery, type PlaylistRef } from "@/utils/library/playlistSource";
 
 /**
  * The grid behind the albums / artists / folders tabs.

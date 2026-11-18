@@ -58,7 +58,7 @@
 import { userStore, useDownloadStore } from "@/store";
 import { useRouter } from "vue-router";
 import { getMusicDetail } from "@/api/song";
-import { downloadAvailable } from "@/utils/download";
+import { downloadAvailable } from "@/utils/library/download";
 import { useI18n } from "vue-i18n";
 import SmallSongData from "@/components/DataList/SmallSongData.vue";
 

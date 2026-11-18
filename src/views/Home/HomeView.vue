@@ -175,7 +175,7 @@ import type { SongData } from "@/store/musicTypes";
 import { asRawEntry } from "@/utils/rawEntry";
 import { formatNumber, getSongTime } from "@/utils/timeTools";
 import { useLayerNavigation } from "@/utils/navigation";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 
 type StreamItemType = "playlist" | "album" | "artist";
 

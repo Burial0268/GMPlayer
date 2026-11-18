@@ -123,9 +123,9 @@ import Sidebar from "@/components/Sidebar/index.vue";
 import MobileTabBar from "@/components/Sidebar/MobileTabBar.vue";
 import QueuePanel from "@/components/QueuePanel/index.vue";
 import AppLayerHost from "@/components/Navigation/AppLayerHost.vue";
-import { appInfo } from "@/utils/appInfo";
-import { backTopShown } from "@/utils/backTop";
-import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/playlistLayout";
+import { appInfo } from "@/utils/app/appInfo";
+import { backTopShown } from "@/utils/ui/backTop";
+import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/ui/playlistLayout";
 import { ref, watch, computed, h } from "vue";
 import { setKeepScreenOn } from "@/utils/tauri/platform/screenOrientation";
 

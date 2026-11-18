@@ -2,7 +2,7 @@ import { ref, computed, nextTick, type Ref } from "vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore, settingStore } from "@/store";
 import { activeSound, seekActiveSound } from "@/utils/AudioContext";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { useAutoMixVisual } from "./useAutoMixVisual";
 
 export function useBigPlayerCommon(isMobile: Ref<boolean>) {

@@ -51,8 +51,8 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
-import { isTouchOnly } from "@/utils/touchOnly";
+import { vButton } from "@/utils/ui/buttonRole";
+import { isTouchOnly } from "@/utils/ui/touchOnly";
 import { useI18n } from "vue-i18n";
 import { listenTogetherStore } from "@/store";
 import { PeopleOutline } from "@vicons/ionicons5";

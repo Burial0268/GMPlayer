@@ -39,7 +39,7 @@
 
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
-import type { LocalTrackDetail } from "@/utils/localLibrary";
+import type { LocalTrackDetail } from "@/utils/library/localLibrary";
 import { getSongTime } from "@/utils/timeTools";
 
 /**

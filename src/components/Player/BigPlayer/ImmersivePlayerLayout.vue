@@ -68,7 +68,7 @@ import { computed } from "vue";
 import { AnimatePresence, LayoutGroup, Motion } from "motion-v";
 import { musicStore } from "@/store";
 // Aliased: this file already exposes a `coverUrl` computed of its own.
-import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
+import { coverUrl as toCoverUrl } from "@/utils/ncm/coverUrl";
 import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import DesktopCommentPanel from "./DesktopCommentPanel.vue";
 import DesktopLyricsPanel from "./DesktopLyricsPanel.vue";

@@ -1,4 +1,4 @@
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 
 export const layerMotion = {
   shared: 0.42,

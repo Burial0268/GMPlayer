@@ -3,7 +3,7 @@ import { musicStore, settingStore, siteStore } from "@/store";
 import { getProcessedLyrics, type AMLLLine, type SongLyric } from "@/utils/LyricsProcessor";
 // Aliased: this module has its own `coverUrl` wrapper that adds the empty-string
 // contract the slave windows expect.
-import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
+import { coverUrl as toCoverUrl } from "@/utils/ncm/coverUrl";
 import { isTauri } from "../core/runtime";
 import { windowManager } from "../window/manager";
 import {

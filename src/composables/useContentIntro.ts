@@ -2,7 +2,7 @@ import { onActivated, onBeforeUnmount, onDeactivated, type ObjectDirective } fro
 import { animateMini } from "motion-v";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import { useMotionInterruption } from "./useMotionInterruption";
 
 /** Reveal newly available content once; cached content keeps its visible state. */

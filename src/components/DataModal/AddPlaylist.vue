@@ -62,7 +62,7 @@
 
 <script setup>
 import { addSongToPlayList } from "@/api/playlist";
-import { notifyTrackInPlaylist } from "@/utils/playlistMutations";
+import { notifyTrackInPlaylist } from "@/utils/library/playlistMutations";
 import { userStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import CreatePlaylist from "./CreatePlaylist.vue";

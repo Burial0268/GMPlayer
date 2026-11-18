@@ -20,7 +20,7 @@ import { HomeTwo, FindOne, Me, SettingTwo } from "@icon-park/vue-next";
 import { settingStore } from "@/store";
 import { libraryRoute, useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 
 const { t } = useI18n();
 const navigation = useLayerNavigation();

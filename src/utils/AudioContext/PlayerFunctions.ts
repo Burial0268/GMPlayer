@@ -18,9 +18,9 @@ import useUserDataStore from "@/store/userData";
 const musicStore = () => useMusicDataStore();
 const settingStore = () => useSettingDataStore();
 const userStore = () => useUserDataStore();
-import getLanguageData from "@/utils/getLanguageData";
+import getLanguageData from "@/utils/app/languageData";
 import { applyGlobalCoverPalette } from "@/utils/color/coverPalette";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { BufferedSound } from "./sound/BufferedSound";
 import { SoundManager, activeSound } from "./sound/SoundManager";
 import { AudioContextManager } from "./AudioContextManager";
@@ -54,7 +54,7 @@ import {
   buildNeteaseDesktopUserAgent,
   createNeteasePlaybackSessionId,
   NETEASE_ANDROID_USER_AGENT,
-} from "../neteaseClient";
+} from "../ncm/neteaseClient";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 /** How long a backend-initiated transition (native advance / AutoMix adoption)

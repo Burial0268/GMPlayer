@@ -2,7 +2,7 @@
  * Video API - 视频相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 
 export const video = {
   /**

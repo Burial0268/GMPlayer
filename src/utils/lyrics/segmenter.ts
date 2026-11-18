@@ -9,13 +9,13 @@
  * on running first, which a production bundle does not guarantee — the AMLL chunk was evaluated
  * ahead of the entry chunk, and AMLL kept the native segmenter for good.
  *
- * `segment()` is synchronous but the WASM lives in a worker (`lyricSegmenter.worker.ts`), so
+ * `segment()` is synchronous but the WASM lives in a worker (`lyrics/segmenter.worker.ts`), so
  * that loading it and building jieba's dictionary never block the main thread. The two meet in
  * a cache: `prepareLyricSegments` has the worker cut a song's lines before they are laid out,
  * and `segment()` answers a cached text from it and anything else natively. AMLL only ever
  * segments a whole line's text, which is exactly what gets prepared. Grapheme and sentence
  * granularity always stay native. Without a native `Intl.Segmenter` nothing is installed;
- * AMLL and `lyricLineBreak` already handle its absence.
+ * AMLL and `lyrics/lineBreak` already handle its absence.
  *
  * The worker is resident only while lyrics are on screen. Its WASM holds ~44 MB of linear
  * memory (measured; jieba's dictionary) for a few ms of work per song, so off screen it is
@@ -97,7 +97,7 @@ function getWorker(): Worker | null {
   touch();
   if (worker) return worker;
   try {
-    worker = new Worker(new URL("./lyricSegmenter.worker.ts", import.meta.url), {
+    worker = new Worker(new URL("./segmenter.worker.ts", import.meta.url), {
       type: "module",
     });
   } catch (error) {

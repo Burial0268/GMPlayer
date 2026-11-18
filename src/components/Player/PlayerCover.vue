@@ -200,7 +200,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import {
   MoreHorizRound,
   ThumbDownRound,
@@ -224,7 +224,7 @@ import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
 import { seekActiveSound } from "@/utils/AudioContext";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { getRemainingTime } from "@/utils/timeTools";
 import { useQualityText } from "@/composables/useQualityText";
 import {

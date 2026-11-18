@@ -11,7 +11,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import { getNewAlbum } from "@/api/home";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";

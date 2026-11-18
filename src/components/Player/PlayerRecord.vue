@@ -181,7 +181,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import {
   ThumbDownRound,
   StarBorderRound,
@@ -206,7 +206,7 @@ import {
   useAutoMixElapsed,
   useAutoMixTransition,
 } from "@/composables/useAutoMixTransition";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { getRemainingTime } from "@/utils/timeTools";
 import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import { storeToRefs } from "pinia";

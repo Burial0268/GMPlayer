@@ -59,9 +59,9 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 import { CodeRound, ContentCopyRound, LanguageRound } from "@vicons/material";
-import { appInfo } from "@/utils/appInfo";
-import { openExternalUrl } from "@/utils/openLink";
-import { getRuntimeInfo, type RuntimeInfo } from "@/utils/systemInfo";
+import { appInfo } from "@/utils/app/appInfo";
+import { openExternalUrl } from "@/utils/app/openLink";
+import { getRuntimeInfo, type RuntimeInfo } from "@/utils/app/systemInfo";
 
 declare const $message: any;
 

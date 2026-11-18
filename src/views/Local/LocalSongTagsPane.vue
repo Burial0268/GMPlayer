@@ -99,7 +99,7 @@
 import { Pic, Refresh } from "@icon-park/vue-next";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useI18n } from "vue-i18n";
-import { DEFAULT_COVER } from "@/utils/coverUrl";
+import { DEFAULT_COVER } from "@/utils/ncm/coverUrl";
 import {
   localCoverClear,
   localCoverImport,
@@ -107,7 +107,7 @@ import {
   localTrackReprobe,
   type LocalTrackDetail,
   type TrackOverride,
-} from "@/utils/localLibrary";
+} from "@/utils/library/localLibrary";
 
 /**
  * The tag-correction pane.

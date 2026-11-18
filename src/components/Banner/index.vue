@@ -83,7 +83,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { getBanner } from "@/api/home";
 import { useI18n } from "vue-i18n";
 import { Left, Right } from "@icon-park/vue-next";
-import { openExternalUrl } from "@/utils/openLink";
+import { openExternalUrl } from "@/utils/app/openLink";
 
 const { t } = useI18n();
 const navigation = useLayerNavigation();

@@ -2,7 +2,7 @@
  * Artist API - 歌手相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import type { ArtistType, ArtistArea, ArtistSongsSortOrder } from "./types";
 
 export const artist = {

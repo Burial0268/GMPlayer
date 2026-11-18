@@ -183,7 +183,7 @@ pub fn warm(app: &tauri::AppHandle) {
 /// be wrong costs one request during a moment when nobody was waiting; a hint
 /// that cannot be served right now is dropped rather than queued.
 ///
-/// The frontend sends these from `src/utils/ncmPrefetch.ts`. Kept deliberately
+/// The frontend sends these from `src/utils/ncm/prefetch.ts`. Kept deliberately
 /// dumb on this side — *what* is worth guessing is a question about how the UI
 /// behaves, and belongs where that is known.
 ///

@@ -141,7 +141,7 @@
 </template>
 
 <script setup lang="ts">
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import {
   ClosedCaptionRound,
   MessageRound,

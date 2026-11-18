@@ -1,5 +1,5 @@
 //! Word boundaries for lyric line breaking, served to the WebView as a stand-in for
-//! `Intl.Segmenter` (see `src/utils/lyricSegmenter.ts`).
+//! `Intl.Segmenter` (see `src/utils/lyrics/segmenter.ts`).
 //!
 //! A line with only Han characters (and Latin, digits, punctuation) is Chinese and goes through
 //! jieba, whose dictionary + HMM cuts Chinese lyrics far closer to how they are sung than ICU's

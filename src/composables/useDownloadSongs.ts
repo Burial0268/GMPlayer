@@ -7,8 +7,8 @@
  */
 import { useI18n } from "vue-i18n";
 import { useDownloadStore, userStore } from "@/store";
-import { downloadAvailable, type DownloadRequest } from "@/utils/download";
-import { isLocalSong } from "@/utils/localLibrary";
+import { downloadAvailable, type DownloadRequest } from "@/utils/library/download";
+import { isLocalSong } from "@/utils/library/localLibrary";
 import type { SongData } from "@/store/musicTypes";
 
 /**

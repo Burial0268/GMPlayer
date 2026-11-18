@@ -8,7 +8,7 @@ import {
   getUserAlbum,
 } from "@/api/user";
 import { formatNumber, getLongTime } from "@/utils/timeTools";
-import getLanguageData from "@/utils/getLanguageData";
+import getLanguageData from "@/utils/app/languageData";
 import { asRawEntry } from "@/utils/rawEntry";
 
 declare const $message: any;
@@ -253,7 +253,7 @@ const useUserDataStore = defineStore("userData", {
      * 因此能跟着开着的歌单页一起动。
      *
      * 只有自建歌单带 `trackCount`，收藏的歌单没有这个字段，所以只找 `own`。
-     * 由 `utils/playlistMutations` 统一调用 —— 每个写入点各自记得改计数是行不通的，
+     * 由 `utils/library/playlistMutations` 统一调用 —— 每个写入点各自记得改计数是行不通的，
      * 漏掉了也看不出来，直到数字对不上。
      */
     applyPlaylistTrackDelta(playlistId: number, delta: number) {

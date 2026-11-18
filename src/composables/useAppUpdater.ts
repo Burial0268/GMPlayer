@@ -2,7 +2,7 @@ import { computed, markRaw, reactive } from "vue";
 import { getVersion } from "@tauri-apps/api/app";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
-import { openExternalUrl } from "@/utils/openLink";
+import { openExternalUrl } from "@/utils/app/openLink";
 import { isMobileDevice, isTauri, windowManager } from "@/utils/tauri";
 
 // tauri-plugin-updater 在 Android / iOS 上没有实现（也无法静默安装 APK），

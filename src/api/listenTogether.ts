@@ -3,7 +3,7 @@
  * 基于网易云音乐一起听歌功能
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 
 /**
  * 播放命令类型

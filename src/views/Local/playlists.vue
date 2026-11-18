@@ -109,8 +109,8 @@ import {
   localPlaylistDelete,
   localPlaylistImportM3u,
   type LocalPlaylist,
-} from "@/utils/localLibrary";
-import { refToQuery } from "@/utils/playlistSource";
+} from "@/utils/library/localLibrary";
+import { refToQuery } from "@/utils/library/playlistSource";
 import { isMobile } from "@/utils/tauri/platform/mobile";
 
 const { t } = useI18n();

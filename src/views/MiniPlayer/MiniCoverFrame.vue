@@ -5,7 +5,7 @@
 </template>
 
 <script setup lang="ts">
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 defineProps<{
   visible: boolean;
   frameStyle: Record<string, string>;

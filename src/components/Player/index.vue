@@ -259,8 +259,8 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
-import { isTouchOnly } from "@/utils/touchOnly";
+import { vButton } from "@/utils/ui/buttonRole";
+import { isTouchOnly } from "@/utils/ui/touchOnly";
 import { getMusicDetail } from "@/api/song";
 import { resolveSongUrl } from "@/utils/AudioContext/resolveSongUrl";
 import { Motion, AnimatePresence, LayoutGroup } from "motion-v";
@@ -335,12 +335,12 @@ import BigPlayer from "./BigPlayer/index.vue";
 import MiniPlayerProgress from "./MiniPlayerProgress.vue";
 import { watch } from "vue";
 import { parseLyricData as parseLyric } from "@/utils/LyricsProcessor";
-import { lyricFetcher } from "@/utils/lyricFetcher";
-import { localLyricFor } from "@/utils/localLibrary";
-import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
+import { lyricFetcher } from "@/utils/lyrics/fetcher";
+import { localLyricFor } from "@/utils/library/localLibrary";
+import { onLocalTracksChanged } from "@/utils/library/localLibraryMutations";
 import { detectWordTimedLyricFormat } from "@/utils/LyricsProcessor/timeUtils";
 import { ttmlCreditsOf } from "@/utils/LyricsProcessor/parser/ttmlCredits";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import {
   setupNativePersonalFm,
   sendNativeFmPlaying,

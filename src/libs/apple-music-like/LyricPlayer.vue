@@ -29,7 +29,7 @@ import {
 } from "@applemusic-like-lyrics/core";
 import { animateMini } from "motion-v";
 import { preprocessLyrics, getProcessedLyrics, type AMLLLine } from "@/utils/LyricsProcessor";
-import { prepareLyricSegments, holdLyricSegmenter } from "@/utils/lyricSegmenter";
+import { prepareLyricSegments, holdLyricSegmenter } from "@/utils/lyrics/segmenter";
 import type { LyricShareOrigin } from "@/composables/useLyricShare";
 import { useLayerNavigation } from "@/utils/navigation";
 import { activeSound } from "@/utils/AudioContext/sound/SoundManager";

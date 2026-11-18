@@ -176,7 +176,7 @@ const buildQuery = (config: InternalAxiosRequestConfig): Record<string, unknown>
 /**
  * Attach the session cookie, as every request that crosses to Rust must.
  *
- * Split out from `buildQuery` because the prefetch path in `@/utils/ncmPrefetch`
+ * Split out from `buildQuery` because the prefetch path in `@/utils/ncm/prefetch`
  * has to produce a byte-identical query: the cache is keyed on the whole
  * parameter set, cookie included, so a hint that spells anything differently
  * warms an entry the real call will never look at. Sharing the code is what

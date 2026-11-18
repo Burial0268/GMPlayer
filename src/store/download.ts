@@ -17,8 +17,8 @@ import {
   downloadSettingsGet,
   downloadSubscribe,
   isNeedsDirectory,
-} from "@/utils/download";
-import { notifyLocalTracksChanged } from "@/utils/localLibraryMutations";
+} from "@/utils/library/download";
+import { notifyLocalTracksChanged } from "@/utils/library/localLibraryMutations";
 
 /**
  * Locators of finished downloads waiting to be announced, and the timer that will.

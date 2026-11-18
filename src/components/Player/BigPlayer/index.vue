@@ -208,7 +208,7 @@ import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { usePwaThemeColor } from "@/composables/usePwaThemeColor";
 import { useBigPlayerCommon } from "@/composables/useBigPlayerCommon";
 import { useMobileCoverFrame } from "@/composables/useMobileCoverFrame";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
