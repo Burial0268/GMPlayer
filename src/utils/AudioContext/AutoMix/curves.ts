@@ -7,6 +7,36 @@
 
 import type { CrossfadeCurve } from "./types";
 
+/** Share of a fade, at each end, over which its progress eases in and out. */
+const FADE_EDGE = 0.15;
+
+/**
+ * A fade's progress warped so every curve built on it starts and ends at rest: linear through the
+ * middle, with raised-cosine velocity ramps over the first and last `FADE_EDGE`. Monotone, exact
+ * at 0 and 1 (the tail mirrors the head). Mirrors `eased_progress` in
+ * `audio-backend/src/player/mixer.rs`; keep the two in step.
+ */
+export function easedProgress(progress: number): number {
+  const t = Math.max(0, Math.min(1, progress));
+  if (t > 0.5) return 1 - easedProgress(1 - t);
+  const speed = 1 / (1 - FADE_EDGE);
+  if (t < FADE_EDGE) {
+    return speed * (0.5 * t - (FADE_EDGE / (2 * Math.PI)) * Math.sin((Math.PI * t) / FADE_EDGE));
+  }
+  return speed * (t - 0.5 * FADE_EDGE);
+}
+
+/** Smootherstep (C2): at rest at both ends. */
+export function smootherstep(progress: number): number {
+  const t = Math.max(0, Math.min(1, progress));
+  return t * t * t * (t * (t * 6 - 15) + 10);
+}
+
+/** `min(x, 1.1)` without the corner: unchanged up to 1, then easing into 1.1 with matching slope. */
+function softPowerCap(x: number): number {
+  return x <= 1 ? x : 1 + 0.1 * (1 - Math.exp(-(x - 1) / 0.1));
+}
+
 /**
  * Generate crossfade curve values at a given progress point (0-1).
  * Returns [outgoingVolume, incomingVolume].
@@ -31,33 +61,25 @@ export function getCrossfadeValues(
   let outVol: number;
   let inVol: number;
 
+  // Each side from its own end (`f(1 - t)`, not `1 - f(t)`): both warps are symmetric, and this
+  // keeps the outgoing side precise near zero, where a shape exponent below 1 amplifies rounding.
+  // `linear` and `equalPower` run on the eased progress so they leave and arrive at rest;
+  // `sCurve` is smootherstep, already at rest at both ends.
   switch (curve) {
+    case "equalPower":
+      outVol = Math.sin(easedProgress(1 - t) * Math.PI * 0.5);
+      inVol = Math.sin(easedProgress(t) * Math.PI * 0.5);
+      break;
+
+    case "sCurve":
+      outVol = Math.sin(smootherstep(1 - t) * Math.PI * 0.5);
+      inVol = Math.sin(smootherstep(t) * Math.PI * 0.5);
+      break;
+
     case "linear":
-      outVol = 1 - t;
-      inVol = t;
-      break;
-
-    case "equalPower": {
-      // Equal-power: constant perceived loudness during crossfade
-      outVol = Math.cos(t * Math.PI * 0.5);
-      inVol = Math.sin(t * Math.PI * 0.5);
-      break;
-    }
-
-    case "sCurve": {
-      // Smootherstep (6th-order, C2-continuous) → equal-power angle.
-      // C2 continuity eliminates the velocity "kink" at t=0/1 that
-      // smoothstep has, which matters when automation lanes are dense.
-      const s = t * t * t * (t * (t * 6 - 15) + 10);
-      const angle = s * Math.PI * 0.5;
-      outVol = Math.cos(angle);
-      inVol = Math.sin(angle);
-      break;
-    }
-
     default:
-      outVol = 1 - t;
-      inVol = t;
+      outVol = easedProgress(1 - t);
+      inVol = easedProgress(t);
       break;
   }
 
@@ -83,6 +105,9 @@ export function getCrossfadeValues(
 /**
  * Convert the normalized crossfade shape into actual GainNode values while
  * keeping overlap power controlled when incoming/outgoing target gains differ.
+ * The power target moves on the eased progress, the headroom dip is shaped
+ * `sin^2(pi t)` and the lift is soft-capped, so every gain leaves and arrives at
+ * rest. Mirrors `balance` in `audio-backend/src/player/mixer.rs`.
  */
 export function getBalancedCrossfadeGains(
   progress: number,
@@ -101,13 +126,14 @@ export function getBalancedCrossfadeGains(
 
   const currentPower = outGain * outGain + inGain * inGain;
   if (currentPower > 1e-8) {
+    const w = easedProgress(t);
     const targetPower =
-      outgoingTargetGain * outgoingTargetGain * (1 - t) +
-      incomingTargetGain * incomingTargetGain * t;
+      outgoingTargetGain * outgoingTargetGain * (1 - w) +
+      incomingTargetGain * incomingTargetGain * w;
     const powerScale = Math.sqrt(Math.max(0, targetPower) / currentPower);
-    const overlapShape = Math.sin(t * Math.PI);
+    const overlapShape = Math.sin(t * Math.PI) ** 2;
     const headroomScale = Math.pow(10, (overlapHeadroomDb * overlapShape) / 20);
-    const scale = Math.min(1.1, powerScale) * headroomScale;
+    const scale = softPowerCap(powerScale) * headroomScale;
 
     outGain *= scale;
     inGain *= scale;
@@ -173,59 +199,37 @@ export function buildBalancedCurveArray(
   return arr;
 }
 
-/**
- * Build a Float32Array for a linear interpolation between two values.
- * Used for EQ gain automation (dB ramps).
- */
-export function buildLinearCurve(
-  resolution: number,
-  startValue: number,
-  endValue: number,
-): Float32Array {
-  const arr = new Float32Array(resolution);
-  for (let i = 0; i < resolution; i++) {
-    arr[i] = startValue + (i / (resolution - 1)) * (endValue - startValue);
-  }
-  return arr;
+/** EQ gain in dB at `progress` for a band ramping `fromDb` -> `toDb` on the eased progress. */
+export function eqLeanAt(progress: number, fromDb: number, toDb: number): number {
+  return fromDb + (toDb - fromDb) * easedProgress(progress);
 }
 
 /**
- * Build a Float32Array for a bass-swap curve: hold start value for 40%,
- * ramp during 40%-60% (midpoint handoff), hold end value for remaining 40%.
- * Used for low-band EQ to prevent bass muddiness during crossfade overlap.
- *
- * Shape:  ▄▄▄▄▄▄▄▅▆▇█████████  (clean handoff at midpoint)
- * vs linear: ─────────────────  (gradual, muddy overlap)
+ * Bass-swap EQ gain at `progress`: holds `fromDb` until 40% of the fade, moves to `toDb` by 60% on
+ * smootherstep, then holds. A clean handoff at the midpoint instead of two basslines stacking,
+ * without the corners a linear ramp has where it starts and stops.
  */
-export function buildBassSwapCurve(
-  resolution: number,
-  startValue: number,
-  endValue: number,
-): Float32Array {
-  const arr = new Float32Array(resolution);
-  for (let i = 0; i < resolution; i++) {
-    const t = i / (resolution - 1);
-    if (t < 0.4) {
-      arr[i] = startValue;
-    } else if (t > 0.6) {
-      arr[i] = endValue;
-    } else {
-      // Linear ramp in the 0.4–0.6 range
-      const rampProgress = (t - 0.4) / 0.2;
-      arr[i] = startValue + rampProgress * (endValue - startValue);
-    }
-  }
-  return arr;
+export function bassSwapValueAt(progress: number, fromDb: number, toDb: number): number {
+  return fromDb + (toDb - fromDb) * smootherstep((progress - 0.4) / 0.2);
 }
 
 /**
- * Compute the bass-swap curve value at a given progress point.
- * Used by pause/resume to compute intermediate EQ gain for the low band.
+ * Sample an EQ gain function over `[startProgress, endProgress]` of the fade, for
+ * `setValueCurveAtTime`. Pause and resume take a sub-range of the same function, so a resumed
+ * fade continues its curve rather than restarting a new one over the remaining time.
  */
-export function bassSwapValueAt(progress: number, startValue: number, endValue: number): number {
-  if (progress < 0.4) return startValue;
-  if (progress > 0.6) return endValue;
-  return startValue + ((progress - 0.4) / 0.2) * (endValue - startValue);
+export function buildEqCurve(
+  resolution: number,
+  startProgress: number,
+  endProgress: number,
+  valueAt: (progress: number) => number,
+): Float32Array {
+  const arr = new Float32Array(resolution);
+  const range = endProgress - startProgress;
+  for (let i = 0; i < resolution; i++) {
+    arr[i] = valueAt(startProgress + (i / (resolution - 1)) * range);
+  }
+  return arr;
 }
 
 /** Share of an overlap's vocal windows that makes a side "singing" / "clear". */

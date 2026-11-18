@@ -12,7 +12,7 @@
  */
 
 import { AudioContextManager } from "../AudioContextManager";
-import { buildLinearCurve, buildBassSwapCurve, bassSwapValueAt } from "./curves";
+import { bassSwapValueAt, buildEqCurve, eqLeanAt } from "./curves";
 import type { SpectralCrossfadeData } from "./types";
 
 /** EQ band center frequencies matching TrackAnalyzer boundaries */
@@ -40,7 +40,6 @@ export class SpectralEQ {
   ): void {
     this._spectralData = data;
     const resolution = Math.max(64, Math.ceil(duration * 48));
-    const useBassSwap = data.bassSwapLow ?? false;
 
     // Create outgoing EQ chain (gain ramps 0dB → outTargetDb)
     if (!fadeInOnly) {
@@ -48,11 +47,7 @@ export class SpectralEQ {
       for (let i = 0; i < 3; i++) {
         const f = this._outgoingFilters[i];
         f.gain.setValueAtTime(0, startTime);
-        // Low band (i=0): use bass-swap curve for clean midpoint handoff
-        const curve =
-          i === 0 && useBassSwap
-            ? buildBassSwapCurve(resolution, 0, data.outTargetDb[i])
-            : buildLinearCurve(resolution, 0, data.outTargetDb[i]);
+        const curve = buildEqCurve(resolution, 0, 1, this._bandValue("outgoing", i));
         f.gain.setValueCurveAtTime(curve, startTime, duration);
       }
       this._insertFilterChain(outgoingGain, this._outgoingFilters, ctx);
@@ -63,14 +58,24 @@ export class SpectralEQ {
     for (let i = 0; i < 3; i++) {
       const f = this._incomingFilters[i];
       f.gain.setValueAtTime(data.inInitialDb[i], startTime);
-      // Low band (i=0): use bass-swap curve for clean midpoint handoff
-      const curve =
-        i === 0 && useBassSwap
-          ? buildBassSwapCurve(resolution, data.inInitialDb[i], 0)
-          : buildLinearCurve(resolution, data.inInitialDb[i], 0);
+      const curve = buildEqCurve(resolution, 0, 1, this._bandValue("incoming", i));
       f.gain.setValueCurveAtTime(curve, startTime, duration);
     }
     this._insertFilterChain(incomingGain, this._incomingFilters, ctx);
+  }
+
+  /**
+   * EQ gain in dB of band `i` on one side at a fade progress. The low band follows the bass-swap
+   * window when one runs; every band moves on the eased progress, so setup, pause and resume all
+   * read the same curve.
+   */
+  private _bandValue(side: "outgoing" | "incoming", i: number): (progress: number) => number {
+    const data = this._spectralData;
+    if (!data) return () => 0;
+    const [from, to] = side === "outgoing" ? [0, data.outTargetDb[i]] : [data.inInitialDb[i], 0];
+    return i === 0 && (data.bassSwapLow ?? false)
+      ? (progress) => bassSwapValueAt(progress, from, to)
+      : (progress) => eqLeanAt(progress, from, to);
   }
 
   /**
@@ -79,61 +84,34 @@ export class SpectralEQ {
    */
   pauseAt(progress: number, now: number): void {
     if (!this._spectralData) return;
-    const useBassSwap = this._spectralData.bassSwapLow ?? false;
-
-    for (let i = 0; i < this._outgoingFilters.length; i++) {
-      const f = this._outgoingFilters[i];
-      f.gain.cancelScheduledValues(now);
-      const currentDb =
-        i === 0 && useBassSwap
-          ? bassSwapValueAt(progress, 0, this._spectralData.outTargetDb[i])
-          : this._spectralData.outTargetDb[i] * progress;
-      f.gain.setValueAtTime(currentDb, now);
-    }
-    for (let i = 0; i < this._incomingFilters.length; i++) {
-      const f = this._incomingFilters[i];
-      f.gain.cancelScheduledValues(now);
-      const currentDb =
-        i === 0 && useBassSwap
-          ? bassSwapValueAt(progress, this._spectralData.inInitialDb[i], 0)
-          : this._spectralData.inInitialDb[i] * (1 - progress);
-      f.gain.setValueAtTime(currentDb, now);
+    const sides = [
+      ["outgoing", this._outgoingFilters],
+      ["incoming", this._incomingFilters],
+    ] as const;
+    for (const [side, filters] of sides) {
+      filters.forEach((f, i) => {
+        f.gain.cancelScheduledValues(now);
+        f.gain.setValueAtTime(this._bandValue(side, i)(progress), now);
+      });
     }
   }
 
   /**
-   * Resume EQ automation from a paused progress point.
+   * Resume EQ automation from a paused progress point: the rest of the same curve, not a new one
+   * squeezed into the remaining time.
    */
   resumeFrom(progress: number, now: number, remainingDuration: number): void {
     if (!this._spectralData) return;
     const eqResolution = Math.max(32, Math.ceil(remainingDuration * 48));
-    const useBassSwap = this._spectralData.bassSwapLow ?? false;
-
-    for (let i = 0; i < this._outgoingFilters.length; i++) {
-      const f = this._outgoingFilters[i];
-      const currentDb =
-        i === 0 && useBassSwap
-          ? bassSwapValueAt(progress, 0, this._spectralData.outTargetDb[i])
-          : this._spectralData.outTargetDb[i] * progress;
-      const endDb = this._spectralData.outTargetDb[i];
-      // For bass-swap low band, build the remaining portion of the stepped curve
-      const curve =
-        i === 0 && useBassSwap
-          ? buildBassSwapCurve(eqResolution, currentDb, endDb)
-          : buildLinearCurve(eqResolution, currentDb, endDb);
-      f.gain.setValueCurveAtTime(curve, now, remainingDuration);
-    }
-    for (let i = 0; i < this._incomingFilters.length; i++) {
-      const f = this._incomingFilters[i];
-      const currentDb =
-        i === 0 && useBassSwap
-          ? bassSwapValueAt(progress, this._spectralData.inInitialDb[i], 0)
-          : this._spectralData.inInitialDb[i] * (1 - progress);
-      const curve =
-        i === 0 && useBassSwap
-          ? buildBassSwapCurve(eqResolution, currentDb, 0)
-          : buildLinearCurve(eqResolution, currentDb, 0);
-      f.gain.setValueCurveAtTime(curve, now, remainingDuration);
+    const sides = [
+      ["outgoing", this._outgoingFilters],
+      ["incoming", this._incomingFilters],
+    ] as const;
+    for (const [side, filters] of sides) {
+      filters.forEach((f, i) => {
+        const curve = buildEqCurve(eqResolution, progress, 1, this._bandValue(side, i));
+        f.gain.setValueCurveAtTime(curve, now, remainingDuration);
+      });
     }
   }
 
