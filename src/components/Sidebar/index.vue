@@ -600,11 +600,17 @@ const isTauri = ref(false);
 onMounted(() => {
   isTauri.value = typeof window !== "undefined" && "__TAURI__" in window;
   if (isTauri.value) checkForUpdate({ silent: true });
-  // Load playlists if logged in
-  if (user.userLogin && !user.getUserPlayLists.has) {
-    user.setUserPlayLists();
-  }
 });
+
+// The sidebar mounts before anyone logs in, so a load on mount alone left the
+// playlist list empty after login until a page under /user happened to fetch it.
+watch(
+  () => user.userLogin,
+  (login) => {
+    if (login && !user.getUserPlayLists.has) user.setUserPlayLists();
+  },
+  { immediate: true },
+);
 
 watch(
   () => [

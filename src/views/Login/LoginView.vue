@@ -255,6 +255,8 @@ const getQrKeyData = async (sessionId = qrSessionId) => {
     if (stateRes.data.profile && window.localStorage.getItem("cookie")) {
       stopQrPolling();
       $message.info(t("login.loggedIn"));
+      // Logging in flips userLogin, which loads the playlists; they need the uid.
+      user.setUserData(stateRes.data.profile);
       user.userLogin = true;
       leaveLogin();
     } else {
