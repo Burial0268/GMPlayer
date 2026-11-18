@@ -241,8 +241,8 @@ onMounted(async () => {
       width: 44px;
       height: 44px;
       border-radius: 8px;
-      background-color: rgba(var(--main-color), 0.14);
-      color: rgb(var(--main-color));
+      background-color: color-mix(in srgb, var(--main-color) 14%, transparent);
+      color: var(--main-color);
     }
   }
 }

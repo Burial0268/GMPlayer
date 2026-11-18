@@ -116,8 +116,8 @@ const open = (group: LocalGroup, origin: Event) => {
       aspect-ratio: 1 / 1;
       border-radius: 8px;
       overflow: hidden;
-      background-color: rgba(var(--main-color), 0.12);
-      color: rgb(var(--main-color));
+      background-color: color-mix(in srgb, var(--main-color) 12%, transparent);
+      color: var(--main-color);
       transition: transform var(--duration-300) var(--ease-out);
       img {
         width: 100%;

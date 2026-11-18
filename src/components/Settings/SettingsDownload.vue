@@ -274,7 +274,7 @@ watch(
     gap: 12px;
     padding: 12px 14px;
     border-radius: 10px;
-    background-color: rgba(var(--main-color), 0.08);
+    background-color: color-mix(in srgb, var(--main-color) 8%, transparent);
     .text {
       display: flex;
       flex-direction: column;

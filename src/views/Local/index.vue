@@ -93,6 +93,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { userStore, useDownloadStore, useLocalLibraryStore } from "@/store";
 import { useTabTransition } from "@/composables/useTabTransition";
+import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import ImportLocalMusic from "@/components/DataModal/ImportLocalMusic.vue";
 import DownloadManager from "@/components/DataModal/DownloadManager.vue";
 
@@ -107,10 +108,9 @@ const downloadRef = ref<InstanceType<typeof DownloadManager> | null>(null);
 
 // 手机上登录后底栏「音乐库」改指 `/user`（见 `MobileTabBar.vue`）。只关掉登录页会落回
 // 这一页，看起来像没登录成功，所以直接带上 redirect 让 `LoginView` 切过去。
+const { isMobile } = useResponsiveLayout();
 const loginTarget = () =>
-  window.matchMedia("(max-width: 768px)").matches
-    ? { path: "/login", query: { redirect: "/user" } }
-    : "/login";
+  isMobile.value ? { path: "/login", query: { redirect: "/user" } } : "/login";
 
 const TABS = ["songs", "albums", "artists", "folders", "playlists"];
 const { transitionName, updateDirection, syncIndex } = useTabTransition(TABS);
