@@ -29,6 +29,11 @@ const CROSSFADE_RAMP_FRAMES: usize = 64;
 /// Bass swap: a low shelf deep enough to take a kick and bassline out of the mix.
 const BASS_SWAP_HZ: f32 = 180.0;
 const BASS_SWAP_KILL_DB: f32 = -24.0;
+/// Band morph corner frequencies, the Web `SpectralEQ`'s and the analysis bands' edges.
+const MORPH_LOW_HZ: f32 = 300.0;
+const MORPH_MID_HZ: f32 = 1_100.0;
+const MORPH_MID_Q: f32 = 0.7;
+const MORPH_HIGH_HZ: f32 = 4_000.0;
 /// Layouts wider than this skip deck filtering rather than allocate filter state.
 const BASS_SWAP_MAX_CHANNELS: usize = 8;
 /// FilterCut: the outgoing high-pass climbs 300 Hz -> 18 kHz across the fade.
@@ -176,7 +181,18 @@ pub struct CrossfadeParams {
     pub out_shape: f32,
     /// Hand the low band from outgoing to incoming over this progress window.
     pub bass_swap: Option<BassSwap>,
+    /// Lean each deck's tone toward the other's across the fade.
+    pub morph: Option<BandMorph>,
     pub style: FadeStyle,
+}
+
+/// The tonal half of a handover, per band (low, mid, high) in dB: A's spectrum leans toward B's as
+/// it leaves (0 -> `d`), and B arrives leaning toward A's and settles into its own (`-d` -> 0), so
+/// the tone changes as gradually as the level. Mirrors the Web `SpectralEQ` (low shelf 300 Hz,
+/// peaking 1.1 kHz, high shelf 4 kHz). The low band is left to `BassSwap` when one runs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandMorph {
+    pub db: [f32; 3],
 }
 
 /// How the two decks share the fade. Every style but `FilterCut` sets only the balance between
@@ -209,10 +225,17 @@ pub struct BassSwap {
 }
 
 impl BassSwap {
-    /// Shelf gains (outgoing, incoming) in dB at `progress`.
+    /// The middle fifth of the fade, for a pair whose beats are not matched.
+    pub const MIDDLE: Self = Self {
+        start: 0.4,
+        end: 0.6,
+    };
+
+    /// Shelf gains (outgoing, incoming) in dB at `progress`. Smootherstep, so the shelf, too,
+    /// starts and stops moving at rest.
     fn shelf_db(self, progress: f32) -> (f32, f32) {
         let x = ((progress - self.start) / (self.end - self.start).max(1e-6)).clamp(0.0, 1.0);
-        let s = x * x * (3.0 - 2.0 * x);
+        let s = smootherstep(x);
         (BASS_SWAP_KILL_DB * s, BASS_SWAP_KILL_DB * (1.0 - s))
     }
 }
@@ -227,6 +250,7 @@ impl Default for CrossfadeParams {
             in_shape: 1.0,
             out_shape: 1.0,
             bass_swap: None,
+            morph: None,
             style: FadeStyle::Blend,
         }
     }
@@ -865,8 +889,17 @@ struct CrossfadeRuntime {
     duration_samples: usize,
     elapsed_samples: usize,
     params: CrossfadeParams,
-    /// Deck filter state, `[primary, secondary][channel]`; unused without a filter.
-    filters: [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
+    /// Deck filter state, `[primary, secondary][channel][stage]`; unused without a filter.
+    filters: [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
+}
+
+/// One segment's deck filter coefficients, `[primary, secondary]` per stage. A fade's stage count
+/// is fixed by its params, and a single-filter fade (FilterCut, a bass swap alone) stays a single
+/// biquad per sample.
+#[derive(Clone, Copy)]
+enum FadeFilters {
+    One([[BiquadCoeffs; 1]; 2]),
+    Three([[BiquadCoeffs; 3]; 2]),
 }
 
 #[derive(Clone, Copy)]
@@ -879,8 +912,8 @@ struct CrossfadeBlockRamp {
     incoming_step: f32,
     outgoing_final: f32,
     incoming_final: f32,
-    /// Deck filter coefficients for this segment, `[primary, secondary]`.
-    filters: Option<[BiquadCoeffs; 2]>,
+    /// Deck filter coefficients for this segment.
+    filters: Option<FadeFilters>,
 }
 
 impl CrossfadeBlockRamp {
@@ -1156,7 +1189,20 @@ impl MixerWorker {
                 .zip(self.crossfade.as_mut());
             let segment_start = block.len();
             let (primary, secondary) = match filters {
-                Some((coeffs, fade)) => mix_segment(
+                Some((FadeFilters::One(coeffs), fade)) => mix_segment(
+                    &mut self.primary,
+                    &mut self.secondary,
+                    block,
+                    channels,
+                    segment_frames,
+                    paused,
+                    crossfade_ramp,
+                    &mut BiquadFilters {
+                        state: &mut fade.filters,
+                        coeffs,
+                    },
+                ),
+                Some((FadeFilters::Three(coeffs), fade)) => mix_segment(
                     &mut self.primary,
                     &mut self.secondary,
                     block,
@@ -1487,30 +1533,19 @@ impl MixerWorker {
         })
     }
 
-    /// Coefficients for this segment: FilterCut's sweep on the outgoing deck,
-    /// else the bass swap's shelves, else none.
-    fn deck_filters(&self, fade: &CrossfadeRuntime, progress: f32) -> Option<[BiquadCoeffs; 2]> {
+    /// Coefficients for this segment: FilterCut's sweep on the outgoing deck, else the band
+    /// morph (with the bass swap as its low stage when one runs), else the bass swap alone, else
+    /// none.
+    fn deck_filters(&self, fade: &CrossfadeRuntime, progress: f32) -> Option<FadeFilters> {
         if self.output_channels > BASS_SWAP_MAX_CHANNELS {
             return None;
         }
-        let rate = self.sample_rate as f32;
-        let (out, inc) = if fade.params.style == FadeStyle::FilterCut {
-            let hz = (FILTER_CUT_FROM_HZ * FILTER_CUT_SPAN.powf(progress)).clamp(10.0, rate * 0.45);
-            (
-                BiquadCoeffs::high_pass(rate, hz, 0.707),
-                BiquadCoeffs::IDENTITY,
-            )
-        } else {
-            let (out_db, in_db) = fade.params.bass_swap?.shelf_db(progress);
-            (
-                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db),
-                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db),
-            )
-        };
-        Some(match fade.outgoing {
-            DeckId::Primary => [out, inc],
-            DeckId::Secondary => [inc, out],
-        })
+        deck_filters(
+            self.sample_rate as f32,
+            fade.params,
+            fade.outgoing,
+            progress,
+        )
     }
 
     fn commit_crossfade_block(&mut self, frames: usize) {
@@ -1651,16 +1686,84 @@ impl DeckFilter for NoFilter {
     }
 }
 
-struct BiquadFilters<'a> {
-    state: &'a mut [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
-    coeffs: [BiquadCoeffs; 2],
+/// `N` stages in series per deck; the count is a const so the per-sample loop is unrolled and a
+/// one-stage fade pays for one biquad.
+struct BiquadFilters<'a, const N: usize> {
+    state: &'a mut [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
+    coeffs: [[BiquadCoeffs; N]; 2],
 }
 
-impl DeckFilter for BiquadFilters<'_> {
+impl<const N: usize> DeckFilter for BiquadFilters<'_, N> {
     #[inline(always)]
     fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32 {
-        self.state[deck][channel].process(self.coeffs[deck], sample)
+        let state = &mut self.state[deck][channel];
+        let mut sample = sample;
+        for stage in 0..N {
+            sample = state[stage].process(self.coeffs[deck][stage], sample);
+        }
+        sample
     }
+}
+
+/// See `MixerWorker::deck_filters`.
+fn deck_filters(
+    rate: f32,
+    params: CrossfadeParams,
+    outgoing: DeckId,
+    progress: f32,
+) -> Option<FadeFilters> {
+    fn order<T>(outgoing: DeckId, out: T, inc: T) -> [T; 2] {
+        match outgoing {
+            DeckId::Primary => [out, inc],
+            DeckId::Secondary => [inc, out],
+        }
+    }
+    let swap_shelves = |swap: BassSwap| {
+        let (out_db, in_db) = swap.shelf_db(progress);
+        (
+            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db),
+            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db),
+        )
+    };
+    if params.style == FadeStyle::FilterCut {
+        let hz = (FILTER_CUT_FROM_HZ * FILTER_CUT_SPAN.powf(progress)).clamp(10.0, rate * 0.45);
+        return Some(FadeFilters::One(order(
+            outgoing,
+            [BiquadCoeffs::high_pass(rate, hz, 0.707)],
+            [BiquadCoeffs::IDENTITY],
+        )));
+    }
+    let Some(morph) = params.morph else {
+        let (out, inc) = swap_shelves(params.bass_swap?);
+        return Some(FadeFilters::One(order(outgoing, [out], [inc])));
+    };
+    // Outgoing leans 0 -> d, incoming -d -> 0, on the same eased progress as the gains. A band
+    // that never moves is an exact pass-through.
+    let (lean_out, lean_in) = (eased_progress(progress), eased_progress(1.0 - progress));
+    let band = |db: f32, design: &dyn Fn(f32) -> BiquadCoeffs| {
+        if db == 0.0 {
+            (BiquadCoeffs::IDENTITY, BiquadCoeffs::IDENTITY)
+        } else {
+            (design(db * lean_out), design(-db * lean_in))
+        }
+    };
+    let low = match params.bass_swap {
+        Some(swap) => swap_shelves(swap),
+        None => band(morph.db[0], &|db| {
+            BiquadCoeffs::low_shelf(rate, MORPH_LOW_HZ, 0.707, db)
+        }),
+    };
+    let mid = band(morph.db[1], &|db| {
+        BiquadCoeffs::peaking(rate, MORPH_MID_HZ, MORPH_MID_Q, db)
+    });
+    let high = band(morph.db[2], &|db| {
+        BiquadCoeffs::high_shelf(rate, MORPH_HIGH_HZ, 0.707, db)
+    });
+    Some(FadeFilters::Three(order(
+        outgoing,
+        [low.0, mid.0, high.0],
+        [low.1, mid.1, high.1],
+    )))
 }
 
 #[inline]
@@ -2137,10 +2240,10 @@ mod tests {
             let rate = 48_000.0;
             let coeffs =
                 BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, swap.shelf_db(progress).0);
-            let mut state = [[BiquadState::default(); BASS_SWAP_MAX_CHANNELS]; 2];
-            let mut band = BiquadFilters {
+            let mut state = [[[BiquadState::default(); 3]; BASS_SWAP_MAX_CHANNELS]; 2];
+            let mut band = BiquadFilters::<1> {
                 state: &mut state,
-                coeffs: [coeffs, coeffs],
+                coeffs: [[coeffs], [coeffs]],
             };
             let mut peak = 0.0f32;
             for i in 0..48_000 {
@@ -2283,6 +2386,79 @@ mod tests {
             assert!(w >= last, "monotone at {i}");
             last = w;
         }
+    }
+
+    /// Steady-state level in dB of a tone through one deck's filters for this segment.
+    fn tone_level(filters: FadeFilters, deck: usize, hz: f32) -> f32 {
+        let rate = 48_000.0;
+        let mut state = [[[BiquadState::default(); 3]; BASS_SWAP_MAX_CHANNELS]; 2];
+        let mut peak = 0.0f32;
+        for i in 0..48_000 {
+            let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
+            let y = match filters {
+                FadeFilters::One(coeffs) => BiquadFilters {
+                    state: &mut state,
+                    coeffs,
+                }
+                .apply(deck, 0, x),
+                FadeFilters::Three(coeffs) => BiquadFilters {
+                    state: &mut state,
+                    coeffs,
+                }
+                .apply(deck, 0, x),
+            };
+            if i > 24_000 {
+                peak = peak.max(y.abs());
+            }
+        }
+        20.0 * peak.log10()
+    }
+
+    #[test]
+    fn a_band_morph_leans_each_deck_toward_the_other_and_settles() {
+        let params = CrossfadeParams {
+            morph: Some(BandMorph {
+                db: [0.0, 4.0, -3.0],
+            }),
+            ..Default::default()
+        };
+        let at = |progress| deck_filters(48_000.0, params, DeckId::Primary, progress).unwrap();
+        let (outgoing, incoming) = (0, 1);
+        let near = |a: f32, b: f32| (a - b).abs() < 0.3;
+        // A starts untouched and ends leaning toward B's mids and highs.
+        assert!(near(tone_level(at(0.0), outgoing, 1_100.0), 0.0));
+        assert!(near(tone_level(at(1.0), outgoing, 1_100.0), 4.0));
+        assert!(near(tone_level(at(1.0), outgoing, 12_000.0), -3.0));
+        // B starts leaning toward A's and ends as itself.
+        assert!(near(tone_level(at(0.0), incoming, 1_100.0), -4.0));
+        assert!(near(tone_level(at(0.0), incoming, 12_000.0), 3.0));
+        assert!(near(tone_level(at(1.0), incoming, 1_100.0), 0.0));
+        assert!(near(tone_level(at(1.0), incoming, 12_000.0), 0.0));
+        // The band that does not move is left alone throughout.
+        assert!(near(tone_level(at(0.5), outgoing, 60.0), 0.0));
+        // Swapped decks swap the roles.
+        let swapped = deck_filters(48_000.0, params, DeckId::Secondary, 1.0).unwrap();
+        assert!(near(tone_level(swapped, 1, 1_100.0), 4.0));
+    }
+
+    #[test]
+    fn a_single_filter_fade_stays_a_single_stage() {
+        let swap_only = CrossfadeParams {
+            bass_swap: Some(BassSwap::MIDDLE),
+            ..Default::default()
+        };
+        let cut = CrossfadeParams {
+            style: FadeStyle::FilterCut,
+            morph: Some(BandMorph { db: [1.0; 3] }),
+            ..Default::default()
+        };
+        for params in [swap_only, cut] {
+            assert!(matches!(
+                deck_filters(48_000.0, params, DeckId::Primary, 0.5),
+                Some(FadeFilters::One(_))
+            ));
+        }
+        assert!(deck_filters(48_000.0, CrossfadeParams::default(), DeckId::Primary, 0.5).is_none());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use super::plan::{build_analysis_backed_plan, incoming_gain};
+use super::plan::{build_analysis_backed_plan, build_time_based_plan, choose_morph, incoming_gain};
 use super::*;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::EmotionalArc;
@@ -282,4 +282,57 @@ fn the_incoming_gain_matches_what_is_heard_now() {
         incoming_gain(&off, 0.6, Some(&a), Some(&at(-6.0, 0.3))),
         1.0
     );
+}
+
+#[test]
+fn the_band_morph_carries_tone_not_loudness() {
+    let banded = |[low, mid, high]: [f32; 3], ending: bool| {
+        let mut track = track(vec![]);
+        let bands = automix_analysis::MultibandEnergy {
+            low: vec![low; 240],
+            mid: vec![mid; 240],
+            high: vec![high; 240],
+        };
+        if ending {
+            track.outro = Some(automix_analysis::OutroAnalysis {
+                outro_type: "musicalOutro".into(),
+                outro_confidence: 0.7,
+                musical_end_offset: 0.0,
+                suggested_crossfade_start: 190.0,
+                multiband_energy: bands,
+                spectral_flux: Vec::new(),
+                short_term_loudness: Vec::new(),
+                deceleration_start: None,
+                sustain_onset: None,
+                outro_section_start: None,
+                loop_period: None,
+            });
+        } else {
+            track.intro = Some(automix_analysis::IntroAnalysis {
+                quiet_intro_duration: 0.0,
+                energy_build_duration: 0.0,
+                intro_energy_ratio: 1.0,
+                multiband_energy: Some(bands),
+            });
+        }
+        track
+    };
+    let mut plan = build_time_based_plan(&config(false), 200.0);
+    let a = banded([0.1; 3], true);
+
+    // B only louder: that is the gain's business, not the morph's.
+    assert!(choose_morph(&plan, &a, &banded([0.4; 3], false)).is_none());
+
+    // B brighter: its highs lead, the other bands give way by the same common offset.
+    let morph = choose_morph(&plan, &a, &banded([0.1, 0.1, 0.4], false)).unwrap();
+    let highs = 10.0 * 4f32.log10();
+    let expected = [-highs / 3.0, -highs / 3.0, highs * 2.0 / 3.0];
+    for (got, want) in morph.db.iter().zip(expected) {
+        assert!((got - want).abs() < 0.01, "{:?} vs {expected:?}", morph.db);
+    }
+
+    // With a bass swap running, the low band is the swap's.
+    plan.bass_swap = Some(crate::player::mixer::BassSwap::MIDDLE);
+    let morph = choose_morph(&plan, &a, &banded([0.1, 0.1, 0.4], false)).unwrap();
+    assert_eq!(morph.db[0], 0.0);
 }

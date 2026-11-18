@@ -16,7 +16,7 @@ use crate::types::{
 };
 
 use super::automix;
-use super::mixer::{CrossfadeParams, DeckId, FadeStyle};
+use super::mixer::{BassSwap, CrossfadeParams, DeckId, FadeStyle};
 use super::{AudioPlayer, PlaybackIntent};
 
 const AUTOMIX_MIN_INCOMING_BUFFER_SECS: f64 = 0.25;
@@ -542,7 +542,7 @@ impl AudioPlayer {
                 plan.duration = (remaining - 0.1).max(0.05);
                 plan.outgoing_rate = 1.0;
                 plan.beat_synced = false;
-                plan.style = FadeStyle::Blend;
+                unsync_beat_mix(plan);
             }
             if start_position.is_none() || plan.start_time <= now + 2.0 || start_paused {
                 plan.outgoing_rate = 1.0;
@@ -574,7 +574,7 @@ impl AudioPlayer {
             }
             // Holding both decks up only works while their beats meet.
             if !plan.beat_synced && matches!(plan.style, FadeStyle::BeatMix(_)) {
-                plan.style = FadeStyle::Blend;
+                unsync_beat_mix(plan);
             }
         }
         let duration = prepared.plan.as_ref().map(|p| p.duration).unwrap_or(2.0);
@@ -609,6 +609,7 @@ impl AudioPlayer {
                 in_shape: plan.in_shape as f32,
                 out_shape: plan.out_shape as f32,
                 bass_swap: plan.bass_swap,
+                morph: plan.morph,
                 style: plan.style,
             })
             .unwrap_or_else(|| CrossfadeParams {
@@ -789,6 +790,15 @@ impl AudioPlayer {
 }
 
 /// Where B's decoder opens: the plan's entry downbeat, or the top of the track.
+/// A beat-mix that can no longer meet on the beat fades as a blend, and its bass swap - one beat
+/// long, placed on a kick that will not land there now - moves to the middle of the fade.
+fn unsync_beat_mix(plan: &mut automix::CrossfadePlan) {
+    if matches!(plan.style, FadeStyle::BeatMix(_)) && plan.bass_swap.is_some() {
+        plan.bass_swap = Some(BassSwap::MIDDLE);
+    }
+    plan.style = FadeStyle::Blend;
+}
+
 fn incoming_entry(prepared: &automix::PreparedAutoMixStart) -> f64 {
     prepared
         .plan

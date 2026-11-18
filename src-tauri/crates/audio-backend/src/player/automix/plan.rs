@@ -3,7 +3,7 @@
 use super::beat_plan;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
-use crate::player::mixer::{BassSwap, FadeStyle};
+use crate::player::mixer::{BandMorph, BassSwap, FadeStyle};
 use crate::types::{AutoMixConfig, CrossfadeCurve};
 
 const MIN_CROSSFADE_DURATION: f64 = 2.0;
@@ -32,6 +32,7 @@ pub struct CrossfadePlan {
     pub outgoing_rate: f64,
     pub beat_synced: bool,
     pub bass_swap: Option<BassSwap>,
+    pub morph: Option<BandMorph>,
     pub style: FadeStyle,
     /// B's source second the overlap starts from: its first downbeat on a
     /// paired plan, so an intro before the beat is not laid under A.
@@ -61,6 +62,7 @@ pub(super) fn build_time_based_plan(
         outgoing_rate: 1.0,
         beat_synced: false,
         bass_swap: None,
+        morph: None,
         style: FadeStyle::Blend,
         incoming_start: 0.0,
     }
@@ -130,8 +132,15 @@ pub(super) fn build_analysis_backed_plan(
     // fit already refuses an overlap A's measured grid does not cover.
     let aligned = next_analysis
         .filter(|_| config.bpm_match && config.beat_align)
-        .and_then(|next| beat_plan::align(&plan, current, next, effective_end, config.bpm_match));
-    if let Some(aligned) = aligned {
+        .and_then(|next| {
+            beat_plan::align(&plan, current, next, effective_end, config.bpm_match)
+                .map(|aligned| (aligned, next))
+        });
+    if let Some((mut aligned, next)) = aligned {
+        // FilterCut's sweep is its own tonal handover.
+        if aligned.style != FadeStyle::FilterCut {
+            aligned.morph = choose_morph(&aligned, current, next);
+        }
         return aligned;
     }
     let mut plan = clamp_plan_to_content(plan, effective_end);
@@ -224,11 +233,7 @@ fn shape_for_pair(
     current: &automix_analysis::TrackAnalysis,
     next: &automix_analysis::TrackAnalysis,
 ) {
-    let outgoing = (
-        plan.start_time,
-        plan.start_time + plan.duration * plan.outgoing_rate,
-    );
-    let incoming = (plan.incoming_start, plan.incoming_start + plan.duration);
+    let (outgoing, incoming) = overlap_windows(plan);
     let (in_scale, out_scale) = pair_shape_scale(
         vocal_share(current, outgoing),
         vocal_share(next, incoming),
@@ -242,6 +247,68 @@ fn shape_for_pair(
         plan.out_shape = (plan.out_shape * out_scale).clamp(0.7, 1.3);
     }
     plan.bass_swap = choose_bass_swap(plan, current, next, outgoing, incoming);
+    plan.morph = choose_morph(plan, current, next);
+}
+
+/// Source-second windows the overlap covers on A and on B.
+fn overlap_windows(plan: &CrossfadePlan) -> ((f64, f64), (f64, f64)) {
+    (
+        (
+            plan.start_time,
+            plan.start_time + plan.duration * plan.outgoing_rate,
+        ),
+        (plan.incoming_start, plan.incoming_start + plan.duration),
+    )
+}
+
+/// Largest tonal lean a morph applies to a band, as the Web clamps it.
+const MORPH_MAX_DB: f32 = 6.0;
+/// Below this in every band the two sides already sound alike.
+const MORPH_MIN_DB: f32 = 1.5;
+
+/// The tonal half of the handover: how far each band of B's opening sits from A's ending, in dB,
+/// for `BandMorph` to lean the decks across. From the same overlap windows as the bass swap; the
+/// Web derives it from the last and first 2 s. The bands' common offset is removed first, because
+/// that part is loudness, which `incoming_gain` already matches — morphing it too would move the
+/// level twice. `10 * log10` over RMS ratios gives half the real dB difference; kept as the Web has
+/// it, so the two lean alike. The low band is left out while a bass swap runs.
+pub(super) fn choose_morph(
+    plan: &CrossfadePlan,
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+) -> Option<BandMorph> {
+    let ((out_from, out_to), (in_from, in_to)) = overlap_windows(plan);
+    let outro = &current.outro.as_ref()?.multiband_energy;
+    let intro = next.intro.as_ref()?.multiband_energy.as_ref()?;
+    // Outro windows end at the content end, 0.25 s each.
+    let origin = f64::from(current.duration - current.energy.trailing_silence)
+        - outro.low.len() as f64 * 0.25;
+    let mut db = [0f32; 3];
+    for (band, (a, b)) in [
+        (&outro.low, &intro.low),
+        (&outro.mid, &intro.mid),
+        (&outro.high, &intro.high),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let a = mean_window(a, (out_from - origin) / 0.25, (out_to - origin) / 0.25)?;
+        let b = mean_window(b, in_from / 0.25, in_to / 0.25)?;
+        db[band] = match (a < 1e-4, b < 1e-4) {
+            (true, true) => 0.0,
+            (true, false) => MORPH_MAX_DB,
+            (false, true) => -MORPH_MAX_DB,
+            (false, false) => 10.0 * (b / a).log10(),
+        };
+    }
+    let offset = db.iter().sum::<f32>() / 3.0;
+    for d in &mut db {
+        *d = (*d - offset).clamp(-MORPH_MAX_DB, MORPH_MAX_DB);
+    }
+    if plan.bass_swap.is_some() {
+        db[0] = 0.0;
+    }
+    (db.iter().any(|d| d.abs() >= MORPH_MIN_DB)).then_some(BandMorph { db })
 }
 
 /// (incoming, outgoing) exponent scales. Mirrored by `pairShapeScale` in
@@ -338,10 +405,7 @@ fn choose_bass_swap(
                 end: end as f32,
             })
         });
-    Some(beat.unwrap_or(BassSwap {
-        start: 0.4,
-        end: 0.6,
-    }))
+    Some(beat.unwrap_or(BassSwap::MIDDLE))
 }
 
 fn mean_window(values: &[f32], from: f64, to: f64) -> Option<f32> {
