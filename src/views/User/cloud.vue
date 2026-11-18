@@ -49,7 +49,7 @@
       />
     </div>
     <Pagination
-      v-if="cloudData[0]"
+      v-if="totalCount > 0"
       :totalCount="totalCount"
       :pageNumber="pageNumber"
       @pageSizeChange="pageSizeChange"
@@ -126,12 +126,17 @@ const upSongModal = ref(false);
 const upSongCompleted = ref(0);
 
 // 获取云盘数据
+// Only the newest request may write: an older page that settles late would
+// otherwise replace the list, raise the error panel or end the loading state.
+let cloudRequestSeq = 0;
 const getCloudData = (limit = 30, offset = 0, scroll = true) => {
   if (scroll && typeof $scrollToTop !== "undefined") $scrollToTop();
+  const seq = ++cloudRequestSeq;
   loading.value = true;
   error.value = false;
   getCloud(limit, offset)
     .then((res) => {
+      if (seq !== cloudRequestSeq) return;
       totalCount.value = res.count;
       cloudData.value = [];
       // 云盘空间
@@ -160,11 +165,12 @@ const getCloudData = (limit = 30, offset = 0, scroll = true) => {
       }
     })
     .catch((err) => {
+      if (seq !== cloudRequestSeq) return;
       console.error("[cloud] failed to load cloud songs", err);
       error.value = true;
     })
     .finally(() => {
-      loading.value = false;
+      if (seq === cloudRequestSeq) loading.value = false;
     });
 };
 
