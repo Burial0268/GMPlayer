@@ -207,7 +207,7 @@ function memoryHistory(initial = "/", data: HistoryState = {}) {
   return { history, entries };
 }
 
-async function fixture(initial = "/", data: HistoryState = {}) {
+async function fixture(initial = "/", data: HistoryState = {}, libraryRoute?: () => string) {
   const { history, entries } = memoryHistory(initial, data);
   const page = { render: () => null };
   const router = createRouter({
@@ -216,6 +216,8 @@ async function fixture(initial = "/", data: HistoryState = {}) {
       { path: "/", name: "home", component: page, meta: { navigationRoot: "home" } },
       { path: "/discover/:category?", component: page, meta: { navigationRoot: "discover" } },
       { path: "/local", component: page, meta: { navigationRoot: "library" } },
+      { path: "/user", component: page, meta: { navigationRoot: "library" } },
+      { path: "/library-detail", component: page, meta: { navigationFallback: "library" } },
       { path: "/local/playlist", component: page, meta: { navigationFallback: "library" } },
       { path: "/local/song", component: page },
       {
@@ -232,7 +234,7 @@ async function fixture(initial = "/", data: HistoryState = {}) {
       { path: "/login", component: page },
     ],
   });
-  const navigation = createLayerNavigation(router);
+  const navigation = createLayerNavigation(router, libraryRoute);
   await router.push(initial);
   return { router, navigation, history, entries };
 }
@@ -479,6 +481,26 @@ test("deep links have an explicit fallback without invented source geometry", as
   const { navigation: nav, router } = await fixture("/local/playlist?kind=local-album&album=A");
   assert.equal(nav.current.value!.root, "library");
   assert.equal(nav.current.value!.source, undefined);
+  await traversed(router, () => {
+    nav.closeTop();
+  });
+  assert.equal(router.currentRoute.value.path, "/local");
+});
+
+test("a deep link falls back to wherever the library root lives now", async () => {
+  const { navigation: nav, router } = await fixture("/library-detail", {}, () => "/user");
+  await traversed(router, () => {
+    nav.closeTop();
+  });
+  assert.equal(router.currentRoute.value.path, "/user");
+});
+
+test("a local detail page always falls back to the local library", async () => {
+  const { navigation: nav, router } = await fixture(
+    "/local/playlist?kind=local-all",
+    {},
+    () => "/user",
+  );
   await traversed(router, () => {
     nav.closeTop();
   });

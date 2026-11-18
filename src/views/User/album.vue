@@ -1,6 +1,10 @@
 <template>
   <div class="album">
-    <CoverLists :listData="user.getUserAlbumLists.list" listType="album" />
+    <CoverLists
+      :listData="user.getUserAlbumLists.list"
+      listType="album"
+      :loading="user.getUserAlbumLists.isLoading || !user.getUserAlbumLists.has"
+    />
   </div>
 </template>
 

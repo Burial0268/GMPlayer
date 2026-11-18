@@ -152,8 +152,7 @@ const toUser = (id) => {
           align-items: center;
           justify-content: center;
           width: 100%;
-          height: 0;
-          padding-bottom: 100%;
+          aspect-ratio: 1;
           background-color: #0001;
           .n-spin-body {
             position: absolute;
@@ -229,9 +228,9 @@ const toUser = (id) => {
   }
   .loading {
     .pic {
-      padding-bottom: 100%;
       width: 100%;
-      height: 0;
+      height: auto;
+      aspect-ratio: 1;
       border-radius: 50% !important;
       margin-bottom: 20px;
     }

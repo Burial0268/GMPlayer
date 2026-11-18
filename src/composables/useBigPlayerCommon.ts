@@ -26,7 +26,9 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   const coverImageUrl = computed(() => coverUrl(visualPicUrl.value));
 
   // The resize hint is Netease's; a file on disk is served as-is.
-  const coverImageUrl500 = computed(() => coverUrl(visualPicUrl.value, 500));
+  // The mobile artwork follows the playing song, not the midpoint switch: it blends the incoming
+  // cover over itself (MobileCoverFrame's overlay), so switching it here would cut mid-blend.
+  const coverImageUrl500 = computed(() => coverUrl(music.getPlaySongData?.album?.picUrl, 500));
 
   // --- Song metadata ---
   const artistList = computed(() => music.getPlaySongData?.artist ?? []);

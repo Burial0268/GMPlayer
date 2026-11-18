@@ -27,6 +27,8 @@
       @load="onImgLoad"
       @error="onImgError"
     />
+    <!-- AutoMix: the next song's artwork fades in over this one with the mix. -->
+    <img v-if="incomingCoverUrl" class="automix-in" :src="incomingCoverUrl" alt="" />
   </Motion>
 </template>
 
@@ -65,6 +67,8 @@ const props = defineProps<{
   visible: boolean;
   motionStyle?: MotionStyleRecord | null;
   coverUrl: string;
+  /** The incoming song's artwork during an AutoMix crossfade. */
+  incomingCoverUrl?: string | null;
   layoutTransition: Record<string, unknown>;
   layoutDependency?: unknown;
   layoutEnabled?: boolean;
@@ -176,6 +180,12 @@ function onImgError(): void {
 
     &.loaded {
       opacity: 1;
+    }
+
+    // Outranks the load fade above; the mix is written every frame, so no transition.
+    &.automix-in {
+      opacity: var(--automix-mix, 0);
+      transition: none;
     }
   }
 

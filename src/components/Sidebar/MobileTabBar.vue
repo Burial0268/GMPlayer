@@ -17,16 +17,14 @@
 <script setup>
 import { NIcon } from "naive-ui";
 import { HomeTwo, FindOne, Me, SettingTwo } from "@icon-park/vue-next";
-import { settingStore, userStore } from "@/store";
-import { useLayerNavigation } from "@/utils/navigation";
+import { settingStore } from "@/store";
+import { libraryRoute, useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
-import { isTauri } from "@/utils/tauri/core/runtime";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
 
 const { t } = useI18n();
 const navigation = useLayerNavigation();
 const setting = settingStore();
-const user = userStore();
 
 /**
  * The "library" tab's destination depends on being signed in.
@@ -39,7 +37,7 @@ const user = userStore();
  * login banner to replace it. The two changes belong together; splitting them
  * leaves a mobile build with no way to log in at all.
  */
-const libraryTarget = computed(() => (user.userLogin || !isTauri() ? "/user" : "/local"));
+const libraryTarget = computed(libraryRoute);
 
 const tabs = computed(() => [
   { key: "home", to: "/", icon: HomeTwo, label: t("sidebar.tab.home") },

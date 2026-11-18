@@ -1,8 +1,7 @@
 <template>
   <div class="playlists">
-    <div class="data">
+    <div class="toolbar">
       <n-button
-        class="add"
         type="primary"
         strong
         secondary
@@ -17,7 +16,10 @@
       <!-- 新建歌单 -->
       <CreatePlaylist ref="createPlaylistRef" />
     </div>
-    <CoverLists :listData="user.getUserPlayLists.own" />
+    <CoverLists
+      :listData="user.getUserPlayLists.own"
+      :loading="user.getUserPlayLists.isLoading || !user.getUserPlayLists.has"
+    />
   </div>
 </template>
 
@@ -40,12 +42,10 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .playlists {
-  .data {
-    width: 100%;
-    margin: 20px 0;
+  .toolbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    margin-bottom: 16px;
   }
 }
 </style>

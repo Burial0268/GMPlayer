@@ -247,6 +247,7 @@
           :visible="albumLayerVisible"
           :motionStyle="coverFrameStyle"
           :coverUrl="coverImageUrl500"
+          :incomingCoverUrl="incomingCoverUrl"
           :layoutTransition="layoutTransition"
           :layoutDependency="mobileLayer"
           :layoutEnabled="false"
@@ -357,6 +358,8 @@ import {
   useAutoMixTransition,
 } from "@/composables/useAutoMixTransition";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
+import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
+import { coverUrl } from "@/utils/coverUrl";
 
 type Artist = { name: string };
 type StaticStyleRecord = Record<string, string | number | undefined>;
@@ -446,6 +449,11 @@ const qualityText = useQualityText();
 const autoMixBarPhase = useAutoMixBarPhase();
 const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
+// Same size as `coverImageUrl500`, so the base it hands off to is already in the cache.
+const { incoming: mixIncoming } = useAutoMixVisual();
+const incomingCoverUrl = computed(() =>
+  mixIncoming.value ? coverUrl(mixIncoming.value.album?.picUrl, 500) : null,
+);
 // The output menu drives the native backend; the web player has no device list to offer.
 const nativeOutput = isTauri();
 const playbackControlsRef = ref<HTMLElement | null>(null);

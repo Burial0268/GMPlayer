@@ -24,6 +24,13 @@
             alt="cover"
           />
         </Motion>
+        <!-- AutoMix: the next song's label fades in over this one with the mix. -->
+        <img
+          v-if="mixIncoming"
+          class="album automix-cover automix-in"
+          :src="coverUrl(mixIncoming.album?.picUrl, 500)"
+          alt=""
+        />
       </div>
     </div>
     <div :class="['controls', { tinted: setting.immersivePlayer }]">
@@ -36,9 +43,11 @@
             :transition="sharedContentTransition"
           >
             <span class="name">
-              <OverflowMarquee :speed="36">
-                {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
-              </OverflowMarquee>
+              <Transition name="automix-meta" mode="out-in">
+                <OverflowMarquee :key="music.getPlaySongData?.id" :speed="36">
+                  {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+                </OverflowMarquee>
+              </Transition>
             </span>
           </Motion>
           <Motion
@@ -49,17 +58,21 @@
             :transition="sharedContentTransition"
           >
             <span class="artists">
-              <OverflowMarquee>
-                <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
-                  <span
-                    v-button
-                    class="artist-name"
-                    @click="routerJump('/artist', { id: ar.id })"
-                    >{{ ar.name }}</span
-                  >
-                  <span v-if="index < music.getPlaySongData.artist.length - 1">&nbsp;/&nbsp;</span>
-                </span>
-              </OverflowMarquee>
+              <Transition name="automix-meta" mode="out-in">
+                <OverflowMarquee :key="music.getPlaySongData?.id">
+                  <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
+                    <span
+                      v-button
+                      class="artist-name"
+                      @click="routerJump('/artist', { id: ar.id })"
+                      >{{ ar.name }}</span
+                    >
+                    <span v-if="index < music.getPlaySongData.artist.length - 1"
+                      >&nbsp;/&nbsp;</span
+                    >
+                  </span>
+                </OverflowMarquee>
+              </Transition>
             </span>
           </Motion>
         </div>
@@ -194,6 +207,7 @@ import {
   useAutoMixTransition,
 } from "@/composables/useAutoMixTransition";
 import { coverUrl } from "@/utils/coverUrl";
+import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
 import { seekActiveSound } from "@/utils/AudioContext";
@@ -211,6 +225,7 @@ const music = musicStore();
 const autoMixBarPhase = useAutoMixBarPhase();
 const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
 const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
+const { incoming: mixIncoming } = useAutoMixVisual();
 const user = userStore();
 const setting = settingStore();
 const { persistData } = storeToRefs(music);
@@ -463,6 +478,12 @@ const routerJump = (url, query) => {
         box-shadow:
           0 0 0 calc(var(--cover-size) * 0.012) rgb(0 0 0 / 0.42),
           0 0 calc(var(--cover-size) * 0.05) rgb(0 0 0 / 0.3);
+      }
+      // Laid over the label: the same 62% box, centred on the disc.
+      .automix-cover {
+        position: absolute;
+        inset: 0;
+        margin: auto;
       }
     }
   }

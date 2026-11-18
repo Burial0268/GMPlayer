@@ -24,7 +24,8 @@ export interface OpenPageOptions {
   identity?: string;
 }
 
-export function createLayerNavigation(router: Router) {
+/** `libraryRoute` answers where the library root lives now; it moves on login/logout. */
+export function createLayerNavigation(router: Router, libraryRoute: () => string = () => "/local") {
   const state = shallowRef<LayerHistory>({ version: 1, entryId: nextLayerId(), layers: [] });
   const transition = shallowRef<LayerTransition>({
     id: 0,
@@ -288,7 +289,14 @@ export function createLayerNavigation(router: Router) {
     if (!top.isRoot) {
       backPending = true;
       const target =
-        top.root === "library" ? "/local" : top.root === "discover" ? "/discover" : "/";
+        top.root === "library"
+          ? // A local detail page belongs to the local library whoever is signed in.
+            top.route.startsWith("/local")
+            ? "/local"
+            : libraryRoute()
+          : top.root === "discover"
+            ? "/discover"
+            : "/";
       const next = pageLayer(router.resolve(target));
       void go(target, [next], true);
       return true;
