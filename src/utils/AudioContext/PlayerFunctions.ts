@@ -7,19 +7,17 @@
  * - Improved error handling
  */
 
-import { h } from "vue";
-import { songScrobbleV2, submitSongPlayState } from "@/api/song";
+import { songScrobble, songScrobbleAndroid, submitSongPlayState } from "@/api/song";
 // Import stores directly to avoid circular dependency through barrel exports
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
 import useMusicDataStore from "@/store/musicData";
+import { flushMusicPersist, isMusicPersistCheap } from "@/store/musicPersistedData";
 import useSettingDataStore from "@/store/settingData";
 import useUserDataStore from "@/store/userData";
 
 const musicStore = () => useMusicDataStore();
 const settingStore = () => useSettingDataStore();
 const userStore = () => useUserDataStore();
-import { NIcon } from "naive-ui";
-import { MusicNoteFilled } from "@vicons/material";
 import getLanguageData from "@/utils/getLanguageData";
 import { applyGlobalCoverPalette } from "@/utils/color/coverPalette";
 import { coverUrl } from "@/utils/coverUrl";
@@ -51,9 +49,11 @@ import { armLyricSeekPresentationHold } from "../tauri/audio/uiDelay";
 import type { TrackIdentity } from "../tauri/audio/protocol";
 import { logNative } from "../tauri/core/nativeLog";
 import {
+  buildNeteaseAndroidCookie,
   buildNeteaseDesktopCookie,
   buildNeteaseDesktopUserAgent,
   createNeteasePlaybackSessionId,
+  NETEASE_ANDROID_USER_AGENT,
 } from "../neteaseClient";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -115,6 +115,16 @@ let lastBackendStateAuditAt = 0;
 let lastPlaybackPresentationAt = 0;
 
 const PLAYBACK_PRESENTATION_INTERVAL_MS = 1000 / 30;
+/**
+ * A crash, a killed process, Windows shutdown/logoff (`WM_ENDSESSION`) and
+ * macOS Cmd+Q/logout (`applicationWillTerminate`) give the page no usable exit
+ * hook — tao runs `RunEvent::Exit` synchronously on the thread the page would
+ * have to answer through, then ends the process — so the resume position is
+ * only as fresh as this. Cheap since the queue moved to IndexedDB: a checkpoint
+ * rewrites only the small `state` record.
+ */
+const PERIODIC_CHECKPOINT_MS = 5_000;
+let lastPeriodicCheckpointAt = 0;
 const SCROBBLE_DELAY_MS = 3000;
 const SCROBBLE_DUPLICATE_GUARD_MS = 10000;
 
@@ -183,6 +193,17 @@ const resetPlaySongTime = (music: ReturnType<typeof musicStore>): void => {
   music.resetPlaySongTime();
 };
 
+// Saves the store's own time rather than re-reading the sound: that path sets the
+// display time without the UI delay, which would nudge the lyrics every 15 s.
+// Skipped on the localStorage fallback, where every write re-serializes the whole queue.
+const periodicCheckpoint = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
+  if (!sound.playing() || !isMusicPersistCheap()) return;
+  const now = Date.now();
+  if (now - lastPeriodicCheckpointAt < PERIODIC_CHECKPOINT_MS) return;
+  lastPeriodicCheckpointAt = now;
+  music.checkpointPlaySongTime(true);
+};
+
 const checkpointActivePosition = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
   const duration = getUsableDuration(sound.duration(), music.getPlaySongTime.duration);
   const position = normalizePlaybackPosition(
@@ -192,6 +213,17 @@ const checkpointActivePosition = (sound: ISound, music: ReturnType<typeof musicS
   );
   music.setPlaySongTime({ currentTime: position, duration, displayCurrentTime: position });
   music.checkpointPlaySongTime(true);
+};
+
+/**
+ * Checkpoint the playing position and write the whole queue store out now,
+ * resolving once it is committed. For the moments with no later chance: the
+ * page going to the background, and the Tauri exit handshake.
+ */
+export const persistPlaybackNow = (): Promise<void> => {
+  const sound = SoundManager.getCurrentSound();
+  if (sound) checkpointActivePosition(sound, musicStore());
+  return flushMusicPersist();
 };
 
 const getPlayStateSessionId = (key: string): string => {
@@ -240,7 +272,13 @@ const syncNativeAnalysisState = (
   settings = settingStore(),
 ): void => {
   if (!isBackendSound(sound)) return;
-  const analysisEnabled = isPageVisible && (settings.musicFrequency || settings.dynamicFlowSpeed);
+  // Both consumers (the spectrum and the background's flow speed) live in the big player. Every
+  // frame of this stream is one IPC crossing (~60/s each kind), and on WebView2 each crossing
+  // leaves memory behind that a GC does not fully return -- measured at ~100 MB per 8 minutes.
+  const analysisEnabled =
+    isPageVisible &&
+    musicStore().showBigPlayer &&
+    (settings.musicFrequency || settings.dynamicFlowSpeed);
   sound.setAnalysisEnabled(analysisEnabled);
   sound.setFFTEnabled(analysisEnabled && settings.musicFrequency);
 };
@@ -250,6 +288,14 @@ const disableActiveNativeAnalysis = (): void => {
   if (!sound) return;
   sound.setFFTEnabled(false);
   sound.setAnalysisEnabled(false);
+};
+
+// Once per track: the only record of whether Netease accepted a listen (`console` never reaches
+// GMPlayer.log, and a rejection is not an HTTP error).
+const logScrobble = (level: "info" | "warn", message: string, detail?: unknown): void => {
+  const suffix = detail === undefined ? "" : `: ${JSON.stringify(detail)?.slice(0, 600)}`;
+  logNative(level, `[scrobble] ${message}${suffix}`);
+  if (IS_DEV) console[level === "warn" ? "warn" : "log"](`[scrobble] ${message}`, detail ?? "");
 };
 
 const scheduleScrobble = (reason: string): void => {
@@ -279,12 +325,6 @@ const scheduleScrobble = (reason: string): void => {
     // 歌曲(总)时长由后端歌曲数据提供，作为播放时长 time 与总时长 total 上报
     const totalSec = Math.round(Number(music.getPlaySongTime?.duration) || 0);
     const progressSec = Math.max(0, Math.round(music.getPlaySongPlaybackCurrentTime()));
-    const artist = Array.isArray(liveData?.artist)
-      ? liveData.artist
-          .map((a: { name?: string }) => a?.name)
-          .filter(Boolean)
-          .join("/")
-      : undefined;
     const sessionId = getPlayStateSessionId(scrobbleKey);
     const desktopCookie = buildNeteaseDesktopCookie(user.cookie);
 
@@ -295,25 +335,42 @@ const scheduleScrobble = (reason: string): void => {
       type: "song",
       cookie: desktopCookie,
       ua: buildNeteaseDesktopUserAgent(),
-    }).catch((err) => {
-      console.error("播放状态提交失败：" + err);
-    });
-
-    songScrobbleV2(songId, totalSec, {
-      sourceid: sourceId || undefined,
-      source: "list",
-      name: liveData?.name,
-      artist,
-      total: totalSec || undefined,
     })
       .then((res) => {
+        if (res?.code !== 200) logScrobble("warn", `play state for ${songId} rejected`, res);
+      })
+      .catch((err) => logScrobble("warn", `play state for ${songId} failed`, String(err)));
+
+    // Weblog takes a zero-length play without complaint and counts nothing.
+    if (totalSec <= 0) {
+      logScrobble("warn", `${songId} skipped (${reason}): duration unknown`);
+      return;
+    }
+    // Two weblog entries either way: startplay (recent plays), then play (the ranking). The NCBL
+    // upload (`scrobble_v1`) answered OK and was never counted. Android reports as the Android
+    // client; elsewhere upstream's `/scrobble`, which reports as the macOS client.
+    const report = /Android/i.test(navigator.userAgent)
+      ? songScrobbleAndroid(
+          songId,
+          sourceId,
+          totalSec,
+          buildNeteaseAndroidCookie(user.cookie),
+          NETEASE_ANDROID_USER_AGENT,
+        )
+      : songScrobble(songId, sourceId, totalSec);
+    report
+      .then((res) => {
+        // `/scrobble` itself always answers 200; only each weblog answer says anything.
+        const { startplay, play } = res?.details ?? {};
+        if (startplay?.code !== 200 || play?.code !== 200) {
+          logScrobble("warn", `${songId} rejected (${reason})`, res);
+          return;
+        }
         lastScrobbleKey = scrobbleKey;
         lastScrobbleAt = Date.now();
-        if (IS_DEV) console.log(`歌曲打卡完成 (${reason})`, res);
+        logScrobble("info", `${songId} reported (${reason}, ${totalSec}s)`);
       })
-      .catch((err) => {
-        console.error("歌曲打卡失败：" + err);
-      });
+      .catch((err) => logScrobble("warn", `${songId} failed (${reason})`, String(err)));
   }, SCROBBLE_DELAY_MS);
 };
 
@@ -418,7 +475,9 @@ const startBackgroundMonitor = (): void => {
     }
     const autoMix = getAutoMixEngine();
     autoMix.monitorPlayback(sound);
-    checkAudioTime(sound, musicStore());
+    const music = musicStore();
+    checkAudioTime(sound, music);
+    periodicCheckpoint(sound, music);
   }, 1000);
 };
 
@@ -451,6 +510,7 @@ const scheduleAudioTimePresentation = (
   generation: number,
 ): void => {
   if (!sound.playing()) return;
+  periodicCheckpoint(sound, music);
   if (isBackendSound(sound)) {
     const now = Date.now();
     if (now - lastBackendStateAuditAt >= 2000) {
@@ -514,8 +574,8 @@ if (typeof document !== "undefined") {
     isPageVisible = document.visibilityState === "visible";
     if (!isPageVisible) {
       disableActiveNativeAnalysis();
-      const sound = SoundManager.getCurrentSound();
-      if (sound) checkpointActivePosition(sound, musicStore());
+      // Android may kill a backgrounded process without another event.
+      void persistPlaybackNow();
       // RAF is paused while hidden; keep playback time and AutoMix monitoring
       // on a low-rate timer independent of visual spectrum settings.
       startBackgroundMonitor();
@@ -874,14 +934,6 @@ const setupNativeSound = (
     // Resumed into a stall the backend has not cleared yet.
     if ((sound as { isBuffering?: () => boolean }).isBuffering?.()) applyRebuffering();
 
-    if (typeof window.$message !== "undefined" && songArtist !== null) {
-      window.$message.info(`${songName} - ${songArtist}`, {
-        icon: () => h(NIcon, null, { default: () => h(MusicNoteFilled) }),
-      });
-    } else {
-      window.$message.warning(getLanguageData("songNotDetails"));
-    }
-
     if (IS_DEV) console.log(`[Native] 开始播放：${songName} - ${songArtist}`);
 
     setMediaSession(music);
@@ -1228,18 +1280,6 @@ export const createSound = (
       music.playingSongId = boundSongId;
       music.setPlayState(true);
 
-      // 播放通知
-      if (typeof window.$message !== "undefined" && songArtist !== null) {
-        window.$message.info(`${songName} - ${songArtist}`, {
-          icon: () =>
-            h(NIcon, null, {
-              default: () => h(MusicNoteFilled),
-            }),
-        });
-      } else {
-        window.$message.warning(getLanguageData("songNotDetails"));
-      }
-
       if (IS_DEV) {
         console.log(`开始播放：${songName} - ${songArtist}`);
       }
@@ -1387,6 +1427,10 @@ export const setVolume = (sound: ISound | undefined, volume: number): void => {
  */
 export const setSeek = (sound: ISound | undefined, seek: number): void => {
   const music = musicStore();
+  // First, so the target is resolved after an uncommitted web mix has reverted to the outgoing
+  // sound — the one the bar was showing.
+  const autoMix = getAutoMixEngine();
+  autoMix.interruptForSeek();
   const target = resolveSeekTarget(sound);
   if (!target) {
     if (IS_DEV) {
@@ -1406,11 +1450,6 @@ export const setSeek = (sound: ISound | undefined, seek: number): void => {
     soundDuration,
     music.getPlaySongPlaybackCurrentTime(),
   );
-  // Cancel AutoMix crossfade on seek
-  const autoMix = getAutoMixEngine();
-  if (autoMix.isCrossfading()) {
-    autoMix.cancelCrossfade();
-  }
   target.seekTo(currentTime);
   // The lyric clock runs behind the playback clock on mobile; pin it at the
   // target before the store update below recomputes the lyric index from it.
@@ -1786,6 +1825,9 @@ export const setPageVisible = (visible: boolean): void => {
   isPageVisible = visible;
   if (!visible) {
     disableActiveNativeAnalysis();
+    // Hidden to the tray is where a desktop session usually ends — by shutdown or
+    // logout, which give the page no exit hook (see `PERIODIC_CHECKPOINT_MS`).
+    void persistPlaybackNow();
     startBackgroundMonitor();
   } else if (visible) {
     requestNativeBackendSync();

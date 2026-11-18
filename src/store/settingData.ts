@@ -84,6 +84,7 @@ interface SettingDataState {
   songVolumeFade: boolean;
   listNumber: number;
   memoryLastPlaybackPosition: boolean;
+  keepScreenOnLyrics: boolean;
   language: string;
   bottomClick: boolean;
   immersivePlayer: boolean;
@@ -99,8 +100,6 @@ interface SettingDataState {
   autoMixBpmMatch: boolean;
   autoMixBeatAlign: boolean;
   autoMixVolumeNorm: boolean;
-  autoMixTransitionStyle: "linear" | "equalPower" | "sCurve";
-  autoMixSmartCurve: boolean;
   autoMixTransitionEffects: boolean;
   autoMixVocalGuard: boolean;
   autoMixEmotionalTransition: boolean;
@@ -280,6 +279,7 @@ const useSettingDataStore = defineStore("settingData", {
       songVolumeFade: true,
       listNumber: 30,
       memoryLastPlaybackPosition: true,
+      keepScreenOnLyrics: false,
       language: "zh-CN",
       bottomClick: false,
       immersivePlayer: false,
@@ -295,8 +295,6 @@ const useSettingDataStore = defineStore("settingData", {
       autoMixBpmMatch: true,
       autoMixBeatAlign: true,
       autoMixVolumeNorm: true,
-      autoMixTransitionStyle: "equalPower",
-      autoMixSmartCurve: true,
       autoMixTransitionEffects: true,
       autoMixVocalGuard: true,
       autoMixEmotionalTransition: true,

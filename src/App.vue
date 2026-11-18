@@ -127,6 +127,7 @@ import { appInfo } from "@/utils/appInfo";
 import { backTopShown } from "@/utils/backTop";
 import { INLINE_QUEUE_MEDIA_QUERY } from "@/utils/playlistLayout";
 import { ref, watch, computed, h } from "vue";
+import { setKeepScreenOn } from "@/utils/tauri/platform/screenOrientation";
 
 const { t } = useI18n();
 const music = musicStore();
@@ -135,6 +136,13 @@ const setting = settingStore();
 const site = siteStore();
 const router = useRouter();
 const route = useRoute();
+
+// Opt-in: keep the screen on while the lyric player is open and playing (Tauri mobile only).
+watch(
+  () => setting.keepScreenOnLyrics && music.showBigPlayer && music.getPlayState,
+  (on) => void setKeepScreenOn(on),
+  { immediate: true },
+);
 const contentStage = ref<HTMLElement | null>(null);
 const mainContent = ref<HTMLElement | null>(null);
 // Mirrors iOS scrollEdgeAppearance: the mobile header glass only materializes

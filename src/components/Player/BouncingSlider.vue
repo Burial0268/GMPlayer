@@ -1,6 +1,6 @@
 <template>
   <Motion
-    class="bouncing-slider"
+    :class="['bouncing-slider', { transitioning: transitionPhase === 'active', leaving }]"
     :style="{ x: bounceXSpring }"
     :onPanStart="handlePanStart"
     :onPan="handlePan"
@@ -20,6 +20,14 @@
           :style="{ transform: `scaleX(${bufferedScale})` }"
         />
         <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
+        <div
+          v-if="leaving"
+          class="ghost"
+          aria-hidden="true"
+          :style="{ transform: `scaleX(${ghostScale})` }"
+          @animationend="leaving = false"
+          @animationcancel="leaving = false"
+        />
       </Motion>
     </div>
     <slot name="after-icon" />
@@ -47,10 +55,17 @@ const props = withDefaults(
     changeOnDrag?: boolean;
     /** How far the track is buffered, in the units of `value`. */
     buffered?: number;
+    /**
+     * An AutoMix transition. `active` highlights the bar, which keeps moving and stays seekable;
+     * `committed` (the next song taking over) plays the hand-off. Back to `none` without a commit
+     * — an interrupted transition — only drops the highlight.
+     */
+    transitionPhase?: "none" | "active" | "committed";
   }>(),
   {
     isPlaying: false,
     changeOnDrag: false,
+    transitionPhase: "none",
   },
 );
 
@@ -106,6 +121,36 @@ const clipPath = useMotionTemplate`inset(${insetMv}px 0px round 100px)`;
 
 const bounceXSpring = useSpring(0, { damping: 12, stiffness: 300 });
 
+// At the hand-off the outgoing song's fill stays as a ghost and fades down to the next song's
+// segment, which then flashes and settles, instead of the fill shrinking back from the end.
+// Cleared when that sequence ends.
+const leaving = ref(false);
+const ghostScale = ref(1);
+// The outgoing song's progress, recorded while the transition is active: by the time the commit is
+// seen, the value may already be the incoming song's.
+let activeProgress = 1;
+
+const progressOf = (time: number) => {
+  const range = props.max - props.min;
+  return range > 0 ? Math.max(0, Math.min(1, (time - props.min) / range)) : 0;
+};
+
+watch(
+  () => props.transitionPhase,
+  (now, was) => {
+    // The finishing hold (`committed`) ends after 0.8 s, well before the hand-off does, so only
+    // a new transition cuts it short.
+    if (now === "active") leaving.value = false;
+    if (was !== "active" || now !== "committed") return;
+    leaving.value = true;
+    ghostScale.value = activeProgress;
+    // The jump to the new song is not a seek: show where it is, under the ghost.
+    seekAnimControl?.stop();
+    seekAnimControl = null;
+    progressMv.set(progressOf(localTime));
+  },
+);
+
 // Animate progress to a target value with bezier easing (for seeks)
 const animateProgressTo = (p: number) => {
   seekAnimControl?.stop();
@@ -134,7 +179,8 @@ watch(
     // Detect a seek: value jumped by more than 1.5s or min/max changed
     const oldVal = oldArr ? (oldArr[0] as number) : v;
     const jumped = Math.abs(v - oldVal) > 1.5;
-    if (jumped) {
+    if (props.transitionPhase === "active") activeProgress = p;
+    if (jumped && !leaving.value) {
       animateProgressTo(p);
     } else {
       // Normal playback tick — set directly (no animation)
@@ -155,6 +201,7 @@ useAnimationFrame((_time: number, delta: number) => {
     const range = props.max - props.min;
     const p = range > 0 ? Math.max(0, Math.min(1, (localTime - props.min) / range)) : 0;
     progressMv.set(p);
+    if (props.transitionPhase === "active") activeProgress = p;
   }
 });
 
@@ -280,6 +327,13 @@ const handleClick = (event: MouseEvent) => {
 .inner-wrapper {
   flex: 1;
   width: 100%;
+  /* On the wrapper: `.inner` is clipped to its rounded shape and would clip its own shadow. */
+  transition: filter 0.8s ease;
+}
+
+.transitioning .inner-wrapper {
+  filter: drop-shadow(0 0 6px rgb(255 255 255 / 55%));
+  transition-duration: 0.7s;
 }
 
 .inner {
@@ -313,6 +367,86 @@ const handleClick = (event: MouseEvent) => {
 
 .thumb {
   opacity: 0.4;
+  transition: opacity 0.25s ease;
+}
+
+.transitioning .thumb {
+  opacity: 0.85;
+  transition-duration: 0.7s;
+}
+
+/* The outgoing song's fill at the hand-off. Highlighted like the active thumb, it fades out over
+   the next song's segment, which is bright underneath and so is what stays behind; the segment
+   flashes, stays highlighted (glow included) for a while on the new song, then settles to its
+   resting 0.4. One duration for all three, so the ghost's end clears the state only once the
+   thumb has settled. */
+.ghost {
+  position: absolute;
+  inset: 0;
+  background-color: white;
+  transform-origin: left center;
+  animation: slider-leave-ghost 3.2s forwards;
+}
+
+.leaving .thumb {
+  animation: slider-leave-thumb 3.2s forwards;
+}
+
+.leaving .inner-wrapper {
+  animation: slider-leave-glow 3.2s forwards;
+}
+
+@keyframes slider-leave-ghost {
+  0% {
+    opacity: 0.85;
+    animation-timing-function: ease;
+  }
+
+  22%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes slider-leave-thumb {
+  0%,
+  22% {
+    opacity: 0.85;
+    animation-timing-function: ease-out;
+  }
+
+  28% {
+    opacity: 1;
+    animation-timing-function: ease-in-out;
+  }
+
+  38%,
+  65% {
+    opacity: 0.85;
+    animation-timing-function: ease-in-out;
+  }
+
+  100% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes slider-leave-glow {
+  0%,
+  65% {
+    filter: drop-shadow(0 0 6px rgb(255 255 255 / 55%));
+    animation-timing-function: ease-in-out;
+  }
+
+  100% {
+    filter: drop-shadow(0 0 6px rgb(255 255 255 / 0%));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .leaving .thumb {
+    animation: none;
+  }
 }
 
 .bouncing-slider > :deep(.n-icon) {

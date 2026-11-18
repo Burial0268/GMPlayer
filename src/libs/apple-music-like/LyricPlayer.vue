@@ -1,6 +1,6 @@
 <template>
   <div
-    class="lyric-player-wrapper"
+    :class="['lyric-player-wrapper', { 'outgoing-hidden': music.autoMixHidesLyrics }]"
     :style="lyricStyles"
     ref="playerEl"
     @wheel.self="passToPlayer"
@@ -474,6 +474,13 @@ watch(
 .lyric-player-wrapper {
   width: 100%;
   height: 100%;
+  transition: opacity 0.4s ease;
+
+  /* An AutoMix mix: the outgoing song's lines leave, the layout stays. */
+  &.outgoing-hidden {
+    opacity: 0;
+  }
+
   touch-action: pan-y;
   container-type: size;
   overflow: hidden;

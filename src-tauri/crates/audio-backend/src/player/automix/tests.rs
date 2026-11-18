@@ -196,3 +196,32 @@ fn the_arc_never_stretches_past_the_configured_duration() {
     assert_eq!(plan.arc, EmotionalArc::Drift);
     assert!(plan.duration <= AutoMixConfig::default().crossfade_duration);
 }
+
+#[test]
+fn the_outro_starts_at_the_last_outro_section_then_the_classifier_then_the_energy() {
+    use super::prepare::outro_start_of;
+    // Sections first: the outgoing fixture's outro section starts at 180 s.
+    assert_eq!(outro_start_of(&outgoing()), 180.0);
+    // No sections: the energy drop, 8 s before the 200 s end.
+    let mut plain = track(Vec::new());
+    assert_eq!(outro_start_of(&plain), 192.0);
+    // The classifier's distinct outro section outranks the energy.
+    plain.outro = Some(automix_analysis::OutroAnalysis {
+        outro_type: "musicalOutro".into(),
+        outro_confidence: 0.7,
+        musical_end_offset: 0.0,
+        suggested_crossfade_start: 190.0,
+        multiband_energy: automix_analysis::MultibandEnergy {
+            low: Vec::new(),
+            mid: Vec::new(),
+            high: Vec::new(),
+        },
+        spectral_flux: Vec::new(),
+        short_term_loudness: Vec::new(),
+        deceleration_start: None,
+        sustain_onset: None,
+        outro_section_start: Some(170.0),
+        loop_period: None,
+    });
+    assert_eq!(outro_start_of(&plain), 170.0);
+}

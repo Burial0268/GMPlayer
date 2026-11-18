@@ -35,8 +35,10 @@
             :layout-id="sharedLayoutIds.title"
             :transition="sharedContentTransition"
           >
-            <span class="name text-hidden">
-              {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+            <span class="name">
+              <OverflowMarquee :speed="36">
+                {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+              </OverflowMarquee>
             </span>
           </Motion>
           <Motion
@@ -46,13 +48,18 @@
             :layout-id="sharedLayoutIds.artists"
             :transition="sharedContentTransition"
           >
-            <span class="artists text-hidden">
-              <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
-                <span v-button class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{
-                  ar.name
-                }}</span>
-                <span v-if="index < music.getPlaySongData.artist.length - 1"> / </span>
-              </span>
+            <span class="artists">
+              <OverflowMarquee>
+                <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
+                  <span
+                    v-button
+                    class="artist-name"
+                    @click="routerJump('/artist', { id: ar.id })"
+                    >{{ ar.name }}</span
+                  >
+                  <span v-if="index < music.getPlaySongData.artist.length - 1">&nbsp;/&nbsp;</span>
+                </span>
+              </OverflowMarquee>
             </span>
           </Motion>
         </div>
@@ -91,11 +98,12 @@
             :max="music.getPlaySongTime.duration || 1"
             :is-playing="music.getPlayState"
             :buffered="music.bufferedTime"
+            :transition-phase="autoMixBarPhase"
             @update:value="handleProgressSeek"
           />
         </div>
         <div class="time-info">
-          <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
+          <span class="time-text">{{ elapsedLabel }}</span>
           <span class="time-text">{{ remainingTime }}</span>
         </div>
       </div>
@@ -120,12 +128,18 @@
           :component="ThumbDownRound"
           @click="music.setFmDislike(music.getPersonalFmData.id)"
         />
-        <n-icon
+        <!-- Same as the mini player: a spinner while a track loads; pause stays clickable while
+             it only rebuffers. -->
+        <div
           class="button-icon"
-          :class="{ loading: music.getLoadingState }"
-          :component="music.getPlayState ? IconPause : IconPlay"
-          @click.stop="!music.getLoadingState && music.setPlayState(!music.getPlayState)"
-        />
+          :class="{ loading: loadBlocksPlay }"
+          @click.stop="!loadBlocksPlay && music.setPlayState(!music.getPlayState)"
+        >
+          <Transition name="fade" mode="out-in">
+            <n-spin v-if="music.getLoadingState" :size="26" stroke="currentColor" />
+            <n-icon v-else :component="music.getPlayState ? IconPause : IconPlay" />
+          </Transition>
+        </div>
         <n-icon
           class="button-icon skip-icon"
           :component="IconForward"
@@ -174,6 +188,11 @@ import IconRewind from "./icons/IconRewind.vue";
 import IconPlay from "./icons/IconPlay.vue";
 import IconPause from "./icons/IconPause.vue";
 import { musicStore, settingStore, userStore } from "@/store";
+import {
+  useAutoMixBarPhase,
+  useAutoMixElapsed,
+  useAutoMixTransition,
+} from "@/composables/useAutoMixTransition";
 import { coverUrl } from "@/utils/coverUrl";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
@@ -189,6 +208,9 @@ import { getDesktopPlayerSharedLayoutIds } from "./desktopSharedLayout";
 const navigation = useLayerNavigation();
 defineEmits(["openComments"]);
 const music = musicStore();
+const autoMixBarPhase = useAutoMixBarPhase();
+const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
+const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 const user = userStore();
 const setting = settingStore();
 const { persistData } = storeToRefs(music);
@@ -262,6 +284,10 @@ const handleMoreSelect = (key) => {
   else if (key === "desktopLyrics") toggleDesktopLyrics();
   else if (key === "taskbarLyrics") openTaskbarLyrics();
 };
+
+const loadBlocksPlay = computed(
+  () => music.getLoadingState && music.getLoadingStage !== "rebuffering",
+);
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {
@@ -466,6 +492,8 @@ const routerJump = (url, query) => {
       color: var(--main-cover-mix-color, rgb(239, 239, 239));
       .text {
         display: flex;
+        flex: 1 1 auto;
+        min-width: 0;
         flex-direction: column;
         gap: 0.25rem;
         mix-blend-mode: plus-lighter;
@@ -582,7 +610,6 @@ const routerJump = (url, query) => {
           }
         }
         &.loading {
-          opacity: 0.35;
           pointer-events: none;
         }
         &.active {

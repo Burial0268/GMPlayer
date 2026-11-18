@@ -160,7 +160,14 @@ const adoptSessionControls = (controls: SessionControls): void => {
   let modeChanged = false;
   adopting = true;
   try {
-    if (controls.playMode && ["normal", "random", "single"].includes(controls.playMode)) {
+    // A fresh backend publishes its default mode with any like-state change, possibly before our
+    // own push lands. Adopting that `normal` restored natural order and dropped the shuffle,
+    // and the `random` that followed waited for a permutation the backend never sent.
+    if (
+      controls.playModeKnown !== false &&
+      controls.playMode &&
+      ["normal", "random", "single"].includes(controls.playMode)
+    ) {
       // `setPlaySongMode` is the interactive path: it toasts and re-publishes the
       // controls, neither of which is right for a value the backend has *already*
       // applied to its own planner. `adoptPlaySongMode` is the quiet half. It does

@@ -39,8 +39,6 @@ export interface AutoMixConfig {
   bpmMatch: boolean;
   beatAlign: boolean;
   volumeNorm: boolean;
-  smartCurve: boolean;
-  transitionStyle: "linear" | "equalPower" | "sCurve";
   transitionEffects: boolean;
   vocalGuard: boolean;
   emotionalTransition: boolean;

@@ -1,5 +1,5 @@
 import { defineStore, acceptHMRUpdate, storeToRefs } from "pinia";
-import { nextTick, h } from "vue";
+import { nextTick, h, toRaw } from "vue";
 import { getSongTime, getDailySongsDate } from "@/utils/timeTools";
 import { getPersonalFm, setFmTrash } from "@/api/home";
 import { getLikelist, setLikeSong } from "@/api/user";
@@ -117,6 +117,15 @@ interface AutoMixStateData {
   crossfadeProgress: number;
   incomingSongName: string | null;
   incomingSongId: number | null;
+  // The incoming audio is buffered and the cue can start the mix. Native says so itself; the web
+  // path loads its incoming sound before it schedules anything.
+  incomingReady: boolean;
+  // Where the transition state starts, in the outgoing song's seconds: its outro, bounded by the
+  // crossfade. 0 while nothing is scheduled.
+  leadInStart: number;
+  // The incoming song is audible in the mix: the outgoing song's lyric, hidden rather than emptied
+  // so the player keeps its lyric layout. Read it through `autoMixHidesLyrics`.
+  hiddenLyric: object | null;
 }
 
 interface MusicDataState {
@@ -208,6 +217,9 @@ const useMusicDataStore = defineStore("musicData", {
         crossfadeProgress: -1,
         incomingSongName: null,
         incomingSongId: null,
+        incomingReady: false,
+        leadInStart: 0,
+        hiddenLyric: null,
       },
       playSongTime: playSongTime as unknown as PlaySongTime,
       persistData: persistedStore.persistData,
@@ -261,6 +273,11 @@ const useMusicDataStore = defineStore("musicData", {
     },
     getPlaySongTime(state): PlaySongTime {
       return state.playSongTime;
+    },
+    /** An AutoMix hides the lyrics on screen: those of the song it is mixing out of. */
+    autoMixHidesLyrics(state): boolean {
+      const hidden = state.autoMixState.hiddenLyric;
+      return hidden !== null && toRaw(hidden) === toRaw(state.songLyric);
     },
     getPlayState(state): boolean {
       return state.playState;
@@ -1070,10 +1087,14 @@ const useMusicDataStore = defineStore("musicData", {
       // 网易 id，照常提示歌词/详情，切过去就是 0 请求。
       if (this.persistData.playSongMode === "single") return;
 
-      const AHEAD = 2;
+      const n = playlist.length;
+      // The next song, the one in-app "previous" goes back to, then the one after next — last,
+      // since a hint that finds no permit is dropped and that one is hinted again as the next.
+      const indices = new Set([1, -1, 2].map((step) => (currentIndex + step + n) % n));
+      indices.delete(currentIndex);
       const ids: Array<number | string> = [];
-      for (let i = 1; i <= AHEAD; i++) {
-        const song = playlist[(currentIndex + i) % playlist.length];
+      for (const index of indices) {
+        const song = playlist[index];
         // 本地曲目没有网易 id，提示它等于让协议层去查一首不存在的歌。
         if (song?.local?.uri) continue;
         if (song?.id !== undefined) ids.push(song.id);

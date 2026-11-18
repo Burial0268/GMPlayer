@@ -47,24 +47,11 @@ class LyricFetcher {
     song?: LyricSongInfo,
   ): Promise<{ result: ParsedLyricResult; stale: boolean }> {
     const generation = ++this._generation;
-    const settingStore = useSettingDataStore();
-    const useTTMLRepo = settingStore.useTTMLRepo;
-    // 自动模式跟随界面语言，所以界面语言也算偏好的一部分
-    const translationPref = `${settingStore.lyricTranslationLanguage}|${settingStore.language}`;
+    const { useTTMLRepo, translationPref } = this._prefs();
 
     // 1. Cache hit (setting must match)
-    const cached = this._cache.get(id);
-    if (
-      cached &&
-      cached.useTTMLRepo === useTTMLRepo &&
-      (cached.translationPref === translationPref || cached.result.translationLanguages.length < 2)
-    ) {
-      // LRU touch: delete + re-insert to move to end
-      this._cache.delete(id);
-      this._cache.set(id, cached);
-      this._releaseDerived(id);
-      return { result: cached.result, stale: generation !== this._generation };
-    }
+    const cached = this.peek(id);
+    if (cached) return { result: cached, stale: generation !== this._generation };
 
     // 2. In-flight dedup: if the same id is already being fetched, reuse its promise
     const pending = this._pending.get(id);
@@ -75,12 +62,65 @@ class LyricFetcher {
     }
 
     // 3. Network fetch + parse
+    const result = await this._fetchIntoCache(id, useTTMLRepo, translationPref, song);
+    this._releaseDerived(id);
+    return { result, stale: generation !== this._generation };
+  }
+
+  /**
+   * The cached lyrics for `id` under the current settings, made the live track's, or null.
+   * Synchronous, so a caller switching tracks can show them in the same frame.
+   */
+  peek(id: number): ParsedLyricResult | null {
+    const cached = this._cache.get(id);
+    if (!cached || !this._matches(cached, this._prefs())) return null;
+    // LRU touch: delete + re-insert to move to end
+    this._cache.delete(id);
+    this._cache.set(id, cached);
+    this._releaseDerived(id);
+    return cached.result;
+  }
+
+  /**
+   * Warm the cache for a song about to play. Unlike `fetchLyric` it does not bump the
+   * generation — that would mark the live track's own in-flight fetch stale — and a failure
+   * only means the real fetch tries again.
+   */
+  prefetch(id: number, song?: LyricSongInfo): void {
+    const prefs = this._prefs();
+    const cached = this._cache.get(id);
+    if (this._pending.has(id) || (cached && this._matches(cached, prefs))) return;
+    this._fetchIntoCache(id, prefs.useTTMLRepo, prefs.translationPref, song).catch(() => {});
+  }
+
+  /** The translation preference only matters for a song that has more than one translation. */
+  private _matches(entry: CacheEntry, prefs: ReturnType<LyricFetcher["_prefs"]>): boolean {
+    return (
+      entry.useTTMLRepo === prefs.useTTMLRepo &&
+      (entry.translationPref === prefs.translationPref ||
+        entry.result.translationLanguages.length < 2)
+    );
+  }
+
+  private _prefs() {
+    const settingStore = useSettingDataStore();
+    return {
+      useTTMLRepo: settingStore.useTTMLRepo,
+      // 自动模式跟随界面语言，所以界面语言也算偏好的一部分
+      translationPref: `${settingStore.lyricTranslationLanguage}|${settingStore.language}`,
+    };
+  }
+
+  private async _fetchIntoCache(
+    id: number,
+    useTTMLRepo: boolean,
+    translationPref: string,
+    song?: LyricSongInfo,
+  ): Promise<ParsedLyricResult> {
     const promise = this._doFetch(id, useTTMLRepo, song);
     this._pending.set(id, promise);
-
     try {
       const result = await promise;
-
       // Cache the result (evict oldest if over limit)
       if (this._cache.size >= MAX_CACHE_SIZE) {
         const oldest = this._cache.keys().next().value;
@@ -89,9 +129,7 @@ class LyricFetcher {
         }
       }
       this._cache.set(id, { result, useTTMLRepo, translationPref });
-      this._releaseDerived(id);
-
-      return { result, stale: generation !== this._generation };
+      return result;
     } finally {
       this._pending.delete(id);
     }

@@ -204,20 +204,42 @@ accounting approach from [SPlayer-Next PR #429](https://github.com/SPlayer-Dev/S
 revision `ae4d3255de854ed36e8eeaa447d03f0aa0589cd2`. The reference is AGPL-3.0;
 Signalsmith Stretch's Rust wrapper is an MIT dependency.
 
-`../automix-analysis/src/beats.rs` measures spectral-flux onset peaks in the first and last
-40 seconds. It fits observed stable runs of at least eight pulses and three
-seconds, requires 90% of the pulses to fit, and never extrapolates the grid beyond
-its measured interval. The existing global BPM result remains available to the
+`../automix-analysis/src/beats.rs` measures spectral flux in the first and last
+40 seconds, takes the tempo from its autocorrelation (weighted towards 120 BPM)
+and the phase from a comb over the onset envelope, then picks the metrical level
+by on/off-phase contrast: a beat's "and" carries only hats (3-7x weaker), a
+half-bar's carries the snare (~1.6x). Predicted beats are matched to nearby
+onsets; a run may bridge two misses, needs eight hits over three seconds, and is
+refit by least squares. An earlier fit required consecutive equal peak-to-peak
+intervals, which one hat or ghost note broke — on a synthetic kick/snare/hat
+groove it found no grid at all at 122 BPM. The grid still never extrapolates
+beyond its measured interval. The existing global BPM result remains available to the
 legacy structure planner; the new pair planner uses the local periods and phases
 instead. Four-pulse grouping is a conservative phrase-length heuristic, not a
 claim that a downbeat model has identified the meter.
 
-`player/automix/beat_plan.rs` tests half/double-time folds and permits at most
-±4% stretch of the outgoing A track. B starts at its original beginning and
-remains at its original speed. A cue is chosen so the observed pulse phases
-meet; the complete overlap must fit both stable runs and the configured duration
-budget. Missing evidence, an unsafe tempo ratio or insufficient preparation lead
-retains ordinary crossfade. Pair fitting runs before the legacy end clamp so a
+`player/automix/beat_plan.rs` plans the pair in bars, following
+[HyPlayer-Nextgen's AutoMix planner](https://github.com/Gaimoydev/HyPlayer-Nextgen/tree/develop/HyPlayer/Services/Playback/AutoMix)
+(GPL-3.0; the ideas are re-derived, no code is copied). Half/double-time folds
+are tried; within ±4% the outgoing A is stretched and the pair **beat-mixes**:
+16, 8, 4, 3 or 2 bars (at most 40 s, no longer capped by the crossfade setting),
+A leaving on the latest bar start that fits, preferably a four-bar phrase from
+its outro. B enters on its first downbeat — or, when its first line is far off,
+on the bar one overlap before it — so the decoder opens B there and its clock
+starts from that position. B rises to full by the handoff while A holds full,
+then A releases; the low band swaps at the handoff. The handoff is 0.5 unless
+A's last vocal line runs later (up to 0.9), always on a bar line. A bar count
+whose overlap would put both singers together for more than a second is
+skipped. Outside the stretch range (or with BPM matching off) the pair
+**filter-cuts** at native speed: A is high-passed from 300 Hz to 18 kHz, holds
+until 70%, and B enters halfway. Both styles hold the decks near full volume,
+so the mixer limits the sum (-0.26 dB, 120 ms release) until the limiter has
+released. An unsynced fade whose A still sings inside it holds A until the last
+line with B at 0.6 underneath. The bar comes from `BeatRegion::downbeat`, the
+pulse phase whose low band hits hardest; a kick on 1 and 3 alike leaves it
+unknown, and every pulse may then anchor. B is still not stretched, and its
+tempo is not ramped back after the overlap (HyPlayer stretches B instead).
+Pair fitting runs before the legacy end clamp so a
 slightly earlier real pulse can recover an otherwise shortened overlap.
 
 The Signalsmith processor is constructed on a prepare thread and applied in the

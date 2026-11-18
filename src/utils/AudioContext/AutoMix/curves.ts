@@ -227,3 +227,40 @@ export function bassSwapValueAt(progress: number, startValue: number, endValue: 
   if (progress > 0.6) return endValue;
   return startValue + ((progress - 0.4) / 0.2) * (endValue - startValue);
 }
+
+/** Share of an overlap's vocal windows that makes a side "singing" / "clear". */
+const VOCAL_BUSY = 0.5;
+const VOCAL_CLEAR = 0.25;
+
+/**
+ * Auto-curve exponent scales `[inScale, outScale]` from what overlaps: two
+ * vocals hand over quickly, a singer arriving clears the old song first, a
+ * quiet opening comes in early and a loud one is held back.
+ * Mirrors `pair_shape_scale` in `audio-backend/src/player/automix/plan.rs`;
+ * keep the thresholds in step.
+ */
+export function pairShapeScale(
+  vocalOut: number | null,
+  vocalIn: number | null,
+  energyOut: number | null,
+  energyIn: number | null,
+): [number, number] {
+  let inScale = 1;
+  let outScale = 1;
+  if (vocalOut !== null && vocalIn !== null) {
+    if (vocalOut >= VOCAL_BUSY && vocalIn >= VOCAL_BUSY) {
+      inScale *= 1.2;
+      outScale *= 1.2;
+    } else if (vocalIn >= VOCAL_BUSY && vocalOut < VOCAL_CLEAR) {
+      outScale *= 1.2;
+    } else if (vocalOut >= VOCAL_BUSY && vocalIn < VOCAL_CLEAR) {
+      inScale *= 0.85;
+    }
+  }
+  if (energyOut !== null && energyIn !== null) {
+    const ratio = energyIn / Math.max(energyOut, 1e-3);
+    if (ratio < 0.5) inScale *= 0.85;
+    else if (ratio > 2) inScale *= 1.15;
+  }
+  return [inScale, outScale];
+}

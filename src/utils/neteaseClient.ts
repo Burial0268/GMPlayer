@@ -137,3 +137,25 @@ export const buildNeteaseDesktopCookie = (rawCookie: string | null | undefined):
 
   return stringifyCookie({ ...fallback, ...cookie });
 };
+
+/**
+ * The Android client, for the listen report. Every value is read off the one Android UA upstream
+ * ships (`util/request.js` `userAgentMap.api.android`), so the UA, app version, version code, OS
+ * version and model all describe the same client; upstream's own `osMap.android` defaults
+ * (app 8.20.20, Android 14) contradict that UA. deviceId is left to the protocol layer, which
+ * fills in this install's persisted one.
+ */
+export const NETEASE_ANDROID_USER_AGENT =
+  "NeteaseMusic/9.5.61.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android 12; HBN-AL00 Build/cd737a2.0)";
+
+const ANDROID_IDENTITY: Record<string, string> = {
+  os: "android",
+  appver: "9.5.61.260802021928",
+  versioncode: "9005061",
+  osver: "12",
+  mobilename: "HBN-AL00",
+};
+
+/** The session cookie, claiming the Android client over whatever identity it carried. */
+export const buildNeteaseAndroidCookie = (rawCookie: string | null | undefined): string =>
+  stringifyCookie({ ...parseCookie(rawCookie), ...ANDROID_IDENTITY });

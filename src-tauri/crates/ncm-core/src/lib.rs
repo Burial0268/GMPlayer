@@ -203,6 +203,9 @@ impl NcmCore {
         let cold = match store.lock() {
             Ok(s) => {
                 s.get("xeapi_public_key").is_none()
+                    // The anonymous token is bound to the deviceId it was registered under,
+                    // and installs from before the id was kept have neither.
+                    || s.get("device_id").is_none()
                     || s.get(StateStore::BOOTSTRAP_VERSION).as_deref() != Some(protocol_build().as_str())
             }
             Err(_) => true,
@@ -791,6 +794,189 @@ mod tests {
             })
             .await
             .expect("eval failed")
+    }
+
+    /// Every Cookie header a stubbed transport saw for an eapi call and a scrobble.
+    async fn cookies_sent(core: &NcmCore) -> Vec<String> {
+        eval(
+            core,
+            r#"(()=>{
+              globalThis.__cookies = [];
+              globalThis.__ncm_host.httpRequest = (cfg) => {
+                globalThis.__cookies.push(String(cfg.headers.Cookie || ""));
+                return Promise.resolve({ status: 200, headers: {}, body: Buffer.from('{"code":200}') });
+              };
+              return "ok";
+            })()"#,
+        )
+        .await;
+        // An eapi call (what login is) and the NCBL scrobble, which reads the cookie raw.
+        let _ = core.call("login_qr_key", r#"{"cookie":"MUSIC_U=x"}"#).await;
+        let _ = core
+            .call(
+                "scrobble_v1",
+                r#"{"id":"1","time":30,"cookie":"MUSIC_U=x; __csrf=y"}"#,
+            )
+            .await;
+        serde_json::from_str(&eval(core, "JSON.stringify(globalThis.__cookies)").await).unwrap()
+    }
+
+    fn cookie_field(cookie: &str, key: &str) -> String {
+        cookie
+            .split("; ")
+            .find_map(|kv| kv.strip_prefix(key)?.strip_prefix('='))
+            .unwrap_or("<missing>")
+            .to_string()
+    }
+
+    /// Upstream keeps the deviceId only in memory, minted by a handshake that runs once per
+    /// bundle, so every later launch sent `deviceId=undefined` — at login too, which left the
+    /// session off the account's device list — and the scrobble an empty one.
+    #[tokio::test]
+    async fn every_call_carries_one_device_id_that_survives_a_restart() {
+        let dir = std::env::temp_dir().join(format!("ncm-device-id-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let first = cookies_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
+        let again = cookies_sent(&NcmCore::build(Some(dir.clone()), false).await.unwrap()).await;
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(first.len(), 2, "{first:?}");
+        let ids: Vec<String> = first.iter().map(|c| cookie_field(c, "deviceId")).collect();
+        let id = &ids[0];
+        assert!(
+            id.len() == 52 && id.chars().all(|c| c.is_ascii_hexdigit()),
+            "not a minted deviceId: {id:?}"
+        );
+        assert!(ids.iter().all(|sent| sent == id), "{ids:?}");
+
+        // The NCBL scrobble's clientSign: `MAC@@@HEX(id)@@@@@@sha256`, upstream's shape.
+        let sign = cookie_field(&first[1], "clientSign");
+        let (info, hash) = sign.split_once("@@@@@@").expect("no clientSign");
+        let (mac, _) = info.split_once("@@@").expect("malformed clientSign");
+        assert_eq!(mac.len(), 17, "not a MAC: {mac:?}");
+        assert_eq!(hash.len(), 64, "not a sha256: {hash:?}");
+
+        for key in ["deviceId", "clientSign"] {
+            assert_eq!(
+                cookie_field(&again[1], key),
+                cookie_field(&first[1], key),
+                "a restart must keep {key}"
+            );
+        }
+    }
+
+    /// The desktop client compresses the NCBL body with zstd and the header has no codec flag,
+    /// so the gzip fallback `util/ncbl.js` takes without `zstdCompressSync` was stored by the
+    /// endpoint and never counted.
+    #[tokio::test]
+    async fn the_ncbl_body_is_compressed_with_zstd() {
+        let core = NcmCore::offline().await.expect("isolate");
+        eval(
+            &core,
+            r#"(()=>{
+              const h = globalThis.__ncm_host;
+              globalThis.__codecs = [];
+              for (const name of ["zstd", "gzip"]) {
+                const op = h[name];
+                h[name] = (bytes) => (globalThis.__codecs.push(name), op(bytes));
+              }
+              h.httpRequest = (cfg) => {
+                const name = /filename="([^"]+)"/.exec(Buffer.from(cfg.body.subarray(0, 400)).toString("latin1"));
+                const body = JSON.stringify({ code: 200, data: { successfiles: [name ? name[1] : ""] } });
+                return Promise.resolve({ status: 200, headers: {}, body: Buffer.from(body) });
+              };
+              return "ok";
+            })()"#,
+        )
+        .await;
+        let out = core
+            .call(
+                "scrobble_v1",
+                r#"{"id":"347230","time":30,"total":268,"cookie":"MUSIC_U=x"}"#,
+            )
+            .await
+            .expect("call failed");
+        assert!(out.contains(r#""code":200"#), "scrobble_v1 failed: {out}");
+        assert_eq!(
+            eval(&core, "JSON.stringify(globalThis.__codecs)").await,
+            r#"["zstd","zstd"]"#,
+            "PLV and PLD bodies"
+        );
+        // A real zstd frame, not a passthrough.
+        assert_eq!(
+            eval(
+                &core,
+                r#"Array.from(globalThis.__ncm_host.zstd(Buffer.from("x".repeat(64))).subarray(0, 4)).join(",")"#
+            )
+            .await,
+            "40,181,47,253"
+        );
+    }
+
+    /// Android's listen report (`songScrobbleAndroid`) is the generic `weblog` module steered by
+    /// its query. Nothing in it is checked by Netease's answer, which is 200 either way, so what
+    /// goes out is pinned here: clientlog's eapi path, the Android UA and identity, this install's
+    /// deviceId, and no desktop clientSign.
+    #[tokio::test]
+    async fn the_android_listen_report_goes_out_as_the_android_client() {
+        let core = NcmCore::offline().await.expect("isolate");
+        eval(
+            &core,
+            r#"(()=>{
+              globalThis.__sent = [];
+              globalThis.__ncm_host.httpRequest = (cfg) => {
+                const h = cfg.headers;
+                globalThis.__sent.push({ url: cfg.url, ua: h["User-Agent"] || h["user-agent"], cookie: h.Cookie || h.cookie });
+                return Promise.resolve({ status: 200, headers: {}, body: Buffer.from('{"code":200,"data":"success"}') });
+              };
+              return "ok";
+            })()"#,
+        )
+        .await;
+        let ua = "NeteaseMusic/9.5.61.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android 12; HBN-AL00 Build/cd737a2.0)";
+        let query = serde_json::json!({
+            "crypto": "eapi",
+            "domain": "https://clientlog.music.163.com",
+            "cookie": "MUSIC_U=x; os=android; appver=9.5.61.260802021928; versioncode=9005061; osver=12; mobilename=HBN-AL00",
+            "ua": ua,
+            "data": { "logs": r#"[{"action":"play","json":{"id":1,"type":"song","time":200,"end":"playend"}}]"# },
+        });
+        let out = core
+            .call("weblog", &query.to_string())
+            .await
+            .expect("call failed");
+        assert!(out.contains(r#""code":200"#), "{out}");
+
+        let sent: serde_json::Value =
+            serde_json::from_str(&eval(&core, "JSON.stringify(globalThis.__sent)").await).unwrap();
+        let [request] = sent.as_array().expect("array").as_slice() else {
+            panic!("expected one request: {sent}");
+        };
+        assert_eq!(
+            request["url"],
+            "https://clientlog.music.163.com/eapi/feedback/weblog"
+        );
+        assert_eq!(request["ua"], ua);
+        let cookie = request["cookie"].as_str().expect("no cookie");
+        for field in [
+            "os=android",
+            "appver=9.5.61.260802021928",
+            "versioncode=9005061",
+            "osver=12",
+            "mobilename=HBN-AL00",
+        ] {
+            assert!(
+                cookie.split("; ").any(|kv| kv == field),
+                "{field} missing: {cookie}"
+            );
+        }
+        let device_id = eval(&core, "globalThis.deviceId").await;
+        assert_eq!(cookie_field(cookie, "deviceId"), device_id);
+        assert!(
+            !cookie.contains("clientSign"),
+            "desktop clientSign leaked: {cookie}"
+        );
     }
 
     /// The form encoding produced by the `URLSearchParams` shim goes on the

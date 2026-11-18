@@ -15,9 +15,8 @@
  *
  * 哪些 store 被托管由 store 自己的 `tauri` 选项决定（见 settingData /
  * siteData / userData）。默认 `save: false, sync: false`，所以没有显式开启的
- * store（musicData、musicPersistedData、listenTogether）只走 localStorage。
- * musicPersistedData 尤其要留在原地：它装着整条播放列表，有自己的节流落盘
- * 方案，而且 musicData 的 `state()` 会同步读它推导 playingSongId。
+ * store（musicData、listenTogether）只走 localStorage。musicPersistedData
+ * 不在这里：它装着整条播放列表，自己落在 IndexedDB 并在启动时预载，见那里。
  */
 import type { Pinia } from "pinia";
 import type { TauriStoreContract } from "@tauri-store/pinia";

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { buildSync } from "esbuild";
+import { createSpectrumEaser } from "../src/utils/AudioContext/analysis/spectrumEasing";
 
 const bundled = buildSync({
   entryPoints: ["src/utils/tauri/audio/uiDelay.ts"],
@@ -222,4 +223,25 @@ test("lyrics already revealed for the playing song are not hidden by later loadi
     /loading:\s*music\.isLoadingSong && revealedSongId\.value !== songId\.value/,
   );
   assert.match(rolling, /if \(!music\.isLoadingSong\) revealedSongId\.value = songId\.value/);
+});
+
+test("spectrum easing moves from the shown bars to each new frame over the measured gap", () => {
+  const easer = createSpectrumEaser();
+  // The first frame is shown as-is.
+  assert.deepEqual(Array.from(easer.frame([0, 10], 0)), [0, 10]);
+  // A new frame 32 ms later starts from what is on screen, not from the new values.
+  const next = [20, 10];
+  assert.deepEqual(Array.from(easer.frame(next, 32)), [0, 10]);
+  assert.equal(easer.easing(40), true);
+  // Half-way through the measured gap (~33 ms), half-way there; at its end, exactly there.
+  const mid = Array.from(easer.frame(next, 32 + 16.5));
+  assert.ok(mid[0] > 8 && mid[0] < 12, `expected about 10, got ${mid[0]}`);
+  assert.deepEqual(Array.from(easer.frame(next, 32 + 40)), [20, 10]);
+  assert.equal(easer.easing(32 + 40), false);
+  // An array filled in place keeps its identity and is drawn live, not eased.
+  next[0] = 5;
+  assert.deepEqual(Array.from(easer.frame(next, 80)), [5, 10]);
+  // An empty frame (pause, track change) clears; the next real frame is shown as-is.
+  assert.equal(easer.frame([], 90).length, 0);
+  assert.deepEqual(Array.from(easer.frame([7, 7], 100)), [7, 7]);
 });

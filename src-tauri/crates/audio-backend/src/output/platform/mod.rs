@@ -12,7 +12,7 @@ mod other;
 mod windows;
 
 #[cfg(target_os = "android")]
-pub(super) use android::{stable_buffer_size, DEFAULT_QUEUE_BLOCKS};
+pub(super) use android::{is_media_output, stable_buffer_size, DEFAULT_QUEUE_BLOCKS};
 #[cfg(not(any(target_os = "android", target_os = "linux")))]
 pub(super) use desktop::{stable_buffer_size, DEFAULT_QUEUE_BLOCKS};
 #[cfg(target_os = "linux")]
@@ -28,6 +28,12 @@ pub(super) use other::default_output_id;
 pub(super) use windows::{
     apartment_note, default_output_device, default_output_id, ensure_audio_apartment,
 };
+
+/// Every output a desktop host lists is a place music can go.
+#[cfg(not(target_os = "android"))]
+pub(super) fn is_media_output(_description: &cpal::DeviceDescription) -> bool {
+    true
+}
 
 /// COM apartments are a Windows-only concern — see
 /// `windows::ensure_audio_apartment` for what depends on it there. Every other

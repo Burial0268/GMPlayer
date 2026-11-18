@@ -180,6 +180,13 @@ internal object MediaSessionController {
      */
     private var downloadingArtworkUrl: String? = null
 
+    /** The next track's cover, downloaded ahead of its `updateState`. */
+    private var prefetchArtworkUrl: String? = null
+    private var prefetchedArtwork: Pair<String, Bitmap>? = null
+
+    /** URLs with a download running, so a track change adopts its prefetch. */
+    private val artworkInFlight = HashSet<String>()
+
     // ── Identifiers derived from the host app ───────────────────────────
 
     private val channelId: String
@@ -291,7 +298,14 @@ internal object MediaSessionController {
             } else if (url != cachedArtworkUrl) {
                 cachedArtworkUrl = url
                 downloadingArtworkUrl = url
-                downloadArtwork(url)
+                val ready = prefetchedArtwork
+                if (ready?.first == url) {
+                    prefetchedArtwork = null
+                    downloadingArtworkUrl = null
+                    cachedArtwork = ready.second
+                } else if (url !in artworkInFlight) {
+                    downloadArtwork(url)
+                }
             }
         }
 
@@ -369,6 +383,8 @@ internal object MediaSessionController {
         cachedArtwork = null
         cachedArtworkUrl = null
         downloadingArtworkUrl = null
+        prefetchArtworkUrl = null
+        prefetchedArtwork = null
 
         contextOrNull()?.let { PlaybackService.release(it) }
     }
@@ -731,7 +747,19 @@ internal object MediaSessionController {
 
     // ── Artwork download (native HTTP, no CORS) ─────────────────────────
 
+    /**
+     * Download the next track's cover now, so its `updateState` finds it ready.
+     * Only the newest request is kept; a failure is dropped silently and the
+     * track change downloads it again as before.
+     */
+    fun prefetchArtwork(url: String) {
+        if (url.isEmpty() || url == cachedArtworkUrl || prefetchedArtwork?.first == url) return
+        prefetchArtworkUrl = url
+        if (url !in artworkInFlight) downloadArtwork(url)
+    }
+
     private fun downloadArtwork(url: String) {
+        artworkInFlight.add(url)
         Thread {
             val bitmap = try {
                 fetchBitmap(url)
@@ -739,13 +767,20 @@ internal object MediaSessionController {
                 Log.w(TAG, "artwork: failed for $url: ${e.message}")
                 null
             }
-            if (bitmap == null) {
-                applyFallbackArtwork(url)
-                return@Thread
-            }
             mainHandler.post {
-                // Apply only if this is still the most recently requested URL.
-                if (downloadingArtworkUrl != url) return@post
+                artworkInFlight.remove(url)
+                // Not the URL on screen: keep it only if it is the newest
+                // prefetch — a track skipped past is not wanted again.
+                if (downloadingArtworkUrl != url) {
+                    if (bitmap != null && url == prefetchArtworkUrl) {
+                        prefetchedArtwork = url to bitmap
+                    }
+                    return@post
+                }
+                if (bitmap == null) {
+                    applyFallbackArtwork(url)
+                    return@post
+                }
                 downloadingArtworkUrl = null
                 // The previous bitmap is *not* recycled. It is still referenced
                 // by the notification already posted and by the metadata the

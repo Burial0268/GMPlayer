@@ -1,9 +1,10 @@
 // `node:zlib` over Rust host ops. Only the synchronous entry points the
 // protocol layer calls.
 //
-// `zstdCompressSync` is deliberately absent: `util/ncbl.js` feature-detects it
-// with `typeof zlib.zstdCompressSync === 'function'` and falls back to gzip,
-// so leaving it undefined selects the fallback rather than breaking.
+// `zstdCompressSync` is what `util/ncbl.js` feature-detects for the NCBL
+// scrobble body. Without it that falls back to gzip, which the upload endpoint
+// accepts and never counts: the header has no codec flag, and the desktop client
+// it imitates writes zstd.
 
 import { Buffer } from "./buffer.js";
 
@@ -16,5 +17,6 @@ export const gunzipSync = (data) => Buffer.from(host.gunzip(asBytes(data)));
 export const gzipSync = (data) => Buffer.from(host.gzip(asBytes(data)));
 export const inflateSync = (data) => Buffer.from(host.inflate(asBytes(data)));
 export const deflateSync = (data) => Buffer.from(host.deflate(asBytes(data)));
+export const zstdCompressSync = (data) => Buffer.from(host.zstd(asBytes(data)));
 
-export default { gunzipSync, gzipSync, inflateSync, deflateSync };
+export default { gunzipSync, gzipSync, inflateSync, deflateSync, zstdCompressSync };

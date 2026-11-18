@@ -69,7 +69,7 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         })).await.unwrap();
         player.process_message(message(AudioThreadMessage::AutomixConfigure {
             config: AutoMixConfig {
-                enabled: true, crossfade_duration: 4.0, smart_curve: false,
+                enabled: true, crossfade_duration: 4.0,
                 emotional_transition: false, volume_norm: false, transition_effects: false,
                 vocal_guard: false, ..AutoMixConfig::default()
             },
@@ -85,6 +85,7 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         let deadline = Instant::now() + Duration::from_secs(45);
         eprintln!("armed status: {:?}, position={}", player.automix.status(0), player.clock_position());
         let mut started = false;
+        let mut incoming_ready = false;
         let mut track_epochs: Vec<u64> = Vec::new();
         let mut last_change_requested = true;
         let mut completed = false;
@@ -114,7 +115,9 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
             }
             while let Ok(event) = event_rx.try_recv() {
                 match event.data {
+                    Some(AudioThreadEvent::AutomixIncomingReady { .. }) => incoming_ready = true,
                     Some(AudioThreadEvent::AutomixCrossfadeStarted { duration, .. }) => {
+                        assert!(incoming_ready, "readiness is announced before the mix starts");
                         started = true;
                         fade_duration = duration;
                         let anchor = player.output.writer().render_clock().anchor().unwrap();
@@ -178,4 +181,17 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         player.process_message(message(AudioThreadMessage::JumpToSong { song_index: 0 })).await.unwrap();
         assert_eq!(player.current_local_path.as_deref(), Some(Path::new(a.file_path().unwrap())), "previous must reopen A rather than reusing B's decoded source");
     });
+}
+
+#[test]
+fn a_full_deck_queue_counts_as_a_preloaded_incoming_deck() {
+    // 0.25 s exceeded the whole Windows/macOS queue, so readiness never came on there.
+    for (rate, channels) in [(44_100, 2), (48_000, 2), (96_000, 2), (48_000, 1)] {
+        let full = super::super::mixer::deck_queue_full_samples(channels);
+        assert!(
+            min_incoming_samples(rate, channels) <= full,
+            "{rate} Hz × {channels}"
+        );
+        assert!(min_incoming_samples(rate, channels) > 0);
+    }
 }

@@ -119,7 +119,7 @@
           </div>
         </n-space>
       </div>
-      <div class="list-toolbar">
+      <div ref="listToolbarRef" :class="['list-toolbar', { filtering: !!normalizedKeyword }]">
         <n-input
           class="list-search"
           :class="{ 'has-value': !!searchKeyword }"
@@ -215,6 +215,7 @@ import {
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
+import { alignListUnderToolbar } from "@/utils/listFilterScroll";
 
 const { t } = useI18n();
 const navigation = useLayerNavigation();
@@ -656,6 +657,7 @@ const hydrationDone = computed(
 // 250 ms 的连续长任务。所以补齐在块之间让位（见 `hydrateUntil`），并且这里只在
 // 用户停下手时才启动——每敲一个键都驱动一次，会让上面那串解析和输入抢同一条线程。
 const searchKeyword = ref("");
+const listToolbarRef = ref<HTMLElement | null>(null);
 const normalizedKeyword = computed(() => searchKeyword.value.trim());
 const isSearching = computed(() => !!normalizedKeyword.value);
 
@@ -734,7 +736,7 @@ let searchHydrateTimer: ReturnType<typeof setTimeout> | null = null;
 watch(normalizedKeyword, (keyword, prev) => {
   // 换了关键词就回到列表顶部。过滤后的结果是一份全新的、按相关度重排的列表，停在
   // 原来的滚动位置没有任何意义——用户要看的第一条在最上面。
-  if (keyword !== prev && typeof $scrollToTop !== "undefined") $scrollToTop();
+  if (keyword !== prev) alignListUnderToolbar(listToolbarRef.value);
   if (searchHydrateTimer) clearTimeout(searchHydrateTimer);
   // 补齐已经跑完就不必再驱动一遍：这个 watch 每敲一个键都会响，而 `hydrateUntil`
   // 在补齐完成后每次都要重新跑一遍循环条件才退出。
@@ -1576,6 +1578,11 @@ watch(
       > * {
         pointer-events: auto;
       }
+    }
+
+    // 筛选结果比视口短时，浏览器会把滚动位置夹回去，工具栏随之跳离钉住的位置。
+    .list-toolbar.filtering + .datalists {
+      min-height: calc(100dvh - var(--content-sticky-top, 0px));
     }
 
     // 药丸形悬浮控件。常态收窄，聚焦或有内容时展开——列表页大部分时间不在搜索，

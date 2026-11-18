@@ -6,9 +6,9 @@ use std::time::Duration;
 use parking_lot::{Mutex, RwLock};
 
 use crate::decoder::PlaybackSink;
-use crate::effects::DspChain;
+use crate::effects::{BiquadCoeffs, BiquadState, DspChain, LimiterRuntime};
 use crate::output::{stream_samples_per_sec, OutputWriter, ProducerWait, PushCancel};
-use crate::types::{CrossfadeCurve, DspConfig};
+use crate::types::{CrossfadeCurve, DspConfig, LimiterConfig};
 
 #[cfg(any(target_os = "android", target_os = "linux"))]
 // Match the deeper Android/Linux output queue so decode jitter does not
@@ -18,8 +18,25 @@ const DECK_QUEUE_BLOCKS: usize = 48;
 #[cfg(not(any(target_os = "android", target_os = "linux")))]
 const DECK_QUEUE_BLOCKS: usize = 8;
 const DECK_RECYCLE_QUEUE_BLOCKS: usize = DECK_QUEUE_BLOCKS + 4;
+
+/// Samples a deck's queue reliably holds once full: one block short of capacity, since the last
+/// block of a run can be partial. Decoder and mix blocks are both `MIX_BLOCK_FRAMES`.
+pub(super) fn deck_queue_full_samples(channels: u16) -> usize {
+    (DECK_QUEUE_BLOCKS - 1) * MIX_BLOCK_FRAMES * channels as usize
+}
 const MIX_BLOCK_FRAMES: usize = 512;
 const CROSSFADE_RAMP_FRAMES: usize = 64;
+/// Bass swap: a low shelf deep enough to take a kick and bassline out of the mix.
+const BASS_SWAP_HZ: f32 = 180.0;
+const BASS_SWAP_KILL_DB: f32 = -24.0;
+/// Layouts wider than this skip deck filtering rather than allocate filter state.
+const BASS_SWAP_MAX_CHANNELS: usize = 8;
+/// FilterCut: the outgoing high-pass climbs 300 Hz -> 18 kHz across the fade.
+const FILTER_CUT_FROM_HZ: f32 = 300.0;
+const FILTER_CUT_SPAN: f32 = 60.0;
+/// Both decks near full volume can clip; held just under full scale, 120 ms release.
+const OVERLAP_LIMIT_DB: f32 = -0.26;
+const OVERLAP_LIMIT_RELEASE_MS: f32 = 120.0;
 // Both decks paused means no deadline at all: the worker has nothing to render
 // until a control message arrives, so it blocks on the control channel instead
 // of polling. `DeckWriter::set_paused` pokes that channel, so resuming is
@@ -118,6 +135,26 @@ pub struct DeckWriter {
     flush_epoch: Arc<AtomicU64>,
     queued_samples: Arc<AtomicUsize>,
     recycle_rx: Arc<Mutex<mpsc::Receiver<Vec<f32>>>>,
+    stale: Arc<StaleBlocks>,
+}
+
+/// What the mixer discarded from a deck as stale (generation or flush epoch it no longer accepts).
+/// Written only on a discard, read when an AutoMix cue finds the deck empty with audio queued.
+#[derive(Default)]
+pub(super) struct StaleBlocks {
+    count: AtomicU64,
+    /// (generation << 32) | flush_epoch of the last block discarded…
+    block: AtomicU64,
+    /// …and of what the deck accepted at that moment.
+    accepted: AtomicU64,
+}
+
+fn pack_epochs(generation: u64, flush_epoch: u64) -> u64 {
+    (generation << 32) | (flush_epoch & 0xffff_ffff)
+}
+
+fn unpack_epochs(packed: u64) -> (u64, u64) {
+    (packed >> 32, packed & 0xffff_ffff)
 }
 
 struct DeckBlock {
@@ -137,6 +174,45 @@ pub struct CrossfadeParams {
     pub in_shape: f32,
     /// Exponent on the outgoing curve: above 1 clears the outgoing sooner.
     pub out_shape: f32,
+    /// Hand the low band from outgoing to incoming over this progress window.
+    pub bass_swap: Option<BassSwap>,
+    pub style: FadeStyle,
+}
+
+/// How the two decks share the fade. Every style but `Blend` keeps both decks
+/// near full volume somewhere in the overlap, so the mixer limits the sum.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FadeStyle {
+    /// Constant-power `curve` with `in_shape`/`out_shape`.
+    Blend,
+    /// A holds until `handoff` then releases; B is at 0.6 by it (A still singing).
+    Handoff(f32),
+    /// Beat-synced: B is full by `handoff`, A holds until it, then releases.
+    BeatMix(f32),
+    /// Tempos too far apart to sync: A is high-passed away, B enters halfway.
+    FilterCut,
+}
+
+impl FadeStyle {
+    fn limits(self) -> bool {
+        self != Self::Blend
+    }
+}
+
+/// Progress window (0..1 of the fade) over which the low band changes hands.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BassSwap {
+    pub start: f32,
+    pub end: f32,
+}
+
+impl BassSwap {
+    /// Shelf gains (outgoing, incoming) in dB at `progress`.
+    fn shelf_db(self, progress: f32) -> (f32, f32) {
+        let x = ((progress - self.start) / (self.end - self.start).max(1e-6)).clamp(0.0, 1.0);
+        let s = x * x * (3.0 - 2.0 * x);
+        (BASS_SWAP_KILL_DB * s, BASS_SWAP_KILL_DB * (1.0 - s))
+    }
 }
 
 impl Default for CrossfadeParams {
@@ -148,6 +224,8 @@ impl Default for CrossfadeParams {
             overlap_headroom_db: -0.8,
             in_shape: 1.0,
             out_shape: 1.0,
+            bass_swap: None,
+            style: FadeStyle::Blend,
         }
     }
 }
@@ -268,6 +346,20 @@ impl PlaybackSink for DeckWriter {
 }
 
 impl DeckWriter {
+    /// Discarded-block count, the last discarded block's (generation, flush epoch), what the deck
+    /// accepted then, and this writer's current pair.
+    pub(super) fn stale_blocks(&self) -> (u64, (u64, u64), (u64, u64), (u64, u64)) {
+        (
+            self.stale.count.load(Ordering::Relaxed),
+            unpack_epochs(self.stale.block.load(Ordering::Relaxed)),
+            unpack_epochs(self.stale.accepted.load(Ordering::Relaxed)),
+            (
+                self.generation.load(Ordering::Acquire),
+                self.flush_epoch.load(Ordering::Acquire),
+            ),
+        )
+    }
+
     /// This deck's own queue, excluding what the shared output already holds.
     pub(super) fn deck_queued_samples(&self) -> usize {
         self.queued_samples.load(Ordering::Acquire)
@@ -325,6 +417,8 @@ impl DeckMixer {
         let secondary_flush_epoch = Arc::new(AtomicU64::new(0));
         let primary_queued = Arc::new(AtomicUsize::new(0));
         let secondary_queued = Arc::new(AtomicUsize::new(0));
+        let primary_stale = Arc::new(StaleBlocks::default());
+        let secondary_stale = Arc::new(StaleBlocks::default());
         let control_epoch = Arc::new(AtomicU64::new(0));
         let worker: WorkerHandle = Arc::new(OnceLock::new());
         let samples_per_sec = stream_samples_per_sec(output_sample_rate, output_channels);
@@ -342,6 +436,7 @@ impl DeckMixer {
             flush_epoch: Arc::clone(&primary_flush_epoch),
             queued_samples: Arc::clone(&primary_queued),
             recycle_rx: Arc::new(Mutex::new(primary_recycle_rx)),
+            stale: Arc::clone(&primary_stale),
         };
 
         let secondary = DeckWriter {
@@ -357,6 +452,7 @@ impl DeckMixer {
             flush_epoch: Arc::clone(&secondary_flush_epoch),
             queued_samples: Arc::clone(&secondary_queued),
             recycle_rx: Arc::new(Mutex::new(secondary_recycle_rx)),
+            stale: Arc::clone(&secondary_stale),
         };
 
         let mixer_stop = Arc::clone(&stop_flag);
@@ -378,22 +474,29 @@ impl DeckMixer {
                 let mut dsp = DspChain::new(output_sample_rate, output_channels);
                 dsp.set_dsp(&dsp_config);
                 let mut worker = MixerWorker {
+                    overlap_limiter: None,
                     output,
                     output_channels: output_channels.max(1) as usize,
-                    primary: DeckRuntime::new(
-                        primary_rx,
-                        primary_queued,
-                        primary_paused,
-                        primary_recycle_tx,
-                        1.0,
-                    ),
-                    secondary: DeckRuntime::new(
-                        secondary_rx,
-                        secondary_queued,
-                        secondary_paused,
-                        secondary_recycle_tx,
-                        0.0,
-                    ),
+                    primary: DeckRuntime {
+                        stale: primary_stale,
+                        ..DeckRuntime::new(
+                            primary_rx,
+                            primary_queued,
+                            primary_paused,
+                            primary_recycle_tx,
+                            1.0,
+                        )
+                    },
+                    secondary: DeckRuntime {
+                        stale: secondary_stale,
+                        ..DeckRuntime::new(
+                            secondary_rx,
+                            secondary_queued,
+                            secondary_paused,
+                            secondary_recycle_tx,
+                            0.0,
+                        )
+                    },
                     crossfade: None,
                     scheduled: None,
                     transition: 0,
@@ -573,6 +676,7 @@ struct DeckRuntime {
     recycle_tx: mpsc::SyncSender<Vec<f32>>,
     gain: f32,
     position: Option<crate::output::PcmPosition>,
+    stale: Arc<StaleBlocks>,
 }
 
 impl DeckRuntime {
@@ -594,6 +698,7 @@ impl DeckRuntime {
             recycle_tx,
             gain,
             position: None,
+            stale: Arc::default(),
         }
     }
 
@@ -605,6 +710,11 @@ impl DeckRuntime {
         self.accepted_generation = generation;
         self.accepted_flush_epoch = flush_epoch;
         self.queued_samples.store(0, Ordering::Release);
+        // Drain what was queued before the clear now, keeping the first block of the new
+        // generation if one is already there. A deck that is mixed drops these within a block
+        // anyway, but AutoMix's incoming deck is not read until its cue, and a full queue of
+        // stale blocks would hold its new decoder off until the cue found nothing to play.
+        self.current_samples();
     }
 
     fn current_samples(&mut self) -> &[f32] {
@@ -615,6 +725,15 @@ impl DeckRuntime {
             if block.generation != self.accepted_generation
                 || block.flush_epoch != self.accepted_flush_epoch
             {
+                self.stale.count.fetch_add(1, Ordering::Relaxed);
+                self.stale.block.store(
+                    pack_epochs(block.generation, block.flush_epoch),
+                    Ordering::Relaxed,
+                );
+                self.stale.accepted.store(
+                    pack_epochs(self.accepted_generation, self.accepted_flush_epoch),
+                    Ordering::Relaxed,
+                );
                 recycle_deck_buffer(&self.recycle_tx, block.samples);
                 continue;
             }
@@ -744,6 +863,8 @@ struct CrossfadeRuntime {
     duration_samples: usize,
     elapsed_samples: usize,
     params: CrossfadeParams,
+    /// Deck filter state, `[primary, secondary][channel]`; unused without a filter.
+    filters: [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
 }
 
 #[derive(Clone, Copy)]
@@ -756,6 +877,8 @@ struct CrossfadeBlockRamp {
     incoming_step: f32,
     outgoing_final: f32,
     incoming_final: f32,
+    /// Deck filter coefficients for this segment, `[primary, secondary]`.
+    filters: Option<[BiquadCoeffs; 2]>,
 }
 
 impl CrossfadeBlockRamp {
@@ -795,6 +918,8 @@ struct MixerWorker {
     /// would free an allocation the output callback recycled for us and force
     /// the next iteration to allocate again.
     spare_block: Option<Vec<f32>>,
+    /// Limits an overlap that holds both decks up; kept until it has released.
+    overlap_limiter: Option<LimiterRuntime>,
     /// Windowed underrun telemetry; see `note_underrun`.
     underruns_in_window: u32,
     underrun_window_start: Option<std::time::Instant>,
@@ -1014,19 +1139,46 @@ impl MixerWorker {
             let segment_frames = (block_frames - mixed_frames).min(CROSSFADE_RAMP_FRAMES);
             let crossfade_ramp = self.crossfade_block_ramp(segment_frames);
 
-            let (primary, secondary) = mix_segment(
-                &mut self.primary,
-                &mut self.secondary,
-                block,
-                channels,
-                segment_frames,
-                (primary_paused, secondary_paused),
-                crossfade_ramp,
-            );
+            let paused = (primary_paused, secondary_paused);
+            let filters = crossfade_ramp
+                .and_then(|ramp| ramp.filters)
+                .zip(self.crossfade.as_mut());
+            let segment_start = block.len();
+            let (primary, secondary) = match filters {
+                Some((coeffs, fade)) => mix_segment(
+                    &mut self.primary,
+                    &mut self.secondary,
+                    block,
+                    channels,
+                    segment_frames,
+                    paused,
+                    crossfade_ramp,
+                    &mut BiquadFilters {
+                        state: &mut fade.filters,
+                        coeffs,
+                    },
+                ),
+                None => mix_segment(
+                    &mut self.primary,
+                    &mut self.secondary,
+                    block,
+                    channels,
+                    segment_frames,
+                    paused,
+                    crossfade_ramp,
+                    &mut NoFilter,
+                ),
+            };
             has_audio |= primary > 0 || secondary > 0;
             consumed_primary += primary;
             consumed_secondary += secondary;
 
+            if let Some(limiter) = self.overlap_limiter.as_mut() {
+                limiter.process_interleaved(&mut block[segment_start..], channels);
+                if self.crossfade.is_none() && limiter.gain >= 0.9999 {
+                    self.overlap_limiter = None;
+                }
+            }
             if crossfade_ramp.is_some() {
                 self.commit_crossfade_block(segment_frames);
             }
@@ -1101,7 +1253,17 @@ impl MixerWorker {
             duration_samples: schedule.duration_samples.max(1),
             elapsed_samples: 0,
             params: schedule.params,
+            filters: Default::default(),
         });
+        if schedule.params.style.limits() && self.overlap_limiter.is_none() {
+            let config = LimiterConfig {
+                enabled: true,
+                threshold_db: OVERLAP_LIMIT_DB,
+                ceiling_db: OVERLAP_LIMIT_DB,
+                release_ms: OVERLAP_LIMIT_RELEASE_MS,
+            };
+            self.overlap_limiter = Some(LimiterRuntime::new(config, self.sample_rate as f32));
+        }
     }
 
     fn record_timeline(
@@ -1272,8 +1434,7 @@ impl MixerWorker {
         let active_frames = remaining_samples.div_ceil(step).min(frames.max(1));
         let start_progress =
             (fade.elapsed_samples as f32 / fade.duration_samples as f32).clamp(0.0, 1.0);
-        let (outgoing_start, incoming_start) =
-            balanced_crossfade_gains(start_progress, fade.params);
+        let (outgoing_start, incoming_start) = fade_gains(start_progress, fade.params);
         let completes = remaining_samples <= active_frames.saturating_mul(step);
         let (outgoing_end, incoming_end) = if completes {
             (0.0, fade.params.incoming_gain)
@@ -1282,7 +1443,7 @@ impl MixerWorker {
                 .elapsed_samples
                 .saturating_add((active_frames.saturating_sub(1)).saturating_mul(step));
             let end_progress = (end_elapsed as f32 / fade.duration_samples as f32).clamp(0.0, 1.0);
-            balanced_crossfade_gains(end_progress, fade.params)
+            fade_gains(end_progress, fade.params)
         };
         let ramp_steps = active_frames.saturating_sub(1) as f32;
         let (outgoing_step, incoming_step) = if ramp_steps > 0.0 {
@@ -1311,6 +1472,33 @@ impl MixerWorker {
             incoming_step,
             outgoing_final: 0.0,
             incoming_final: fade.params.incoming_gain,
+            filters: self.deck_filters(fade, start_progress),
+        })
+    }
+
+    /// Coefficients for this segment: FilterCut's sweep on the outgoing deck,
+    /// else the bass swap's shelves, else none.
+    fn deck_filters(&self, fade: &CrossfadeRuntime, progress: f32) -> Option<[BiquadCoeffs; 2]> {
+        if self.output_channels > BASS_SWAP_MAX_CHANNELS {
+            return None;
+        }
+        let rate = self.sample_rate as f32;
+        let (out, inc) = if fade.params.style == FadeStyle::FilterCut {
+            let hz = (FILTER_CUT_FROM_HZ * FILTER_CUT_SPAN.powf(progress)).clamp(10.0, rate * 0.45);
+            (
+                BiquadCoeffs::high_pass(rate, hz, 0.707),
+                BiquadCoeffs::IDENTITY,
+            )
+        } else {
+            let (out_db, in_db) = fade.params.bass_swap?.shelf_db(progress);
+            (
+                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db),
+                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db),
+            )
+        };
+        Some(match fade.outgoing {
+            DeckId::Primary => [out, inc],
+            DeckId::Secondary => [inc, out],
         })
     }
 
@@ -1349,7 +1537,8 @@ impl MixerWorker {
 
 // Queue and pause checks belong at contiguous PCM boundaries, not at every
 // sample. A missing deck contributes silence until the next run/64-frame segment.
-fn mix_segment(
+#[allow(clippy::too_many_arguments)]
+fn mix_segment<L: DeckFilter>(
     primary: &mut DeckRuntime,
     secondary: &mut DeckRuntime,
     block: &mut Vec<f32>,
@@ -1357,6 +1546,7 @@ fn mix_segment(
     frames: usize,
     paused: (bool, bool),
     ramp: Option<CrossfadeBlockRamp>,
+    filter: &mut L,
 ) -> (usize, usize) {
     let gains = (primary.gain, secondary.gain);
     let start = block.len();
@@ -1390,15 +1580,36 @@ fn mix_segment(
         let output = &mut dst[written..written + run];
         let frame_offset = written / channels;
         match available {
-            (true, true) => {
-                mix_pcm_run::<true, true>(p, s, output, channels, frame_offset, gains, ramp)
-            }
-            (true, false) => {
-                mix_pcm_run::<true, false>(p, s, output, channels, frame_offset, gains, ramp)
-            }
-            (false, true) => {
-                mix_pcm_run::<false, true>(p, s, output, channels, frame_offset, gains, ramp)
-            }
+            (true, true) => mix_pcm_run::<true, true, L>(
+                p,
+                s,
+                output,
+                channels,
+                frame_offset,
+                gains,
+                ramp,
+                filter,
+            ),
+            (true, false) => mix_pcm_run::<true, false, L>(
+                p,
+                s,
+                output,
+                channels,
+                frame_offset,
+                gains,
+                ramp,
+                filter,
+            ),
+            (false, true) => mix_pcm_run::<false, true, L>(
+                p,
+                s,
+                output,
+                channels,
+                frame_offset,
+                gains,
+                ramp,
+                filter,
+            ),
             (false, false) => break,
         }
         if available.0 {
@@ -1414,8 +1625,36 @@ fn mix_segment(
     consumed
 }
 
+/// A per-deck filter ahead of the gain: a no-op outside a swap or sweep, so the
+/// ordinary mix monomorphises to exactly what it was.
+trait DeckFilter {
+    fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32;
+}
+
+struct NoFilter;
+
+impl DeckFilter for NoFilter {
+    #[inline(always)]
+    fn apply(&mut self, _: usize, _: usize, sample: f32) -> f32 {
+        sample
+    }
+}
+
+struct BiquadFilters<'a> {
+    state: &'a mut [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
+    coeffs: [BiquadCoeffs; 2],
+}
+
+impl DeckFilter for BiquadFilters<'_> {
+    #[inline(always)]
+    fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32 {
+        self.state[deck][channel].process(self.coeffs[deck], sample)
+    }
+}
+
 #[inline]
-fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
+#[allow(clippy::too_many_arguments)]
+fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool, L: DeckFilter>(
     primary: &[f32],
     secondary: &[f32],
     output: &mut [f32],
@@ -1423,6 +1662,7 @@ fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
     frame_offset: usize,
     gains: (f32, f32),
     ramp: Option<CrossfadeBlockRamp>,
+    filter: &mut L,
 ) {
     for (frame_index, frame) in output.chunks_exact_mut(channels).enumerate() {
         let (primary_gain, secondary_gain) = match ramp {
@@ -1438,12 +1678,12 @@ fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool>(
         let start = frame_index * channels;
         for (channel, sample) in frame.iter_mut().enumerate() {
             let p = if PRIMARY {
-                primary[start + channel]
+                filter.apply(0, channel, primary[start + channel])
             } else {
                 0.0
             };
             let s = if SECONDARY {
-                secondary[start + channel]
+                filter.apply(1, channel, secondary[start + channel])
             } else {
                 0.0
             };
@@ -1488,6 +1728,56 @@ fn starved_retry_backoff(retry_count: &mut u32) {
         .saturating_mul(1u64 << shift)
         .min(MIXER_STARVED_MAX_PARK_US);
     thread::park_timeout(Duration::from_micros(park_us));
+}
+
+/// Deck gains at `progress` for the fade's style; `Blend` is the balanced curve.
+fn fade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
+    use std::f32::consts::{FRAC_PI_2, PI};
+    let t = progress.clamp(0.0, 1.0);
+    let release = |handoff: f32| {
+        let handoff = handoff.clamp(0.05, 0.95);
+        (handoff, ((t - handoff) / (1.0 - handoff)).max(0.0))
+    };
+    let (out_vol, in_vol) = match params.style {
+        FadeStyle::Blend => return balanced_crossfade_gains(progress, params),
+        FadeStyle::Handoff(handoff) => {
+            let (h, r) = release(handoff);
+            let rise = if t < h {
+                0.6 * (t / h * FRAC_PI_2).sin()
+            } else {
+                0.6 + 0.4 * (r * FRAC_PI_2).sin()
+            };
+            ((r * FRAC_PI_2).cos(), rise)
+        }
+        FadeStyle::BeatMix(handoff) => {
+            let (h, r) = release(handoff);
+            let rise = if t < h {
+                (t / h * FRAC_PI_2).sin()
+            } else {
+                1.0
+            };
+            ((r * FRAC_PI_2).cos(), rise)
+        }
+        FadeStyle::FilterCut => (
+            if t < 0.7 {
+                1.0
+            } else {
+                ((t - 0.7) / 0.3 * FRAC_PI_2).cos()
+            },
+            if t < 0.5 {
+                0.0
+            } else {
+                ((t - 0.5) / 0.5 * FRAC_PI_2).sin()
+            },
+        ),
+    };
+    let headroom = 10f32.powf(params.overlap_headroom_db * (t * PI).sin() / 20.0);
+    let outgoing = params.outgoing_gain.clamp(0.0, 2.0);
+    let incoming = params.incoming_gain.clamp(0.0, 2.0);
+    (
+        out_vol.max(0.0) * outgoing * headroom,
+        in_vol.max(0.0) * incoming * headroom,
+    )
 }
 
 fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
@@ -1615,6 +1905,41 @@ mod tests {
     }
 
     #[test]
+    fn clearing_a_deck_nobody_reads_makes_room_for_its_next_decoder() {
+        // AutoMix's incoming deck is not read until its cue. A preload that filled it and was
+        // then cancelled left its blocks queued; the next preload's decoder found the queue full
+        // and waited until the cue drained it, leaving nothing to play there.
+        let (tx, rx) = mpsc::sync_channel(4);
+        let (recycle_tx, _recycle_rx) = mpsc::sync_channel(16);
+        let block = |generation| DeckBlock {
+            samples: vec![0.5, 0.5],
+            generation,
+            flush_epoch: generation,
+            position: None,
+        };
+        for _ in 0..4 {
+            tx.send(block(0)).unwrap();
+        }
+        let mut deck = DeckRuntime::new(
+            rx,
+            Arc::new(AtomicUsize::new(0)),
+            Arc::new(AtomicBool::new(false)),
+            recycle_tx,
+            0.0,
+        );
+
+        deck.clear(1, 1);
+
+        for _ in 0..4 {
+            assert!(
+                tx.try_send(block(1)).is_ok(),
+                "stale blocks still fill the queue"
+            );
+        }
+        assert_eq!(deck.current_samples(), &[0.5, 0.5]);
+    }
+
+    #[test]
     fn fill_scaled_skips_stale_generation_blocks() {
         let (tx, rx) = mpsc::sync_channel(16);
         let (recycle_tx, _recycle_rx) = mpsc::sync_channel(16);
@@ -1681,6 +2006,7 @@ mod tests {
                 incoming_step: (in_end - in_start) / denominator,
                 outgoing_final: 0.0,
                 incoming_final: params.incoming_gain,
+                filters: None,
             };
 
             for frame in 0..CROSSFADE_RAMP_FRAMES {
@@ -1691,6 +2017,84 @@ mod tests {
                 assert!((exact.1 - interpolated.1).abs() < 0.001);
             }
         }
+    }
+
+    #[test]
+    fn every_fade_style_ends_where_completion_leaves_the_decks() {
+        let near =
+            |a: (f32, f32), b: (f32, f32)| (a.0 - b.0).abs() < 1e-5 && (a.1 - b.1).abs() < 1e-5;
+        for style in [
+            FadeStyle::Blend,
+            FadeStyle::Handoff(0.6),
+            FadeStyle::BeatMix(0.5),
+            FadeStyle::FilterCut,
+        ] {
+            let params = CrossfadeParams {
+                style,
+                incoming_gain: 0.9,
+                outgoing_gain: 0.8,
+                ..Default::default()
+            };
+            assert!(near(fade_gains(0.0, params), (0.8, 0.0)), "{style:?} start");
+            assert!(near(fade_gains(1.0, params), (0.0, 0.9)), "{style:?} end");
+        }
+        let flat = CrossfadeParams {
+            overlap_headroom_db: 0.0,
+            ..Default::default()
+        };
+        let beat_mix = CrossfadeParams {
+            style: FadeStyle::BeatMix(0.5),
+            ..flat
+        };
+        assert!(
+            near(fade_gains(0.5, beat_mix), (1.0, 1.0)),
+            "both decks full at the handoff"
+        );
+        let cut = CrossfadeParams {
+            style: FadeStyle::FilterCut,
+            ..flat
+        };
+        assert!(
+            near(fade_gains(0.49, cut), (1.0, 0.0)),
+            "B waits for the middle"
+        );
+        assert_eq!(fade_gains(0.69, cut).0, 1.0, "A holds until 70%");
+    }
+
+    #[test]
+    fn a_bass_swap_hands_the_low_band_over_and_leaves_the_highs() {
+        let swap = BassSwap {
+            start: 0.4,
+            end: 0.6,
+        };
+        assert_eq!(swap.shelf_db(0.0), (0.0, BASS_SWAP_KILL_DB));
+        assert_eq!(swap.shelf_db(1.0), (BASS_SWAP_KILL_DB, 0.0));
+        // Steady-state level of a tone through the outgoing deck's shelf.
+        let level = |hz: f32, progress: f32| {
+            let rate = 48_000.0;
+            let coeffs =
+                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, swap.shelf_db(progress).0);
+            let mut state = [[BiquadState::default(); BASS_SWAP_MAX_CHANNELS]; 2];
+            let mut band = BiquadFilters {
+                state: &mut state,
+                coeffs: [coeffs, coeffs],
+            };
+            let mut peak = 0.0f32;
+            for i in 0..48_000 {
+                let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
+                let y = band.apply(0, 0, x);
+                if i > 24_000 {
+                    peak = peak.max(y.abs());
+                }
+            }
+            20.0 * peak.log10()
+        };
+        assert!(
+            level(50.0, 0.0).abs() < 0.1,
+            "before the swap the bass is untouched"
+        );
+        assert!(level(50.0, 1.0) < -18.0, "after it the kick band is gone");
+        assert!(level(4_000.0, 1.0).abs() < 0.5, "the highs never move");
     }
 
     #[test]

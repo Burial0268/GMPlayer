@@ -42,7 +42,7 @@
       "assetProtocol": {
         "enable": true,
         "scope": [
-          "$APPCACHE/local-covers/*"
+          "$APPDATA/local-covers/*"
         ]
       }
     }

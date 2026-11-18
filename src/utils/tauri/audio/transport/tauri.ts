@@ -61,7 +61,7 @@ class TauriInvokeAudioIpc implements AudioBackendTransport {
   }
 
   private _dispatchOrCoalesce(event: AudioThreadEvent, seq?: number): void {
-    if (event.type === "fftData") {
+    if (event.type === "fftData" || event.type === "analysisFrame") {
       this._pendingFft = { event, seq };
       this._scheduleVisualDispatch();
       return;
@@ -162,7 +162,7 @@ class TauriChannelAudioIpc implements AudioBackendTransport {
   }
 
   private _dispatchOrCoalesce(event: AudioThreadEvent, seq?: number): void {
-    if (event.type === "fftData") {
+    if (event.type === "fftData" || event.type === "analysisFrame") {
       this._pendingFft = { event, seq };
       this._scheduleVisualDispatch();
       return;

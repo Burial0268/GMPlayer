@@ -43,9 +43,26 @@ function environment(deferResolution = false) {
       commits.push(index);
       this.persistData.playSongIndex = index;
     },
-    resetSongLyricState() {},
-  };
+    songLyric: { lrc: [{ time: 0, content: "A" }] } as unknown,
+    resetSongLyricState() {
+      shownLyrics.push(null);
+      this.songLyric = { lrc: [] };
+    },
+    setPlaySongLyric(lyric: unknown) {
+      shownLyrics.push(lyric);
+      this.songLyric = lyric;
+    },
+  } as any;
+  const prefetched: number[] = [];
+  const cachedLyrics = new Map<number, unknown>();
+  const shownLyrics: unknown[] = [];
   const imports: Record<string, unknown> = {
+    "../../lyricFetcher": {
+      lyricFetcher: {
+        prefetch: (id: number) => prefetched.push(id),
+        peek: (id: number) => cachedLyrics.get(id) ?? null,
+      },
+    },
     "../sound/SoundManager": { SoundManager: { getCurrentSound: () => sound } },
     "../sound/types": { isBackendSound: (s: any) => s?.kind === "backend" },
     "../PlayerFunctions": { syncNativeAutoMixCurrentSound: async () => {} },
@@ -124,6 +141,14 @@ function environment(deferResolution = false) {
     sent,
     commits,
     transitionId,
+    prefetched,
+    cachedLyrics,
+    shownLyrics,
+    /** Mirrors the store's `autoMixHidesLyrics`. */
+    hidesLyrics() {
+      const hidden = music.autoMixState?.hiddenLyric ?? null;
+      return hidden !== null && hidden === music.songLyric;
+    },
     resolveNext() {
       resolutions.shift()?.({ url: "https://example.test/next.mp3", source: "test" });
     },
@@ -158,6 +183,100 @@ test("a native crossfade survives a long pause and accepts the backend's eventua
   env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
   assert.deepEqual(env.commits, [1]);
   assert.equal(env.state.getState(), "finishing");
+});
+
+test("the native lead-in waits for the backend to report the incoming deck buffered", () => {
+  const env = environment();
+  env.state._updateStoreState();
+  assert.equal(env.music.autoMixState.incomingReady, false);
+  env.event("automixIncomingReady", { transitionId: env.transitionId + 1 });
+  assert.equal(env.music.autoMixState.incomingReady, false, "another transition's deck");
+  env.event("automixIncomingReady", { transitionId: env.transitionId });
+  assert.equal(env.music.autoMixState.incomingReady, true);
+  env.event("automixError", { error: "AutoMix incoming audio missed its scheduled beat" });
+  assert.equal(env.state.getState(), "idle");
+  assert.equal(env.music.autoMixState.incomingReady, true, "idle: no transition left to wait on");
+  assert.equal(env.state._nativeIncomingReady, false);
+});
+
+test("the incoming lyrics are prefetched with the plan and shown at the commit", () => {
+  const env = environment();
+  assert.deepEqual(env.prefetched, [2]);
+  const lyric = { lrc: [{ time: 0, content: "B" }] };
+  env.cachedLyrics.set(2, lyric);
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.equal(env.hidesLyrics(), true, "the outgoing lyrics leave once B is audible");
+  assert.deepEqual(env.shownLyrics, [], "hidden, not emptied: the layout keeps its lyrics");
+  env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
+  assert.deepEqual(env.commits, [1]);
+  assert.deepEqual(env.shownLyrics, [lyric]);
+  assert.equal(env.hidesLyrics(), false);
+});
+
+test("lyrics not cached at the commit keep the outgoing ones hidden until the player sets B's", () => {
+  const env = environment();
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  env.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: env.transitionId });
+  assert.deepEqual(env.commits, [1]);
+  assert.deepEqual(env.shownLyrics, [], "not emptied: the lyric layout holds");
+  assert.equal(env.hidesLyrics(), true);
+  env.state.cancelCrossfade();
+  assert.equal(env.hidesLyrics(), true, "a cleared transition must not bring A's back under B");
+  const lyric = { lrc: [{ time: 0, content: "B" }] };
+  env.music.setPlaySongLyric(lyric);
+  assert.equal(env.hidesLyrics(), false, "B's lyrics show as soon as they are set");
+});
+
+test("a transition called off after B entered shows the outgoing lyrics again", () => {
+  const env = environment();
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.equal(env.hidesLyrics(), true);
+  env.event("automixError", { error: "AutoMix incoming audio missed its scheduled beat" });
+  assert.equal(env.state.getState(), "idle");
+  assert.equal(env.hidesLyrics(), false);
+  assert.deepEqual(env.shownLyrics, [], "they never left the store");
+});
+
+test("a seek interrupts an uncommitted transition but not a committed one", () => {
+  const env = environment();
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  env.state.interruptForSeek();
+  assert.equal(env.state.getState(), "idle");
+  assert.ok(env.sent.some((msg: any) => msg.type === "automixCancel"));
+
+  const committed = environment();
+  committed.event("automixCrossfadeStarted", { duration: 8, transitionId: committed.transitionId });
+  committed.event("automixCrossfadeComplete", {
+    currentIndex: 1,
+    transitionId: committed.transitionId,
+  });
+  committed.state.interruptForSeek();
+  assert.equal(committed.state.getState(), "finishing", "the seek belongs to the new song");
+  assert.ok(!committed.sent.some((msg: any) => msg.type === "automixCancel"));
+});
+
+test("the transition state starts at the outgoing song's outro, bounded by the crossfade", () => {
+  const leadIn = (outroStart: number | null | undefined) => {
+    const env = environment();
+    env.state._state = "analyzing";
+    env.event("automixStatus", {
+      status: {
+        state: "waiting",
+        enabled: true,
+        transitionId: env.transitionId,
+        currentIndex: 0,
+        nextIndex: 1,
+        crossfadeStart: 250,
+        crossfadeDuration: 8,
+        outroStart,
+      },
+    });
+    return env.music.autoMixState.leadInStart;
+  };
+  assert.equal(leadIn(230), 230);
+  assert.equal(leadIn(100), 205, "no more than 45 s ahead of the mix");
+  assert.equal(leadIn(260), 250, "never after the mix starts");
+  assert.equal(leadIn(null), 242, "without an analysis, one crossfade length ahead");
 });
 
 test("pausing just before a native cue preserves it until playback reaches it after resume", () => {
@@ -249,6 +368,19 @@ test("a backend seek cancellation allows the same track to prepare again", () =>
     assert.equal(env.state.getState(), "analyzing");
     assert.notEqual(env.state._activeTransition.id, env.transitionId);
   }
+});
+
+test("a backend seek cancelling a running crossfade returns to the outgoing song", () => {
+  const env = environment();
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.equal(env.hidesLyrics(), true);
+  env.event("automixStatus", {
+    status: { state: "idle", enabled: true, currentIndex: 0, transitionId: env.transitionId },
+  });
+  assert.equal(env.state.getState(), "idle", "the OS seek cancelled the mix before its handoff");
+  assert.equal(env.hidesLyrics(), false);
+  assert.deepEqual(env.commits, []);
+  assert.ok(!env.sent.some((msg: any) => msg.type === "automixCancel"));
 });
 
 test("configuration idle snapshots and retired cancellations preserve a new prepare", () => {

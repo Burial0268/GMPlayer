@@ -195,6 +195,7 @@ impl AudioPlayer {
         }
         let next = self.session_controls.play_mode.cycled();
         self.session_controls.play_mode = next;
+        self.session_controls.play_mode_known = true;
         let reordered = self.adopt_play_mode(next);
         self.publish_session_controls().await;
         self.publish_queue_order(reordered).await;

@@ -397,6 +397,8 @@ const messages: Record<string, unknown> = {
   },
   // Player
   player: {
+    // AutoMix 转场期间替代音质标签
+    autoMixTransition: "Transition",
     // 无障碍标签：图标按钮没有可见文字，读屏器只能靠 aria-label
     controls: {
       playMode: "Play mode",
@@ -506,6 +508,9 @@ const messages: Record<string, unknown> = {
     songVolumeFadeTip: "Gradually fade in/out volume when stopping/starting playback",
     memoryLastPlaybackPosition: "Remember Playback Position",
     memoryLastPlaybackPositionTip: "Resume last playback progress after refreshing the page",
+    keepScreenOnLyrics: "Keep Screen On in Lyrics",
+    keepScreenOnLyricsTip:
+      "Stop the screen from turning off while the player's lyrics are open and playing",
     songLevel: "Song Quality",
     songLevelTip: "Lossless quality and above require a Black Vinyl Club membership",
     standard: "Standard",
@@ -771,14 +776,6 @@ const messages: Record<string, unknown> = {
     autoMixBeatAlignTip: "Align transition point to the beat of the song",
     autoMixVolumeNorm: "Volume Normalization",
     autoMixVolumeNormTip: "Automatically adjust volume for consistent loudness between songs",
-    autoMixTransitionStyle: "Transition Curve",
-    autoMixTransitionStyleTip: "The type of volume curve used during transitions",
-    autoMixLinear: "Linear",
-    autoMixEqualPower: "Equal Power",
-    autoMixSCurve: "S-Curve",
-    autoMixSmartCurve: "Smart Curve Override",
-    autoMixSmartCurveTip:
-      "Automatically select the best crossfade curve based on detected song ending type",
     autoMixEmotionalTransition: "Emotional Transitions",
     autoMixEmotionalTransitionTip:
       "Detect intro, verse, chorus and other sections, hand over after the last chorus, and pace the blend by how the energy rises or falls where the two songs meet",

@@ -1,7 +1,9 @@
 <template>
   <div ref="coverContainerRef" class="player-cover-container">
     <div class="cover-stage">
-      <Transition name="fade" mode="out-in">
+      <!-- An AutoMix hand-off is already blended by the overlay; fading the base again would
+           flash the outgoing cover under it. -->
+      <Transition :name="mixIncoming ? 'automix-cut' : 'fade'" mode="out-in">
         <div
           :key="`cover_pic--${music.getPlaySongData?.album?.pic ?? defaultCover}`"
           :class="[
@@ -27,6 +29,13 @@
               alt="cover"
             />
           </Motion>
+          <img
+            v-if="mixIncoming"
+            class="album automix-cover automix-in"
+            decoding="async"
+            :src="coverUrl(mixIncoming.album?.picUrl, 1024)"
+            alt=""
+          />
         </div>
       </Transition>
     </div>
@@ -39,8 +48,12 @@
             :layout-id="sharedLayoutIds.title"
             :transition="sharedContentTransition"
           >
-            <span class="name text-hidden">
-              {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+            <span class="name">
+              <Transition name="automix-meta" mode="out-in">
+                <OverflowMarquee :key="music.getPlaySongData?.id" :speed="36">
+                  {{ music.getPlaySongData ? music.getPlaySongData.name : $t("other.noSong") }}
+                </OverflowMarquee>
+              </Transition>
             </span>
           </Motion>
           <Motion
@@ -50,13 +63,22 @@
             :layout-id="sharedLayoutIds.artists"
             :transition="sharedContentTransition"
           >
-            <span class="artists text-hidden">
-              <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
-                <span v-button class="artist-name" @click="routerJump('/artist', { id: ar.id })">{{
-                  ar.name
-                }}</span>
-                <span v-if="index < music.getPlaySongData.artist.length - 1"> / </span>
-              </span>
+            <span class="artists">
+              <Transition name="automix-meta" mode="out-in">
+                <OverflowMarquee :key="music.getPlaySongData?.id">
+                  <span v-for="(ar, index) in music.getPlaySongData.artist" :key="ar.id">
+                    <span
+                      v-button
+                      class="artist-name"
+                      @click="routerJump('/artist', { id: ar.id })"
+                      >{{ ar.name }}</span
+                    >
+                    <span v-if="index < music.getPlaySongData.artist.length - 1"
+                      >&nbsp;/&nbsp;</span
+                    >
+                  </span>
+                </OverflowMarquee>
+              </Transition>
             </span>
           </Motion>
         </div>
@@ -95,14 +117,24 @@
             :max="music.getPlaySongTime.duration || 1"
             :is-playing="music.getPlayState"
             :buffered="music.bufferedTime"
+            :transition-phase="autoMixBarPhase"
             @update:value="handleProgressSeek"
           />
         </div>
         <div class="time-info">
-          <span class="time-text">{{ music.getPlaySongTime.songTimePlayed }}</span>
-          <div v-if="qualityText" class="quality-badge">
-            <n-icon :component="IconLossless" />
-            <span class="quality-label">{{ qualityText }}</span>
+          <span class="time-text">{{ elapsedLabel }}</span>
+          <!-- "过渡" replaces the whole quality badge in one centred slot, so it is centred
+               whatever the quality badge's width (global `.automix-tag-slot`). -->
+          <div v-if="qualityText || autoMixTransitioning" class="automix-tag-slot">
+            <Transition name="automix-tag-swap">
+              <div v-if="autoMixTransitioning" key="automix" class="quality-badge automix-tag">
+                <span class="automix-tag-text">{{ $t("player.autoMixTransition") }}</span>
+              </div>
+              <div v-else key="quality" class="quality-badge">
+                <n-icon :component="IconLossless" />
+                <span class="quality-label">{{ qualityText }}</span>
+              </div>
+            </Transition>
           </div>
           <span class="time-text">{{ remainingTime }}</span>
         </div>
@@ -128,12 +160,18 @@
           :component="ThumbDownRound"
           @click="music.setFmDislike(music.getPersonalFmData.id)"
         />
-        <n-icon
+        <!-- Same as the mini player: a spinner while a track loads; pause stays clickable while
+             it only rebuffers. -->
+        <div
           class="button-icon"
-          :class="{ loading: music.getLoadingState }"
-          :component="music.getPlayState ? IconPause : IconPlay"
-          @click.stop="!music.getLoadingState && music.setPlayState(!music.getPlayState)"
-        />
+          :class="{ loading: loadBlocksPlay }"
+          @click.stop="!loadBlocksPlay && music.setPlayState(!music.getPlayState)"
+        >
+          <Transition name="fade" mode="out-in">
+            <n-spin v-if="music.getLoadingState" :size="26" stroke="currentColor" />
+            <n-icon v-else :component="music.getPlayState ? IconPause : IconPlay" />
+          </Transition>
+        </div>
         <n-icon
           class="button-icon skip-icon"
           :component="IconForward"
@@ -188,6 +226,12 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { seekActiveSound } from "@/utils/AudioContext";
 import { coverUrl } from "@/utils/coverUrl";
 import { useQualityText } from "@/composables/useQualityText";
+import {
+  useAutoMixBarPhase,
+  useAutoMixElapsed,
+  useAutoMixTransition,
+} from "@/composables/useAutoMixTransition";
+import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import BouncingSlider from "./BouncingSlider.vue";
 import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
@@ -279,6 +323,14 @@ const handleMoreSelect = (key) => {
 };
 
 const qualityText = useQualityText();
+const autoMixBarPhase = useAutoMixBarPhase();
+const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
+const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
+const { incoming: mixIncoming } = useAutoMixVisual();
+
+const loadBlocksPlay = computed(
+  () => music.getLoadingState && music.getLoadingStage !== "rebuffering",
+);
 
 // 剩余时间（负数格式）
 const remainingTime = computed(() => {
@@ -434,6 +486,11 @@ onUnmounted(() => {
       height: 100%;
       border-radius: var(--radius-panel);
     }
+    .automix-cover {
+      position: absolute;
+      inset: 0;
+      object-fit: cover;
+    }
   }
   .controls {
     width: min(var(--cover-size), 100%);
@@ -464,6 +521,8 @@ onUnmounted(() => {
 
       .text {
         display: flex;
+        flex: 1 1 auto;
+        min-width: 0;
         mix-blend-mode: plus-lighter;
         flex-direction: column;
         gap: 0.25rem;
@@ -532,16 +591,17 @@ onUnmounted(() => {
             text-align: right;
           }
         }
+        .automix-tag-slot {
+          flex: 0 1 auto;
+          max-width: calc(100% - 88px);
+        }
         .quality-badge {
           display: flex;
           align-items: center;
           gap: 4px;
-          flex: 0 1 auto;
           min-width: 0;
-          max-width: calc(100% - 88px);
           background-color: rgba(255, 255, 255, 0.1);
           color: var(--main-cover-mix-color, rgb(239, 239, 239));
-          opacity: 1;
           font-size: 0.75rem;
           padding: 2px 8px;
           border-radius: var(--radius-xs);
@@ -591,7 +651,6 @@ onUnmounted(() => {
           }
         }
         &.loading {
-          opacity: 0.35;
           pointer-events: none;
         }
         &.active {

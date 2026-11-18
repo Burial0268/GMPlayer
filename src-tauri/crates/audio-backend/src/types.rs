@@ -47,8 +47,6 @@ pub struct AutoMixConfig {
     pub bpm_match: bool,
     pub beat_align: bool,
     pub volume_norm: bool,
-    pub smart_curve: bool,
-    pub transition_style: CrossfadeCurve,
     pub transition_effects: bool,
     pub vocal_guard: bool,
     /// Hand over after the last chorus and shape the blend by the energy of
@@ -65,8 +63,6 @@ impl Default for AutoMixConfig {
             bpm_match: true,
             beat_align: true,
             volume_norm: true,
-            smart_curve: true,
-            transition_style: CrossfadeCurve::EqualPower,
             transition_effects: true,
             vocal_guard: true,
             emotional_transition: true,
@@ -201,6 +197,9 @@ pub struct AutoMixStatus {
     pub next_id: Option<String>,
     pub crossfade_start: Option<f64>,
     pub crossfade_duration: Option<f64>,
+    /// Where the outgoing song's outro begins, in its own seconds; the UI enters its transition
+    /// state there. `None` without an analysis of the outgoing song.
+    pub outro_start: Option<f64>,
     pub error: Option<String>,
 }
 
@@ -229,6 +228,9 @@ pub struct AudioInfo {
     pub codec: String,
     pub sample_rate: u32,
     pub channels: u16,
+    /// Valid bits per decoded sample (16, 24, …), when the codec has such a thing: lossless and
+    /// PCM do, lossy codecs do not.
+    pub bits_per_sample: Option<u32>,
     pub duration_secs: f64,
     pub bitrate_bps: Option<u64>,
     pub total_frames: Option<u64>,
@@ -604,6 +606,14 @@ pub enum AudioThreadEvent {
     /// display frame, as AMLL does.
     #[serde(rename_all = "camelCase")]
     LowFreqBins { bins: Vec<f32> },
+    /// The latest `FFTData` and `LowFreqBins` merged into one message and paced
+    /// to the WebView (see `AnalysisPacer` in `player::api`). Each message is an
+    /// IPC crossing, and the two streams otherwise arrive at ~60 Hz each.
+    #[serde(rename_all = "camelCase")]
+    AnalysisFrame {
+        fft: Option<Vec<f32>>,
+        bins: Option<Vec<f32>>,
+    },
     #[serde(rename_all = "camelCase")]
     AutomixStatus { status: AutoMixStatus },
     #[serde(rename_all = "camelCase")]
@@ -612,6 +622,10 @@ pub enum AudioThreadEvent {
         next_id: String,
         transition_id: Option<u64>,
     },
+    /// The armed mix's incoming deck holds audio, so the cue can start it. Once per mix, and
+    /// again when a recreated page re-attaches.
+    #[serde(rename_all = "camelCase")]
+    AutomixIncomingReady { transition_id: Option<u64> },
     #[serde(rename_all = "camelCase")]
     AutomixCrossfadeStarted {
         from_id: String,
@@ -1070,6 +1084,10 @@ pub struct NowPlayingInfo {
     /// the OS session renders them next to the metadata and a subscriber that
     /// received one without the other would render a half-updated notification.
     pub controls: SessionControls,
+    /// Cover of the track the planner plays next, so the platform can download
+    /// it before the change instead of after. Not part of [`Self::same_metadata`]:
+    /// nothing on screen shows it.
+    pub next_artwork_url: Option<String>,
 }
 
 /// Session controls that are *not* audio state.
@@ -1091,6 +1109,12 @@ pub struct SessionControls {
     /// no Netease identity, has nothing to like — and a control the OS renders
     /// but cannot honour is worse than one it does not render.
     pub can_favourite: bool,
+    /// Whether anyone has told the backend the mode. A process that has heard from no frontend
+    /// and no OS button holds `play_mode`'s default, not the user's choice — and a like-state
+    /// change published before the frontend's own push carried that default out, where the
+    /// frontend adopted it, restored natural order, and then waited in vain for a permutation.
+    /// Surfaces must not adopt `play_mode` while this is false.
+    pub play_mode_known: bool,
 }
 
 /// Partial update to [`SessionControls`]. Absent fields are left alone, which is
@@ -1118,6 +1142,7 @@ impl SessionControls {
             play_mode: patch.play_mode.unwrap_or(self.play_mode),
             favourite: patch.favourite.unwrap_or(self.favourite),
             can_favourite: patch.can_favourite.unwrap_or(self.can_favourite),
+            play_mode_known: self.play_mode_known || patch.play_mode.is_some(),
         };
         let changed = next != *self;
         *self = next;
@@ -1155,6 +1180,7 @@ impl Default for NowPlayingInfo {
             is_loading: false,
             playlist_index: 0,
             controls: SessionControls::default(),
+            next_artwork_url: None,
         }
     }
 }
@@ -1285,6 +1311,10 @@ pub struct AudioQuality {
     pub bitrate: u32,
     pub sample_rate: u32,
     pub channels: u16,
+    /// Lowercase codec name (`flac`, `mp3`, `pcm_s24le`…); empty when unknown. With
+    /// `bits_per_sample` this is what tells lossless from lossy, which a bitrate cannot.
+    pub codec: String,
+    pub bits_per_sample: Option<u32>,
 }
 
 impl Default for AudioQuality {
@@ -1293,6 +1323,20 @@ impl Default for AudioQuality {
             bitrate: 0,
             sample_rate: 44100,
             channels: 2,
+            codec: String::new(),
+            bits_per_sample: None,
+        }
+    }
+}
+
+impl From<&AudioInfo> for AudioQuality {
+    fn from(info: &AudioInfo) -> Self {
+        Self {
+            bitrate: info.bitrate_bps.map(|b| b as u32).unwrap_or_default(),
+            sample_rate: info.sample_rate,
+            channels: info.channels,
+            codec: info.codec.clone(),
+            bits_per_sample: info.bits_per_sample,
         }
     }
 }
@@ -1533,6 +1577,7 @@ mod tests {
             is_loading: false,
             playlist_index: 3,
             controls: SessionControls::default(),
+            next_artwork_url: Some("https://img/next".into()),
         };
 
         let seeked = NowPlayingInfo {
@@ -1555,6 +1600,15 @@ mod tests {
         assert!(
             base.same_metadata(&buffering),
             "a load transition must not rebuild metadata"
+        );
+
+        let queue_edited = NowPlayingInfo {
+            next_artwork_url: Some("https://img/other".into()),
+            ..base.clone()
+        };
+        assert!(
+            base.same_metadata(&queue_edited),
+            "a different next track must not rebuild the current one"
         );
 
         let next_track = NowPlayingInfo {
@@ -1589,6 +1643,7 @@ mod tests {
                 play_mode: NativePlaybackMode::Random,
                 favourite: true,
                 can_favourite: true,
+                play_mode_known: true,
             },
             ..base.clone()
         };
@@ -1611,6 +1666,7 @@ mod tests {
             play_mode: NativePlaybackMode::Random,
             favourite: true,
             can_favourite: true,
+            play_mode_known: true,
         };
 
         // Empty patch: nothing claimed, nothing changed.
@@ -1630,6 +1686,26 @@ mod tests {
             controls.play_mode,
             NativePlaybackMode::Random,
             "an absent field must be left alone, not defaulted"
+        );
+    }
+
+    /// A fresh backend's mode is a default until someone states one; a patch that
+    /// only carries the like state must not make it look decided.
+    #[test]
+    fn the_default_mode_is_not_known_until_stated() {
+        let mut controls = SessionControls::default();
+        assert!(controls.apply(&SessionControlsPatch {
+            favourite: Some(true),
+            ..Default::default()
+        }));
+        assert!(!controls.play_mode_known);
+        assert!(controls.apply(&SessionControlsPatch {
+            play_mode: Some(NativePlaybackMode::Normal),
+            ..Default::default()
+        }));
+        assert!(
+            controls.play_mode_known,
+            "stating the default still decides it"
         );
     }
 

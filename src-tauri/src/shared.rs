@@ -20,6 +20,23 @@ pub struct DesktopEnvironment {
     pub uses_native_traffic_lights: bool,
 }
 
+/// The computer's name, as the OS shows it, for naming this login among the
+/// account's devices on Netease. Android answers through the orientation plugin.
+#[tauri::command(rename_all = "snake_case")]
+pub fn device_name() -> Option<String> {
+    #[cfg(windows)]
+    let name = std::env::var("COMPUTERNAME").ok();
+    #[cfg(target_os = "macos")]
+    let name = std::process::Command::new("scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+        .ok()
+        .and_then(|out| String::from_utf8(out.stdout).ok());
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let name = std::fs::read_to_string("/proc/sys/kernel/hostname").ok();
+    name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty())
+}
+
 /// Returns platform details needed by the frontend window chrome.
 #[tauri::command(rename_all = "snake_case")]
 pub fn desktop_environment() -> DesktopEnvironment {

@@ -1,7 +1,7 @@
 /**
  * 「系统重置」的持久化清理入口。
  *
- * localStorage 只是其中一层：Tauri 环境下 settingData / siteData / userData
+ * localStorage 只是其中一层：播放队列在 IndexedDB；Tauri 环境下 settingData / siteData / userData
  * 还落在 Tauri store 文件里。只 `localStorage.clear()` 的话，重载后这几个
  * store 会从文件里重新 hydrate 回来，重置等于没做。
  *
@@ -16,7 +16,7 @@ import {
   isTauriPiniaInstalled,
 } from "@/utils/tauri/store/piniaPersistence";
 import { localLibraryReset } from "@/utils/localLibrary";
-import { suspendMusicPersist } from "./musicPersistedData";
+import { clearMusicPersist } from "./musicPersistedData";
 import useSettingDataStore, { settingStorage } from "./settingData";
 import useSiteDataStore from "./siteData";
 import useUserDataStore from "./userData";
@@ -41,10 +41,12 @@ export interface ResetOptions {
  * 卡住，localStorage 也一定会被清掉。
  */
 export async function resetPersistedStorage(options: ResetOptions = {}): Promise<void> {
-  suspendMusicPersist();
+  // 同步部分先挂起写入，之后才 await 清空 IndexedDB 里的播放队列。
+  const musicCleared = clearMusicPersist();
   // settingData 的写入是节流合并的，不挂起的话 clear 之后还会有尾调用落地，
   // 把刚清掉的设置原样写回去。
   settingStorage.suspend();
+  await musicCleared;
   if (isTauriPiniaInstalled()) {
     await destroyTauriPiniaStores([useSettingDataStore(), useSiteDataStore(), useUserDataStore()]);
   }

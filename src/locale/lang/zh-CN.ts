@@ -398,6 +398,8 @@ const messages: Record<string, unknown> = {
   },
   // 播放器
   player: {
+    // AutoMix 转场期间替代音质标签
+    autoMixTransition: "过渡",
     // 无障碍标签：图标按钮没有可见文字，读屏器只能靠 aria-label
     controls: {
       playMode: "播放模式",
@@ -506,6 +508,8 @@ const messages: Record<string, unknown> = {
     songVolumeFadeTip: "是否在歌曲暂停 / 播放时渐入渐出",
     memoryLastPlaybackPosition: "记忆播放位置",
     memoryLastPlaybackPositionTip: "是否在刷新后恢复上次播放进度",
+    keepScreenOnLyrics: "歌词页屏幕常亮",
+    keepScreenOnLyricsTip: "打开播放器歌词页并正在播放时，屏幕不会自动熄灭",
     songLevel: "歌曲音质",
     songLevelTip: "无损音质及以上需要您为黑胶会员",
     standard: "标准",
@@ -749,13 +753,6 @@ const messages: Record<string, unknown> = {
     autoMixBeatAlignTip: "将过渡时间点对齐到歌曲节拍",
     autoMixVolumeNorm: "音量标准化",
     autoMixVolumeNormTip: "自动调节音量，使歌曲之间响度一致",
-    autoMixTransitionStyle: "过渡曲线",
-    autoMixTransitionStyleTip: "过渡音量变化的曲线类型",
-    autoMixLinear: "线性",
-    autoMixEqualPower: "等功率",
-    autoMixSCurve: "S 曲线",
-    autoMixSmartCurve: "智能曲线覆盖",
-    autoMixSmartCurveTip: "根据检测到的歌曲结尾类型自动选择最佳过渡曲线",
     autoMixEmotionalTransition: "情绪过渡",
     autoMixEmotionalTransitionTip:
       "识别前奏、主歌、副歌等段落，在最后一段副歌结束处切歌，并按两首歌衔接处的情绪起伏决定过渡的快慢与曲线",

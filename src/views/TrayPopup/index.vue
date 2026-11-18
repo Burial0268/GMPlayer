@@ -400,22 +400,13 @@ onMounted(async () => {
     }),
   );
 
-  // Ask the master for state instead of waiting to be pushed.
-  //
-  // This window is the only one in `SUSPEND_WHEN_HIDDEN`: `TrySuspend` exists
-  // so the OS can reclaim the suspended renderer, and when it does, resuming
-  // reloads the page. Every existing sync path is a one-shot push fired at
-  // *show* time — `tray-popup-opened` → master → `player-state-update`, and
-  // the `managed-window-visibility` heal — so a page still reloading has no
-  // listeners registered yet and misses all of them, leaving stale UI. (The
-  // visibility heal never reached us anyway: it bails on
-  // `isContentWindowLabel`, and `tray-popup` is in `PLAYER_STATE_WINDOW_LABELS`
-  // but not `PLAYER_CONTENT_WINDOW_LABELS`.)
-  //
-  // Pulling on mount is reload-proof: whenever this page becomes ready — first
-  // open or after a reclaim — it asks. Safe to reuse the slave handshake: the
-  // master's `markContentWindowOpen` filters on `isContentWindowLabel`, so this
-  // cannot pollute the 30 Hz content-broadcast set.
+  // Ask the master for state instead of waiting to be pushed. The other sync
+  // paths are one-shot pushes fired at *show* time (`tray-popup-opened` →
+  // master → `player-state-update`), which a page still loading — the
+  // pre-created popup on a fast first click — misses because its listeners are
+  // not registered yet. Pulling on mount covers that. Safe to reuse the slave
+  // handshake: the master's `markContentWindowOpen` filters on
+  // `isContentWindowLabel`, so this cannot pollute the 30 Hz content-broadcast set.
   const requestState = () => {
     getTauri()?.event.emit("slave-window-opened", { label: "tray-popup" });
   };

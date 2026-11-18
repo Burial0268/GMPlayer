@@ -21,6 +21,7 @@ import { TransitionEffects } from "./TransitionEffects";
 import { getOutroTypeCrossfadeProfile } from "./types";
 import { analyzeTrack, type OutroType, type TrackAnalysis } from "./TrackAnalyzer";
 import { findNearestBeat } from "./BPMDetector";
+import { pairShapeScale } from "./curves";
 import {
   planEmotionalArc,
   sectionMixOutCue,
@@ -36,6 +37,7 @@ import {
   syncNativeAutoMixCurrentSound,
 } from "../PlayerFunctions";
 import { resolveSongUrl } from "../resolveSongUrl";
+import { lyricFetcher } from "../../lyricFetcher";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
 import { audioSendMsg } from "../../tauri/audio/bridge";
 import { isNativeAudioBackendAvailable } from "../../tauri/audio/backendRuntime";
@@ -72,6 +74,25 @@ const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value));
 
 type AutoMixTransitionMode = "web" | "native";
+
+// The longest lead-in an outro may give the transition state: the energy outro looks back 45 s.
+const MAX_LEAD_IN = 45;
+
+/**
+ * Where a song's outro begins: the last section the section analysis calls an outro, else the
+ * classifier's distinct outro section, else where the energy last drops. Mirrors Rust's
+ * `outro_start_of` (automix/prepare.rs); keep the two in step.
+ */
+export function outroStartOf(analysis: TrackAnalysis | null | undefined): number | null {
+  if (!analysis) return null;
+  const sections = analysis.sections?.sections ?? [];
+  for (let i = sections.length - 1; i >= 0; i--) {
+    if (sections[i].sectionType === "outro") return Math.max(0, sections[i].start);
+  }
+  const start =
+    analysis.outro?.outroSectionStart ?? analysis.duration - analysis.energy.outroStartOffset;
+  return Math.max(0, start);
+}
 type AutoMixTransitionPhase = "preparing" | "waiting" | "crossfading" | "finishing" | "committed";
 
 interface ActiveAutoMixTransition {
@@ -129,11 +150,9 @@ export class TransitionStateMachine {
   // Settings cache (refreshed from store)
   private _enabled: boolean = false;
   private _settingsCrossfadeDuration: number = 8;
-  private _settingsCurve: CrossfadeCurve = "equalPower";
   private _settingsBpmMatch: boolean = true;
   private _settingsBeatAlign: boolean = true;
   private _settingsVolumeNorm: boolean = true;
-  private _settingsSmartCurve: boolean = true;
   private _settingsTransitionEffects: boolean = true;
   private _settingsVocalGuard: boolean = true;
   private _settingsPhraseAlign: boolean = true;
@@ -159,8 +178,19 @@ export class TransitionStateMachine {
   // Pending store update: next playlist index to set after crossfade.
   // Used as fallback in _onCrossfadeComplete when _waitForPlayStart is delayed (background tabs).
   private _pendingNextIndex: number = -1;
+  // The web mix plays the incoming song from its start, but the store follows it only when the
+  // mix is over, as the native path does: title, cover and lyrics switch after the transition.
+  private _pendingWebCommit: { transitionId: number; sound: ISound; nextIndex: number } | null =
+    null;
   private _transitionSeq: number = 0;
   private _activeTransition: ActiveAutoMixTransition | null = null;
+  // The outgoing song's lyric, hidden once the incoming audio enters so it does not scroll on
+  // through the mix. Hidden rather than emptied: an empty lyric would switch the player to its
+  // no-lyrics layout. It stays hidden for as long as the store holds this very lyric, so past the
+  // commit it gives way exactly when the next song's is set, however long that takes.
+  private _hiddenLyric: object | null = null;
+  // Committed: the outgoing lyric must not come back, even if the transition is cleared.
+  private _hiddenUntilReplaced: boolean = false;
 
   // Pause state during crossfade
   private _isPaused: boolean = false;
@@ -178,6 +208,10 @@ export class TransitionStateMachine {
   private _nativeNextIndex: number = -1;
   private _nativeUnsubscribe: (() => void) | null = null;
   private _nativeForceStartSent: boolean = false;
+  // Rust reports the incoming deck holds audio; until then the cue may still find it empty.
+  private _nativeIncomingReady: boolean = false;
+  // Where Rust's analysis puts the outgoing song's outro; null without an analysis.
+  private _nativeOutroStart: number | null = null;
   private _nativeHandoffHoldUntil: number = 0;
 
   // Store references (loaded once lazily)
@@ -214,6 +248,18 @@ export class TransitionStateMachine {
 
   isCrossfading(): boolean {
     return this._state === "crossfading" || this._state === "finishing";
+  }
+
+  /**
+   * A seek ends a transition that has not committed: the bar shows the outgoing song, so that is
+   * the song the seek is about, and on the web path the incoming sound is already current until
+   * the cancel reverts it. Called before the seek target is resolved. After the commit the seek
+   * belongs to the incoming song, and cancelling then would revert it.
+   */
+  interruptForSeek(): void {
+    if (this._state === "analyzing" || this._state === "waiting" || this._state === "crossfading") {
+      this.cancelCrossfade();
+    }
   }
 
   isHandoffActive(): boolean {
@@ -254,7 +300,32 @@ export class TransitionStateMachine {
       committed: false,
       holdUntil: 0,
     };
+    // Ready by the commit, so the lyric panel switches with the title instead of going empty
+    // through Player's song debounce and the fetch. Local files read theirs from disk.
+    if (toSong?.id !== undefined && !toSong.local?.uri) {
+      lyricFetcher.prefetch(Number(toSong.id), {
+        name: toSong.name,
+        artists: (toSong.artist ?? []).map((artist: any) => artist?.name).filter(Boolean),
+      });
+    }
     return id;
+  }
+
+  /**
+   * The committed song's prefetched lyrics if they landed. Otherwise (a slow fetch, a local file)
+   * the outgoing lyric stays hidden in place until the player sets the committed song's.
+   */
+  private _showCommittedLyric(music: any): void {
+    const song = this._currentStoreSong(music);
+    const lyric = song && !song.local?.uri ? lyricFetcher.peek(Number(song.id)) : null;
+    if (lyric) {
+      music.setPlaySongLyric(lyric);
+      this._hiddenLyric = null;
+    } else if (this._hiddenLyric) {
+      this._hiddenUntilReplaced = true;
+    } else {
+      music.resetSongLyricState();
+    }
   }
 
   private _getSongId(song: any): number | null {
@@ -328,6 +399,23 @@ export class TransitionStateMachine {
   private _clearTransition(id?: number): void {
     if (id !== undefined && !this._isTransitionActive(id)) return;
     this._activeTransition = null;
+    // Called off before its commit: the outgoing song plays on, and its lyrics never left.
+    if (this._hiddenLyric && !this._hiddenUntilReplaced) {
+      this._hiddenLyric = null;
+      this._updateStoreState();
+    }
+  }
+
+  private _currentStoreSong(music: any): any {
+    return music.persistData?.playlists?.[music.persistData.playSongIndex];
+  }
+
+  /** The incoming audio has entered: the outgoing song's lyrics leave the screen until the commit. */
+  private _hideOutgoingLyric(): void {
+    if (this._hiddenLyric && !this._hiddenUntilReplaced) return;
+    this._hiddenLyric = this._musicStoreRef?.songLyric ?? null;
+    this._hiddenUntilReplaced = false;
+    this._updateStoreState();
   }
 
   // ─── Store loading (lazy, one-time) ────────────────────────────
@@ -350,11 +438,9 @@ export class TransitionStateMachine {
     if (!this._settingStoreRef) return;
     this._enabled = this._settingStoreRef.autoMixEnabled ?? false;
     this._settingsCrossfadeDuration = this._settingStoreRef.autoMixCrossfadeDuration ?? 8;
-    this._settingsCurve = this._settingStoreRef.autoMixTransitionStyle ?? "equalPower";
     this._settingsBpmMatch = this._settingStoreRef.autoMixBpmMatch ?? true;
     this._settingsBeatAlign = this._settingStoreRef.autoMixBeatAlign ?? true;
     this._settingsVolumeNorm = this._settingStoreRef.autoMixVolumeNorm ?? true;
-    this._settingsSmartCurve = this._settingStoreRef.autoMixSmartCurve ?? true;
     this._settingsTransitionEffects = this._settingStoreRef.autoMixTransitionEffects ?? true;
     this._settingsVocalGuard = this._settingStoreRef.autoMixVocalGuard ?? true;
     this._settingsPhraseAlign = this._settingStoreRef.autoMixPhraseAlign ?? true;
@@ -515,6 +601,8 @@ export class TransitionStateMachine {
     this._crossfadeStartTime = Math.max(0, duration - effectiveDuration);
     this._nativeNextIndex = nextIndex;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
+    this._nativeIncomingReady = false;
     this._nativeAutoMixPreparing = true;
     this._state = "analyzing";
     this._updateStoreState();
@@ -609,8 +697,6 @@ export class TransitionStateMachine {
         bpmMatch: this._settingsBpmMatch,
         beatAlign: this._settingsBeatAlign,
         volumeNorm: this._settingsVolumeNorm,
-        smartCurve: this._settingsSmartCurve,
-        transitionStyle: this._settingsCurve,
         transitionEffects: this._settingsTransitionEffects,
         vocalGuard: this._settingsVocalGuard,
         emotionalTransition: this._settingsEmotionalTransition,
@@ -671,6 +757,9 @@ export class TransitionStateMachine {
         if (status.crossfadeDuration !== undefined && status.crossfadeDuration !== null) {
           this._crossfadeDuration = status.crossfadeDuration;
         }
+        if (status.outroStart !== undefined) {
+          this._nativeOutroStart = status.outroStart;
+        }
         if (status.state === "waiting" && this._state === "analyzing") {
           this._nativeAutoMixReady = true;
           if (status.transitionId !== undefined && status.transitionId !== null) {
@@ -686,12 +775,18 @@ export class TransitionStateMachine {
           status.state === "idle" &&
           status.transitionId !== undefined &&
           status.transitionId !== null &&
-          (this._state === "analyzing" || this._state === "waiting")
+          (this._state === "analyzing" ||
+            this._state === "waiting" ||
+            // A seek the frontend did not start (the OS media controls) cancelled a running mix
+            // before its handoff: the outgoing song is still current.
+            (this._state === "crossfading" && status.currentIndex !== this._nativeNextIndex))
         ) {
           // Seek/output rebuild cancelled this attempt. Anonymous configure snapshots do not.
           this._nativeAutoMixPreparing = false;
           this._nativeAutoMixReady = false;
           this._nativeForceStartSent = false;
+          this._nativeOutroStart = null;
+          this._nativeIncomingReady = false;
           this._nativeNextIndex = -1;
           this._clearTransition(status.transitionId);
           this._state = "idle";
@@ -718,6 +813,11 @@ export class TransitionStateMachine {
           this._updateStoreState();
         }
         break;
+      case "automixIncomingReady":
+        if (!this._acceptNativeTransitionEvent(event.data.transitionId)) return;
+        this._nativeIncomingReady = true;
+        this._updateStoreState();
+        break;
       case "automixCrossfadeStarted":
         if (!this._acceptNativeTransitionEvent(event.data.transitionId)) return;
         if (this._nativeNextIndex < 0) return;
@@ -728,6 +828,7 @@ export class TransitionStateMachine {
         }
         this._crossfadeDuration = event.data.duration || this._crossfadeDuration;
         this._state = "crossfading";
+        this._hideOutgoingLyric();
         this._updateStoreState();
         break;
       case "automixCrossfadeComplete":
@@ -751,6 +852,8 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
+    this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
     this._clearTransition();
     if (this._state === "analyzing" || this._state === "waiting" || this._state === "crossfading") {
@@ -767,9 +870,7 @@ export class TransitionStateMachine {
     );
     if (nextIndex >= 0 && this._musicStoreRef) {
       this._musicStoreRef.commitPlaySongIndex(nextIndex);
-      if (typeof this._musicStoreRef.resetSongLyricState === "function") {
-        this._musicStoreRef.resetSongLyricState();
-      }
+      this._showCommittedLyric(this._musicStoreRef);
     }
 
     this._isPaused = false;
@@ -791,6 +892,8 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
+    this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
 
     if (this._finishingTimerId !== null) {
@@ -1245,6 +1348,46 @@ export class TransitionStateMachine {
     return clamp(headroom, -2.8, 0);
   }
 
+  /** Vocal share and mean energy of A's overlap and B's opening, through `pairShapeScale`. */
+  private _pairShapeScale(start: number, duration: number, effectiveEnd: number): [number, number] {
+    const current = this._currentAnalysis?.analysis;
+    const next = this._nextAnalysis?.analysis;
+    if (!current || !next) return [1, 1];
+    const vocalShare = (
+      bands: { low: number[]; mid: number[]; high: number[] } | null | undefined,
+      origin: number,
+      from: number,
+      to: number,
+    ): number | null => {
+      if (!bands) return null;
+      const first = Math.max(0, Math.floor((from - origin) / 0.25));
+      const last = Math.min(bands.mid.length, Math.ceil((to - origin) / 0.25));
+      if (last <= first) return null;
+      let active = 0;
+      for (let i = first; i < last; i++) {
+        if (this._vocalGuard.isVocalActive(bands, i)) active++;
+      }
+      return active / (last - first);
+    };
+    const meanEnergy = (perSecond: number[], from: number, to: number): number | null => {
+      const first = Math.max(0, Math.floor(from));
+      const last = Math.min(perSecond.length, Math.ceil(to));
+      if (last <= first) return null;
+      let sum = 0;
+      for (let i = first; i < last; i++) sum += perSecond[i];
+      return sum / (last - first);
+    };
+    const outroBands = current.outro?.multibandEnergy;
+    // Outro windows are 0.25 s each and end at the content end.
+    const outroOrigin = effectiveEnd - (outroBands?.mid.length ?? 0) * 0.25;
+    return pairShapeScale(
+      vocalShare(outroBands, outroOrigin, start, start + duration),
+      vocalShare(next.intro?.multibandEnergy, 0, 0, duration),
+      meanEnergy(current.energy.energyPerSecond, start, start + duration),
+      meanEnergy(next.energy.energyPerSecond, 0, duration),
+    );
+  }
+
   // ─── Consolidated crossfade parameter finalization ──────────────
 
   private _finalizeCrossfadeParams(volume: number, outgoingSound: ISound): CrossfadeParams {
@@ -1257,7 +1400,7 @@ export class TransitionStateMachine {
     // At a section cue the song has not reached its own ending yet, so neither
     // "the outgoing fades by itself" nor the outro-type profile applies.
     const cueUsed = this._emotionalCue !== null;
-    let effectiveCurve: CrossfadeCurve = this._settingsCurve;
+    let effectiveCurve: CrossfadeCurve = "equalPower";
     let effectiveFadeInOnly =
       !cueUsed && (this._outroType === "fadeOut" || this._outroType === "loopFade");
     let effectiveInShape = 1;
@@ -1265,7 +1408,7 @@ export class TransitionStateMachine {
 
     const outroConfidence = this._currentAnalysis?.analysis.outro?.outroConfidence ?? 0;
     const outroConfident = !cueUsed && outroConfidence >= 0.75;
-    if (this._settingsSmartCurve && this._outroType && outroConfident) {
+    if (this._outroType && outroConfident) {
       const profile = getOutroTypeCrossfadeProfile(this._outroType);
       effectiveCurve = profile.curve;
       effectiveFadeInOnly = profile.fadeInOnly;
@@ -1356,7 +1499,7 @@ export class TransitionStateMachine {
     // Filter sweep replaces spectral EQ (both serve frequency-domain smoothing;
     // filter sweep is far more aggressive for truly incompatible tracks)
     let spectralCrossfade: SpectralCrossfadeData | false = false;
-    if (this._settingsSmartCurve && !effectiveFadeInOnly && !strategy.useFilterSweep) {
+    if (!effectiveFadeInOnly && !strategy.useFilterSweep) {
       spectralCrossfade = this._computeSpectralCrossfadeData();
     }
 
@@ -1392,6 +1535,11 @@ export class TransitionStateMachine {
         strategy.useEffects = strategy.useReverbTail || strategy.useFilterSweep;
       }
     }
+
+    // Auto-curve from what overlaps (vocals, energy); scales whatever was chosen above.
+    const [inScale, outScale] = this._pairShapeScale(outgoingNow, crossfadeDuration, effectiveEnd);
+    if (inScale !== 1) effectiveInShape = clamp(effectiveInShape * inScale, 0.7, 1.3);
+    if (outScale !== 1) effectiveOutShape = clamp(effectiveOutShape * outScale, 0.7, 1.3);
 
     if (IS_DEV) {
       console.log(
@@ -1716,7 +1864,8 @@ export class TransitionStateMachine {
 
     SoundManager.beginTransition(incomingSound, nextSong.id);
     incomingSound.play();
-    this._commitWebTransition(transitionId, incomingSound, nextIndex);
+    this._pendingWebCommit = { transitionId, sound: incomingSound, nextIndex };
+    this._hideOutgoingLyric();
 
     const volume = music.persistData.playVolume;
     const params = this._finalizeCrossfadeParams(volume, outgoingSound);
@@ -1869,9 +2018,7 @@ export class TransitionStateMachine {
       if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
         music.commitPlaySongIndex(resolvedNextIndex);
       }
-      if (typeof music.resetSongLyricState === "function") {
-        music.resetSongLyricState();
-      }
+      this._showCommittedLyric(music);
     }
 
     adoptIncomingSound(incomingSound);
@@ -1971,6 +2118,10 @@ export class TransitionStateMachine {
       }
     }
 
+    const commit = this._pendingWebCommit;
+    this._pendingWebCommit = null;
+    if (commit) this._commitWebTransition(commit.transitionId, commit.sound, commit.nextIndex);
+
     // Fallback: if _waitForPlayStart was delayed (background tab), the normal
     // _doCrossfade path may not have updated the store yet. Apply pending updates
     // so the debounced watcher in Player/index.vue sees isCrossfading()=true.
@@ -1979,9 +2130,7 @@ export class TransitionStateMachine {
       const resolvedNextIndex = this.resolveActiveTransitionTargetIndex(this._pendingNextIndex);
       if (resolvedNextIndex >= 0 && music.persistData.playSongIndex !== resolvedNextIndex) {
         music.commitPlaySongIndex(resolvedNextIndex);
-        if (typeof music.resetSongLyricState === "function") {
-          music.resetSongLyricState();
-        }
+        this._showCommittedLyric(music);
         if (IS_DEV) {
           console.log("TransitionStateMachine: Applied pending playSongIndex (bg tab fallback)");
         }
@@ -2056,6 +2205,8 @@ export class TransitionStateMachine {
     this._nativeAutoMixPreparing = false;
     this._nativeAutoMixReady = false;
     this._nativeForceStartSent = false;
+    this._nativeOutroStart = null;
+    this._nativeIncomingReady = false;
     this._nativeNextIndex = -1;
     this._nativeHandoffHoldUntil = 0;
     this._clearTransition();
@@ -2094,6 +2245,7 @@ export class TransitionStateMachine {
     this._nextAnalysis = null;
     this._lastStrategy = null;
     this._pendingNextIndex = -1;
+    this._pendingWebCommit = null;
     this._isPaused = false;
     this._activeGainAdjustment = 1;
     this._phraseMixOutTime = null;
@@ -2218,6 +2370,8 @@ export class TransitionStateMachine {
       this._nativeAutoMixPreparing = false;
       this._nativeAutoMixReady = false;
       this._nativeForceStartSent = false;
+      this._nativeOutroStart = null;
+      this._nativeIncomingReady = false;
       this._nativeNextIndex = -1;
       if (this._isNativeTransitionActive()) this._clearTransition();
     }
@@ -2359,6 +2513,22 @@ export class TransitionStateMachine {
       }
     }
 
+    const outroStart =
+      activeTransition?.mode === "native"
+        ? this._nativeOutroStart
+        : outroStartOf(this._currentAnalysis?.analysis);
+    const crossfadeStart = this._crossfadeStartTime;
+    // The outro, but never after the mix itself nor more than MAX_LEAD_IN before it; without an
+    // analysis, one crossfade length ahead.
+    const leadInStart =
+      crossfadeStart > 0
+        ? Math.max(
+            0,
+            crossfadeStart - MAX_LEAD_IN,
+            Math.min(crossfadeStart, outroStart ?? crossfadeStart - this._crossfadeDuration),
+          )
+        : 0;
+
     this._musicStoreRef.autoMixState = {
       phase: this._state,
       outroType: this._outroType ?? null,
@@ -2368,6 +2538,9 @@ export class TransitionStateMachine {
       crossfadeProgress: progress,
       incomingSongName,
       incomingSongId,
+      incomingReady: activeTransition?.mode !== "native" || this._nativeIncomingReady,
+      leadInStart,
+      hiddenLyric: this._hiddenLyric,
     };
   }
 

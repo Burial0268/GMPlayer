@@ -692,15 +692,29 @@ fn device_name(device: &cpal::Device) -> String {
         .unwrap_or_else(|_| device.to_string())
 }
 
-fn find_output_device_by_name(host: &cpal::Host, name: &str) -> Result<cpal::Device, String> {
-    let target = name.trim();
+/// The outputs a user may pick, each with its name. One list for the picker and for selection,
+/// so a device that is not offered (an Android earpiece) cannot be selected by a stale name either.
+fn pickable_output_devices(
+    host: &cpal::Host,
+) -> Result<impl Iterator<Item = (cpal::Device, String)>, String> {
     let devices = host
         .output_devices()
         .map_err(|e| format!("enumerate output devices: {e:?}"))?;
+    Ok(devices.filter_map(|device| match device.description() {
+        Ok(description) if !platform::is_media_output(&description) => None,
+        Ok(description) => Some((device, description.name().to_string())),
+        Err(_) => {
+            let name = device.to_string();
+            Some((device, name))
+        }
+    }))
+}
+
+fn find_output_device_by_name(host: &cpal::Host, name: &str) -> Result<cpal::Device, String> {
+    let target = name.trim();
     let mut case_insensitive_match = None;
 
-    for device in devices {
-        let device_name = device_name(&device);
+    for (device, device_name) in pickable_output_devices(host)? {
         if device_name == target {
             return Ok(device);
         }
@@ -721,12 +735,8 @@ fn find_output_device_by_name(host: &cpal::Host, name: &str) -> Result<cpal::Dev
 pub fn output_device_names() -> Result<Vec<String>, String> {
     platform::ensure_audio_apartment();
     with_output_probe_host(|host| {
-        let devices = host
-            .output_devices()
-            .map_err(|e| format!("enumerate output devices: {e:?}"))?;
         let mut names: Vec<String> = Vec::new();
-        for device in devices {
-            let name = device_name(&device);
+        for (_, name) in pickable_output_devices(host)? {
             // shortcut: two devices sharing a name collapse into one entry, because selection
             // is by name too; switch both to `device.id()` if that ever shows up in practice.
             if !names.contains(&name) {
@@ -844,8 +854,13 @@ fn open_output_stream(
     let stream_config = stable_stream_config(&supported_config);
 
     info!(
-        "音频输出：selector={} device={device_name} channels={} rate={} format={:?} buffer={:?} target={effective_target:?}",
+        "音频输出：selector={} device={device_name} id={} channels={} rate={} format={:?} buffer={:?} target={effective_target:?}",
         selector.label(),
+        // On Android this is the id handed to AAudioStreamBuilder_setDeviceId (-1: no explicit
+        // route), the one thing that tells a routing complaint apart from a wrong pick.
+        device
+            .id()
+            .map_or_else(|_| "?".to_string(), |id| id.to_string()),
         stream_config.channels,
         stream_config.sample_rate,
         config_key.sample_format,

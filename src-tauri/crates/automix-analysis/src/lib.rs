@@ -33,6 +33,10 @@ pub struct BeatRegion {
     pub beats: Vec<f32>,
     pub period: f32,
     pub stability: f32,
+    /// Index into `beats` of the first bar start, when the low band (kick, bass
+    /// note changes) clearly accents one of the four phases. 4/4 is assumed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downbeat: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize)]

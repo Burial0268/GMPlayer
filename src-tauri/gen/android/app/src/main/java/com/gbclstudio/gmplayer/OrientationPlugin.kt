@@ -8,10 +8,48 @@ import app.tauri.annotation.InvokeArg
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.Plugin
+import android.os.Build
+import android.provider.Settings
+import android.view.WindowManager
+import app.tauri.plugin.JSObject
+import java.lang.ref.WeakReference
 
 @InvokeArg
 class SetOrientationArgs {
     lateinit var orientation: String
+}
+
+@InvokeArg
+class SetKeepScreenOnArgs {
+    var enabled: Boolean = false
+}
+
+/**
+ * 屏幕常亮。Tauri 的插件每个进程只构造一次，构造时拿到的 Activity 在渲染进程
+ * 崩溃后的 recreate() 之后就是一个已销毁的实例，所以这里跟踪当前 Activity，
+ * 并在新 Activity 创建时重新应用上一次的请求。
+ */
+internal object ScreenAwake {
+    private var activity = WeakReference<Activity>(null)
+    private var enabled = false
+
+    fun attach(current: Activity) {
+        activity = WeakReference(current)
+        apply()
+    }
+
+    fun set(value: Boolean) {
+        enabled = value
+        apply()
+    }
+
+    private fun apply() {
+        val current = activity.get() ?: return
+        current.runOnUiThread {
+            if (enabled) current.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            else current.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
 }
 
 /**
@@ -62,6 +100,24 @@ class OrientationPlugin(private val activity: Activity) : Plugin(activity) {
             Log.d(TAG, "requestedOrientation = ${args.orientation} ($requested)")
             invoke.resolve()
         }
+    }
+
+    @Command
+    fun setKeepScreenOn(invoke: Invoke) {
+        val args = invoke.parseArgs(SetKeepScreenOnArgs::class.java)
+        ScreenAwake.set(args.enabled)
+        invoke.resolve()
+    }
+
+    /** The name the user sees for this phone (Settings → About), else its maker and model. */
+    @Command
+    fun deviceName(invoke: Invoke) {
+        val named = Settings.Global.getString(
+            activity.applicationContext.contentResolver,
+            Settings.Global.DEVICE_NAME,
+        )
+        val name = named?.takeIf { it.isNotBlank() } ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+        invoke.resolve(JSObject().put("name", name))
     }
 
     private companion object {

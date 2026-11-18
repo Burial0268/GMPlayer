@@ -121,7 +121,7 @@
           </div>
         </n-space>
       </div>
-      <div class="list-toolbar">
+      <div ref="listToolbarRef" :class="['list-toolbar', { filtering: !!normalizedKeyword }]">
         <n-input
           class="list-search"
           :class="{ 'has-value': !!searchKeyword }"
@@ -204,6 +204,7 @@ import getCoverUrl from "@/utils/ncm/getCoverUrl";
 import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
+import { alignListUnderToolbar } from "@/utils/listFilterScroll";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -275,6 +276,7 @@ const loadFailed = ref(false);
 // 专辑一次就把全部曲目取回来了（`getAlbum` 无分页），所以这里是纯本地过滤，不需要
 // 像歌单那样补块。
 const searchKeyword = ref("");
+const listToolbarRef = ref<HTMLElement | null>(null);
 const normalizedKeyword = computed(() => searchKeyword.value.trim());
 
 const displayData = computed(() =>
@@ -285,7 +287,7 @@ const displayData = computed(() =>
 
 watch(normalizedKeyword, (keyword, prev) => {
   // 同 PlayList：过滤结果是按相关度重排的新列表，停在原滚动位置没有意义。
-  if (keyword !== prev && typeof $scrollToTop !== "undefined") $scrollToTop();
+  if (keyword !== prev) alignListUnderToolbar(listToolbarRef.value);
 });
 
 // 判断收藏还是取消
@@ -751,6 +753,11 @@ onMounted(() => {
       > * {
         pointer-events: auto;
       }
+    }
+
+    // 筛选结果比视口短时，浏览器会把滚动位置夹回去，工具栏随之跳离钉住的位置。
+    .list-toolbar.filtering + .datalists {
+      min-height: calc(100dvh - var(--content-sticky-top, 0px));
     }
 
     // 药丸形，对齐 NCM 的观感。见歌单页同名规则。

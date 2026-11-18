@@ -295,16 +295,28 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the deviceName command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-device-name",
+          "markdownDescription": "Enables the deviceName command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the setKeepScreenOn command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-keep-screen-on",
+          "markdownDescription": "Enables the setKeepScreenOn command without any pre-configured scope."
+        },
+        {
           "description": "Enables the setOrientation command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-screen-orientation",
           "markdownDescription": "Enables the setOrientation command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the orientation plugin\n#### This default permission set includes:\n\n- `allow-set-screen-orientation`",
+          "description": "Default permissions for the orientation plugin\n#### This default permission set includes:\n\n- `allow-set-screen-orientation`\n- `allow-set-keep-screen-on`\n- `allow-device-name`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the orientation plugin\n#### This default permission set includes:\n\n- `allow-set-screen-orientation`"
+          "markdownDescription": "Default permissions for the orientation plugin\n#### This default permission set includes:\n\n- `allow-set-screen-orientation`\n- `allow-set-keep-screen-on`\n- `allow-device-name`"
         },
         {
           "description": "Denies the setOrientation command without any pre-configured scope.",

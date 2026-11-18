@@ -190,13 +190,27 @@
                       :max="music.getPlaySongTime.duration || 1"
                       :is-playing="music.getPlayState"
                       :buffered="music.bufferedTime"
+                      :transition-phase="autoMixBarPhase"
                       @update:value="handleProgressSeek"
                     />
                     <div class="time-display">
-                      <span>{{ music.getPlaySongTime.songTimePlayed }}</span>
-                      <span v-if="qualityText" class="quality-badge">
-                        <n-icon :component="IconLossless" />
-                        <span class="quality-label">{{ qualityText }}</span>
+                      <span>{{ elapsedLabel }}</span>
+                      <span v-if="qualityText || autoMixTransitioning" class="automix-tag-slot">
+                        <Transition name="automix-tag-swap">
+                          <span
+                            v-if="autoMixTransitioning"
+                            key="automix"
+                            class="quality-badge automix-tag"
+                          >
+                            <span class="automix-tag-text">
+                              {{ $t("player.autoMixTransition") }}
+                            </span>
+                          </span>
+                          <span v-else key="quality" class="quality-badge">
+                            <n-icon :component="IconLossless" />
+                            <span class="quality-label">{{ qualityText }}</span>
+                          </span>
+                        </Transition>
                       </span>
                       <span>-{{ remainingTime }}</span>
                     </div>
@@ -256,16 +270,15 @@
           aria-hidden="true"
           :style="titleFrameStyle"
         >
-          <div class="title-name">
-            <OverflowMarquee
-              v-if="isNameOverflow && !textTravelling"
-              class="title-marquee"
-              :speed="36"
-            >
-              <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
-            </OverflowMarquee>
-            <template v-else>{{ songName || $t("other.noSong") }}</template>
-          </div>
+          <!-- A song change (an AutoMix switch included) fades the old name out, then the new in. -->
+          <Transition name="automix-meta" mode="out-in">
+            <div :key="songName" class="title-name">
+              <OverflowMarquee v-if="!textTravelling" class="title-marquee" :speed="36">
+                <span class="title-marquee-content">{{ songName || $t("other.noSong") }}</span>
+              </OverflowMarquee>
+              <template v-else>{{ songName || $t("other.noSong") }}</template>
+            </div>
+          </Transition>
         </Motion>
 
         <!-- 歌手行同理，只在 mini 条显示的是歌手（不是歌词）时共享。 -->
@@ -275,7 +288,12 @@
           aria-hidden="true"
           :style="artistsFrameStyle"
         >
-          <div class="artists-line">{{ artistNames }}</div>
+          <Transition name="automix-meta" mode="out-in">
+            <div :key="artistNames" class="artists-line">
+              <OverflowMarquee v-if="!textTravelling">{{ artistNames }}</OverflowMarquee>
+              <template v-else>{{ artistNames }}</template>
+            </div>
+          </Transition>
         </Motion>
       </div>
     </div>
@@ -333,6 +351,11 @@ import OutputDeviceButton from "./OutputDeviceButton.vue";
 import PlayerQueueList from "./PlayerQueueList.vue";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { useQualityText } from "@/composables/useQualityText";
+import {
+  useAutoMixBarPhase,
+  useAutoMixElapsed,
+  useAutoMixTransition,
+} from "@/composables/useAutoMixTransition";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 type Artist = { name: string };
@@ -420,6 +443,9 @@ const queueTouch = ref<{
 
 const activeMobileLayer = computed(() => (props.mobileLayer === 2 ? 2 : 1));
 const qualityText = useQualityText();
+const autoMixBarPhase = useAutoMixBarPhase();
+const autoMixTransitioning = useAutoMixTransition(autoMixBarPhase);
+const elapsedLabel = useAutoMixElapsed(autoMixTransitioning);
 // The output menu drives the native backend; the web player has no device list to offer.
 const nativeOutput = isTauri();
 const playbackControlsRef = ref<HTMLElement | null>(null);
@@ -924,7 +950,6 @@ defineExpose({
 
   .title-marquee-content {
     display: inline-block;
-    padding-right: 2em;
     white-space: nowrap;
   }
 }
@@ -1194,7 +1219,6 @@ defineExpose({
 
         .mobile-name-marquee-content {
           display: inline-block;
-          padding-right: 2em;
           white-space: nowrap;
         }
       }
@@ -1400,7 +1424,6 @@ defineExpose({
 
           .mobile-name-marquee-content {
             display: inline-block;
-            padding-right: 2em;
             white-space: nowrap;
           }
         }

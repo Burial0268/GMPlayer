@@ -83,3 +83,17 @@ export function restoreDefaultOrientation(): Promise<void> {
 export function unlockOrientation(): Promise<void> {
   return setScreenOrientation("auto");
 }
+
+/**
+ * Keep the screen on (Android `FLAG_KEEP_SCREEN_ON`; the Web Screen Wake Lock API is not
+ * available in Android WebView). Only lasts while the app is in the foreground.
+ */
+export async function setKeepScreenOn(enabled: boolean): Promise<void> {
+  if (!(await isTauriMobile())) return;
+
+  try {
+    await invoke("plugin:orientation|setKeepScreenOn", { enabled });
+  } catch (err) {
+    console.warn("[ScreenOrientation] Failed to set keep-screen-on:", err);
+  }
+}

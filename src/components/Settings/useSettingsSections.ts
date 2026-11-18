@@ -13,7 +13,7 @@ import {
   InfoRound,
 } from "@vicons/material";
 import { settingStore, userStore } from "@/store";
-import { isTauri } from "@/utils/tauri";
+import { isTauri, isMobileDevice } from "@/utils/tauri";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import type { SettingsSection } from "./types";
@@ -303,6 +303,13 @@ export function useSettingsSections() {
       searchText: "YRC TTML AMLL lyric",
       items: [
         {
+          key: "keepScreenOnLyrics",
+          label: "setting.keepScreenOnLyrics",
+          tip: "setting.keepScreenOnLyricsTip",
+          control: "switch",
+          show: () => isTauri() && isMobileDevice(),
+        },
+        {
           key: "useTTMLRepo",
           label: "setting.useTTMLRepo",
           tip: "setting.useTTMLRepoTip",
@@ -490,25 +497,6 @@ export function useSettingsSections() {
           min: 3,
           max: 12,
           step: 1,
-          show: () => setting.autoMixEnabled,
-        },
-        {
-          key: "autoMixTransitionStyle",
-          label: "setting.autoMixTransitionStyle",
-          tip: "setting.autoMixTransitionStyleTip",
-          control: "select",
-          show: () => setting.autoMixEnabled,
-          options: [
-            { label: "setting.autoMixEqualPower", value: "equalPower" },
-            { label: "setting.autoMixLinear", value: "linear" },
-            { label: "setting.autoMixSCurve", value: "sCurve" },
-          ],
-        },
-        {
-          key: "autoMixSmartCurve",
-          label: "setting.autoMixSmartCurve",
-          tip: "setting.autoMixSmartCurveTip",
-          control: "switch",
           show: () => setting.autoMixEnabled,
         },
         {

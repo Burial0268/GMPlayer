@@ -34,6 +34,10 @@ export interface AudioQuality {
   bitrate: number;
   sampleRate: number;
   channels: number;
+  /** Lowercase decoder name (`flac`, `mp3`, `pcm_s24le`…); empty or absent when unknown. */
+  codec?: string;
+  /** Valid bits per sample for lossless/PCM codecs; absent for lossy ones. */
+  bitsPerSample?: number | null;
 }
 
 export interface DisplayAudioInfo {
@@ -66,6 +70,8 @@ export interface AutoMixNativeStatus {
   nextId?: string | null;
   crossfadeStart?: number | null;
   crossfadeDuration?: number | null;
+  /** Where the outgoing song's outro begins; the transition state starts there. */
+  outroStart?: number | null;
   error?: string | null;
 }
 
@@ -187,11 +193,14 @@ export type AudioThreadEvent =
   | { type: "fftData"; data: { data: number[] } }
   | { type: "lowFrequencyVolume"; data: { volume: number } }
   | { type: "lowFreqBins"; data: { bins: number[] } }
+  /** The native backend's paced merge of the two above (~30 Hz). */
+  | { type: "analysisFrame"; data: { fft: number[] | null; bins: number[] | null } }
   | { type: "automixStatus"; data: { status: AutoMixNativeStatus } }
   | {
       type: "automixAnalysisReady";
       data: { currentId: string; nextId: string; transitionId?: number | null };
     }
+  | { type: "automixIncomingReady"; data: { transitionId?: number | null } }
   | {
       type: "automixCrossfadeStarted";
       data: { fromId: string; toId: string; duration: number; transitionId?: number | null };
@@ -243,6 +252,11 @@ export interface SessionControls {
   favourite: boolean;
   /** Whether toggling is possible at all (logged in, Netease track). */
   canFavourite: boolean;
+  /**
+   * False while the backend has been told no mode by anyone: `playMode` is then its default,
+   * not the user's choice, and must not be adopted.
+   */
+  playModeKnown: boolean;
 }
 
 /**
@@ -266,6 +280,8 @@ export interface NowPlayingInfo {
   playlistIndex: number;
   /** Session controls carried with the projection — see [`SessionControls`]. */
   controls: SessionControls;
+  /** Cover of the planner's next track, for the OS session to prefetch. */
+  nextArtworkUrl: string | null;
 }
 
 export type AudioThreadEventCallback = (event: AudioThreadEvent, seq?: number) => void;

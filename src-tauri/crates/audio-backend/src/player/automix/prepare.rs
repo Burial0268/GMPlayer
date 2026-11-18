@@ -44,6 +44,28 @@ impl PrepareCancel {
 
 const SUPERSEDED: &str = "AutoMix prepare superseded";
 
+/// Where a song's outro begins, for the UI's transition lead-in: the last section the section
+/// analysis calls an outro, else the classifier's distinct outro section, else where the energy
+/// last drops. Mirrored by `outroStartOf` in TransitionStateMachine.ts; keep the two in step.
+pub(in crate::player) fn outro_start_of(analysis: &crate::automix::TrackAnalysis) -> f64 {
+    let from_sections = analysis.sections.as_ref().and_then(|sections| {
+        sections
+            .sections
+            .iter()
+            .rev()
+            .find(|section| matches!(section.section_type, crate::automix::SongSectionKind::Outro))
+            .map(|section| section.start)
+    });
+    let from_classifier = analysis
+        .outro
+        .as_ref()
+        .and_then(|outro| outro.outro_section_start);
+    from_sections
+        .or(from_classifier)
+        .unwrap_or(analysis.duration - analysis.energy.outro_start_offset)
+        .max(0.0) as f64
+}
+
 pub(in crate::player) struct AutoMixPrepareResult {
     pub generation: u64,
     pub transition_id: Option<u64>,
@@ -124,11 +146,7 @@ fn prepare_track_blocking(
     let audio_info = crate::metadata::extract_metadata_only(&local_path)
         .map_err(|e| format!("read next track metadata: {e}"))?;
     let display_info = build_display_info(&audio_info, &source);
-    let quality = AudioQuality {
-        sample_rate: audio_info.sample_rate,
-        channels: audio_info.channels,
-        bitrate: audio_info.bitrate_bps.map(|b| b as u32).unwrap_or_default(),
-    };
+    let quality = AudioQuality::from(&audio_info);
     // Analyze the current + next tracks so the crossfade plan is driven by real
     // outro classification, mix-point selection, curve shaping, and loudness
     // matching instead of a blind "fade the last N seconds" plan.
@@ -143,15 +161,8 @@ fn prepare_track_blocking(
     // Analyze with the same BPM policy as a "current" track so this result can be
     // reused straight from the cache when the next track later becomes current,
     // avoiding a second full decode of the same file.
-    let next_analysis = if config.beat_align
-        || config.volume_norm
-        || config.smart_curve
-        || config.emotional_transition
-    {
-        analyze_cached("next", &local_path, analyze_current_bpm, cancel)
-    } else {
-        None
-    };
+    // The curve is always chosen from what overlaps, so B is always analysed.
+    let next_analysis = analyze_cached("next", &local_path, analyze_current_bpm, cancel);
     if cancel.is_cancelled() {
         return Err(SUPERSEDED.into());
     }
@@ -199,6 +210,7 @@ fn prepare_track_blocking(
         _temp_file: temp_file,
         duration,
         plan,
+        outro_start: current_analysis.as_ref().map(outro_start_of),
         display_info,
         quality,
         next_index: 0,

@@ -79,6 +79,7 @@ fn audio_info_from_reader(
 
     let sample_rate = codec_params.sample_rate.unwrap_or(44_100).max(1);
     let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
+    let bits_per_sample = codec_params.bits_per_sample;
     let total_frames = codec_params.n_frames;
     let duration_secs = total_frames
         .map(|frames| {
@@ -105,6 +106,7 @@ fn audio_info_from_reader(
         codec,
         sample_rate,
         channels,
+        bits_per_sample,
         duration_secs,
         bitrate_bps,
         total_frames,
@@ -326,6 +328,39 @@ fn parse_year(value: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A canonical PCM WAV of `frames` silent stereo frames.
+    fn wav(sample_rate: u32, bits: u16, frames: u32) -> Vec<u8> {
+        let block_align = 2 * bits / 8;
+        let data_len = frames * u32::from(block_align);
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data_len).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&sample_rate.to_le_bytes());
+        out.extend_from_slice(&(sample_rate * u32::from(block_align)).to_le_bytes());
+        out.extend_from_slice(&block_align.to_le_bytes());
+        out.extend_from_slice(&bits.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_len.to_le_bytes());
+        out.resize(out.len() + data_len as usize, 0);
+        out
+    }
+
+    /// The quality badge tells lossless from Hi-Res by codec and bit depth, not by bitrate.
+    #[test]
+    fn bit_depth_and_codec_reach_the_quality() {
+        let mut file = tempfile::Builder::new().suffix(".wav").tempfile().unwrap();
+        std::io::Write::write_all(&mut file, &wav(96_000, 24, 9_600)).unwrap();
+        let info = extract_metadata_only(file.path()).unwrap();
+        let quality = crate::types::AudioQuality::from(&info);
+        assert_eq!(quality.bits_per_sample, Some(24));
+        assert_eq!(quality.sample_rate, 96_000);
+        assert!(quality.codec.starts_with("pcm_"), "{}", quality.codec);
+    }
 
     #[test]
     fn estimate_bitrate_from_file_size_and_duration() {

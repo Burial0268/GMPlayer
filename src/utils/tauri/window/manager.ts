@@ -217,6 +217,23 @@ export const windowManager = {
   },
 
   /**
+   * Answer the exit handshake in `quit_app` / `flush_persisted_state`: run
+   * `flush`, then confirm, so Rust exits only once the page's own state is
+   * written. Main window only. Confirms even when `flush` fails — Rust waits
+   * either way, bounded, and a failure is not a reason to hold the exit.
+   */
+  async onExitFlushRequested(flush: () => Promise<void>): Promise<() => void> {
+    return listen("app-exit-flush", async () => {
+      try {
+        await flush();
+      } catch (error) {
+        console.error("[windowManager] state flush before exit failed", error);
+      }
+      await invoke("page_flush_done");
+    });
+  },
+
+  /**
    * Get the current screen cursor position (physical pixels).
    */
   async getCursorPosition(): Promise<[number, number] | null> {

@@ -16,7 +16,7 @@ use crate::types::{
 };
 
 use super::automix;
-use super::mixer::{CrossfadeParams, DeckId};
+use super::mixer::{CrossfadeParams, DeckId, FadeStyle};
 use super::{AudioPlayer, PlaybackIntent};
 
 const AUTOMIX_MIN_INCOMING_BUFFER_SECS: f64 = 0.25;
@@ -28,6 +28,7 @@ pub(super) struct NativeMix {
     to_id: String,
     duration: f64,
     pub(super) started: bool,
+    incoming_ready: bool,
     pub(super) outgoing_finished: bool,
     playback_id: u64,
     incoming_identity: Option<TrackIdentity>,
@@ -138,10 +139,8 @@ impl AudioPlayer {
             DeckId::Secondary => self.deck_mixer.secondary_writer(),
         };
         let config = self.output.config();
-        let minimum = (config.sample_rate as f64
-            * config.channels as f64
-            * AUTOMIX_MIN_INCOMING_BUFFER_SECS) as usize;
-        incoming_writer.deck_queued_samples() >= minimum
+        incoming_writer.deck_queued_samples()
+            >= min_incoming_samples(config.sample_rate, config.channels)
     }
 
     fn inactive_deck(&self) -> DeckId {
@@ -226,6 +225,9 @@ impl AudioPlayer {
             return false;
         }
         mix.next_index = next_index;
+        let ready = mix
+            .incoming_ready
+            .then_some(AudioThreadEvent::AutomixIncomingReady { transition_id });
         let started = mix
             .started
             .then(|| AudioThreadEvent::AutomixCrossfadeStarted {
@@ -242,7 +244,7 @@ impl AudioPlayer {
                 status: self.automix.status(self.current_play_index),
             })
             .await;
-        if let Some(event) = started {
+        for event in [ready, started].into_iter().flatten() {
             let _ = self.emitter().emit(event).await;
         }
         info!("AutoMix attached to active native pair: next_index={next_index}, transition_id={transition_id:?}");
@@ -285,6 +287,19 @@ impl AudioPlayer {
             self.native_mix = None;
             return;
         }
+        // Before the cue the anchor still belongs to the outgoing track, so this goes first.
+        if !mix.started && !mix.incoming_ready && self.native_automix_incoming_ready() {
+            if let Some(mix) = self.native_mix.as_mut() {
+                mix.incoming_ready = true;
+            }
+            let event = AudioThreadEvent::AutomixIncomingReady {
+                transition_id: self.native_crossfade_transition_id,
+            };
+            let _ = self.emitter().emit(event).await;
+        }
+        let Some(mix) = self.native_mix.as_ref() else {
+            return;
+        };
         let render_clock = self.output.writer().render_clock();
         let Some(anchor) = render_clock.anchor() else {
             return;
@@ -296,6 +311,25 @@ impl AudioPlayer {
             return;
         }
         if anchor.anchor.phase == 3 {
+            // The mixer found the incoming deck empty at the cue. Queued samples here mean blocks
+            // were pushed but rejected as a stale generation; none means the decoder lagged.
+            let incoming = match self.inactive_deck() {
+                DeckId::Primary => self.deck_mixer.primary_writer(),
+                DeckId::Secondary => self.deck_mixer.secondary_writer(),
+            };
+            let (stale_blocks, stale_block, stale_accepted, writer) = incoming.stale_blocks();
+            warn!(
+                queued_samples = incoming.deck_queued_samples(),
+                deck_generation = incoming.generation(),
+                stale_blocks,
+                stale_block = ?stale_block,
+                stale_accepted = ?stale_accepted,
+                writer = ?writer,
+                deck = ?self.inactive_deck(),
+                decoder_alive = self.secondary_decoder_handle.is_some(),
+                secondary_playback_id = ?self.secondary_playback_id,
+                "AutoMix incoming deck empty at the cue"
+            );
             self.cancel_native_automix_runtime().await;
             let events = self.automix.mark_failed(
                 "AutoMix incoming audio missed its scheduled beat".into(),
@@ -379,6 +413,7 @@ impl AudioPlayer {
 
         let analysis_tx_for_open = self.analysis_tx.clone();
         let path_for_open = prepared.local_path.clone();
+        let entry = incoming_entry(&prepared);
         let output_config = self.output.config();
         let playback_id = self.decoder_playback_id.wrapping_add(1);
         let decoder_event_tx = self.decoder_event_tx.clone();
@@ -387,7 +422,7 @@ impl AudioPlayer {
         let open_result = tokio::task::spawn_blocking(move || {
             decoder::spawn_playback_decoder(
                 &path_for_open,
-                Some(0.0),
+                Some(entry),
                 incoming_writer,
                 output_config.channels,
                 output_config.sample_rate,
@@ -463,6 +498,7 @@ impl AudioPlayer {
 
             let analysis_tx_for_open = self.analysis_tx.clone();
             let path_for_open = prepared.local_path.clone();
+            let entry = incoming_entry(&prepared);
             let playback_id = self.decoder_playback_id.wrapping_add(1);
             let decoder_event_tx = self.decoder_event_tx.clone();
             let analysis_enabled_for_open = Arc::clone(&self.analysis_enabled);
@@ -470,7 +506,7 @@ impl AudioPlayer {
             let open_result = tokio::task::spawn_blocking(move || {
                 decoder::spawn_playback_decoder(
                     &path_for_open,
-                    Some(0.0),
+                    Some(entry),
                     incoming_writer,
                     output_config.channels,
                     output_config.sample_rate,
@@ -495,11 +531,12 @@ impl AudioPlayer {
             .filter(|plan| scheduled && plan.start_time > now)
             .map(|plan| plan.start_time);
         if let Some(plan) = prepared.plan.as_mut() {
-            if prepared.analysis_duration > 0.0 && plan.duration + 0.1 >= prepared.analysis_duration
-            {
-                plan.duration = (prepared.analysis_duration - 0.1).max(0.05);
+            let remaining = prepared.analysis_duration - plan.incoming_start;
+            if prepared.analysis_duration > 0.0 && plan.duration + 0.1 >= remaining {
+                plan.duration = (remaining - 0.1).max(0.05);
                 plan.outgoing_rate = 1.0;
                 plan.beat_synced = false;
+                plan.style = FadeStyle::Blend;
             }
             if start_position.is_none() || plan.start_time <= now + 2.0 || start_paused {
                 plan.outgoing_rate = 1.0;
@@ -528,6 +565,10 @@ impl AudioPlayer {
                     plan.outgoing_rate = 1.0;
                     plan.beat_synced = false;
                 }
+            }
+            // Holding both decks up only works while their beats meet.
+            if !plan.beat_synced && matches!(plan.style, FadeStyle::BeatMix(_)) {
+                plan.style = FadeStyle::Blend;
             }
         }
         let duration = prepared.plan.as_ref().map(|p| p.duration).unwrap_or(2.0);
@@ -561,6 +602,8 @@ impl AudioPlayer {
                 overlap_headroom_db: plan.overlap_headroom_db as f32,
                 in_shape: plan.in_shape as f32,
                 out_shape: plan.out_shape as f32,
+                bass_swap: plan.bass_swap,
+                style: plan.style,
             })
             .unwrap_or_else(|| CrossfadeParams {
                 outgoing_gain: self.active_norm_gain,
@@ -583,6 +626,7 @@ impl AudioPlayer {
             to_id: prepared.song.get_id(),
             duration,
             started: false,
+            incoming_ready: false,
             outgoing_finished: false,
             playback_id: self.decoder_playback_id,
             incoming_identity: prepared
@@ -730,6 +774,21 @@ impl AudioPlayer {
         self.emit_many(events).await;
         self.sync_ui().await;
     }
+}
+
+/// Where B's decoder opens: the plan's entry downbeat, or the top of the track.
+fn incoming_entry(prepared: &automix::PreparedAutoMixStart) -> f64 {
+    prepared
+        .plan
+        .as_ref()
+        .map_or(0.0, |plan| plan.incoming_start.max(0.0))
+}
+
+/// What counts as a preloaded incoming deck. Capped at a full queue: a Windows/macOS deck holds 8
+/// blocks (~85 ms), so 0.25 s could never be met there, and a preloaded mix never read as ready.
+fn min_incoming_samples(sample_rate: u32, channels: u16) -> usize {
+    ((sample_rate as f64 * channels as f64 * AUTOMIX_MIN_INCOMING_BUFFER_SECS) as usize)
+        .min(super::mixer::deck_queue_full_samples(channels))
 }
 
 pub(super) fn local_identity(song: &SongData) -> Option<TrackIdentity> {

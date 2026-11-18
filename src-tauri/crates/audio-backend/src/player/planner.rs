@@ -204,21 +204,27 @@ impl Planner {
         if !self.enabled || self.exhausted || manifest.is_empty() {
             return None;
         }
-        if let Some(pending) = self.pending_next.clone() {
-            // Guard against a manifest replacement that dropped the memoized
-            // track: only reuse it while it still resolves to the same identity.
-            if manifest
-                .entry_at(pending.position)
-                .is_some_and(|entry| entry.identity.key() == pending.identity.key())
-            {
-                return Some(pending);
-            }
-            self.pending_next = None;
-        }
-
-        let planned = self.compute_next(manifest);
+        let planned = self.upcoming(manifest);
         self.pending_next = planned.clone();
         planned
+    }
+
+    /// What [`Self::peek_next`] would answer, without memoizing it — for the
+    /// media session, which only displays the next track and must not plan.
+    pub fn upcoming(&self, manifest: &ManifestStore) -> Option<PlannedTrack> {
+        if !self.enabled || self.exhausted || manifest.is_empty() {
+            return None;
+        }
+        // Guard against a manifest replacement that dropped the memoized
+        // track: only reuse it while it still resolves to the same identity.
+        self.pending_next
+            .clone()
+            .filter(|pending| {
+                manifest
+                    .entry_at(pending.position)
+                    .is_some_and(|entry| entry.identity.key() == pending.identity.key())
+            })
+            .or_else(|| self.compute_next(manifest))
     }
 
     fn compute_next(&self, manifest: &ManifestStore) -> Option<PlannedTrack> {
