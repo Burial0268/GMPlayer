@@ -87,8 +87,9 @@ fn the_overlap_limiter_releases_smoothly_after_the_fade_completes() {
     // when A lets go, so completion lands mid-release.
     let fade = rate / 10;
     let tail = rate / 2;
-    let a = noise(fade + tail, channels, 0.7, 1);
-    let b = noise(fade + tail, channels, 0.7, 2);
+    // Loud enough that two balanced decks still overshoot the limiter's ceiling.
+    let a = noise(fade + tail, channels, 0.95, 1);
+    let b = noise(fade + tail, channels, 0.95, 2);
     let params = CrossfadeParams {
         style: FadeStyle::BeatMix(0.9),
         overlap_headroom_db: 0.0,
@@ -121,4 +122,70 @@ fn the_overlap_limiter_releases_smoothly_after_the_fade_completes() {
         (gains[gains.len() - 1] - 1.0).abs() < 0.01,
         "and it finishes at unity"
     );
+}
+
+/// What a listener hears through a balanced fade: the level moves from A's to B's without a bump
+/// or a dip, and stays at B's once the fade is over. Equal-RMS noise on both decks, so the level
+/// is the gains' doing; quiet enough that the limiter never acts.
+#[test]
+fn a_balanced_fade_moves_the_level_from_a_to_b_without_bumps() {
+    let channels = 2;
+    let rate = 48_000;
+    let fade = rate * 2;
+    let tail = rate / 2;
+    let a = noise(fade + tail, channels, 0.3, 3);
+    let b = noise(fade + tail, channels, 0.3, 4);
+    let source_rms = 0.3 / 3f32.sqrt();
+    let window = rate / 20 * channels; // 50 ms
+    for style in [
+        FadeStyle::Blend,
+        FadeStyle::Handoff(0.6),
+        FadeStyle::BeatMix(0.5),
+    ] {
+        let params = CrossfadeParams {
+            style,
+            outgoing_gain: 0.8,
+            incoming_gain: 1.1,
+            overlap_headroom_db: -1.2,
+            ..CrossfadeParams::default()
+        };
+        let (out, completed) = render(&a, &b, channels, fade, tail, params);
+        let levels: Vec<f32> = out
+            .chunks_exact(window)
+            .map(|w| {
+                20.0 * ((w.iter().map(|s| s * s).sum::<f32>() / w.len() as f32).sqrt()).log10()
+            })
+            .collect();
+        let worst = levels
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        // Two independent noises sum to noise of the summed power, so the level follows the gains;
+        // 50 ms windows of noise wander by a few tenths of a dB on their own.
+        assert!(
+            worst < 1.0,
+            "{style:?}: a step of {worst} dB between 50 ms windows"
+        );
+        let lowest = levels.iter().copied().fold(f32::INFINITY, f32::min);
+        let from = 20.0 * (0.8 * source_rms).log10();
+        let to = 20.0 * (1.1 * source_rms).log10();
+        assert!(
+            lowest > from - 1.2 - 0.6,
+            "{style:?}: dips to {lowest} dB, below A's level less the headroom"
+        );
+        // The old BeatMix stacked both decks to about +0.6 dB above B here, a bump that then fell
+        // away as A left; 50 ms of noise is steady to about 0.1 dB.
+        let highest = levels.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            highest < from.max(to) + 0.3,
+            "{style:?}: swells to {highest} dB, above both A ({from}) and B ({to})"
+        );
+        let after = &levels[completed * channels / window + 1..];
+        for level in after {
+            assert!(
+                (level - to).abs() < 0.5,
+                "{style:?}: settles at {level}, not {to}"
+            );
+        }
+    }
 }

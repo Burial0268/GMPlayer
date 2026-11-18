@@ -226,16 +226,22 @@ are tried; within ±4% the outgoing A is stretched and the pair **beat-mixes**:
 A leaving on the latest bar start that fits, preferably a four-bar phrase from
 its outro. B enters on its first downbeat — or, when its first line is far off,
 on the bar one overlap before it — so the decoder opens B there and its clock
-starts from that position. B rises to full by the handoff while A holds full,
-then A releases; the low band swaps at the handoff. The handoff is 0.5 unless
+starts from that position. B rises to A's level by the handoff, then A
+releases; the low band swaps at the handoff. The pair is balanced rather than
+stacked: the style sets who is heard how much, and the summed level moves from
+A's gain to B's (both decks at full was a bump of up to +3 dB that the limiter
+then released as A left). The handoff is 0.5 unless
 A's last vocal line runs later (up to 0.9), always on a bar line. A bar count
 whose overlap would put both singers together for more than a second is
 skipped. Outside the stretch range (or with BPM matching off) the pair
 **filter-cuts** at native speed: A is high-passed from 300 Hz to 18 kHz, holds
-until 70%, and B enters halfway. Both styles hold the decks near full volume,
-so the mixer limits the sum (-0.26 dB, 120 ms release) until the limiter has
-released. An unsynced fade whose A still sings inside it holds A until the last
-line with B at 0.6 underneath. The bar comes from `BeatRegion::downbeat`, the
+until 70%, and B enters halfway; FilterCut keeps its own levels, since its
+high-pass removes energy a gain model cannot see. The mixer still limits these
+styles (-0.26 dB, 120 ms release) as a safety net, and keeps the limiter
+running after the fade until it has released. An unsynced fade whose A still
+sings inside it lets A dominate until the last line with B at 0.6 of it
+underneath. Every piece of every curve is built on an eased progress, so gains
+leave and arrive at rest instead of with a corner. The bar comes from `BeatRegion::downbeat`, the
 pulse phase whose low band hits hardest; a kick on 1 and 3 alike leaves it
 unknown, and every pulse may then anchor. B is still not stretched, and its
 tempo is not ramped back after the overlap (HyPlayer stretches B instead).
