@@ -40,6 +40,17 @@ export const getSongTime = (mss: number): string => {
 };
 
 /**
+ * Time left in a song as the player shows it: `-m:ss`, minutes unpadded. No duration yet reads
+ * `-0:00`.
+ */
+export const getRemainingTime = (time: { duration: number; currentTime?: number }): string => {
+  if (!time?.duration) return "-0:00";
+  const remaining = Math.max(0, time.duration - (time.currentTime || 0));
+  const seconds = Math.floor(remaining % 60);
+  return `-${Math.floor(remaining / 60)}:${seconds.toString().padStart(2, "0")}`;
+};
+
+/**
  * 获取时间戳对应的日期
  * @param mss - 时间戳
  * @returns 日期字符串

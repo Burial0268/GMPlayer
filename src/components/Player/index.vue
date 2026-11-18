@@ -48,10 +48,11 @@
                   <template v-if="setting.bottomLyricShow">
                     <Transition name="mini-lyric" mode="out-in">
                       <n-text v-if="miniLyricLine" :key="miniLyricLine.key" class="lrc" :depth="3">
-                        <LyricScroll
+                        <MiniLyricScroll
                           class="mini-lrc-scroll"
                           :text="miniLyricLine.text"
-                          :progress="miniLyricProgress"
+                          :start="miniLyricLine.start"
+                          :end="miniLyricLine.end"
                         />
                       </n-text>
                       <OverflowMarquee v-else key="artists" data-mobile-player-artists>
@@ -95,10 +96,10 @@
                 <Motion
                   v-if="music.getLoadingState"
                   key="loading"
-                  :initial="{ opacity: 0, scale: 0.8 }"
-                  :animate="{ opacity: 1, scale: 1 }"
-                  :exit="{ opacity: 0, scale: 0.8 }"
-                  :transition="{ duration: 0.2 }"
+                  :initial="playStateFadeHidden"
+                  :animate="playStateFadeShown"
+                  :exit="playStateFadeHidden"
+                  :transition="playStateFadeTransition"
                   class="play-state-inner"
                 >
                   <n-spin :size="28" stroke="var(--player-accent-color, var(--main-color))" />
@@ -106,10 +107,10 @@
                 <Motion
                   v-else
                   :key="music.getPlayState ? 'pause' : 'play'"
-                  :initial="{ opacity: 0, scale: 0.8 }"
-                  :animate="{ opacity: 1, scale: 1 }"
-                  :exit="{ opacity: 0, scale: 0.8 }"
-                  :transition="{ duration: 0.2 }"
+                  :initial="playStateFadeHidden"
+                  :animate="playStateFadeShown"
+                  :exit="playStateFadeHidden"
+                  :transition="playStateFadeTransition"
                   class="play-state-inner"
                 >
                   <n-icon
@@ -328,8 +329,7 @@ import ListenTogetherModal from "@/components/DataModal/ListenTogetherModal.vue"
 import ListenTogetherStatus from "./ListenTogetherStatus.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
-import LyricScroll from "@/components/Lyric/LyricScroll.vue";
-import { getLyricPresentationTimeSeconds } from "@/utils/tauri/audio/uiDelay";
+import MiniLyricScroll from "./MiniLyricScroll.vue";
 import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import BigPlayer from "./BigPlayer/index.vue";
 import MiniPlayerProgress from "./MiniPlayerProgress.vue";
@@ -411,16 +411,11 @@ const miniLyricLine = computed(() => {
   return { key: `lrc-${index}`, text: line.content, start: line.time, end };
 });
 
-// 和桌面歌词同一套：溢出部分随这一行的播放进度滚出来，而不是固定速度循环
-const miniLyricProgress = computed(() => {
-  const line = miniLyricLine.value;
-  if (!line) return 0;
-  const now = getLyricPresentationTimeSeconds(
-    music.getPlaySongTime.playbackCurrentTime ?? music.getPlaySongTime.currentTime,
-    setting.lyricTimeOffset ?? 0,
-  );
-  return (now - line.start) / Math.max(0.8, line.end - line.start);
-});
+// Module constants, not template literals: motion-v restarts a <Motion>'s animation on every
+// update, and a fresh object each render updates it — 30 times a second with the play clock.
+const playStateFadeHidden = { opacity: 0, scale: 0.8 };
+const playStateFadeShown = { opacity: 1, scale: 1 };
+const playStateFadeTransition = { duration: 0.2 };
 
 const getMiniSharedFrames = () => {
   const artworkEl = document.querySelector("[data-mobile-player-artwork]");

@@ -1,7 +1,7 @@
 <template>
   <Motion
     :class="['bouncing-slider', { transitioning: transitionPhase === 'active', leaving }]"
-    :style="{ x: bounceXSpring }"
+    :style="rootStyle"
     :onPanStart="handlePanStart"
     :onPan="handlePan"
     :onPanEnd="handlePanEnd"
@@ -11,7 +11,7 @@
   >
     <slot name="before-icon" />
     <div ref="innerRef" class="inner-wrapper">
-      <Motion tag="div" class="inner" :style="{ clipPath }">
+      <Motion tag="div" class="inner" :style="innerStyle">
         <div
           v-if="bufferedScale > 0"
           :key="bufferedRun"
@@ -19,7 +19,7 @@
           :class="{ landed: bufferedScale >= 1 }"
           :style="{ transform: `scaleX(${bufferedScale})` }"
         />
-        <Motion tag="div" class="thumb" :style="{ scaleX, originX: 0 }" />
+        <Motion tag="div" class="thumb" :style="thumbStyle" />
         <div
           v-if="leaving"
           class="ghost"
@@ -120,6 +120,12 @@ const insetMv = useMotionValue(INITIAL_INSET);
 const clipPath = useMotionTemplate`inset(${insetMv}px 0px round 100px)`;
 
 const bounceXSpring = useSpring(0, { damping: 12, stiffness: 300 });
+
+// Constants, not template literals: motion-v restarts a <Motion>'s animation on every update, and
+// `value` re-renders this component with the play clock, 30 times a second.
+const rootStyle = { x: bounceXSpring };
+const innerStyle = { clipPath };
+const thumbStyle = { scaleX, originX: 0 };
 
 // At the hand-off the outgoing song's fill stays as a ghost and fades down to the next song's
 // segment, which then flashes and settles, instead of the fill shrinking back from the end.

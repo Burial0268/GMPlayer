@@ -212,7 +212,7 @@
                           </span>
                         </Transition>
                       </span>
-                      <span>-{{ remainingTime }}</span>
+                      <span>{{ remainingTime }}</span>
                     </div>
                   </div>
                   <!-- 控制按钮 + 音量 -->
@@ -337,6 +337,7 @@ import { animate, Motion, useMotionValue, useTransform, type MotionValue } from 
 import { musicStore } from "@/store";
 import { prefersReducedMotion } from "@/utils/reducedMotion";
 import { useLayerNavigation } from "@/utils/navigation";
+import { getRemainingTime } from "@/utils/timeTools";
 import { layerMotion } from "@/utils/navigation/motion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import RollingLyrics from "../RollingLyrics.vue";
@@ -377,7 +378,6 @@ const props = defineProps<{
   artistList: Artist[];
   isNameOverflow: boolean;
   hasLyrics: boolean;
-  remainingTime: string;
   coverImageUrl500: string;
   handleProgressSeek: (val: number) => void;
   queueOpen: boolean;
@@ -417,6 +417,10 @@ const emit = defineEmits<{
 
 const music = musicStore();
 const navigation = useLayerNavigation();
+
+// Read here, not passed in: BigPlayer renders this layout inside a <Motion>'s slot, and a slot
+// reading the clock re-renders that Motion — which restarts its animation — every second.
+const remainingTime = computed(() => getRemainingTime(music.getPlaySongTime));
 
 // Expose phony refs and name refs for parent (cover frame composable + name overflow)
 const phonyBigCoverRef = ref<HTMLElement | null>(null);

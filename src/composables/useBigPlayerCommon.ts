@@ -34,16 +34,6 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   const artistList = computed(() => music.getPlaySongData?.artist ?? []);
   const songName = computed(() => music.getPlaySongData?.name ?? "");
 
-  // --- Remaining time ---
-  const remainingTime = computed(() => {
-    const playTime = music.getPlaySongTime;
-    if (!playTime || !playTime.duration) return "0:00";
-    const remaining = Math.max(0, playTime.duration - (playTime.currentTime || 0));
-    const minutes = Math.floor(remaining / 60);
-    const seconds = Math.floor(remaining % 60);
-    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-  });
-
   // --- Has lyrics ---
   const hasLyrics = computed(() => {
     const lrc = music.getPlaySongLyric?.lrc;
@@ -130,7 +120,6 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
     coverImageUrl500,
     artistList,
     songName,
-    remainingTime,
     hasLyrics,
     lrcMouseStatus,
     lyricsScroll,

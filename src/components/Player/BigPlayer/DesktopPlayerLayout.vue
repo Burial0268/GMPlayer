@@ -26,9 +26,9 @@
               key="comments"
               class="left-stage comment-stage"
               :layout="true"
-              :initial="stageVars(0, -22, 8, 0.99)"
-              :animate="stageVars(1, 0, 0, 1)"
-              :exit="stageVars(0, -14, 5, 0.995)"
+              :initial="commentStageFrom"
+              :animate="stageRest"
+              :exit="commentStageExit"
               :transition="commentStageTransition"
             >
               <DesktopCommentPanel @close="$emit('closeComments')" />
@@ -38,9 +38,9 @@
               key="artwork"
               class="left-stage artwork-stage"
               :layout="true"
-              :initial="stageVars(0, 22, 8, 0.99)"
-              :animate="stageVars(1, 0, 0, 1)"
-              :exit="stageVars(0, 14, 5, 0.995)"
+              :initial="artworkStageFrom"
+              :animate="stageRest"
+              :exit="artworkStageExit"
               :transition="artworkStageTransition"
             >
               <PlayerCover
@@ -143,6 +143,13 @@ const stageVars = (opacity: number, x: number, y: number, scale: number) => ({
   "--stage-y": y,
   "--stage-scale": scale,
 });
+// Bound as constants, not template literals: motion-v restarts a <Motion>'s animation on every
+// update, and a fresh object each render is an update (this layout re-renders with menuShow).
+const stageRest = stageVars(1, 0, 0, 1);
+const commentStageFrom = stageVars(0, -22, 8, 0.99);
+const commentStageExit = stageVars(0, -14, 5, 0.995);
+const artworkStageFrom = stageVars(0, 22, 8, 0.99);
+const artworkStageExit = stageVars(0, 14, 5, 0.995);
 const commentStageTransition = {
   ...stageSpring,
   default: stageSpring,
