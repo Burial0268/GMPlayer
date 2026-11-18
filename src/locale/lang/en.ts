@@ -26,6 +26,14 @@ const messages: Record<string, unknown> = {
       cloud: "Music Cloud",
       login: "Login",
       results: "Music Library",
+      more: "More options",
+      tab: {
+        playlist: "Playlists",
+        like: "Saved",
+        album: "Albums",
+        artist: "Artists",
+        cloud: "Cloud",
+      },
     },
     avatar: {
       dark: "Dark Mode",

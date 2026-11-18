@@ -26,6 +26,15 @@ const messages: Record<string, unknown> = {
       artist: "收藏的歌手",
       cloud: "音乐云盘",
       results: "的音乐库",
+      more: "更多操作",
+      // 分段控件放不下五个四字标签，这里是短名
+      tab: {
+        playlist: "歌单",
+        like: "收藏歌单",
+        album: "专辑",
+        artist: "歌手",
+        cloud: "云盘",
+      },
     },
     avatar: {
       dark: "深色模式",

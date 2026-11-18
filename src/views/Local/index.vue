@@ -19,18 +19,19 @@
         secondary
         round
         type="primary"
-        @click="navigation.openPage('/login', { origin: $event })"
+        @click="navigation.openPage(loginTarget(), { origin: $event })"
       >
         {{ $t("nav.avatar.login") }}
       </n-button>
     </div>
 
-    <div class="title">
+    <header class="local-head">
       <div class="icon-badge">
-        <n-icon :size="34" :component="FolderMusic" />
+        <n-icon :component="FolderMusic" />
       </div>
       <div class="text">
-        <n-text class="key">{{ $t("sidebar.localMusic") }}</n-text>
+        <span class="eyebrow s-label">{{ $t("nav.user") }}</span>
+        <h1 class="title">{{ $t("sidebar.localMusic") }}</h1>
         <n-text class="tip" :depth="3">
           {{ $t("local.summary", { sources: local.sources.length, tracks: local.trackCount }) }}
         </n-text>
@@ -55,9 +56,14 @@
           {{ $t("local.manageSources") }}
         </n-button>
       </div>
-    </div>
+    </header>
 
-    <n-tabs class="main-tab" type="line" v-model:value="tabValue" @update:value="tabChange">
+    <n-tabs
+      class="main-tab local-tab"
+      type="segment"
+      v-model:value="tabValue"
+      @update:value="tabChange"
+    >
       <n-tab name="songs">{{ $t("local.tab.songs") }}</n-tab>
       <n-tab name="albums">{{ $t("local.tab.albums") }}</n-tab>
       <n-tab name="artists">{{ $t("local.tab.artists") }}</n-tab>
@@ -99,6 +105,13 @@ const download = useDownloadStore();
 const importRef = ref<InstanceType<typeof ImportLocalMusic> | null>(null);
 const downloadRef = ref<InstanceType<typeof DownloadManager> | null>(null);
 
+// 手机上登录后底栏「音乐库」改指 `/user`（见 `MobileTabBar.vue`）。只关掉登录页会落回
+// 这一页，看起来像没登录成功，所以直接带上 redirect 让 `LoginView` 切过去。
+const loginTarget = () =>
+  window.matchMedia("(max-width: 768px)").matches
+    ? { path: "/login", query: { redirect: "/user" } }
+    : "/login";
+
 const TABS = ["songs", "albums", "artists", "folders", "playlists"];
 const { transitionName, updateDirection, syncIndex } = useTabTransition(TABS);
 
@@ -135,14 +148,16 @@ onMounted(async () => {
 
 <style lang="scss" scoped>
 .local {
+  padding: 6px 0 32px;
+
   .local-login-banner {
     display: flex;
     align-items: center;
     gap: 16px;
-    margin-top: 24px;
+    margin-bottom: 24px;
     padding: 16px 20px;
     border-radius: 12px;
-    background-color: rgba(var(--main-color), 0.08);
+    background-color: color-mix(in srgb, var(--main-color) 8%, transparent);
     .text {
       display: flex;
       flex-direction: column;
@@ -170,67 +185,80 @@ onMounted(async () => {
     }
   }
 
-  .title {
-    margin-top: 30px;
-    margin-bottom: 20px;
+  // 与 `/user`、搜索结果页同一套头部。
+  .local-head {
     display: flex;
     align-items: center;
+    gap: 16px;
+    min-width: 0;
+
     .icon-badge {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 80px;
-      height: 80px;
-      min-width: 80px;
-      margin-right: 16px;
-      border-radius: 12px;
-      background-color: rgba(var(--main-color), 0.14);
-      color: rgb(var(--main-color));
-      box-shadow: 0 6px 8px -2px rgb(0 0 0 / 16%);
+      --size: clamp(52px, 7vw, 72px);
+      display: grid;
+      place-items: center;
+      width: var(--size);
+      height: var(--size);
+      flex-shrink: 0;
+      border-radius: var(--radius-panel);
+      background-color: color-mix(in srgb, var(--main-color) 14%, transparent);
+      color: var(--main-color);
+      font-size: calc(var(--size) * 0.45);
     }
+
     .text {
       display: flex;
       flex-direction: column;
+      flex: 1;
       min-width: 0;
-      .key {
-        font-size: 34px;
-        font-weight: bold;
+
+      .eyebrow {
+        margin-bottom: 10px;
+        color: var(--n-text-color-3);
       }
+
+      .title {
+        margin: 0;
+        font-size: clamp(26px, 4.6vw, 50px);
+        font-weight: 700;
+        line-height: 1.08;
+        letter-spacing: -0.02em;
+        color: var(--n-text-color);
+      }
+
       .tip {
-        font-size: 15px;
+        margin-top: 6px;
+        font-size: 13px;
       }
     }
+
     .actions {
-      margin-left: auto;
       flex-shrink: 0;
-      align-self: center;
       display: flex;
       align-items: center;
       gap: 10px;
     }
+
+    // 手机上两颗按钮并排会把标题挤没，所以整块挪到下一行并铺满宽度。
     @media (max-width: 620px) {
-      .icon-badge {
-        width: 56px;
-        height: 56px;
-        min-width: 56px;
-      }
-      .text .key {
-        font-size: 26px;
-      }
-      // 手机上两颗按钮并排会把标题挤没，所以整块挪到下一行并铺满宽度。
       flex-wrap: wrap;
+
       .actions {
-        margin-left: 0;
         width: 100%;
-        margin-top: 12px;
+
         > * {
           flex: 1;
         }
+
         :deep(.n-button) {
           width: 100%;
         }
       }
     }
+  }
+
+  .local-tab {
+    margin-top: 22px;
+    max-width: 480px;
   }
 
   // 用 `overflow: clip` 而**不是** `hidden`。两者裁剪效果一样（这里只是要把 slide 转场
@@ -254,7 +282,7 @@ onMounted(async () => {
   .content {
     position: relative;
     overflow: clip;
-    margin-top: 20px;
+    margin-top: 24px;
   }
 }
 </style>

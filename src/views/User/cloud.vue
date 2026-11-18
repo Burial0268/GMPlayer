@@ -1,7 +1,7 @@
 <template>
   <div class="cloud">
-    <div class="data">
-      <n-button class="up" type="primary" strong secondary round @click="upSongRef.click()">
+    <div class="toolbar">
+      <n-button type="primary" strong secondary round @click="upSongRef.click()">
         <template #icon>
           <n-icon :component="BackupRound" />
         </template>
@@ -14,33 +14,34 @@
         accept="audio/*"
         @change="upCloudSongData"
       />
+      <!-- 用量直接写出来：原先藏在 hover 弹层里，触屏上看不到。 -->
       <div class="space" v-if="cloudSpace[0]">
-        <span>{{ cloudSpace[0] }} G</span>
-        <n-popover trigger="hover">
-          <template #trigger>
-            <n-progress
-              type="line"
-              :color="setting.themeData.primaryColor"
-              class="progress"
-              :show-indicator="false"
-              :percentage="100 / (cloudSpace[1] / cloudSpace[0])"
-            />
-          </template>
-          <n-text>
-            {{
-              $t("general.name.cloudUsed", {
-                used: (100 / (cloudSpace[1] / cloudSpace[0])).toFixed(),
-                remaining: (cloudSpace[1] - cloudSpace[0]).toFixed(),
-              })
-            }}
-          </n-text>
-        </n-popover>
-        <span>{{ cloudSpace[1] }} G</span>
+        <div class="space-head s-num">
+          <span>{{ cloudSpace[0] }} G</span>
+          <span>{{ cloudSpace[1] }} G</span>
+        </div>
+        <n-progress
+          type="line"
+          :color="setting.themeData.primaryColor"
+          :show-indicator="false"
+          :height="6"
+          :percentage="cloudUsedPercent"
+        />
+        <n-text class="space-tip" :depth="3">
+          {{
+            $t("general.name.cloudUsed", {
+              used: cloudUsedPercent.toFixed(),
+              remaining: (cloudSpace[1] - cloudSpace[0]).toFixed(),
+            })
+          }}
+        </n-text>
       </div>
     </div>
-    <div class="song-panel">
+    <PageLoadState v-if="error" error @retry="cloudDataLoad(true)" />
+    <div v-else class="song-panel">
       <DataLists
         :listData="cloudData"
+        :loading="loading"
         virtual
         virtual-height="min(68vh, 760px)"
         :virtual-item-size="54"
@@ -48,6 +49,7 @@
       />
     </div>
     <Pagination
+      v-if="cloudData[0]"
       :totalCount="totalCount"
       :pageNumber="pageNumber"
       @pageSizeChange="pageSizeChange"
@@ -97,6 +99,7 @@ import { BackupRound } from "@vicons/material";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import type { ProgressStatus } from "naive-ui";
 
 const { t } = useI18n();
@@ -110,6 +113,11 @@ const cloudData = ref([]);
 const pagelimit = ref(30);
 const pageNumber = ref(route.query.page ? Number(route.query.page) : 1);
 const totalCount = ref(0);
+const loading = ref(false);
+const error = ref(false);
+const cloudUsedPercent = computed(() =>
+  cloudSpace.value[1] > 0 ? (cloudSpace.value[0] / cloudSpace.value[1]) * 100 : 0,
+);
 
 // 上传歌曲数据
 const upSongRef = ref(null);
@@ -120,35 +128,44 @@ const upSongCompleted = ref(0);
 // 获取云盘数据
 const getCloudData = (limit = 30, offset = 0, scroll = true) => {
   if (scroll && typeof $scrollToTop !== "undefined") $scrollToTop();
-  getCloud(limit, offset).then((res) => {
-    console.log(res);
-    totalCount.value = res.count;
-    cloudData.value = [];
-    // 云盘空间
-    cloudSpace.value = [
-      (res.size / Math.pow(1024, 3)).toFixed(2),
-      (res.maxSize / Math.pow(1024, 3)).toFixed(0),
-    ];
-    // 全部歌曲
-    if (res.data) {
-      res.data.forEach((v, i) => {
-        cloudData.value.push(
-          asRawEntry({
-            id: v.songId,
-            num: i + 1 + (pageNumber.value - 1) * pagelimit.value,
-            name: v.simpleSong.name,
-            artist: v.simpleSong.ar,
-            album: v.simpleSong.al,
-            alia: v.simpleSong.alia,
-            mv: v.simpleSong.mv,
-            time: getSongTime(v.simpleSong.dt),
-          }),
-        );
-      });
-    } else {
-      $message.error(t("general.message.acquisitionFailed"));
-    }
-  });
+  loading.value = true;
+  error.value = false;
+  getCloud(limit, offset)
+    .then((res) => {
+      totalCount.value = res.count;
+      cloudData.value = [];
+      // 云盘空间
+      cloudSpace.value = [
+        (res.size / Math.pow(1024, 3)).toFixed(2),
+        (res.maxSize / Math.pow(1024, 3)).toFixed(0),
+      ];
+      // 全部歌曲
+      if (res.data) {
+        res.data.forEach((v, i) => {
+          cloudData.value.push(
+            asRawEntry({
+              id: v.songId,
+              num: i + 1 + (pageNumber.value - 1) * pagelimit.value,
+              name: v.simpleSong.name,
+              artist: v.simpleSong.ar,
+              album: v.simpleSong.al,
+              alia: v.simpleSong.alia,
+              mv: v.simpleSong.mv,
+              time: getSongTime(v.simpleSong.dt),
+            }),
+          );
+        });
+      } else {
+        $message.error(t("general.message.acquisitionFailed"));
+      }
+    })
+    .catch((err) => {
+      console.error("[cloud] failed to load cloud songs", err);
+      error.value = true;
+    })
+    .finally(() => {
+      loading.value = false;
+    });
 };
 
 // 上传进度条
@@ -160,14 +177,12 @@ const onUploadProgress = (progressEvent) => {
 
 // 歌曲上传
 const upCloudSongData = (e) => {
-  console.log(e);
   const files = e.target.files;
   if (!files[0]) return false;
   upSongType.value = "success";
   upSongModal.value = true;
   upCloudSong(files[0], onUploadProgress)
     .then((res) => {
-      console.log(res);
       if (res.code === 200) {
         closeUpSongModal();
         if (!res.privateCloud.simpleSong.al?.name) {
@@ -208,7 +223,6 @@ const resetUpSongModal = () => {
 
 // 每页个数数据变化
 const pageSizeChange = (val) => {
-  console.log(val);
   pagelimit.value = val;
   getCloudData(val, (pageNumber.value - 1) * pagelimit.value);
 };
@@ -249,22 +263,35 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .cloud {
-  .data {
-    width: 100%;
-    margin: 20px 0;
+  .toolbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+
     .space {
-      width: 160px;
+      width: 220px;
       display: flex;
-      align-items: center;
-      span {
-        white-space: nowrap;
-        font-size: 13px;
+      flex-direction: column;
+      gap: 6px;
+
+      .space-head {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
       }
-      .progress {
-        margin: 0 8px;
+
+      .space-tip {
+        font-size: 12px;
+      }
+    }
+
+    @media (max-width: 620px) {
+      flex-wrap: wrap;
+
+      .space {
+        width: 100%;
       }
     }
   }
