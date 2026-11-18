@@ -161,6 +161,7 @@ import { NIcon } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
 import { useLayerNavigation } from "@/utils/navigation";
+import { getRemainingTime } from "@/utils/timeTools";
 import type { LocationQueryRaw } from "vue-router";
 import { musicStore, settingStore, userStore } from "@/store";
 import {
@@ -206,14 +207,7 @@ const loadBlocksPlay = computed(
 );
 
 // 剩余时间（负数格式，与封面模式一致）
-const remainingTime = computed(() => {
-  const songTime = music.getPlaySongTime;
-  if (!songTime?.duration) return "-0:00";
-  const remainingSeconds = Math.max(0, songTime.duration - (songTime.currentTime || 0));
-  const minutes = Math.floor(remainingSeconds / 60);
-  const seconds = Math.floor(remainingSeconds % 60);
-  return `-${minutes}:${seconds.toString().padStart(2, "0")}`;
-});
+const remainingTime = computed(() => getRemainingTime(music.getPlaySongTime));
 
 const playModeIcon = computed(() => {
   const mode = music.getPlaySongMode;
