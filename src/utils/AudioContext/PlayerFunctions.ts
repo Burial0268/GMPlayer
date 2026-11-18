@@ -11,7 +11,7 @@ import { songScrobbleV2, submitSongPlayState } from "@/api/song";
 // Import stores directly to avoid circular dependency through barrel exports
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
 import useMusicDataStore from "@/store/musicData";
-import { flushMusicPersist } from "@/store/musicPersistedData";
+import { flushMusicPersist, isMusicPersistCheap } from "@/store/musicPersistedData";
 import useSettingDataStore from "@/store/settingData";
 import useUserDataStore from "@/store/userData";
 
@@ -193,8 +193,9 @@ const resetPlaySongTime = (music: ReturnType<typeof musicStore>): void => {
 
 // Saves the store's own time rather than re-reading the sound: that path sets the
 // display time without the UI delay, which would nudge the lyrics every 15 s.
+// Skipped on the localStorage fallback, where every write re-serializes the whole queue.
 const periodicCheckpoint = (sound: ISound, music: ReturnType<typeof musicStore>): void => {
-  if (!sound.playing()) return;
+  if (!sound.playing() || !isMusicPersistCheap()) return;
   const now = Date.now();
   if (now - lastPeriodicCheckpointAt < PERIODIC_CHECKPOINT_MS) return;
   lastPeriodicCheckpointAt = now;

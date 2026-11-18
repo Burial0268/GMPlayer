@@ -213,6 +213,9 @@ export async function loadMusicPersist(): Promise<void> {
  */
 export const flushMusicPersist = (): Promise<void> => flushImpl?.() ?? Promise.resolve();
 
+/** 一次落盘只重写小的 `state` 记录。退回 localStorage 时每次都要整块重写队列。 */
+export const isMusicPersistCheap = (): boolean => mode === "idb";
+
 /**
  * 「系统重置」用：此后不再写入，并清空 IndexedDB 存档。
  * 从设置窗口调用时本窗口没打开过数据库，所以按需打开。
