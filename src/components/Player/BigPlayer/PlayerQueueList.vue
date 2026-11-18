@@ -157,6 +157,7 @@ import {
   watch,
   type CSSProperties,
 } from "vue";
+import { animateMini } from "motion-v";
 import { DeleteRound, DragHandleRound } from "@vicons/material";
 import { musicStore } from "@/store";
 import { coverUrl } from "@/utils/coverUrl";
@@ -593,8 +594,7 @@ const scrollToCurrent = (smooth = false) => {
  * parent's smooth scroll followed, which read as the list scrolling first and the song changing
  * after. Read before the DOM patches (`flush: "pre"`), played after it.
  */
-const SWITCH_MS = 380;
-const SWITCH_EASE = "cubic-bezier(0.25, 1, 0.5, 1)";
+const SWITCH = { duration: 0.38, ease: [0.25, 1, 0.5, 1] as [number, number, number, number] };
 let switching = false;
 
 type SwitchPlan = {
@@ -606,7 +606,10 @@ type SwitchPlan = {
 
 const planSwitch = (from: number, to: number): SwitchPlan | null => {
   const scroller = scrollRef.value;
-  if (!scroller || to <= from || drag.value || prefersReducedMotion()) return null;
+  // Hidden: no frame would run to play it, and `switching` would hold off scrolling until shown.
+  if (!scroller || to <= from || drag.value || document.hidden || prefersReducedMotion()) {
+    return null;
+  }
   const box = scroller.getBoundingClientRect();
   const target = scroller.querySelector<HTMLElement>(`#${props.rowPrefix}-${to}`);
   const targetBox = target?.getBoundingClientRect();
@@ -644,6 +647,8 @@ const playSwitch = (plan: SwitchPlan) => {
         .map((group) => group.querySelector<HTMLElement>(".queue-section"))
         .filter((section): section is HTMLElement => !!section),
     ];
+    // The skipped rows have already left the DOM (Vue re-sorted the groups), so copies of them
+    // play the exit where they stood.
     const ghosts = plan.leaving.map(({ el, top, left, width }) => {
       const ghost = el.cloneNode(true) as HTMLElement;
       ghost.removeAttribute("id");
@@ -654,32 +659,30 @@ const playSwitch = (plan: SwitchPlan) => {
         width: `${width}px`,
         zIndex: "1",
         pointerEvents: "none",
-        transition: "none",
       });
       scroller.appendChild(ghost);
       return ghost;
     });
-    for (const el of moving) {
-      el.style.transition = "none";
-      el.style.transform = `translateY(${shift}px)`;
-    }
-    // One frame at the old positions, then everything travels the same distance.
-    void scroller.offsetHeight;
-    const travel = `transform ${SWITCH_MS}ms ${SWITCH_EASE}, opacity ${SWITCH_MS}ms ${SWITCH_EASE}`;
-    for (const el of moving) {
-      el.style.transition = travel;
-      el.style.transform = "";
-    }
-    for (const ghost of ghosts) {
-      ghost.style.transition = travel;
-      ghost.style.transform = `translateY(${-shift}px)`;
-      ghost.style.opacity = "0";
-    }
-    window.setTimeout(() => {
+    // WAAPI, so the rows' own CSS transform transition never sees a change. Ending on `none`:
+    // the final keyframe is committed inline, and a leftover transform would isolate every row's
+    // plus-lighter from the cover.
+    const animations = [
+      ...moving.map((el) =>
+        animateMini(el, { transform: [`translateY(${shift}px)`, "none"] }, SWITCH),
+      ),
+      ...ghosts.map((ghost) =>
+        animateMini(
+          ghost,
+          { transform: ["none", `translateY(${-shift}px)`], opacity: [1, 0] },
+          SWITCH,
+        ),
+      ),
+    ];
+    void Promise.all(animations).then(() => {
       for (const ghost of ghosts) ghost.remove();
-      for (const el of moving) el.style.removeProperty("transition");
+      for (const el of moving) el.style.removeProperty("transform");
       switching = false;
-    }, SWITCH_MS);
+    });
   });
 };
 
