@@ -1113,6 +1113,15 @@ impl MixerWorker {
                 // we actually have, and lets `render.rs` own the fade.
                 let frame_aligned = written - (written % channels);
                 block.truncate(frame_aligned);
+                // A fade's limiter outlives it until it has released. Skipping it here, as this
+                // path used to, dropped whatever reduction was left to unity in one block: an
+                // audible jump the moment a limited fade completed.
+                if let Some(limiter) = self.overlap_limiter.as_mut() {
+                    limiter.process_interleaved(block, channels);
+                    if limiter.gain >= 0.9999 {
+                        self.overlap_limiter = None;
+                    }
+                }
                 self.record_timeline(position, frame_aligned, phase);
                 return frame_aligned > 0;
             }
@@ -1852,6 +1861,10 @@ mod timing_tests;
 #[cfg(test)]
 #[path = "mixer/perf_tests.rs"]
 mod perf_tests;
+
+#[cfg(test)]
+#[path = "mixer/continuity_tests.rs"]
+mod continuity_tests;
 
 #[cfg(test)]
 mod tests {
