@@ -2,7 +2,7 @@ import { ref, computed, nextTick, type Ref } from "vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore, settingStore } from "@/store";
 import { activeSound, seekActiveSound } from "@/utils/AudioContext";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { useAutoMixVisual } from "./useAutoMixVisual";
 
 export function useBigPlayerCommon(isMobile: Ref<boolean>) {
@@ -33,16 +33,6 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
   // --- Song metadata ---
   const artistList = computed(() => music.getPlaySongData?.artist ?? []);
   const songName = computed(() => music.getPlaySongData?.name ?? "");
-
-  // --- Remaining time ---
-  const remainingTime = computed(() => {
-    const playTime = music.getPlaySongTime;
-    if (!playTime || !playTime.duration) return "0:00";
-    const remaining = Math.max(0, playTime.duration - (playTime.currentTime || 0));
-    const minutes = Math.floor(remaining / 60);
-    const seconds = Math.floor(remaining % 60);
-    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-  });
 
   // --- Has lyrics ---
   const hasLyrics = computed(() => {
@@ -130,7 +120,6 @@ export function useBigPlayerCommon(isMobile: Ref<boolean>) {
     coverImageUrl500,
     artistList,
     songName,
-    remainingTime,
     hasLyrics,
     lrcMouseStatus,
     lyricsScroll,

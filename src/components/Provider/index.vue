@@ -50,7 +50,7 @@ import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { isMobileDevice, isTauri, windowManager } from "@/utils/tauri";
 import themeColorData from "./themeColor.json";
 import { createInterfaceTheme } from "./interfaceTheme";
-import { isTouchOnly } from "@/utils/touchOnly";
+import { isTouchOnly } from "@/utils/ui/touchOnly";
 
 const setting = settingStore();
 useDspSettings();

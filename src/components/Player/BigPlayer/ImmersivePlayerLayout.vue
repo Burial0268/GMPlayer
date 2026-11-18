@@ -32,9 +32,9 @@
           v-if="commentsOpen"
           key="comments"
           class="immersive-comment-stage"
-          :initial="{ opacity: 0, x: -18 }"
-          :animate="{ opacity: 1, x: 0 }"
-          :exit="{ opacity: 0, x: -12 }"
+          :initial="commentStageFrom"
+          :animate="commentStageRest"
+          :exit="commentStageExit"
           :transition="commentStageTransition"
         >
           <DesktopCommentPanel @close="$emit('closeComments')" />
@@ -68,7 +68,7 @@ import { computed } from "vue";
 import { AnimatePresence, LayoutGroup, Motion } from "motion-v";
 import { musicStore } from "@/store";
 // Aliased: this file already exposes a `coverUrl` computed of its own.
-import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
+import { coverUrl as toCoverUrl } from "@/utils/ncm/coverUrl";
 import { useAutoMixVisual } from "@/composables/useAutoMixVisual";
 import DesktopCommentPanel from "./DesktopCommentPanel.vue";
 import DesktopLyricsPanel from "./DesktopLyricsPanel.vue";
@@ -101,6 +101,11 @@ const commentStageSpring = {
   restDelta: 0.001,
   restSpeed: 0.01,
 } as const;
+// Bound as constants, not template literals: motion-v restarts a <Motion>'s animation on every
+// update, and a fresh object each render is an update.
+const commentStageFrom = { opacity: 0, x: -18 };
+const commentStageRest = { opacity: 1, x: 0 };
+const commentStageExit = { opacity: 0, x: -12 };
 const commentStageTransition = {
   ...commentStageSpring,
   default: commentStageSpring,

@@ -23,14 +23,14 @@ import type { NativeResolverConfig } from "@/utils/tauri/audio/protocol";
 import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
 import useSettingDataStore from "@/store/settingData";
 import { userStore } from "@/store";
-import { getNcmTransport } from "@/utils/request";
+import { getNcmTransport } from "@/utils/ncm/request";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
 let lastSerialized = "";
 
 /**
- * Resolve the NCM API base the same way `utils/request.ts` does.
+ * Resolve the NCM API base the same way `utils/ncm/request.ts` does.
  *
  * In dev the frontend talks to Vite's same-origin proxy (`/api/ncm`), which
  * Rust cannot use — it has no dev server. Fall back to the configured upstream

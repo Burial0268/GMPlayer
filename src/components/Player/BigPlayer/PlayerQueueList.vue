@@ -160,9 +160,9 @@ import {
 import { animateMini } from "motion-v";
 import { DeleteRound, DragHandleRound } from "@vicons/material";
 import { musicStore } from "@/store";
-import { coverUrl } from "@/utils/coverUrl";
-import { isTouchOnly } from "@/utils/touchOnly";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { coverUrl } from "@/utils/ncm/coverUrl";
+import { isTouchOnly } from "@/utils/ui/touchOnly";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import IconShuffle from "../icons/IconShuffle.vue";
 import IconShuffleOn from "../icons/IconShuffleOn.vue";
 import IconRepeat from "../icons/IconRepeat.vue";

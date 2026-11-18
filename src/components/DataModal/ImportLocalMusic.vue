@@ -136,7 +136,7 @@
 import { DeleteFour, FileMusic, FolderOpen, Refresh } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { useDownloadStore, useLocalLibraryStore } from "@/store";
-import type { LocalScanSummary, LocalSource } from "@/utils/localLibrary";
+import type { LocalScanSummary, LocalSource } from "@/utils/library/localLibrary";
 
 const { t } = useI18n();
 const local = useLocalLibraryStore();

@@ -2,7 +2,7 @@
  * Album API - 专辑相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import type { AlbumArea } from "./types";
 
 export const album = {

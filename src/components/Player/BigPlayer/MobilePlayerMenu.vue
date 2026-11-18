@@ -132,9 +132,9 @@ import {
   TranslateRound,
 } from "@vicons/material";
 import { musicStore } from "@/store";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { layerMotion } from "@/utils/navigation/motion";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import { LYRIC_OFFSET_STEP, useLyricControls } from "@/composables/useLyricControls";
 import { useSheetDrag } from "@/composables/useSheetDrag";
 

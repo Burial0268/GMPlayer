@@ -52,7 +52,7 @@
 
 <script setup>
 import { playlistUpdate } from "@/api/playlist";
-import { notifyPlaylistChanged } from "@/utils/playlistMutations";
+import { notifyPlaylistChanged } from "@/utils/library/playlistMutations";
 import { formRules } from "@/utils/ui/formRules";
 import { musicStore, userStore } from "@/store";
 import { useI18n } from "vue-i18n";

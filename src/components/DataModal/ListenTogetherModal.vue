@@ -326,7 +326,7 @@ import {
 } from "@vicons/ionicons5";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 
 // ── i18n / stores ──────────────────────────────────────────────────────────
 const { t } = useI18n();

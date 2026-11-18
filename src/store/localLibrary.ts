@@ -18,8 +18,8 @@ import {
   localScanCancel,
   localTracksBySongIds,
   localTrackToSongData,
-} from "@/utils/localLibrary";
-import { onLocalTracksChanged } from "@/utils/localLibraryMutations";
+} from "@/utils/library/localLibrary";
+import { onLocalTracksChanged } from "@/utils/library/localLibraryMutations";
 import type { SongData } from "@/store/musicTypes";
 
 interface ScanState {

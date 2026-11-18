@@ -1,7 +1,7 @@
 import ColorThief from "colorthief";
 import { Hct, themeFromSourceColor } from "@material/material-color-utilities";
 import { settingStore, siteStore } from "@/store";
-import { isAssetUrl } from "@/utils/coverUrl";
+import { isAssetUrl } from "@/utils/ncm/coverUrl";
 import { quantizeCoverPixels } from "./quantizeClient";
 
 export type RGB = [number, number, number];

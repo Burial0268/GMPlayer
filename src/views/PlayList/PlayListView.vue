@@ -192,8 +192,8 @@ import { userStore, musicStore, settingStore } from "@/store";
 import { getLongTime } from "@/utils/timeTools";
 import { transformSongData } from "@/utils/ncm/transformSongData";
 import { asRawEntry } from "@/utils/rawEntry";
-import { onPlaylistChanged, type PlaylistChange } from "@/utils/playlistMutations";
-import { fuzzyFilterSongs } from "@/utils/fuzzySearch";
+import { onPlaylistChanged, type PlaylistChange } from "@/utils/library/playlistMutations";
+import { fuzzyFilterSongs } from "@/utils/ui/fuzzySearch";
 import { renderIcon } from "@/utils/ui/renderIcon";
 import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
@@ -215,7 +215,7 @@ import {
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
-import { alignListUnderToolbar } from "@/utils/listFilterScroll";
+import { alignListUnderToolbar } from "@/utils/ui/listFilterScroll";
 
 const { t } = useI18n();
 const navigation = useLayerNavigation();

@@ -135,7 +135,7 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 import { useDownloadStore } from "@/store";
-import { dirIsRevealable, dirLabelOf, downloadAvailable } from "@/utils/download";
+import { dirIsRevealable, dirLabelOf, downloadAvailable } from "@/utils/library/download";
 import DownloadManager from "@/components/DataModal/DownloadManager.vue";
 
 const { t } = useI18n();

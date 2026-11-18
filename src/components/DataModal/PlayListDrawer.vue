@@ -39,7 +39,7 @@
  */
 import { musicStore } from "@/store";
 import { useLayerNavigation } from "@/utils/navigation";
-import { PLAYLIST_DRAWER_MEDIA_QUERY, PLAYLIST_SHEET_MEDIA_QUERY } from "@/utils/playlistLayout";
+import { PLAYLIST_DRAWER_MEDIA_QUERY, PLAYLIST_SHEET_MEDIA_QUERY } from "@/utils/ui/playlistLayout";
 import QueuePanel from "@/components/QueuePanel/index.vue";
 import PlayListSheet from "@/components/DataModal/PlayListSheet.vue";
 

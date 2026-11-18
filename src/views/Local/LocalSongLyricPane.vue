@@ -165,7 +165,7 @@ import {
   type AmllOutcome,
   type AmllSearchResult,
   type AmllSongItem,
-} from "@/utils/amllTtmlApi";
+} from "@/utils/lyrics/amllTtmlApi";
 import {
   localLyricClear,
   localLyricFor,
@@ -173,7 +173,7 @@ import {
   localLyricImportText,
   type LocalLyric,
   type LocalTrackDetail,
-} from "@/utils/localLibrary";
+} from "@/utils/library/localLibrary";
 import { isTauri } from "@/utils/tauri/core/runtime";
 
 /**

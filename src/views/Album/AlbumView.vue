@@ -179,7 +179,7 @@ import { getAlbum, likeAlbum } from "@/api/album";
 import { useRouter } from "vue-router";
 import { getLongTime } from "@/utils/timeTools";
 import { transformSongData } from "@/utils/ncm/transformSongData";
-import { fuzzyFilterSongs } from "@/utils/fuzzySearch";
+import { fuzzyFilterSongs } from "@/utils/ui/fuzzySearch";
 import { renderIcon } from "@/utils/ui/renderIcon";
 import { buildLikeMessage } from "@/utils/ui/buildLikeMessage";
 import { usePlayAllSong } from "@/composables/usePlayAllSong";
@@ -204,7 +204,7 @@ import getCoverUrl from "@/utils/ncm/getCoverUrl";
 import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
-import { alignListUnderToolbar } from "@/utils/listFilterScroll";
+import { alignListUnderToolbar } from "@/utils/ui/listFilterScroll";
 
 const { t } = useI18n();
 const router = useRouter();

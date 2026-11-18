@@ -200,7 +200,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import {
   MoreHorizRound,
   ThumbDownRound,
@@ -224,7 +224,8 @@ import { musicStore, userStore, settingStore } from "@/store";
 import { storeToRefs } from "pinia";
 import { useLayerNavigation } from "@/utils/navigation";
 import { seekActiveSound } from "@/utils/AudioContext";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
+import { getRemainingTime } from "@/utils/timeTools";
 import { useQualityText } from "@/composables/useQualityText";
 import {
   useAutoMixBarPhase,
@@ -333,14 +334,7 @@ const loadBlocksPlay = computed(
 );
 
 // 剩余时间（负数格式）
-const remainingTime = computed(() => {
-  const songTime = music.getPlaySongTime;
-  if (!songTime?.duration) return "-0:00";
-  const remainingSeconds = Math.max(0, songTime.duration - (songTime.currentTime || 0));
-  const minutes = Math.floor(remainingSeconds / 60);
-  const seconds = Math.floor(remainingSeconds % 60);
-  return `-${minutes}:${seconds.toString().padStart(2, "0")}`;
-});
+const remainingTime = computed(() => getRemainingTime(music.getPlaySongTime));
 
 // 播放模式图标
 const playModeIcon = computed(() => {

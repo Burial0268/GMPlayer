@@ -149,7 +149,7 @@ import { getComment } from "@/api/comment";
 import Comment from "@/components/Comment/index.vue";
 import { musicStore } from "@/store";
 // Aliased: this file already exposes a `coverUrl` computed of its own.
-import { coverUrl as toCoverUrl } from "@/utils/coverUrl";
+import { coverUrl as toCoverUrl } from "@/utils/ncm/coverUrl";
 import { Motion } from "motion-v";
 import { NVirtualList } from "naive-ui";
 import { getDesktopPlayerSharedLayoutIds } from "../desktopSharedLayout";

@@ -3,13 +3,13 @@
  * 歌词服务 - 歌词获取与处理
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import { parseEslrc, parseQrc, parseYrc } from "@applemusic-like-lyrics/lyric";
 import useSettingDataStore from "@/store/settingData";
 import { parseTTMLForLanguage } from "./parser/ttmlLanguage";
 import { ttmlCreditsOf } from "./parser/ttmlCredits";
 import type { LyricCredits } from "./types";
-import { getCachedTTML, setCachedTTML } from "@/utils/ttmlCache";
+import { getCachedTTML, setCachedTTML } from "@/utils/lyrics/ttmlCache";
 import {
   detectWordTimedLyricFormat,
   detectLrcTimestampMode,

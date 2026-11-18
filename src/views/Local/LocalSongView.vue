@@ -179,9 +179,9 @@ import {
   localTrackDetail,
   localTrackToSongData,
   type LocalTrackDetail,
-} from "@/utils/localLibrary";
+} from "@/utils/library/localLibrary";
 import { getSongTime } from "@/utils/timeTools";
-import { DEFAULT_COVER } from "@/utils/coverUrl";
+import { DEFAULT_COVER } from "@/utils/ncm/coverUrl";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
 import LocalSongInfoPane from "./LocalSongInfoPane.vue";

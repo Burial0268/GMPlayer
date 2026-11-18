@@ -34,7 +34,7 @@
 /**
  * 移动端播放队列的底部抽屉。
  *
- * 只在移动外壳（≤768px，见 `utils/playlistLayout`）里由 PlayListDrawer 挂载，
+ * 只在移动外壳（≤768px，见 `utils/ui/playlistLayout`）里由 PlayListDrawer 挂载，
  * 769–1040px 仍是右侧 n-drawer。刻意没有复用 n-drawer：遮罩浓度要跟着拖拽进度走，
  * 而 naive 的 mask 只有开 / 关两态；面板的 transform 也由它的过渡类接管，跟手拖拽
  * 必然和过渡类抢同一个属性 —— 内联 transform 赢，于是退场动画反而失效。
@@ -54,7 +54,7 @@ import { musicStore, settingStore } from "@/store";
 import QueuePanel from "@/components/QueuePanel/index.vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import { useSheetDrag } from "@/composables/useSheetDrag";
 

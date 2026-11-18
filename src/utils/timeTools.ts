@@ -1,4 +1,4 @@
-import getLanguageData from "./getLanguageData";
+import getLanguageData from "./app/languageData";
 import dayjs from "dayjs";
 import duration from "dayjs/plugin/duration";
 
@@ -37,6 +37,17 @@ export const getSongTime = (mss: number): string => {
   const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, "0");
   const seconds = String(totalSeconds % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+};
+
+/**
+ * Time left in a song as the player shows it: `-m:ss`, minutes unpadded. No duration yet reads
+ * `-0:00`.
+ */
+export const getRemainingTime = (time: { duration: number; currentTime?: number }): string => {
+  if (!time?.duration) return "-0:00";
+  const remaining = Math.max(0, time.duration - (time.currentTime || 0));
+  const seconds = Math.floor(remaining % 60);
+  return `-${Math.floor(remaining / 60)}:${seconds.toString().padStart(2, "0")}`;
 };
 
 /**

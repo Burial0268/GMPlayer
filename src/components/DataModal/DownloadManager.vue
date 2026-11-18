@@ -125,7 +125,7 @@
 import { DeleteFour, FolderOpen, PauseOne, PlayOne, Refresh } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { useDownloadStore } from "@/store";
-import { dirIsRevealable, dirLabelOf, type DownloadTask } from "@/utils/download";
+import { dirIsRevealable, dirLabelOf, type DownloadTask } from "@/utils/library/download";
 
 const { t } = useI18n();
 const download = useDownloadStore();

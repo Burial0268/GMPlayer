@@ -2,7 +2,7 @@
  * Home API - 首页推荐相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import type { PersonalizedType } from "./types";
 
 export const home = {

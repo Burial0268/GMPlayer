@@ -56,7 +56,7 @@
                   @keydown.enter.space.prevent="toggle(row.key)"
                 >
                   <!-- The card wraps as the image does; desktop keeps AMLL's units and
-                       its breaks between them (`lyricLineBreak`). -->
+                       its breaks between them (`lyrics/lineBreak`). -->
                   <div v-if="isMobile" class="text">{{ row.line.text }}</div>
                   <div v-else class="text">
                     <template v-for="(units, r) in rowsOf(row)" :key="r">
@@ -194,9 +194,9 @@ import type { GlobalThemeOverrides, NVirtualList } from "naive-ui";
 import { Close, Copy, Download, ShareTwo } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, settingStore, siteStore } from "@/store";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import type { AMLLLine } from "@/utils/LyricsProcessor";
-import { balancedBreaks, lineUnits, type BreakUnit } from "@/utils/lyricLineBreak";
+import { balancedBreaks, lineUnits, type BreakUnit } from "@/utils/lyrics/lineBreak";
 import { getTauri, isTauri } from "@/utils/tauri/core/runtime";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
@@ -212,7 +212,7 @@ import {
   type CardAssets,
   type LyricCardInput,
   type LyricShareLine,
-} from "@/utils/lyricShareCard";
+} from "@/utils/lyrics/shareCard";
 
 const props = defineProps<{
   /** A still of the player's fluid background, when that is what it shows. */

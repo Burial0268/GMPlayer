@@ -3,7 +3,7 @@
 //! A playlist stores track *keys*, never copies of the rows — see
 //! [`super::model::LocalPlaylist`]. Everything here is a plain in-memory edit
 //! followed by a write: unlike a Netease playlist there is no server to be
-//! read-after-write inconsistent with, so none of `utils/playlistMutations.ts`'s
+//! read-after-write inconsistent with, so none of `utils/library/playlistMutations.ts`'s
 //! patch-then-reconcile machinery applies and none of it is reproduced.
 
 use std::collections::HashMap;

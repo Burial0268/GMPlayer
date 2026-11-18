@@ -11,8 +11,8 @@
         'scroll-bottom-shadow': sidebarShowBottomShadow,
       },
     ]"
-    :animate="{ width: sidebarWidth, minWidth: sidebarWidth }"
-    :transition="{ type: 'tween', duration: 0.22, ease: 'easeInOut' }"
+    :animate="sidebarAnimate"
+    :transition="sidebarTween"
     :data-tauri-drag-region="isTauri || undefined"
   >
     <!-- Header: search + collapse toggle -->
@@ -41,10 +41,10 @@
           key="expanded-navigation"
           tag="div"
           class="sidebar-nav-layer"
-          :initial="{ opacity: 0 }"
-          :animate="{ opacity: 1 }"
-          :exit="{ opacity: 0 }"
-          :transition="{ duration: 0.22, ease: 'easeInOut' }"
+          :initial="navLayerHidden"
+          :animate="navLayerShown"
+          :exit="navLayerHidden"
+          :transition="navLayerFade"
         >
           <n-virtual-list
             class="sidebar-scroll sidebar-virtual expanded"
@@ -115,10 +115,10 @@
           key="collapsed-navigation"
           tag="div"
           class="sidebar-nav-layer collapsed"
-          :initial="{ opacity: 0 }"
-          :animate="{ opacity: 1 }"
-          :exit="{ opacity: 0 }"
-          :transition="{ duration: 0.22, ease: 'easeInOut' }"
+          :initial="navLayerHidden"
+          :animate="navLayerShown"
+          :exit="navLayerHidden"
+          :transition="navLayerFade"
         >
           <n-virtual-list
             class="sidebar-scroll sidebar-virtual collapsed"
@@ -331,7 +331,16 @@ const handleLogout = () => {
   });
 };
 
-const sidebarWidth = computed(() => (setting.sidebarCollapsed ? "56px" : "208px"));
+// Bound as constants, not template literals: motion-v restarts a <Motion>'s animation on every
+// update, and a fresh object each render is an update.
+const sidebarAnimate = computed(() => {
+  const width = setting.sidebarCollapsed ? "56px" : "208px";
+  return { width, minWidth: width };
+});
+const sidebarTween = { type: "tween", duration: 0.22, ease: "easeInOut" } as const;
+const navLayerHidden = { opacity: 0 };
+const navLayerShown = { opacity: 1 };
+const navLayerFade = { duration: 0.22, ease: "easeInOut" } as const;
 const sidebarShowTopShadow = ref(false);
 const sidebarShowBottomShadow = ref(false);
 const sectionOpen = reactive({

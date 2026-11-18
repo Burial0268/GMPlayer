@@ -37,7 +37,7 @@ import {
   syncNativeAutoMixCurrentSound,
 } from "../PlayerFunctions";
 import { resolveSongUrl } from "../resolveSongUrl";
-import { lyricFetcher } from "../../lyricFetcher";
+import { lyricFetcher } from "../../lyrics/fetcher";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
 import { audioSendMsg } from "../../tauri/audio/bridge";
 import { isNativeAudioBackendAvailable } from "../../tauri/audio/backendRuntime";

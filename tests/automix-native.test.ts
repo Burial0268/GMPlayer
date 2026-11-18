@@ -57,7 +57,7 @@ function environment(deferResolution = false) {
   const cachedLyrics = new Map<number, unknown>();
   const shownLyrics: unknown[] = [];
   const imports: Record<string, unknown> = {
-    "../../lyricFetcher": {
+    "../../lyrics/fetcher": {
       lyricFetcher: {
         prefetch: (id: number) => prefetched.push(id),
         peek: (id: number) => cachedLyrics.get(id) ?? null,

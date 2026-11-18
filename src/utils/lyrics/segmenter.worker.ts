@@ -1,7 +1,7 @@
 /**
  * Owns the lyric-segmenter WASM so that downloading it and building jieba's dictionary
  * (~200 ms) never block the main thread. Answers batches of texts with the crate's packed
- * segment ends; `lyricSegmenter.ts` caches them for its synchronous `Intl.Segmenter`.
+ * segment ends; `lyrics/segmenter.ts` caches them for its synchronous `Intl.Segmenter`.
  */
 import type { LyricSegmenter } from "@player-helper/lyric-segmenter";
 

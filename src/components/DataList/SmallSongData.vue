@@ -25,7 +25,7 @@
 <script setup>
 import { useRouter } from "vue-router";
 import { getMusicDetail } from "@/api/song";
-import { coverUrl } from "@/utils/coverUrl";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
 

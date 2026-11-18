@@ -2,7 +2,7 @@ import { defineStore, acceptHMRUpdate } from "pinia";
 import { NIcon } from "naive-ui";
 import { WbSunnyFilled, DarkModeFilled } from "@vicons/material";
 import { h } from "vue";
-import getLanguageData from "@/utils/getLanguageData";
+import getLanguageData from "@/utils/app/languageData";
 import { createThrottledStorage } from "./throttledStorage";
 
 declare const $message: any;

@@ -9,7 +9,7 @@ import type { AxiosAdapter } from "axios";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { isMobileDevice } from "@/utils/tauri/platform/mobile";
 import { isTauri } from "@/utils/tauri/core/runtime";
-import { createLocalNcmAdapter, setNcmCookieProvider } from "@/utils/ncmLocalTransport";
+import { createLocalNcmAdapter, setNcmCookieProvider } from "@/utils/ncm/localTransport";
 
 // Extend AxiosRequestConfig to include custom hiddenBar property
 export interface CustomAxiosRequestConfig extends AxiosRequestConfig {
@@ -99,7 +99,7 @@ export const getNcmTransport = (): NcmTransport => currentTransport;
  * Tell the embedded transport where to read the session cookie.
  *
  * Called from `main.ts` after Pinia hydrates. Re-exported here so callers only
- * ever need to know about `@/utils/request`.
+ * ever need to know about `@/utils/ncm/request`.
  */
 export const setNcmCookieSource = setNcmCookieProvider;
 

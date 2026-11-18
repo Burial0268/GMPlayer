@@ -33,9 +33,9 @@
 
 import { getPlayListDetail } from "@/api/playlist";
 import { getMusicDetail } from "@/api/song";
-import { getNcmTransport } from "@/utils/request";
+import { getNcmTransport } from "@/utils/ncm/request";
 import { isTauri } from "@/utils/tauri/core/runtime";
-import { decodeEnvelope, getInvoke, urlToEndpoint, withCookie } from "@/utils/ncmLocalTransport";
+import { decodeEnvelope, getInvoke, urlToEndpoint, withCookie } from "@/utils/ncm/localTransport";
 
 /**
  * One projected call, or `undefined` when this path is not available.

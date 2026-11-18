@@ -1,5 +1,5 @@
 import type { RouteLocationNormalized } from "vue-router";
-import { refFromQuery, refToQuery } from "@/utils/playlistSource";
+import { refFromQuery, refToQuery } from "@/utils/library/playlistSource";
 
 export type RootEntry = "home" | "discover" | "library" | "settings";
 export type LayerKind = "page" | "search" | "player" | "queue" | "share";

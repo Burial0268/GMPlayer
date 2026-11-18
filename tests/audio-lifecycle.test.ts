@@ -37,7 +37,7 @@ function sourceModule(path: string, imports: Record<string, unknown>, globals = 
 }
 
 const musicTypes = sourceModule("src/store/musicTypes.ts", {});
-const playlistOrder = sourceModule("src/utils/playlistOrder.ts", {});
+const playlistOrder = sourceModule("src/utils/library/playlistOrder.ts", {});
 const soundTypes = sourceModule("src/utils/AudioContext/sound/types.ts", {});
 const keyOf = (identity: any) =>
   identity ? `${identity.provider}:${identity.id ?? identity.path}` : null;
@@ -77,12 +77,12 @@ function queueEnvironment(native = true) {
       pinia: { defineStore: (_id: string, options: any) => options },
       vue: { nextTick },
       "./musicTypes": musicTypes,
-      "@/utils/getLanguageData": { __esModule: true, default: (key: string) => key },
+      "@/utils/app/languageData": { __esModule: true, default: (key: string) => key },
       "@/utils/tauri/core/runtime": { isTauri: () => native },
       "@/utils/AudioContext/sound/types": soundTypes,
       "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
       "@/utils/tauri/core/nativeLog": { logNative() {} },
-      "@/utils/playlistOrder": playlistOrder,
+      "@/utils/library/playlistOrder": playlistOrder,
       "@/utils/rawEntry": { asRawEntries: (songs: any[]) => songs.slice() },
       "@/utils/AudioContext": {
         requestNativeReshuffle: () => publisher.requestNativeReshuffle(),
@@ -1094,7 +1094,7 @@ test("the lyric segmenter worker is held while lyrics are visible and released w
     }
   }
   const segmenter = sourceModule(
-    "src/utils/lyricSegmenter.ts",
+    "src/utils/lyrics/segmenter.ts",
     {},
     {
       Worker,

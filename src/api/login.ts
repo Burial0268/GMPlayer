@@ -2,7 +2,7 @@
  * Login API - 登录相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 
 export const login = {
   /**

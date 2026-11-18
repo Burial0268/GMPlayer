@@ -1,5 +1,5 @@
 import { animateMini } from "motion-v";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import { layerMotion } from "./motion";
 import {
   liveSource,

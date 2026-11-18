@@ -1,6 +1,6 @@
 import { acceptHMRUpdate, defineStore } from "pinia";
 import { shallowRef, ref } from "vue";
-import getLanguageData from "@/utils/getLanguageData";
+import getLanguageData from "@/utils/app/languageData";
 import { getLyricPresentationTimeSeconds } from "@/utils/tauri/audio/uiDelay";
 import {
   preprocessLyrics,

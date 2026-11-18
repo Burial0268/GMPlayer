@@ -75,7 +75,7 @@ import { Filter, SortAmountDown, SortAmountUp } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { musicStore, useLocalLibraryStore } from "@/store";
 import DataLists from "@/components/DataList/DataLists.vue";
-import { LOCAL_AUTO_CAPABILITIES } from "@/utils/playlistSource";
+import { LOCAL_AUTO_CAPABILITIES } from "@/utils/library/playlistSource";
 import type { SongData } from "@/store/musicTypes";
 
 const { t } = useI18n();

@@ -490,7 +490,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 // `h` 显式引入而不靠 auto-import：unimport 只要在文件的**任意作用域**里看到一个同名
 // 声明，就认定该名字已存在、整个模块都不再注入它。这里的 `h` 只在右键菜单的
 // `renderIcon` 里用到，缺了它编译期无声无息，只有右键那一刻才 ReferenceError。
@@ -513,8 +513,8 @@ import {
   Aiming,
 } from "@icon-park/vue-next";
 import { localLibraryStore, musicStore, settingStore, userStore } from "@/store";
-import { localPlaylistAddTracks } from "@/utils/localLibrary";
-import { coverUrl } from "@/utils/coverUrl";
+import { localPlaylistAddTracks } from "@/utils/library/localLibrary";
+import { coverUrl } from "@/utils/ncm/coverUrl";
 import { useRouter } from "vue-router";
 import { setCloudDel } from "@/api/user";
 import { NIcon, NVirtualList, useThemeVars } from "naive-ui";
@@ -524,9 +524,9 @@ import AllArtists from "./AllArtists.vue";
 import SmallSongData from "./SmallSongData.vue";
 import { Motion, AnimatePresence } from "motion-v";
 import { miuixSpring, withReducedMotion } from "@/utils/motion/springs";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
-import { backTopShown } from "@/utils/backTop";
-import { locateRow, locateVirtualRow } from "@/utils/locateRow";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
+import { backTopShown } from "@/utils/ui/backTop";
+import { locateRow, locateVirtualRow } from "@/utils/ui/locateRow";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -695,7 +695,7 @@ const props = defineProps({
     default: 0,
   },
   /**
-   * What the *list* allows, from `utils/playlistSource`.
+   * What the *list* allows, from `utils/library/playlistSource`.
    *
    * Drives which context-menu entries exist. Individual rows are still checked
    * on their own (`data.local`) — a mixed queue holds both kinds — but the list
@@ -1059,7 +1059,7 @@ const getSongClass = (item, index) => [
 // ── 定位到正在播放 ──────────────────────────────────────────
 //
 // 正在播放的那行不在可视带里时，列表底部浮出一颗药丸，点一下把它滚到可视带正中。
-// 滚动本身交给 `utils/locateRow`：三种渲染模式都会在滚动途中挪行，目标得逐帧重量。
+// 滚动本身交给 `utils/ui/locateRow`：三种渲染模式都会在滚动途中挪行，目标得逐帧重量。
 const virtualListRef = ref(null);
 const datalistsRootRef = ref(null);
 const showLocatePill = ref(false);
@@ -2247,5 +2247,4 @@ const jumpLink = (id, type) => {
 :global(.data-list-context-dropdown .n-dropdown-divider) {
   margin: 6px 8px;
 }
-
 </style>

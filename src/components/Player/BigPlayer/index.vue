@@ -69,7 +69,6 @@
               :artistList="artistList"
               :isNameOverflow="isNameOverflow"
               :hasLyrics="hasLyrics"
-              :remainingTime="remainingTime"
               :coverImageUrl500="coverImageUrl500"
               :handleProgressSeek="handleProgressSeek"
               :queueOpen="mobileQueueOpen"
@@ -209,7 +208,7 @@ import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { usePwaThemeColor } from "@/composables/usePwaThemeColor";
 import { useBigPlayerCommon } from "@/composables/useBigPlayerCommon";
 import { useMobileCoverFrame } from "@/composables/useMobileCoverFrame";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 import { useMotionInterruption } from "@/composables/useMotionInterruption";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";
@@ -248,7 +247,6 @@ const {
   coverImageUrl500,
   artistList,
   songName,
-  remainingTime,
   hasLyrics,
   lrcMouseStatus,
   lyricsScroll,

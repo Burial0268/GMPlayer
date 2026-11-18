@@ -60,7 +60,7 @@
 
 <script setup>
 import { setCloudMatch } from "@/api/user";
-import { isTouchOnly } from "@/utils/touchOnly";
+import { isTouchOnly } from "@/utils/ui/touchOnly";
 import { userStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import { Search } from "@icon-park/vue-next";

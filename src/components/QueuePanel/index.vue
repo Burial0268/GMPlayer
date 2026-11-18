@@ -96,9 +96,9 @@
 import { NIcon, NVirtualList } from "naive-ui";
 import { DeleteFour, Aiming } from "@icon-park/vue-next";
 import { musicStore } from "@/store";
-import { coverUrl } from "@/utils/coverUrl";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
-import { locateVirtualRow } from "@/utils/locateRow";
+import { coverUrl } from "@/utils/ncm/coverUrl";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
+import { locateVirtualRow } from "@/utils/ui/locateRow";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 
 const music = musicStore();
@@ -120,7 +120,7 @@ const changeIndex = (index) => {
 };
 
 // 把正在播放的那行顶到列表上沿，下面接着就是「接下来播放」。抽屉打开时调用，也供底部
-// 按钮点击。近处滑过去，远处（含刚打开）一跳到位，见 `utils/locateRow`。
+// 按钮点击。近处滑过去，远处（含刚打开）一跳到位，见 `utils/ui/locateRow`。
 const scrollToCurrent = () => {
   const index = music.persistData.playSongIndex;
   if (index < 0 || index >= music.getPlaylists.length) return;

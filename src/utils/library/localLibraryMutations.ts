@@ -31,7 +31,7 @@
  * `onLocalTracksChanged` returns its own unsubscribe so a view can tie it to its
  * lifetime.
  *
- * Emitted from the write wrappers in `utils/localLibrary.ts` themselves rather
+ * Emitted from the write wrappers in `utils/library/localLibrary.ts` themselves rather
  * than from each call site. Forgetting it is invisible — the detail page refreshes
  * either way, so the edit looks like it worked and only the rest of the app is
  * wrong. That is the opposite of `playlistMutations`, where the caller emits

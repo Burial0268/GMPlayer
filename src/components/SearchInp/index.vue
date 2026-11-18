@@ -245,7 +245,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { animateMini } from "motion-v";
 import { getSearchHot, getSearchSuggest } from "@/api/search";

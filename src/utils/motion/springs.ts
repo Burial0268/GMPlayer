@@ -1,5 +1,5 @@
 import type { Transition } from "motion-v";
-import { prefersReducedMotion } from "@/utils/reducedMotion";
+import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
 
 /**
  * Miuix (Xiaomi HyperOS / Folme) motion primitives, ported for motion-v.

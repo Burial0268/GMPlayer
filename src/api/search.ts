@@ -2,7 +2,7 @@
  * Search API - 搜索相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import type { SearchType } from "./types";
 
 export const search = {

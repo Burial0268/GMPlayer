@@ -26,7 +26,7 @@
 </template>
 
 <script setup>
-import { vButton } from "@/utils/buttonRole";
+import { vButton } from "@/utils/ui/buttonRole";
 import { NTooltip } from "naive-ui";
 
 defineProps({

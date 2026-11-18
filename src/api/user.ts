@@ -2,7 +2,7 @@
  * User API - 用户相关接口
  */
 
-import request from "@/utils/request";
+import request from "@/utils/ncm/request";
 import type { UploadProgressCallback } from "./types";
 
 export const user = {
@@ -132,7 +132,7 @@ export const user = {
    * `like` stays a boolean here because that is what a caller wants to pass.
    * Both transports hand the endpoint module the string `"true"`/`"false"` —
    * axios by serializing the query, the embedded layer by coercing it in
-   * `ncmLocalTransport.buildQuery`, which explains why the type matters.
+   * `localTransport.buildQuery`, which explains why the type matters.
    */
   likeSong: (id: number, like = true) =>
     request<any>({

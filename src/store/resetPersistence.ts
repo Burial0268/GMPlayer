@@ -15,7 +15,7 @@ import {
   destroyTauriPiniaStores,
   isTauriPiniaInstalled,
 } from "@/utils/tauri/store/piniaPersistence";
-import { localLibraryReset } from "@/utils/localLibrary";
+import { localLibraryReset } from "@/utils/library/localLibrary";
 import { clearMusicPersist } from "./musicPersistedData";
 import useSettingDataStore, { settingStorage } from "./settingData";
 import useSiteDataStore from "./siteData";
