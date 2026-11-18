@@ -122,7 +122,7 @@ export const getSimiPlayList = song.getSimiPlaylist;
 export const getSimiSong = song.getSimiSong;
 export const getSongDownload = song.getDownloadUrl;
 export const songScrobble = song.scrobble;
-export const songScrobbleV2 = song.scrobbleV2;
+export const songScrobbleAndroid = song.scrobbleAndroid;
 export const submitSongPlayState = song.submitPlayState;
 export const setLikeSong = user.likeSong;
 

@@ -318,9 +318,12 @@ function generateEntry() {
     "      typeof q.cookie === 'string' ? cookieToJson(q.cookie) : q.cookie || {};",
     // Modules that read the cookie raw (`scrobble_v1`'s NCBL context) never pass
     // through `request.js`, which is what falls back to the global id, and
-    // nothing upstream supplies a clientSign at all.
+    // nothing upstream supplies a clientSign at all. The clientSign is the
+    // desktop client's, so only the desktop NCBL upload carries it: weapi
+    // copies every cookie field into the header, and an Android or web
+    // identity must not arrive signed as a Windows PC.
     "    if (!cookie.deviceId) cookie.deviceId = globalThis.deviceId;",
-    "    if (!cookie.clientSign) cookie.clientSign = clientSign;",
+    "    if (!cookie.clientSign && name === 'scrobble_v1') cookie.clientSign = clientSign;",
     "    try {",
     "      // load() is inside the try: a module that throws while being",
     "      // evaluated (an unavailable dependency at import time) must report",

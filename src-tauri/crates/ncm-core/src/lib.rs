@@ -914,6 +914,71 @@ mod tests {
         );
     }
 
+    /// Android's listen report (`songScrobbleAndroid`) is the generic `weblog` module steered by
+    /// its query. Nothing in it is checked by Netease's answer, which is 200 either way, so what
+    /// goes out is pinned here: clientlog's eapi path, the Android UA and identity, this install's
+    /// deviceId, and no desktop clientSign.
+    #[tokio::test]
+    async fn the_android_listen_report_goes_out_as_the_android_client() {
+        let core = NcmCore::offline().await.expect("isolate");
+        eval(
+            &core,
+            r#"(()=>{
+              globalThis.__sent = [];
+              globalThis.__ncm_host.httpRequest = (cfg) => {
+                const h = cfg.headers;
+                globalThis.__sent.push({ url: cfg.url, ua: h["User-Agent"] || h["user-agent"], cookie: h.Cookie || h.cookie });
+                return Promise.resolve({ status: 200, headers: {}, body: Buffer.from('{"code":200,"data":"success"}') });
+              };
+              return "ok";
+            })()"#,
+        )
+        .await;
+        let ua = "NeteaseMusic/9.5.61.260802021928(9005061);Dalvik/2.1.0 (Linux; U; Android 12; HBN-AL00 Build/cd737a2.0)";
+        let query = serde_json::json!({
+            "crypto": "eapi",
+            "domain": "https://clientlog.music.163.com",
+            "cookie": "MUSIC_U=x; os=android; appver=9.5.61.260802021928; versioncode=9005061; osver=12; mobilename=HBN-AL00",
+            "ua": ua,
+            "data": { "logs": r#"[{"action":"play","json":{"id":1,"type":"song","time":200,"end":"playend"}}]"# },
+        });
+        let out = core
+            .call("weblog", &query.to_string())
+            .await
+            .expect("call failed");
+        assert!(out.contains(r#""code":200"#), "{out}");
+
+        let sent: serde_json::Value =
+            serde_json::from_str(&eval(&core, "JSON.stringify(globalThis.__sent)").await).unwrap();
+        let [request] = sent.as_array().expect("array").as_slice() else {
+            panic!("expected one request: {sent}");
+        };
+        assert_eq!(
+            request["url"],
+            "https://clientlog.music.163.com/eapi/feedback/weblog"
+        );
+        assert_eq!(request["ua"], ua);
+        let cookie = request["cookie"].as_str().expect("no cookie");
+        for field in [
+            "os=android",
+            "appver=9.5.61.260802021928",
+            "versioncode=9005061",
+            "osver=12",
+            "mobilename=HBN-AL00",
+        ] {
+            assert!(
+                cookie.split("; ").any(|kv| kv == field),
+                "{field} missing: {cookie}"
+            );
+        }
+        let device_id = eval(&core, "globalThis.deviceId").await;
+        assert_eq!(cookie_field(cookie, "deviceId"), device_id);
+        assert!(
+            !cookie.contains("clientSign"),
+            "desktop clientSign leaked: {cookie}"
+        );
+    }
+
     /// The form encoding produced by the `URLSearchParams` shim goes on the
     /// wire *inside the signed xeapi payload* (`buildXeapiPlaintext` base64s
     /// it), so it has to match Node byte for byte. These expectations are what

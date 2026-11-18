@@ -7,7 +7,7 @@
  * - Improved error handling
  */
 
-import { songScrobbleV2, submitSongPlayState } from "@/api/song";
+import { songScrobble, songScrobbleAndroid, submitSongPlayState } from "@/api/song";
 // Import stores directly to avoid circular dependency through barrel exports
 // (musicData.ts imports from @/utils/AudioContext, which re-exports this file)
 import useMusicDataStore from "@/store/musicData";
@@ -49,9 +49,11 @@ import { armLyricSeekPresentationHold } from "../tauri/audio/uiDelay";
 import type { TrackIdentity } from "../tauri/audio/protocol";
 import { logNative } from "../tauri/core/nativeLog";
 import {
+  buildNeteaseAndroidCookie,
   buildNeteaseDesktopCookie,
   buildNeteaseDesktopUserAgent,
   createNeteasePlaybackSessionId,
+  NETEASE_ANDROID_USER_AGENT,
 } from "../neteaseClient";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
@@ -323,12 +325,6 @@ const scheduleScrobble = (reason: string): void => {
     // 歌曲(总)时长由后端歌曲数据提供，作为播放时长 time 与总时长 total 上报
     const totalSec = Math.round(Number(music.getPlaySongTime?.duration) || 0);
     const progressSec = Math.max(0, Math.round(music.getPlaySongPlaybackCurrentTime()));
-    const artist = Array.isArray(liveData?.artist)
-      ? liveData.artist
-          .map((a: { name?: string }) => a?.name)
-          .filter(Boolean)
-          .join("/")
-      : undefined;
     const sessionId = getPlayStateSessionId(scrobbleKey);
     const desktopCookie = buildNeteaseDesktopCookie(user.cookie);
 
@@ -345,16 +341,28 @@ const scheduleScrobble = (reason: string): void => {
       })
       .catch((err) => logScrobble("warn", `play state for ${songId} failed`, String(err)));
 
-    songScrobbleV2(songId, totalSec, {
-      sourceid: sourceId || undefined,
-      source: "list",
-      name: liveData?.name,
-      artist,
-      total: totalSec || undefined,
-    })
+    // Weblog takes a zero-length play without complaint and counts nothing.
+    if (totalSec <= 0) {
+      logScrobble("warn", `${songId} skipped (${reason}): duration unknown`);
+      return;
+    }
+    // Two weblog entries either way: startplay (recent plays), then play (the ranking). The NCBL
+    // upload (`scrobble_v1`) answered OK and was never counted. Android reports as the Android
+    // client; elsewhere upstream's `/scrobble`, which reports as the macOS client.
+    const report = /Android/i.test(navigator.userAgent)
+      ? songScrobbleAndroid(
+          songId,
+          sourceId,
+          totalSec,
+          buildNeteaseAndroidCookie(user.cookie),
+          NETEASE_ANDROID_USER_AGENT,
+        )
+      : songScrobble(songId, sourceId, totalSec);
+    report
       .then((res) => {
-        // A rejected PLV/PLD upload still answers HTTP 200, with the reason in the body.
-        if (res?.code !== 200) {
+        // `/scrobble` itself always answers 200; only each weblog answer says anything.
+        const { startplay, play } = res?.details ?? {};
+        if (startplay?.code !== 200 || play?.code !== 200) {
           logScrobble("warn", `${songId} rejected (${reason})`, res);
           return;
         }
