@@ -66,19 +66,17 @@ pub(super) fn build_time_based_plan(
     }
 }
 
+/// `outgoing_gain` is the gain the outgoing deck is playing at now (`active_norm_gain`).
 pub(super) fn build_analysis_backed_plan(
     config: &AutoMixConfig,
     current_duration: f64,
     current_analysis: Option<&automix_analysis::TrackAnalysis>,
     next_analysis: Option<&automix_analysis::TrackAnalysis>,
+    outgoing_gain: f64,
 ) -> CrossfadePlan {
     let mut plan = build_time_based_plan(config, current_duration);
-
-    if config.volume_norm {
-        if let Some(next) = next_analysis {
-            plan.incoming_gain_adjustment = next.volume.gain_adjustment as f64;
-        }
-    }
+    plan.incoming_gain_adjustment =
+        incoming_gain(config, outgoing_gain, current_analysis, next_analysis);
 
     let Some(current) = current_analysis else {
         return plan;
@@ -146,6 +144,41 @@ pub(super) fn build_analysis_backed_plan(
 
 /// A still singing inside an unsynced fade holds at full until its last line
 /// ends, with B waiting underneath at 0.6 (HyPlayer-Nextgen's crossfade).
+/// The incoming deck's gain, matched to what the listener hears now rather than to an absolute
+/// target. Taking B's absolute normalisation (`gain_adjustment`, 0.1..3.0) as-is was a step of
+/// several dB whenever A played at another gain — after any ordinary load A is at 1.0 — and the
+/// step arrived as the fade finished. Mirrors `_computeIncomingGainAdjustment` in
+/// TransitionStateMachine.ts: 3/4 relative to A's effective loudness, 1/4 toward B's own target,
+/// so a playlist still drifts to the configured loudness. Web's energy-contrast term is not
+/// carried. One deliberate difference: with B unanalysed the Web returns 1.0, here the outgoing
+/// gain carries over, because 1.0 is itself a step when A is not at unity.
+pub(super) fn incoming_gain(
+    config: &AutoMixConfig,
+    outgoing_gain: f64,
+    current: Option<&automix_analysis::TrackAnalysis>,
+    next: Option<&automix_analysis::TrackAnalysis>,
+) -> f64 {
+    if !config.volume_norm {
+        return 1.0;
+    }
+    let Some(next) = next else {
+        return outgoing_gain;
+    };
+    let absolute = f64::from(next.volume.gain_adjustment).clamp(0.55, 1.8);
+    let gain = match current {
+        Some(current) => {
+            let heard =
+                f64::from(current.volume.estimated_lufs) + 20.0 * outgoing_gain.max(0.001).log10();
+            let relative = 10f64
+                .powf((heard - f64::from(next.volume.estimated_lufs)) / 20.0)
+                .clamp(0.5, 2.0);
+            relative.powf(0.75) * absolute.powf(0.25)
+        }
+        None => absolute,
+    };
+    gain.clamp(0.55, 1.8)
+}
+
 fn hold_for_last_vocal(plan: &mut CrossfadePlan, current: &automix_analysis::TrackAnalysis) {
     let Some(end) = vocal_runs(current, 0.8).last().map(|run| run.1) else {
         return;

@@ -613,6 +613,12 @@ impl AudioPlayer {
             })
             .unwrap_or_else(|| CrossfadeParams {
                 outgoing_gain: self.active_norm_gain,
+                // Same rule as `plan::incoming_gain` with nothing known about B.
+                incoming_gain: if self.automix.volume_norm() {
+                    self.active_norm_gain
+                } else {
+                    1.0
+                },
                 ..Default::default()
             });
         // Remember the incoming track's normalization gain so it can be promoted

@@ -22,6 +22,8 @@ pub(in crate::player) struct AutoMixPrepareRequest {
     /// Backend clock position when the request was made: bounds how long analysis may wait for
     /// a download to land.
     pub current_position: Option<f64>,
+    /// The outgoing deck's gain now (`active_norm_gain`): what B's gain is matched against.
+    pub outgoing_gain: f32,
     pub current_source_path: Option<PathBuf>,
     pub next_song: SongData,
     pub next_identity: Option<TrackIdentity>,
@@ -138,6 +140,7 @@ pub(in crate::player) fn run_prepare_request_blocking(
         current_id,
         current_duration,
         current_position,
+        outgoing_gain,
         current_source_path,
         next_song,
         next_identity,
@@ -151,6 +154,7 @@ pub(in crate::player) fn run_prepare_request_blocking(
         current_source_path,
         next_song,
         wait_until,
+        outgoing_gain,
         cancel,
     )
     .map(|mut prepared| {
@@ -180,6 +184,7 @@ fn prepare_track_blocking(
     current_source_path: Option<PathBuf>,
     next_song: SongData,
     wait_until: Option<std::time::Instant>,
+    outgoing_gain: f32,
     cancel: &PrepareCancel,
 ) -> Result<PreparedTrack, String> {
     let source = next_song
@@ -229,6 +234,7 @@ fn prepare_track_blocking(
             duration,
             current_analysis.as_ref(),
             next_analysis.as_ref(),
+            f64::from(outgoing_gain),
         )
     });
     if let Some(plan) = plan.as_ref() {

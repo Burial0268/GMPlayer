@@ -81,6 +81,10 @@ impl AutoMixManager {
         }]
     }
 
+    pub fn volume_norm(&self) -> bool {
+        self.config.volume_norm
+    }
+
     pub fn configure(
         &mut self,
         config: AutoMixConfig,
@@ -213,6 +217,7 @@ impl AutoMixManager {
         current_song: Option<SongData>,
         current_duration: Option<f64>,
         current_position: Option<f64>,
+        outgoing_gain: f32,
         current_source_path: Option<PathBuf>,
         next_song: SongData,
         next_identity: Option<TrackIdentity>,
@@ -243,6 +248,7 @@ impl AutoMixManager {
             current_id,
             current_duration,
             current_position,
+            outgoing_gain,
             current_source_path,
             next_song,
             next_identity,
