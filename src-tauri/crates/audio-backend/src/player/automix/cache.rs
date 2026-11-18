@@ -82,6 +82,7 @@ pub(super) fn analyze_cached(
     label: &str,
     path: &Path,
     analyze_bpm: bool,
+    wait_until: Option<std::time::Instant>,
     cancel: &PrepareCancel,
 ) -> Option<automix_analysis::TrackAnalysis> {
     let key = analysis_cache_key(path);
@@ -95,10 +96,16 @@ pub(super) fn analyze_cached(
     }
 
     // A second reader on a download still landing waits on the network for the
-    // rest of the file and competes with the playback decoder for it. Plan by
-    // time until the source is whole; a later prepare fills the cache.
+    // rest of the file and competes with the playback decoder for it, so wait for
+    // it to land first — waiting opens nothing. Nothing prepares again later, so
+    // giving up here plans this transition by time.
     if crate::source::is_complete(path) == Some(false) {
-        return None;
+        let landed = wait_until.is_some_and(|deadline| {
+            crate::source::wait_complete(path, deadline, || cancel.is_cancelled())
+        });
+        if !landed {
+            return None;
+        }
     }
 
     let analysis = analyze_optional(label, path, analyze_bpm, cancel)?;

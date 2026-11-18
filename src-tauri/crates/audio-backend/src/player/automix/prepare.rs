@@ -1,5 +1,6 @@
 //! Blocking source acquisition, metadata and analysis preparation.
 
+use super::beat_plan::EXIT_WINDOW;
 use super::cache::analyze_cached;
 use super::plan::build_analysis_backed_plan;
 use super::PreparedTrack;
@@ -7,7 +8,7 @@ use crate::types::{
     AudioInfo, AudioQuality, AutoMixConfig, DisplayAudioInfo, SongData, TrackIdentity,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{info, info_span};
 
@@ -18,6 +19,9 @@ pub(in crate::player) struct AutoMixPrepareRequest {
     pub next_index: usize,
     pub current_id: String,
     pub current_duration: Option<f64>,
+    /// Backend clock position when the request was made: bounds how long analysis may wait for
+    /// a download to land.
+    pub current_position: Option<f64>,
     pub current_source_path: Option<PathBuf>,
     pub next_song: SongData,
     pub next_identity: Option<TrackIdentity>,
@@ -27,19 +31,59 @@ pub(in crate::player) struct AutoMixPrepareRequest {
 /// Tells a blocking prepare it was superseded. The task cannot be aborted, so
 /// it polls this at its checkpoints and stops decoding instead of finishing a
 /// track nobody will use.
+#[derive(Clone)]
 pub(in crate::player) struct PrepareCancel {
     live: Arc<AtomicU64>,
     generation: u64,
+    /// Set when the runtime stopped waiting for this request (its 60 s bound). Nothing bumps the
+    /// generation then, so without it the task would keep its download and the analysis gate.
+    abandoned: Arc<AtomicBool>,
 }
 
 impl PrepareCancel {
     pub(in crate::player) fn new(live: Arc<AtomicU64>, generation: u64) -> Self {
-        Self { live, generation }
+        Self {
+            live,
+            generation,
+            abandoned: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub(in crate::player) fn abandon(&self) {
+        self.abandoned.store(true, Ordering::Release);
     }
 
     pub(super) fn is_cancelled(&self) -> bool {
-        self.live.load(Ordering::Acquire) != self.generation
+        self.abandoned.load(Ordering::Acquire)
+            || self.live.load(Ordering::Acquire) != self.generation
     }
+}
+
+/// Longest a prepare waits for a download to land before analysing it.
+const MAX_ANALYSIS_WAIT: f64 = 20.0;
+/// Kept free between the end of that wait and where the fade could start.
+const ANALYSIS_WAIT_MARGIN: f64 = 8.0;
+
+/// Until when analysis may wait for a still-downloading source, or `None` for not at all.
+///
+/// A remote track is played while it downloads (`source::download_to_temp_path` returns on the
+/// headers), and the prepare runs at the start of the track, so an analysis that only accepted a
+/// whole file never saw the incoming track. Waiting is cheap — a download is usually seconds and
+/// the fade minutes away — but must end before the fade could start: a beat-matched or
+/// section-cued plan may start up to `EXIT_WINDOW` before the end, not just one crossfade length.
+fn analysis_deadline(
+    config: &AutoMixConfig,
+    current_duration: Option<f64>,
+    current_position: Option<f64>,
+) -> Option<std::time::Instant> {
+    let remaining = current_duration? - current_position?;
+    let earliest_fade = if config.emotional_transition || (config.bpm_match && config.beat_align) {
+        config.crossfade_duration.max(EXIT_WINDOW)
+    } else {
+        config.crossfade_duration
+    };
+    let budget = (remaining - earliest_fade - ANALYSIS_WAIT_MARGIN).min(MAX_ANALYSIS_WAIT);
+    (budget > 0.0).then(|| std::time::Instant::now() + std::time::Duration::from_secs_f64(budget))
 }
 
 const SUPERSEDED: &str = "AutoMix prepare superseded";
@@ -93,17 +137,20 @@ pub(in crate::player) fn run_prepare_request_blocking(
         next_index,
         current_id,
         current_duration,
+        current_position,
         current_source_path,
         next_song,
         next_identity,
         config,
     } = request;
+    let wait_until = analysis_deadline(&config, current_duration, current_position);
 
     let result = prepare_track_blocking(
         config,
         current_duration,
         current_source_path,
         next_song,
+        wait_until,
         cancel,
     )
     .map(|mut prepared| {
@@ -132,6 +179,7 @@ fn prepare_track_blocking(
     current_duration: Option<f64>,
     current_source_path: Option<PathBuf>,
     next_song: SongData,
+    wait_until: Option<std::time::Instant>,
     cancel: &PrepareCancel,
 ) -> Result<PreparedTrack, String> {
     let source = next_song
@@ -152,17 +200,19 @@ fn prepare_track_blocking(
     // matching instead of a blind "fade the last N seconds" plan.
     //
     // `run_prepare_request_blocking` runs off the audio callback. The runtime
-    // bounds preparation to 60s, including source acquisition and analysis.
-    // Any analysis failure degrades gracefully back to the time-based plan.
+    // bounds preparation to 60s, including source acquisition, waiting for a
+    // download to land (`analysis_deadline`) and analysis. Any analysis failure
+    // degrades gracefully back to the time-based plan.
     let analyze_current_bpm = config.bpm_match && config.beat_align;
     let current_analysis = current_source_path
         .as_deref()
-        .and_then(|path| analyze_cached("current", path, analyze_current_bpm, cancel));
+        .and_then(|path| analyze_cached("current", path, analyze_current_bpm, wait_until, cancel));
     // Analyze with the same BPM policy as a "current" track so this result can be
     // reused straight from the cache when the next track later becomes current,
     // avoiding a second full decode of the same file.
     // The curve is always chosen from what overlaps, so B is always analysed.
-    let next_analysis = analyze_cached("next", &local_path, analyze_current_bpm, cancel);
+    let next_analysis =
+        analyze_cached("next", &local_path, analyze_current_bpm, wait_until, cancel);
     if cancel.is_cancelled() {
         return Err(SUPERSEDED.into());
     }
@@ -260,4 +310,40 @@ fn extract_tag(info: &AudioInfo, keys: &[&str]) -> Option<String> {
 
 fn extract_title_from_metadata(info: &AudioInfo) -> Option<String> {
     extract_tag(info, &["title", "TIT2"])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wait_seconds(config: &AutoMixConfig, duration: f64, position: f64) -> Option<f64> {
+        let now = std::time::Instant::now();
+        analysis_deadline(config, Some(duration), Some(position))
+            .map(|deadline| deadline.duration_since(now).as_secs_f64())
+    }
+
+    #[test]
+    fn analysis_waits_only_while_the_fade_is_still_ahead() {
+        let plain = AutoMixConfig {
+            bpm_match: false,
+            emotional_transition: false,
+            ..AutoMixConfig::default()
+        };
+        // Track start: capped at the maximum wait.
+        let at_start = wait_seconds(&plain, 240.0, 0.0).unwrap();
+        assert!((at_start - MAX_ANALYSIS_WAIT).abs() < 0.1, "{at_start}");
+        // Near the end: whatever is left before the fade and its margin.
+        let late = wait_seconds(&plain, 240.0, 215.0).unwrap();
+        assert!(
+            (late - (25.0 - 8.0 - ANALYSIS_WAIT_MARGIN)).abs() < 0.1,
+            "{late}"
+        );
+        // Past that: no wait at all, plan as before.
+        assert_eq!(wait_seconds(&plain, 240.0, 228.0), None);
+        // A beat-matched or section-cued plan may start up to EXIT_WINDOW early.
+        assert_eq!(wait_seconds(&AutoMixConfig::default(), 240.0, 190.0), None);
+        // Unknown length or position: no basis for a deadline.
+        assert_eq!(analysis_deadline(&plain, None, Some(0.0)), None);
+        assert_eq!(analysis_deadline(&plain, Some(240.0), None), None);
+    }
 }

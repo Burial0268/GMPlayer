@@ -376,6 +376,7 @@ impl AudioPlayer {
                         *next_index,
                         current_song,
                         current_duration,
+                        Some(self.clock_position()),
                         current_source_path,
                         next_song.clone(),
                         next_identity,

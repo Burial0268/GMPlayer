@@ -23,7 +23,7 @@ use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use symphonia::core::io::MediaSource;
 
@@ -413,6 +413,33 @@ pub fn is_complete(path: &Path) -> Option<bool> {
     lookup(path).map(|p| p.is_complete())
 }
 
+/// Wait until a registered download has landed in full, without reading it: `true` once it has
+/// (or when the path is not one of ours, so the caller's own open decides), `false` when it failed
+/// or was cancelled, when `cancelled` says so, or at `deadline`.
+///
+/// The progress is looked up once and held. A guard dropped mid-wait (the track was skipped)
+/// unregisters the path, and looking it up again would then read "not a download" and send the
+/// caller off to analyse a deleted file; the held progress sees the cancellation instead.
+pub fn wait_complete(path: &Path, deadline: Instant, cancelled: impl Fn() -> bool) -> bool {
+    let Some(progress) = lookup(path) else {
+        return true;
+    };
+    loop {
+        if progress.is_complete() {
+            return true;
+        }
+        if progress.is_finished() || cancelled() {
+            return false;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        // Bounded so `cancelled`, which nothing signals, is still polled.
+        progress.wait_for_change((deadline - now).min(Duration::from_millis(250)));
+    }
+}
+
 // ── Reader ───────────────────────────────────────────────────────
 
 pub(crate) struct GrowingFile {
@@ -577,6 +604,54 @@ mod tests {
             self.progress.end_writer(id, r.clone());
             r
         }
+    }
+
+    #[test]
+    fn waiting_for_a_download_ends_when_it_lands_fails_or_runs_out_of_time() {
+        let far = || Instant::now() + Duration::from_secs(5);
+
+        // Lands while waiting.
+        let rig = rig(8);
+        register(&rig.path, rig.progress.clone());
+        let p = rig.progress.clone();
+        let path = rig.path.clone();
+        let writer = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            let id = p.begin_writer(0);
+            let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+            let r = pump(&p, id, file, io::Cursor::new(body(0, 8)));
+            p.end_writer(id, r);
+        });
+        assert!(wait_complete(&rig.path, far(), || false));
+        writer.join().unwrap();
+        unregister(&rig.path);
+
+        // Still going at the deadline.
+        let rig = rig_with_writer(8);
+        let soon = Instant::now() + Duration::from_millis(30);
+        assert!(!wait_complete(&rig.path, soon, || false));
+
+        // The caller gave up.
+        assert!(!wait_complete(&rig.path, far(), || true));
+
+        // The guard is dropped mid-wait: cancelled, then unregistered, as `TempGuard` does.
+        let path = rig.path.clone();
+        let waited = std::thread::spawn(move || wait_complete(&path, far(), || false));
+        std::thread::sleep(Duration::from_millis(20));
+        rig.progress.cancel();
+        unregister(&rig.path);
+        assert!(!waited.join().unwrap());
+
+        // Not a download of ours: nothing to wait for.
+        assert!(wait_complete(Path::new("/not/registered"), far(), || false));
+    }
+
+    /// A registered rig whose only writer started and never finishes.
+    fn rig_with_writer(total: u64) -> Rig {
+        let rig = rig(total);
+        register(&rig.path, rig.progress.clone());
+        rig.progress.begin_writer(0);
+        rig
     }
 
     #[test]

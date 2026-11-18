@@ -44,6 +44,7 @@ impl AudioPlayer {
             let current_index = request.current_index;
             let current_id = request.current_id.clone();
             let cancel = automix::PrepareCancel::new(live, generation);
+            let abandon = cancel.clone();
             let task = tokio::task::spawn_blocking(move || {
                 automix::run_prepare_request_blocking(request, &cancel)
             });
@@ -56,13 +57,18 @@ impl AudioPlayer {
                     current_id,
                     result: Err(format!("AutoMix prepare task failed: {err}")),
                 },
-                Err(_) => automix::AutoMixPrepareResult {
-                    generation,
-                    transition_id,
-                    current_index,
-                    current_id,
-                    result: Err("AutoMix prepare timed out".to_string()),
-                },
+                Err(_) => {
+                    // The blocking task cannot be aborted; tell it to stop at its next checkpoint
+                    // so it lets go of the download and the analysis gate.
+                    abandon.abandon();
+                    automix::AutoMixPrepareResult {
+                        generation,
+                        transition_id,
+                        current_index,
+                        current_id,
+                        result: Err("AutoMix prepare timed out".to_string()),
+                    }
+                }
             };
             let _ = tx.send(result);
         });
