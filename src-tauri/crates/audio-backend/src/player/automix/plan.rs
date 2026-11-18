@@ -151,8 +151,6 @@ pub(super) fn build_analysis_backed_plan(
     plan
 }
 
-/// A still singing inside an unsynced fade holds at full until its last line
-/// ends, with B waiting underneath at 0.6 (HyPlayer-Nextgen's crossfade).
 /// The incoming deck's gain, matched to what the listener hears now rather than to an absolute
 /// target. Taking B's absolute normalisation (`gain_adjustment`, 0.1..3.0) as-is was a step of
 /// several dB whenever A played at another gain — after any ordinary load A is at 1.0 — and the
@@ -188,6 +186,8 @@ pub(super) fn incoming_gain(
     gain.clamp(0.55, 1.8)
 }
 
+/// A still singing inside an unsynced fade dominates until its last line ends,
+/// with B waiting underneath at 0.6 of it (HyPlayer-Nextgen's crossfade).
 fn hold_for_last_vocal(plan: &mut CrossfadePlan, current: &automix_analysis::TrackAnalysis) {
     let Some(end) = vocal_runs(current, 0.8).last().map(|run| run.1) else {
         return;
@@ -301,11 +301,14 @@ pub(super) fn choose_morph(
             (false, false) => 10.0 * (b / a).log10(),
         };
     }
-    let offset = db.iter().sum::<f32>() / 3.0;
+    // The offset comes from the bands the morph will move: with a bass swap running, B's bass is
+    // the swap's, and counting it would push its difference onto the mids and highs.
+    let moved = if plan.bass_swap.is_some() { 1 } else { 0 };
+    let offset = db[moved..].iter().sum::<f32>() / (3 - moved) as f32;
     for d in &mut db {
         *d = (*d - offset).clamp(-MORPH_MAX_DB, MORPH_MAX_DB);
     }
-    if plan.bass_swap.is_some() {
+    if moved == 1 {
         db[0] = 0.0;
     }
     (db.iter().any(|d| d.abs() >= MORPH_MIN_DB)).then_some(BandMorph { db })

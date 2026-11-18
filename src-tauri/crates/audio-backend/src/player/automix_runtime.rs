@@ -789,7 +789,6 @@ impl AudioPlayer {
     }
 }
 
-/// Where B's decoder opens: the plan's entry downbeat, or the top of the track.
 /// A beat-mix that can no longer meet on the beat fades as a blend, and its bass swap - one beat
 /// long, placed on a kick that will not land there now - moves to the middle of the fade.
 fn unsync_beat_mix(plan: &mut automix::CrossfadePlan) {
@@ -799,6 +798,7 @@ fn unsync_beat_mix(plan: &mut automix::CrossfadePlan) {
     plan.style = FadeStyle::Blend;
 }
 
+/// Where B's decoder opens: the plan's entry downbeat, or the top of the track.
 fn incoming_entry(prepared: &automix::PreparedAutoMixStart) -> f64 {
     prepared
         .plan

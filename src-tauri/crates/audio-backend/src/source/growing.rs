@@ -634,13 +634,14 @@ mod tests {
         // The caller gave up.
         assert!(!wait_complete(&rig.path, far(), || true));
 
-        // The guard is dropped mid-wait: cancelled, then unregistered, as `TempGuard` does.
+        // The guard is dropped mid-wait: the held progress sees the cancellation. Unregistered
+        // only after the waiter returns, so a slow start cannot find the path already gone.
         let path = rig.path.clone();
         let waited = std::thread::spawn(move || wait_complete(&path, far(), || false));
         std::thread::sleep(Duration::from_millis(20));
         rig.progress.cancel();
-        unregister(&rig.path);
         assert!(!waited.join().unwrap());
+        unregister(&rig.path);
 
         // Not a download of ours: nothing to wait for.
         assert!(wait_complete(Path::new("/not/registered"), far(), || false));

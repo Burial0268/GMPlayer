@@ -1148,15 +1148,9 @@ impl MixerWorker {
                 // we actually have, and lets `render.rs` own the fade.
                 let frame_aligned = written - (written % channels);
                 block.truncate(frame_aligned);
-                // A fade's limiter outlives it until it has released. Skipping it here, as this
-                // path used to, dropped whatever reduction was left to unity in one block: an
-                // audible jump the moment a limited fade completed.
-                if let Some(limiter) = self.overlap_limiter.as_mut() {
-                    limiter.process_interleaved(block, channels);
-                    if limiter.gain >= 0.9999 {
-                        self.overlap_limiter = None;
-                    }
-                }
+                // Skipping the limiter here, as this path used to, dropped whatever reduction a
+                // limited fade left to unity in one block: a jump the moment it completed.
+                self.run_overlap_limiter(block, channels);
                 self.record_timeline(position, frame_aligned, phase);
                 return frame_aligned > 0;
             }
@@ -1230,12 +1224,7 @@ impl MixerWorker {
             consumed_primary += primary;
             consumed_secondary += secondary;
 
-            if let Some(limiter) = self.overlap_limiter.as_mut() {
-                limiter.process_interleaved(&mut block[segment_start..], channels);
-                if self.crossfade.is_none() && limiter.gain >= 0.9999 {
-                    self.overlap_limiter = None;
-                }
-            }
+            self.run_overlap_limiter(&mut block[segment_start..], channels);
             if crossfade_ramp.is_some() {
                 self.commit_crossfade_block(segment_frames);
             }
@@ -1297,6 +1286,28 @@ impl MixerWorker {
             frames = frames.min(available).max(1);
         }
         (frames, position)
+    }
+
+    /// Whatever is left of a fade's overlap limiter. It limits only while a fade that needs it
+    /// runs; otherwise it just releases and then goes. Limiting on after the fade would hold a
+    /// zero-attack limiter over the next track, which can sit above its ceiling at its matched
+    /// gain, and dropping it at once would snap the level back up.
+    fn run_overlap_limiter(&mut self, samples: &mut [f32], channels: usize) {
+        let limiting = self
+            .crossfade
+            .as_ref()
+            .is_some_and(|fade| fade.params.style.limits());
+        let Some(limiter) = self.overlap_limiter.as_mut() else {
+            return;
+        };
+        if limiting {
+            limiter.process_interleaved(samples, channels);
+        } else {
+            limiter.release_interleaved(samples, channels);
+            if limiter.gain >= 0.9999 {
+                self.overlap_limiter = None;
+            }
+        }
     }
 
     fn begin_crossfade(&mut self, schedule: ScheduledCrossfade) {
@@ -1740,23 +1751,28 @@ fn deck_filters(
     // Outgoing leans 0 -> d, incoming -d -> 0, on the same eased progress as the gains. A band
     // that never moves is an exact pass-through.
     let (lean_out, lean_in) = (eased_progress(progress), eased_progress(1.0 - progress));
-    let band = |db: f32, design: &dyn Fn(f32) -> BiquadCoeffs| {
+    fn band(
+        db: f32,
+        (lean_out, lean_in): (f32, f32),
+        design: impl Fn(f32) -> BiquadCoeffs,
+    ) -> (BiquadCoeffs, BiquadCoeffs) {
         if db == 0.0 {
             (BiquadCoeffs::IDENTITY, BiquadCoeffs::IDENTITY)
         } else {
             (design(db * lean_out), design(-db * lean_in))
         }
-    };
+    }
+    let lean = (lean_out, lean_in);
     let low = match params.bass_swap {
         Some(swap) => swap_shelves(swap),
-        None => band(morph.db[0], &|db| {
+        None => band(morph.db[0], lean, |db| {
             BiquadCoeffs::low_shelf(rate, MORPH_LOW_HZ, 0.707, db)
         }),
     };
-    let mid = band(morph.db[1], &|db| {
+    let mid = band(morph.db[1], lean, |db| {
         BiquadCoeffs::peaking(rate, MORPH_MID_HZ, MORPH_MID_Q, db)
     });
-    let high = band(morph.db[2], &|db| {
+    let high = band(morph.db[2], lean, |db| {
         BiquadCoeffs::high_shelf(rate, MORPH_HIGH_HZ, 0.707, db)
     });
     Some(FadeFilters::Three(order(

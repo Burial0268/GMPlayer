@@ -258,6 +258,18 @@ impl LimiterRuntime {
             }
         }
     }
+
+    /// Only the release: the gain recovers toward unity and is applied, and no peak can pull it
+    /// down again. For a limiter whose job is over but whose reduction must not snap back.
+    #[inline]
+    pub(crate) fn release_interleaved(&mut self, samples: &mut [f32], channels: usize) {
+        for frame in samples.chunks_exact_mut(channels) {
+            self.gain += (1.0 - self.gain) * self.release_coeff;
+            for sample in frame {
+                *sample *= self.gain;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]

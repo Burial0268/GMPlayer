@@ -331,8 +331,15 @@ fn the_band_morph_carries_tone_not_loudness() {
         assert!((got - want).abs() < 0.01, "{:?} vs {expected:?}", morph.db);
     }
 
-    // With a bass swap running, the low band is the swap's.
+    // With a bass swap running, the low band is the swap's - and so is its difference: B's bass
+    // alone leaves nothing for the mids and highs to lean.
     plan.bass_swap = Some(crate::player::mixer::BassSwap::MIDDLE);
     let morph = choose_morph(&plan, &a, &banded([0.1, 0.1, 0.4], false)).unwrap();
     assert_eq!(morph.db[0], 0.0);
+    assert!(
+        (morph.db[2] - morph.db[1] - highs).abs() < 0.01,
+        "{:?}",
+        morph.db
+    );
+    assert!(choose_morph(&plan, &a, &banded([0.4, 0.1, 0.1], false)).is_none());
 }

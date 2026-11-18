@@ -87,21 +87,23 @@ fn the_overlap_limiter_releases_smoothly_after_the_fade_completes() {
     // when A lets go, so completion lands mid-release.
     let fade = rate / 10;
     let tail = rate / 2;
-    // Loud enough that two balanced decks still overshoot the limiter's ceiling.
+    // Loud enough that two balanced decks still overshoot the limiter's ceiling, and B at its
+    // matched gain keeps overshooting it after the fade: the limiter must still only release.
     let a = noise(fade + tail, channels, 0.95, 1);
     let b = noise(fade + tail, channels, 0.95, 2);
     let params = CrossfadeParams {
         style: FadeStyle::BeatMix(0.9),
         overlap_headroom_db: 0.0,
+        incoming_gain: 1.5,
         ..CrossfadeParams::default()
     };
     let (out, completed) = render(&a, &b, channels, fade, tail, params);
 
-    // After completion only B plays, so output / B is the limiter's gain, frame by frame.
+    // After completion only B plays, so output / (B * its gain) is the limiter's, frame by frame.
     let gains: Vec<f32> = (completed..(out.len() / channels))
         .filter_map(|frame| {
             let i = frame * channels;
-            (b[i].abs() > 0.05).then(|| out[i] / b[i])
+            (b[i].abs() > 0.05).then(|| out[i] / (b[i] * params.incoming_gain))
         })
         .collect();
     assert!(gains.len() > 1000, "enough audible frames to judge");
@@ -117,6 +119,10 @@ fn the_overlap_limiter_releases_smoothly_after_the_fade_completes() {
     assert!(
         worst_step < 0.01,
         "the release is gradual, worst step between frames {worst_step}"
+    );
+    assert!(
+        gains.windows(2).all(|w| w[1] >= w[0] - 1e-5),
+        "and only a release: B's own peaks never pull it down again"
     );
     assert!(
         (gains[gains.len() - 1] - 1.0).abs() < 0.01,

@@ -1256,30 +1256,39 @@ export class TransitionStateMachine {
       introAvg[b] = inSum / introWindows;
     }
 
-    const diffDb: [number, number, number] = [0, 0, 0];
-    let maxAbsDiff = 0;
-
+    const rawDb: [number, number, number] = [0, 0, 0];
     for (let b = 0; b < 3; b++) {
       if (outroAvg[b] < 0.0001 && introAvg[b] < 0.0001) {
-        diffDb[b] = 0;
-        continue;
-      }
-      if (outroAvg[b] < 0.0001) {
-        diffDb[b] = 6;
+        rawDb[b] = 0;
+      } else if (outroAvg[b] < 0.0001) {
+        rawDb[b] = 6;
       } else if (introAvg[b] < 0.0001) {
-        diffDb[b] = -6;
+        rawDb[b] = -6;
       } else {
-        diffDb[b] = 10 * Math.log10(introAvg[b] / outroAvg[b]);
+        rawDb[b] = 10 * Math.log10(introAvg[b] / outroAvg[b]);
       }
-      diffDb[b] = Math.max(-6, Math.min(6, diffDb[b]));
-      maxAbsDiff = Math.max(maxAbsDiff, Math.abs(diffDb[b]));
     }
+    const bassSwapLow =
+      outroAvg[0] > 0.01 && introAvg[0] > 0.01 && Math.abs(clamp(rawDb[0], -6, 6)) >= 2.0;
+
+    // Remove the bands' common offset before leaning: that part is loudness, which
+    // `_computeIncomingGainAdjustment` already matches, and leaning it too moves the level twice.
+    // With a bass swap the low band is the swap's (it keeps its own difference as the swap's
+    // depth), so the offset comes from the mids and highs only. Mirrors `choose_morph` in
+    // `audio-backend/src/player/automix/plan.rs`.
+    const leaned = bassSwapLow ? [1, 2] : [0, 1, 2];
+    const offset = leaned.reduce((sum, b) => sum + rawDb[b], 0) / leaned.length;
+    const diffDb = rawDb.map((d, b) => clamp(bassSwapLow && b === 0 ? d : d - offset, -6, 6)) as [
+      number,
+      number,
+      number,
+    ];
+    const maxAbsDiff = Math.max(...diffDb.map(Math.abs));
 
     if (maxAbsDiff < 1.5) return false;
 
     const outTargetDb: [number, number, number] = [diffDb[0], diffDb[1], diffDb[2]];
     const inInitialDb: [number, number, number] = [-diffDb[0], -diffDb[1], -diffDb[2]];
-    const bassSwapLow = outroAvg[0] > 0.01 && introAvg[0] > 0.01 && Math.abs(diffDb[0]) >= 2.0;
 
     if (IS_DEV) {
       console.log(
