@@ -16,7 +16,7 @@ use crate::types::{
 };
 
 use super::automix;
-use super::mixer::{CrossfadeParams, DeckId, FadeStyle};
+use super::mixer::{BassSwap, CrossfadeParams, DeckId, FadeStyle};
 use super::{AudioPlayer, PlaybackIntent};
 
 const AUTOMIX_MIN_INCOMING_BUFFER_SECS: f64 = 0.25;
@@ -44,6 +44,7 @@ impl AudioPlayer {
             let current_index = request.current_index;
             let current_id = request.current_id.clone();
             let cancel = automix::PrepareCancel::new(live, generation);
+            let abandon = cancel.clone();
             let task = tokio::task::spawn_blocking(move || {
                 automix::run_prepare_request_blocking(request, &cancel)
             });
@@ -56,13 +57,18 @@ impl AudioPlayer {
                     current_id,
                     result: Err(format!("AutoMix prepare task failed: {err}")),
                 },
-                Err(_) => automix::AutoMixPrepareResult {
-                    generation,
-                    transition_id,
-                    current_index,
-                    current_id,
-                    result: Err("AutoMix prepare timed out".to_string()),
-                },
+                Err(_) => {
+                    // The blocking task cannot be aborted; tell it to stop at its next checkpoint
+                    // so it lets go of the download and the analysis gate.
+                    abandon.abandon();
+                    automix::AutoMixPrepareResult {
+                        generation,
+                        transition_id,
+                        current_index,
+                        current_id,
+                        result: Err("AutoMix prepare timed out".to_string()),
+                    }
+                }
             };
             let _ = tx.send(result);
         });
@@ -536,7 +542,7 @@ impl AudioPlayer {
                 plan.duration = (remaining - 0.1).max(0.05);
                 plan.outgoing_rate = 1.0;
                 plan.beat_synced = false;
-                plan.style = FadeStyle::Blend;
+                unsync_beat_mix(plan);
             }
             if start_position.is_none() || plan.start_time <= now + 2.0 || start_paused {
                 plan.outgoing_rate = 1.0;
@@ -568,7 +574,7 @@ impl AudioPlayer {
             }
             // Holding both decks up only works while their beats meet.
             if !plan.beat_synced && matches!(plan.style, FadeStyle::BeatMix(_)) {
-                plan.style = FadeStyle::Blend;
+                unsync_beat_mix(plan);
             }
         }
         let duration = prepared.plan.as_ref().map(|p| p.duration).unwrap_or(2.0);
@@ -603,10 +609,17 @@ impl AudioPlayer {
                 in_shape: plan.in_shape as f32,
                 out_shape: plan.out_shape as f32,
                 bass_swap: plan.bass_swap,
+                morph: plan.morph,
                 style: plan.style,
             })
             .unwrap_or_else(|| CrossfadeParams {
                 outgoing_gain: self.active_norm_gain,
+                // Same rule as `plan::incoming_gain` with nothing known about B.
+                incoming_gain: if self.automix.volume_norm() {
+                    self.active_norm_gain
+                } else {
+                    1.0
+                },
                 ..Default::default()
             });
         // Remember the incoming track's normalization gain so it can be promoted
@@ -774,6 +787,15 @@ impl AudioPlayer {
         self.emit_many(events).await;
         self.sync_ui().await;
     }
+}
+
+/// A beat-mix that can no longer meet on the beat fades as a blend, and its bass swap - one beat
+/// long, placed on a kick that will not land there now - moves to the middle of the fade.
+fn unsync_beat_mix(plan: &mut automix::CrossfadePlan) {
+    if matches!(plan.style, FadeStyle::BeatMix(_)) && plan.bass_swap.is_some() {
+        plan.bass_swap = Some(BassSwap::MIDDLE);
+    }
+    plan.style = FadeStyle::Blend;
 }
 
 /// Where B's decoder opens: the plan's entry downbeat, or the top of the track.

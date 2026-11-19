@@ -29,6 +29,11 @@ const CROSSFADE_RAMP_FRAMES: usize = 64;
 /// Bass swap: a low shelf deep enough to take a kick and bassline out of the mix.
 const BASS_SWAP_HZ: f32 = 180.0;
 const BASS_SWAP_KILL_DB: f32 = -24.0;
+/// Band morph corner frequencies, the Web `SpectralEQ`'s and the analysis bands' edges.
+const MORPH_LOW_HZ: f32 = 300.0;
+const MORPH_MID_HZ: f32 = 1_100.0;
+const MORPH_MID_Q: f32 = 0.7;
+const MORPH_HIGH_HZ: f32 = 4_000.0;
 /// Layouts wider than this skip deck filtering rather than allocate filter state.
 const BASS_SWAP_MAX_CHANNELS: usize = 8;
 /// FilterCut: the outgoing high-pass climbs 300 Hz -> 18 kHz across the fade.
@@ -176,20 +181,33 @@ pub struct CrossfadeParams {
     pub out_shape: f32,
     /// Hand the low band from outgoing to incoming over this progress window.
     pub bass_swap: Option<BassSwap>,
+    /// Lean each deck's tone toward the other's across the fade.
+    pub morph: Option<BandMorph>,
     pub style: FadeStyle,
 }
 
-/// How the two decks share the fade. Every style but `Blend` keeps both decks
-/// near full volume somewhere in the overlap, so the mixer limits the sum.
+/// The tonal half of a handover, per band (low, mid, high) in dB: A's spectrum leans toward B's as
+/// it leaves (0 -> `d`), and B arrives leaning toward A's and settles into its own (`-d` -> 0), so
+/// the tone changes as gradually as the level. Mirrors the Web `SpectralEQ` (low shelf 300 Hz,
+/// peaking 1.1 kHz, high shelf 4 kHz). The low band is left to `BassSwap` when one runs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandMorph {
+    pub db: [f32; 3],
+}
+
+/// How the two decks share the fade. Every style but `FilterCut` sets only the balance between
+/// the decks; the level follows A's gain to B's (see `fade_gains`). Every style but `Blend` still
+/// runs the overlap limiter as a safety net.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FadeStyle {
     /// Constant-power `curve` with `in_shape`/`out_shape`.
     Blend,
-    /// A holds until `handoff` then releases; B is at 0.6 by it (A still singing).
+    /// A dominates until `handoff` then releases; B is at 0.6 of A by it (A still singing).
     Handoff(f32),
-    /// Beat-synced: B is full by `handoff`, A holds until it, then releases.
+    /// Beat-synced: B is level with A by `handoff`, then A releases.
     BeatMix(f32),
-    /// Tempos too far apart to sync: A is high-passed away, B enters halfway.
+    /// Tempos too far apart to sync: A is high-passed away, holding its level until 70%; B enters
+    /// halfway.
     FilterCut,
 }
 
@@ -207,10 +225,17 @@ pub struct BassSwap {
 }
 
 impl BassSwap {
-    /// Shelf gains (outgoing, incoming) in dB at `progress`.
+    /// The middle fifth of the fade, for a pair whose beats are not matched.
+    pub const MIDDLE: Self = Self {
+        start: 0.4,
+        end: 0.6,
+    };
+
+    /// Shelf gains (outgoing, incoming) in dB at `progress`. Smootherstep, so the shelf, too,
+    /// starts and stops moving at rest.
     fn shelf_db(self, progress: f32) -> (f32, f32) {
         let x = ((progress - self.start) / (self.end - self.start).max(1e-6)).clamp(0.0, 1.0);
-        let s = x * x * (3.0 - 2.0 * x);
+        let s = smootherstep(x);
         (BASS_SWAP_KILL_DB * s, BASS_SWAP_KILL_DB * (1.0 - s))
     }
 }
@@ -225,6 +250,7 @@ impl Default for CrossfadeParams {
             in_shape: 1.0,
             out_shape: 1.0,
             bass_swap: None,
+            morph: None,
             style: FadeStyle::Blend,
         }
     }
@@ -863,8 +889,17 @@ struct CrossfadeRuntime {
     duration_samples: usize,
     elapsed_samples: usize,
     params: CrossfadeParams,
-    /// Deck filter state, `[primary, secondary][channel]`; unused without a filter.
-    filters: [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
+    /// Deck filter state, `[primary, secondary][channel][stage]`; unused without a filter.
+    filters: [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
+}
+
+/// One segment's deck filter coefficients, `[primary, secondary]` per stage. A fade's stage count
+/// is fixed by its params, and a single-filter fade (FilterCut, a bass swap alone) stays a single
+/// biquad per sample.
+#[derive(Clone, Copy)]
+enum FadeFilters {
+    One([[BiquadCoeffs; 1]; 2]),
+    Three([[BiquadCoeffs; 3]; 2]),
 }
 
 #[derive(Clone, Copy)]
@@ -877,8 +912,8 @@ struct CrossfadeBlockRamp {
     incoming_step: f32,
     outgoing_final: f32,
     incoming_final: f32,
-    /// Deck filter coefficients for this segment, `[primary, secondary]`.
-    filters: Option<[BiquadCoeffs; 2]>,
+    /// Deck filter coefficients for this segment.
+    filters: Option<FadeFilters>,
 }
 
 impl CrossfadeBlockRamp {
@@ -1113,6 +1148,9 @@ impl MixerWorker {
                 // we actually have, and lets `render.rs` own the fade.
                 let frame_aligned = written - (written % channels);
                 block.truncate(frame_aligned);
+                // Skipping the limiter here, as this path used to, dropped whatever reduction a
+                // limited fade left to unity in one block: a jump the moment it completed.
+                self.run_overlap_limiter(block, channels);
                 self.record_timeline(position, frame_aligned, phase);
                 return frame_aligned > 0;
             }
@@ -1145,7 +1183,20 @@ impl MixerWorker {
                 .zip(self.crossfade.as_mut());
             let segment_start = block.len();
             let (primary, secondary) = match filters {
-                Some((coeffs, fade)) => mix_segment(
+                Some((FadeFilters::One(coeffs), fade)) => mix_segment(
+                    &mut self.primary,
+                    &mut self.secondary,
+                    block,
+                    channels,
+                    segment_frames,
+                    paused,
+                    crossfade_ramp,
+                    &mut BiquadFilters {
+                        state: &mut fade.filters,
+                        coeffs,
+                    },
+                ),
+                Some((FadeFilters::Three(coeffs), fade)) => mix_segment(
                     &mut self.primary,
                     &mut self.secondary,
                     block,
@@ -1173,12 +1224,7 @@ impl MixerWorker {
             consumed_primary += primary;
             consumed_secondary += secondary;
 
-            if let Some(limiter) = self.overlap_limiter.as_mut() {
-                limiter.process_interleaved(&mut block[segment_start..], channels);
-                if self.crossfade.is_none() && limiter.gain >= 0.9999 {
-                    self.overlap_limiter = None;
-                }
-            }
+            self.run_overlap_limiter(&mut block[segment_start..], channels);
             if crossfade_ramp.is_some() {
                 self.commit_crossfade_block(segment_frames);
             }
@@ -1240,6 +1286,28 @@ impl MixerWorker {
             frames = frames.min(available).max(1);
         }
         (frames, position)
+    }
+
+    /// Whatever is left of a fade's overlap limiter. It limits only while a fade that needs it
+    /// runs; otherwise it just releases and then goes. Limiting on after the fade would hold a
+    /// zero-attack limiter over the next track, which can sit above its ceiling at its matched
+    /// gain, and dropping it at once would snap the level back up.
+    fn run_overlap_limiter(&mut self, samples: &mut [f32], channels: usize) {
+        let limiting = self
+            .crossfade
+            .as_ref()
+            .is_some_and(|fade| fade.params.style.limits());
+        let Some(limiter) = self.overlap_limiter.as_mut() else {
+            return;
+        };
+        if limiting {
+            limiter.process_interleaved(samples, channels);
+        } else {
+            limiter.release_interleaved(samples, channels);
+            if limiter.gain >= 0.9999 {
+                self.overlap_limiter = None;
+            }
+        }
     }
 
     fn begin_crossfade(&mut self, schedule: ScheduledCrossfade) {
@@ -1476,30 +1544,19 @@ impl MixerWorker {
         })
     }
 
-    /// Coefficients for this segment: FilterCut's sweep on the outgoing deck,
-    /// else the bass swap's shelves, else none.
-    fn deck_filters(&self, fade: &CrossfadeRuntime, progress: f32) -> Option<[BiquadCoeffs; 2]> {
+    /// Coefficients for this segment: FilterCut's sweep on the outgoing deck, else the band
+    /// morph (with the bass swap as its low stage when one runs), else the bass swap alone, else
+    /// none.
+    fn deck_filters(&self, fade: &CrossfadeRuntime, progress: f32) -> Option<FadeFilters> {
         if self.output_channels > BASS_SWAP_MAX_CHANNELS {
             return None;
         }
-        let rate = self.sample_rate as f32;
-        let (out, inc) = if fade.params.style == FadeStyle::FilterCut {
-            let hz = (FILTER_CUT_FROM_HZ * FILTER_CUT_SPAN.powf(progress)).clamp(10.0, rate * 0.45);
-            (
-                BiquadCoeffs::high_pass(rate, hz, 0.707),
-                BiquadCoeffs::IDENTITY,
-            )
-        } else {
-            let (out_db, in_db) = fade.params.bass_swap?.shelf_db(progress);
-            (
-                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db),
-                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db),
-            )
-        };
-        Some(match fade.outgoing {
-            DeckId::Primary => [out, inc],
-            DeckId::Secondary => [inc, out],
-        })
+        deck_filters(
+            self.sample_rate as f32,
+            fade.params,
+            fade.outgoing,
+            progress,
+        )
     }
 
     fn commit_crossfade_block(&mut self, frames: usize) {
@@ -1640,16 +1697,89 @@ impl DeckFilter for NoFilter {
     }
 }
 
-struct BiquadFilters<'a> {
-    state: &'a mut [[BiquadState; BASS_SWAP_MAX_CHANNELS]; 2],
-    coeffs: [BiquadCoeffs; 2],
+/// `N` stages in series per deck; the count is a const so the per-sample loop is unrolled and a
+/// one-stage fade pays for one biquad.
+struct BiquadFilters<'a, const N: usize> {
+    state: &'a mut [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
+    coeffs: [[BiquadCoeffs; N]; 2],
 }
 
-impl DeckFilter for BiquadFilters<'_> {
+impl<const N: usize> DeckFilter for BiquadFilters<'_, N> {
     #[inline(always)]
     fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32 {
-        self.state[deck][channel].process(self.coeffs[deck], sample)
+        let state = &mut self.state[deck][channel];
+        let mut sample = sample;
+        for stage in 0..N {
+            sample = state[stage].process(self.coeffs[deck][stage], sample);
+        }
+        sample
     }
+}
+
+/// See `MixerWorker::deck_filters`.
+fn deck_filters(
+    rate: f32,
+    params: CrossfadeParams,
+    outgoing: DeckId,
+    progress: f32,
+) -> Option<FadeFilters> {
+    fn order<T>(outgoing: DeckId, out: T, inc: T) -> [T; 2] {
+        match outgoing {
+            DeckId::Primary => [out, inc],
+            DeckId::Secondary => [inc, out],
+        }
+    }
+    let swap_shelves = |swap: BassSwap| {
+        let (out_db, in_db) = swap.shelf_db(progress);
+        (
+            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db),
+            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db),
+        )
+    };
+    if params.style == FadeStyle::FilterCut {
+        let hz = (FILTER_CUT_FROM_HZ * FILTER_CUT_SPAN.powf(progress)).clamp(10.0, rate * 0.45);
+        return Some(FadeFilters::One(order(
+            outgoing,
+            [BiquadCoeffs::high_pass(rate, hz, 0.707)],
+            [BiquadCoeffs::IDENTITY],
+        )));
+    }
+    let Some(morph) = params.morph else {
+        let (out, inc) = swap_shelves(params.bass_swap?);
+        return Some(FadeFilters::One(order(outgoing, [out], [inc])));
+    };
+    // Outgoing leans 0 -> d, incoming -d -> 0, on the same eased progress as the gains. A band
+    // that never moves is an exact pass-through.
+    let (lean_out, lean_in) = (eased_progress(progress), eased_progress(1.0 - progress));
+    fn band(
+        db: f32,
+        (lean_out, lean_in): (f32, f32),
+        design: impl Fn(f32) -> BiquadCoeffs,
+    ) -> (BiquadCoeffs, BiquadCoeffs) {
+        if db == 0.0 {
+            (BiquadCoeffs::IDENTITY, BiquadCoeffs::IDENTITY)
+        } else {
+            (design(db * lean_out), design(-db * lean_in))
+        }
+    }
+    let lean = (lean_out, lean_in);
+    let low = match params.bass_swap {
+        Some(swap) => swap_shelves(swap),
+        None => band(morph.db[0], lean, |db| {
+            BiquadCoeffs::low_shelf(rate, MORPH_LOW_HZ, 0.707, db)
+        }),
+    };
+    let mid = band(morph.db[1], lean, |db| {
+        BiquadCoeffs::peaking(rate, MORPH_MID_HZ, MORPH_MID_Q, db)
+    });
+    let high = band(morph.db[2], lean, |db| {
+        BiquadCoeffs::high_shelf(rate, MORPH_HIGH_HZ, 0.707, db)
+    });
+    Some(FadeFilters::Three(order(
+        outgoing,
+        [low.0, mid.0, high.0],
+        [low.1, mid.1, high.1],
+    )))
 }
 
 #[inline]
@@ -1730,73 +1860,114 @@ fn starved_retry_backoff(retry_count: &mut u32) {
     thread::park_timeout(Duration::from_micros(park_us));
 }
 
-/// Deck gains at `progress` for the fade's style; `Blend` is the balanced curve.
+/// Share of a fade, at each end, over which its progress eases in and out.
+const FADE_EDGE: f32 = 0.15;
+
+/// A fade's progress warped so every curve built on it starts and ends at rest: linear through
+/// the middle, with raised-cosine velocity ramps over the first and last `FADE_EDGE`. On plain `t`
+/// an equal-power fade sets off at full speed (slope pi/2) and a piecewise style kinks wherever
+/// two pieces meet; built on this, gains have zero slope and continuous curvature at both ends of
+/// every piece. Monotone, with `w(0) = 0` and `w(1) = 1` exactly (the tail is the head mirrored,
+/// so 1.0 is not left to rounding).
+fn eased_progress(t: f32) -> f32 {
+    use std::f32::consts::PI;
+    let t = t.clamp(0.0, 1.0);
+    if t > 0.5 {
+        return 1.0 - eased_progress(1.0 - t);
+    }
+    let speed = 1.0 / (1.0 - FADE_EDGE);
+    if t < FADE_EDGE {
+        speed * (0.5 * t - FADE_EDGE / (2.0 * PI) * (PI * t / FADE_EDGE).sin())
+    } else {
+        speed * (t - 0.5 * FADE_EDGE)
+    }
+}
+
+fn smootherstep(t: f32) -> f32 {
+    t * t * t * (t * (t * 6.0 - 15.0) + 10.0)
+}
+
+/// `min(x, 1.1)` without the corner: unchanged up to 1.0, then easing into 1.1 with matching
+/// slope. Bounds how far the balancing may lift a pair whose shapes dip.
+fn soft_power_cap(x: f32) -> f32 {
+    if x <= 1.0 {
+        x
+    } else {
+        1.0 + 0.1 * (1.0 - (-(x - 1.0) / 0.1).exp())
+    }
+}
+
+/// Deck gains at `progress` for the fade's style.
+///
+/// Every style but `FilterCut` only decides the balance — who is heard how much, when — and
+/// `balance` then sets the level: the pair's summed power follows A's level to B's level along the
+/// eased progress. Handoff and BeatMix used to keep both decks near full in the overlap, a
+/// loudness bump of up to +3 dB that the overlap limiter squashed and then released as A left.
+/// FilterCut keeps its own levels: its high-pass removes most of A's energy, which a gain model
+/// cannot see, so balancing it would duck B.
 fn fade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
     use std::f32::consts::{FRAC_PI_2, PI};
     let t = progress.clamp(0.0, 1.0);
+    // A holds until `handoff` and then releases; `r` is how far through the release it is.
     let release = |handoff: f32| {
-        let handoff = handoff.clamp(0.05, 0.95);
-        (handoff, ((t - handoff) / (1.0 - handoff)).max(0.0))
+        let h = handoff.clamp(0.05, 0.95);
+        let r = ((t - h) / (1.0 - h)).max(0.0);
+        (h, r, (eased_progress(1.0 - r) * FRAC_PI_2).sin())
     };
+    let rise = |share: f32| (eased_progress(share) * FRAC_PI_2).sin();
     let (out_vol, in_vol) = match params.style {
-        FadeStyle::Blend => return balanced_crossfade_gains(progress, params),
+        FadeStyle::Blend => return balanced_crossfade_gains(t, params),
         FadeStyle::Handoff(handoff) => {
-            let (h, r) = release(handoff);
-            let rise = if t < h {
-                0.6 * (t / h * FRAC_PI_2).sin()
+            let (h, r, out) = release(handoff);
+            let inc = if t < h {
+                0.6 * rise(t / h)
             } else {
-                0.6 + 0.4 * (r * FRAC_PI_2).sin()
+                0.6 + 0.4 * rise(r)
             };
-            ((r * FRAC_PI_2).cos(), rise)
+            (out, inc)
         }
         FadeStyle::BeatMix(handoff) => {
-            let (h, r) = release(handoff);
-            let rise = if t < h {
-                (t / h * FRAC_PI_2).sin()
-            } else {
-                1.0
-            };
-            ((r * FRAC_PI_2).cos(), rise)
+            let (h, _, out) = release(handoff);
+            (out, rise(t / h))
         }
-        FadeStyle::FilterCut => (
-            if t < 0.7 {
-                1.0
-            } else {
-                ((t - 0.7) / 0.3 * FRAC_PI_2).cos()
-            },
-            if t < 0.5 {
-                0.0
-            } else {
-                ((t - 0.5) / 0.5 * FRAC_PI_2).sin()
-            },
-        ),
+        FadeStyle::FilterCut => {
+            let out = (eased_progress((1.0 - t) / 0.3) * FRAC_PI_2).sin();
+            let inc = rise((t - 0.5) / 0.5);
+            let headroom = 10f32.powf(params.overlap_headroom_db * (t * PI).sin().powi(2) / 20.0);
+            return (
+                out.max(0.0) * params.outgoing_gain.clamp(0.0, 2.0) * headroom,
+                inc.max(0.0) * params.incoming_gain.clamp(0.0, 2.0) * headroom,
+            );
+        }
     };
-    let headroom = 10f32.powf(params.overlap_headroom_db * (t * PI).sin() / 20.0);
-    let outgoing = params.outgoing_gain.clamp(0.0, 2.0);
-    let incoming = params.incoming_gain.clamp(0.0, 2.0);
-    (
-        out_vol.max(0.0) * outgoing * headroom,
-        in_vol.max(0.0) * incoming * headroom,
-    )
+    balance(t, out_vol, in_vol, params)
 }
 
 fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
     let t = progress.clamp(0.0, 1.0);
     let (out_vol, in_vol) = crossfade_values(t, &params);
+    balance(t, out_vol, in_vol, params)
+}
+
+/// Gains for a balance of the two decks (`out_vol`, `in_vol` in 0..1): scaled so the pair's power
+/// moves from A's gain to B's along the eased progress, with the overlap headroom dip on top.
+/// The dip is shaped `sin^2(pi t)` so it, too, leaves and returns at rest.
+fn balance(t: f32, out_vol: f32, in_vol: f32, params: CrossfadeParams) -> (f32, f32) {
     let outgoing_target = params.outgoing_gain.clamp(0.0, 2.0);
     let incoming_target = params.incoming_gain.clamp(0.0, 2.0);
-
-    let mut out_gain = out_vol * outgoing_target;
-    let mut in_gain = in_vol * incoming_target;
+    // f32 `cos(FRAC_PI_2)` is a hair below zero.
+    let mut out_gain = out_vol.max(0.0) * outgoing_target;
+    let mut in_gain = in_vol.max(0.0) * incoming_target;
 
     let current_power = out_gain * out_gain + in_gain * in_gain;
     if current_power > 1e-8 {
+        let w = eased_progress(t);
         let target_power =
-            outgoing_target * outgoing_target * (1.0 - t) + incoming_target * incoming_target * t;
+            outgoing_target * outgoing_target * (1.0 - w) + incoming_target * incoming_target * w;
         let power_scale = (target_power.max(0.0) / current_power).sqrt();
-        let overlap_shape = (t * std::f32::consts::PI).sin();
+        let overlap_shape = (t * std::f32::consts::PI).sin().powi(2);
         let headroom_scale = 10f32.powf((params.overlap_headroom_db * overlap_shape) / 20.0);
-        let scale = power_scale.min(1.1) * headroom_scale;
+        let scale = soft_power_cap(power_scale) * headroom_scale;
         out_gain *= scale;
         in_gain *= scale;
     }
@@ -1807,18 +1978,24 @@ fn balanced_crossfade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32
 /// Same shaping as the Web `getCrossfadeValues`: shapes are exponents on each
 /// side, and the constant-power curves are renormalised afterwards so an
 /// asymmetric shape moves *when* each side is heard without a level dip.
+/// `Linear` and `EqualPower` run on `eased_progress`; `SCurve` is smootherstep,
+/// already at rest at both ends.
 fn crossfade_values(progress: f32, params: &CrossfadeParams) -> (f32, f32) {
+    use std::f32::consts::FRAC_PI_2;
     let t = progress.clamp(0.0, 1.0);
-    let (mut out_vol, mut in_vol) = match params.curve {
-        CrossfadeCurve::Linear => (1.0 - t, t),
-        CrossfadeCurve::EqualPower => {
-            let angle = t * std::f32::consts::FRAC_PI_2;
-            (angle.cos(), angle.sin())
+    // Each side from its own end: both warps are symmetric (`f(1 - t) = 1 - f(t)`), and taking
+    // the outgoing side as `f(1 - t)` rather than `1 - f(t)` keeps its precision near zero, where
+    // a shape exponent below 1 would otherwise turn f32 rounding steps into slope jumps.
+    let (rest, done) = match params.curve {
+        CrossfadeCurve::Linear | CrossfadeCurve::EqualPower => {
+            (eased_progress(1.0 - t), eased_progress(t))
         }
-        CrossfadeCurve::SCurve => {
-            let s = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
-            let angle = s * std::f32::consts::FRAC_PI_2;
-            (angle.cos(), angle.sin())
+        CrossfadeCurve::SCurve => (smootherstep(1.0 - t), smootherstep(t)),
+    };
+    let (mut out_vol, mut in_vol) = match params.curve {
+        CrossfadeCurve::Linear => (rest, done),
+        CrossfadeCurve::EqualPower | CrossfadeCurve::SCurve => {
+            ((rest * FRAC_PI_2).sin(), (done * FRAC_PI_2).sin())
         }
     };
 
@@ -1826,8 +2003,8 @@ fn crossfade_values(progress: f32, params: &CrossfadeParams) -> (f32, f32) {
     if params.in_shape == 1.0 && params.out_shape == 1.0 {
         return (out_vol, in_vol);
     }
-    // f32 `cos(FRAC_PI_2)` is a hair below zero, and a negative base with a
-    // fractional exponent is NaN.
+    // A negative base with a fractional exponent is NaN; keep the clamp even though the sides
+    // are now computed as sines of non-negative angles.
     if params.out_shape != 1.0 {
         out_vol = out_vol.max(0.0).powf(params.out_shape);
     }
@@ -1852,6 +2029,10 @@ mod timing_tests;
 #[cfg(test)]
 #[path = "mixer/perf_tests.rs"]
 mod perf_tests;
+
+#[cfg(test)]
+#[path = "mixer/continuity_tests.rs"]
+mod continuity_tests;
 
 #[cfg(test)]
 mod tests {
@@ -2046,9 +2227,10 @@ mod tests {
             style: FadeStyle::BeatMix(0.5),
             ..flat
         };
+        let half = std::f32::consts::FRAC_1_SQRT_2;
         assert!(
-            near(fade_gains(0.5, beat_mix), (1.0, 1.0)),
-            "both decks full at the handoff"
+            near(fade_gains(0.5, beat_mix), (half, half)),
+            "level with each other at the handoff, without stacking to +3 dB"
         );
         let cut = CrossfadeParams {
             style: FadeStyle::FilterCut,
@@ -2074,10 +2256,10 @@ mod tests {
             let rate = 48_000.0;
             let coeffs =
                 BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, swap.shelf_db(progress).0);
-            let mut state = [[BiquadState::default(); BASS_SWAP_MAX_CHANNELS]; 2];
-            let mut band = BiquadFilters {
+            let mut state = [[[BiquadState::default(); 3]; BASS_SWAP_MAX_CHANNELS]; 2];
+            let mut band = BiquadFilters::<1> {
                 state: &mut state,
-                coeffs: [coeffs, coeffs],
+                coeffs: [[coeffs], [coeffs]],
             };
             let mut peak = 0.0f32;
             for i in 0..48_000 {
@@ -2098,6 +2280,204 @@ mod tests {
     }
 
     #[test]
+    fn every_curve_and_style_moves_without_corners() {
+        // Each piece of a fade is smooth, so a corner can only sit where pieces meet: at the ends
+        // and at a style's joins. Check the slope matches across each, and that each side moves
+        // one way only.
+        const D: f32 = 1e-4;
+        let check = |name: &str, gains: &dyn Fn(f32) -> (f32, f32), joins: &[f32]| {
+            for side in 0..2 {
+                let at = |t: f32| {
+                    let (out, inc) = gains(t);
+                    if side == 0 {
+                        out
+                    } else {
+                        inc
+                    }
+                };
+                let slope = |from: f32| (at(from + D) - at(from)) / D;
+                assert!(
+                    slope(0.0).abs() < 0.05 && slope(1.0 - D).abs() < 0.05,
+                    "{name} side {side} starts and ends at rest: {} {}",
+                    slope(0.0),
+                    slope(1.0 - D)
+                );
+                for &join in joins {
+                    let step = slope(join) - slope(join - D);
+                    assert!(
+                        step.abs() < 0.05,
+                        "{name} side {side} kinks at {join}: {step}"
+                    );
+                }
+                let mut last = at(0.0);
+                for i in 1..=2_000 {
+                    let value = at(i as f32 / 2_000.0);
+                    let moved = if side == 0 {
+                        last - value
+                    } else {
+                        value - last
+                    };
+                    assert!(moved > -1e-6, "{name} side {side} turns back at {i}");
+                    last = value;
+                }
+            }
+        };
+        // Equal gains, so the level path is flat and each side is monotone.
+        let base = CrossfadeParams {
+            outgoing_gain: 1.0,
+            incoming_gain: 1.0,
+            overlap_headroom_db: 0.0,
+            ..Default::default()
+        };
+        let edges = [FADE_EDGE, 1.0 - FADE_EDGE];
+        for curve in [
+            CrossfadeCurve::Linear,
+            CrossfadeCurve::EqualPower,
+            CrossfadeCurve::SCurve,
+        ] {
+            for (in_shape, out_shape) in [(1.0, 1.0), (1.3, 0.7), (0.7, 1.3)] {
+                let params = CrossfadeParams {
+                    curve,
+                    in_shape,
+                    out_shape,
+                    ..base
+                };
+                check(
+                    &format!("{curve:?} {in_shape}/{out_shape}"),
+                    &|t| fade_gains(t, params),
+                    &edges,
+                );
+            }
+        }
+        for (style, joins) in [
+            (FadeStyle::Handoff(0.6), vec![0.6]),
+            (FadeStyle::Handoff(0.2), vec![0.2]),
+            (FadeStyle::BeatMix(0.5), vec![0.5]),
+            (FadeStyle::BeatMix(0.9), vec![0.9]),
+            (FadeStyle::FilterCut, vec![0.5, 0.7]),
+        ] {
+            let params = CrossfadeParams { style, ..base };
+            check(&format!("{style:?}"), &|t| fade_gains(t, params), &joins);
+        }
+        // Unequal gains and a headroom dip still leave and return at rest.
+        let leveled = CrossfadeParams {
+            outgoing_gain: 0.8,
+            incoming_gain: 1.1,
+            overlap_headroom_db: -1.2,
+            ..Default::default()
+        };
+        for style in [
+            FadeStyle::Blend,
+            FadeStyle::Handoff(0.6),
+            FadeStyle::BeatMix(0.5),
+        ] {
+            let params = CrossfadeParams { style, ..leveled };
+            for side in 0..2 {
+                let at = |t: f32| {
+                    let g = fade_gains(t, params);
+                    if side == 0 {
+                        g.0
+                    } else {
+                        g.1
+                    }
+                };
+                let slope_in = (at(D) - at(0.0)) / D;
+                let slope_out = (at(1.0) - at(1.0 - D)) / D;
+                assert!(
+                    slope_in.abs() < 0.05 && slope_out.abs() < 0.05,
+                    "{style:?} side {side}: {slope_in} {slope_out}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_eased_progress_is_monotone_and_exact_at_its_ends() {
+        assert_eq!(eased_progress(0.0), 0.0);
+        assert_eq!(eased_progress(1.0), 1.0);
+        assert!((eased_progress(0.5) - 0.5).abs() < 1e-6);
+        let mut last = 0.0;
+        for i in 1..=1000 {
+            let w = eased_progress(i as f32 / 1000.0);
+            assert!(w >= last, "monotone at {i}");
+            last = w;
+        }
+    }
+
+    /// Steady-state level in dB of a tone through one deck's filters for this segment.
+    fn tone_level(filters: FadeFilters, deck: usize, hz: f32) -> f32 {
+        let rate = 48_000.0;
+        let mut state = [[[BiquadState::default(); 3]; BASS_SWAP_MAX_CHANNELS]; 2];
+        let mut peak = 0.0f32;
+        for i in 0..48_000 {
+            let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
+            let y = match filters {
+                FadeFilters::One(coeffs) => BiquadFilters {
+                    state: &mut state,
+                    coeffs,
+                }
+                .apply(deck, 0, x),
+                FadeFilters::Three(coeffs) => BiquadFilters {
+                    state: &mut state,
+                    coeffs,
+                }
+                .apply(deck, 0, x),
+            };
+            if i > 24_000 {
+                peak = peak.max(y.abs());
+            }
+        }
+        20.0 * peak.log10()
+    }
+
+    #[test]
+    fn a_band_morph_leans_each_deck_toward_the_other_and_settles() {
+        let params = CrossfadeParams {
+            morph: Some(BandMorph {
+                db: [0.0, 4.0, -3.0],
+            }),
+            ..Default::default()
+        };
+        let at = |progress| deck_filters(48_000.0, params, DeckId::Primary, progress).unwrap();
+        let (outgoing, incoming) = (0, 1);
+        let near = |a: f32, b: f32| (a - b).abs() < 0.3;
+        // A starts untouched and ends leaning toward B's mids and highs.
+        assert!(near(tone_level(at(0.0), outgoing, 1_100.0), 0.0));
+        assert!(near(tone_level(at(1.0), outgoing, 1_100.0), 4.0));
+        assert!(near(tone_level(at(1.0), outgoing, 12_000.0), -3.0));
+        // B starts leaning toward A's and ends as itself.
+        assert!(near(tone_level(at(0.0), incoming, 1_100.0), -4.0));
+        assert!(near(tone_level(at(0.0), incoming, 12_000.0), 3.0));
+        assert!(near(tone_level(at(1.0), incoming, 1_100.0), 0.0));
+        assert!(near(tone_level(at(1.0), incoming, 12_000.0), 0.0));
+        // The band that does not move is left alone throughout.
+        assert!(near(tone_level(at(0.5), outgoing, 60.0), 0.0));
+        // Swapped decks swap the roles.
+        let swapped = deck_filters(48_000.0, params, DeckId::Secondary, 1.0).unwrap();
+        assert!(near(tone_level(swapped, 1, 1_100.0), 4.0));
+    }
+
+    #[test]
+    fn a_single_filter_fade_stays_a_single_stage() {
+        let swap_only = CrossfadeParams {
+            bass_swap: Some(BassSwap::MIDDLE),
+            ..Default::default()
+        };
+        let cut = CrossfadeParams {
+            style: FadeStyle::FilterCut,
+            morph: Some(BandMorph { db: [1.0; 3] }),
+            ..Default::default()
+        };
+        for params in [swap_only, cut] {
+            assert!(matches!(
+                deck_filters(48_000.0, params, DeckId::Primary, 0.5),
+                Some(FadeFilters::One(_))
+            ));
+        }
+        assert!(deck_filters(48_000.0, CrossfadeParams::default(), DeckId::Primary, 0.5).is_none());
+    }
+
+    #[test]
     fn unit_shapes_leave_every_curve_untouched() {
         for curve in [
             CrossfadeCurve::Linear,
@@ -2111,17 +2491,17 @@ mod tests {
             for step in 0..=20 {
                 let t = step as f32 / 20.0;
                 let (out_vol, in_vol) = crossfade_values(t, &params);
+                let quarter = std::f32::consts::FRAC_PI_2;
                 let (expected_out, expected_in) = match curve {
-                    CrossfadeCurve::Linear => (1.0 - t, t),
-                    CrossfadeCurve::EqualPower => {
-                        let angle = t * std::f32::consts::FRAC_PI_2;
-                        (angle.cos(), angle.sin())
-                    }
-                    CrossfadeCurve::SCurve => {
-                        let s = t * t * t * (t * (t * 6.0 - 15.0) + 10.0);
-                        let angle = s * std::f32::consts::FRAC_PI_2;
-                        (angle.cos(), angle.sin())
-                    }
+                    CrossfadeCurve::Linear => (eased_progress(1.0 - t), eased_progress(t)),
+                    CrossfadeCurve::EqualPower => (
+                        (eased_progress(1.0 - t) * quarter).sin(),
+                        (eased_progress(t) * quarter).sin(),
+                    ),
+                    CrossfadeCurve::SCurve => (
+                        (smootherstep(1.0 - t) * quarter).sin(),
+                        (smootherstep(t) * quarter).sin(),
+                    ),
                 };
                 assert_eq!(out_vol.to_bits(), expected_out.to_bits());
                 assert_eq!(in_vol.to_bits(), expected_in.to_bits());

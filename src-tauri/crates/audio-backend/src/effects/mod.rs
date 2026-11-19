@@ -258,6 +258,18 @@ impl LimiterRuntime {
             }
         }
     }
+
+    /// Only the release: the gain recovers toward unity and is applied, and no peak can pull it
+    /// down again. For a limiter whose job is over but whose reduction must not snap back.
+    #[inline]
+    pub(crate) fn release_interleaved(&mut self, samples: &mut [f32], channels: usize) {
+        for frame in samples.chunks_exact_mut(channels) {
+            self.gain += (1.0 - self.gain) * self.release_coeff;
+            for sample in frame {
+                *sample *= self.gain;
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -270,7 +282,7 @@ pub(crate) struct BiquadCoeffs {
 }
 
 impl BiquadCoeffs {
-    fn peaking(sample_rate: f32, frequency: f32, q: f32, gain_db: f32) -> Self {
+    pub(crate) fn peaking(sample_rate: f32, frequency: f32, q: f32, gain_db: f32) -> Self {
         let a = db_to_gain(gain_db).sqrt();
         let omega = std::f32::consts::TAU * frequency / sample_rate;
         let (sin, cos) = omega.sin_cos();
@@ -302,7 +314,7 @@ impl BiquadCoeffs {
         Self::normalize(b0, b1, b2, a0, a1, a2)
     }
 
-    fn high_shelf(sample_rate: f32, frequency: f32, q: f32, gain_db: f32) -> Self {
+    pub(crate) fn high_shelf(sample_rate: f32, frequency: f32, q: f32, gain_db: f32) -> Self {
         let a = db_to_gain(gain_db).sqrt();
         let omega = std::f32::consts::TAU * frequency / sample_rate;
         let (sin, cos) = omega.sin_cos();

@@ -33,7 +33,7 @@ fn deck_with_timing(
     )
 }
 
-fn worker(
+pub(super) fn worker(
     primary: DeckRuntime,
     secondary: DeckRuntime,
     channels: usize,

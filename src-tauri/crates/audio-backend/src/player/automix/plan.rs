@@ -3,7 +3,7 @@
 use super::beat_plan;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
-use crate::player::mixer::{BassSwap, FadeStyle};
+use crate::player::mixer::{BandMorph, BassSwap, FadeStyle};
 use crate::types::{AutoMixConfig, CrossfadeCurve};
 
 const MIN_CROSSFADE_DURATION: f64 = 2.0;
@@ -32,6 +32,7 @@ pub struct CrossfadePlan {
     pub outgoing_rate: f64,
     pub beat_synced: bool,
     pub bass_swap: Option<BassSwap>,
+    pub morph: Option<BandMorph>,
     pub style: FadeStyle,
     /// B's source second the overlap starts from: its first downbeat on a
     /// paired plan, so an intro before the beat is not laid under A.
@@ -61,24 +62,23 @@ pub(super) fn build_time_based_plan(
         outgoing_rate: 1.0,
         beat_synced: false,
         bass_swap: None,
+        morph: None,
         style: FadeStyle::Blend,
         incoming_start: 0.0,
     }
 }
 
+/// `outgoing_gain` is the gain the outgoing deck is playing at now (`active_norm_gain`).
 pub(super) fn build_analysis_backed_plan(
     config: &AutoMixConfig,
     current_duration: f64,
     current_analysis: Option<&automix_analysis::TrackAnalysis>,
     next_analysis: Option<&automix_analysis::TrackAnalysis>,
+    outgoing_gain: f64,
 ) -> CrossfadePlan {
     let mut plan = build_time_based_plan(config, current_duration);
-
-    if config.volume_norm {
-        if let Some(next) = next_analysis {
-            plan.incoming_gain_adjustment = next.volume.gain_adjustment as f64;
-        }
-    }
+    plan.incoming_gain_adjustment =
+        incoming_gain(config, outgoing_gain, current_analysis, next_analysis);
 
     let Some(current) = current_analysis else {
         return plan;
@@ -132,8 +132,15 @@ pub(super) fn build_analysis_backed_plan(
     // fit already refuses an overlap A's measured grid does not cover.
     let aligned = next_analysis
         .filter(|_| config.bpm_match && config.beat_align)
-        .and_then(|next| beat_plan::align(&plan, current, next, effective_end, config.bpm_match));
-    if let Some(aligned) = aligned {
+        .and_then(|next| {
+            beat_plan::align(&plan, current, next, effective_end, config.bpm_match)
+                .map(|aligned| (aligned, next))
+        });
+    if let Some((mut aligned, next)) = aligned {
+        // FilterCut's sweep is its own tonal handover.
+        if aligned.style != FadeStyle::FilterCut {
+            aligned.morph = choose_morph(&aligned, current, next);
+        }
         return aligned;
     }
     let mut plan = clamp_plan_to_content(plan, effective_end);
@@ -144,8 +151,43 @@ pub(super) fn build_analysis_backed_plan(
     plan
 }
 
-/// A still singing inside an unsynced fade holds at full until its last line
-/// ends, with B waiting underneath at 0.6 (HyPlayer-Nextgen's crossfade).
+/// The incoming deck's gain, matched to what the listener hears now rather than to an absolute
+/// target. Taking B's absolute normalisation (`gain_adjustment`, 0.1..3.0) as-is was a step of
+/// several dB whenever A played at another gain — after any ordinary load A is at 1.0 — and the
+/// step arrived as the fade finished. Mirrors `_computeIncomingGainAdjustment` in
+/// TransitionStateMachine.ts: 3/4 relative to A's effective loudness, 1/4 toward B's own target,
+/// so a playlist still drifts to the configured loudness. Web's energy-contrast term is not
+/// carried. One deliberate difference: with B unanalysed the Web returns 1.0, here the outgoing
+/// gain carries over, because 1.0 is itself a step when A is not at unity.
+pub(super) fn incoming_gain(
+    config: &AutoMixConfig,
+    outgoing_gain: f64,
+    current: Option<&automix_analysis::TrackAnalysis>,
+    next: Option<&automix_analysis::TrackAnalysis>,
+) -> f64 {
+    if !config.volume_norm {
+        return 1.0;
+    }
+    let Some(next) = next else {
+        return outgoing_gain;
+    };
+    let absolute = f64::from(next.volume.gain_adjustment).clamp(0.55, 1.8);
+    let gain = match current {
+        Some(current) => {
+            let heard =
+                f64::from(current.volume.estimated_lufs) + 20.0 * outgoing_gain.max(0.001).log10();
+            let relative = 10f64
+                .powf((heard - f64::from(next.volume.estimated_lufs)) / 20.0)
+                .clamp(0.5, 2.0);
+            relative.powf(0.75) * absolute.powf(0.25)
+        }
+        None => absolute,
+    };
+    gain.clamp(0.55, 1.8)
+}
+
+/// A still singing inside an unsynced fade dominates until its last line ends,
+/// with B waiting underneath at 0.6 of it (HyPlayer-Nextgen's crossfade).
 fn hold_for_last_vocal(plan: &mut CrossfadePlan, current: &automix_analysis::TrackAnalysis) {
     let Some(end) = vocal_runs(current, 0.8).last().map(|run| run.1) else {
         return;
@@ -191,11 +233,7 @@ fn shape_for_pair(
     current: &automix_analysis::TrackAnalysis,
     next: &automix_analysis::TrackAnalysis,
 ) {
-    let outgoing = (
-        plan.start_time,
-        plan.start_time + plan.duration * plan.outgoing_rate,
-    );
-    let incoming = (plan.incoming_start, plan.incoming_start + plan.duration);
+    let (outgoing, incoming) = overlap_windows(plan);
     let (in_scale, out_scale) = pair_shape_scale(
         vocal_share(current, outgoing),
         vocal_share(next, incoming),
@@ -209,6 +247,71 @@ fn shape_for_pair(
         plan.out_shape = (plan.out_shape * out_scale).clamp(0.7, 1.3);
     }
     plan.bass_swap = choose_bass_swap(plan, current, next, outgoing, incoming);
+    plan.morph = choose_morph(plan, current, next);
+}
+
+/// Source-second windows the overlap covers on A and on B.
+fn overlap_windows(plan: &CrossfadePlan) -> ((f64, f64), (f64, f64)) {
+    (
+        (
+            plan.start_time,
+            plan.start_time + plan.duration * plan.outgoing_rate,
+        ),
+        (plan.incoming_start, plan.incoming_start + plan.duration),
+    )
+}
+
+/// Largest tonal lean a morph applies to a band, as the Web clamps it.
+const MORPH_MAX_DB: f32 = 6.0;
+/// Below this in every band the two sides already sound alike.
+const MORPH_MIN_DB: f32 = 1.5;
+
+/// The tonal half of the handover: how far each band of B's opening sits from A's ending, in dB,
+/// for `BandMorph` to lean the decks across. From the same overlap windows as the bass swap; the
+/// Web derives it from the last and first 2 s. The bands' common offset is removed first, because
+/// that part is loudness, which `incoming_gain` already matches — morphing it too would move the
+/// level twice. `10 * log10` over RMS ratios gives half the real dB difference; kept as the Web has
+/// it, so the two lean alike. The low band is left out while a bass swap runs.
+pub(super) fn choose_morph(
+    plan: &CrossfadePlan,
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+) -> Option<BandMorph> {
+    let ((out_from, out_to), (in_from, in_to)) = overlap_windows(plan);
+    let outro = &current.outro.as_ref()?.multiband_energy;
+    let intro = next.intro.as_ref()?.multiband_energy.as_ref()?;
+    // Outro windows end at the content end, 0.25 s each.
+    let origin = f64::from(current.duration - current.energy.trailing_silence)
+        - outro.low.len() as f64 * 0.25;
+    let mut db = [0f32; 3];
+    for (band, (a, b)) in [
+        (&outro.low, &intro.low),
+        (&outro.mid, &intro.mid),
+        (&outro.high, &intro.high),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let a = mean_window(a, (out_from - origin) / 0.25, (out_to - origin) / 0.25)?;
+        let b = mean_window(b, in_from / 0.25, in_to / 0.25)?;
+        db[band] = match (a < 1e-4, b < 1e-4) {
+            (true, true) => 0.0,
+            (true, false) => MORPH_MAX_DB,
+            (false, true) => -MORPH_MAX_DB,
+            (false, false) => 10.0 * (b / a).log10(),
+        };
+    }
+    // The offset comes from the bands the morph will move: with a bass swap running, B's bass is
+    // the swap's, and counting it would push its difference onto the mids and highs.
+    let moved = if plan.bass_swap.is_some() { 1 } else { 0 };
+    let offset = db[moved..].iter().sum::<f32>() / (3 - moved) as f32;
+    for d in &mut db {
+        *d = (*d - offset).clamp(-MORPH_MAX_DB, MORPH_MAX_DB);
+    }
+    if moved == 1 {
+        db[0] = 0.0;
+    }
+    (db.iter().any(|d| d.abs() >= MORPH_MIN_DB)).then_some(BandMorph { db })
 }
 
 /// (incoming, outgoing) exponent scales. Mirrored by `pairShapeScale` in
@@ -305,10 +408,7 @@ fn choose_bass_swap(
                 end: end as f32,
             })
         });
-    Some(beat.unwrap_or(BassSwap {
-        start: 0.4,
-        end: 0.6,
-    }))
+    Some(beat.unwrap_or(BassSwap::MIDDLE))
 }
 
 fn mean_window(values: &[f32], from: f64, to: f64) -> Option<f32> {

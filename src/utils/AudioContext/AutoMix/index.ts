@@ -28,8 +28,8 @@ export { getOutroTypeCrossfadeProfile } from "./types";
 export {
   getCrossfadeValues,
   buildCurveArray,
-  buildLinearCurve,
-  buildBassSwapCurve,
+  buildEqCurve,
+  eqLeanAt,
   bassSwapValueAt,
 } from "./curves";
 

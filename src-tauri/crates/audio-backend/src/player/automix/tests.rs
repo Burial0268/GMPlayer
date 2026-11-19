@@ -1,4 +1,4 @@
-use super::plan::build_analysis_backed_plan;
+use super::plan::{build_analysis_backed_plan, build_time_based_plan, choose_morph, incoming_gain};
 use super::*;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::EmotionalArc;
@@ -102,7 +102,8 @@ fn inspect_real_pair() {
         }
     }
     let duration = current.duration as f64;
-    let plan = build_analysis_backed_plan(&config(true), duration, Some(&current), Some(&next));
+    let plan =
+        build_analysis_backed_plan(&config(true), duration, Some(&current), Some(&next), 1.0);
     println!("plan={plan:?}");
 }
 
@@ -139,9 +140,14 @@ fn cancellation_identifies_the_retired_attempt_only_in_its_event() {
 fn without_emotional_transitions_sections_change_nothing() {
     let next = cold_open();
     let with_sections =
-        build_analysis_backed_plan(&config(false), 200.0, Some(&outgoing()), Some(&next));
-    let without_sections =
-        build_analysis_backed_plan(&config(false), 200.0, Some(&track(vec![])), Some(&next));
+        build_analysis_backed_plan(&config(false), 200.0, Some(&outgoing()), Some(&next), 1.0);
+    let without_sections = build_analysis_backed_plan(
+        &config(false),
+        200.0,
+        Some(&track(vec![])),
+        Some(&next),
+        1.0,
+    );
 
     assert_eq!(with_sections.start_time, without_sections.start_time);
     assert_eq!(with_sections.duration, without_sections.duration);
@@ -164,7 +170,7 @@ fn the_overlap_finishes_before_trailing_silence() {
         let mut current = track(vec![]);
         current.energy.trailing_silence = silence;
         current.energy.outro_start_offset = silence + 8.0;
-        let plan = build_analysis_backed_plan(&config(false), 200.0, Some(&current), None);
+        let plan = build_analysis_backed_plan(&config(false), 200.0, Some(&current), None, 1.0);
         let content_end = 200.0 - f64::from(silence);
         assert!(plan.start_time > 0.0);
         assert!(plan.duration >= 2.0);
@@ -174,8 +180,13 @@ fn the_overlap_finishes_before_trailing_silence() {
 
 #[test]
 fn emotional_transitions_hand_over_after_the_last_chorus() {
-    let plan =
-        build_analysis_backed_plan(&config(true), 200.0, Some(&outgoing()), Some(&cold_open()));
+    let plan = build_analysis_backed_plan(
+        &config(true),
+        200.0,
+        Some(&outgoing()),
+        Some(&cold_open()),
+        1.0,
+    );
 
     assert_eq!(plan.section_cue, Some(180.0));
     assert_eq!(plan.start_time, 180.0);
@@ -190,8 +201,13 @@ fn emotional_transitions_hand_over_after_the_last_chorus() {
 #[test]
 fn the_arc_never_stretches_past_the_configured_duration() {
     // Quiet outro into a quiet intro drifts, which wants a longer blend.
-    let plan =
-        build_analysis_backed_plan(&config(true), 200.0, Some(&outgoing()), Some(&outgoing()));
+    let plan = build_analysis_backed_plan(
+        &config(true),
+        200.0,
+        Some(&outgoing()),
+        Some(&outgoing()),
+        1.0,
+    );
 
     assert_eq!(plan.arc, EmotionalArc::Drift);
     assert!(plan.duration <= AutoMixConfig::default().crossfade_duration);
@@ -224,4 +240,106 @@ fn the_outro_starts_at_the_last_outro_section_then_the_classifier_then_the_energ
         loop_period: None,
     });
     assert_eq!(outro_start_of(&plain), 170.0);
+}
+
+#[test]
+fn the_incoming_gain_matches_what_is_heard_now() {
+    let cfg = config(false);
+    let at = |lufs: f32, gain: f32| {
+        let mut track = track(vec![]);
+        track.volume.estimated_lufs = lufs;
+        track.volume.gain_adjustment = gain;
+        track
+    };
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-3;
+    let a = at(-14.0, 1.0);
+
+    // Same loudness, A at unity: nothing to change.
+    assert!(close(
+        incoming_gain(&cfg, 1.0, Some(&a), Some(&at(-14.0, 1.0))),
+        1.0
+    ));
+    // B 4 dB louder: turned down by 3/4 of the difference relative, 1/4 toward its own target.
+    let louder = incoming_gain(&cfg, 1.0, Some(&a), Some(&at(-10.0, 0.631)));
+    let expected = 10f64.powf(-4.0 / 20.0).powf(0.75) * 0.631f64.powf(0.25);
+    assert!(close(louder, expected), "{louder} vs {expected}");
+    // A is being played turned down: B is matched to what is heard, not to A's raw loudness.
+    let matched = incoming_gain(&cfg, 0.6, Some(&a), Some(&at(-14.0, 1.0)));
+    assert!(close(matched, 0.6f64.powf(0.75)), "{matched}");
+    // Nothing known about A: B's own target, clamped as the Web clamps it.
+    assert!(close(
+        incoming_gain(&cfg, 1.0, None, Some(&at(-6.0, 0.3))),
+        0.55
+    ));
+    // Nothing known about B: the applied gain carries over instead of stepping to unity.
+    assert_eq!(incoming_gain(&cfg, 0.6, Some(&a), None), 0.6);
+    // Normalisation off: unity, as before.
+    let off = AutoMixConfig {
+        volume_norm: false,
+        ..cfg.clone()
+    };
+    assert_eq!(
+        incoming_gain(&off, 0.6, Some(&a), Some(&at(-6.0, 0.3))),
+        1.0
+    );
+}
+
+#[test]
+fn the_band_morph_carries_tone_not_loudness() {
+    let banded = |[low, mid, high]: [f32; 3], ending: bool| {
+        let mut track = track(vec![]);
+        let bands = automix_analysis::MultibandEnergy {
+            low: vec![low; 240],
+            mid: vec![mid; 240],
+            high: vec![high; 240],
+        };
+        if ending {
+            track.outro = Some(automix_analysis::OutroAnalysis {
+                outro_type: "musicalOutro".into(),
+                outro_confidence: 0.7,
+                musical_end_offset: 0.0,
+                suggested_crossfade_start: 190.0,
+                multiband_energy: bands,
+                spectral_flux: Vec::new(),
+                short_term_loudness: Vec::new(),
+                deceleration_start: None,
+                sustain_onset: None,
+                outro_section_start: None,
+                loop_period: None,
+            });
+        } else {
+            track.intro = Some(automix_analysis::IntroAnalysis {
+                quiet_intro_duration: 0.0,
+                energy_build_duration: 0.0,
+                intro_energy_ratio: 1.0,
+                multiband_energy: Some(bands),
+            });
+        }
+        track
+    };
+    let mut plan = build_time_based_plan(&config(false), 200.0);
+    let a = banded([0.1; 3], true);
+
+    // B only louder: that is the gain's business, not the morph's.
+    assert!(choose_morph(&plan, &a, &banded([0.4; 3], false)).is_none());
+
+    // B brighter: its highs lead, the other bands give way by the same common offset.
+    let morph = choose_morph(&plan, &a, &banded([0.1, 0.1, 0.4], false)).unwrap();
+    let highs = 10.0 * 4f32.log10();
+    let expected = [-highs / 3.0, -highs / 3.0, highs * 2.0 / 3.0];
+    for (got, want) in morph.db.iter().zip(expected) {
+        assert!((got - want).abs() < 0.01, "{:?} vs {expected:?}", morph.db);
+    }
+
+    // With a bass swap running, the low band is the swap's - and so is its difference: B's bass
+    // alone leaves nothing for the mids and highs to lean.
+    plan.bass_swap = Some(crate::player::mixer::BassSwap::MIDDLE);
+    let morph = choose_morph(&plan, &a, &banded([0.1, 0.1, 0.4], false)).unwrap();
+    assert_eq!(morph.db[0], 0.0);
+    assert!(
+        (morph.db[2] - morph.db[1] - highs).abs() < 0.01,
+        "{:?}",
+        morph.db
+    );
+    assert!(choose_morph(&plan, &a, &banded([0.4, 0.1, 0.1], false)).is_none());
 }
