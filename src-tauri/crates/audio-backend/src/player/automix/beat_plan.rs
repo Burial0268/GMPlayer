@@ -30,6 +30,7 @@ pub(super) fn align(
     effective_end: f64,
     allow_tempo: bool,
     crossfade_duration: f64,
+    placed: Option<(f64, f64)>,
 ) -> Option<CrossfadePlan> {
     let a = outgoing.bpm.as_ref()?.tail.as_ref()?;
     let b = incoming.bpm.as_ref()?.head.as_ref()?;
@@ -70,9 +71,18 @@ pub(super) fn align(
         .map(|run| run.0)
         .find(|start| *start >= first_b - 0.5);
     let tolerance = a_period.min(0.8);
-    // Bar counts nearest twice the crossfade setting first (fewer bars on a tie): a club-length
-    // 16 bars at 128 BPM is a 30 s overlap, far longer than a listener asked for.
-    let target = (crossfade_duration * 2.0).clamp(MIN_TARGET, MAX_OVERLAP);
+    // A fade placed over A's measured decay (start, duration) is the overlap to fit: its length is
+    // the target and no exit starts more than a bar before it, so a longer bar count that would
+    // start under A's full level falls through to a shorter one. Otherwise bar counts nearest
+    // twice the crossfade setting first (fewer bars on a tie): a club-length 16 bars at 128 BPM
+    // is a 30 s overlap, far longer than a listener asked for.
+    let (target, floor) = match placed {
+        Some((start, duration)) => (duration.clamp(2.0, MAX_OVERLAP), start - bar),
+        None => (
+            (crossfade_duration * 2.0).clamp(MIN_TARGET, MAX_OVERLAP),
+            0.0,
+        ),
+    };
     let mut order = [0usize; BEAT_MIX_BARS.len()];
     let order = &mut order[..bar_counts.len()];
     order.copy_from_slice(bar_counts);
@@ -96,6 +106,7 @@ pub(super) fn align(
             phrase,
             baseline,
             effective_end,
+            floor,
             a_end - span,
             bar,
         ) else {
@@ -170,10 +181,11 @@ fn choose_exit(
     phrase: Option<usize>,
     baseline: &CrossfadePlan,
     effective_end: f64,
+    floor: f64,
     latest: f64,
     bar: f64,
 ) -> Option<f64> {
-    let earliest = (effective_end - EXIT_WINDOW).max(0.0);
+    let earliest = (effective_end - EXIT_WINDOW).max(floor).max(0.0);
     let candidates = downbeats
         .iter()
         .copied()
@@ -329,14 +341,14 @@ mod tests {
     #[test]
     fn matched_tempos_beat_mix_eight_bars_from_bs_first_downbeat() {
         let (a, b) = pair(0.469, 0.48, 1.7);
-        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0).unwrap();
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
         assert_eq!(plan.style, FadeStyle::BeatMix(0.5));
         assert!(plan.beat_synced);
         assert!((plan.outgoing_rate - 0.469 / 0.48).abs() < 1e-6);
         // At 125 BPM and the default 8 s setting: 8 bars (15 s), not a club-length 16.
         assert!((plan.duration - 8.0 * 4.0 * 0.48).abs() < 1e-3);
         // A long setting earns the long mix.
-        let long = align(&baseline(), &a, &b, 100.0, true, 16.0).unwrap();
+        let long = align(&baseline(), &a, &b, 100.0, true, 16.0, None).unwrap();
         assert!((long.duration - 16.0 * 4.0 * 0.48).abs() < 1e-3);
         assert!(
             (plan.incoming_start - 1.7).abs() < 1e-6,
@@ -354,11 +366,11 @@ mod tests {
     #[test]
     fn a_late_last_line_moves_the_handoff_onto_a_later_bar() {
         let (mut a, b) = pair(0.5, 0.5, 0.0);
-        let free = align(&baseline(), &a, &b, 100.0, true, 8.0).unwrap();
+        let free = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
         // A sings until three quarters into where the free plan would overlap.
         let end = free.start_time + free.duration * 0.72;
         sings(&mut a, &[(40.0, end as f32)]);
-        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0).unwrap();
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
         let FadeStyle::BeatMix(handoff) = plan.style else {
             panic!("{:?}", plan.style)
         };
@@ -379,7 +391,7 @@ mod tests {
         let (mut a, mut b) = pair(0.5, 0.5, 0.0);
         sings(&mut a, &[(40.0, 92.0)]);
         sings(&mut b, &[(4.0, 60.0)]);
-        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0).unwrap();
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
         let a_runs = vocal_runs(&a, 0.8);
         let b_runs = vocal_runs(&b, 0.4);
         let FadeStyle::BeatMix(handoff) = plan.style else {
@@ -405,7 +417,7 @@ mod tests {
     fn a_long_instrumental_intro_enters_one_overlap_before_bs_first_line() {
         let (a, mut b) = pair(0.5, 0.5, 0.0);
         sings(&mut b, &[(36.0, 60.0)]);
-        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0).unwrap();
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
         assert!(plan.incoming_start > 0.0);
         assert!(plan.incoming_start + plan.duration <= 36.0 + 0.5 + 1e-6);
     }
@@ -413,7 +425,7 @@ mod tests {
     #[test]
     fn tempos_out_of_stretch_range_filter_cut_at_native_speed() {
         let (a, b) = pair(0.469, 0.6, 0.0);
-        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0).unwrap();
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
         assert_eq!(plan.style, FadeStyle::FilterCut);
         assert_eq!(plan.outgoing_rate, 1.0);
         assert!(!plan.beat_synced && plan.bass_swap.is_none());
@@ -421,7 +433,9 @@ mod tests {
         // With BPM matching off, a near match may not be stretched either.
         let (a, b) = pair(0.469, 0.48, 0.0);
         assert_eq!(
-            align(&baseline(), &a, &b, 100.0, false, 8.0).unwrap().style,
+            align(&baseline(), &a, &b, 100.0, false, 8.0, None)
+                .unwrap()
+                .style,
             FadeStyle::FilterCut
         );
     }
@@ -435,9 +449,25 @@ mod tests {
         ] {
             grid.unwrap().downbeat = None;
         }
-        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0).unwrap();
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
         assert!((plan.incoming_start - 0.3).abs() < 1e-6);
         let phase = (plan.start_time - 60.0).rem_euclid(0.5);
         assert!(phase.min(0.5 - phase) < 1e-3);
+    }
+
+    #[test]
+    fn a_measured_decay_bounds_the_beat_mix() {
+        let (a, b) = pair(0.5, 0.5, 0.0);
+        // Unplaced, the default setting aims at 8 bars (16 s); A's decay measured 10 s.
+        let free = align(&baseline(), &a, &b, 100.0, true, 8.0, None).unwrap();
+        assert!(free.start_time < 88.0);
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, Some((90.0, 10.0))).unwrap();
+        assert!(plan.start_time >= 90.0 - 2.0 - 1e-6, "{}", plan.start_time);
+        assert!(plan.start_time + plan.duration * plan.outgoing_rate <= 100.0 + 1e-6);
+        assert!(
+            (plan.duration - 4.0 * 2.0).abs() < 1e-6,
+            "{}",
+            plan.duration
+        );
     }
 }
