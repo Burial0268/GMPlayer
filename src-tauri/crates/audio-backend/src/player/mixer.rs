@@ -332,8 +332,9 @@ pub struct BandMorph {
 }
 
 /// How the two decks share the fade. Every style but `FilterCut` sets only the balance between
-/// the decks; the level follows A's gain to B's (see `fade_gains`). Every style but `Blend` still
-/// runs the overlap limiter as a safety net.
+/// the decks; the level follows A's gain to B's (see `fade_gains`). Every style runs the overlap
+/// limiter as a safety net: balancing is a power model, and neither two uncorrelated loud masters'
+/// peaks nor a band morph's boost or an echo's repeats show up in it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FadeStyle {
     /// Constant-power `curve` with `in_shape`/`out_shape`.
@@ -345,12 +346,6 @@ pub enum FadeStyle {
     /// Tempos too far apart to sync: A is high-passed away, holding its level until 70%; B enters
     /// halfway.
     FilterCut,
-}
-
-impl FadeStyle {
-    fn limits(self) -> bool {
-        self != Self::Blend
-    }
 }
 
 /// Progress window (0..1 of the fade) over which the low band changes hands.
@@ -1450,10 +1445,7 @@ impl MixerWorker {
     /// zero-attack limiter over the next track, which can sit above its ceiling at its matched
     /// gain, and dropping it at once would snap the level back up.
     fn run_overlap_limiter(&mut self, samples: &mut [f32], channels: usize) {
-        let limiting = self
-            .crossfade
-            .as_ref()
-            .is_some_and(|fade| fade.params.style.limits());
+        let limiting = self.crossfade.is_some();
         let Some(limiter) = self.overlap_limiter.as_mut() else {
             return;
         };
@@ -1504,7 +1496,7 @@ impl MixerWorker {
                 &mut self.echo_line,
             )
         });
-        if schedule.params.style.limits() && self.overlap_limiter.is_none() {
+        if self.overlap_limiter.is_none() {
             let config = LimiterConfig {
                 enabled: true,
                 threshold_db: OVERLAP_LIMIT_DB,

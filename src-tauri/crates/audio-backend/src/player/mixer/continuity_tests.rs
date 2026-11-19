@@ -137,6 +137,32 @@ fn the_overlap_limiter_releases_smoothly_after_the_fade_completes() {
 /// What a listener hears through a balanced fade: the level moves from A's to B's without a bump
 /// or a dip, and stays at B's once the fade is over. Equal-RMS noise on both decks, so the level
 /// is the gains' doing; quiet enough that the limiter never acts.
+/// A `Blend` used to skip the overlap limiter, but a band morph boosts one deck by up to 6 dB after
+/// the gains are balanced (and two loud masters already overshoot), which the device callback
+/// would then hard-clip.
+#[test]
+fn a_morphing_blend_stays_under_the_limiter_ceiling() {
+    let channels = 2;
+    let rate = 48_000;
+    let fade = rate / 2;
+    let a = noise(fade, channels, 0.9, 3);
+    let b = noise(fade, channels, 0.9, 4);
+    let params = CrossfadeParams {
+        style: FadeStyle::Blend,
+        morph: Some(BandMorph {
+            db: [6.0, -3.0, -3.0],
+        }),
+        ..CrossfadeParams::default()
+    };
+    let (out, _) = render(&a, &b, channels, fade, 0, params);
+    let peak = out.iter().fold(0f32, |peak, s| peak.max(s.abs()));
+    let ceiling = 10f32.powf(OVERLAP_LIMIT_DB / 20.0);
+    assert!(
+        peak <= ceiling + 1e-4,
+        "peak {peak} over the ceiling {ceiling}"
+    );
+}
+
 #[test]
 fn a_balanced_fade_moves_the_level_from_a_to_b_without_bumps() {
     let channels = 2;
