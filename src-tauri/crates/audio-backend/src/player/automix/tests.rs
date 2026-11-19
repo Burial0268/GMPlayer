@@ -520,13 +520,13 @@ fn a_quiet_lead_in_lands_bs_first_beat_where_a_lets_go() {
     next.bpm = Some(grid(Some(head), None));
 
     let plan = build_analysis_backed_plan(&config(false), 200.0, Some(&current), Some(&next), 1.0);
-    // B's first beat on the beat after A's last pulse, the fade just past it.
+    // B's first beat on the beat after A's last pulse; A's tail rings out to its end under B.
     assert!(
         (plan.start_time - (196.3 - 2.6)).abs() < 1e-3,
         "{}",
         plan.start_time
     );
-    assert!((plan.duration - 2.85).abs() < 1e-3, "{}", plan.duration);
+    assert!((plan.duration - 6.3).abs() < 1e-3, "{}", plan.duration);
     assert_eq!(plan.incoming_start, 0.0);
     // A holds until its drop; the bass changes hands from there to B's first beat.
     let FadeStyle::Handoff(handoff) = plan.style else {

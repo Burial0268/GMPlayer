@@ -345,6 +345,10 @@ fn render_real_pair() {
         let secondary = deck(&b_part, channels, 0.0);
         let (mut worker, _output) =
             super::timing_tests::worker_at(primary, secondary, channels, rate);
+        // What `DeckMixer::schedule_crossfade` sends ahead of the first fade with an echo.
+        if params.echo.is_some() {
+            worker.apply_control(MixerControl::EchoLine(echo_line(rate, channels)));
+        }
         let mut out = Vec::with_capacity(total_frames * channels);
         let mut started = false;
         while out.len() < total_frames * channels {

@@ -24,9 +24,8 @@ const LONG_TAIL_SECONDS: f64 = 15.0;
 const LOUD_PAIR_SECONDS: f64 = 4.0;
 /// Shorter than this, B opens at full level and there is no lead-in to lay under A.
 const MIN_LEAD_IN: f64 = 0.5;
-/// How long a fade that meets B's first beat runs past it, so B lands at nearly full gain.
-const MEET_SETTLE: f64 = 0.25;
-/// Longest tail after A's drop that meeting B may cut; a longer decay is faded over instead.
+/// Longest tail after A's drop that may ring out under B: B reaches full level only as A's release
+/// ends, so a longer decay keeps its measured fade.
 const MEET_MAX_TAIL: f64 = 4.0;
 
 #[derive(Debug, Clone)]
@@ -817,14 +816,13 @@ fn arrival(next: &automix_analysis::TrackAnalysis) -> Option<f64> {
 /// B's energy arrives as A's leaves. B opening with a quiet lead-in starts that long before A's
 /// full level stops, so its first beat lands where A lets go (`departure`); started at its top
 /// instead, B was still in its lead-in as A decayed, a hole of up to 18 dB between two loud songs.
-/// A holds until its own drop and releases into B's first beat, and the fade ends just after it:
-/// the gain model balances the decks as if both were at full level, so a release left running
-/// over A's natural decay ducked B's opening. What remains of A's tail is already 8 dB down and
-/// under B. Returns the window the bass changes hands in, A's drop to B's first beat. Only for a
-/// fade over A's ending (one a section cue moved well before it keeps its place) whose tail after
-/// the drop is short enough to cut (`MEET_MAX_TAIL`; a long fade-out keeps its measured fade);
-/// without A's ending or B's opening measured, or with a lead-in too long to lay under A, nothing
-/// changes.
+/// A holds until its own drop, then releases over the rest of its tail, which rings out under B
+/// while B rises to full: the bass changes hands from A's drop to B's first beat (the returned
+/// window). Ending the fade just after B's first beat instead cut A's tail off and handed over in
+/// under half a second, which read as a hard cut between two moods. Only for a fade over A's
+/// ending (one a section cue moved well before it keeps its place) whose tail after the drop is
+/// at most `MEET_MAX_TAIL`; without A's ending or B's opening measured, or with a lead-in too long
+/// to lay under A, nothing changes.
 fn meet_on_arrival(
     plan: &mut CrossfadePlan,
     config: &AutoMixConfig,
@@ -835,7 +833,7 @@ fn meet_on_arrival(
     let (drop, meet) = departure(current)?;
     let arrive = arrival(next)?;
     let start = meet - arrive;
-    let duration = (meet + MEET_SETTLE).min(effective_end) - start;
+    let duration = effective_end - start;
     if arrive < MIN_LEAD_IN
         || effective_end - drop > MEET_MAX_TAIL
         || plan.start_time + plan.duration <= drop
