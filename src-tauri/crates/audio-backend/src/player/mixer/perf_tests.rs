@@ -247,6 +247,41 @@ fn benchmark_mixing() {
     use std::hint::black_box;
     use std::time::Instant;
 
+    // Coefficient design, once per ramp segment: as many calls as the mixing loops below make.
+    let segments = 20_000 * (MIX_BLOCK_FRAMES / CROSSFADE_RAMP_FRAMES);
+    for (name, params) in [
+        (
+            "design one shelf",
+            CrossfadeParams {
+                stage: Some(BandStage { crossover: 0.5 }),
+                ..Default::default()
+            },
+        ),
+        (
+            "design three bands",
+            CrossfadeParams {
+                stage: Some(BandStage { crossover: 0.5 }),
+                bass_swap: Some(BassSwap::MIDDLE),
+                morph: Some(BandMorph {
+                    db: [0.0, 2.0, -3.0],
+                }),
+                ..Default::default()
+            },
+        ),
+    ] {
+        let start = Instant::now();
+        for i in 0..segments {
+            let progress = black_box(i as f32 / segments as f32);
+            black_box(deck_filters(
+                48_000.0,
+                black_box(params),
+                DeckId::Primary,
+                progress,
+            ));
+        }
+        eprintln!("mixer {name}: {:?}", start.elapsed());
+    }
+
     for channels in [1, 2, 6] {
         let input = signal(MIX_BLOCK_FRAMES, channels, 0.0);
         let mut primary = deck(&[], 1);
@@ -330,10 +365,7 @@ fn benchmark_mixing() {
                 CROSSFADE_RAMP_FRAMES,
                 (false, false),
                 black_box(ramp),
-                &mut BiquadFilters {
-                    state: &mut state,
-                    coeffs: [[shelf]; 2],
-                },
+                &mut BiquadFilters::new(&mut state, [[shelf]; 2]),
             ));
         });
         time("three bands", &mut |p, s, b| {
@@ -345,10 +377,20 @@ fn benchmark_mixing() {
                 CROSSFADE_RAMP_FRAMES,
                 (false, false),
                 black_box(ramp),
-                &mut BiquadFilters {
-                    state: &mut state,
-                    coeffs: [[shelf; 3]; 2],
-                },
+                &mut BiquadFilters::new(&mut state, [[shelf; 3]; 2]),
+            ));
+        });
+        let pass = BiquadCoeffs::IDENTITY;
+        time("three bands, B passing through", &mut |p, s, b| {
+            black_box(mix_segment(
+                p,
+                s,
+                b,
+                black_box(channels),
+                CROSSFADE_RAMP_FRAMES,
+                (false, false),
+                black_box(ramp),
+                &mut BiquadFilters::new(&mut state, [[shelf; 3], [pass; 3]]),
             ));
         });
         time("echo", &mut |p, s, b| {

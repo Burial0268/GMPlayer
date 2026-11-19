@@ -330,6 +330,11 @@ impl BiquadCoeffs {
         Self::normalize(b0, b1, b2, a0, a1, a2)
     }
 
+    /// Exactly the pass-through, whose state stays at zero: skipping it changes nothing.
+    pub(crate) fn is_identity(&self) -> bool {
+        self.b0 == 1.0 && self.b1 == 0.0 && self.b2 == 0.0 && self.a1 == 0.0 && self.a2 == 0.0
+    }
+
     pub(crate) const IDENTITY: Self = Self {
         b0: 1.0,
         b1: 0.0,

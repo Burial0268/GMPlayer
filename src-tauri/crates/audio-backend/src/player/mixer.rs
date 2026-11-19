@@ -1356,28 +1356,19 @@ impl MixerWorker {
                     decks,
                     echo,
                     segment,
-                    BiquadFilters {
-                        state: &mut fade.filters,
-                        coeffs,
-                    },
+                    BiquadFilters::new(&mut fade.filters, coeffs),
                 ),
                 Some((FadeFilters::Two(coeffs), fade)) => mix_segment_echoing(
                     decks,
                     echo,
                     segment,
-                    BiquadFilters {
-                        state: &mut fade.filters,
-                        coeffs,
-                    },
+                    BiquadFilters::new(&mut fade.filters, coeffs),
                 ),
                 Some((FadeFilters::Three(coeffs), fade)) => mix_segment_echoing(
                     decks,
                     echo,
                     segment,
-                    BiquadFilters {
-                        state: &mut fade.filters,
-                        coeffs,
-                    },
+                    BiquadFilters::new(&mut fade.filters, coeffs),
                 ),
                 None => mix_segment_echoing(decks, echo, segment, NoFilter),
             };
@@ -1977,11 +1968,32 @@ impl DeckFilter for NoFilter {
 struct BiquadFilters<'a, const N: usize> {
     state: &'a mut [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
     coeffs: [[BiquadCoeffs; N]; 2],
+    /// Decks with a stage that is not the pass-through. Most of a staged entry or a bass swap
+    /// leaves one deck's whole chain at identity (A before its band moves, B after), and an
+    /// identity biquad's state stays at zero, so skipping it is exact.
+    active: [bool; 2],
+}
+
+impl<'a, const N: usize> BiquadFilters<'a, N> {
+    fn new(
+        state: &'a mut [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
+        coeffs: [[BiquadCoeffs; N]; 2],
+    ) -> Self {
+        let active = coeffs.map(|deck| deck.iter().any(|stage| !stage.is_identity()));
+        Self {
+            state,
+            coeffs,
+            active,
+        }
+    }
 }
 
 impl<const N: usize> DeckFilter for BiquadFilters<'_, N> {
     #[inline(always)]
     fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32 {
+        if !self.active[deck] {
+            return sample;
+        }
         let state = &mut self.state[deck][channel];
         let mut sample = sample;
         for stage in 0..N {
@@ -2006,10 +2018,15 @@ fn deck_filters(
     }
     let swap_shelves = |swap: BassSwap| {
         let (out_db, in_db) = swap.shelf_db(progress);
-        (
-            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db),
-            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db),
-        )
+        // Outside its window one side is exactly 0 dB: no design, and skippable.
+        let shelf = |db: f32| {
+            if db == 0.0 {
+                BiquadCoeffs::IDENTITY
+            } else {
+                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, db)
+            }
+        };
+        (shelf(out_db), shelf(in_db))
     };
     if params.style == FadeStyle::FilterCut {
         let hz = (FILTER_CUT_FROM_HZ * FILTER_CUT_SPAN.powf(progress)).clamp(10.0, rate * 0.45);
@@ -2559,10 +2576,7 @@ mod tests {
             let coeffs =
                 BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, swap.shelf_db(progress).0);
             let mut state = [[[BiquadState::default(); 3]; BASS_SWAP_MAX_CHANNELS]; 2];
-            let mut band = BiquadFilters::<1> {
-                state: &mut state,
-                coeffs: [[coeffs], [coeffs]],
-            };
+            let mut band = BiquadFilters::<1>::new(&mut state, [[coeffs], [coeffs]]);
             let mut peak = 0.0f32;
             for i in 0..48_000 {
                 let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
@@ -2714,21 +2728,15 @@ mod tests {
         for i in 0..48_000 {
             let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
             let y = match filters {
-                FadeFilters::One(coeffs) => BiquadFilters {
-                    state: &mut state,
-                    coeffs,
+                FadeFilters::One(coeffs) => {
+                    BiquadFilters::new(&mut state, coeffs).apply(deck, 0, x)
                 }
-                .apply(deck, 0, x),
-                FadeFilters::Two(coeffs) => BiquadFilters {
-                    state: &mut state,
-                    coeffs,
+                FadeFilters::Two(coeffs) => {
+                    BiquadFilters::new(&mut state, coeffs).apply(deck, 0, x)
                 }
-                .apply(deck, 0, x),
-                FadeFilters::Three(coeffs) => BiquadFilters {
-                    state: &mut state,
-                    coeffs,
+                FadeFilters::Three(coeffs) => {
+                    BiquadFilters::new(&mut state, coeffs).apply(deck, 0, x)
                 }
-                .apply(deck, 0, x),
             };
             if i > 24_000 {
                 peak = peak.max(y.abs());
@@ -2893,6 +2901,14 @@ mod tests {
                 Some(FadeFilters::One(_))
             ));
         }
+        // Before the crossover A's chain is the pass-through, and is skipped.
+        let Some(FadeFilters::One(coeffs)) =
+            deck_filters(48_000.0, staged_only, DeckId::Primary, 0.2)
+        else {
+            panic!("one stage");
+        };
+        let mut state = Default::default();
+        assert_eq!(BiquadFilters::new(&mut state, coeffs).active, [false, true]);
         // Only the bands that move are filtered.
         let two_bands = CrossfadeParams {
             morph: Some(BandMorph {
