@@ -172,8 +172,9 @@ pub(super) fn build_analysis_backed_plan(
     // pulse may move it earlier and recover the configured overlap budget.
     // No outro-type skip here: a fade-out usually keeps its drums, and the pair
     // fit already refuses an overlap A's measured grid does not cover.
+    // Where A's measured full level stops, and the longest fade a placement may take.
     let placed = (measured.is_some() && plan.section_cue.is_none())
-        .then_some((plan.start_time, plan.duration));
+        .then(|| (plan.start_time, longest_fade(config, effective_end)));
     let aligned = next_analysis
         .filter(|_| config.bpm_match && config.beat_align)
         .and_then(|next| {

@@ -71,18 +71,16 @@ pub(super) fn align(
         .map(|run| run.0)
         .find(|start| *start >= first_b - 0.5);
     let tolerance = a_period.min(0.8);
-    // A fade placed over A's measured decay (start, duration) is the overlap to fit: its length is
-    // the target and no exit starts more than a bar before it, so a longer bar count that would
-    // start under A's full level falls through to a shorter one. Otherwise bar counts nearest
-    // twice the crossfade setting first (fewer bars on a tie): a club-length 16 bars at 128 BPM
-    // is a 30 s overlap, far longer than a listener asked for.
-    let (target, floor) = match placed {
-        Some((start, duration)) => (duration.clamp(2.0, MAX_OVERLAP), start - bar),
-        None => (
-            (crossfade_duration * 2.0).clamp(MIN_TARGET, MAX_OVERLAP),
-            0.0,
-        ),
-    };
+    // Bar counts nearest twice the crossfade setting first (fewer bars on a tie): a club-length
+    // 16 bars at 128 BPM is a 30 s overlap, far longer than a listener asked for. Over a measured
+    // placement (where A's full level stops, the longest fade) the overlap is capped there and
+    // must reach that point, and A holds until a bar before it: B's beats come in under A's last
+    // bars and A's level still follows the measurement. Fitting the overlap *inside* the decay
+    // instead made a beat-mix impossible whenever the decay was under two bars, since A's pulse
+    // ends where it starts.
+    let target = (crossfade_duration * 2.0)
+        .clamp(MIN_TARGET, MAX_OVERLAP)
+        .min(placed.map_or(MAX_OVERLAP, |(_, cap)| cap));
     let mut order = [0usize; BEAT_MIX_BARS.len()];
     let order = &mut order[..bar_counts.len()];
     order.copy_from_slice(bar_counts);
@@ -93,10 +91,14 @@ pub(super) fn align(
 
     for &bars in order.iter() {
         let duration = bars as f64 * bar;
-        if !(2.0..=MAX_OVERLAP).contains(&duration) {
+        if !(2.0..=MAX_OVERLAP).contains(&duration)
+            || placed.is_some_and(|(_, cap)| duration > cap + 1e-6)
+        {
             continue;
         }
         let span = duration * rate;
+        // Where A's release may start, a bar before its level drops.
+        let hold = placed.map(|(drop, _)| drop - bar);
         let entry = choose_entry(&b_downbeats, first_line_b, duration, bar, incoming.duration);
         if entry + duration > b_end {
             continue;
@@ -106,7 +108,7 @@ pub(super) fn align(
             phrase,
             baseline,
             effective_end,
-            floor,
+            hold.map_or(0.0, |hold| hold - span),
             a_end - span,
             bar,
         ) else {
@@ -116,7 +118,10 @@ pub(super) fn align(
         if last_line.is_some_and(|end| end > exit + span + tolerance) {
             continue;
         }
+        // A measured hold is a floor of its own, not rounded to a bar: rounding could release A
+        // before it.
         let handoff = handoff(last_line, exit, span, bars);
+        let handoff = hold.map_or(handoff, |hold| handoff.max((hold - exit) / span).min(0.95));
         let audible = duration * (handoff + 0.7 * (1.0 - handoff));
         if vocal_clash(&a_vocals, &b_vocals, exit, rate, entry, audible) > MAX_VOCAL_CLASH {
             continue;
@@ -469,5 +474,24 @@ mod tests {
             "{}",
             plan.duration
         );
+    }
+
+    #[test]
+    fn a_short_measured_decay_still_beat_mixes_under_as_last_bars() {
+        let (a, b) = pair(0.5, 0.5, 0.0);
+        // A drops 1.2 s before its end, under a bar: the overlap runs through A's last bars instead.
+        let plan = align(&baseline(), &a, &b, 100.0, true, 8.0, Some((98.8, 12.0))).unwrap();
+        assert!(plan.beat_synced);
+        assert!(plan.duration <= 12.0 + 1e-6, "{}", plan.duration);
+        let end = plan.start_time + plan.duration * plan.outgoing_rate;
+        assert!((98.8 - 2.0..=100.0 + 1e-6).contains(&end), "{end}");
+        // A at full until a bar before its drop.
+        let FadeStyle::BeatMix(handoff) = plan.style else {
+            panic!("{:?}", plan.style)
+        };
+        let release = plan.start_time + f64::from(handoff) * plan.duration;
+        assert!(release >= 98.8 - 2.0 - 1e-6, "{release}");
+        // Nothing fits under a cap shorter than two bars.
+        assert!(align(&baseline(), &a, &b, 100.0, true, 8.0, Some((98.8, 3.0))).is_none());
     }
 }
