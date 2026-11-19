@@ -148,8 +148,15 @@ pub(super) fn build_analysis_backed_plan(
     let aligned = next_analysis
         .filter(|_| config.bpm_match && config.beat_align)
         .and_then(|next| {
-            beat_plan::align(&plan, current, next, effective_end, config.bpm_match)
-                .map(|aligned| (aligned, next))
+            beat_plan::align(
+                &plan,
+                current,
+                next,
+                effective_end,
+                config.bpm_match,
+                config.crossfade_duration,
+            )
+            .map(|aligned| (aligned, next))
         });
     if let Some((mut aligned, next)) = aligned {
         // FilterCut's sweep is its own tonal handover.
