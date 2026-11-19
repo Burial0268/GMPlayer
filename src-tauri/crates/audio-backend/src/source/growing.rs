@@ -537,6 +537,14 @@ impl TempGuard {
             path,
         }
     }
+
+    /// The download behind this file stopped short (gave up or was cancelled): a replay of it
+    /// ends where the download did, so it must be fetched again rather than reused.
+    pub(crate) fn is_broken(&self) -> bool {
+        self.progress
+            .as_ref()
+            .is_some_and(|p| p.is_finished() && !p.is_complete())
+    }
 }
 
 impl From<tempfile::TempPath> for TempGuard {
@@ -795,5 +803,34 @@ mod tests {
         });
         assert!(rig.reader.read(&mut [0u8; 4]).is_err());
         t.join().unwrap();
+    }
+
+    #[test]
+    fn a_guard_is_broken_only_once_its_download_stopped_short() {
+        let guard = |total| {
+            let (file, path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+            file.set_len(total).unwrap();
+            let progress = Progress::new(total);
+            (TempGuard::streaming(path, progress.clone()), progress)
+        };
+
+        // Still landing, then landed in full: reusable.
+        let (whole, progress) = guard(8);
+        let id = progress.begin_writer(0);
+        assert!(!whole.is_broken());
+        progress.advance(id, 8);
+        progress.end_writer(id, Ok(()));
+        assert!(!whole.is_broken());
+
+        // Gave up part-way.
+        let (failed, progress) = guard(8);
+        let id = progress.begin_writer(0);
+        progress.advance(id, 3);
+        progress.end_writer(id, Err("connection reset".into()));
+        assert!(failed.is_broken());
+
+        // Not a download at all.
+        let plain = TempGuard::from(tempfile::NamedTempFile::new().unwrap().into_temp_path());
+        assert!(!plain.is_broken());
     }
 }

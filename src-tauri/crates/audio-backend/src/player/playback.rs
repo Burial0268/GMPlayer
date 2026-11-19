@@ -258,6 +258,13 @@ impl AudioPlayer {
             self.current_local_path
                 .clone()
                 .filter(|path| path.exists())
+                // A download that gave up would replay up to the same gap and end there again.
+                .filter(|_| {
+                    !self
+                        .current_temp_file
+                        .as_ref()
+                        .is_some_and(crate::source::TempGuard::is_broken)
+                })
                 .map(|path| (path, self.current_temp_file.take()))
         } else {
             None
