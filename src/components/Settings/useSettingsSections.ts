@@ -541,8 +541,16 @@ export function useSettingsSections() {
       key: "system",
       label: "setting.sectionSystem",
       icon: BuildRound,
-      searchText: "setting.appUpdate setting.resetApp",
+      searchText: "setting.appUpdate setting.resetApp setting.storage.title cache 缓存 存储 清理",
       items: [
+        {
+          key: "storageSettings",
+          label: "setting.storage.title",
+          tip: "setting.storage.tip",
+          control: "custom",
+          slot: "storageSettings",
+          show: () => isTauri(),
+        },
         {
           key: "appUpdate",
           label: "setting.appUpdate",

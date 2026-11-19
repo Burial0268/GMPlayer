@@ -109,6 +109,18 @@ async function bootstrap() {
         },
         { immediate: true },
       );
+      // 音频缓存上限同样活在 Rust 里：启动时推一次，之后跟随设置变化。
+      watch(
+        () => settingData.audioCacheBudget,
+        (bytes) => {
+          void import("@/utils/tauri/storage").then((m) =>
+            m.storageSetAudioBudget(bytes).catch((err) => {
+              console.warn("[main] could not push the audio cache budget", err);
+            }),
+          );
+        },
+        { immediate: true },
+      );
     }
     watch(
       () => settingData.ncmTransport,

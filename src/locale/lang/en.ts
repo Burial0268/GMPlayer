@@ -697,6 +697,25 @@ const messages: Record<string, unknown> = {
     musicFrequencyTip:
       "Show a real-time spectrum on the player page. May increase performance cost.",
     dspTitle: "DSP & Equalizer",
+    storage: {
+      title: "Storage & cache",
+      tip: "What the app keeps on this device for you: how much space each takes, and clearing it",
+      refresh: "Refresh",
+      budget: "Song cache limit",
+      budgetTip:
+        "Played songs are kept, so a replay, Previous and AutoMix do not download them again. Over the limit, the least recently played go first",
+      off: "Off",
+      audio: "Song cache",
+      audioTip:
+        "Only complete downloads matching the checksum Netease declares are kept; unlocked sources are not cached",
+      api: "API cache",
+      apiTip: "Netease responses for playlists, lyrics and details, up to about 64 MB",
+      localStream: "Local file copies",
+      localStreamTip:
+        "Copies of local files that cannot be read in place (some Android documents), up to about 512 MB",
+      clear: "Clear",
+      cleared: "Freed {size}; the playing song is kept",
+    },
     download: {
       title: "Downloads",
       tip: "Downloads land in the platform's standard location and join the local library automatically",
