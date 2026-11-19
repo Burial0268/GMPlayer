@@ -21,7 +21,7 @@ const MAX_VOCAL_CLASH: f64 = 1.0;
 /// How far before the content end an exit may be.
 pub(super) const EXIT_WINDOW: f64 = 45.0;
 /// The swap reads as a step; this only keeps the shelf change from clicking.
-const SWAP_RAMP_SECONDS: f64 = 0.03;
+pub(super) const SWAP_RAMP_SECONDS: f64 = 0.03;
 
 pub(super) fn align(
     baseline: &CrossfadePlan,

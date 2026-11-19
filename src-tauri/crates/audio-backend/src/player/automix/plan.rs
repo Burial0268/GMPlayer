@@ -22,6 +22,12 @@ const LONG_TAIL_DROP_LU: f32 = 20.0;
 const LONG_TAIL_SECONDS: f64 = 15.0;
 /// Overlap for two songs that are both loud at the seam (Liquidsoap `cross.smart`).
 const LOUD_PAIR_SECONDS: f64 = 4.0;
+/// Shorter than this, B opens at full level and there is no lead-in to lay under A.
+const MIN_LEAD_IN: f64 = 0.5;
+/// How long a fade that meets B's first beat runs past it, so B lands at nearly full gain.
+const MEET_SETTLE: f64 = 0.25;
+/// Longest tail after A's drop that meeting B may cut; a longer decay is faded over instead.
+const MEET_MAX_TAIL: f64 = 4.0;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -180,7 +186,12 @@ pub(super) fn build_analysis_backed_plan(
     }
     let mut plan = clamp_plan_to_content(plan, effective_end);
     if let Some(next) = next_analysis {
+        let met = meet_on_arrival(&mut plan, config, current, next, effective_end);
         shape_for_pair(&mut plan, current, next);
+        // Whether the bass swaps is still `choose_bass_swap`'s call; when is B's first beat.
+        if let Some(window) = met {
+            plan.bass_swap = plan.bass_swap.map(|_| window);
+        }
     }
     hold_for_last_vocal(&mut plan, current);
     plan.stage = choose_stage(&plan);
@@ -288,7 +299,12 @@ fn hold_for_last_vocal(plan: &mut CrossfadePlan, current: &automix_analysis::Tra
         return;
     };
     let handoff = ((end - plan.start_time) / plan.duration).clamp(0.0, 0.8);
-    if handoff >= 0.1 {
+    // A handoff already placed later (B's arrival) is kept.
+    let held = match plan.style {
+        FadeStyle::Handoff(held) => f64::from(held),
+        _ => 0.0,
+    };
+    if handoff >= 0.1 && handoff > held {
         plan.style = FadeStyle::Handoff(handoff as f32);
     }
 }
@@ -730,12 +746,116 @@ fn loudness_placement(
         }
         configured_duration(config, effective_end).min(LOUD_PAIR_SECONDS)
     } else {
-        let longest = (config.crossfade_duration * 1.5)
-            .max(12.0)
-            .min((effective_end / 4.0).max(MIN_CROSSFADE_DURATION));
-        tail.clamp(MIN_CROSSFADE_DURATION, longest)
+        tail.clamp(MIN_CROSSFADE_DURATION, longest_fade(config, effective_end))
     };
     Some((content_end - duration, duration))
+}
+
+/// Longest fade a measured placement may take: max(1.5 x the setting, 12 s), at most a quarter of A.
+fn longest_fade(config: &AutoMixConfig, effective_end: f64) -> f64 {
+    (config.crossfade_duration * 1.5)
+        .max(12.0)
+        .min((effective_end / 4.0).max(MIN_CROSSFADE_DURATION))
+}
+
+/// Band power in dB per 250 ms window, and the first and last window within `TAIL_DROP_LU` (here
+/// dB, not LU) of their 80th percentile: where a song's full level starts and stops. Unsmoothed,
+/// unlike the outro's short-term loudness, which lags a sudden drop.
+fn loud_windows(bands: &automix_analysis::MultibandEnergy) -> Option<(usize, usize, usize)> {
+    let level: Vec<f32> = bands
+        .low
+        .iter()
+        .zip(&bands.mid)
+        .zip(&bands.high)
+        .map(|((low, mid), high)| 10.0 * (low * low + mid * mid + high * high).max(1e-12).log10())
+        .collect();
+    // Under 4 s of windows says nothing.
+    if level.len() < 16 {
+        return None;
+    }
+    let mut sorted = level.clone();
+    let rank = (sorted.len() - 1) * 8 / 10;
+    let floor = *sorted.select_nth_unstable_by(rank, f32::total_cmp).1 - TAIL_DROP_LU;
+    let first = level.iter().position(|db| *db >= floor)?;
+    let last = level.iter().rposition(|db| *db >= floor)?;
+    Some((first, last, level.len()))
+}
+
+/// Where A's full level stops, in song seconds: the end of its last loud outro window (they end at
+/// the content end). Also returned, where B's first beat should land: the beat after A's last pulse
+/// when that is where the grid ends, so B's first beat continues A's, else the same point.
+fn departure(current: &automix_analysis::TrackAnalysis) -> Option<(f64, f64)> {
+    let (_, last, len) = loud_windows(&current.outro.as_ref()?.multiband_energy)?;
+    let content_end = f64::from(current.duration - current.energy.trailing_silence);
+    let drop = content_end - (len - 1 - last) as f64 * 0.25;
+    let next_beat = current
+        .bpm
+        .as_ref()
+        .and_then(|bpm| bpm.tail.as_ref())
+        .and_then(|grid| {
+            let (last, period) = (f64::from(*grid.beats.last()?), f64::from(grid.period));
+            (last <= drop && drop - last <= 1.5 * period).then_some(last + period)
+        });
+    Some((drop, next_beat.unwrap_or(drop).min(content_end)))
+}
+
+/// How far into B its full level starts: the start of its first loud intro window, or its first
+/// beat when that falls just after (the window can only say which quarter second).
+fn arrival(next: &automix_analysis::TrackAnalysis) -> Option<f64> {
+    let (first, _, _) = loud_windows(next.intro.as_ref()?.multiband_energy.as_ref()?)?;
+    let arrive = first as f64 * 0.25;
+    let first_beat = next
+        .bpm
+        .as_ref()
+        .and_then(|bpm| bpm.head.as_ref())
+        .and_then(|grid| grid.beats.first())
+        .map(|beat| f64::from(*beat))
+        .filter(|beat| (arrive - 0.25..=arrive + 0.5).contains(beat));
+    Some(first_beat.unwrap_or(arrive))
+}
+
+/// B's energy arrives as A's leaves. B opening with a quiet lead-in starts that long before A's
+/// full level stops, so its first beat lands where A lets go (`departure`); started at its top
+/// instead, B was still in its lead-in as A decayed, a hole of up to 18 dB between two loud songs.
+/// A holds until its own drop and releases into B's first beat, and the fade ends just after it:
+/// the gain model balances the decks as if both were at full level, so a release left running
+/// over A's natural decay ducked B's opening. What remains of A's tail is already 8 dB down and
+/// under B. Returns the window the bass changes hands in, A's drop to B's first beat. Only for a
+/// fade over A's ending (one a section cue moved well before it keeps its place) whose tail after
+/// the drop is short enough to cut (`MEET_MAX_TAIL`; a long fade-out keeps its measured fade);
+/// without A's ending or B's opening measured, or with a lead-in too long to lay under A, nothing
+/// changes.
+fn meet_on_arrival(
+    plan: &mut CrossfadePlan,
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+    effective_end: f64,
+) -> Option<BassSwap> {
+    let (drop, meet) = departure(current)?;
+    let arrive = arrival(next)?;
+    let start = meet - arrive;
+    let duration = (meet + MEET_SETTLE).min(effective_end) - start;
+    if arrive < MIN_LEAD_IN
+        || effective_end - drop > MEET_MAX_TAIL
+        || plan.start_time + plan.duration <= drop
+        || start < 0.0
+        || duration > longest_fade(config, effective_end)
+    {
+        return None;
+    }
+    plan.start_time = start;
+    plan.duration = duration;
+    plan.incoming_start = 0.0;
+    plan.section_cue = None;
+    let handoff = ((drop.min(meet) - start) / duration).max(0.0) as f32;
+    plan.style = FadeStyle::Handoff(handoff);
+    let landed = (arrive / duration) as f32;
+    let ramp = (beat_plan::SWAP_RAMP_SECONDS / duration) as f32;
+    Some(BassSwap {
+        start: handoff.min(landed - ramp),
+        end: landed,
+    })
 }
 
 fn analysis_baseline_start(
