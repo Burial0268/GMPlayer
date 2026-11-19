@@ -354,6 +354,11 @@ pub enum FadeStyle {
     Handoff(f32),
     /// Beat-synced: B is level with A by `handoff`, then A releases.
     BeatMix(f32),
+    /// A's tail rings out under B: A holds until `handoff` (its drop) and releases over the rest,
+    /// B reaches full at `landed` (its first beat). Not balanced: A's own decay has already taken
+    /// the energy a power model would charge it for, so balancing held B 3-5 dB under its own
+    /// level after A had gone, a hole between two songs.
+    RingOut { handoff: f32, landed: f32 },
     /// Tempos too far apart to sync: A is high-passed away, holding its level until 70%; B enters
     /// halfway.
     FilterCut,
@@ -2252,6 +2257,14 @@ fn fade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
             let (h, _, out) = release(handoff);
             (out, rise(t / h))
         }
+        FadeStyle::RingOut { handoff, landed } => {
+            let (_, _, out) = release(handoff);
+            let inc = rise((t / landed.clamp(0.05, 1.0)).min(1.0));
+            return (
+                out.max(0.0) * params.outgoing_gain.clamp(0.0, 2.0),
+                inc.max(0.0) * params.incoming_gain.clamp(0.0, 2.0),
+            );
+        }
         FadeStyle::FilterCut => {
             let out = (eased_progress((1.0 - t) / 0.3) * FRAC_PI_2).sin();
             let inc = rise((t - 0.5) / 0.5);
@@ -2531,6 +2544,10 @@ mod tests {
             FadeStyle::Handoff(0.6),
             FadeStyle::BeatMix(0.5),
             FadeStyle::FilterCut,
+            FadeStyle::RingOut {
+                handoff: 0.4,
+                landed: 0.45,
+            },
         ] {
             let params = CrossfadeParams {
                 style,
@@ -2674,6 +2691,13 @@ mod tests {
             (FadeStyle::BeatMix(0.5), vec![0.5]),
             (FadeStyle::BeatMix(0.9), vec![0.9]),
             (FadeStyle::FilterCut, vec![0.5, 0.7]),
+            (
+                FadeStyle::RingOut {
+                    handoff: 0.4,
+                    landed: 0.45,
+                },
+                vec![0.4, 0.45],
+            ),
         ] {
             let params = CrossfadeParams { style, ..base };
             check(&format!("{style:?}"), &|t| fade_gains(t, params), &joins);

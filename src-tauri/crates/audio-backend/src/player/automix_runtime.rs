@@ -544,20 +544,29 @@ impl AudioPlayer {
                 plan.beat_synced = false;
                 unsync_beat_mix(plan);
             }
-            if start_position.is_none() || plan.start_time <= now + 2.0 || start_paused {
+            // A ride eases A into B's tempo before the fade starts.
+            let (tempo_start, ramp) = plan
+                .tempo_ramp
+                .map_or((plan.start_time, 0.0), |(from, to)| (from, to - from));
+            if start_position.is_none() || tempo_start <= now + 2.0 || start_paused {
                 plan.outgoing_rate = 1.0;
                 plan.beat_synced = false;
             }
             if (plan.outgoing_rate - 1.0).abs() > 1e-6 {
                 let channels = output_config.channels;
                 let sample_rate = output_config.sample_rate;
-                let rate = plan.outgoing_rate.clamp(0.96, 1.04);
+                let rate = plan.outgoing_rate.clamp(
+                    *decoder::tempo::RATE_RANGE.start(),
+                    *decoder::tempo::RATE_RANGE.end(),
+                );
+                let ramp_frames = (ramp * f64::from(sample_rate)) as usize;
                 let processor = tokio::task::spawn_blocking(move || {
                     decoder::tempo::AutoMixStretch::new(channels, sample_rate, rate)
+                        .ramping(ramp_frames)
                 })
                 .await?;
                 let result = match self.current_decoder_handle.as_ref() {
-                    Some(handle) => match handle.arm_tempo(plan.start_time, processor) {
+                    Some(handle) => match handle.arm_tempo(tempo_start, processor) {
                         Ok(ack) => ack.wait().await,
                         Err(error) => Err(error),
                     },

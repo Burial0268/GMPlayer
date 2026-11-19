@@ -529,13 +529,15 @@ fn a_quiet_lead_in_lands_bs_first_beat_where_a_lets_go() {
     assert!((plan.duration - 6.3).abs() < 1e-3, "{}", plan.duration);
     assert_eq!(plan.incoming_start, 0.0);
     // A holds until its drop; the bass changes hands from there to B's first beat.
-    let FadeStyle::Handoff(handoff) = plan.style else {
+    let FadeStyle::RingOut { handoff, landed } = plan.style else {
         panic!("{:?}", plan.style)
     };
     let at = |share: f32| plan.start_time + f64::from(share) * plan.duration;
     assert!((at(handoff) - 196.0).abs() < 1e-3, "{}", at(handoff));
     let swap = plan.bass_swap.unwrap();
     assert!((at(swap.start) - 196.0).abs() < 1e-3 && (at(swap.end) - 196.3).abs() < 1e-3);
+    // B is at full by its first beat.
+    assert!((at(landed) - 196.3).abs() < 1e-3);
 
     // An echo-out of A's last beat opens on B's first beat and repeats on B's beats.
     let echo = plan.echo.unwrap();
@@ -550,11 +552,78 @@ fn a_quiet_lead_in_lands_bs_first_beat_where_a_lets_go() {
     let mut fading = current.clone();
     fading.outro.as_mut().unwrap().multiband_energy = bands(&[(0.3, 34.0), (0.005, 10.0)]);
     let faded = build_analysis_backed_plan(&config(false), 200.0, Some(&fading), Some(&next), 1.0);
-    assert!(!matches!(faded.style, FadeStyle::Handoff(_)));
+    assert!(!matches!(faded.style, FadeStyle::RingOut { .. }));
 
     // Without B's opening measured, the plan is the ordinary one.
     next.intro.as_mut().unwrap().multiband_energy = None;
     let ordinary =
         build_analysis_backed_plan(&config(false), 200.0, Some(&current), Some(&next), 1.0);
-    assert!(!matches!(ordinary.style, FadeStyle::Handoff(_)));
+    assert!(!matches!(ordinary.style, FadeStyle::RingOut { .. }));
+}
+
+#[test]
+fn a_faster_a_rides_into_bs_tempo_before_bs_first_beat() {
+    // As above, but A pulses every 0.47 s against B's 0.5 s: A slows into B's beat over its last
+    // two bars, so its last beats already fall at B's spacing and B's first beat continues them.
+    let mut current = with_loudness("musicalOutro", &[]);
+    let outro = current.outro.as_mut().unwrap();
+    outro.outro_confidence = 0.3;
+    outro.multiband_energy = bands(&[(0.3, 40.0), (0.005, 4.0)]);
+    let mut next = opening(2.0);
+    next.intro.as_mut().unwrap().multiband_energy = Some(bands(&[(0.001, 2.5), (0.3, 17.5)]));
+    let grid = |head, tail| automix_analysis::BPMResult {
+        bpm: 120.0,
+        confidence: 1.0,
+        beat_grid: Vec::new(),
+        analysis_offset: 0.0,
+        head,
+        tail,
+    };
+    let tail = automix_analysis::BeatRegion {
+        beats: (0..40).rev().map(|i| 195.8 - i as f32 * 0.47).collect(),
+        period: 0.47,
+        stability: 1.0,
+        downbeat: None,
+    };
+    current.bpm = Some(grid(None, Some(tail)));
+    let mut head = pulses(2.6, 19.6);
+    head.stability = 0.8;
+    next.bpm = Some(grid(Some(head), None));
+
+    let plan = build_analysis_backed_plan(&config(false), 200.0, Some(&current), Some(&next), 1.0);
+    let rate = f64::from(0.47f32) / 0.5;
+    assert!(
+        (plan.outgoing_rate - rate).abs() < 1e-6,
+        "{}",
+        plan.outgoing_rate
+    );
+    let (from, to) = plan.tempo_ramp.unwrap();
+    assert!((from - (195.8 - 8.0 * 0.47)).abs() < 1e-3 && (to - 195.8).abs() < 1e-3);
+
+    // Output seconds A takes over its source `start..end`, integrated independently of the plan.
+    let played = |start: f64, end: f64| {
+        let steps = 200_000;
+        let ds = (end - start) / f64::from(steps);
+        (0..steps)
+            .map(|i| {
+                let s = start + (f64::from(i) + 0.5) * ds;
+                let progress = ((s - from) / (to - from)).clamp(0.0, 1.0);
+                ds / (1.0 + (rate - 1.0) * progress)
+            })
+            .sum::<f64>()
+    };
+    // B's first beat (2.6 s into the fade) one of B's beats after A's last pulse.
+    let last = played(plan.start_time, to);
+    assert!((last + 0.5 - 2.6).abs() < 1e-3, "{last}");
+    assert!((plan.duration - played(plan.start_time, 200.0)).abs() < 1e-3);
+    let swap = plan.bass_swap.unwrap();
+    assert!((f64::from(swap.end) * plan.duration - 2.6).abs() < 1e-3);
+    let FadeStyle::RingOut { handoff, landed } = plan.style else {
+        panic!("{:?}", plan.style)
+    };
+    let drop = played(plan.start_time, 196.0);
+    assert!((f64::from(handoff) * plan.duration - drop).abs() < 1e-3);
+    assert!((f64::from(landed) * plan.duration - 2.6).abs() < 1e-3);
+    // Repeats of A's last beat, now at B's spacing, still fall on B's beats.
+    assert!((plan.echo.unwrap().delay - 0.5).abs() < 1e-6);
 }

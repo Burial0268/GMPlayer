@@ -3,6 +3,7 @@
 use super::beat_plan;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
+use crate::decoder::tempo::RATE_RANGE;
 use crate::player::mixer::{BandMorph, BandStage, BassSwap, EchoOut, FadeStyle, ECHO_MAX_DELAY};
 use crate::types::{AutoMixConfig, CrossfadeCurve};
 
@@ -28,9 +29,14 @@ const MIN_LEAD_IN: f64 = 0.5;
 const MEET_STEP_TOLERANCE: f64 = 0.1;
 /// How fast an echo-out into B's first beat opens.
 const ECHO_OUT_ATTACK: f64 = 0.03;
-/// Longest tail after A's drop that may ring out under B: B reaches full level only as A's release
-/// ends, so a longer decay keeps its measured fade.
+/// Longest tail after A's drop that may ring out under B: B is at full from its first beat, so a
+/// longer, still-audible decay would stack on it; that keeps its measured fade.
 const MEET_MAX_TAIL: f64 = 4.0;
+/// Beats over which A eases into B's tempo before B's first beat: two bars.
+const RIDE_BEATS: f64 = 8.0;
+/// Tempo gap under which B's first beat simply continues A's pulse at B's spacing; one longer beat
+/// is not heard below it.
+const RIDE_MIN_CHANGE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -46,6 +52,9 @@ pub struct CrossfadePlan {
     /// Section boundary the fade was moved to, when emotional transitions chose one.
     pub section_cue: Option<f64>,
     pub outgoing_rate: f64,
+    /// A's source seconds over which it eases from its own speed to `outgoing_rate`; without one
+    /// the rate applies from `start_time`.
+    pub tempo_ramp: Option<(f64, f64)>,
     pub beat_synced: bool,
     pub bass_swap: Option<BassSwap>,
     pub morph: Option<BandMorph>,
@@ -78,6 +87,7 @@ pub(super) fn build_time_based_plan(
         arc: EmotionalArc::Neutral,
         section_cue: None,
         outgoing_rate: 1.0,
+        tempo_ramp: None,
         beat_synced: false,
         bass_swap: None,
         morph: None,
@@ -260,7 +270,9 @@ pub(super) fn choose_echo(
 pub(in crate::player) fn choose_stage(plan: &CrossfadePlan) -> Option<BandStage> {
     let handoff = match plan.style {
         FadeStyle::FilterCut => return None,
-        FadeStyle::Handoff(handoff) | FadeStyle::BeatMix(handoff) => handoff,
+        FadeStyle::Handoff(handoff)
+        | FadeStyle::BeatMix(handoff)
+        | FadeStyle::RingOut { handoff, .. } => handoff,
         FadeStyle::Blend => 0.0,
     };
     let crossover = plan.bass_swap.map_or(0.5, |swap| swap.end).max(handoff);
@@ -309,13 +321,20 @@ fn hold_for_last_vocal(plan: &mut CrossfadePlan, current: &automix_analysis::Tra
         return;
     };
     let handoff = ((end - plan.start_time) / plan.duration).clamp(0.0, 0.8);
-    // A handoff already placed later (B's arrival) is kept.
-    let held = match plan.style {
-        FadeStyle::Handoff(held) => f64::from(held),
-        _ => 0.0,
-    };
-    if handoff >= 0.1 && handoff > held {
-        plan.style = FadeStyle::Handoff(handoff as f32);
+    // A handoff already placed later (A's drop under B's arrival) is kept.
+    match &mut plan.style {
+        FadeStyle::RingOut { handoff: held, .. } => {
+            *held = held.max(handoff as f32);
+        }
+        style => {
+            let held = match style {
+                FadeStyle::Handoff(held) => f64::from(*held),
+                _ => 0.0,
+            };
+            if handoff >= 0.1 && handoff > held {
+                *style = FadeStyle::Handoff(handoff as f32);
+            }
+        }
     }
 }
 
@@ -795,11 +814,13 @@ fn loud_windows(bands: &automix_analysis::MultibandEnergy) -> Option<(usize, usi
 /// the content end). Also where B's first beat should land, which continues A's pulse when A's
 /// grid ends there: one step after its last pulse, B's own beat when the two are within
 /// `MEET_STEP_TOLERANCE` (so repeats of A's last beat at that spacing land on B's beats, and the
-/// step is returned), else A's. Without that pulse it is the drop itself.
+/// step is returned), else A's. Without that pulse it is the drop itself. When B's beat is more
+/// than `RIDE_MIN_CHANGE` off A's, A rides into it over its last `RIDE_BEATS` (pitch kept): its
+/// last beats then fall at B's spacing, and B's first beat lands on A's own next beat.
 fn departure(
     current: &automix_analysis::TrackAnalysis,
     next: &automix_analysis::TrackAnalysis,
-) -> Option<(f64, f64, Option<f64>)> {
+) -> Option<(f64, f64, Option<f64>, Option<Ride>)> {
     let (_, last, len) = loud_windows(&current.outro.as_ref()?.multiband_energy)?;
     let content_end = f64::from(current.duration - current.energy.trailing_silence);
     let drop = content_end - (len - 1 - last) as f64 * 0.25;
@@ -818,10 +839,67 @@ fn departure(
                 return None;
             }
             let step = b_beat.filter(|b| (b / period - 1.0).abs() <= MEET_STEP_TOLERANCE);
-            Some((last + step.unwrap_or(period), step))
+            let ride = step.map(|step| Ride {
+                from: last - RIDE_BEATS * period,
+                to: last,
+                rate: period / step,
+            });
+            let ride = ride.filter(|ride| {
+                (ride.rate - 1.0).abs() > RIDE_MIN_CHANGE
+                    && RATE_RANGE.contains(&ride.rate)
+                    && ride.from >= 0.0
+            });
+            match ride {
+                Some(ride) => Some((last + period, step, Some(ride))),
+                None => Some((last + step.unwrap_or(period), step, None)),
+            }
         });
-    let (meet, step) = pulse.unwrap_or((drop, None));
-    Some((drop, meet.min(content_end), step))
+    let (meet, step, ride) = pulse.unwrap_or((drop, None, None));
+    Some((drop, meet.min(content_end), step, ride))
+}
+
+/// A easing linearly, by source position, from its own speed at `from` to `rate` at `to`, and
+/// held there after. `rate` is source seconds per output second.
+#[derive(Debug, Clone, Copy)]
+struct Ride {
+    from: f64,
+    to: f64,
+    rate: f64,
+}
+
+impl Ride {
+    /// Output seconds A takes to play its source seconds `start..end`.
+    fn played(ride: Option<&Self>, start: f64, end: f64) -> f64 {
+        let Some(ride) = ride else {
+            return end - start;
+        };
+        let before = (end.min(ride.from) - start).max(0.0);
+        let after = (end - start.max(ride.to)).max(0.0) / ride.rate;
+        let (x, y) = (start.max(ride.from), end.min(ride.to));
+        let slope = (ride.rate - 1.0) / (ride.to - ride.from);
+        let speed = |s: f64| 1.0 + slope * (s - ride.from);
+        let during = if y > x {
+            (speed(y) / speed(x)).ln() / slope
+        } else {
+            0.0
+        };
+        before + during + after
+    }
+
+    /// The source second from which A takes `seconds` of output to reach `end`.
+    fn start_before(ride: Option<&Self>, end: f64, seconds: f64) -> f64 {
+        let (min, max) = (*RATE_RANGE.start(), *RATE_RANGE.end());
+        let (mut early, mut late) = (end - seconds * max, end - seconds * min);
+        for _ in 0..48 {
+            let mid = 0.5 * (early + late);
+            if Self::played(ride, mid, end) > seconds {
+                early = mid;
+            } else {
+                late = mid;
+            }
+        }
+        0.5 * (early + late)
+    }
 }
 
 /// How far into B its full level starts: the start of its first loud intro window, or its first
@@ -843,8 +921,8 @@ fn arrival(next: &automix_analysis::TrackAnalysis) -> Option<f64> {
 /// full level stops, so its first beat lands where A lets go (`departure`); started at its top
 /// instead, B was still in its lead-in as A decayed, a hole of up to 18 dB between two loud songs.
 /// A holds until its own drop, then releases over the rest of its tail, which rings out under B
-/// while B rises to full: the bass changes hands from A's drop to B's first beat (the returned
-/// window). Ending the fade just after B's first beat instead cut A's tail off and handed over in
+/// (`FadeStyle::RingOut`, B at full from its first beat): the bass changes hands from A's drop to
+/// B's first beat (the returned window). Ending the fade just after B's first beat instead cut A's tail off and handed over in
 /// under half a second, which read as a hard cut between two moods. Only for a fade over A's
 /// ending (one a section cue moved well before it keeps its place) whose tail after the drop is
 /// at most `MEET_MAX_TAIL`; without A's ending or B's opening measured, or with a lead-in too long
@@ -856,10 +934,11 @@ fn meet_on_arrival(
     next: &automix_analysis::TrackAnalysis,
     effective_end: f64,
 ) -> Option<Meet> {
-    let (drop, meet, step) = departure(current, next)?;
+    let (drop, meet, step, ride) = departure(current, next)?;
     let arrive = arrival(next)?;
-    let start = meet - arrive;
-    let duration = effective_end - start;
+    // B plays at its own speed from the fade's start, so its first beat is `arrive` of output in.
+    let start = Ride::start_before(ride.as_ref(), meet, arrive);
+    let duration = Ride::played(ride.as_ref(), start, effective_end);
     if arrive < MIN_LEAD_IN
         || effective_end - drop > MEET_MAX_TAIL
         || plan.start_time + plan.duration <= drop
@@ -872,9 +951,13 @@ fn meet_on_arrival(
     plan.duration = duration;
     plan.incoming_start = 0.0;
     plan.section_cue = None;
-    let handoff = ((drop.min(meet) - start) / duration).max(0.0) as f32;
-    plan.style = FadeStyle::Handoff(handoff);
+    if let Some(ride) = ride {
+        plan.outgoing_rate = ride.rate;
+        plan.tempo_ramp = Some((ride.from, ride.to));
+    }
+    let handoff = (Ride::played(ride.as_ref(), start, drop.min(meet)) / duration).max(0.0) as f32;
     let landed = (arrive / duration) as f32;
+    plan.style = FadeStyle::RingOut { handoff, landed };
     let ramp = (beat_plan::SWAP_RAMP_SECONDS / duration) as f32;
     Some(Meet {
         swap: BassSwap {

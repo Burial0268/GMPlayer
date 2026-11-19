@@ -271,9 +271,9 @@ fn an_echo_out_rings_past_its_fade_and_then_goes() {
 /// ```
 ///
 /// Analyses both files, builds the plan a native prepare would, and renders 10 s of A, the fade
-/// and 10 s of B through `mix_block`. Writes `transition.wav` (the mix), `metrics.csv` (per 100 ms:
-/// level of the mix and of each deck, overall and per band) and prints a summary. Not rendered:
-/// the outgoing tempo stretch of a beat-synced plan (A plays at its own speed).
+/// and 10 s of B through `mix_block`. Writes `transition.wav` (the mix), `a.wav` and `b.wav` (each deck alone), `metrics.csv` (per 100 ms:
+/// level of the mix and of each deck, overall and per band) and prints a summary. A's tempo
+/// stretch (a beat-mix's or a ride's) runs through the decoder's own processor.
 #[test]
 #[ignore = "set AUTOMIX_CURRENT_FILE, AUTOMIX_NEXT_FILE and AUTOMIX_RENDER_OUT"]
 fn render_real_pair() {
@@ -290,6 +290,23 @@ fn render_real_pair() {
         ..Default::default()
     };
     let plan = plan_for_pair(&config, &current, &next);
+    let grid = |region: Option<&crate::automix::BeatRegion>| {
+        region.map(|r| {
+            (
+                r.beats.first().copied(),
+                r.beats.last().copied(),
+                r.beats.len(),
+                r.period,
+                r.stability,
+                r.downbeat,
+            )
+        })
+    };
+    println!(
+        "A tail (first, last, n, period, stability, downbeat) = {:?}\nB head = {:?}",
+        grid(current.bpm.as_ref().and_then(|b| b.tail.as_ref())),
+        grid(next.bpm.as_ref().and_then(|b| b.head.as_ref())),
+    );
     println!("plan = {plan:#?}");
 
     let (a, rate, channels) =
@@ -329,7 +346,31 @@ fn render_real_pair() {
     let b_from = frame(plan.incoming_start).min(b.len());
     let fade_frames = (plan.duration * f64::from(rate)) as usize;
     // A starts `lead` before the fade, or at its top when the fade starts sooner.
-    let lead_frames = (plan.start_time.clamp(0.0, lead) * f64::from(rate)) as usize;
+    let mut lead_frames = (plan.start_time.clamp(0.0, lead) * f64::from(rate)) as usize;
+    // What the decoder hands the mixer: A stretched from where the runtime arms its processor,
+    // and the fade starting where A's stretched output reaches `start_time`.
+    let a = if (plan.outgoing_rate - 1.0).abs() > 1e-6 {
+        let (from, ramp) = plan
+            .tempo_ramp
+            .map_or((plan.start_time, 0.0), |(from, to)| (from, to - from));
+        let split = frame(from).max(a_from).min(a.len());
+        let mut processor =
+            crate::decoder::tempo::AutoMixStretch::new(channels as u16, rate, plan.outgoing_rate)
+                .ramping((ramp * f64::from(rate)) as usize);
+        let mut out = a[..split].to_vec();
+        let (mut source, fade_at) = (split, frame(plan.start_time));
+        for block in a[split..].chunks(512 * channels) {
+            source += processor.process(block, &mut out) as usize;
+            // Within one block (about 10 ms) of where the source reaches the fade.
+            if source < fade_at {
+                lead_frames = (out.len() - a_from) / channels;
+            }
+        }
+        processor.flush(&mut out);
+        out
+    } else {
+        a
+    };
     let tail_frames = 10 * rate as usize;
     let total_frames = lead_frames + fade_frames + tail_frames;
 
@@ -378,6 +419,9 @@ fn render_real_pair() {
     let b_only = render_with(false, true);
 
     write_wav(&out_dir.join("transition.wav"), &mix, rate, channels);
+    // Each deck as heard in the mix, for reading either side's beats without the other's.
+    write_wav(&out_dir.join("a.wav"), &a_only, rate, channels);
+    write_wav(&out_dir.join("b.wav"), &b_only, rate, channels);
 
     // Per-100 ms levels, overall and per band (low < 300 Hz < mid < 4 kHz < high).
     let window = rate as usize / 10;
