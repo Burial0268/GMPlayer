@@ -405,6 +405,17 @@ fn the_fade_covers_the_tail_where_the_outgoing_song_decays() {
     // A tail longer than the overlap budget keeps its end and gives up its start.
     let capped = with_loudness("fadeOut", &[(-10.0, 36.0), (-25.0, 14.0)]);
     assert!(near(placed(&capped, &next), (188.0, 12.0)));
+    // An emotional arc may shorten it, but the fade still ends where A does.
+    for current in [&decaying, &long_tail, &capped] {
+        let plan =
+            build_analysis_backed_plan(&config(true), 200.0, Some(current), Some(&next), 1.0);
+        assert!(
+            (plan.start_time + plan.duration - 200.0).abs() < 0.01,
+            "{} + {}",
+            plan.start_time,
+            plan.duration
+        );
+    }
 }
 
 #[test]

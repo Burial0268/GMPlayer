@@ -139,7 +139,13 @@ pub(super) fn build_analysis_backed_plan(
     }
     if config.emotional_transition {
         if let Some(next) = next_analysis {
+            let end = plan.start_time + plan.duration;
             apply_emotional_arc(&mut plan, config, current, next, effective_end);
+            // A fade placed over A's decay keeps its end when the arc shortens it, or A's last
+            // seconds would play at zero gain.
+            if measured.is_some() && plan.section_cue.is_none() {
+                plan.start_time = end - plan.duration;
+            }
         }
     }
 
@@ -201,7 +207,9 @@ pub(super) fn choose_echo(
     let hard = current
         .outro
         .as_ref()
-        .is_some_and(|outro| outro.outro_type == "hard" && outro.outro_confidence >= 0.6);
+        .is_some_and(|outro| outro.outro_type == "hard" && outro.outro_confidence >= 0.6)
+        // A section cue moved the fade off the ending the outro type describes.
+        && plan.section_cue.is_none();
     if plan.style != FadeStyle::FilterCut && !(hard && plan.duration < 4.0) {
         return None;
     }
@@ -551,9 +559,10 @@ fn apply_emotional_arc(
         return;
     };
     plan.arc = arc;
+    // Never longer than the setting, or than a measured decay already is.
     plan.duration = (plan.duration * f64::from(profile.duration_scale)).clamp(
         MIN_CROSSFADE_DURATION,
-        configured_duration(config, effective_end),
+        configured_duration(config, effective_end).max(plan.duration),
     );
     if let Some(curve) = profile.curve {
         plan.curve = curve;
@@ -697,8 +706,8 @@ fn loudness_placement(
         return None;
     }
     let mut sorted = loudness.clone();
-    sorted.sort_by(f32::total_cmp);
-    let reference = sorted[(sorted.len() - 1) * 8 / 10];
+    let rank = (sorted.len() - 1) * 8 / 10;
+    let reference = *sorted.select_nth_unstable_by(rank, f32::total_cmp).1;
     let content_end = f64::from(current.duration - current.energy.trailing_silence);
     let tail_start = |drop: f32| {
         loudness

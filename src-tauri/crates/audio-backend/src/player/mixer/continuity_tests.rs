@@ -53,6 +53,10 @@ fn render(
     let primary = deck(outgoing, channels, params.outgoing_gain);
     let secondary = deck(incoming, channels, 0.0);
     let (mut worker, _output) = worker(primary, secondary, channels);
+    // What `DeckMixer::schedule_crossfade` sends ahead of the first fade with an echo.
+    if params.echo.is_some() {
+        worker.apply_control(MixerControl::EchoLine(echo_line(48_000, channels)));
+    }
     worker.apply_control(MixerControl::StartCrossfade {
         outgoing: DeckId::Primary,
         incoming: DeckId::Secondary,

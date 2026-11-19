@@ -293,5 +293,79 @@ fn benchmark_mixing() {
                 start.elapsed()
             );
         }
+
+        // The fade paths: one shelf (a staged entry alone), the full three-band chain, and an
+        // echo-out around no filter.
+        let shelf = BiquadCoeffs::high_shelf(48_000.0, 4_000.0, 0.707, -6.0);
+        let mut state = [[[BiquadState::default(); 3]; BASS_SWAP_MAX_CHANNELS]; 2];
+        let mut line = echo_line(48_000, channels);
+        let echo = EchoOut {
+            delay: 0.25,
+            feedback: 0.3,
+            cutoff_hz: 3_300.0,
+            wet: 0.1,
+            duration: 1e6,
+        };
+        let mut echo = EchoRuntime::new(echo, 48_000, channels, &mut line).unwrap();
+        let mut time =
+            |name: &str, run: &mut dyn FnMut(&mut DeckRuntime, &mut DeckRuntime, &mut Vec<f32>)| {
+                let start = Instant::now();
+                for _ in 0..20_000 {
+                    primary.current_index = 0;
+                    secondary.current_index = 0;
+                    block.clear();
+                    for _ in 0..MIX_BLOCK_FRAMES / CROSSFADE_RAMP_FRAMES {
+                        run(&mut primary, &mut secondary, &mut block);
+                    }
+                    black_box(&block);
+                }
+                eprintln!("mixer channels={channels} {name}: {:?}", start.elapsed());
+            };
+        time("one shelf", &mut |p, s, b| {
+            black_box(mix_segment(
+                p,
+                s,
+                b,
+                black_box(channels),
+                CROSSFADE_RAMP_FRAMES,
+                (false, false),
+                black_box(ramp),
+                &mut BiquadFilters {
+                    state: &mut state,
+                    coeffs: [[shelf]; 2],
+                },
+            ));
+        });
+        time("three bands", &mut |p, s, b| {
+            black_box(mix_segment(
+                p,
+                s,
+                b,
+                black_box(channels),
+                CROSSFADE_RAMP_FRAMES,
+                (false, false),
+                black_box(ramp),
+                &mut BiquadFilters {
+                    state: &mut state,
+                    coeffs: [[shelf; 3]; 2],
+                },
+            ));
+        });
+        time("echo", &mut |p, s, b| {
+            black_box(mix_segment(
+                p,
+                s,
+                b,
+                black_box(channels),
+                CROSSFADE_RAMP_FRAMES,
+                (false, false),
+                black_box(ramp),
+                &mut Echoing {
+                    filter: NoFilter,
+                    echo: &mut echo,
+                    line: &mut line,
+                },
+            ));
+        });
     }
 }

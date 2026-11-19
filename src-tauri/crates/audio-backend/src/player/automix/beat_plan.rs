@@ -73,13 +73,15 @@ pub(super) fn align(
     // Bar counts nearest twice the crossfade setting first (fewer bars on a tie): a club-length
     // 16 bars at 128 BPM is a 30 s overlap, far longer than a listener asked for.
     let target = (crossfade_duration * 2.0).clamp(MIN_TARGET, MAX_OVERLAP);
-    let mut bar_counts = bar_counts.to_vec();
-    bar_counts.sort_by(|x, y| {
+    let mut order = [0usize; BEAT_MIX_BARS.len()];
+    let order = &mut order[..bar_counts.len()];
+    order.copy_from_slice(bar_counts);
+    order.sort_unstable_by(|x, y| {
         let off = |bars: usize| (bars as f64 * bar - target).abs();
         off(*x).total_cmp(&off(*y)).then(x.cmp(y))
     });
 
-    for bars in bar_counts {
+    for &bars in order.iter() {
         let duration = bars as f64 * bar;
         if !(2.0..=MAX_OVERLAP).contains(&duration) {
             continue;
