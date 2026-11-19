@@ -548,7 +548,17 @@ mod tests {
 
     #[test]
     fn scratch_analysis_remains_cancellable_after_decode_finishes() {
-        let mut decoder = Decoder::new(Cursor::new(wav_bytes(44_100, 2, 44_100))).unwrap();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&wav_bytes(44_100, 2, 44_100)).unwrap();
+        file.flush().unwrap();
+        let opened = OpenedDecoder::open_with(|| {
+            let input = crate::source::open(crate::source::SourceLocator::from_path(file.path()))?;
+            let extension = input.extension().map(str::to_string);
+            Ok((input, extension))
+        });
+        let Ok(OpenedDecoder::Symphonia(mut decoder)) = opened else {
+            panic!("a WAV opens with symphonia");
+        };
         let flag = std::cell::Cell::new(false);
         let cancelled = || flag.get();
         let spool = PcmSpool::decode(&mut decoder, &cancelled).unwrap();
