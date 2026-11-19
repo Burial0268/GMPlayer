@@ -15,6 +15,22 @@ mod prepare;
 mod tests;
 
 pub use plan::CrossfadePlan;
+
+/// The plan a native prepare would build for this pair, for offline diagnostics.
+#[cfg(test)]
+pub(in crate::player) fn plan_for_pair(
+    config: &AutoMixConfig,
+    current: &crate::automix::TrackAnalysis,
+    next: &crate::automix::TrackAnalysis,
+) -> CrossfadePlan {
+    plan::build_analysis_backed_plan(
+        config,
+        f64::from(current.duration),
+        Some(current),
+        Some(next),
+        1.0,
+    )
+}
 pub(super) use prepare::{
     run_prepare_request_blocking, AutoMixPrepareRequest, AutoMixPrepareResult, PrepareCancel,
 };

@@ -38,7 +38,16 @@ pub(super) fn worker(
     secondary: DeckRuntime,
     channels: usize,
 ) -> (MixerWorker, TestOutput) {
-    let output = TestOutput::new(channels as u16, 48_000, 8);
+    worker_at(primary, secondary, channels, 48_000)
+}
+
+pub(super) fn worker_at(
+    primary: DeckRuntime,
+    secondary: DeckRuntime,
+    channels: usize,
+    rate: u32,
+) -> (MixerWorker, TestOutput) {
+    let output = TestOutput::new(channels as u16, rate, 8);
     let (_, rx) = mpsc::channel();
     let worker = MixerWorker {
         overlap_limiter: None,
@@ -54,8 +63,8 @@ pub(super) fn worker(
         last_phase: (0, 0),
         block_anchor: None,
         block_target: MIX_BLOCK_FRAMES * channels,
-        sample_rate: 48_000,
-        dsp: DspChain::new(48_000, channels as u16),
+        sample_rate: rate,
+        dsp: DspChain::new(rate, channels as u16),
         control_rx: rx,
         control_epoch: Arc::new(AtomicU64::new(0)),
         stop_flag: Arc::new(AtomicBool::new(false)),

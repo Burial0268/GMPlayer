@@ -195,3 +195,284 @@ fn a_balanced_fade_moves_the_level_from_a_to_b_without_bumps() {
         }
     }
 }
+
+/// Offline render of a real pair, for tuning by measurement and by ear:
+///
+/// ```text
+/// AUTOMIX_CURRENT_FILE=a.flac AUTOMIX_NEXT_FILE=b.flac AUTOMIX_RENDER_OUT=/tmp/out \
+///   cargo test -p gmplayer-audio-backend --lib render_real_pair -- --ignored --nocapture
+/// ```
+///
+/// Analyses both files, builds the plan a native prepare would, and renders 10 s of A, the fade
+/// and 10 s of B through `mix_block`. Writes `transition.wav` (the mix), `metrics.csv` (per 100 ms:
+/// level of the mix and of each deck, overall and per band) and prints a summary. Not rendered:
+/// the outgoing tempo stretch of a beat-synced plan (A plays at its own speed).
+#[test]
+#[ignore = "set AUTOMIX_CURRENT_FILE, AUTOMIX_NEXT_FILE and AUTOMIX_RENDER_OUT"]
+fn render_real_pair() {
+    use crate::player::automix::plan_for_pair;
+    let var = |name: &str| std::env::var(name).unwrap_or_else(|_| panic!("set {name}"));
+    let (current_path, next_path) = (var("AUTOMIX_CURRENT_FILE"), var("AUTOMIX_NEXT_FILE"));
+    let out_dir = std::path::PathBuf::from(var("AUTOMIX_RENDER_OUT"));
+    std::fs::create_dir_all(&out_dir).unwrap();
+
+    let current = crate::automix::analyze_audio_file(&current_path, true).unwrap();
+    let next = crate::automix::analyze_audio_file(&next_path, true).unwrap();
+    let config = crate::types::AutoMixConfig {
+        enabled: true,
+        ..Default::default()
+    };
+    let plan = plan_for_pair(&config, &current, &next);
+    println!("plan = {plan:#?}");
+
+    let (a, rate, channels) =
+        crate::automix::decode_interleaved(std::path::Path::new(&current_path)).unwrap();
+    let (b, b_rate, b_channels) =
+        crate::automix::decode_interleaved(std::path::Path::new(&next_path)).unwrap();
+    assert_eq!(
+        (rate, channels),
+        (b_rate, b_channels),
+        "render needs matching formats"
+    );
+
+    // The params `automix_runtime` would arm, including its downgrade of an unsynced beat-mix.
+    let mut style = plan.style;
+    let mut bass_swap = plan.bass_swap;
+    if !plan.beat_synced && matches!(style, FadeStyle::BeatMix(_)) {
+        style = FadeStyle::Blend;
+        bass_swap = bass_swap.map(|_| BassSwap::MIDDLE);
+    }
+    let params = CrossfadeParams {
+        curve: plan.curve,
+        incoming_gain: plan.incoming_gain_adjustment as f32,
+        outgoing_gain: 1.0,
+        overlap_headroom_db: plan.overlap_headroom_db as f32,
+        in_shape: plan.in_shape as f32,
+        out_shape: plan.out_shape as f32,
+        bass_swap,
+        morph: plan.morph,
+        style,
+    };
+
+    let frame = |seconds: f64| (seconds.max(0.0) * f64::from(rate)) as usize * channels;
+    let lead = 10.0;
+    let a_from = frame(plan.start_time - lead).min(a.len());
+    let b_from = frame(plan.incoming_start).min(b.len());
+    let fade_frames = (plan.duration * f64::from(rate)) as usize;
+    // A starts `lead` before the fade, or at its top when the fade starts sooner.
+    let lead_frames = (plan.start_time.clamp(0.0, lead) * f64::from(rate)) as usize;
+    let tail_frames = 10 * rate as usize;
+    let total_frames = lead_frames + fade_frames + tail_frames;
+
+    // Render the mix, then each deck alone (the mixer is linear apart from the safety limiter).
+    let render_with = |a_on: bool, b_on: bool| {
+        let a_part: Vec<f32> = a[a_from..]
+            .iter()
+            .map(|s| if a_on { *s } else { 0.0 })
+            .collect();
+        let b_part: Vec<f32> = b[b_from..]
+            .iter()
+            .map(|s| if b_on { *s } else { 0.0 })
+            .collect();
+        let primary = deck(&a_part, channels, params.outgoing_gain);
+        let secondary = deck(&b_part, channels, 0.0);
+        let (mut worker, _output) =
+            super::timing_tests::worker_at(primary, secondary, channels, rate);
+        let mut out = Vec::with_capacity(total_frames * channels);
+        let mut started = false;
+        while out.len() < total_frames * channels {
+            if !started && out.len() >= lead_frames * channels {
+                worker.apply_control(MixerControl::StartCrossfade {
+                    outgoing: DeckId::Primary,
+                    incoming: DeckId::Secondary,
+                    duration_samples: fade_frames * channels,
+                    start_position: None,
+                    transition: 1,
+                    params,
+                });
+                started = true;
+            }
+            let mut block = Vec::with_capacity(MIX_BLOCK_FRAMES * channels);
+            if !worker.mix_block(&mut block, channels, false, false) {
+                break;
+            }
+            out.extend_from_slice(&block);
+        }
+        out
+    };
+    let mix = render_with(true, true);
+    let a_only = render_with(true, false);
+    let b_only = render_with(false, true);
+
+    write_wav(&out_dir.join("transition.wav"), &mix, rate, channels);
+
+    // Per-100 ms levels, overall and per band (low < 300 Hz < mid < 4 kHz < high).
+    let window = rate as usize / 10;
+    let levels = |signal: &[f32]| band_levels(signal, rate, channels, window);
+    let (mix_l, a_l, b_l) = (levels(&mix), levels(&a_only), levels(&b_only));
+    let mut csv = String::from("t,mix,a,b,a_low,a_mid,a_high,b_low,b_mid,b_high\n");
+    for i in 0..mix_l.len().min(a_l.len()).min(b_l.len()) {
+        let t = i as f64 * 0.1 - lead_frames as f64 / f64::from(rate);
+        csv += &format!(
+            "{t:.1},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2},{:.2}\n",
+            mix_l[i][0],
+            a_l[i][0],
+            b_l[i][0],
+            a_l[i][1],
+            a_l[i][2],
+            a_l[i][3],
+            b_l[i][1],
+            b_l[i][2],
+            b_l[i][3]
+        );
+    }
+    std::fs::write(out_dir.join("metrics.csv"), csv).unwrap();
+
+    // Summary: how the level moves across the fade, when B is heard, where the decks clash.
+    let start_w = lead_frames / window;
+    let end_w = (lead_frames + fade_frames) / window;
+    let mean =
+        |v: &[[f32; 4]], band: usize| v.iter().map(|l| l[band]).sum::<f32>() / v.len() as f32;
+    let before = mean(&mix_l[start_w.saturating_sub(20)..start_w], 0);
+    let after = mean(&mix_l[end_w + 10..(end_w + 30).min(mix_l.len())], 0);
+    let fade = &mix_l[start_w..end_w];
+    let deviation = fade
+        .iter()
+        .enumerate()
+        .map(|(i, l)| l[0] - (before + (after - before) * i as f32 / fade.len() as f32))
+        .fold((0.0f32, 0.0f32), |(lo, hi), d| (lo.min(d), hi.max(d)));
+    let share = |pred: &dyn Fn(usize) -> bool| {
+        (start_w..end_w)
+            .find(|w| pred(*w))
+            .map_or(1.0, |w| (w - start_w) as f32 / (end_w - start_w) as f32)
+    };
+    let heard = share(&|w| b_l[w][0] > a_l[w][0] - 10.0);
+    let crossed = share(&|w| b_l[w][0] > a_l[w][0]);
+    let clash = |band: usize| {
+        (start_w..end_w)
+            .filter(|w| {
+                let (x, y) = (a_l[*w][band], b_l[*w][band]);
+                x > -50.0 && y > -50.0 && (x - y).abs() < 6.0
+            })
+            .count() as f32
+            * 0.1
+    };
+    // B's own level at points through the fade, and the jump in the second after completion.
+    let b_at = |share: f32| b_l[start_w + ((end_w - start_w) as f32 * share) as usize][0];
+    let step_after = mean(&mix_l[end_w..(end_w + 10).min(mix_l.len())], 0)
+        - mean(&mix_l[end_w.saturating_sub(10)..end_w], 0);
+    println!(
+        "B level at 10/25/50% of the fade: {:.1} / {:.1} / {:.1} dB, \
+         step in the 1 s after completion {:+.1} dB",
+        b_at(0.10),
+        b_at(0.25),
+        b_at(0.50),
+        step_after,
+    );
+    println!(
+        "fade {:.1} s at {:.1} s ({:?}, beat_synced={})\n\
+         level before {before:.1} dB, after {after:.1} dB, \
+         deviation from a straight dB path {:.1}..{:+.1} dB\n\
+         B heard (within 10 dB of A) at {:.0}% of the fade, louder than A at {:.0}%\n\
+         both decks within 6 dB: low {:.1} s, mid {:.1} s, high {:.1} s",
+        plan.duration,
+        plan.start_time,
+        params.style,
+        plan.beat_synced,
+        deviation.0,
+        deviation.1,
+        heard * 100.0,
+        crossed * 100.0,
+        clash(1),
+        clash(2),
+        clash(3),
+    );
+}
+
+/// `[overall, low, mid, high]` RMS in dBFS per `window` frames of an interleaved signal.
+fn band_levels(signal: &[f32], rate: u32, channels: usize, window: usize) -> Vec<[f32; 4]> {
+    let rate = f64::from(rate);
+    let mut low = Biquad::low_pass(rate, 300.0);
+    let (mut mid_hp, mut mid_lp) = (
+        Biquad::high_pass(rate, 300.0),
+        Biquad::low_pass(rate, 4_000.0),
+    );
+    let mut high = Biquad::high_pass(rate, 4_000.0);
+    let db = |sum: f64, n: usize| (10.0 * (sum / n.max(1) as f64 + 1e-12).log10()) as f32;
+    signal
+        .chunks_exact(channels)
+        .collect::<Vec<_>>()
+        .chunks(window)
+        .filter(|w| w.len() == window)
+        .map(|frames| {
+            let mut sums = [0f64; 4];
+            for frame in frames {
+                let x = frame.iter().map(|s| f64::from(*s)).sum::<f64>() / channels as f64;
+                let bands = [x, low.run(x), mid_lp.run(mid_hp.run(x)), high.run(x)];
+                for (sum, value) in sums.iter_mut().zip(bands) {
+                    *sum += value * value;
+                }
+            }
+            sums.map(|sum| db(sum, frames.len()))
+        })
+        .collect()
+}
+
+/// RBJ biquad for measurement only.
+struct Biquad {
+    b: [f64; 3],
+    a: [f64; 2],
+    z: [f64; 2],
+}
+
+impl Biquad {
+    fn design(rate: f64, hz: f64, high: bool) -> Self {
+        let w = std::f64::consts::TAU * hz / rate;
+        let (sin, cos) = w.sin_cos();
+        let alpha = sin / (2.0 * std::f64::consts::FRAC_1_SQRT_2);
+        let a0 = 1.0 + alpha;
+        let b = if high {
+            [(1.0 + cos) / 2.0, -(1.0 + cos), (1.0 + cos) / 2.0]
+        } else {
+            [(1.0 - cos) / 2.0, 1.0 - cos, (1.0 - cos) / 2.0]
+        };
+        Self {
+            b: b.map(|x| x / a0),
+            a: [-2.0 * cos / a0, (1.0 - alpha) / a0],
+            z: [0.0; 2],
+        }
+    }
+    fn low_pass(rate: f64, hz: f64) -> Self {
+        Self::design(rate, hz, false)
+    }
+    fn high_pass(rate: f64, hz: f64) -> Self {
+        Self::design(rate, hz, true)
+    }
+    fn run(&mut self, x: f64) -> f64 {
+        let y = self.b[0] * x + self.z[0];
+        self.z[0] = self.b[1] * x - self.a[0] * y + self.z[1];
+        self.z[1] = self.b[2] * x - self.a[1] * y;
+        y
+    }
+}
+
+fn write_wav(path: &std::path::Path, samples: &[f32], rate: u32, channels: usize) {
+    let data_len = (samples.len() * 2) as u32;
+    let mut out = Vec::with_capacity(44 + data_len as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_len).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes());
+    out.extend_from_slice(&(channels as u16).to_le_bytes());
+    out.extend_from_slice(&rate.to_le_bytes());
+    out.extend_from_slice(&(rate * channels as u32 * 2).to_le_bytes());
+    out.extend_from_slice(&(channels as u16 * 2).to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_len.to_le_bytes());
+    for s in samples {
+        out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+    }
+    std::fs::write(path, out).unwrap();
+}
