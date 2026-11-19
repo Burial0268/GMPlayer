@@ -610,6 +610,7 @@ impl AudioPlayer {
                 out_shape: plan.out_shape as f32,
                 bass_swap: plan.bass_swap,
                 morph: plan.morph,
+                stage: plan.stage,
                 style: plan.style,
             })
             .unwrap_or_else(|| CrossfadeParams {
@@ -796,6 +797,7 @@ fn unsync_beat_mix(plan: &mut automix::CrossfadePlan) {
         plan.bass_swap = Some(BassSwap::MIDDLE);
     }
     plan.style = FadeStyle::Blend;
+    plan.stage = automix::choose_stage(plan);
 }
 
 /// Where B's decoder opens: the plan's entry downbeat, or the top of the track.

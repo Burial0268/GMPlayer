@@ -14,6 +14,7 @@ mod prepare;
 #[cfg(test)]
 mod tests;
 
+pub(super) use plan::choose_stage;
 pub use plan::CrossfadePlan;
 
 /// The plan a native prepare would build for this pair, for offline diagnostics.

@@ -34,6 +34,10 @@ const MORPH_LOW_HZ: f32 = 300.0;
 const MORPH_MID_HZ: f32 = 1_100.0;
 const MORPH_MID_Q: f32 = 0.7;
 const MORPH_HIGH_HZ: f32 = 4_000.0;
+/// How far a staged entry holds B's highs down (on the morph's high shelf) until the crossover.
+const STAGE_HIGH_DB: f32 = -15.0;
+/// Share of the fade over which a staged entry hands the highs from A to B.
+const STAGE_HIGH_SPAN: f32 = 0.15;
 /// Layouts wider than this skip deck filtering rather than allocate filter state.
 const BASS_SWAP_MAX_CHANNELS: usize = 8;
 /// FilterCut: the outgoing high-pass climbs 300 Hz -> 18 kHz across the fade.
@@ -183,7 +187,28 @@ pub struct CrossfadeParams {
     pub bass_swap: Option<BassSwap>,
     /// Lean each deck's tone toward the other's across the fade.
     pub morph: Option<BandMorph>,
+    /// Bring B in early but thin; ignored by `FilterCut`.
+    pub stage: Option<BandStage>,
     pub style: FadeStyle,
+}
+
+/// A DJ's staged entry (as in dnb-autodj's transitions): B is heard early as a body without its
+/// highs (and, with a bass swap, without its lows), takes the bass at the `crossover`, and the
+/// highs change hands last, over `STAGE_HIGH_SPAN` from it. Two full spectra never sit on top of
+/// each other, which is what makes a long overlap muddy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandStage {
+    pub crossover: f32,
+}
+
+impl BandStage {
+    /// High shelf gains (outgoing, incoming) in dB at `progress`. The handover always finishes
+    /// by the end of the fade, so B is itself when the filters come off.
+    fn high_db(self, progress: f32) -> (f32, f32) {
+        let start = self.crossover.clamp(0.0, 1.0 - STAGE_HIGH_SPAN);
+        let s = smootherstep(((progress - start) / STAGE_HIGH_SPAN).clamp(0.0, 1.0));
+        (STAGE_HIGH_DB * s, STAGE_HIGH_DB * (1.0 - s))
+    }
 }
 
 /// The tonal half of a handover, per band (low, mid, high) in dB: A's spectrum leans toward B's as
@@ -251,6 +276,7 @@ impl Default for CrossfadeParams {
             out_shape: 1.0,
             bass_swap: None,
             morph: None,
+            stage: None,
             style: FadeStyle::Blend,
         }
     }
@@ -1744,35 +1770,41 @@ fn deck_filters(
             [BiquadCoeffs::IDENTITY],
         )));
     }
-    let Some(morph) = params.morph else {
+    if params.morph.is_none() && params.stage.is_none() {
         let (out, inc) = swap_shelves(params.bass_swap?);
         return Some(FadeFilters::One(order(outgoing, [out], [inc])));
-    };
-    // Outgoing leans 0 -> d, incoming -d -> 0, on the same eased progress as the gains. A band
-    // that never moves is an exact pass-through.
-    let (lean_out, lean_in) = (eased_progress(progress), eased_progress(1.0 - progress));
-    fn band(
-        db: f32,
-        (lean_out, lean_in): (f32, f32),
-        design: impl Fn(f32) -> BiquadCoeffs,
-    ) -> (BiquadCoeffs, BiquadCoeffs) {
-        if db == 0.0 {
-            (BiquadCoeffs::IDENTITY, BiquadCoeffs::IDENTITY)
-        } else {
-            (design(db * lean_out), design(-db * lean_in))
-        }
     }
-    let lean = (lean_out, lean_in);
+    let morph = params.morph.map_or([0.0; 3], |morph| morph.db);
+    // Outgoing leans 0 -> d, incoming -d -> 0, on the same eased progress as the gains; `extra`
+    // (the staged entry) adds on in dB. A side that does not move is an exact pass-through.
+    let (lean_out, lean_in) = (eased_progress(progress), eased_progress(1.0 - progress));
+    let band =
+        |db: f32, (extra_out, extra_in): (f32, f32), design: &dyn Fn(f32) -> BiquadCoeffs| {
+            let side = |db: f32| {
+                if db == 0.0 {
+                    BiquadCoeffs::IDENTITY
+                } else {
+                    design(db)
+                }
+            };
+            (
+                side(db * lean_out + extra_out),
+                side(-db * lean_in + extra_in),
+            )
+        };
     let low = match params.bass_swap {
         Some(swap) => swap_shelves(swap),
-        None => band(morph.db[0], lean, |db| {
+        None => band(morph[0], (0.0, 0.0), &|db| {
             BiquadCoeffs::low_shelf(rate, MORPH_LOW_HZ, 0.707, db)
         }),
     };
-    let mid = band(morph.db[1], lean, |db| {
+    let mid = band(morph[1], (0.0, 0.0), &|db| {
         BiquadCoeffs::peaking(rate, MORPH_MID_HZ, MORPH_MID_Q, db)
     });
-    let high = band(morph.db[2], lean, |db| {
+    let staged = params
+        .stage
+        .map_or((0.0, 0.0), |stage| stage.high_db(progress));
+    let high = band(morph[2], staged, &|db| {
         BiquadCoeffs::high_shelf(rate, MORPH_HIGH_HZ, 0.707, db)
     });
     Some(FadeFilters::Three(order(
@@ -1861,7 +1893,7 @@ fn starved_retry_backoff(retry_count: &mut u32) {
 }
 
 /// Share of a fade, at each end, over which its progress eases in and out.
-const FADE_EDGE: f32 = 0.15;
+const FADE_EDGE: f32 = 0.06;
 
 /// A fade's progress warped so every curve built on it starts and ends at rest: linear through
 /// the middle, with raised-cosine velocity ramps over the first and last `FADE_EDGE`. On plain `t`
@@ -2455,6 +2487,58 @@ mod tests {
         // Swapped decks swap the roles.
         let swapped = deck_filters(48_000.0, params, DeckId::Secondary, 1.0).unwrap();
         assert!(near(tone_level(swapped, 1, 1_100.0), 4.0));
+    }
+
+    #[test]
+    fn a_staged_entry_holds_b_thin_until_the_crossover_then_hands_the_highs_over() {
+        let params = CrossfadeParams {
+            bass_swap: Some(BassSwap {
+                start: 0.4,
+                end: 0.5,
+            }),
+            stage: Some(BandStage { crossover: 0.5 }),
+            ..Default::default()
+        };
+        let at = |progress| deck_filters(48_000.0, params, DeckId::Primary, progress).unwrap();
+        let (a, b) = (0, 1);
+        let near = |got: f32, want: f32| (got - want).abs() < 0.5;
+        // B arrives as a body: no highs, no lows; A is untouched.
+        assert!(near(tone_level(at(0.0), b, 14_000.0), STAGE_HIGH_DB));
+        assert!(near(tone_level(at(0.0), b, 40.0), BASS_SWAP_KILL_DB));
+        assert!(near(tone_level(at(0.0), b, 700.0), 0.0));
+        assert!(near(tone_level(at(0.0), a, 14_000.0), 0.0));
+        // Still without highs at the crossover, though the bass has changed hands.
+        assert!(near(tone_level(at(0.5), b, 14_000.0), STAGE_HIGH_DB));
+        assert!(near(tone_level(at(0.5), b, 40.0), 0.0));
+        // The highs have changed hands one span later.
+        let handed = at(0.5 + STAGE_HIGH_SPAN);
+        assert!(near(tone_level(handed, b, 14_000.0), 0.0));
+        assert!(near(tone_level(handed, a, 14_000.0), STAGE_HIGH_DB));
+        // A crossover too late for the span still lets B finish as itself.
+        let late = CrossfadeParams {
+            stage: Some(BandStage { crossover: 0.98 }),
+            ..params
+        };
+        let end = deck_filters(48_000.0, late, DeckId::Primary, 1.0).unwrap();
+        assert!(near(tone_level(end, b, 14_000.0), 0.0));
+        // On top of a morph the two add in dB.
+        let morphed = CrossfadeParams {
+            morph: Some(BandMorph {
+                db: [0.0, 0.0, -3.0],
+            }),
+            ..params
+        };
+        let end = deck_filters(48_000.0, morphed, DeckId::Primary, 1.0).unwrap();
+        assert!(near(tone_level(end, a, 14_000.0), STAGE_HIGH_DB - 3.0));
+        // FilterCut has its own sweep.
+        let cut = CrossfadeParams {
+            style: FadeStyle::FilterCut,
+            ..params
+        };
+        assert!(matches!(
+            deck_filters(48_000.0, cut, DeckId::Primary, 0.0),
+            Some(FadeFilters::One(_))
+        ));
     }
 
     #[test]

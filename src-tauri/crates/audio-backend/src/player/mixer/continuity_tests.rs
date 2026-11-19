@@ -236,11 +236,11 @@ fn render_real_pair() {
     );
 
     // The params `automix_runtime` would arm, including its downgrade of an unsynced beat-mix.
-    let mut style = plan.style;
-    let mut bass_swap = plan.bass_swap;
-    if !plan.beat_synced && matches!(style, FadeStyle::BeatMix(_)) {
-        style = FadeStyle::Blend;
-        bass_swap = bass_swap.map(|_| BassSwap::MIDDLE);
+    let mut plan = plan;
+    if !plan.beat_synced && matches!(plan.style, FadeStyle::BeatMix(_)) {
+        plan.style = FadeStyle::Blend;
+        plan.bass_swap = plan.bass_swap.map(|_| BassSwap::MIDDLE);
+        plan.stage = crate::player::automix::choose_stage(&plan);
     }
     let params = CrossfadeParams {
         curve: plan.curve,
@@ -249,9 +249,10 @@ fn render_real_pair() {
         overlap_headroom_db: plan.overlap_headroom_db as f32,
         in_shape: plan.in_shape as f32,
         out_shape: plan.out_shape as f32,
-        bass_swap,
+        bass_swap: plan.bass_swap,
         morph: plan.morph,
-        style,
+        stage: plan.stage,
+        style: plan.style,
     };
 
     let frame = |seconds: f64| (seconds.max(0.0) * f64::from(rate)) as usize * channels;

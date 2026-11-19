@@ -3,7 +3,7 @@
 use super::beat_plan;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
-use crate::player::mixer::{BandMorph, BassSwap, FadeStyle};
+use crate::player::mixer::{BandMorph, BandStage, BassSwap, FadeStyle};
 use crate::types::{AutoMixConfig, CrossfadeCurve};
 
 const MIN_CROSSFADE_DURATION: f64 = 2.0;
@@ -33,6 +33,7 @@ pub struct CrossfadePlan {
     pub beat_synced: bool,
     pub bass_swap: Option<BassSwap>,
     pub morph: Option<BandMorph>,
+    pub stage: Option<BandStage>,
     pub style: FadeStyle,
     /// B's source second the overlap starts from: its first downbeat on a
     /// paired plan, so an intro before the beat is not laid under A.
@@ -63,6 +64,7 @@ pub(super) fn build_time_based_plan(
         beat_synced: false,
         bass_swap: None,
         morph: None,
+        stage: None,
         style: FadeStyle::Blend,
         incoming_start: 0.0,
     }
@@ -141,6 +143,7 @@ pub(super) fn build_analysis_backed_plan(
         if aligned.style != FadeStyle::FilterCut {
             aligned.morph = choose_morph(&aligned, current, next);
         }
+        aligned.stage = choose_stage(&aligned);
         return aligned;
     }
     let mut plan = clamp_plan_to_content(plan, effective_end);
@@ -148,7 +151,21 @@ pub(super) fn build_analysis_backed_plan(
         shape_for_pair(&mut plan, current, next);
     }
     hold_for_last_vocal(&mut plan, current);
+    plan.stage = choose_stage(&plan);
     plan
+}
+
+/// Staged entry for every style but `FilterCut` (whose sweep is its own handover). The crossover
+/// is where B takes the bass — the swap's end — or A's handoff when A holds the floor longer,
+/// since A's highs must not dull while it is still singing.
+pub(in crate::player) fn choose_stage(plan: &CrossfadePlan) -> Option<BandStage> {
+    let handoff = match plan.style {
+        FadeStyle::FilterCut => return None,
+        FadeStyle::Handoff(handoff) | FadeStyle::BeatMix(handoff) => handoff,
+        FadeStyle::Blend => 0.0,
+    };
+    let crossover = plan.bass_swap.map_or(0.5, |swap| swap.end).max(handoff);
+    Some(BandStage { crossover })
 }
 
 /// The incoming deck's gain, matched to what the listener hears now rather than to an absolute
