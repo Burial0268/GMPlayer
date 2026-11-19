@@ -106,7 +106,7 @@ impl AudioPlayer {
                 "AutoMix prepared: next_index={:?}, start_time={:.3}, duration={:?}",
                 status.next_index, start_time, status.crossfade_duration
             );
-            if let Err(error) = self.start_native_automix_crossfade(true).await {
+            if let Err(error) = self.start_native_automix_crossfade().await {
                 self.cancel_native_automix_runtime().await;
                 let events = self.automix.mark_failed(error.to_string(), status_index);
                 self.emit_many(events).await;
@@ -460,10 +460,12 @@ impl AudioPlayer {
         Ok(())
     }
 
-    pub(super) async fn start_native_automix_crossfade(
-        &mut self,
-        scheduled: bool,
-    ) -> anyhow::Result<()> {
+    /// Arms the prepared fade at its cue, or starts it now once the cue has passed. A force-start
+    /// from the frontend comes here too and gets the same answer: the frontend's clock is an
+    /// extrapolation that runs ahead of a stalled stream (an Android WebView thawing runs its frame
+    /// loop before the queued `Buffering` events), and starting at once then cut off a track that
+    /// was still downloading. The backend's position is the one that counts.
+    pub(super) async fn start_native_automix_crossfade(&mut self) -> anyhow::Result<()> {
         let mut prepared = self
             .automix
             .take_prepared_for_start()
@@ -534,7 +536,7 @@ impl AudioPlayer {
         let start_position = prepared
             .plan
             .as_ref()
-            .filter(|plan| scheduled && plan.start_time > now)
+            .filter(|plan| plan.start_time > now)
             .map(|plan| plan.start_time);
         if let Some(plan) = prepared.plan.as_mut() {
             let remaining = prepared.analysis_duration - plan.incoming_start;

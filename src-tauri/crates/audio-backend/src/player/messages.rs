@@ -409,7 +409,7 @@ impl AudioPlayer {
                         self.schedule_native_automix_ready_retry(self.native_crossfade_gen());
                         return self.finish_message(msg).await;
                     }
-                    if let Err(err) = self.start_native_automix_crossfade(false).await {
+                    if let Err(err) = self.start_native_automix_crossfade().await {
                         self.cancel_native_automix_runtime().await;
                         let events = self
                             .automix

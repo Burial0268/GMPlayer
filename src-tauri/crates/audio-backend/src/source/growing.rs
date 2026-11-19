@@ -204,6 +204,15 @@ impl Progress {
         id
     }
 
+    /// How far writer `id` has written: where a resume after it failed picks up.
+    pub(crate) fn writer_pos(&self, id: u64) -> u64 {
+        self.lock()
+            .writers
+            .iter()
+            .find(|w| w.id == id)
+            .map_or(0, |w| w.pos)
+    }
+
     pub(crate) fn writer_start(&self, id: u64) -> u64 {
         self.lock()
             .writers
