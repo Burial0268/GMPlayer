@@ -611,6 +611,7 @@ impl AudioPlayer {
                 bass_swap: plan.bass_swap,
                 morph: plan.morph,
                 stage: plan.stage,
+                echo: plan.echo,
                 style: plan.style,
             })
             .unwrap_or_else(|| CrossfadeParams {

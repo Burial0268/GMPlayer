@@ -338,6 +338,14 @@ impl BiquadCoeffs {
         a2: 0.0,
     };
 
+    pub(crate) fn low_pass(sample_rate: f32, frequency: f32, q: f32) -> Self {
+        let omega = std::f32::consts::TAU * frequency / sample_rate;
+        let (sin, cos) = omega.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let b0 = (1.0 - cos) / 2.0;
+        Self::normalize(b0, 1.0 - cos, b0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha)
+    }
+
     pub(crate) fn high_pass(sample_rate: f32, frequency: f32, q: f32) -> Self {
         let omega = std::f32::consts::TAU * frequency / sample_rate;
         let (sin, cos) = omega.sin_cos();

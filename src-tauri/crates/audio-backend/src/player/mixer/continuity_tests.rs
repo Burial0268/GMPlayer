@@ -196,6 +196,41 @@ fn a_balanced_fade_moves_the_level_from_a_to_b_without_bumps() {
     }
 }
 
+/// An echo-out keeps ringing after a fade shorter than it, then leaves the worker; a fade without
+/// one sounds exactly as before.
+#[test]
+fn an_echo_out_rings_past_its_fade_and_then_goes() {
+    let (channels, rate) = (2, 48_000);
+    let fade = rate / 10;
+    let a = noise(fade, channels, 0.5, 1);
+    let b = vec![0.0; 2 * rate * channels];
+    let plain = CrossfadeParams::default();
+    let echo = EchoOut {
+        delay: 0.125,
+        feedback: 0.4,
+        cutoff_hz: 4_000.0,
+        wet: 0.5,
+        duration: 1.0,
+    };
+    let echoed = CrossfadeParams {
+        echo: Some(echo),
+        ..plain
+    };
+    let rms = |x: &[f32]| (x.iter().map(|s| s * s).sum::<f32>() / x.len() as f32).sqrt();
+    let (dry, completed) = render(&a, &b, channels, fade, rate, plain);
+    let (wet, _) = render(&a, &b, channels, fade, rate, echoed);
+    // Both are A alone until the first repeat comes back.
+    let first = rate / 8 * channels;
+    assert_eq!(dry[..first], wet[..first]);
+    // After the fade A is gone and B is silent: only the echo is left.
+    let after = completed * channels;
+    assert_eq!(rms(&dry[after..]), 0.0);
+    assert!(rms(&wet[after..after + rate / 4 * channels]) > 1e-3);
+    // Its envelope has died away by its end.
+    let end = rate * channels;
+    assert!(rms(&wet[end..]) < 1e-4, "{}", rms(&wet[end..]));
+}
+
 /// Offline render of a real pair, for tuning by measurement and by ear:
 ///
 /// ```text
@@ -252,6 +287,7 @@ fn render_real_pair() {
         bass_swap: plan.bass_swap,
         morph: plan.morph,
         stage: plan.stage,
+        echo: plan.echo,
         style: plan.style,
     };
 

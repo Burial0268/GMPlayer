@@ -6,6 +6,7 @@ use crate::automix::{
     EnergyAnalysis, SectionAnalysis, SongSection, SongSectionKind, SpectralFingerprint,
     TrackAnalysis, VolumeAnalysis,
 };
+use crate::player::mixer::FadeStyle;
 use crate::types::CrossfadeCurve;
 use std::path::Path;
 
@@ -426,4 +427,35 @@ fn two_loud_ends_barely_overlap() {
         placed(&loud_to_the_end, &opening(4.0)),
         placed(&unmeasured, &opening(4.0))
     );
+}
+
+#[test]
+fn an_echo_out_carries_a_filter_cut_or_a_hard_ending_out() {
+    let mut plan = build_time_based_plan(&config(false), 200.0);
+    let current = with_loudness("hard", &[]);
+    let mut effects = config(false);
+    effects.transition_effects = true;
+    let echo = |config: &AutoMixConfig, plan: &CrossfadePlan| {
+        super::plan::choose_echo(config, &current, plan)
+    };
+    // A blend over an ordinary length needs none.
+    plan.duration = 8.0;
+    assert!(echo(&effects, &plan).is_none());
+    // A hard ending's short fade, and a filter-cut, do.
+    plan.duration = 3.0;
+    let thrown = echo(&effects, &plan).unwrap();
+    assert!(
+        (thrown.delay - 0.32).abs() < 1e-6,
+        "no tempo: the Web's default"
+    );
+    assert!((thrown.duration - 1.65).abs() < 1e-6);
+    plan.duration = 15.0;
+    plan.style = FadeStyle::FilterCut;
+    assert_eq!(echo(&effects, &plan).unwrap().duration, 4.0);
+    // Not without transition effects, nor on a calm arc.
+    let mut without = effects.clone();
+    without.transition_effects = false;
+    assert!(echo(&without, &plan).is_none());
+    plan.arc = EmotionalArc::Drift;
+    assert!(echo(&effects, &plan).is_none());
 }

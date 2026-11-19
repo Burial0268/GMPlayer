@@ -51,6 +51,8 @@ pub(super) fn worker_at(
     let (_, rx) = mpsc::channel();
     let worker = MixerWorker {
         overlap_limiter: None,
+        echo: None,
+        echo_line: super::echo_line(rate, channels),
         output: output.writer.clone(),
         output_channels: channels,
         primary,

@@ -3,7 +3,7 @@
 use super::beat_plan;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
-use crate::player::mixer::{BandMorph, BandStage, BassSwap, FadeStyle};
+use crate::player::mixer::{BandMorph, BandStage, BassSwap, EchoOut, FadeStyle, ECHO_MAX_DELAY};
 use crate::types::{AutoMixConfig, CrossfadeCurve};
 
 const MIN_CROSSFADE_DURATION: f64 = 2.0;
@@ -41,6 +41,7 @@ pub struct CrossfadePlan {
     pub bass_swap: Option<BassSwap>,
     pub morph: Option<BandMorph>,
     pub stage: Option<BandStage>,
+    pub echo: Option<EchoOut>,
     pub style: FadeStyle,
     /// B's source second the overlap starts from: its first downbeat on a
     /// paired plan, so an intro before the beat is not laid under A.
@@ -72,6 +73,7 @@ pub(super) fn build_time_based_plan(
         bass_swap: None,
         morph: None,
         stage: None,
+        echo: None,
         style: FadeStyle::Blend,
         incoming_start: 0.0,
     }
@@ -164,6 +166,7 @@ pub(super) fn build_analysis_backed_plan(
             aligned.morph = choose_morph(&aligned, current, next);
         }
         aligned.stage = choose_stage(&aligned);
+        aligned.echo = choose_echo(config, current, &aligned);
         return aligned;
     }
     let mut plan = clamp_plan_to_content(plan, effective_end);
@@ -172,7 +175,51 @@ pub(super) fn build_analysis_backed_plan(
     }
     hold_for_last_vocal(&mut plan, current);
     plan.stage = choose_stage(&plan);
+    plan.echo = choose_echo(config, current, &plan);
     plan
+}
+
+/// How hard the echo-out throws, the Web's `1 - compatibility`; native plans keep no
+/// compatibility score.
+/// shortcut: one fixed intensity, upgrade when native plans score pair compatibility.
+const ECHO_INTENSITY: f32 = 0.5;
+
+/// An echo-out where nothing else carries A out: a filter-cut (tempos too far apart to blend
+/// beats) or a short fade off an abrupt ending. Off without transition effects, and for the calm
+/// arcs, as on the Web. Parameters are the Web echo throw's (`TransitionEffects.ts`): an
+/// eighth-note delay from A's tempo, and a duration of about half the fade, 1 to 4 s.
+pub(super) fn choose_echo(
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    plan: &CrossfadePlan,
+) -> Option<EchoOut> {
+    if !config.transition_effects
+        || matches!(plan.arc, EmotionalArc::Afterglow | EmotionalArc::Drift)
+    {
+        return None;
+    }
+    let hard = current
+        .outro
+        .as_ref()
+        .is_some_and(|outro| outro.outro_type == "hard" && outro.outro_confidence >= 0.6);
+    if plan.style != FadeStyle::FilterCut && !(hard && plan.duration < 4.0) {
+        return None;
+    }
+    let beat = current.bpm.as_ref().and_then(|bpm| {
+        bpm.tail
+            .as_ref()
+            .map(|grid| grid.period)
+            .filter(|period| *period > 0.0)
+            .or((bpm.bpm > 0.0).then(|| 60.0 / bpm.bpm))
+    });
+    let intensity = ECHO_INTENSITY;
+    Some(EchoOut {
+        delay: beat.map_or(0.32, |beat| (beat * 0.5).clamp(0.16, ECHO_MAX_DELAY)),
+        feedback: 0.22 + intensity * 0.18,
+        cutoff_hz: 4_200.0 - intensity * 1_800.0,
+        wet: 10f32.powf((-22.0 + intensity * 8.0) / 20.0),
+        duration: (plan.duration as f32 * 0.55).clamp(1.0, 4.0),
+    })
 }
 
 /// Staged entry for every style but `FilterCut` (whose sweep is its own handover). The crossover
