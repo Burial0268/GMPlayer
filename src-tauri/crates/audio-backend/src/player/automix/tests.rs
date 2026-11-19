@@ -343,3 +343,87 @@ fn the_band_morph_carries_tone_not_loudness() {
     );
     assert!(choose_morph(&plan, &a, &banded([0.4, 0.1, 0.1], false)).is_none());
 }
+
+/// An outro whose 250 ms short-term loudness windows are `runs` of (LUFS, seconds), ending at the
+/// content end.
+fn with_loudness(outro_type: &str, runs: &[(f32, f32)]) -> TrackAnalysis {
+    let mut track = track(vec![]);
+    let loudness = runs
+        .iter()
+        .flat_map(|(lufs, seconds)| std::iter::repeat_n(*lufs, (seconds * 4.0) as usize))
+        .collect();
+    track.outro = Some(automix_analysis::OutroAnalysis {
+        outro_type: outro_type.into(),
+        outro_confidence: 0.7,
+        musical_end_offset: 0.0,
+        suggested_crossfade_start: 190.0,
+        multiband_energy: automix_analysis::MultibandEnergy {
+            low: Vec::new(),
+            mid: Vec::new(),
+            high: Vec::new(),
+        },
+        spectral_flux: Vec::new(),
+        short_term_loudness: loudness,
+        deceleration_start: None,
+        sustain_onset: None,
+        outro_section_start: None,
+        loop_period: None,
+    });
+    track
+}
+
+fn opening(quiet_intro_duration: f32) -> TrackAnalysis {
+    let mut track = track(vec![]);
+    track.intro = Some(automix_analysis::IntroAnalysis {
+        quiet_intro_duration,
+        energy_build_duration: 0.0,
+        intro_energy_ratio: 1.0,
+        multiband_energy: None,
+    });
+    track
+}
+
+fn placed(current: &TrackAnalysis, next: &TrackAnalysis) -> (f64, f64) {
+    let plan = build_analysis_backed_plan(&config(false), 200.0, Some(current), Some(next), 1.0);
+    (plan.start_time, plan.duration)
+}
+
+fn near(got: (f64, f64), want: (f64, f64)) -> bool {
+    (got.0 - want.0).abs() < 0.01 && (got.1 - want.1).abs() < 0.01
+}
+
+#[test]
+fn the_fade_covers_the_tail_where_the_outgoing_song_decays() {
+    let next = opening(4.0);
+    // Steady, then 8 LU down for its last 10 s: B arrives as the decay starts.
+    let decaying = with_loudness("fadeOut", &[(-10.0, 40.0), (-25.0, 10.0)]);
+    assert!(near(placed(&decaying, &next), (190.0, 10.0)));
+    // An 8 LU tail longer than 15 s starts too early; the 20 LU point is the real end.
+    let long_tail = with_loudness("fadeOut", &[(-10.0, 25.0), (-22.0, 20.0), (-40.0, 5.0)]);
+    assert!(near(placed(&long_tail, &next), (195.0, 5.0)));
+    // A tail longer than the overlap budget keeps its end and gives up its start.
+    let capped = with_loudness("fadeOut", &[(-10.0, 36.0), (-25.0, 14.0)]);
+    assert!(near(placed(&capped, &next), (188.0, 12.0)));
+}
+
+#[test]
+fn a_hard_ending_keeps_its_short_fade() {
+    let next = opening(4.0);
+    let hard = with_loudness("hard", &[(-10.0, 40.0), (-25.0, 10.0)]);
+    let unmeasured = with_loudness("hard", &[]);
+    assert_eq!(placed(&hard, &next), placed(&unmeasured, &next));
+}
+
+#[test]
+fn two_loud_ends_barely_overlap() {
+    let loud_to_the_end = with_loudness("musicalOutro", &[(-10.0, 50.0)]);
+    let (start, duration) = placed(&loud_to_the_end, &opening(0.0));
+    assert!(duration <= 4.0 + 1e-9, "{duration}");
+    assert!((start + duration - 200.0).abs() < 0.01);
+    // B opening quietly can be laid under A as before.
+    let unmeasured = with_loudness("musicalOutro", &[]);
+    assert_eq!(
+        placed(&loud_to_the_end, &opening(4.0)),
+        placed(&unmeasured, &opening(4.0))
+    );
+}

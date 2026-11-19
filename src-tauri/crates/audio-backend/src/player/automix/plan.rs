@@ -15,6 +15,13 @@ const VOCAL_CLEAR: f32 = 0.25;
 const VOCAL_WINDOW_ACTIVE: f32 = 0.55;
 /// Mean low-band level both sides need before two basslines would stack.
 const BASS_PRESENT: f32 = 0.01;
+/// Liquidsoap autocue's thresholds: A's decay starts where it falls `TAIL_DROP_LU` below its loud
+/// level, or `LONG_TAIL_DROP_LU` when that tail would be longer than `LONG_TAIL_SECONDS`.
+const TAIL_DROP_LU: f32 = 8.0;
+const LONG_TAIL_DROP_LU: f32 = 20.0;
+const LONG_TAIL_SECONDS: f64 = 15.0;
+/// Overlap for two songs that are both loud at the seam (Liquidsoap `cross.smart`).
+const LOUD_PAIR_SECONDS: f64 = 4.0;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -98,9 +105,15 @@ pub(super) fn build_analysis_backed_plan(
     plan.curve = choose_analysis_curve(current);
     plan.overlap_headroom_db = choose_overlap_headroom(current_analysis, next_analysis);
 
-    let baseline_start =
-        analysis_baseline_start(current, current_duration, effective_end, plan.duration)
-            .unwrap_or(plan.start_time);
+    let measured = loudness_placement(config, current, next_analysis, effective_end);
+    let baseline_start = match measured {
+        Some((start, duration)) => {
+            plan.duration = duration;
+            start
+        }
+        None => analysis_baseline_start(current, current_duration, effective_end, plan.duration)
+            .unwrap_or(plan.start_time),
+    };
     let candidate_start = selected_mix_candidate_start(config, current);
     let start = if let Some(candidate_start) = candidate_start {
         let max_shift = plan.duration.max(8.0).min(20.0);
@@ -605,6 +618,58 @@ fn spectral_similarity(a: &[f32], b: &[f32]) -> f32 {
     } else {
         (dot / denom).clamp(0.0, 1.0)
     }
+}
+
+/// Start and length of a fade over A's own decay. Reads A's outro short-term loudness (250 ms
+/// windows ending at the content end) the way Liquidsoap's autocue does: the decay starts after
+/// the last window within `TAIL_DROP_LU` of the outro's loud level (its 80th percentile). B
+/// arriving there is heard as A lets go, rather than at a fixed time that is either still inside
+/// A's last full bars or already in its silence. A hard or silent ending keeps its short fade.
+/// When A is loud to the very end, B opening loud gets a short overlap; B opening quietly is left
+/// to the ordinary placement, where A covers its intro.
+fn loudness_placement(
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    next: Option<&automix_analysis::TrackAnalysis>,
+    effective_end: f64,
+) -> Option<(f64, f64)> {
+    let outro = current.outro.as_ref()?;
+    if outro.outro_confidence >= 0.6 && matches!(outro.outro_type.as_str(), "hard" | "silence") {
+        return None;
+    }
+    let loudness = &outro.short_term_loudness;
+    // Under 4 s of windows says nothing about a decay.
+    if loudness.len() < 16 {
+        return None;
+    }
+    let mut sorted = loudness.clone();
+    sorted.sort_by(f32::total_cmp);
+    let reference = sorted[(sorted.len() - 1) * 8 / 10];
+    let content_end = f64::from(current.duration - current.energy.trailing_silence);
+    let tail_start = |drop: f32| {
+        loudness
+            .iter()
+            .rposition(|lufs| *lufs >= reference - drop)
+            .map(|i| content_end - (loudness.len() - 1 - i) as f64 * 0.25)
+    };
+    let mut start = tail_start(TAIL_DROP_LU)?;
+    if content_end - start > LONG_TAIL_SECONDS {
+        start = tail_start(LONG_TAIL_DROP_LU)?;
+    }
+    let tail = content_end - start;
+    let duration = if tail < MIN_CROSSFADE_DURATION {
+        let intro = next?.intro.as_ref()?;
+        if intro.quiet_intro_duration >= 1.0 || intro.intro_energy_ratio < 0.8 {
+            return None;
+        }
+        configured_duration(config, effective_end).min(LOUD_PAIR_SECONDS)
+    } else {
+        let longest = (config.crossfade_duration * 1.5)
+            .max(12.0)
+            .min((effective_end / 4.0).max(MIN_CROSSFADE_DURATION));
+        tail.clamp(MIN_CROSSFADE_DURATION, longest)
+    };
+    Some((content_end - duration, duration))
 }
 
 fn analysis_baseline_start(
