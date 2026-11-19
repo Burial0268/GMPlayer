@@ -24,6 +24,10 @@ const LONG_TAIL_SECONDS: f64 = 15.0;
 const LOUD_PAIR_SECONDS: f64 = 4.0;
 /// Shorter than this, B opens at full level and there is no lead-in to lay under A.
 const MIN_LEAD_IN: f64 = 0.5;
+/// How far B's beat may sit from A's for B's first beat to continue A's pulse at B's spacing.
+const MEET_STEP_TOLERANCE: f64 = 0.1;
+/// How fast an echo-out into B's first beat opens.
+const ECHO_OUT_ATTACK: f64 = 0.03;
 /// Longest tail after A's drop that may ring out under B: B reaches full level only as A's release
 /// ends, so a longer decay keeps its measured fade.
 const MEET_MAX_TAIL: f64 = 4.0;
@@ -184,17 +188,21 @@ pub(super) fn build_analysis_backed_plan(
         return aligned;
     }
     let mut plan = clamp_plan_to_content(plan, effective_end);
+    let mut met = None;
     if let Some(next) = next_analysis {
-        let met = meet_on_arrival(&mut plan, config, current, next, effective_end);
+        met = meet_on_arrival(&mut plan, config, current, next, effective_end);
         shape_for_pair(&mut plan, current, next);
         // Whether the bass swaps is still `choose_bass_swap`'s call; when is B's first beat.
-        if let Some(window) = met {
-            plan.bass_swap = plan.bass_swap.map(|_| window);
+        if let Some(meet) = &met {
+            plan.bass_swap = plan.bass_swap.map(|_| meet.swap);
         }
     }
     hold_for_last_vocal(&mut plan, current);
     plan.stage = choose_stage(&plan);
-    plan.echo = choose_echo(config, current, &plan);
+    plan.echo = match &met {
+        Some(meet) => echo_into_arrival(config, &plan, meet),
+        None => choose_echo(config, current, &plan),
+    };
     plan
 }
 
@@ -234,12 +242,15 @@ pub(super) fn choose_echo(
             .or((bpm.bpm > 0.0).then(|| 60.0 / bpm.bpm))
     });
     let intensity = ECHO_INTENSITY;
+    let duration = (plan.duration as f32 * 0.55).clamp(1.0, 4.0);
     Some(EchoOut {
         delay: beat.map_or(0.32, |beat| (beat * 0.5).clamp(0.16, ECHO_MAX_DELAY)),
         feedback: 0.22 + intensity * 0.18,
         cutoff_hz: 4_200.0 - intensity * 1_800.0,
         wet: 10f32.powf((-22.0 + intensity * 8.0) / 20.0),
-        duration: (plan.duration as f32 * 0.55).clamp(1.0, 4.0),
+        start: 0.0,
+        attack: duration * 0.15,
+        duration,
     })
 }
 
@@ -781,21 +792,36 @@ fn loud_windows(bands: &automix_analysis::MultibandEnergy) -> Option<(usize, usi
 }
 
 /// Where A's full level stops, in song seconds: the end of its last loud outro window (they end at
-/// the content end). Also returned, where B's first beat should land: the beat after A's last pulse
-/// when that is where the grid ends, so B's first beat continues A's, else the same point.
-fn departure(current: &automix_analysis::TrackAnalysis) -> Option<(f64, f64)> {
+/// the content end). Also where B's first beat should land, which continues A's pulse when A's
+/// grid ends there: one step after its last pulse, B's own beat when the two are within
+/// `MEET_STEP_TOLERANCE` (so repeats of A's last beat at that spacing land on B's beats, and the
+/// step is returned), else A's. Without that pulse it is the drop itself.
+fn departure(
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+) -> Option<(f64, f64, Option<f64>)> {
     let (_, last, len) = loud_windows(&current.outro.as_ref()?.multiband_energy)?;
     let content_end = f64::from(current.duration - current.energy.trailing_silence);
     let drop = content_end - (len - 1 - last) as f64 * 0.25;
-    let next_beat = current
+    let b_beat = next
+        .bpm
+        .as_ref()
+        .and_then(|bpm| bpm.head.as_ref())
+        .map(|grid| f64::from(grid.period));
+    let pulse = current
         .bpm
         .as_ref()
         .and_then(|bpm| bpm.tail.as_ref())
         .and_then(|grid| {
             let (last, period) = (f64::from(*grid.beats.last()?), f64::from(grid.period));
-            (last <= drop && drop - last <= 1.5 * period).then_some(last + period)
+            if last > drop || drop - last > 1.5 * period {
+                return None;
+            }
+            let step = b_beat.filter(|b| (b / period - 1.0).abs() <= MEET_STEP_TOLERANCE);
+            Some((last + step.unwrap_or(period), step))
         });
-    Some((drop, next_beat.unwrap_or(drop).min(content_end)))
+    let (meet, step) = pulse.unwrap_or((drop, None));
+    Some((drop, meet.min(content_end), step))
 }
 
 /// How far into B its full level starts: the start of its first loud intro window, or its first
@@ -829,8 +855,8 @@ fn meet_on_arrival(
     current: &automix_analysis::TrackAnalysis,
     next: &automix_analysis::TrackAnalysis,
     effective_end: f64,
-) -> Option<BassSwap> {
-    let (drop, meet) = departure(current)?;
+) -> Option<Meet> {
+    let (drop, meet, step) = departure(current, next)?;
     let arrive = arrival(next)?;
     let start = meet - arrive;
     let duration = effective_end - start;
@@ -850,9 +876,49 @@ fn meet_on_arrival(
     plan.style = FadeStyle::Handoff(handoff);
     let landed = (arrive / duration) as f32;
     let ramp = (beat_plan::SWAP_RAMP_SECONDS / duration) as f32;
-    Some(BassSwap {
-        start: handoff.min(landed - ramp),
-        end: landed,
+    Some(Meet {
+        swap: BassSwap {
+            start: handoff.min(landed - ramp),
+            end: landed,
+        },
+        beat: arrive,
+        step,
+    })
+}
+
+/// What `meet_on_arrival` decided beyond the plan itself.
+struct Meet {
+    /// When the bass changes hands: from A's drop to B's first beat.
+    swap: BassSwap,
+    /// Seconds into the fade of B's first beat.
+    beat: f64,
+    /// B's beat, when B's first beat continues A's pulse at it.
+    step: Option<f64>,
+}
+
+/// A DJ's echo-out on A's last beat, to carry A's mood into B instead of dropping it: from B's
+/// first beat, A's last beat repeats at B's own spacing — on B's beats — and dies away over B's
+/// opening, about four repeats. Opens 30 ms before that beat, so nothing earlier in the line is
+/// heard. Only when B's first beat continues A's pulse at B's beat (`departure`), and like every
+/// echo-out not without transition effects or on a calm arc. The Web's echo throw is a lighter
+/// effect over the whole fade (`choose_echo`).
+fn echo_into_arrival(config: &AutoMixConfig, plan: &CrossfadePlan, meet: &Meet) -> Option<EchoOut> {
+    let step = meet
+        .step
+        .filter(|step| *step <= f64::from(ECHO_MAX_DELAY))?;
+    if !config.transition_effects
+        || matches!(plan.arc, EmotionalArc::Afterglow | EmotionalArc::Drift)
+    {
+        return None;
+    }
+    Some(EchoOut {
+        delay: step as f32,
+        feedback: 0.6,
+        cutoff_hz: 2_500.0,
+        wet: 0.5,
+        start: (meet.beat - ECHO_OUT_ATTACK).max(0.0) as f32,
+        attack: ECHO_OUT_ATTACK as f32,
+        duration: 12.0,
     })
 }
 

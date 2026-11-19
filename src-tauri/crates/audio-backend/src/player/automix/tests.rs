@@ -537,6 +537,15 @@ fn a_quiet_lead_in_lands_bs_first_beat_where_a_lets_go() {
     let swap = plan.bass_swap.unwrap();
     assert!((at(swap.start) - 196.0).abs() < 1e-3 && (at(swap.end) - 196.3).abs() < 1e-3);
 
+    // An echo-out of A's last beat opens on B's first beat and repeats on B's beats.
+    let echo = plan.echo.unwrap();
+    assert!((echo.delay - 0.5).abs() < 1e-6);
+    assert!((plan.start_time + f64::from(echo.start + echo.attack) - 196.3).abs() < 1e-3);
+    let mut plain = config(false);
+    plain.transition_effects = false;
+    let without = build_analysis_backed_plan(&plain, 200.0, Some(&current), Some(&next), 1.0);
+    assert!(without.echo.is_none());
+
     // A long decay after the drop is faded over, not cut under B.
     let mut fading = current.clone();
     fading.outro.as_mut().unwrap().multiband_energy = bands(&[(0.3, 34.0), (0.005, 10.0)]);

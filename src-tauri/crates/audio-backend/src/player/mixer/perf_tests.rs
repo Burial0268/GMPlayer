@@ -339,6 +339,8 @@ fn benchmark_mixing() {
             feedback: 0.3,
             cutoff_hz: 3_300.0,
             wet: 0.1,
+            start: 0.0,
+            attack: 1.5e5,
             duration: 1e6,
         };
         let mut echo = EchoRuntime::new(echo, 48_000, channels, &mut line).unwrap();

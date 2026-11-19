@@ -212,7 +212,12 @@ pub struct EchoOut {
     pub feedback: f32,
     pub cutoff_hz: f32,
     pub wet: f32,
-    /// Seconds from the fade's start.
+    /// Seconds into the fade the repeats start to be heard; the line is fed from the fade's start
+    /// regardless, so the first repeat can be of what played before.
+    pub start: f32,
+    /// Seconds the wet level takes to rise, from `start`.
+    pub attack: f32,
+    /// Seconds from `start` until the repeats are gone.
     pub duration: f32,
 }
 
@@ -230,7 +235,9 @@ struct EchoRuntime {
     gain: f32,
     attack_step: f32,
     decay_ratio: f32,
-    attack_frames: usize,
+    /// The wet level rises over frames `(rise_from, rise_to]` and decays after.
+    rise_from: usize,
+    rise_to: usize,
     frames: usize,
     elapsed: usize,
 }
@@ -246,8 +253,10 @@ impl EchoRuntime {
             return None;
         }
         line[..len].fill(0.0);
-        let frames = (echo.duration.max(0.05) * rate_f) as usize;
-        let attack_frames = ((frames as f32 * 0.15) as usize).max(1);
+        let rise_from = (echo.start.max(0.0) * rate_f) as usize;
+        let attack_frames = ((echo.attack * rate_f) as usize).max(1);
+        let frames =
+            rise_from + ((echo.duration.max(0.05) * rate_f) as usize).max(attack_frames + 1);
         let wet = echo.wet.max(ECHO_FLOOR);
         Some(Self {
             channels,
@@ -258,8 +267,10 @@ impl EchoRuntime {
             pos: 0,
             gain: 0.0,
             attack_step: wet / attack_frames as f32,
-            decay_ratio: (ECHO_FLOOR / wet).powf(1.0 / (frames - attack_frames).max(1) as f32),
-            attack_frames,
+            decay_ratio: (ECHO_FLOOR / wet)
+                .powf(1.0 / (frames - rise_from - attack_frames).max(1) as f32),
+            rise_from,
+            rise_to: rise_from + attack_frames,
             frames,
             elapsed: 0,
         })
@@ -279,10 +290,10 @@ impl EchoRuntime {
                 self.pos = 0;
             }
             self.elapsed += 1;
-            if self.elapsed <= self.attack_frames {
-                self.gain += self.attack_step;
-            } else {
+            if self.elapsed > self.rise_to {
                 self.gain *= self.decay_ratio;
+            } else if self.elapsed > self.rise_from {
+                self.gain += self.attack_step;
             }
         }
         out
@@ -295,7 +306,7 @@ impl EchoRuntime {
     /// Bring the repeats down to the floor within `frames` instead of cutting them mid-ring.
     fn release(&mut self, frames: usize) {
         let frames = frames.clamp(1, self.frames.saturating_sub(self.elapsed).max(1));
-        self.attack_frames = self.elapsed;
+        (self.rise_from, self.rise_to) = (self.elapsed, self.elapsed);
         self.frames = self.elapsed + frames;
         self.decay_ratio = (ECHO_FLOOR / self.gain.max(ECHO_FLOOR)).powf(1.0 / frames as f32);
     }
@@ -2832,6 +2843,8 @@ mod tests {
             feedback: 0.4,
             cutoff_hz: 4_000.0,
             wet: 0.5,
+            start: 0.0,
+            attack: 0.3,
             duration: 2.0,
         };
         let mut runtime = EchoRuntime::new(echo, rate, 1, &mut line).unwrap();
@@ -2857,6 +2870,27 @@ mod tests {
         }
         assert!(runtime.done());
         assert!((runtime.gain - ECHO_FLOOR).abs() < ECHO_FLOOR * 0.05);
+
+        // Opening later, it is silent until then, and what went in one delay before its attack
+        // ends is its first repeat, at full wet level.
+        let late = EchoOut {
+            start: 0.5,
+            attack: 0.01,
+            ..echo
+        };
+        let mut runtime = EchoRuntime::new(late, rate, 1, &mut line).unwrap();
+        let open = rate as usize / 2;
+        let landed = open + rate as usize / 100;
+        let mut out = Vec::new();
+        for n in 0..landed + 200 {
+            out.push(runtime.tap(&mut line, 0, if n + delay == landed { 1.0 } else { 0.0 }));
+        }
+        assert!(
+            out[..open].iter().all(|x| *x == 0.0),
+            "silent until it opens"
+        );
+        let repeat: f32 = out[landed..].iter().sum();
+        assert!((repeat - 0.5).abs() < 0.05, "first repeat {repeat}");
 
         // Released mid-ring, it reaches the floor in the frames given and no later.
         let mut runtime = EchoRuntime::new(echo, rate, 1, &mut line).unwrap();

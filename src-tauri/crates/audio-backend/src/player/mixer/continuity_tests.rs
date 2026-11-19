@@ -240,6 +240,8 @@ fn an_echo_out_rings_past_its_fade_and_then_goes() {
         feedback: 0.4,
         cutoff_hz: 4_000.0,
         wet: 0.5,
+        start: 0.0,
+        attack: 0.15,
         duration: 1.0,
     };
     let echoed = CrossfadeParams {
