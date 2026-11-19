@@ -192,7 +192,7 @@ fn prepare_track_blocking(
         .ok_or_else(|| "AutoMix only supports local/url SongData for now".to_string())?
         .to_string();
 
-    let (local_path, temp_file) = resolve_source_to_local_path(&source)?;
+    let (local_path, temp_file) = resolve_source_to_local_path(&source, next_song.md5())?;
     if cancel.is_cancelled() {
         return Err(SUPERSEDED.into());
     }
@@ -277,9 +277,10 @@ fn prepare_track_blocking(
 
 fn resolve_source_to_local_path(
     source: &str,
+    md5: Option<&str>,
 ) -> Result<(PathBuf, Option<crate::source::TempGuard>), String> {
     if crate::source::is_http_url(source) {
-        let temp = crate::source::download_to_temp_path(source).map_err(|e| e.to_string())?;
+        let temp = crate::source::fetch(source, md5).map_err(|e| e.to_string())?;
         let path = temp.to_path_buf();
         Ok((path, Some(temp)))
     } else {

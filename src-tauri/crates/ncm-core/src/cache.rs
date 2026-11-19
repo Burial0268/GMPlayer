@@ -335,6 +335,18 @@ impl ResponseCache {
         }
     }
 
+    /// Forget every response in both tiers (the user cleared the cache), returning the bytes the
+    /// disk tier freed. A write already handed to a blocking thread may still land afterwards;
+    /// that file is a valid answer, merely a recent one.
+    pub(crate) fn clear(&self) -> u64 {
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        *self.bytes.lock().unwrap_or_else(|e| e.into_inner()) = 0;
+        self.disk.as_ref().map_or(0, |disk| disk.clear())
+    }
+
     /// Bring the disk tier inside its bounds. Call once, off the startup path.
     pub(crate) fn prune_disk(&self) {
         if let Some(disk) = &self.disk {

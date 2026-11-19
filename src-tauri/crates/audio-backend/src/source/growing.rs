@@ -521,21 +521,43 @@ impl MediaSource for GrowingFile {
 
 // ── Guard ────────────────────────────────────────────────────────
 
-/// A temp file plus, while its download is running, the means to stop it.
+/// A downloaded file plus, while its download is running, the means to stop it.
 /// Dropping it cancels the writers and then deletes the file, so a skipped
-/// track stops costing bandwidth at once.
+/// track stops costing bandwidth at once — unless the audio cache adopted the
+/// file, in which case dropping it only releases the cache's pin.
 pub struct TempGuard {
     // Declared first so the writers are told to stop before the file goes.
     progress: Option<Arc<Progress>>,
-    path: tempfile::TempPath,
+    path: PathBuf,
+    /// Deletes the file on drop; `None` for a file the cache already owned.
+    temp: Option<tempfile::TempPath>,
+    cache: Option<super::cache::Hold>,
 }
 
 impl TempGuard {
     pub(crate) fn streaming(path: tempfile::TempPath, progress: Arc<Progress>) -> Self {
         Self {
             progress: Some(progress),
-            path,
+            path: path.to_path_buf(),
+            temp: Some(path),
+            cache: None,
         }
+    }
+
+    /// A file the audio cache keeps, pinned until this guard drops.
+    pub(crate) fn cached(path: PathBuf, hold: super::cache::Hold) -> Self {
+        Self {
+            progress: None,
+            path,
+            temp: None,
+            cache: Some(hold),
+        }
+    }
+
+    /// Let the cache adopt this download once it has landed and checked out.
+    pub(crate) fn with_cache(mut self, hold: super::cache::Hold) -> Self {
+        self.cache = Some(hold);
+        self
     }
 
     /// The download behind this file stopped short (gave up or was cancelled): a replay of it
@@ -551,7 +573,9 @@ impl From<tempfile::TempPath> for TempGuard {
     fn from(path: tempfile::TempPath) -> Self {
         Self {
             progress: None,
-            path,
+            path: path.to_path_buf(),
+            temp: Some(path),
+            cache: None,
         }
     }
 }
@@ -574,6 +598,11 @@ impl Drop for TempGuard {
         if let Some(p) = self.progress.take() {
             p.cancel();
             unregister(&self.path);
+        }
+        if self.cache.take().is_some_and(super::cache::Hold::release) {
+            if let Some(temp) = self.temp.take() {
+                let _ = temp.keep();
+            }
         }
     }
 }

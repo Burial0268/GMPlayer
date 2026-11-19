@@ -121,6 +121,9 @@ pub fn run() {
             crate::download::download_retry,
             crate::download::download_cancel,
             crate::download::download_clear_finished,
+            crate::storage::storage_usage,
+            crate::storage::storage_clear,
+            crate::storage::storage_set_audio_budget,
         ])
         .setup(|app| {
             let app_handle = app.handle().clone();
@@ -129,6 +132,8 @@ pub fn run() {
                 commands::set_android_context_ready_check(android_ndk_context_ready);
                 init_android_ndk_context(app);
             }
+            // Before the player exists: its first download already lands in the audio cache.
+            crate::storage::install(&app_handle);
             app.manage(commands::PlayerState::new(app_handle.clone()));
             // The isolate itself is built lazily on first request, so this only
             // records where its session state lives.

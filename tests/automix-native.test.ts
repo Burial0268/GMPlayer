@@ -80,6 +80,7 @@ function environment(deferResolution = false) {
         sent.push(msg);
       },
     },
+    "../native/DeclaredMd5": { declaredMd5For: () => undefined },
     "../resolveSongUrl": {
       resolveSongUrl: () =>
         deferResolution

@@ -146,6 +146,7 @@ mod tests {
             file_path: path.to_string(),
             orig_order,
             display: None,
+            md5: None,
         }
     }
 
