@@ -22,9 +22,13 @@ use symphonia::core::io::MediaSource;
 
 use crate::error::{AudioError, AudioResult};
 
+mod cache;
 mod download;
 pub(crate) mod growing;
-pub use download::download_to_temp_path;
+pub use cache::{
+    audio_cache_usage, clear_audio_cache, set_audio_cache_budget, set_audio_cache_dir,
+};
+pub use download::{download_to_temp_path, fetch};
 pub use growing::{buffered_bytes, expected_len, is_complete, wait_complete, TempGuard};
 
 // ── Locator ──────────────────────────────────────────────────────
@@ -196,6 +200,91 @@ pub fn set_stream_cache_dir(dir: PathBuf) -> bool {
     STREAM_CACHE_DIR.set(dir).is_ok()
 }
 
+/// Spooled copies are kept up to this much; the least recently opened go first. Every copy used
+/// to be kept forever — one per document ever played — bounded only by Android clearing the cache.
+const STREAM_CACHE_BUDGET: u64 = 512 * 1024 * 1024;
+/// A `.part` this old is a copy a killed process never finished.
+const LEFTOVER_AGE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// Bytes the spooled copies take.
+pub fn stream_cache_usage() -> u64 {
+    STREAM_CACHE_DIR
+        .get()
+        .map_or(0, |dir| files_in(dir).iter().map(|(_, size, _)| size).sum())
+}
+
+/// Delete every spooled copy, returning the bytes freed. A copy being read stays readable: this
+/// is Android-only, where an open file outlives its name.
+pub fn clear_stream_cache() -> u64 {
+    STREAM_CACHE_DIR.get().map_or(0, |dir| evict_oldest(dir, 0))
+}
+
+/// `(path, size, modified)` of the plain files in `dir`.
+fn files_in(dir: &Path) -> Vec<(PathBuf, u64, std::time::SystemTime)> {
+    let Ok(listing) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    listing
+        .flatten()
+        .filter_map(|item| {
+            let meta = item.metadata().ok().filter(|m| m.is_file())?;
+            let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            Some((item.path(), meta.len(), modified))
+        })
+        .collect()
+}
+
+/// Remove abandoned `.part` files, then the oldest copies until `budget` holds the rest.
+fn evict_oldest(dir: &Path, budget: u64) -> u64 {
+    let now = std::time::SystemTime::now();
+    let mut freed = 0;
+    let mut kept = Vec::new();
+    for (path, size, modified) in files_in(dir) {
+        let abandoned = path.extension().is_some_and(|e| e == "part")
+            && now
+                .duration_since(modified)
+                .is_ok_and(|age| age > LEFTOVER_AGE);
+        if abandoned {
+            if std::fs::remove_file(&path).is_ok() {
+                freed += size;
+            }
+        } else if path.extension().is_some_and(|e| e == "bin") {
+            kept.push((path, size, modified));
+        }
+    }
+    kept.sort_by_key(|(_, _, modified)| *modified);
+    let mut total: u64 = kept.iter().map(|(_, size, _)| size).sum();
+    for (path, size, _) in kept {
+        if total <= budget {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total -= size;
+            freed += size;
+        }
+    }
+    freed
+}
+
+/// Remove downloads and spooled copies a killed process left in the OS temp directory (only
+/// used when no cache directory is configured). Only files older than an hour, in case another
+/// instance is using its own. Returns the bytes freed.
+pub fn sweep_temp_leftovers() -> u64 {
+    let now = std::time::SystemTime::now();
+    files_in(&std::env::temp_dir())
+        .into_iter()
+        .filter(|(path, _, modified)| {
+            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+            name.is_some_and(|n| {
+                n.starts_with("gmplayer-audio-") || n.starts_with("gmplayer-content-")
+            }) && now
+                .duration_since(*modified)
+                .is_ok_and(|age| age > LEFTOVER_AGE)
+        })
+        .filter_map(|(path, size, _)| std::fs::remove_file(path).ok().map(|()| size))
+        .sum()
+}
+
 /// Scratch keeps short inputs in bounded memory, then spills into the app cache.
 /// The disk file is removed by the OS when its handle closes, including cancellation.
 pub(crate) fn temporary_file(memory_limit: usize) -> std::io::Result<tempfile::SpooledTempFile> {
@@ -237,6 +326,8 @@ fn spool_to_file<R: Read>(
         let target = dir.join(format!("{}.bin", hash_uri(uri)));
         if let Ok(file) = std::fs::File::open(&target) {
             if file.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+                // Eviction is least recently *opened* first.
+                let _ = file.set_modified(std::time::SystemTime::now());
                 return Ok((file, None));
             }
         }
@@ -248,7 +339,10 @@ fn spool_to_file<R: Read>(
             out.sync_all()?;
         }
         std::fs::rename(&part, &target)?;
-        return Ok((std::fs::File::open(&target)?, None));
+        let file = std::fs::File::open(&target)?;
+        // After the open: an evicted copy stays readable through its handle.
+        evict_oldest(dir, STREAM_CACHE_BUDGET);
+        return Ok((file, None));
     }
 
     let mut temp = tempfile::Builder::new()
@@ -438,6 +532,33 @@ pub fn local_exists(locator: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spooled_copies_are_evicted_oldest_first_with_abandoned_parts() {
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, age_secs: u64| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, [0u8; 10]).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(SystemTime::now() - Duration::from_secs(age_secs))
+                .unwrap();
+            path
+        };
+        let oldest = file("a.bin", 300);
+        let middle = file("b.bin", 200);
+        let newest = file("c.bin", 100);
+        let fresh_part = file("d.part", 10);
+        let dead_part = file("e.part", 2 * 60 * 60);
+
+        assert_eq!(evict_oldest(dir.path(), 15), 30);
+        assert!(!oldest.exists() && !middle.exists() && !dead_part.exists());
+        assert!(newest.exists(), "within budget");
+        assert!(fresh_part.exists(), "may still be being written");
+    }
     use std::io::Write;
 
     #[test]

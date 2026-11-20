@@ -23,6 +23,7 @@ import type { SongData as QueueSongData } from "@/utils/tauri/audio/protocol";
 import { isBackendSound } from "@/utils/AudioContext/sound/types";
 import { resolveSongUrl } from "../resolveSongUrl";
 import { toTrackDisplay } from "./NativeManifestPublisher";
+import { declaredMd5For } from "./DeclaredMd5";
 // Import stores directly to avoid circular dependency through barrel exports
 import useMusicDataStore from "@/store/musicData";
 import useListenTogetherStore from "@/store/listenTogether";
@@ -134,6 +135,7 @@ export async function prefillNativeQueue(): Promise<void> {
   const currentEntry: QueueSongData = {
     type: "local",
     filePath: sound.getSourceUrl(),
+    md5: declaredMd5For(sound.getSourceUrl()),
     origOrder: currentIndex,
     // Sent with the track so the OS media session is correct on the first
     // frame. The backend downloads this https path to a temp file before
@@ -223,6 +225,7 @@ export async function prefillNativeQueue(): Promise<void> {
       filePath: entry.url,
       origOrder: entry.index,
       display: entry.display,
+      md5: declaredMd5For(entry.url),
     });
     registry.set(`local:${entry.url}`, { songId: entry.songId, index: entry.index });
   }

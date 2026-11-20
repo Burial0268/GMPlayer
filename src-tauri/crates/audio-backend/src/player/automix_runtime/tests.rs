@@ -52,7 +52,7 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         pulse_file(&a, 0.5);
         pulse_file(&b, 0.5 / 1.03);
         let song = |path: &Path, index| SongData::Local {
-            file_path: path.to_string_lossy().to_string(), orig_order: index, display: None,
+            file_path: path.to_string_lossy().to_string(), orig_order: index, display: None, md5: None,
         };
         let a = song(&a, 0);
         let b = song(&b, 1);
@@ -151,7 +151,7 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
                 let incoming = player.secondary_playback_id;
                 player.process_message(message(AudioThreadMessage::AutomixPrepareNext {
                     current_index: 0, next_index: 7,
-                    next_song: SongData::Local { file_path: "https://example.invalid/rotated-signed-url".into(), orig_order: 7, display: None },
+                    next_song: SongData::Local { file_path: "https://example.invalid/rotated-signed-url".into(), orig_order: 7, display: None, md5: None },
                     transition_id: Some(78),
                     current_identity: Some(crate::types::TrackIdentity::Local { path: a.file_path().unwrap().to_string() }),
                     next_identity: Some(crate::types::TrackIdentity::Netease { id: "2".into() }),

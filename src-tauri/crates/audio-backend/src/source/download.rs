@@ -4,7 +4,7 @@ use crate::error::{AudioError, AudioResult};
 
 #[cfg(test)]
 mod tests;
-use crate::source::growing;
+use crate::source::{cache, growing};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,8 +47,21 @@ const RESUME_BACKOFF: Duration = Duration::from_millis(10);
 /// guarantee by reading exactly `Content-Length` bytes and failing on a short
 /// body, never by trusting the connection to be at a boundary.
 pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard> {
+    fetch(url, None)
+}
+
+/// [`download_to_temp_path`], through the audio cache. `md5` is the hash the resolver declared
+/// for this file: a kept copy of it is used instead of the network, and a new download is kept
+/// once it has landed and hashes to it. Without one this is exactly a download.
+pub fn fetch(url: &str, md5: Option<&str>) -> AudioResult<crate::source::TempGuard> {
     use crate::source::growing::Progress;
     use std::io::Read;
+
+    let md5 = cache::normalize_md5(md5);
+    if let Some((path, hold)) = md5.as_deref().and_then(cache::lookup) {
+        tracing::info!("audio cache hit: {}", md5.as_deref().unwrap_or_default());
+        return Ok(crate::source::TempGuard::cached(path, hold));
+    }
 
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
@@ -63,17 +76,34 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard>
         .and_then(|v| v.trim().parse::<u64>().ok())
         .filter(|n| *n >= STREAM_MIN_BYTES);
 
-    let mut temp = tempfile::Builder::new()
-        .prefix("gmplayer-audio-")
-        .suffix(".tmp")
-        .tempfile()
-        .map_err(|e| AudioError::Download(format!("Create temp file: {e}")))?;
+    let mut temp = match cache::download_dir() {
+        Some(dir) => tempfile::Builder::new()
+            .prefix(cache::DOWNLOAD_PREFIX)
+            .suffix(".tmp")
+            .tempfile_in(dir),
+        None => tempfile::Builder::new()
+            .prefix("gmplayer-audio-")
+            .suffix(".tmp")
+            .tempfile(),
+    }
+    .map_err(|e| AudioError::Download(format!("Create temp file: {e}")))?;
+    let hold = md5.map(cache::Hold::pending);
+    let committer = hold
+        .as_ref()
+        .map(|hold| hold.committer(temp.path().to_path_buf()));
 
     let mut reader = response.into_reader();
     let Some(total) = total else {
         std::io::copy(&mut reader, &mut temp)
             .map_err(|e| AudioError::Download(format!("Write temp file: {e}")))?;
-        return Ok(temp.into_temp_path().into());
+        let guard = crate::source::TempGuard::from(temp.into_temp_path());
+        return Ok(match (hold, committer) {
+            (Some(hold), Some(committer)) => {
+                committer.commit();
+                guard.with_cache(hold)
+            }
+            _ => guard,
+        });
     };
 
     let (file, path) = temp.into_parts();
@@ -82,14 +112,17 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard>
 
     // A forward seek far past the head writer starts a second one at the target.
     let (jump_url, jump_path) = (url.to_string(), path.to_path_buf());
+    let jump_committer = committer.clone();
     progress.set_jumper(Box::new(move |progress, id, start| {
         let (url, path) = (jump_url.clone(), jump_path.clone());
+        let committer = jump_committer.clone();
         let worker = Arc::clone(&progress);
         let spawned = std::thread::Builder::new()
             .name("audio-download-range".into())
             .spawn(move || {
                 let outcome = fill_range(&worker, &url, &path, id, start);
                 keep_writing(&worker, &url, &path, id, outcome);
+                commit_if_complete(&worker, committer.as_ref());
             });
         if let Err(e) = spawned {
             progress.end_writer(id, Err(format!("Start range thread: {e}")));
@@ -97,7 +130,10 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard>
     }));
 
     let (head_url, head_path) = (url.to_string(), path.to_path_buf());
-    let guard = crate::source::TempGuard::streaming(path, progress.clone());
+    let mut guard = crate::source::TempGuard::streaming(path, progress.clone());
+    if let Some(hold) = hold {
+        guard = guard.with_cache(hold);
+    }
     let head = progress.begin_writer(0);
     let writer = progress.clone();
     let spawned = std::thread::Builder::new()
@@ -106,10 +142,18 @@ pub fn download_to_temp_path(url: &str) -> AudioResult<crate::source::TempGuard>
             let outcome =
                 growing::pump(&writer, head, file, reader.take(total)).map_err(RangeError::Failed);
             keep_writing(&writer, &head_url, &head_path, head, outcome);
+            commit_if_complete(&writer, committer.as_ref());
         });
     spawned.map_err(|e| AudioError::Download(format!("Start download thread: {e}")))?;
 
     Ok(guard)
+}
+
+/// Whichever writer finishes the file offers it to the cache; the commit itself runs once.
+fn commit_if_complete(progress: &growing::Progress, committer: Option<&cache::Committer>) {
+    if let Some(committer) = committer.filter(|_| progress.is_complete()) {
+        committer.commit();
+    }
 }
 
 /// Why a writer stopped short: a server that will not serve a `Range` cannot be resumed, a

@@ -5,6 +5,7 @@ pub mod media;
 pub mod ncm;
 pub mod share;
 pub mod shared;
+pub mod storage;
 
 #[cfg(not(mobile))]
 pub mod desktop;

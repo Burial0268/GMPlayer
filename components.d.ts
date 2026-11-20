@@ -164,6 +164,7 @@ declare module 'vue' {
     SettingsDsp: typeof import('./src/components/Settings/SettingsDsp.vue')['default']
     SettingsItem: typeof import('./src/components/Settings/SettingsItem.vue')['default']
     SettingsPanel: typeof import('./src/components/Settings/SettingsPanel.vue')['default']
+    SettingsStorage: typeof import('./src/components/Settings/SettingsStorage.vue')['default']
     SettingsWorkspace: typeof import('./src/components/Settings/SettingsWorkspace.vue')['default']
     Sidebar: typeof import('./src/components/Sidebar/index.vue')['default']
     SidebarItem: typeof import('./src/components/Sidebar/SidebarItem.vue')['default']

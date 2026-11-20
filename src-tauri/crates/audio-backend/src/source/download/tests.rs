@@ -45,6 +45,57 @@ mod stream_tests {
         assert_eq!(all.len(), total);
     }
 
+    /// The only test that configures the audio cache: it is process-global, and every other
+    /// download here behaves the same with or without it (it only changes where the file lands).
+    #[test]
+    fn a_download_matching_its_md5_is_kept_and_replayed_without_the_network() {
+        use md5::Digest;
+        let dir = tempfile::tempdir().unwrap();
+        assert!(crate::source::set_audio_cache_dir(dir.path().join("audio")));
+        let total = 3 * 1024 * 1024;
+        let md5: String = md5::Md5::digest(vec![7u8; total])
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let landed = |guard: &crate::source::TempGuard| {
+            let until = Instant::now() + Duration::from_secs(10);
+            while crate::source::is_complete(guard) != Some(true) {
+                assert!(Instant::now() < until, "download did not land");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            // The commit runs on the writer thread right after the last byte.
+            std::thread::sleep(Duration::from_millis(300));
+        };
+
+        // A declared hash the bytes do not match: played, never kept.
+        let guard = super::super::fetch(&serve(total, total), Some(&"0".repeat(32))).unwrap();
+        landed(&guard);
+        let path = guard.to_path_buf();
+        drop(guard);
+        assert_eq!(crate::source::audio_cache_usage(), 0);
+        assert!(!path.exists());
+
+        let guard = super::super::fetch(&serve(total, total), Some(&md5)).unwrap();
+        landed(&guard);
+        assert_eq!(crate::source::audio_cache_usage(), total as u64);
+        let path = guard.to_path_buf();
+        drop(guard);
+        assert!(path.exists(), "a kept file outlives its guard");
+
+        // Nothing listens there: only the cache can answer.
+        let replay =
+            super::super::fetch("http://127.0.0.1:9/gone.mp3", Some(&md5.to_uppercase())).unwrap();
+        assert_eq!(&*replay, path.as_path());
+        assert_eq!(
+            crate::source::clear_audio_cache(),
+            0,
+            "a file in use is not cleared"
+        );
+        drop(replay);
+        assert_eq!(crate::source::clear_audio_cache(), total as u64);
+        assert!(!path.exists());
+    }
+
     #[test]
     fn a_body_cut_short_fails_the_read() {
         let guard = download_to_temp_path(&serve(3 * 1024 * 1024, 1024 * 1024)).unwrap();

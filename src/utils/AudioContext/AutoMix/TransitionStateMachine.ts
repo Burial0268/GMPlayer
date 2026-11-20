@@ -37,6 +37,7 @@ import {
   syncNativeAutoMixCurrentSound,
 } from "../PlayerFunctions";
 import { resolveSongUrl } from "../resolveSongUrl";
+import { declaredMd5For } from "../native/DeclaredMd5";
 import { lyricFetcher } from "../../lyrics/fetcher";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
 import { audioSendMsg } from "../../tauri/audio/bridge";
@@ -714,6 +715,7 @@ export class TransitionStateMachine {
         type: "local",
         filePath: resolved.url,
         origOrder: nextIndex,
+        md5: declaredMd5For(resolved.url),
       },
     });
   }

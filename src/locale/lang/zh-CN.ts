@@ -683,6 +683,23 @@ const messages: Record<string, unknown> = {
     musicFrequency: "显示音乐频谱",
     musicFrequencyTip: "播放页显示实时频谱，可能增加性能消耗",
     dspTitle: "DSP 与均衡器",
+    storage: {
+      title: "存储与缓存",
+      tip: "应用替你存在本机的东西：各占多少空间，以及清除它们",
+      refresh: "刷新",
+      budget: "歌曲缓存上限",
+      budgetTip:
+        "播放过的歌曲会留一份，重播、上一首和 AutoMix 不再重新下载。超出上限时先删最久没听的",
+      off: "关闭",
+      audio: "歌曲缓存",
+      audioTip: "只保存与网易云声明的文件校验值一致的完整下载；解锁音源不缓存",
+      api: "接口缓存",
+      apiTip: "歌单、歌词、详情等网易云接口的应答，最多约 64 MB",
+      localStream: "本地文件副本",
+      localStreamTip: "无法直接读取的本地文件（部分 Android 文档）的拷贝，最多约 512 MB",
+      clear: "清除",
+      cleared: "已释放 {size}；正在播放的歌曲会保留",
+    },
     download: {
       title: "下载",
       tip: "下载的歌曲会落到平台的规范位置，并自动进入本地音乐库",

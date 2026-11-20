@@ -43,6 +43,8 @@ interface SettingDataState {
   showRoma: boolean;
   taskbarLyrics: boolean;
   songLevel: string;
+  /** Native audio cache budget in bytes; 0 turns it off. */
+  audioCacheBudget: number;
   lyricsPosition: string;
   lyricsBlock: string;
   lyricsFontSize: number;
@@ -192,6 +194,13 @@ export function migrateLegacySettingPayload(payload: any): any {
  */
 export function repairSettingData(store: any): void {
   if (
+    typeof store.audioCacheBudget !== "number" ||
+    !Number.isFinite(store.audioCacheBudget) ||
+    store.audioCacheBudget < 0
+  ) {
+    store.audioCacheBudget = 1024 * 1024 * 1024;
+  }
+  if (
     typeof store.desktopLyricsFontSizeOffset !== "number" ||
     !Number.isFinite(store.desktopLyricsFontSizeOffset)
   ) {
@@ -250,6 +259,7 @@ const useSettingDataStore = defineStore("settingData", {
       showRoma: false,
       taskbarLyrics: true,
       songLevel: "exhigh",
+      audioCacheBudget: 1024 * 1024 * 1024,
       lyricsPosition: "left",
       lyricsBlock: "top",
       lyricsFontSize: 3.6,

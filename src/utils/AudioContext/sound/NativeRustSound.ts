@@ -24,6 +24,7 @@ import { LowFreqVolumeAnalyzer } from "../analysis/LowFreqVolumeAnalyzer";
 import { activeSound } from "./SoundManager";
 import { isTauri } from "../../tauri/core/runtime";
 import { audioGetSession } from "../../tauri/audio/bridge";
+import { declaredMd5For } from "../native/DeclaredMd5";
 import { AudioTimelineSync } from "../../tauri/audio/timeline";
 import { sameTrackIdentity } from "../../tauri/audio/identity";
 import { setMeasuredOutputLatencyMs } from "../../tauri/audio/uiDelay";
@@ -366,6 +367,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         filePath: this._path,
         origOrder: 0,
         display: this._display,
+        md5: declaredMd5For(this._path),
       };
       // `windowed: true` — a bare single-entry queue must stop at track end
       // instead of wrap-replaying itself; the real advance window arrives via

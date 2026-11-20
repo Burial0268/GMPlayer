@@ -382,7 +382,7 @@ impl AudioPlayer {
             return;
         }
         match self
-            .start_planned_track(&track, source.uri, PlannerDirection::Next)
+            .start_planned_track(&track, source, PlannerDirection::Next)
             .await
         {
             PlannedStart::Started => {}
