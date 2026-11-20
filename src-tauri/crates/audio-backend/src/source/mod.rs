@@ -266,21 +266,66 @@ fn evict_oldest(dir: &Path, budget: u64) -> u64 {
     freed
 }
 
-/// Remove downloads and spooled copies a killed process left in the OS temp directory (only
-/// used when no cache directory is configured). Only files older than an hour, in case another
-/// instance is using its own. Returns the bytes freed.
-pub fn sweep_temp_leftovers() -> u64 {
-    let now = std::time::SystemTime::now();
+/// The prefixes `download_to_temp_path` and `spool_to_file` give a file in the OS temp directory.
+const TEMP_PREFIXES: [&str; 2] = ["gmplayer-audio-", "gmplayer-content-"];
+
+/// Exactly what `tempfile` names a file of ours: prefix, six random alphanumerics, `.tmp`. The OS
+/// temp directory is shared, and a prefix alone also matched other things called `gmplayer-…`.
+fn is_temp_of_ours(name: &str) -> bool {
+    TEMP_PREFIXES.iter().any(|prefix| {
+        name.strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(".tmp"))
+            .is_some_and(|random| {
+                random.len() == 6 && random.bytes().all(|b| b.is_ascii_alphanumeric())
+            })
+    })
+}
+
+/// Downloads and spooled copies of ours in the OS temp directory, minus a download still landing.
+///
+/// Every download went there before the audio cache existed, and still does when no cache
+/// directory is configured, so these are mostly what earlier versions left behind (a killed
+/// process runs no `Drop`).
+fn temp_leftovers() -> Vec<(PathBuf, u64, std::time::SystemTime)> {
     files_in(&std::env::temp_dir())
         .into_iter()
-        .filter(|(path, _, modified)| {
-            let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-            name.is_some_and(|n| {
-                n.starts_with("gmplayer-audio-") || n.starts_with("gmplayer-content-")
-            }) && now
-                .duration_since(*modified)
-                .is_ok_and(|age| age > LEFTOVER_AGE)
+        .filter(|(path, _, _)| {
+            path.file_name()
+                .is_some_and(|name| is_temp_of_ours(&name.to_string_lossy()))
+                && growing::lookup(path).is_none()
         })
+        .collect()
+}
+
+/// Bytes our files in the OS temp directory take.
+pub fn temp_leftover_usage() -> u64 {
+    temp_leftovers().iter().map(|(_, size, _)| size).sum()
+}
+
+/// Delete our files in the OS temp directory, returning the bytes freed. One still open on
+/// Windows will not delete and is left for the next try.
+pub fn clear_temp_leftovers() -> u64 {
+    remove_all(temp_leftovers())
+}
+
+/// At start-up: the same files, but only those older than an hour, in case another instance is
+/// using its own.
+pub fn sweep_temp_leftovers() -> u64 {
+    let now = std::time::SystemTime::now();
+    remove_all(
+        temp_leftovers()
+            .into_iter()
+            .filter(|(_, _, modified)| {
+                now.duration_since(*modified)
+                    .is_ok_and(|age| age > LEFTOVER_AGE)
+            })
+            .collect(),
+    )
+}
+
+fn remove_all(files: Vec<(PathBuf, u64, std::time::SystemTime)>) -> u64 {
+    files
+        .into_iter()
         .filter_map(|(path, size, _)| std::fs::remove_file(path).ok().map(|()| size))
         .sum()
 }
@@ -532,6 +577,36 @@ pub fn local_exists(locator: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_files_named_the_way_tempfile_names_ours_count_as_leftovers() {
+        assert!(is_temp_of_ours("gmplayer-audio-Ab3xZ9.tmp"));
+        assert!(is_temp_of_ours("gmplayer-content-000000.tmp"));
+        // Other things sharing the prefix in a shared temp directory.
+        assert!(!is_temp_of_ours("gmplayer-audio-final-tests.log"));
+        assert!(!is_temp_of_ours("gmplayer-audio-validation"));
+        assert!(!is_temp_of_ours("gmplayer-audio-Ab3xZ9.tmp.bak"));
+        assert!(!is_temp_of_ours("gmplayer-audio-Ab3.tmp"));
+        assert!(!is_temp_of_ours("gmplayer-ncm"));
+    }
+
+    #[test]
+    fn leftovers_are_what_our_temp_builders_create_and_nothing_beside_them() {
+        let ours = tempfile::Builder::new()
+            .prefix("gmplayer-audio-")
+            .suffix(".tmp")
+            .tempfile()
+            .unwrap()
+            .into_temp_path();
+        let lookalike =
+            std::env::temp_dir().join(format!("gmplayer-audio-unit-{}.log", std::process::id()));
+        std::fs::write(&lookalike, b"not ours").unwrap();
+
+        let found: Vec<PathBuf> = temp_leftovers().into_iter().map(|(p, _, _)| p).collect();
+        let _ = std::fs::remove_file(&lookalike);
+        assert!(found.iter().any(|p| p == &*ours));
+        assert!(!found.contains(&lookalike));
+    }
 
     #[test]
     fn spooled_copies_are_evicted_oldest_first_with_abandoned_parts() {

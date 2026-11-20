@@ -4,7 +4,7 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 
-export type StorageKind = "audio" | "api" | "localStream";
+export type StorageKind = "audio" | "api" | "localStream" | "temp";
 
 export interface StorageUsage {
   /** Played tracks kept for replay. */
@@ -13,6 +13,8 @@ export interface StorageUsage {
   api: number;
   /** Copies of local documents that cannot be read in place (Android). */
   localStream: number;
+  /** Downloads left in the OS temp directory, mostly by versions before the song cache. */
+  temp: number;
 }
 
 export const storageUsage = (): Promise<StorageUsage> => invoke<StorageUsage>("storage_usage");

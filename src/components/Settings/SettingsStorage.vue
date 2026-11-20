@@ -72,6 +72,7 @@ const rows: { kind: StorageKind; label: string; tip: string }[] = [
     label: "setting.storage.localStream",
     tip: "setting.storage.localStreamTip",
   },
+  { kind: "temp", label: "setting.storage.temp", tip: "setting.storage.tempTip" },
 ];
 
 const budgetOptions = computed(() => [

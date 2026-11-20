@@ -713,6 +713,9 @@ const messages: Record<string, unknown> = {
       localStream: "Local file copies",
       localStreamTip:
         "Copies of local files that cannot be read in place (some Android documents), up to about 512 MB",
+      temp: "Leftover downloads",
+      tempTip:
+        "Downloads left in the system temp folder by older versions or a killed app; ones older than an hour are removed at start-up",
       clear: "Clear",
       cleared: "Freed {size}; the playing song is kept",
     },

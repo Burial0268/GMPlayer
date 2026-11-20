@@ -697,6 +697,8 @@ const messages: Record<string, unknown> = {
       apiTip: "歌单、歌词、详情等网易云接口的应答，最多约 64 MB",
       localStream: "本地文件副本",
       localStreamTip: "无法直接读取的本地文件（部分 Android 文档）的拷贝，最多约 512 MB",
+      temp: "临时下载残留",
+      tempTip: "旧版本或被系统杀掉的进程留在系统临时目录里的下载，启动时会清掉一小时前的",
       clear: "清除",
       cleared: "已释放 {size}；正在播放的歌曲会保留",
     },

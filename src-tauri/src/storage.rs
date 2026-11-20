@@ -34,6 +34,9 @@ pub struct StorageUsage {
     api: u64,
     /// Copies of local documents that cannot be read in place (Android).
     local_stream: u64,
+    /// Downloads and copies of ours left in the OS temp directory, mostly by versions before the
+    /// audio cache.
+    temp: u64,
 }
 
 #[tauri::command]
@@ -44,13 +47,14 @@ pub async fn storage_usage(app: AppHandle) -> Result<StorageUsage, String> {
             .try_state::<crate::ncm::NcmState>()
             .map_or(0, |ncm| ncm.cache_usage()),
         local_stream: source::stream_cache_usage(),
+        temp: source::temp_leftover_usage(),
     })
     .await
     .map_err(|e| e.to_string())
 }
 
-/// Clear one cache (`audio`, `api` or `localStream`), returning the bytes freed. A file in use
-/// (the playing track) survives and is reclaimed later.
+/// Clear one cache (`audio`, `api`, `localStream` or `temp`), returning the bytes freed. A file
+/// in use (the playing track) survives and is reclaimed later.
 #[tauri::command]
 pub async fn storage_clear(app: AppHandle, kind: String) -> Result<u64, String> {
     tauri::async_runtime::spawn_blocking(move || match kind.as_str() {
@@ -59,6 +63,7 @@ pub async fn storage_clear(app: AppHandle, kind: String) -> Result<u64, String> 
             .try_state::<crate::ncm::NcmState>()
             .map_or(0, |ncm| ncm.clear_cache())),
         "localStream" => Ok(source::clear_stream_cache()),
+        "temp" => Ok(source::clear_temp_leftovers()),
         other => Err(format!("unknown cache: {other}")),
     })
     .await
