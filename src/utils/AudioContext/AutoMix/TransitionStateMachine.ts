@@ -263,6 +263,23 @@ export class TransitionStateMachine {
     }
   }
 
+  /**
+   * The queue lost the song a transition that has not committed is heading for: end it, the rule
+   * `interruptForSeek` follows. Left running, the backend mixed the deleted song in anyway, and
+   * its completion then named a song the queue no longer had, so the store adopted whatever had
+   * moved into its slot. After the commit the store already shows the incoming song, and deleting
+   * it is deleting the playing song. Returns whether it cancelled.
+   */
+  cancelIfHeadingFor(songId: number | string): boolean {
+    const target = this._activeTransition?.toSongId;
+    if (target === null || target === undefined || String(target) !== String(songId)) return false;
+    if (this._state !== "analyzing" && this._state !== "waiting" && this._state !== "crossfading") {
+      return false;
+    }
+    this.cancelCrossfade();
+    return true;
+  }
+
   isHandoffActive(): boolean {
     return (
       this.isCrossfading() ||

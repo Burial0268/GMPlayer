@@ -405,6 +405,21 @@ const applyNativeAutoMixCompletion = (sound: BackendSound, playback: BackendTrac
     const advancedSongId = Number(backendIdentity.id);
     if (Number.isFinite(advancedSongId) && playlists[resolvedIndex]?.id !== advancedSongId) {
       const indexByIdentity = playlists.findIndex((song) => song.id === advancedSongId);
+      if (indexByIdentity < 0 && !music.persistData.personalFmMode) {
+        // The backend moved to a song the queue no longer has: it was deleted while AutoMix was
+        // handing over to it. Adopting the reported index would label its successor as playing.
+        // Load that successor instead, without the native-advance hold, so the audio follows the
+        // queue; Player's watcher cancels the handoff on the way.
+        const successor = currentIndex % playlists.length;
+        logNative(
+          "warn",
+          `[nativeAdvance] backend moved to netease:${advancedSongId}, which is no longer queued; ` +
+            `loading index ${successor} (song ${playlists[successor]?.id}) instead`,
+        );
+        music.commitPlaySongIndex(successor);
+        music.resetSongLyricState();
+        return;
+      }
       if (indexByIdentity >= 0) {
         // Rare, and exactly the symptom being hunted: the store and the backend
         // named different tracks. Worth a line in the log of a release build.
