@@ -23,7 +23,7 @@ use convert::FrameConverter;
 pub(crate) use input::OpenedDecoder;
 #[cfg(test)]
 use pcm::append_available_interleaved_frames;
-use pcm::PcmSource;
+pub(crate) use pcm::PcmSource;
 #[cfg(test)]
 use symphonia::SeekableSymphoniaSource;
 

@@ -106,7 +106,7 @@ impl AudioPlayer {
                 "AutoMix prepared: next_index={:?}, start_time={:.3}, duration={:?}",
                 status.next_index, start_time, status.crossfade_duration
             );
-            if let Err(error) = self.start_native_automix_crossfade(true).await {
+            if let Err(error) = self.start_native_automix_crossfade().await {
                 self.cancel_native_automix_runtime().await;
                 let events = self.automix.mark_failed(error.to_string(), status_index);
                 self.emit_many(events).await;
@@ -460,10 +460,12 @@ impl AudioPlayer {
         Ok(())
     }
 
-    pub(super) async fn start_native_automix_crossfade(
-        &mut self,
-        scheduled: bool,
-    ) -> anyhow::Result<()> {
+    /// Arms the prepared fade at its cue, or starts it now once the cue has passed. A force-start
+    /// from the frontend comes here too and gets the same answer: the frontend's clock is an
+    /// extrapolation that runs ahead of a stalled stream (an Android WebView thawing runs its frame
+    /// loop before the queued `Buffering` events), and starting at once then cut off a track that
+    /// was still downloading. The backend's position is the one that counts.
+    pub(super) async fn start_native_automix_crossfade(&mut self) -> anyhow::Result<()> {
         let mut prepared = self
             .automix
             .take_prepared_for_start()
@@ -534,7 +536,7 @@ impl AudioPlayer {
         let start_position = prepared
             .plan
             .as_ref()
-            .filter(|plan| scheduled && plan.start_time > now)
+            .filter(|plan| plan.start_time > now)
             .map(|plan| plan.start_time);
         if let Some(plan) = prepared.plan.as_mut() {
             let remaining = prepared.analysis_duration - plan.incoming_start;
@@ -544,20 +546,29 @@ impl AudioPlayer {
                 plan.beat_synced = false;
                 unsync_beat_mix(plan);
             }
-            if start_position.is_none() || plan.start_time <= now + 2.0 || start_paused {
+            // A ride eases A into B's tempo before the fade starts.
+            let (tempo_start, ramp) = plan
+                .tempo_ramp
+                .map_or((plan.start_time, 0.0), |(from, to)| (from, to - from));
+            if start_position.is_none() || tempo_start <= now + 2.0 || start_paused {
                 plan.outgoing_rate = 1.0;
                 plan.beat_synced = false;
             }
             if (plan.outgoing_rate - 1.0).abs() > 1e-6 {
                 let channels = output_config.channels;
                 let sample_rate = output_config.sample_rate;
-                let rate = plan.outgoing_rate.clamp(0.96, 1.04);
+                let rate = plan.outgoing_rate.clamp(
+                    *decoder::tempo::RATE_RANGE.start(),
+                    *decoder::tempo::RATE_RANGE.end(),
+                );
+                let ramp_frames = (ramp * f64::from(sample_rate)) as usize;
                 let processor = tokio::task::spawn_blocking(move || {
                     decoder::tempo::AutoMixStretch::new(channels, sample_rate, rate)
+                        .ramping(ramp_frames)
                 })
                 .await?;
                 let result = match self.current_decoder_handle.as_ref() {
-                    Some(handle) => match handle.arm_tempo(plan.start_time, processor) {
+                    Some(handle) => match handle.arm_tempo(tempo_start, processor) {
                         Ok(ack) => ack.wait().await,
                         Err(error) => Err(error),
                     },
@@ -610,6 +621,8 @@ impl AudioPlayer {
                 out_shape: plan.out_shape as f32,
                 bass_swap: plan.bass_swap,
                 morph: plan.morph,
+                stage: plan.stage,
+                echo: plan.echo,
                 style: plan.style,
             })
             .unwrap_or_else(|| CrossfadeParams {
@@ -796,6 +809,7 @@ fn unsync_beat_mix(plan: &mut automix::CrossfadePlan) {
         plan.bass_swap = Some(BassSwap::MIDDLE);
     }
     plan.style = FadeStyle::Blend;
+    plan.stage = automix::choose_stage(plan);
 }
 
 /// Where B's decoder opens: the plan's entry downbeat, or the top of the track.

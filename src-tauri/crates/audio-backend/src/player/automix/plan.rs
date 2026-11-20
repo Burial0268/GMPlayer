@@ -3,7 +3,8 @@
 use super::beat_plan;
 use crate::automix as automix_analysis;
 use crate::automix::emotion::{self, EmotionalArc};
-use crate::player::mixer::{BandMorph, BassSwap, FadeStyle};
+use crate::decoder::tempo::RATE_RANGE;
+use crate::player::mixer::{BandMorph, BandStage, BassSwap, EchoOut, FadeStyle, ECHO_MAX_DELAY};
 use crate::types::{AutoMixConfig, CrossfadeCurve};
 
 const MIN_CROSSFADE_DURATION: f64 = 2.0;
@@ -15,6 +16,27 @@ const VOCAL_CLEAR: f32 = 0.25;
 const VOCAL_WINDOW_ACTIVE: f32 = 0.55;
 /// Mean low-band level both sides need before two basslines would stack.
 const BASS_PRESENT: f32 = 0.01;
+/// Liquidsoap autocue's thresholds: A's decay starts where it falls `TAIL_DROP_LU` below its loud
+/// level, or `LONG_TAIL_DROP_LU` when that tail would be longer than `LONG_TAIL_SECONDS`.
+const TAIL_DROP_LU: f32 = 8.0;
+const LONG_TAIL_DROP_LU: f32 = 20.0;
+const LONG_TAIL_SECONDS: f64 = 15.0;
+/// Overlap for two songs that are both loud at the seam (Liquidsoap `cross.smart`).
+const LOUD_PAIR_SECONDS: f64 = 4.0;
+/// Shorter than this, B opens at full level and there is no lead-in to lay under A.
+const MIN_LEAD_IN: f64 = 0.5;
+/// How far B's beat may sit from A's for B's first beat to continue A's pulse at B's spacing.
+const MEET_STEP_TOLERANCE: f64 = 0.1;
+/// How fast an echo-out into B's first beat opens.
+const ECHO_OUT_ATTACK: f64 = 0.03;
+/// Longest tail after A's drop that may ring out under B: B is at full from its first beat, so a
+/// longer, still-audible decay would stack on it; that keeps its measured fade.
+const MEET_MAX_TAIL: f64 = 4.0;
+/// Beats over which A eases into B's tempo before B's first beat: two bars.
+const RIDE_BEATS: f64 = 8.0;
+/// Tempo gap under which B's first beat simply continues A's pulse at B's spacing; one longer beat
+/// is not heard below it.
+const RIDE_MIN_CHANGE: f64 = 0.02;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -30,9 +52,14 @@ pub struct CrossfadePlan {
     /// Section boundary the fade was moved to, when emotional transitions chose one.
     pub section_cue: Option<f64>,
     pub outgoing_rate: f64,
+    /// A's source seconds over which it eases from its own speed to `outgoing_rate`; without one
+    /// the rate applies from `start_time`.
+    pub tempo_ramp: Option<(f64, f64)>,
     pub beat_synced: bool,
     pub bass_swap: Option<BassSwap>,
     pub morph: Option<BandMorph>,
+    pub stage: Option<BandStage>,
+    pub echo: Option<EchoOut>,
     pub style: FadeStyle,
     /// B's source second the overlap starts from: its first downbeat on a
     /// paired plan, so an intro before the beat is not laid under A.
@@ -60,9 +87,12 @@ pub(super) fn build_time_based_plan(
         arc: EmotionalArc::Neutral,
         section_cue: None,
         outgoing_rate: 1.0,
+        tempo_ramp: None,
         beat_synced: false,
         bass_swap: None,
         morph: None,
+        stage: None,
+        echo: None,
         style: FadeStyle::Blend,
         incoming_start: 0.0,
     }
@@ -96,9 +126,15 @@ pub(super) fn build_analysis_backed_plan(
     plan.curve = choose_analysis_curve(current);
     plan.overlap_headroom_db = choose_overlap_headroom(current_analysis, next_analysis);
 
-    let baseline_start =
-        analysis_baseline_start(current, current_duration, effective_end, plan.duration)
-            .unwrap_or(plan.start_time);
+    let measured = loudness_placement(config, current, next_analysis, effective_end);
+    let baseline_start = match measured {
+        Some((start, duration)) => {
+            plan.duration = duration;
+            start
+        }
+        None => analysis_baseline_start(current, current_duration, effective_end, plan.duration)
+            .unwrap_or(plan.start_time),
+    };
     let candidate_start = selected_mix_candidate_start(config, current);
     let start = if let Some(candidate_start) = candidate_start {
         let max_shift = plan.duration.max(8.0).min(20.0);
@@ -122,7 +158,13 @@ pub(super) fn build_analysis_backed_plan(
     }
     if config.emotional_transition {
         if let Some(next) = next_analysis {
+            let end = plan.start_time + plan.duration;
             apply_emotional_arc(&mut plan, config, current, next, effective_end);
+            // A fade placed over A's decay keeps its end when the arc shortens it, or A's last
+            // seconds would play at zero gain.
+            if measured.is_some() && plan.section_cue.is_none() {
+                plan.start_time = end - plan.duration;
+            }
         }
     }
 
@@ -130,25 +172,112 @@ pub(super) fn build_analysis_backed_plan(
     // pulse may move it earlier and recover the configured overlap budget.
     // No outro-type skip here: a fade-out usually keeps its drums, and the pair
     // fit already refuses an overlap A's measured grid does not cover.
+    // Where A's measured full level stops, and the longest fade a placement may take.
+    let placed = (measured.is_some() && plan.section_cue.is_none())
+        .then(|| (plan.start_time, longest_fade(config, effective_end)));
     let aligned = next_analysis
         .filter(|_| config.bpm_match && config.beat_align)
         .and_then(|next| {
-            beat_plan::align(&plan, current, next, effective_end, config.bpm_match)
-                .map(|aligned| (aligned, next))
+            beat_plan::align(
+                &plan,
+                current,
+                next,
+                effective_end,
+                config.bpm_match,
+                config.crossfade_duration,
+                placed,
+            )
+            .map(|aligned| (aligned, next))
         });
     if let Some((mut aligned, next)) = aligned {
         // FilterCut's sweep is its own tonal handover.
         if aligned.style != FadeStyle::FilterCut {
             aligned.morph = choose_morph(&aligned, current, next);
         }
+        aligned.stage = choose_stage(&aligned);
+        aligned.echo = choose_echo(config, current, &aligned);
         return aligned;
     }
     let mut plan = clamp_plan_to_content(plan, effective_end);
+    let mut met = None;
     if let Some(next) = next_analysis {
+        met = meet_on_arrival(&mut plan, config, current, next, effective_end);
         shape_for_pair(&mut plan, current, next);
+        // Whether the bass swaps is still `choose_bass_swap`'s call; when is B's first beat.
+        if let Some(meet) = &met {
+            plan.bass_swap = plan.bass_swap.map(|_| meet.swap);
+        }
     }
     hold_for_last_vocal(&mut plan, current);
+    plan.stage = choose_stage(&plan);
+    plan.echo = match &met {
+        Some(meet) => echo_into_arrival(config, &plan, meet),
+        None => choose_echo(config, current, &plan),
+    };
     plan
+}
+
+/// How hard the echo-out throws, the Web's `1 - compatibility`; native plans keep no
+/// compatibility score.
+/// shortcut: one fixed intensity, upgrade when native plans score pair compatibility.
+const ECHO_INTENSITY: f32 = 0.5;
+
+/// An echo-out where nothing else carries A out: a filter-cut (tempos too far apart to blend
+/// beats) or a short fade off an abrupt ending. Off without transition effects, and for the calm
+/// arcs, as on the Web. Parameters are the Web echo throw's (`TransitionEffects.ts`): an
+/// eighth-note delay from A's tempo, and a duration of about half the fade, 1 to 4 s.
+pub(super) fn choose_echo(
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    plan: &CrossfadePlan,
+) -> Option<EchoOut> {
+    if !config.transition_effects
+        || matches!(plan.arc, EmotionalArc::Afterglow | EmotionalArc::Drift)
+    {
+        return None;
+    }
+    let hard = current
+        .outro
+        .as_ref()
+        .is_some_and(|outro| outro.outro_type == "hard" && outro.outro_confidence >= 0.6)
+        // A section cue moved the fade off the ending the outro type describes.
+        && plan.section_cue.is_none();
+    if plan.style != FadeStyle::FilterCut && !(hard && plan.duration < 4.0) {
+        return None;
+    }
+    let beat = current.bpm.as_ref().and_then(|bpm| {
+        bpm.tail
+            .as_ref()
+            .map(|grid| grid.period)
+            .filter(|period| *period > 0.0)
+            .or((bpm.bpm > 0.0).then(|| 60.0 / bpm.bpm))
+    });
+    let intensity = ECHO_INTENSITY;
+    let duration = (plan.duration as f32 * 0.55).clamp(1.0, 4.0);
+    Some(EchoOut {
+        delay: beat.map_or(0.32, |beat| (beat * 0.5).clamp(0.16, ECHO_MAX_DELAY)),
+        feedback: 0.22 + intensity * 0.18,
+        cutoff_hz: 4_200.0 - intensity * 1_800.0,
+        wet: 10f32.powf((-22.0 + intensity * 8.0) / 20.0),
+        start: 0.0,
+        attack: duration * 0.15,
+        duration,
+    })
+}
+
+/// Staged entry for every style but `FilterCut` (whose sweep is its own handover). The crossover
+/// is where B takes the bass — the swap's end — or A's handoff when A holds the floor longer,
+/// since A's highs must not dull while it is still singing.
+pub(in crate::player) fn choose_stage(plan: &CrossfadePlan) -> Option<BandStage> {
+    let handoff = match plan.style {
+        FadeStyle::FilterCut => return None,
+        FadeStyle::Handoff(handoff)
+        | FadeStyle::BeatMix(handoff)
+        | FadeStyle::RingOut { handoff, .. } => handoff,
+        FadeStyle::Blend => 0.0,
+    };
+    let crossover = plan.bass_swap.map_or(0.5, |swap| swap.end).max(handoff);
+    Some(BandStage { crossover })
 }
 
 /// The incoming deck's gain, matched to what the listener hears now rather than to an absolute
@@ -193,8 +322,20 @@ fn hold_for_last_vocal(plan: &mut CrossfadePlan, current: &automix_analysis::Tra
         return;
     };
     let handoff = ((end - plan.start_time) / plan.duration).clamp(0.0, 0.8);
-    if handoff >= 0.1 {
-        plan.style = FadeStyle::Handoff(handoff as f32);
+    // A handoff already placed later (A's drop under B's arrival) is kept.
+    match &mut plan.style {
+        FadeStyle::RingOut { handoff: held, .. } => {
+            *held = held.max(handoff as f32);
+        }
+        style => {
+            let held = match style {
+                FadeStyle::Handoff(held) => f64::from(*held),
+                _ => 0.0,
+            };
+            if handoff >= 0.1 && handoff > held {
+                *style = FadeStyle::Handoff(handoff as f32);
+            }
+        }
     }
 }
 
@@ -467,9 +608,10 @@ fn apply_emotional_arc(
         return;
     };
     plan.arc = arc;
+    // Never longer than the setting, or than a measured decay already is.
     plan.duration = (plan.duration * f64::from(profile.duration_scale)).clamp(
         MIN_CROSSFADE_DURATION,
-        configured_duration(config, effective_end),
+        configured_duration(config, effective_end).max(plan.duration),
     );
     if let Some(curve) = profile.curve {
         plan.curve = curve;
@@ -588,6 +730,280 @@ fn spectral_similarity(a: &[f32], b: &[f32]) -> f32 {
     } else {
         (dot / denom).clamp(0.0, 1.0)
     }
+}
+
+/// Start and length of a fade over A's own decay. Reads A's outro short-term loudness (250 ms
+/// windows ending at the content end) the way Liquidsoap's autocue does: the decay starts after
+/// the last window within `TAIL_DROP_LU` of the outro's loud level (its 80th percentile). B
+/// arriving there is heard as A lets go, rather than at a fixed time that is either still inside
+/// A's last full bars or already in its silence. A hard or silent ending keeps its short fade.
+/// When A is loud to the very end, B opening loud gets a short overlap; B opening quietly is left
+/// to the ordinary placement, where A covers its intro.
+fn loudness_placement(
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    next: Option<&automix_analysis::TrackAnalysis>,
+    effective_end: f64,
+) -> Option<(f64, f64)> {
+    let outro = current.outro.as_ref()?;
+    if outro.outro_confidence >= 0.6 && matches!(outro.outro_type.as_str(), "hard" | "silence") {
+        return None;
+    }
+    let loudness = &outro.short_term_loudness;
+    // Under 4 s of windows says nothing about a decay.
+    if loudness.len() < 16 {
+        return None;
+    }
+    let mut sorted = loudness.clone();
+    let rank = (sorted.len() - 1) * 8 / 10;
+    let reference = *sorted.select_nth_unstable_by(rank, f32::total_cmp).1;
+    let content_end = f64::from(current.duration - current.energy.trailing_silence);
+    let tail_start = |drop: f32| {
+        loudness
+            .iter()
+            .rposition(|lufs| *lufs >= reference - drop)
+            .map(|i| content_end - (loudness.len() - 1 - i) as f64 * 0.25)
+    };
+    let mut start = tail_start(TAIL_DROP_LU)?;
+    if content_end - start > LONG_TAIL_SECONDS {
+        start = tail_start(LONG_TAIL_DROP_LU)?;
+    }
+    let tail = content_end - start;
+    let duration = if tail < MIN_CROSSFADE_DURATION {
+        let intro = next?.intro.as_ref()?;
+        if intro.quiet_intro_duration >= 1.0 || intro.intro_energy_ratio < 0.8 {
+            return None;
+        }
+        configured_duration(config, effective_end).min(LOUD_PAIR_SECONDS)
+    } else {
+        tail.clamp(MIN_CROSSFADE_DURATION, longest_fade(config, effective_end))
+    };
+    Some((content_end - duration, duration))
+}
+
+/// Longest fade a measured placement may take: max(1.5 x the setting, 12 s), at most a quarter of A.
+fn longest_fade(config: &AutoMixConfig, effective_end: f64) -> f64 {
+    (config.crossfade_duration * 1.5)
+        .max(12.0)
+        .min((effective_end / 4.0).max(MIN_CROSSFADE_DURATION))
+}
+
+/// Band power in dB per 250 ms window, and the first and last window within `TAIL_DROP_LU` (here
+/// dB, not LU) of their 80th percentile: where a song's full level starts and stops. Unsmoothed,
+/// unlike the outro's short-term loudness, which lags a sudden drop.
+fn loud_windows(bands: &automix_analysis::MultibandEnergy) -> Option<(usize, usize, usize)> {
+    let level: Vec<f32> = bands
+        .low
+        .iter()
+        .zip(&bands.mid)
+        .zip(&bands.high)
+        .map(|((low, mid), high)| 10.0 * (low * low + mid * mid + high * high).max(1e-12).log10())
+        .collect();
+    // Under 4 s of windows says nothing.
+    if level.len() < 16 {
+        return None;
+    }
+    let mut sorted = level.clone();
+    let rank = (sorted.len() - 1) * 8 / 10;
+    let floor = *sorted.select_nth_unstable_by(rank, f32::total_cmp).1 - TAIL_DROP_LU;
+    let first = level.iter().position(|db| *db >= floor)?;
+    let last = level.iter().rposition(|db| *db >= floor)?;
+    Some((first, last, level.len()))
+}
+
+/// Where A's full level stops, in song seconds: the end of its last loud outro window (they end at
+/// the content end). Also where B's first beat should land, which continues A's pulse when A's
+/// grid ends there: one step after its last pulse, B's own beat when the two are within
+/// `MEET_STEP_TOLERANCE` (so repeats of A's last beat at that spacing land on B's beats, and the
+/// step is returned), else A's. Without that pulse it is the drop itself. When B's beat is more
+/// than `RIDE_MIN_CHANGE` off A's, A rides into it over its last `RIDE_BEATS` (pitch kept): its
+/// last beats then fall at B's spacing, and B's first beat lands on A's own next beat.
+fn departure(
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+) -> Option<(f64, f64, Option<f64>, Option<Ride>)> {
+    let (_, last, len) = loud_windows(&current.outro.as_ref()?.multiband_energy)?;
+    let content_end = f64::from(current.duration - current.energy.trailing_silence);
+    let drop = content_end - (len - 1 - last) as f64 * 0.25;
+    let b_beat = next
+        .bpm
+        .as_ref()
+        .and_then(|bpm| bpm.head.as_ref())
+        .map(|grid| f64::from(grid.period));
+    let pulse = current
+        .bpm
+        .as_ref()
+        .and_then(|bpm| bpm.tail.as_ref())
+        .and_then(|grid| {
+            let (last, period) = (f64::from(*grid.beats.last()?), f64::from(grid.period));
+            if last > drop || drop - last > 1.5 * period {
+                return None;
+            }
+            let step = b_beat.filter(|b| (b / period - 1.0).abs() <= MEET_STEP_TOLERANCE);
+            let ride = step.map(|step| Ride {
+                from: last - RIDE_BEATS * period,
+                to: last,
+                rate: period / step,
+            });
+            let ride = ride.filter(|ride| {
+                (ride.rate - 1.0).abs() > RIDE_MIN_CHANGE
+                    && RATE_RANGE.contains(&ride.rate)
+                    && ride.from >= 0.0
+            });
+            match ride {
+                Some(ride) => Some((last + period, step, Some(ride))),
+                None => Some((last + step.unwrap_or(period), step, None)),
+            }
+        });
+    let (meet, step, ride) = pulse.unwrap_or((drop, None, None));
+    Some((drop, meet.min(content_end), step, ride))
+}
+
+/// A easing linearly, by source position, from its own speed at `from` to `rate` at `to`, and
+/// held there after. `rate` is source seconds per output second.
+#[derive(Debug, Clone, Copy)]
+struct Ride {
+    from: f64,
+    to: f64,
+    rate: f64,
+}
+
+impl Ride {
+    /// Output seconds A takes to play its source seconds `start..end`.
+    fn played(ride: Option<&Self>, start: f64, end: f64) -> f64 {
+        let Some(ride) = ride else {
+            return end - start;
+        };
+        let before = (end.min(ride.from) - start).max(0.0);
+        let after = (end - start.max(ride.to)).max(0.0) / ride.rate;
+        let (x, y) = (start.max(ride.from), end.min(ride.to));
+        let slope = (ride.rate - 1.0) / (ride.to - ride.from);
+        let speed = |s: f64| 1.0 + slope * (s - ride.from);
+        let during = if y > x {
+            (speed(y) / speed(x)).ln() / slope
+        } else {
+            0.0
+        };
+        before + during + after
+    }
+
+    /// The source second from which A takes `seconds` of output to reach `end`.
+    fn start_before(ride: Option<&Self>, end: f64, seconds: f64) -> f64 {
+        let (min, max) = (*RATE_RANGE.start(), *RATE_RANGE.end());
+        let (mut early, mut late) = (end - seconds * max, end - seconds * min);
+        for _ in 0..48 {
+            let mid = 0.5 * (early + late);
+            if Self::played(ride, mid, end) > seconds {
+                early = mid;
+            } else {
+                late = mid;
+            }
+        }
+        0.5 * (early + late)
+    }
+}
+
+/// How far into B its full level starts: the start of its first loud intro window, or its first
+/// beat when that falls just after (the window can only say which quarter second).
+fn arrival(next: &automix_analysis::TrackAnalysis) -> Option<f64> {
+    let (first, _, _) = loud_windows(next.intro.as_ref()?.multiband_energy.as_ref()?)?;
+    let arrive = first as f64 * 0.25;
+    let first_beat = next
+        .bpm
+        .as_ref()
+        .and_then(|bpm| bpm.head.as_ref())
+        .and_then(|grid| grid.beats.first())
+        .map(|beat| f64::from(*beat))
+        .filter(|beat| (arrive - 0.25..=arrive + 0.5).contains(beat));
+    Some(first_beat.unwrap_or(arrive))
+}
+
+/// B's energy arrives as A's leaves. B opening with a quiet lead-in starts that long before A's
+/// full level stops, so its first beat lands where A lets go (`departure`); started at its top
+/// instead, B was still in its lead-in as A decayed, a hole of up to 18 dB between two loud songs.
+/// A holds until its own drop, then releases over the rest of its tail, which rings out under B
+/// (`FadeStyle::RingOut`, B at full from its first beat): the bass changes hands from A's drop to
+/// B's first beat (the returned window). Ending the fade just after B's first beat instead cut A's tail off and handed over in
+/// under half a second, which read as a hard cut between two moods. Only for a fade over A's
+/// ending (one a section cue moved well before it keeps its place) whose tail after the drop is
+/// at most `MEET_MAX_TAIL`; without A's ending or B's opening measured, or with a lead-in too long
+/// to lay under A, nothing changes.
+fn meet_on_arrival(
+    plan: &mut CrossfadePlan,
+    config: &AutoMixConfig,
+    current: &automix_analysis::TrackAnalysis,
+    next: &automix_analysis::TrackAnalysis,
+    effective_end: f64,
+) -> Option<Meet> {
+    let (drop, meet, step, ride) = departure(current, next)?;
+    let arrive = arrival(next)?;
+    // B plays at its own speed from the fade's start, so its first beat is `arrive` of output in.
+    let start = Ride::start_before(ride.as_ref(), meet, arrive);
+    let duration = Ride::played(ride.as_ref(), start, effective_end);
+    if arrive < MIN_LEAD_IN
+        || effective_end - drop > MEET_MAX_TAIL
+        || plan.start_time + plan.duration <= drop
+        || start < 0.0
+        || duration > longest_fade(config, effective_end)
+    {
+        return None;
+    }
+    plan.start_time = start;
+    plan.duration = duration;
+    plan.incoming_start = 0.0;
+    plan.section_cue = None;
+    if let Some(ride) = ride {
+        plan.outgoing_rate = ride.rate;
+        plan.tempo_ramp = Some((ride.from, ride.to));
+    }
+    let handoff = (Ride::played(ride.as_ref(), start, drop.min(meet)) / duration).max(0.0) as f32;
+    let landed = (arrive / duration) as f32;
+    plan.style = FadeStyle::RingOut { handoff, landed };
+    let ramp = (beat_plan::SWAP_RAMP_SECONDS / duration) as f32;
+    Some(Meet {
+        swap: BassSwap {
+            start: handoff.min(landed - ramp),
+            end: landed,
+        },
+        beat: arrive,
+        step,
+    })
+}
+
+/// What `meet_on_arrival` decided beyond the plan itself.
+struct Meet {
+    /// When the bass changes hands: from A's drop to B's first beat.
+    swap: BassSwap,
+    /// Seconds into the fade of B's first beat.
+    beat: f64,
+    /// B's beat, when B's first beat continues A's pulse at it.
+    step: Option<f64>,
+}
+
+/// A DJ's echo-out on A's last beat, to carry A's mood into B instead of dropping it: from B's
+/// first beat, A's last beat repeats at B's own spacing — on B's beats — and dies away over B's
+/// opening, about four repeats. Opens 30 ms before that beat, so nothing earlier in the line is
+/// heard. Only when B's first beat continues A's pulse at B's beat (`departure`), and like every
+/// echo-out not without transition effects or on a calm arc. The Web's echo throw is a lighter
+/// effect over the whole fade (`choose_echo`).
+fn echo_into_arrival(config: &AutoMixConfig, plan: &CrossfadePlan, meet: &Meet) -> Option<EchoOut> {
+    let step = meet
+        .step
+        .filter(|step| *step <= f64::from(ECHO_MAX_DELAY))?;
+    if !config.transition_effects
+        || matches!(plan.arc, EmotionalArc::Afterglow | EmotionalArc::Drift)
+    {
+        return None;
+    }
+    Some(EchoOut {
+        delay: step as f32,
+        feedback: 0.6,
+        cutoff_hz: 2_500.0,
+        wet: 0.5,
+        start: (meet.beat - ECHO_OUT_ATTACK).max(0.0) as f32,
+        attack: ECHO_OUT_ATTACK as f32,
+        duration: 12.0,
+    })
 }
 
 fn analysis_baseline_start(

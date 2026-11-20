@@ -210,25 +210,12 @@ impl Player {
         // Spawn the audio player on a dedicated thread with its own tokio runtime.
         // `AudioPlayer` owns the live `OutputStream` so it can reopen the stream
         // with a source-aware channel count when tracks change.
-        let thread = thread::Builder::new()
-            .name("audio-player".into())
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("Build tokio runtime");
-                rt.block_on(async move {
-                    let player = match AudioPlayer::new(msg_rx, seek_rx, evt_tx, session).await {
-                        Ok(p) => p,
-                        Err(e) => {
-                            warn!("创建音频播放器失败：{e:?}");
-                            return;
-                        }
-                    };
-                    player.run().await;
-                });
-            })
-            .map_err(|e| AudioError::ThreadError(format!("spawn audio-player thread: {e}")))?;
+        let thread = spawn_initialised(
+            "audio-player",
+            PLAYER_INIT_TIMEOUT,
+            move || AudioPlayer::new(msg_rx, seek_rx, evt_tx, session),
+            AudioPlayer::run,
+        )?;
 
         Ok(Player {
             msg_tx,
@@ -236,6 +223,12 @@ impl Player {
             shared,
             thread: Some(thread),
         })
+    }
+
+    /// Whether the player loop is still running. It ends on its own only when it cannot go on
+    /// (its runtime is gone); a dead player answers every message with "channel closed".
+    pub fn is_alive(&self) -> bool {
+        !self.msg_tx.is_closed()
     }
 
     pub fn handle(&self) -> PlayerHandle {
@@ -341,6 +334,70 @@ impl Drop for Player {
         if let Some(thread) = self.thread.take() {
             join_thread_async("audio-player-join", thread);
         }
+    }
+}
+
+/// Opening the output can wait on the platform (an Android AAudio stream, a WASAPI endpoint
+/// waking up); past this the player is reported as not started rather than left half-made.
+const PLAYER_INIT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Start `init` on its own thread and runtime, and return only once it has come up.
+///
+/// The player used to be spawned and handed back at once, so an output that would not open
+/// (nothing plugged in, a device mid-switch) ended the thread after `Player::new` had already
+/// answered `Ok`: the caller kept a player whose every message failed with "channel closed", until
+/// the app restarted. Waiting here turns that into an error the caller can retry. On a timeout the
+/// thread is left to finish on its own; whatever it built then finds its channels closed and exits.
+fn spawn_initialised<T, F, G>(
+    name: &str,
+    timeout: Duration,
+    init: impl FnOnce() -> F + Send + 'static,
+    run: impl FnOnce(T) -> G + Send + 'static,
+) -> AudioResult<thread::JoinHandle<()>>
+where
+    F: std::future::Future<Output = AudioResult<T>>,
+    G: std::future::Future<Output = ()>,
+{
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<AudioResult<()>>(1);
+    let thread_name = name.to_string();
+    let thread = thread::Builder::new()
+        .name(name.into())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let _ = ready_tx.send(Err(AudioError::ThreadError(format!(
+                        "build {thread_name} runtime: {e}"
+                    ))));
+                    return;
+                }
+            };
+            rt.block_on(async move {
+                match init().await {
+                    Ok(value) => {
+                        let _ = ready_tx.send(Ok(()));
+                        run(value).await;
+                    }
+                    Err(e) => {
+                        warn!("{thread_name} failed to start: {e}");
+                        let _ = ready_tx.send(Err(e));
+                    }
+                }
+            });
+        })
+        .map_err(|e| AudioError::ThreadError(format!("spawn {name} thread: {e}")))?;
+    match ready_rx.recv_timeout(timeout) {
+        Ok(Ok(())) => Ok(thread),
+        Ok(Err(e)) => Err(e),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(AudioError::ThreadError(format!(
+            "{name} did not start within {timeout:?}"
+        ))),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(AudioError::ThreadError(
+            format!("{name} thread ended while starting"),
+        )),
     }
 }
 
@@ -670,5 +727,42 @@ mod tests {
         // Unknown ids are a no-op, not a panic.
         registry.write().retain(|(existing, _)| *existing != 99);
         assert_eq!(registry.read().len(), 1);
+    }
+
+    /// A thread whose setup fails must say so to whoever started it, not hand back a handle to
+    /// something that has already exited.
+    #[test]
+    fn a_thread_that_cannot_start_reports_it_instead_of_returning_a_dead_handle() {
+        let failed = spawn_initialised(
+            "init-fails",
+            Duration::from_secs(5),
+            || async { Err::<(), _>(AudioError::Output("no device".into())) },
+            |_| async {},
+        );
+        assert!(matches!(failed, Err(AudioError::Output(_))));
+
+        let (ran_tx, ran_rx) = std::sync::mpsc::channel();
+        let started = spawn_initialised(
+            "init-succeeds",
+            Duration::from_secs(5),
+            || async { Ok(7) },
+            move |value| async move {
+                let _ = ran_tx.send(value);
+            },
+        )
+        .expect("starts");
+        assert_eq!(ran_rx.recv_timeout(Duration::from_secs(5)), Ok(7));
+        started.join().unwrap();
+
+        let slow = spawn_initialised(
+            "init-hangs",
+            Duration::from_millis(20),
+            || async {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok(())
+            },
+            |_| async {},
+        );
+        assert!(matches!(slow, Err(AudioError::ThreadError(_))));
     }
 }

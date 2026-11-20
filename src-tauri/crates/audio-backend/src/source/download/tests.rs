@@ -45,6 +45,57 @@ mod stream_tests {
         assert_eq!(all.len(), total);
     }
 
+    /// The only test that configures the audio cache: it is process-global, and every other
+    /// download here behaves the same with or without it (it only changes where the file lands).
+    #[test]
+    fn a_download_matching_its_md5_is_kept_and_replayed_without_the_network() {
+        use md5::Digest;
+        let dir = tempfile::tempdir().unwrap();
+        assert!(crate::source::set_audio_cache_dir(dir.path().join("audio")));
+        let total = 3 * 1024 * 1024;
+        let md5: String = md5::Md5::digest(vec![7u8; total])
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let landed = |guard: &crate::source::TempGuard| {
+            let until = Instant::now() + Duration::from_secs(10);
+            while crate::source::is_complete(guard) != Some(true) {
+                assert!(Instant::now() < until, "download did not land");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            // The commit runs on the writer thread right after the last byte.
+            std::thread::sleep(Duration::from_millis(300));
+        };
+
+        // A declared hash the bytes do not match: played, never kept.
+        let guard = super::super::fetch(&serve(total, total), Some(&"0".repeat(32))).unwrap();
+        landed(&guard);
+        let path = guard.to_path_buf();
+        drop(guard);
+        assert_eq!(crate::source::audio_cache_usage(), 0);
+        assert!(!path.exists());
+
+        let guard = super::super::fetch(&serve(total, total), Some(&md5)).unwrap();
+        landed(&guard);
+        assert_eq!(crate::source::audio_cache_usage(), total as u64);
+        let path = guard.to_path_buf();
+        drop(guard);
+        assert!(path.exists(), "a kept file outlives its guard");
+
+        // Nothing listens there: only the cache can answer.
+        let replay =
+            super::super::fetch("http://127.0.0.1:9/gone.mp3", Some(&md5.to_uppercase())).unwrap();
+        assert_eq!(&*replay, path.as_path());
+        assert_eq!(
+            crate::source::clear_audio_cache(),
+            0,
+            "a file in use is not cleared"
+        );
+        drop(replay);
+        assert_eq!(crate::source::clear_audio_cache(), total as u64);
+        assert!(!path.exists());
+    }
+
     #[test]
     fn a_body_cut_short_fails_the_read() {
         let guard = download_to_temp_path(&serve(3 * 1024 * 1024, 1024 * 1024)).unwrap();
@@ -167,5 +218,79 @@ mod range_tests {
         let mut got = vec![0u8; 1000];
         src.read_exact(&mut got).unwrap();
         assert!(got.iter().enumerate().all(|(i, b)| *b == byte(at + i)));
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::atomic::AtomicUsize;
+
+    const TOTAL: usize = 3 * 1024 * 1024;
+
+    fn byte(i: usize) -> u8 {
+        (i % 251) as u8
+    }
+
+    /// The first connection is cut after `cut` bytes, as a flapping mobile network drops one;
+    /// later ones honour `Range`. `refuse` answers every retry with a 200 from byte 0 instead.
+    fn serve(cut: usize, refuse: bool) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/t.mp3", listener.local_addr().unwrap());
+        let connections = Arc::new(AtomicUsize::new(0));
+        let counted = connections.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { return };
+                let nth = counted.fetch_add(1, Ordering::SeqCst);
+                std::thread::spawn(move || {
+                    let mut req = [0u8; 2048];
+                    let n = s.read(&mut req).unwrap_or(0);
+                    let req = String::from_utf8_lossy(&req[..n]).to_ascii_lowercase();
+                    let start = req
+                        .lines()
+                        .find_map(|l| l.strip_prefix("range: bytes="))
+                        .and_then(|r| r.trim_end_matches('-').parse::<usize>().ok())
+                        .filter(|_| !refuse)
+                        .unwrap_or(0);
+                    let head = if start > 0 {
+                        format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {start}-{}/{TOTAL}\r\n\r\n",
+                            TOTAL - start,
+                            TOTAL - 1
+                        )
+                    } else {
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: {TOTAL}\r\n\r\n")
+                    };
+                    let end = if nth == 0 { cut } else { TOTAL };
+                    let body: Vec<u8> = (start..end).map(byte).collect();
+                    let _ = s.write_all(head.as_bytes());
+                    let _ = s.write_all(&body);
+                });
+            }
+        });
+        (url, connections)
+    }
+
+    #[test]
+    fn a_dropped_connection_is_resumed_where_it_stopped() {
+        let (url, connections) = serve(1024 * 1024, false);
+        let guard = download_to_temp_path(&url).unwrap();
+        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
+        let mut all = Vec::new();
+        src.read_to_end(&mut all).unwrap();
+        assert_eq!(all.len(), TOTAL);
+        assert!(all.iter().enumerate().all(|(i, b)| *b == byte(i)));
+        assert_eq!(connections.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_server_that_cannot_resume_still_fails_the_read() {
+        let (url, _) = serve(1024 * 1024, true);
+        let guard = download_to_temp_path(&url).unwrap();
+        let mut src = crate::source::open(crate::source::SourceLocator::Path(&guard)).unwrap();
+        assert!(src.read_to_end(&mut Vec::new()).is_err());
     }
 }

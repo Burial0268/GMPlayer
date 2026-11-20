@@ -277,6 +277,11 @@ impl NcmCore {
 
     /// Endpoint names the bundle exposes (upstream module basenames, e.g.
     /// `song_url_v1`).
+    /// Forget every cached response, in memory and on disk, returning the bytes freed on disk.
+    pub fn clear_cache(&self) -> u64 {
+        self.cache.clear()
+    }
+
     pub async fn endpoints(&self) -> Result<Vec<String>, NcmError> {
         self.context
             .async_with(async |ctx| -> Result<Vec<String>, String> {
@@ -679,6 +684,18 @@ fn explain(ctx: &rquickjs::Ctx<'_>, e: rquickjs::Error) -> String {
 /// the only interesting part with it: `transport error [redacted]` instead of
 /// `transport error (connect) …`. Key names are not secret and are what make a
 /// log line searchable; the value after them is what must never be written.
+/// Bytes the persisted response cache under `state_dir` takes.
+pub fn disk_cache_usage(state_dir: &std::path::Path) -> u64 {
+    disk::DiskCache::open(state_dir).map_or(0, |disk| disk.usage())
+}
+
+/// Delete the persisted response cache under `state_dir`, returning the bytes freed. Once an
+/// isolate is built use [`NcmCore::clear_cache`] instead, or its memory tier keeps serving what
+/// was cleared here.
+pub fn clear_disk_cache(state_dir: &std::path::Path) -> u64 {
+    disk::DiskCache::open(state_dir).map_or(0, |disk| disk.clear())
+}
+
 pub fn redact(text: &str) -> String {
     // Substring match, not token match: `__csrf`, `MUSIC_U` and
     // `anonymous_token` all carry their marker mid-word, and a false positive

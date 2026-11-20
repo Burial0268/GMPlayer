@@ -16,6 +16,7 @@ import { getMusicUrl, getMusicNumUrl } from "@/api/song";
 import type { MusicLevel } from "@/api/types";
 import useSettingDataStore from "@/store/settingData";
 import { reactive } from "vue";
+import { recordDeclaredMd5 } from "./native/DeclaredMd5";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 
@@ -193,9 +194,11 @@ async function resolveSongUrlUncached(
   // Step 1: Try NCM official API
   let url: string | null = null;
   let servedLevel: unknown = null;
+  let declaredMd5: unknown = null;
   try {
     const res = await getMusicUrl(song.id, effectiveLevel);
     servedLevel = res?.data?.[0]?.level;
+    declaredMd5 = res?.data?.[0]?.md5;
 
     const rawUrl = res?.data?.[0]?.url;
     if (rawUrl) {
@@ -219,6 +222,7 @@ async function resolveSongUrlUncached(
   // Step 2: If NCM succeeded, return it
   if (url) {
     recordServedLevel(song.id, servedLevel);
+    recordDeclaredMd5(url, declaredMd5);
     return { url, source: "ncm" };
   }
   recordServedLevel(song.id, null);

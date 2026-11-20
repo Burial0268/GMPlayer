@@ -32,6 +32,8 @@ export interface SongData {
   songJsonData?: string;
   origOrder: number;
   display?: TrackDisplay;
+  /** md5 Netease declared for `filePath`; keys the native audio cache (see `DeclaredMd5.ts`). */
+  md5?: string;
 }
 export interface AutoMixConfig {
   enabled: boolean;

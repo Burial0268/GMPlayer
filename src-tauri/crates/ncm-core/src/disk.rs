@@ -229,6 +229,32 @@ impl DiskCache {
         dropped
     }
 
+    /// Bytes the entries take.
+    pub(crate) fn usage(&self) -> u64 {
+        fs::read_dir(&self.dir).map_or(0, |entries| {
+            entries
+                .flatten()
+                .filter_map(|e| e.metadata().ok())
+                .map(|m| m.len())
+                .sum()
+        })
+    }
+
+    /// Delete every entry, returning the bytes freed.
+    pub(crate) fn clear(&self) -> u64 {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return 0;
+        };
+        let mut freed = 0;
+        for entry in entries.flatten() {
+            let size = entry.metadata().map_or(0, |m| m.len());
+            if fs::remove_file(entry.path()).is_ok() {
+                freed += size;
+            }
+        }
+        freed
+    }
+
     /// Drop what is no longer worth keeping: entries past even their stale
     /// window, then oldest-first until the directory is inside its bounds.
     ///
@@ -482,6 +508,23 @@ mod tests {
         let other = "user_detail\u{0}cookie\u{1}\"MUSIC_U=someoneelse\"\u{2}";
         assert_ne!(disk.path_for(&key), disk.path_for(other));
         assert!(disk.load(other).is_none());
+    }
+
+    #[test]
+    fn clearing_removes_every_entry_and_reports_the_bytes() {
+        let scratch = Scratch::new("clear");
+        let disk = DiskCache::open(&scratch.0).unwrap();
+        disk.store("a\u{0}1", &envelope("1"), ahead(60), ahead(600));
+        disk.store("b\u{0}2", &envelope("22"), ahead(60), ahead(600));
+        let on_disk: u64 = fs::read_dir(&disk.dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.metadata().unwrap().len())
+            .sum();
+
+        assert_eq!(disk.clear(), on_disk);
+        assert!(disk.load("a\u{0}1").is_none());
+        assert_eq!(fs::read_dir(&disk.dir).unwrap().count(), 0);
     }
 
     #[test]

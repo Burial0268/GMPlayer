@@ -124,6 +124,10 @@
         <SettingsDownload />
       </template>
 
+      <template #storageSettings>
+        <SettingsStorage />
+      </template>
+
       <template #aboutApp>
         <SettingsAbout />
       </template>
@@ -241,6 +245,7 @@ import SettingsPanel from "./SettingsPanel.vue";
 import SettingsAppUpdate from "./SettingsAppUpdate.vue";
 import SettingsDsp from "./SettingsDsp.vue";
 import SettingsDownload from "./SettingsDownload.vue";
+import SettingsStorage from "./SettingsStorage.vue";
 import SettingsAbout from "./SettingsAbout.vue";
 import { SETTINGS_SECTION_ALIASES, useSettingsSections } from "./useSettingsSections";
 

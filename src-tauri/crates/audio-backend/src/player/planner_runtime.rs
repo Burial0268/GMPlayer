@@ -485,7 +485,7 @@ impl AudioPlayer {
                 }
             };
 
-            match self.start_planned_track(&next, source.uri, direction).await {
+            match self.start_planned_track(&next, source, direction).await {
                 PlannedStart::Started => return true,
                 // The output is gone, not the track. Every remaining candidate
                 // would fail at the same step, so walking on would blacklist the
@@ -522,7 +522,7 @@ impl AudioPlayer {
     pub(super) async fn start_planned_track(
         &mut self,
         track: &PlannedTrack,
-        uri: String,
+        source: super::source_resolver::ResolvedSource,
         direction: PlannerDirection,
     ) -> PlannedStart {
         // Carry the manifest's own metadata into the load. This is the
@@ -539,9 +539,10 @@ impl AudioPlayer {
                     artwork_url: entry.artwork_url.clone(),
                 });
         let song = SongData::Local {
-            file_path: uri,
+            file_path: source.uri,
             orig_order: track.playlist_index,
             display,
+            md5: source.md5,
         };
         let music_id = song.get_id();
 

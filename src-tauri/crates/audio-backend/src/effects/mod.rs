@@ -330,6 +330,11 @@ impl BiquadCoeffs {
         Self::normalize(b0, b1, b2, a0, a1, a2)
     }
 
+    /// Exactly the pass-through, whose state stays at zero: skipping it changes nothing.
+    pub(crate) fn is_identity(&self) -> bool {
+        self.b0 == 1.0 && self.b1 == 0.0 && self.b2 == 0.0 && self.a1 == 0.0 && self.a2 == 0.0
+    }
+
     pub(crate) const IDENTITY: Self = Self {
         b0: 1.0,
         b1: 0.0,
@@ -337,6 +342,14 @@ impl BiquadCoeffs {
         a1: 0.0,
         a2: 0.0,
     };
+
+    pub(crate) fn low_pass(sample_rate: f32, frequency: f32, q: f32) -> Self {
+        let omega = std::f32::consts::TAU * frequency / sample_rate;
+        let (sin, cos) = omega.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let b0 = (1.0 - cos) / 2.0;
+        Self::normalize(b0, 1.0 - cos, b0, 1.0 + alpha, -2.0 * cos, 1.0 - alpha)
+    }
 
     pub(crate) fn high_pass(sample_rate: f32, frequency: f32, q: f32) -> Self {
         let omega = std::f32::consts::TAU * frequency / sample_rate;

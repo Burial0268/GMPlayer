@@ -8,7 +8,7 @@
 import type { CrossfadeCurve } from "./types";
 
 /** Share of a fade, at each end, over which its progress eases in and out. */
-const FADE_EDGE = 0.15;
+const FADE_EDGE = 0.06;
 
 /**
  * A fade's progress warped so every curve built on it starts and ends at rest: linear through the

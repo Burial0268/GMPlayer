@@ -13,6 +13,8 @@ pub use gmplayer_automix_analysis::{
 pub(crate) mod emotion;
 #[cfg(not(target_arch = "wasm32"))]
 mod file;
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) use file::decode_interleaved;
 #[cfg(not(target_arch = "wasm32"))]
 mod spool;
 #[cfg(not(target_arch = "wasm32"))]

@@ -80,6 +80,7 @@ function environment(deferResolution = false) {
         sent.push(msg);
       },
     },
+    "../native/DeclaredMd5": { declaredMd5For: () => undefined },
     "../resolveSongUrl": {
       resolveSongUrl: () =>
         deferResolution
@@ -167,6 +168,26 @@ function environment(deferResolution = false) {
     },
   };
 }
+
+test("deleting the song a transition heads for calls it off, before the commit only", () => {
+  const env = environment();
+  assert.equal(env.state.cancelIfHeadingFor(3), false, "another song: the transition stays");
+  assert.deepEqual(env.sent, []);
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.equal(env.state.cancelIfHeadingFor(2), true);
+  assert.deepEqual(
+    env.sent.map((msg: any) => msg.type),
+    ["automixCancel"],
+  );
+  assert.equal(env.state.isHandoffActive(), false);
+
+  // After the commit the store shows the incoming song; deleting it is deleting the playing song.
+  const committed = environment();
+  committed.event("automixCrossfadeStarted", { duration: 8, transitionId: committed.transitionId });
+  committed.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: committed.transitionId });
+  assert.equal(committed.state.cancelIfHeadingFor(2), false);
+  assert.deepEqual(committed.sent, []);
+});
 
 test("a native crossfade survives a long pause and accepts the backend's eventual handoff", () => {
   const env = environment();
