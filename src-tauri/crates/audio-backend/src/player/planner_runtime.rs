@@ -150,10 +150,10 @@ impl AudioPlayer {
         }
         self.source_cache.invalidate();
         self.planner = super::planner::Planner::new();
-        let mut session = self.session.lock();
-        session.order.clear();
-        session.shuffle_id = None;
-        drop(session);
+        self.bus.update(|session| {
+            session.order.clear();
+            session.shuffle_id = None;
+        });
         self.emit_planner_status().await;
     }
 
@@ -175,29 +175,27 @@ impl AudioPlayer {
         let shuffle_id = random
             .then(|| self.manifest.shuffle_id().map(str::to_owned))
             .flatten();
-        {
-            let mut session = self.session.lock();
-            session.manifest_revision = self.manifest.revision();
-            session.play_mode = self.session_controls.play_mode;
-            session.order = order.clone();
-            session.shuffle_id = shuffle_id.clone();
-        }
-        if emit && random {
+        let manifest_revision = self.manifest.revision();
+        let play_mode = self.session_controls.play_mode;
+        let event = (emit && random).then(|| {
             info!(
                 "reporting random order to the frontend: {} tracks, revision={}, playing={:?}",
                 order.len(),
-                self.manifest.revision(),
+                manifest_revision,
                 self.current_planner_key(),
             );
-            let _ = self
-                .emitter()
-                .emit(AudioThreadEvent::NativeQueueOrderChanged {
-                    manifest_revision: self.manifest.revision(),
-                    order,
-                    shuffle_id,
-                })
-                .await;
-        }
+            AudioThreadEvent::NativeQueueOrderChanged {
+                manifest_revision,
+                order: order.clone(),
+                shuffle_id: shuffle_id.clone(),
+            }
+        });
+        self.bus.emit_with(event, |session| {
+            session.manifest_revision = manifest_revision;
+            session.play_mode = play_mode;
+            session.order = order;
+            session.shuffle_id = shuffle_id;
+        });
     }
 
     pub(super) fn set_native_resolver_config(&mut self, config: NativeResolverConfig) {

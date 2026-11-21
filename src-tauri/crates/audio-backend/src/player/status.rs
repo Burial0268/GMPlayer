@@ -2,18 +2,18 @@
 //! position-anchor / seek-ack / SyncStatus publishing helpers shared by every
 //! other `AudioPlayer` concern.
 
-use tokio::sync::mpsc;
+use std::sync::Arc;
 
-use crate::types::{
-    AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, PlaybackPhase, TrackIdentity,
-};
+use crate::types::{AudioThreadEvent, PlaybackPhase, TrackIdentity};
+
+use super::bus::EventBus;
 
 use super::api::SeekRequest;
 use super::{AudioPlayer, PlaybackIntent};
 
 impl AudioPlayer {
     pub(super) fn emitter(&self) -> EventEmitter {
-        EventEmitter::new(self.evt_sender.clone())
+        EventEmitter::new(Arc::clone(&self.bus))
     }
 
     pub(super) async fn emit_many(&self, events: Vec<AudioThreadEvent>) {
@@ -33,7 +33,9 @@ impl AudioPlayer {
     /// own source — never for a seek, a pause, or an output-device rebuild,
     /// which all continue the timeline they are already on.
     pub(super) fn begin_timeline(&self) -> u64 {
-        self.clock.lock().begin_epoch()
+        let epoch = self.clock.lock().begin_epoch();
+        self.bus.begin_epoch(epoch);
+        epoch
     }
 
     pub(super) async fn publish_position_anchor(&self, is_playing: bool, position: f64) {
@@ -42,18 +44,13 @@ impl AudioPlayer {
             (clock.set_anchor(is_playing, position), clock.epoch())
         };
         *self.current_position.write().await = position;
-        {
-            let mut session = self.session.lock();
-            session.position = position;
-            session.is_playing = is_playing;
-        }
-        let _ = self
-            .emitter()
-            .emit(AudioThreadEvent::PlayPosition {
+        self.bus.emit_with(
+            Some(AudioThreadEvent::PlayPosition {
                 position,
                 timeline_epoch,
-            })
-            .await;
+            }),
+            |session| session.is_playing = is_playing,
+        );
     }
 
     /// Announce the track that has just become the playing one.
@@ -92,11 +89,12 @@ impl AudioPlayer {
     /// nothing has taken over yet, so a frontend booting in that window falls
     /// back to its own startup path instead of adopting a retired track.
     pub(super) fn clear_session_track(&self) {
-        let mut session = self.session.lock();
-        session.has_track = false;
-        session.music_id.clear();
-        session.identity = None;
-        session.is_playing = false;
+        self.bus.update(|session| {
+            session.has_track = false;
+            session.music_id.clear();
+            session.identity = None;
+            session.is_playing = false;
+        });
     }
 
     pub(super) async fn emit_seek_committed(&self, seek: SeekRequest) {
@@ -135,27 +133,21 @@ impl AudioPlayer {
             .map(|s| s.get_id())
             .unwrap_or_default();
 
-        // Refresh the synchronously-readable snapshot from the same values the
-        // event carries, so `audio_get_session` and `SyncStatus` can never
-        // disagree about what is playing.
-        {
-            let mut session = self.session.lock();
-            session.has_track = self.current_song.is_some();
-            session.personal_fm = self
-                .personal_fm
-                .as_ref()
-                .map(super::personal_fm::PersonalFm::snapshot);
-            session.music_id = music_id.clone();
-            session.identity = self.current_identity.clone();
-            session.playlist_index = self.current_play_index;
-            session.position = position;
-            session.duration = duration;
-            session.is_playing = is_playing;
-            session.volume = self.volume;
-            session.manifest_revision = self.manifest.revision();
-            session.planner_active = self.planner_can_advance();
-            session.play_mode = self.session_controls.play_mode;
-        }
+        // The snapshot is refreshed from the same values in the same step as
+        // the event, so a `Hello` and `SyncStatus` can never disagree about
+        // what is playing.
+        let has_track = self.current_song.is_some();
+        let personal_fm = self
+            .personal_fm
+            .as_ref()
+            .map(super::personal_fm::PersonalFm::snapshot);
+        let manifest_revision = self.manifest.revision();
+        let planner_active = self.planner_can_advance();
+        let play_mode = self.session_controls.play_mode;
+        let identity = self.current_identity.clone();
+        let playlist_index = self.current_play_index;
+        let volume = self.volume;
+        let session_music_id = music_id.clone();
 
         // Resolved display metadata for the in-process media-session bridge.
         // Built before `audio_info` is moved into the status event; emitted
@@ -176,10 +168,23 @@ impl AudioPlayer {
             playlist: self.playlist.clone(),
             current_play_index: self.current_play_index,
             quality,
-            identity: self.current_identity.clone(),
+            identity: identity.clone(),
             timeline_epoch,
         };
-        let _ = self.emitter().emit(status_event).await;
+        self.bus.emit_with(Some(status_event), |session| {
+            session.has_track = has_track;
+            session.personal_fm = personal_fm;
+            session.music_id = session_music_id;
+            session.identity = identity;
+            session.playlist_index = playlist_index;
+            session.position = position;
+            session.duration = duration;
+            session.is_playing = is_playing;
+            session.volume = volume;
+            session.manifest_revision = manifest_revision;
+            session.planner_active = planner_active;
+            session.play_mode = play_mode;
+        });
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::NowPlayingChanged { info: now_playing })
@@ -218,7 +223,6 @@ impl AudioPlayer {
         }
         self.published_phase = Some(current.clone());
         let (phase, identity) = current;
-        self.session.lock().phase = phase;
         let timeline_epoch = self.clock.lock().epoch();
         let _ = self
             .emitter()
@@ -258,7 +262,6 @@ impl AudioPlayer {
             return;
         }
         self.published_buffered = position;
-        self.session.lock().buffered_position = position;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::LoadProgress { position })
@@ -288,32 +291,21 @@ impl AudioPlayer {
 
 // ── EventEmitter helper (mirrors AMLL's AudioPlayerEventEmitter) ──
 
-#[derive(Debug, Clone)]
+/// The player's handle on the bus. `emit` is still `async` and fallible only
+/// so the many `let _ = emitter.emit(..).await` sites need not change; it
+/// neither waits nor fails.
+#[derive(Clone)]
 pub(super) struct EventEmitter {
-    evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
+    bus: Arc<EventBus>,
 }
 
 impl EventEmitter {
-    pub(super) fn new(
-        evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
-    ) -> Self {
-        Self { evt_sender }
+    pub(super) fn new(bus: Arc<EventBus>) -> Self {
+        Self { bus }
     }
 
     pub(super) async fn emit(&self, event: AudioThreadEvent) -> anyhow::Result<()> {
-        self.evt_sender
-            .send(AudioThreadEventMessage::new("".into(), Some(event)))
-            .map_err(|_| anyhow::anyhow!("event channel closed"))?;
-        Ok(())
-    }
-
-    pub(super) async fn ret_none(
-        &self,
-        req: AudioThreadEventMessage<AudioThreadMessage>,
-    ) -> anyhow::Result<()> {
-        self.evt_sender
-            .send(req.to_none::<AudioThreadEvent>())
-            .map_err(|_| anyhow::anyhow!("event channel closed"))?;
+        self.bus.emit(event);
         Ok(())
     }
 }

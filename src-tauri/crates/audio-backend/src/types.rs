@@ -442,6 +442,14 @@ pub enum AudioThreadMessage {
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type", content = "data")]
 pub enum AudioThreadEvent {
+    /// The first message on every subscription, and again in the stream when a
+    /// stopped player is replaced (`boot_id` changes; the new one holds nothing).
+    /// Everything the subscriber receives after it is newer than `snapshot`.
+    #[serde(rename_all = "camelCase")]
+    Hello {
+        boot_id: u64,
+        snapshot: NativeSessionSnapshot,
+    },
     #[serde(rename_all = "camelCase")]
     PersonalFmChanged { session: Option<NativeFmSnapshot> },
     #[serde(rename_all = "camelCase")]
@@ -692,59 +700,42 @@ pub enum AudioThreadEvent {
     SessionControlsChanged { controls: SessionControls },
 }
 
-/// Wrapper message that carries a `callback_id` for request/response
-/// correlation (same shape as AMLL's `AudioThreadEventMessage<T>`).
+/// One event on its way out, stamped by `player::bus::EventBus`.
 ///
-/// `seq` is a monotonic counter the event forwarder stamps on every
-/// outbound event. Both transports (local WebSocket + Tauri channel)
-/// deliver the same event with the same `seq`, so the frontend can drop
-/// the duplicate that arrives second. Without this, a fast Pause →
-/// Seek → Resume burst causes the second transport to re-play
-/// `PlayStatus(false)` after the state has already flipped to playing,
-/// flipping it back to paused and triggering a spurious `play` toast on
-/// the recovery to `true`. `seq = 0` means "unsequenced" — used for
-/// inbound messages from the frontend, where there's no risk of dup
-/// delivery (single transport per send).
+/// The three numbers are what every subscriber orders and gates on, so no
+/// payload has to carry its own copy:
+/// - `seq` is the bus's total order; a snapshot (`Hello`) is "every event up to
+///   its `seq`", so anything that arrives with a lower one is already in it.
+///   `0` marks an analysis frame, which describes no state and is never ordered.
+/// - `epoch` is the timeline the player was on when the event was emitted (see
+///   `PlayerClock::epoch`). It only grows along the stream.
+/// - `ack` is the last frontend command the player had taken up (see
+///   [`CommandEnvelope::cmd`]). An event with `ack < K` was emitted before
+///   command `K` was processed, so it cannot reflect it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AudioThreadEventMessage<T> {
-    pub callback_id: String,
-    pub data: Option<T>,
-    #[serde(default)]
+pub struct EventEnvelope {
     pub seq: u64,
+    pub epoch: u64,
+    pub ack: u64,
+    pub data: AudioThreadEvent,
 }
 
-impl<T> AudioThreadEventMessage<T> {
-    pub fn new(callback_id: String, data: Option<T>) -> Self {
-        Self {
-            callback_id,
-            data,
-            seq: 0,
-        }
-    }
+/// One command on its way in. `cmd` is assigned by the frontend, increasing,
+/// starting above the `ack` of the `Hello` it connected with; `0` is a command
+/// from in-process glue (the OS media session) or the player itself, which no
+/// subscriber waits on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandEnvelope {
+    #[serde(default)]
+    pub cmd: u64,
+    pub data: AudioThreadMessage,
+}
 
-    pub fn data(&self) -> Option<&T> {
-        self.data.as_ref()
-    }
-
-    pub fn callback_id(&self) -> &str {
-        &self.callback_id
-    }
-
-    pub fn to<D>(self, new_data: D) -> AudioThreadEventMessage<D> {
-        AudioThreadEventMessage {
-            callback_id: self.callback_id,
-            data: Some(new_data),
-            seq: self.seq,
-        }
-    }
-
-    pub fn to_none<D>(self) -> AudioThreadEventMessage<D> {
-        AudioThreadEventMessage {
-            callback_id: self.callback_id,
-            data: None,
-            seq: self.seq,
-        }
+impl CommandEnvelope {
+    pub fn internal(data: AudioThreadMessage) -> Self {
+        Self { cmd: 0, data }
     }
 }
 
@@ -993,9 +984,9 @@ pub struct NativeFmSnapshot {
     pub error: Option<String>,
 }
 
-/// Authoritative snapshot of the live playback session, readable synchronously
-/// (no round-trip through the player message loop) via the `audio_get_session`
-/// command.
+/// Authoritative snapshot of the live playback session, kept by the event bus
+/// and carried by the `Hello` that opens every subscription — no round-trip
+/// through the player message loop.
 ///
 /// This exists for one reason: on Android the WebView is destroyed and the page
 /// reloaded while the Rust process — and playback — survives. The reloaded
@@ -1377,7 +1368,7 @@ mod tests {
         );
     }
 
-    /// `audio_get_session` is read by the boot path before it commits to
+    /// The snapshot (in `Hello`) is read by the boot path before it commits to
     /// loading anything; the field names must match
     /// `NativeSessionSnapshot` in `src/utils/tauri/audio/protocol/manifest.ts`.
     #[test]

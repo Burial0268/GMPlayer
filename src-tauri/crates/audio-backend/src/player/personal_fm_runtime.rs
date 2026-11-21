@@ -449,15 +449,12 @@ impl AudioPlayer {
 
     pub(super) async fn publish_personal_fm(&self) {
         let snapshot = self.personal_fm.as_ref().map(PersonalFm::snapshot);
-        {
-            let mut session = self.session.lock();
-            session.personal_fm = snapshot.clone();
-            session.manifest_revision = self.manifest.revision();
-        }
-        let _ = self
-            .emitter()
-            .emit(AudioThreadEvent::PersonalFmChanged { session: snapshot })
-            .await;
+        let manifest_revision = self.manifest.revision();
+        // `personal_fm` itself is applied from the event by the bus.
+        self.bus.emit_with(
+            Some(AudioThreadEvent::PersonalFmChanged { session: snapshot }),
+            |session| session.manifest_revision = manifest_revision,
+        );
     }
 }
 

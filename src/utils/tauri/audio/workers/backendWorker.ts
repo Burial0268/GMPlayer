@@ -1,4 +1,4 @@
-import type { AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage } from "../protocol";
+import type { CommandEnvelope, EventEnvelope } from "../protocol";
 
 interface WasmAudioBackendBinding {
   sendMessageJson(envelopeJson: string): string;
@@ -22,7 +22,7 @@ interface WasmAudioBackendModule {
 }
 
 interface WasmReply {
-  events?: AudioThreadEventMessage<AudioThreadEvent>[];
+  events?: EventEnvelope[];
   effects?: unknown[];
   error?: string;
 }
@@ -32,7 +32,7 @@ type WorkerRequest =
   | {
       id: number;
       type: "sendMessage";
-      envelope: Omit<AudioThreadEventMessage<AudioThreadMessage>, "seq">;
+      envelope: CommandEnvelope;
     }
   | {
       id: number;

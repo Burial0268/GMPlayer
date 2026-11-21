@@ -1,6 +1,7 @@
 import { watch } from "vue";
 import { settingStore } from "@/store";
-import { audioSendMsg } from "@/utils/tauri/audio/bridge";
+import { isTauri } from "@/utils/tauri/core/runtime";
+import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
 
 /**
  * Keeps the native output on the device the user picked (`setting.audioOutputDevice`).
@@ -15,7 +16,7 @@ export function useAudioOutputSetting() {
     () => setting.audioOutputDevice,
     (name, previous) => {
       if (previous === undefined && !name) return;
-      void audioSendMsg({ type: "setAudioOutput", name });
+      if (isTauri()) getAudioBackendTransport().send({ type: "setAudioOutput", name });
     },
     { immediate: true },
   );

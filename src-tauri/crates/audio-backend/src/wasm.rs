@@ -21,14 +21,14 @@ use crate::automix::sections::{
     confident_tempo, segment_song, SectionHints, StructureFeatureExtractor,
 };
 use crate::types::{
-    AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, DisplayAudioInfo,
-    PlaybackState, SongData,
+    AudioQuality, AudioThreadEvent, AudioThreadMessage, CommandEnvelope, DisplayAudioInfo,
+    EventEnvelope, PlaybackState, SongData,
 };
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct WebBackendReply {
-    events: Vec<AudioThreadEventMessage<AudioThreadEvent>>,
+    events: Vec<EventEnvelope>,
     effects: Vec<WebBackendEffect>,
 }
 
@@ -42,9 +42,10 @@ struct AnalysisFrameReply<'a> {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AnalysisEventMessage<'a> {
-    callback_id: &'static str,
-    data: AnalysisFrameEvent<'a>,
     seq: u64,
+    epoch: u64,
+    ack: u64,
+    data: AnalysisFrameEvent<'a>,
 }
 
 #[derive(Serialize)]
@@ -279,6 +280,8 @@ pub struct WasmAudioBackend {
     /// timeline starts, so the shared frontend controller can apply one rule on
     /// both transports instead of special-casing the web one.
     timeline_epoch: u64,
+    /// Last frontend command taken up — the native bus's `ack`.
+    ack: u64,
 }
 
 #[wasm_bindgen]
@@ -302,18 +305,17 @@ impl WasmAudioBackend {
             analysis_fft_enabled: true,
             seq: 0,
             timeline_epoch: 0,
+            ack: 0,
         }
     }
 
-    /// Process an `AudioThreadEventMessage<AudioThreadMessage>` JSON envelope.
+    /// Process a `CommandEnvelope` JSON string.
     ///
     /// Returns `{ events, effects }` as JSON. Parse failures are returned as a
     /// `loadError` event instead of panicking across the WASM boundary.
     #[wasm_bindgen(js_name = "sendMessageJson")]
     pub fn send_message_json(&mut self, envelope_json: &str) -> String {
-        let envelope = match serde_json::from_str::<AudioThreadEventMessage<AudioThreadMessage>>(
-            envelope_json,
-        ) {
+        let envelope = match serde_json::from_str::<CommandEnvelope>(envelope_json) {
             Ok(envelope) => envelope,
             Err(err) => {
                 return self.reply(
@@ -327,11 +329,10 @@ impl WasmAudioBackend {
             }
         };
 
-        let Some(message) = envelope.data else {
-            return self.reply(Vec::new(), Vec::new());
-        };
-
-        self.handle_message(message)
+        if envelope.cmd != 0 {
+            self.ack = envelope.cmd;
+        }
+        self.handle_message(envelope.data)
     }
 
     /// Feed browser metadata once the HTML media element has loaded.
@@ -484,16 +485,16 @@ impl WasmAudioBackend {
         if send_spectrum {
             analysis.spectrum_elapsed_ms %= 50.0;
         }
-        let low_freq_seq = self.next_seq();
+        let epoch = self.timeline_epoch;
         let spectrum;
         let mut events = Vec::with_capacity(2);
         events.push(AnalysisEventMessage {
-            callback_id: "",
+            seq: 0,
+            epoch,
+            ack: 0,
             data: AnalysisFrameEvent::LowFreqBins { bins },
-            seq: low_freq_seq,
         });
         if send_spectrum {
-            let fft_seq = self.next_seq();
             spectrum = self
                 .analysis
                 .as_ref()
@@ -501,9 +502,10 @@ impl WasmAudioBackend {
                 .fft
                 .display_spectrum();
             events.push(AnalysisEventMessage {
-                callback_id: "",
+                seq: 0,
+                epoch,
+                ack: 0,
                 data: AnalysisFrameEvent::FftData { data: &spectrum },
-                seq: fft_seq,
             });
         }
         let reply = AnalysisFrameReply {
@@ -871,11 +873,12 @@ impl WasmAudioBackend {
             .unwrap_or_else(|err| format!(r#"{{"events":[],"effects":[],"error":"{err}"}}"#))
     }
 
-    fn wrap_event(&mut self, event: AudioThreadEvent) -> AudioThreadEventMessage<AudioThreadEvent> {
-        AudioThreadEventMessage {
-            callback_id: String::new(),
-            data: Some(event),
+    fn wrap_event(&mut self, event: AudioThreadEvent) -> EventEnvelope {
+        EventEnvelope {
             seq: self.next_seq(),
+            epoch: self.timeline_epoch,
+            ack: self.ack,
+            data: event,
         }
     }
 

@@ -1,5 +1,6 @@
 import { settingStore } from "@/store";
-import { audioSendMsg } from "@/utils/tauri/audio/bridge";
+import { isTauri } from "@/utils/tauri/core/runtime";
+import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
 import type { DspConfig, EqualizerBand } from "@/utils/tauri/audio/protocol";
 
 const EQ_EPSILON_DB = 0.001;
@@ -72,7 +73,7 @@ export const buildDspConfig = (): DspConfig => {
 };
 
 export const applyDspSettings = () => {
-  audioSendMsg({ type: "setDsp", config: buildDspConfig() });
+  if (isTauri()) getAudioBackendTransport().send({ type: "setDsp", config: buildDspConfig() });
 };
 
 const scheduleApplyDspSettings = () => {

@@ -18,9 +18,11 @@
  * - **One transport listener**, attached with the first handler and detached
  *   with the last.
  *
- * What it deliberately does not do: dedupe by sequence number or gate by
- * revision. Those rules differ per consumer (a revision means something only to
- * whoever published one), so they stay with the handler. Controllers that own a
+ * Every event arrives exactly once and nothing older than the newest `hello`
+ * reaches it — the transport enforces both — so there is no dedupe here. What it
+ * deliberately does not do is gate by revision: that rule differs per consumer
+ * (a revision means something only to whoever published one), so it stays with
+ * the handler, as does reading `EventMeta`. Controllers that own a
  * lifecycle — `NativeRustSound`, the personal-FM subscriber, AutoMix — keep their
  * own subscriptions for the same reason.
  *
@@ -30,23 +32,23 @@
 import { isTauri } from "../core/runtime";
 import { logNative } from "../core/nativeLog";
 import { getAudioBackendTransport } from "./transport";
-import type { AudioThreadEvent, AudioThreadEventCallback } from "./protocol";
+import type { AudioThreadEvent, AudioThreadEventCallback, EventMeta } from "./protocol";
 
 type EventType = AudioThreadEvent["type"];
 type EventOf<T extends EventType> = Extract<AudioThreadEvent, { type: T }>;
-type AnyHandler = (event: AudioThreadEvent, seq?: number) => void;
+type AnyHandler = (event: AudioThreadEvent, meta: EventMeta) => void;
 
 const handlers = new Map<EventType, Set<AnyHandler>>();
 let detach: (() => void) | null = null;
 
-const dispatch: AudioThreadEventCallback = (event, seq) => {
+const dispatch: AudioThreadEventCallback = (event, meta) => {
   const registered = handlers.get(event.type);
   if (!registered) return;
   // Safe against a handler unregistering during the pass: a `Set` skips what was
   // deleted before it is reached.
   for (const handler of registered) {
     try {
-      handler(event, seq);
+      handler(event, meta);
     } catch (err) {
       logNative("warn", `[backendEvents] ${event.type} handler threw: ${String(err)}`);
     }
@@ -56,7 +58,7 @@ const dispatch: AudioThreadEventCallback = (event, seq) => {
 /** Run `handler` for every backend event of `type`. Returns the unregister function. */
 export const onBackendEvent = <T extends EventType>(
   type: T,
-  handler: (event: EventOf<T>, seq?: number) => void,
+  handler: (event: EventOf<T>, meta: EventMeta) => void,
 ): (() => void) => {
   if (!isTauri()) return () => {};
 

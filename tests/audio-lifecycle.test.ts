@@ -805,42 +805,47 @@ function deferred() {
 
 function transportEnvironment() {
   const handshake = deferred();
-  const fallbackHandshake = deferred();
-  const fallbackStarted = deferred();
   const channels: any[] = [];
   const sent: any[] = [];
-  let globalEvent: any;
-  let fallbackCount = 0;
-  const transportModule = sourceModule("src/utils/tauri/audio/transport/tauri.ts", {
-    "@tauri-apps/api/core": {
-      Channel: class {
-        constructor() {
-          channels.push(this);
-        }
+  const failures = new Map<number, Error>();
+  const transportModule = sourceModule(
+    "src/utils/tauri/audio/transport/tauri.ts",
+    {
+      "@tauri-apps/api/core": {
+        Channel: class {
+          constructor() {
+            channels.push(this);
+          }
+        },
+        invoke: () => handshake.promise,
       },
-      invoke: () => handshake.promise,
-    },
-    "../bridge": {
-      audioSendMsg: (msg: any) => sent.push(msg),
-      listenPlayerEvents: (handler: any) => {
-        fallbackCount++;
-        globalEvent = handler;
-        fallbackStarted.resolve();
-        return fallbackHandshake.promise.then(() => () => {});
+      "../bridge": {
+        sendAudioCommand: (envelope: any) => {
+          sent.push(envelope);
+          const failure = failures.get(envelope.cmd);
+          return failure ? Promise.reject(failure) : Promise.resolve();
+        },
       },
+      "../../core/nativeLog": { logNative() {} },
+      "./ticket": sourceModule("src/utils/tauri/audio/transport/ticket.ts", {}),
     },
-  });
+    {
+      requestAnimationFrame: (fn: () => void) => setTimeout(fn, 0),
+      cancelAnimationFrame: clearTimeout,
+    },
+  );
+  /** What the backend's bus would put on the channel. */
+  const envelope = (seq: number, data: any, ack = 0, epoch = 0) => ({ seq, epoch, ack, data });
+  const hello = (seq: number, ack = 0, bootId = 0) =>
+    envelope(seq, { type: "hello", data: { bootId, snapshot: { hasTrack: false } } }, ack);
   return {
     transport: transportModule.createTauriAudioBackendTransport(),
     handshake,
-    fallbackHandshake,
-    fallbackStarted,
     channels,
     sent,
-    emitFallback: (event: any) => globalEvent(event),
-    get fallbackCount() {
-      return fallbackCount;
-    },
+    failures,
+    envelope,
+    hello,
   };
 }
 
@@ -861,6 +866,7 @@ test("session-control subscribers install before the transport is connected", as
   assert.equal(typeof drop, "function");
   const connected = env.transport.connect();
   env.handshake.resolve();
+  env.channels[0].onmessage(env.hello(1));
   await connected;
   drop();
 });
@@ -899,53 +905,95 @@ test("a backend mode nobody has stated yet is not adopted", () => {
   assert.deepEqual(adopted, ["normal"]);
 });
 
-test("cold subscribers hear events during a single shared connection handshake", async () => {
+test("subscribers bound before connecting hear the hello and everything after it, once", async () => {
   const env = transportEnvironment();
   const seen: any[] = [];
-  const drop = env.transport.subscribe((event: any) => seen.push(event));
+  const drop = env.transport.subscribe((event: any) => seen.push(event.type));
   const first = env.transport.connect();
   const second = env.transport.connect();
   assert.equal(first, second);
   assert.equal(env.channels.length, 1);
-  env.channels[0].onmessage({ data: pause, seq: 1 });
-  assert.deepEqual(seen, [pause]);
-  drop();
-  env.channels[0].onmessage({ data: pause, seq: 2 });
-  assert.equal(seen.length, 1);
   env.handshake.resolve();
+  env.channels[0].onmessage(env.hello(5));
+  env.channels[0].onmessage(env.envelope(6, pause));
   await first;
-  env.transport.sendOrQueue({ type: "pauseAudio" });
-  assert.equal(env.sent.length, 1);
+  assert.deepEqual(seen, ["hello", "playStatus"]);
+  drop();
+  env.channels[0].onmessage(env.envelope(7, pause));
+  assert.equal(seen.length, 2);
 });
 
-test("cold subscribers and queued commands survive channel fallback", async () => {
+test("commands wait for the hello and are numbered above what the backend has taken up", async () => {
+  const env = transportEnvironment();
+  env.transport.send({ type: "pauseAudio" });
+  env.transport.send({ type: "resumeAudio" });
+  assert.equal(env.sent.length, 0);
+  env.handshake.resolve();
+  // A previous page left the backend at command 41.
+  env.channels[0].onmessage(env.hello(1, 41));
+  assert.deepEqual(
+    env.sent.map((e: any) => [e.cmd, e.data.type]),
+    [
+      [42, "pauseAudio"],
+      [43, "resumeAudio"],
+    ],
+  );
+  env.transport.send({ type: "pauseAudio" });
+  assert.equal(env.sent[2].cmd, 44);
+});
+
+test("a ticket is acknowledged only by events emitted after its command was taken up", async () => {
+  const env = transportEnvironment();
+  env.handshake.resolve();
+  const connected = env.transport.connect();
+  env.channels[0].onmessage(env.hello(1, 0));
+  await connected;
+  const ticket = env.transport.send({ type: "resumeAudio" });
+  assert.equal(ticket.acknowledgedBy({ seq: 2, epoch: 0, ack: 0 }), false);
+  assert.equal(ticket.acknowledgedBy({ seq: 3, epoch: 0, ack: 1 }), true);
+
+  // A command the backend never received must not be waited on forever.
+  env.failures.set(2, new Error("player channel closed"));
+  const lost = env.transport.send({ type: "pauseAudio" });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(lost.acknowledgedBy({ seq: 4, epoch: 0, ack: 1 }), true);
+});
+
+test("a resync drops whatever its hello already covers, from either channel", async () => {
   const env = transportEnvironment();
   const seen: any[] = [];
-  env.transport.subscribe((event: any) => seen.push(event));
-  env.transport.sendOrQueue({ type: "pauseAudio" });
+  env.transport.subscribe((event: any, meta: any) => seen.push([event.type, meta.seq]));
+  env.handshake.resolve();
   const connected = env.transport.connect();
-  env.handshake.reject(new Error("channel unavailable"));
-  await env.fallbackStarted.promise;
-  assert.equal(env.fallbackCount, 1);
-  env.emitFallback(pause);
-  assert.deepEqual(seen, [pause]);
-  env.fallbackHandshake.resolve();
+  env.channels[0].onmessage(env.hello(1));
   await connected;
-  await Promise.resolve();
-  assert.equal(env.sent.length, 1);
+  env.channels[0].onmessage(env.envelope(2, pause));
+
+  const resynced = env.transport.resync();
+  // The fresh hello is numbered after event 3, which the old channel then delivers late.
+  env.channels[1].onmessage(env.hello(4));
+  env.channels[0].onmessage(env.envelope(3, pause));
+  env.channels[1].onmessage(env.envelope(5, pause));
+  await resynced;
+  assert.deepEqual(seen, [
+    ["hello", 1],
+    ["playStatus", 2],
+    ["hello", 4],
+    ["playStatus", 5],
+  ]);
 });
 
-test("shutdown during connect cannot resurrect a transport or replay an old command", async () => {
+test("shutdown drops queued commands instead of sending them later", async () => {
   const env = transportEnvironment();
-  env.transport.sendOrQueue({ type: "pauseAudio" });
-  const first = env.transport.connect();
+  const ticket = env.transport.send({ type: "pauseAudio" });
+  const connecting = env.transport.connect();
   env.transport.shutdown();
-  const next = env.transport.connect();
   env.handshake.resolve();
-  await Promise.all([first, next]);
-  await Promise.resolve();
-  assert.equal(env.channels.length, 2);
+  env.channels[0].onmessage(env.hello(1));
   assert.equal(env.sent.length, 0);
+  assert.equal(ticket.acknowledgedBy({ seq: 0, epoch: 0, ack: 0 }), true);
+  void connecting;
 });
 
 for (const permissionDenied of [false, true])

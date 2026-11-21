@@ -1,9 +1,6 @@
 use super::*;
-use crate::types::{
-    AudioThreadEventMessage, AudioThreadMessage, AutoMixConfig, NativeSessionSnapshot,
-};
+use crate::types::{AudioThreadMessage, AutoMixConfig, CommandEnvelope};
 use std::io::Write;
-use std::sync::Arc;
 use std::time::Instant;
 
 fn pulse_file(path: &Path, period: f64) {
@@ -57,13 +54,11 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
         let a = song(&a, 0);
         let b = song(&b, 1);
         let (_, messages) = tokio::sync::mpsc::unbounded_channel();
-        let (_, seeks) = tokio::sync::mpsc::unbounded_channel();
-        let (events, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut player = AudioPlayer::new(messages, seeks, events,
-            Arc::new(parking_lot::Mutex::new(NativeSessionSnapshot::default()))).await.unwrap();
+        let (bus, mut event_rx) = super::super::bus::EventBus::new();
+        let mut player = AudioPlayer::new(messages, bus).await.unwrap();
         player.playback_intent = PlaybackIntent::Playing;
         player.analysis_enabled.store(false, Ordering::Release);
-        let message = |data| AudioThreadEventMessage::new("live-test".into(), Some(data));
+        let message = |data| CommandEnvelope { cmd: 1, data };
         player.process_message(message(AudioThreadMessage::SetPlaylist {
             songs: vec![a.clone(), b.clone()], windowed: true, play_index: Some(0), initial_position: Some(8.0), load_request_id: None, autoplay: None,
         })).await.unwrap();
@@ -115,26 +110,26 @@ fn live_native_automix_follows_rendered_audio_and_pauses_without_a_timer_handoff
             }
             while let Ok(event) = event_rx.try_recv() {
                 match event.data {
-                    Some(AudioThreadEvent::AutomixIncomingReady { .. }) => incoming_ready = true,
-                    Some(AudioThreadEvent::AutomixCrossfadeStarted { duration, .. }) => {
+                    AudioThreadEvent::AutomixIncomingReady { .. } => incoming_ready = true,
+                    AudioThreadEvent::AutomixCrossfadeStarted { duration, .. } => {
                         assert!(incoming_ready, "readiness is announced before the mix starts");
                         started = true;
                         fade_duration = duration;
                         let anchor = player.output.writer().render_clock().anchor().unwrap();
                         assert!((1.01..=1.04).contains(&anchor.anchor.source.rate), "tempo plan did not engage: {anchor:?}");
                     }
-                    Some(AudioThreadEvent::TrackChanged { timeline_epoch, load_request_id, .. }) => {
+                    AudioThreadEvent::TrackChanged { timeline_epoch, load_request_id, .. } => {
                         assert!(!track_epochs.contains(&timeline_epoch), "one edge per timeline");
                         track_epochs.push(timeline_epoch);
                         last_change_requested = load_request_id.is_some();
                     }
-                    Some(AudioThreadEvent::AutomixCrossfadeComplete { position, transition_id, .. }) => {
+                    AudioThreadEvent::AutomixCrossfadeComplete { position, transition_id, .. } => {
                         assert!(track_epochs.len() >= 2 && !last_change_requested, "the hand-off's TrackChanged precedes its completion");
                         assert_eq!(transition_id, Some(78));
                         assert!(position >= fade_duration - 0.01 && position < fade_duration + 1.2, "B position={position}, fade={fade_duration}");
                         completed = true;
                     }
-                    Some(AudioThreadEvent::AutomixError { error, .. }) => panic!("AutoMix failed: {error}"),
+                    AudioThreadEvent::AutomixError { error, .. } => panic!("AutoMix failed: {error}"),
                     _ => {}
                 }
             }

@@ -1,4 +1,3 @@
-use serde::Serialize;
 use std::sync::Arc;
 #[cfg(target_os = "android")]
 use std::sync::OnceLock;
@@ -11,7 +10,7 @@ use tracing::info;
 use tracing::warn;
 
 use crate::automix::{self, AutomixAnalyzeRequest, AutomixAnalyzeSourceRequest, TrackAnalysis};
-use crate::player::Player;
+use crate::player::{bus, EventBus, EventSinks, Player};
 use crate::types::*;
 
 // ── PlayerState (managed by Tauri) ────────────────────────────────
@@ -31,50 +30,35 @@ pub struct PlayerState {
     inner: Arc<PlayerStateInner>,
 }
 
-type EventChannel = Channel<AudioThreadEventMessage<AudioThreadEvent>>;
-
 struct PlayerStateInner {
-    app_handle: tauri::AppHandle,
     init_lock: parking_lot::Mutex<()>,
     player: parking_lot::Mutex<Option<Arc<Player>>>,
-    /// Every in-process subscriber, attached to each player that is created.
-    ///
-    /// The player is created lazily (it opens an audio device), and forcing
-    /// that at startup just to attach the media bridge would move device-open
-    /// failures into app launch. They are kept rather than drained because a
-    /// player that stopped is replaced, and its replacement needs them too.
-    subscribers: parking_lot::Mutex<Vec<Arc<dyn crate::player::PlayerEventSubscriber>>>,
-    /// The frontend's event channel, re-attached to a replacement player.
-    event_channel: parking_lot::Mutex<Option<EventChannel>>,
+    /// Outlive every player. The player is created lazily (it opens an audio
+    /// device) and replaced when it stops; subscribers and the frontend channel
+    /// attach here once, and a replacement is announced through the bus.
+    bus: Arc<EventBus>,
+    sinks: Arc<EventSinks>,
 }
 
 impl PlayerState {
-    pub fn new(app_handle: tauri::AppHandle) -> Self {
+    pub fn new() -> Self {
+        let (bus, events) = EventBus::new();
+        let sinks = Arc::new(EventSinks::default());
+        bus::spawn_forwarder(events, Arc::clone(&sinks));
         Self {
             inner: Arc::new(PlayerStateInner {
-                app_handle,
                 init_lock: parking_lot::Mutex::new(()),
                 player: parking_lot::Mutex::new(None),
-                subscribers: parking_lot::Mutex::new(Vec::new()),
-                event_channel: parking_lot::Mutex::new(None),
+                bus,
+                sinks,
             }),
         }
     }
 
     /// Attach an in-process event consumer (see
-    /// [`crate::player::PlayerEventSubscriber`]).
-    ///
-    /// Safe to call before playback has ever started: the subscriber is queued
-    /// and attached when the player is first created, so registering the media
-    /// bridge at startup does not itself open an audio device.
+    /// [`crate::player::PlayerEventSubscriber`]). Opens no audio device.
     pub fn subscribe_events(&self, subscriber: Arc<dyn crate::player::PlayerEventSubscriber>) {
-        // Hold the list across the check so a player created concurrently
-        // cannot attach the list without this one and leave it unattached.
-        let mut subscribers = self.inner.subscribers.lock();
-        if let Some(player) = self.inner.live_player() {
-            player.subscribe(Arc::clone(&subscriber));
-        }
-        subscribers.push(subscriber);
+        self.inner.sinks.subscribe(subscriber);
     }
 
     pub fn preheat(&self) -> Result<(), String> {
@@ -96,7 +80,7 @@ impl PlayerState {
             .live_player()
             .ok_or_else(|| "native audio player is not running".to_string())?;
         player
-            .send_msg(AudioThreadEventMessage::new(String::new(), Some(msg)))
+            .send_msg(CommandEnvelope::internal(msg))
             .map_err(|e| e.to_string())
     }
 
@@ -139,28 +123,19 @@ impl PlayerStateInner {
         if self.live_player().is_some() {
             return Ok(());
         }
-        if self.player.lock().take().is_some() {
+        let replacing = self.player.lock().take().is_some();
+        if replacing {
             warn!("native audio player stopped; starting a new one");
+            // Before the new player can emit: its events must follow the
+            // `Hello` that retires everything the old one said.
+            self.bus.restart();
         }
 
         #[cfg(target_os = "android")]
         wait_for_android_context_ready()?;
 
-        let next = Player::new(self.app_handle.clone()).map_err(|e| e.to_string())?;
-        let next = Arc::new(next);
-        // Attach every subscriber while holding the list — a `subscribe_events`
-        // racing this either sees the player (and attaches directly) or lands in
-        // the list before we walk it.
-        {
-            let subscribers = self.subscribers.lock();
-            for subscriber in subscribers.iter() {
-                next.subscribe(Arc::clone(subscriber));
-            }
-            if let Some(channel) = self.event_channel.lock().clone() {
-                next.set_event_channel(channel);
-            }
-            *self.player.lock() = Some(next);
-        }
+        let next = Player::new(Arc::clone(&self.bus)).map_err(|e| e.to_string())?;
+        *self.player.lock() = Some(Arc::new(next));
         Ok(())
     }
 
@@ -204,25 +179,6 @@ fn wait_for_android_context_ready() -> Result<(), String> {
     Ok(())
 }
 
-// ── Response types ────────────────────────────────────────────────
-
-#[derive(Serialize, Clone, Debug)]
-pub struct AudioStateResponse {
-    pub state: String,
-    pub is_playing: bool,
-    pub position: f64,
-    pub duration: f64,
-}
-
-fn state_name(s: PlaybackState) -> &'static str {
-    match s {
-        PlaybackState::Stopped => "stopped",
-        PlaybackState::Playing => "playing",
-        PlaybackState::Paused => "paused",
-        PlaybackState::Ended => "ended",
-    }
-}
-
 #[tauri::command]
 pub async fn audio_preheat(state: State<'_, PlayerState>) -> Result<(), String> {
     state.preheat_async().await
@@ -232,48 +188,19 @@ pub async fn audio_preheat(state: State<'_, PlayerState>) -> Result<(), String> 
 //  AMLL-style: single message entry point
 // ═══════════════════════════════════════════════════════════════════
 
-/// Send an AudioThreadMessage to the player via Tauri invoke.
-/// This is the native playback control path (frontend → Rust); events flow
-/// back over the `Channel` registered by `audio_subscribe_events`.
+/// Send a command to the player. The frontend numbers its commands (`cmd`),
+/// and every event the player emits from then on carries the last one it took
+/// up as `ack`.
 #[tauri::command]
 pub async fn audio_send_msg(
     state: State<'_, PlayerState>,
-    msg: AudioThreadEventMessage<AudioThreadMessage>,
+    msg: CommandEnvelope,
 ) -> Result<(), String> {
     state
         .player()
         .await?
         .send_msg(msg)
         .map_err(|e| e.to_string())
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  Sync query commands (fast reads, no round-trip through msg loop)
-// ═══════════════════════════════════════════════════════════════════
-
-#[tauri::command]
-pub async fn audio_get_state(state: State<'_, PlayerState>) -> Result<AudioStateResponse, String> {
-    let p = state.player().await?;
-    Ok(AudioStateResponse {
-        state: state_name(p.state()).into(),
-        is_playing: p.is_playing(),
-        position: p.position(),
-        duration: p.duration(),
-    })
-}
-
-/// Authoritative read of what the backend is playing right now.
-///
-/// The Rust process (and playback) outlives the WebView on Android: the page is
-/// destroyed and reloaded while audio keeps going. A reloaded frontend must ask
-/// here *before* it resolves a URL for its persisted track, otherwise it
-/// replaces live playback with a stale snapshot from when the app was
-/// backgrounded. Synchronous — reads a mutex, never touches the message loop.
-#[tauri::command]
-pub async fn audio_get_session(
-    state: State<'_, PlayerState>,
-) -> Result<NativeSessionSnapshot, String> {
-    Ok(state.player().await?.session())
 }
 
 /// Output devices the user can pick, for the player's output menu. Selection itself is the
@@ -288,39 +215,17 @@ pub async fn audio_list_output_devices() -> Result<Vec<String>, String> {
         .map_err(|_| "audio device thread dropped the request".to_string())?
 }
 
-/// Register the frontend event `Channel` (Rust → frontend event stream:
-/// FFT / status / position). The frontend creates a `Channel`, wires its
-/// `onmessage`, and passes it here; the player forwards every
-/// `AudioThreadEventMessage` to it. Replaces the old local WebSocket bridge.
+/// Make `channel` the frontend's event stream. Its first message is a `Hello`
+/// carrying the session snapshot; every later message is newer than it. A page
+/// subscribes again whenever it needs a fresh snapshot — after a reload, or to
+/// attach to a track the backend is already playing. Opens no audio device: a
+/// backend that has not started answers with an empty snapshot.
 #[tauri::command]
 pub async fn audio_subscribe_events(
     state: State<'_, PlayerState>,
-    channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>,
+    channel: Channel<EventEnvelope>,
 ) -> Result<(), String> {
-    *state.inner.event_channel.lock() = Some(channel.clone());
-    state.player().await?.set_event_channel(channel);
-    Ok(())
-}
-
-// ═══════════════════════════════════════════════════════════════════
-//  Session-based event polling (kept for backward compat during migration)
-// ═══════════════════════════════════════════════════════════════════
-
-#[tauri::command]
-pub async fn audio_set_session(
-    state: State<'_, PlayerState>,
-    session_id: u64,
-) -> Result<(), String> {
-    state.player().await?.set_session(session_id);
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn audio_poll_events(
-    state: State<'_, PlayerState>,
-    session_id: u64,
-) -> Result<Vec<AudioThreadEvent>, String> {
-    Ok(state.player().await?.poll_events(session_id))
+    state.inner.sinks.attach_channel(&state.inner.bus, channel)
 }
 
 // ═══════════════════════════════════════════════════════════════════

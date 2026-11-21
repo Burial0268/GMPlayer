@@ -91,7 +91,7 @@ export const syncNativeResolverConfig = (options: { force?: boolean } = {}): voi
   if (!options.force && serialized === lastSerialized) return;
   lastSerialized = serialized;
 
-  getAudioBackendTransport().sendOrQueue({ type: "setNativeResolverConfig", config });
+  getAudioBackendTransport().send({ type: "setNativeResolverConfig", config });
   if (IS_DEV) {
     // Never log the cookie itself — only whether one is present.
     console.log(

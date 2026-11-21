@@ -23,7 +23,6 @@ import { SoundEvents } from "./SoundEvents";
 import { LowFreqVolumeAnalyzer } from "../analysis/LowFreqVolumeAnalyzer";
 import { activeSound } from "./SoundManager";
 import { isTauri } from "../../tauri/core/runtime";
-import { audioGetSession } from "../../tauri/audio/bridge";
 import { declaredMd5For } from "../native/DeclaredMd5";
 import { AudioTimelineSync } from "../../tauri/audio/timeline";
 import { sameTrackIdentity } from "../../tauri/audio/identity";
@@ -33,21 +32,27 @@ import type {
   AudioThreadEvent,
   AudioThreadMessage,
   DisplayAudioInfo,
+  EventMeta,
   NativePlannerStatus,
+  NativeSessionSnapshot,
   NativePlaybackManifest,
   NativeResolverConfig,
   SongData,
   TrackDisplay,
   TrackIdentity,
 } from "../../tauri/audio/protocol";
-import { getAudioBackendTransport, type AudioBackendTransport } from "../../tauri/audio/transport";
+import {
+  getAudioBackendTransport,
+  type AudioBackendTransport,
+  type CommandTicket,
+} from "../../tauri/audio/transport";
+import { logNative } from "../../tauri/core/nativeLog";
 import { isAudioBackendRuntimeAvailable } from "../../tauri/audio/backendRuntime";
 
 const IS_DEV = import.meta.env?.DEV ?? false;
 const LOAD_TIMEOUT_MS = 10_000;
 const FFT_LOG_INTERVAL_MS = 1000;
 const NO_FFT_WARN_MS = 5000;
-const SEEN_EVENT_SEQ_LIMIT = 512;
 const SEEK_REQUEST_ID_MODULO = 1000;
 /** After AudioPlayFinished, how long to wait for the backend queue window to
  * confirm it is advancing (LoadingAudio) before falling back to the JS-driven
@@ -105,7 +110,7 @@ export function announceNativeTrack(
 ): void {
   if (!isTauri() || !display) return;
   try {
-    getAudioBackendTransport().sendOrQueue({ type: "announceTrack", identity, display });
+    getAudioBackendTransport().send({ type: "announceTrack", identity, display });
   } catch (err) {
     if (IS_DEV) console.warn("[NativeRustSound] announce failed", err);
   }
@@ -159,17 +164,15 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   private _timeline: AudioTimelineSync = new AudioTimelineSync();
 
   /**
-   * Recently processed event sequence ids. A single Channel delivers events
-   * in order, but during a Channel → global-emit fallback transition the same
-   * event can briefly arrive over both paths; the `seq` stamp lets us drop the
-   * exact duplicate. Lower seq is still valid if it was not seen yet.
+   * The latest play/pause/stop command. A `playStatus` that does not
+   * acknowledge it was emitted before the backend processed it, so it
+   * describes the state the user just left and must not undo the optimistic
+   * flip — which is what a quick pause→play used to do, visibly, and what a
+   * listen-together room then relayed as a spurious PAUSE/PLAY pair.
    */
-  private _seenEventSeq: Set<number> = new Set();
-  private _seenEventSeqOrder: number[] = [];
-  /** Index of the oldest live entry in `_seenEventSeqOrder` — eviction moves
-   * this head forward instead of `Array#shift`, which is O(window) per event
-   * once the window is full (i.e. for every event after the first ~512). */
-  private _seenEventSeqHead = 0;
+  private _transportTicket: CommandTicket | null = null;
+  /** The native player instance the last `hello` described. */
+  private _bootId: number | null = null;
 
   /** Track metadata from SyncStatus / LoadAudio. */
   private _musicInfo: DisplayAudioInfo | null = null;
@@ -280,7 +283,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     try {
       await transport.connect();
       this._transport = transport;
-      this._unlistenTransport = transport.subscribe((evt, seq) => this._handleEvent(evt, seq));
+      this._unlistenTransport = transport.subscribe((evt, meta) => this._handleEvent(evt, meta));
     } catch (e) {
       const err = e instanceof Error ? e : new Error(String(e));
       this._emit("loaderror", err);
@@ -303,7 +306,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
       this._allowInitialBackendAttach = true;
       await this.requestStatusSync(400);
       if (!this._hasAttachableBackendTrack()) {
-        await this._attachFromSessionSnapshot();
+        await this._resyncForAttach();
       }
       this._allowInitialBackendAttach = false;
       if (this._destroyed || this._terminallyCleared) return;
@@ -422,14 +425,10 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   //  Transport: invoke control path                             ║
   // ═════════════════════════════════════════════════════════════╝
 
-  private _sendCommand(msg: AudioThreadMessage): boolean {
+  private _sendCommand(msg: AudioThreadMessage): CommandTicket {
     const transport = this._transport ?? getAudioBackendTransport();
     this._transport = transport;
-    const sentNow = transport.sendOrQueue(msg);
-    if (!sentNow && IS_DEV) {
-      console.warn("[NativeRustSound] audio control command queued until reconnect", msg.type);
-    }
-    return sentNow;
+    return transport.send(msg);
   }
 
   /**
@@ -584,12 +583,23 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   //  Event routing                                              ║
   // ═════════════════════════════════════════════════════════════╝
 
-  private _handleEvent(evt: AudioThreadEvent, seq?: number): void {
+  private _handleEvent(evt: AudioThreadEvent, meta: EventMeta): void {
     if (this._destroyed || this._terminallyCleared) return;
 
-    if (seq !== undefined && seq > 0 && this._markSeqSeen(seq)) return;
-
     switch (evt.type) {
+      case "hello": {
+        if (this._bootId !== null && evt.data.bootId !== this._bootId) {
+          logNative(
+            "warn",
+            `[NativeRustSound] native player was replaced (boot ${this._bootId} -> ${evt.data.bootId}); ` +
+              `it holds no track`,
+          );
+        }
+        this._bootId = evt.data.bootId;
+        if (this._allowInitialBackendAttach) this._attachFromSnapshot(evt.data.snapshot);
+        break;
+      }
+
       case "syncStatus": {
         const d = evt.data;
         const expectedBefore = this._expectedMusicId;
@@ -714,6 +724,8 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
 
       case "playStatus": {
         if (!this._backendTrackReady) break;
+        if (this._transportTicket && !this._transportTicket.acknowledgedBy(meta)) break;
+        if (this._isFromRetiredTimeline(meta)) break;
         const wantPlaying = evt.data.isPlaying;
         this._pendingPlayCommand = false;
         this._state.isPlaying = wantPlaying;
@@ -744,6 +756,9 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
       }
 
       case "audioPlayFinished": {
+        // The finish is stamped with the gap timeline that retired the track
+        // (one past it), so only an epoch older than ours is someone else's.
+        if (this._isFromRetiredTimeline(meta)) break;
         if (isTauri() && nativePersonalFmActive && this._isActiveController()) {
           this._nativeAdvancePending = true;
           this._adoptNextBackendMusicId = true;
@@ -875,6 +890,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
 
       case "playError":
       case "loadError": {
+        if (evt.type === "playError" && this._isFromRetiredTimeline(meta)) break;
         const err = new Error(evt.data.error);
         if (evt.type === "loadError") {
           if (!this._matchesPendingLoadRequest(evt.data.loadRequestId)) break;
@@ -931,25 +947,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         );
       }
     }
-  }
-
-  private _markSeqSeen(seq: number): boolean {
-    if (this._seenEventSeq.has(seq)) return true;
-
-    this._seenEventSeq.add(seq);
-    this._seenEventSeqOrder.push(seq);
-    while (this._seenEventSeqOrder.length - this._seenEventSeqHead > SEEN_EVENT_SEQ_LIMIT) {
-      const oldSeq = this._seenEventSeqOrder[this._seenEventSeqHead];
-      this._seenEventSeqHead++;
-      if (oldSeq !== undefined) this._seenEventSeq.delete(oldSeq);
-    }
-    // Drop the consumed prefix once it dominates the array so the backing
-    // storage stays bounded at ~2× the dedup window.
-    if (this._seenEventSeqHead >= SEEN_EVENT_SEQ_LIMIT) {
-      this._seenEventSeqOrder = this._seenEventSeqOrder.slice(this._seenEventSeqHead);
-      this._seenEventSeqHead = 0;
-    }
-    return false;
   }
 
   private _coerceIncomingPosition(position: number): number {
@@ -1095,6 +1092,15 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
    * `syncStatus` carrying the same epoch — which does describe it — is already
    * behind it in the stream.
    */
+  /**
+   * Whether an event was emitted on a timeline older than the one this
+   * controller holds — i.e. about a track it has already moved past. Reads the
+   * bus stamp, so it covers events that carry no epoch of their own.
+   */
+  private _isFromRetiredTimeline(meta: EventMeta): boolean {
+    return this._backendTimelineEpoch !== null && meta.epoch < this._backendTimelineEpoch;
+  }
+
   private _isForeignTimeline(epoch: number | undefined): boolean {
     return this._isNewTimeline(epoch);
   }
@@ -1119,15 +1125,14 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     void this.requestStatusSync(500);
   }
 
-  private _issueSeek(position: number): boolean {
+  private _issueSeek(position: number): void {
     const requestId = isTauri() ? this._newSeekRequestId() : undefined;
     const msg: AudioThreadMessage =
       requestId !== undefined
         ? { type: "seekAudio", position, requestId, expectedMusicId: this._expectedMusicId }
         : { type: "seekAudio", position, expectedMusicId: this._expectedMusicId };
-    const sentNow = this._sendCommand(msg);
+    this._sendCommand(msg);
     this._setLocalPosition(position, true, requestId);
-    return sentNow;
   }
 
   private _isActiveController(): boolean {
@@ -1169,16 +1174,22 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
    * mobile network — while a WebView that was just recreated is slow to run
    * the reply as well. Treating the timeout as "not on this track" sent a
    * `setPlaylist` that restarted the track the backend was audibly playing,
-   * from whatever position the store happened to hold. `audio_get_session`
-   * reads a mutex and never enters the loop, so it answers regardless.
+   * from whatever position the store happened to hold. A resubscribe never
+   * enters the loop: its `hello` reaches `_attachFromSnapshot` in stream order.
    */
-  private async _attachFromSessionSnapshot(): Promise<void> {
+  private async _resyncForAttach(): Promise<void> {
     if (!isTauri()) return;
-    const snapshot = await audioGetSession();
-    if (this._destroyed || this._terminallyCleared) return;
+    try {
+      await this._transport?.resync?.();
+    } catch (err) {
+      logNative("warn", `[NativeRustSound] resync for attach failed: ${String(err)}`);
+    }
+  }
+
+  private _attachFromSnapshot(snapshot: NativeSessionSnapshot): void {
     // A sync that landed meanwhile carries the fuller answer; keep it.
     if (this._hasAttachableBackendTrack()) return;
-    if (!snapshot?.hasTrack || !(snapshot.duration > 0)) return;
+    if (!snapshot.hasTrack || !(snapshot.duration > 0)) return;
     if (!this._acceptInitialAttach(snapshot.musicId, snapshot.identity)) return;
 
     this._state.musicId = snapshot.musicId;
@@ -1353,7 +1364,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     if (this._destroyed || this._terminallyCleared) return this;
     if (this._playbackState === "playing" || this._pendingPlayCommand) return this;
     this._pendingPlayCommand = true;
-    this._sendCommand({ type: "resumeAudio" });
+    this._transportTicket = this._sendCommand({ type: "resumeAudio" });
     if (this._optimisticPlayback && this._playbackState !== "playing") {
       this._playbackState = "playing";
       this._state.isPlaying = true;
@@ -1370,7 +1381,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   pause(): this {
     if (this._destroyed || this._terminallyCleared) return this;
     this._pendingPlayCommand = false;
-    this._sendCommand({ type: "pauseAudio" });
+    this._transportTicket = this._sendCommand({ type: "pauseAudio" });
     if (this._optimisticPlayback && this._playbackState !== "paused") {
       this._playbackState = "paused";
       this._state.isPlaying = false;
@@ -1383,7 +1394,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   stop(): this {
     if (this._destroyed || this._terminallyCleared) return this;
     this._pendingPlayCommand = false;
-    this._sendCommand({ type: "pauseAudio" });
+    this._transportTicket = this._sendCommand({ type: "pauseAudio" });
     this._issueSeek(0);
     this._state.isPlaying = false;
     if (this._optimisticPlayback && this._playbackState !== "stopped") {
@@ -1397,8 +1408,9 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
   seekTo(pos: number): this {
     if (!this._destroyed && !this._terminallyCleared) {
       const position = this._normalizeSeekPosition(pos);
-      const sentNow = this._issueSeek(position);
-      if (isTauri() && sentNow) {
+      this._issueSeek(position);
+      // Queued behind the seek, so it reports the state the seek produced.
+      if (isTauri()) {
         window.setTimeout(() => {
           void this.requestStatusSync(300);
         }, 0);
@@ -1562,9 +1574,6 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
     }
     this._clearFFTState();
     this._clearListeners();
-    this._seenEventSeq.clear();
-    this._seenEventSeqOrder.length = 0;
-    this._seenEventSeqHead = 0;
     this._state.playlist = [];
     this._musicInfo = null;
     this._quality = null;

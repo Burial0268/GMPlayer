@@ -15,7 +15,7 @@ export const startNativePersonalFm = (seed: Record<string, any> | null): void =>
   stoppedSessionId = null;
   setNativePersonalFmActive(true);
   syncNativeResolverConfig({ force: true });
-  getAudioBackendTransport().sendOrQueue({ type: "startPersonalFm", seed });
+  getAudioBackendTransport().send({ type: "startPersonalFm", seed });
 };
 
 export const stopNativePersonalFm = (sessionId: number | null): void => {
@@ -24,10 +24,10 @@ export const stopNativePersonalFm = (sessionId: number | null): void => {
   setNativePersonalFmActive(false);
   if (sessionId === null) {
     // The start reply may not have arrived yet; stop before the next ordinary load.
-    getAudioBackendTransport().sendOrQueue({ type: "stopPersonalFm" });
+    getAudioBackendTransport().send({ type: "stopPersonalFm" });
   } else if (stoppedSessionId !== sessionId) {
     stoppedSessionId = sessionId;
-    getAudioBackendTransport().sendOrQueue({ type: "stopPersonalFm", sessionId });
+    getAudioBackendTransport().send({ type: "stopPersonalFm", sessionId });
   }
 };
 
@@ -45,15 +45,15 @@ export const adoptNativePersonalFm = (session: NativeFmSnapshot | null): boolean
 };
 
 export const sendNativeFmPlaying = (playing: boolean): void => {
-  getAudioBackendTransport().sendOrQueue({ type: playing ? "resumeAudio" : "pauseAudio" });
+  getAudioBackendTransport().send({ type: playing ? "resumeAudio" : "pauseAudio" });
 };
 
 export const nextNativePersonalFm = (): void => {
-  getAudioBackendTransport().sendOrQueue({ type: "nextSong" });
+  getAudioBackendTransport().send({ type: "nextSong" });
 };
 
 export const trashNativePersonalFm = (sessionId: number, id: string): void => {
-  getAudioBackendTransport().sendOrQueue({ type: "trashPersonalFm", sessionId, id });
+  getAudioBackendTransport().send({ type: "trashPersonalFm", sessionId, id });
 };
 
 /** Subscribe before boot adoption so a renderer reload cannot miss radio state. */
@@ -62,11 +62,9 @@ export const setupNativePersonalFm = async (
 ): Promise<() => void> => {
   if (!isTauri()) return () => {};
   const transport = getAudioBackendTransport();
-  await transport.connect();
-  let lastSequence = 0;
-  return transport.subscribe((event, sequence) => {
-    if (sequence && sequence <= lastSequence) return;
-    if (sequence) lastSequence = sequence;
+  // Subscribed before connecting: the transport delivers every event once, in
+  // order, starting with the `hello` this connect produces.
+  const unsubscribe = transport.subscribe((event) => {
     if (event.type === "personalFmChanged") {
       adoptNativePersonalFm(event.data.session);
     } else if (event.type === "personalFmTrashResult") {
@@ -79,4 +77,6 @@ export const setupNativePersonalFm = async (
       onPlayback(event);
     }
   });
+  await transport.connect();
+  return unsubscribe;
 };

@@ -50,8 +50,7 @@ function wav(signal, { rate = 44100, channels = 1, duration = 2 } = {}) {
 function backend(t, bytes, fromFreq) {
   const processor = new bindings.WasmAudioBackend();
   t.after(() => processor.free());
-  const send = (data) =>
-    JSON.parse(processor.sendMessageJson(JSON.stringify({ callbackId: "", data })));
+  const send = (data) => JSON.parse(processor.sendMessageJson(JSON.stringify({ cmd: 0, data })));
   send({ type: "setPlaylist", songs: [{ type: "local", filePath: "probe.wav", origOrder: 0 }] });
   const started = send({ type: "jumpToSong", songIndex: 0 });
   const musicId = started.effects.find((effect) => effect.type === "loadTrack").musicId;
@@ -177,9 +176,9 @@ async function transportEnvironment(t) {
   t.after(() => transport.shutdown());
   transport.subscribe((event) => events.push(JSON.parse(JSON.stringify(event))));
   await transport.connect();
-  transport.sendOrQueue({ type: "jumpToSong", songIndex: 0 });
+  transport.send({ type: "jumpToSong", songIndex: 0 });
   await flush();
-  transport.sendOrQueue({ type: "resumeAudio" });
+  transport.send({ type: "resumeAudio" });
   await flush();
   return {
     transport,
@@ -211,7 +210,7 @@ test("late worker frames cannot restore old bins after a seek, pause or analysis
     env.tick();
     const lateFrame = env.frames.shift();
     assert.ok(lateFrame);
-    env.transport.sendOrQueue(command);
+    env.transport.send(command);
     await env.flush();
     const count = env.events.length;
     lateFrame([999, 999]);
@@ -223,9 +222,8 @@ test("late worker frames cannot restore old bins after a seek, pause or analysis
         env.workerRequests.some((request) => request.type === "seek" && request.position === 1),
       );
     }
-    if (command.type === "pauseAudio") env.transport.sendOrQueue({ type: "resumeAudio" });
-    if (command.type === "setAnalysis")
-      env.transport.sendOrQueue({ type: "setAnalysis", enabled: true });
+    if (command.type === "pauseAudio") env.transport.send({ type: "resumeAudio" });
+    if (command.type === "setAnalysis") env.transport.send({ type: "setAnalysis", enabled: true });
     await env.flush();
     if (env.frames.length === 0) env.tick();
     env.frames.shift()([30, 40]);

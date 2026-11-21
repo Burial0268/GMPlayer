@@ -43,7 +43,7 @@ export class SongStructureAnalyzer {
      */
     finishJson(duration: number, content_end: number, bpm: number, bpm_confidence: number): string;
     constructor(sample_rate: number);
-    push(samples: Float32Array): void;
+    push(samples: Float32Array | number[]): void;
 }
 
 /**
@@ -73,18 +73,18 @@ export class WasmAudioBackend {
      * This is intentionally state-independent: AutoMix analysis must not mutate
      * the playback backend's playlist/current-track state.
      */
-    decodeAudioBytes(bytes: Uint8Array, extension: string): DecodedAudioJs;
+    decodeAudioBytes(bytes: Uint8Array | number[], extension: string): DecodedAudioJs;
     /**
      * Decode browser-fetched audio bytes for the WASM analysis path.
      *
      * Playback remains owned by the browser media host; this sidechain feeds
      * the same Rust `audio-analysis` processor used by native playback.
      */
-    loadAnalysisBytes(bytes: Uint8Array, extension: string, music_id: string): string;
+    loadAnalysisBytes(bytes: Uint8Array | number[], extension: string, music_id: string): string;
     constructor();
     processAnalysisFrame(position: number, delta_ms: number): string;
     /**
-     * Process an `AudioThreadEventMessage<AudioThreadMessage>` JSON envelope.
+     * Process a `CommandEnvelope` JSON string.
      *
      * Returns `{ events, effects }` as JSON. Parse failures are returned as a
      * `loadError` event instead of panicking across the WASM boundary.
@@ -157,7 +157,7 @@ export class WasmAudioProcessor {
      * `sample_rate`: AudioContext sample rate (e.g. 44100, 48000)
      * `samples`: Float32Array of mono PCM
      */
-    pushPCM(sample_rate: number, samples: Float32Array): void;
+    pushPCM(sample_rate: number, samples: Float32Array | number[]): void;
     /**
      * Reset normalization, smoothing, and gradient state (e.g. on track change).
      * Does NOT clear the PCM queue.

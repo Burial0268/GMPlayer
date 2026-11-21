@@ -123,8 +123,8 @@ export interface NativePlannerStatus {
 }
 
 /**
- * Authoritative snapshot of the live backend playback session, read through the
- * `audio_get_session` command.
+ * Authoritative snapshot of the live backend playback session, carried by the
+ * `hello` that opens every event subscription.
  *
  * Exists because the Rust process outlives the WebView: on Android the page is
  * destroyed and reloaded while playback continues. The reloaded frontend

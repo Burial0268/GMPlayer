@@ -247,7 +247,7 @@ const requestNativeBackendSync = (): void => {
   const now = Date.now();
   if (now - lastBackendSyncRequestAt < 250) return;
   lastBackendSyncRequestAt = now;
-  getAudioBackendTransport().sendOrQueue({ type: "syncStatus" });
+  getAudioBackendTransport().send({ type: "syncStatus" });
 };
 
 const getActiveNativeSound = (): BackendSound | null => {
