@@ -497,6 +497,20 @@ fn pulses(first: f32, last: f32) -> automix_analysis::BeatRegion {
 }
 
 #[test]
+fn a_ring_out_swaps_the_bass_over_at_least_one_of_bs_beats() {
+    // Drop on B's first beat (a collapsed window) and a drop well ahead of it.
+    let beat = 0.5 / 6.0;
+    let collapsed = super::plan::arrival_swap(0.4, 0.4, beat);
+    assert!((collapsed.start - (0.4 - 0.5 * beat as f32)).abs() < 1e-6);
+    assert!((collapsed.end - (0.4 + 0.5 * beat as f32)).abs() < 1e-6);
+    let wide = super::plan::arrival_swap(0.2, 0.4, beat);
+    assert_eq!((wide.start, wide.end), (0.2, 0.4));
+    // Never outside the fade.
+    let late = super::plan::arrival_swap(0.99, 0.99, beat);
+    assert_eq!(late.end, 1.0);
+}
+
+#[test]
 fn a_quiet_lead_in_lands_bs_first_beat_where_a_lets_go() {
     // A is loud until 196 s, its pulse ending at 195.8; B leads in quietly and hits at 2.6 s.
     let mut current = with_loudness("musicalOutro", &[]);
@@ -528,14 +542,20 @@ fn a_quiet_lead_in_lands_bs_first_beat_where_a_lets_go() {
     );
     assert!((plan.duration - 6.3).abs() < 1e-3, "{}", plan.duration);
     assert_eq!(plan.incoming_start, 0.0);
-    // A holds until its drop; the bass changes hands from there to B's first beat.
+    // A holds until its drop. Drop to first beat is 0.3 s, under one of B's beats, so the bass
+    // changes hands over one beat centred on B's first beat instead of in a step.
     let FadeStyle::RingOut { handoff, landed } = plan.style else {
         panic!("{:?}", plan.style)
     };
     let at = |share: f32| plan.start_time + f64::from(share) * plan.duration;
     assert!((at(handoff) - 196.0).abs() < 1e-3, "{}", at(handoff));
     let swap = plan.bass_swap.unwrap();
-    assert!((at(swap.start) - 196.0).abs() < 1e-3 && (at(swap.end) - 196.3).abs() < 1e-3);
+    assert!(
+        (at(swap.start) - 196.05).abs() < 1e-3 && (at(swap.end) - 196.55).abs() < 1e-3,
+        "{} {}",
+        at(swap.start),
+        at(swap.end)
+    );
     // B is at full by its first beat.
     assert!((at(landed) - 196.3).abs() < 1e-3);
 
@@ -616,8 +636,16 @@ fn a_faster_a_rides_into_bs_tempo_before_bs_first_beat() {
     let last = played(plan.start_time, to);
     assert!((last + 0.5 - 2.6).abs() < 1e-3, "{last}");
     assert!((plan.duration - played(plan.start_time, 200.0)).abs() < 1e-3);
+    // One of B's beats, centred on its first beat.
     let swap = plan.bass_swap.unwrap();
-    assert!((f64::from(swap.end) * plan.duration - 2.6).abs() < 1e-3);
+    let (from_s, to_s) = (
+        f64::from(swap.start) * plan.duration,
+        f64::from(swap.end) * plan.duration,
+    );
+    assert!(
+        (from_s - 2.35).abs() < 1e-3 && (to_s - 2.85).abs() < 1e-3,
+        "{from_s} {to_s}"
+    );
     let FadeStyle::RingOut { handoff, landed } = plan.style else {
         panic!("{:?}", plan.style)
     };

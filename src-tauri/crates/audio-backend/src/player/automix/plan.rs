@@ -32,6 +32,8 @@ const ECHO_OUT_ATTACK: f64 = 0.03;
 /// Longest tail after A's drop that may ring out under B: B is at full from its first beat, so a
 /// longer, still-audible decay would stack on it; that keeps its measured fade.
 const MEET_MAX_TAIL: f64 = 4.0;
+/// B's beat, in seconds, when its head has no grid: 120 BPM.
+const FALLBACK_BEAT: f64 = 0.5;
 /// Beats over which A eases into B's tempo before B's first beat: two bars.
 const RIDE_BEATS: f64 = 8.0;
 /// Tempo gap under which B's first beat simply continues A's pulse at B's spacing; one longer beat
@@ -959,15 +961,42 @@ fn meet_on_arrival(
     let handoff = (Ride::played(ride.as_ref(), start, drop.min(meet)) / duration).max(0.0) as f32;
     let landed = (arrive / duration) as f32;
     plan.style = FadeStyle::RingOut { handoff, landed };
-    let ramp = (beat_plan::SWAP_RAMP_SECONDS / duration) as f32;
     Some(Meet {
-        swap: BassSwap {
-            start: handoff.min(landed - ramp),
-            end: landed,
-        },
+        swap: arrival_swap(handoff, landed, b_beat(next, step) / duration),
         beat: arrive,
         step,
     })
+}
+
+/// B's beat in seconds: the spacing its first beat continues A's pulse at, else its head grid's.
+fn b_beat(next: &automix_analysis::TrackAnalysis, step: Option<f64>) -> f64 {
+    step.or_else(|| {
+        let grid = next.bpm.as_ref()?.head.as_ref()?;
+        Some(f64::from(grid.period))
+    })
+    .filter(|beat| *beat > 0.0)
+    .unwrap_or(FALLBACK_BEAT)
+}
+
+/// When the bass changes hands in a ring-out: from A's drop to B's first beat, and never in less
+/// than one of B's beats. A's drop routinely falls on B's first beat, and the window then
+/// collapsed to the beat-mix's 30 ms step — right for a beat-mix, whose kicks coincide, but here B
+/// is also reaching full level on that beat, so its whole low end arrived in one step (+14 dB of
+/// B's lows in 100 ms while A's fell 17 dB, measured on a real pair). Too short, the window is
+/// centred on B's first beat instead, so that kick arrives with half its low band and A's low
+/// end leaves across the same beat. `beat` is a share of the fade.
+pub(super) fn arrival_swap(handoff: f32, landed: f32, beat: f64) -> BassSwap {
+    let beat = beat as f32;
+    if landed - handoff >= beat {
+        return BassSwap {
+            start: handoff,
+            end: landed,
+        };
+    }
+    BassSwap {
+        start: (landed - 0.5 * beat).max(0.0),
+        end: (landed + 0.5 * beat).min(1.0),
+    }
 }
 
 /// What `meet_on_arrival` decided beyond the plan itself.
