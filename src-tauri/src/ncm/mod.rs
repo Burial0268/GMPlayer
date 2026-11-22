@@ -96,6 +96,20 @@ impl NcmState {
     pub(crate) fn built(&self) -> Option<&Arc<NcmCore>> {
         self.core.get()
     }
+
+    /// Bytes of cached API responses on disk.
+    pub(crate) fn cache_usage(&self) -> u64 {
+        ncm_core::disk_cache_usage(&self.state_dir)
+    }
+
+    /// Forget every cached API response, through the isolate when it is built so its memory
+    /// tier goes too.
+    pub(crate) fn clear_cache(&self) -> u64 {
+        match self.built() {
+            Some(core) => core.clear_cache(),
+            None => ncm_core::clear_disk_cache(&self.state_dir),
+        }
+    }
 }
 
 /// Give the audio backend's playback resolver access to the in-process

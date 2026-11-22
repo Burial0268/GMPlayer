@@ -1674,6 +1674,9 @@ const useMusicDataStore = defineStore("musicData", {
       } else if (index === this.persistData.playSongIndex) {
         stopActiveSound();
       }
+      // 删掉的正是 AutoMix 要过渡去的那首：过渡就此结束，当前这首继续播。必须在发布
+      // manifest 之前发出取消，否则后端照样把它混进来。
+      if (!removedCurrentSong) getAutoMixEngine().cancelIfHeadingFor(songId);
       $message.success(name + " " + getLanguageData("removeSong"));
       this.persistData.playlists.splice(index, 1);
       this.preloadedSongIds.delete(songId);

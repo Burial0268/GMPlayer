@@ -45,6 +45,7 @@ const identities = (ids: number[]) => ids.map((id) => ({ provider: "netease", id
 
 function queueEnvironment(native = true) {
   let music: any;
+  const autoMixCancels: unknown[] = [];
   let publisher: any;
   let shuffleDraws = 0;
   const math = Object.assign(Object.create(Math), {
@@ -90,11 +91,17 @@ function queueEnvironment(native = true) {
         publishSessionControls() {},
         cancelNativeQueuePrefill() {},
         getAudioPreloader: () => ({ cleanup() {} }),
-        getAutoMixEngine: () => ({ isHandoffActive: () => false }),
+        getAutoMixEngine: () => ({
+          isHandoffActive: () => false,
+          cancelIfHeadingFor: (songId: unknown) => {
+            autoMixCancels.push(songId);
+            return false;
+          },
+        }),
         stopActiveSound() {},
       },
     },
-    { window, Math: math, $message: { info() {} } },
+    { window, Math: math, $message: { info() {}, success() {} } },
   ).default;
   function restore(saved?: any) {
     music?.$dispose();
@@ -146,6 +153,7 @@ function queueEnvironment(native = true) {
     get shuffleDraws() {
       return shuffleDraws;
     },
+    autoMixCancels,
     attach() {
       activeSound.value = new NativeRustSound();
       return activeSound.value;
@@ -329,6 +337,24 @@ test("manifest carries original identity order including local tracks, removals 
     Array.from(env.music.persistData.playlists, (s: any) => s.id),
     [1, -1, 3, 5],
   );
+});
+
+test("removing an upcoming song asks AutoMix to drop a transition to it; the playing one does not", () => {
+  const env = queueEnvironment();
+  env.restore({
+    ...musicTypes.createDefaultPersistData(),
+    playlists: [1, 2, 3].map((id) => ({ id, name: String(id) })),
+    playSongIndex: 0,
+  });
+  env.music.checkpointPlaySongTime = () => {};
+  env.music.removeSong(1);
+  assert.deepEqual(env.autoMixCancels, [2]);
+  assert.deepEqual(
+    Array.from(env.music.persistData.playlists, (s: any) => s.id),
+    [1, 3],
+  );
+  env.music.removeSong(0);
+  assert.deepEqual(env.autoMixCancels, [2], "deleting the playing song has its own path");
 });
 
 test("legacy persisted queues migrate to an explicit completion or pending token", async () => {

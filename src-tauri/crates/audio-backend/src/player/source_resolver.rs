@@ -87,6 +87,9 @@ pub struct ResolvedSource {
     pub identity: TrackIdentity,
     pub uri: String,
     pub origin: SourceOrigin,
+    /// The content hash the resolver declared for `uri` (`song_url_v1`'s `md5`), which keys the
+    /// audio cache. `None` for anything that declares none.
+    pub md5: Option<String>,
     resolved_at: Instant,
     ttl: Option<Duration>,
 }
@@ -97,6 +100,7 @@ impl ResolvedSource {
             identity,
             uri: path,
             origin: SourceOrigin::LocalFile,
+            md5: None,
             resolved_at: Instant::now(),
             // A path on disk does not expire.
             ttl: None,
@@ -108,9 +112,15 @@ impl ResolvedSource {
             identity,
             uri,
             origin,
+            md5: None,
             resolved_at: Instant::now(),
             ttl: Some(ASSUMED_URL_TTL),
         }
+    }
+
+    pub fn with_md5(mut self, md5: Option<String>) -> Self {
+        self.md5 = md5;
+        self
     }
 
     /// Whether this source is past its assumed lifetime and should be
@@ -367,18 +377,19 @@ fn resolve_via_ncm(
     let parsed: serde_json::Value = serde_json::from_str(&raw_body)
         .map_err(|_| ResolveError::new(ResolveErrorKind::Transient, "malformed NCM JSON"))?;
 
-    let raw_url = parsed
-        .get("data")
-        .and_then(|data| data.get(0))
+    let first = parsed.get("data").and_then(|data| data.get(0));
+    let raw_url = first
         .and_then(|first| first.get("url"))
         .and_then(|url| url.as_str());
+    let md5 = first
+        .and_then(|first| first.get("md5"))
+        .and_then(|md5| md5.as_str())
+        .map(str::to_string);
 
     match classify_ncm_url(raw_url) {
-        Some(url) => Ok(ResolvedSource::remote(
-            entry.identity.clone(),
-            url,
-            SourceOrigin::Ncm,
-        )),
+        Some(url) => Ok(
+            ResolvedSource::remote(entry.identity.clone(), url, SourceOrigin::Ncm).with_md5(md5),
+        ),
         None => Err(ResolveError::new(
             ResolveErrorKind::Unavailable,
             "NCM returned no playable URL",

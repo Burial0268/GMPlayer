@@ -25,7 +25,15 @@ impl PlaybackQueue {
     pub fn set_playlist(&mut self, songs: Vec<SongData>, windowed: bool) {
         self.songs = songs;
         self.windowed = windowed;
-        self.current_index = self.current_index.min(self.songs.len().saturating_sub(1));
+        // `current_index` is a logical playlist index, not a position: a window `[cur@7, n1@8]`
+        // republished as-is still holds 7, and clamping it to 1 made `next` stop at the edge.
+        if !self
+            .songs
+            .iter()
+            .any(|song| song.orig_order() == self.current_index)
+        {
+            self.current_index = self.current_index.min(self.songs.len().saturating_sub(1));
+        }
     }
 
     pub fn playlist_cloned(&self) -> Vec<SongData> {
@@ -138,6 +146,7 @@ mod tests {
             file_path: path.to_string(),
             orig_order,
             display: None,
+            md5: None,
         }
     }
 
@@ -234,6 +243,16 @@ mod tests {
         queue.set_index(5);
         assert!(!queue.set_index_by_song_id("local:other"));
         assert_eq!(queue.current_index(), 5);
+    }
+
+    #[test]
+    fn republishing_a_window_keeps_its_logical_index() {
+        let window = || vec![local("cur", 7), local("n1", 8), local("n2", 9)];
+        let mut queue = queue_with(window(), true);
+        queue.set_index(7);
+        queue.set_playlist(window(), true);
+        assert_eq!(queue.current_index(), 7);
+        assert_eq!(queue.next().expect("advance").get_id(), "local:n1");
     }
 
     #[test]

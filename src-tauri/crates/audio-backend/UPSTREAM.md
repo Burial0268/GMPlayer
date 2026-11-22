@@ -222,9 +222,10 @@ claim that a downbeat model has identified the meter.
 [HyPlayer-Nextgen's AutoMix planner](https://github.com/Gaimoydev/HyPlayer-Nextgen/tree/develop/HyPlayer/Services/Playback/AutoMix)
 (GPL-3.0; the ideas are re-derived, no code is copied). Half/double-time folds
 are tried; within ±4% the outgoing A is stretched and the pair **beat-mixes**:
-16, 8, 4, 3 or 2 bars (at most 40 s, no longer capped by the crossfade setting),
-A leaving on the latest bar start that fits, preferably a four-bar phrase from
-its outro. B enters on its first downbeat — or, when its first line is far off,
+the bar count (16, 8, 4, 3 or 2) whose overlap is nearest twice the crossfade
+setting (at least 8 s, at most 40 s; 8 bars at 128 BPM by default) is tried
+first, then the others by distance; A leaves on the latest bar start that fits,
+preferably a four-bar phrase from its outro. B enters on its first downbeat — or, when its first line is far off,
 on the bar one overlap before it — so the decoder opens B there and its clock
 starts from that position. B rises to A's level by the handoff, then A
 releases; the low band swaps at the handoff. The pair is balanced rather than

@@ -6,6 +6,7 @@ use crate::automix::{
     EnergyAnalysis, SectionAnalysis, SongSection, SongSectionKind, SpectralFingerprint,
     TrackAnalysis, VolumeAnalysis,
 };
+use crate::player::mixer::FadeStyle;
 use crate::types::CrossfadeCurve;
 use std::path::Path;
 
@@ -342,4 +343,315 @@ fn the_band_morph_carries_tone_not_loudness() {
         morph.db
     );
     assert!(choose_morph(&plan, &a, &banded([0.4, 0.1, 0.1], false)).is_none());
+}
+
+/// An outro whose 250 ms short-term loudness windows are `runs` of (LUFS, seconds), ending at the
+/// content end.
+fn with_loudness(outro_type: &str, runs: &[(f32, f32)]) -> TrackAnalysis {
+    let mut track = track(vec![]);
+    let loudness = runs
+        .iter()
+        .flat_map(|(lufs, seconds)| std::iter::repeat_n(*lufs, (seconds * 4.0) as usize))
+        .collect();
+    track.outro = Some(automix_analysis::OutroAnalysis {
+        outro_type: outro_type.into(),
+        outro_confidence: 0.7,
+        musical_end_offset: 0.0,
+        suggested_crossfade_start: 190.0,
+        multiband_energy: automix_analysis::MultibandEnergy {
+            low: Vec::new(),
+            mid: Vec::new(),
+            high: Vec::new(),
+        },
+        spectral_flux: Vec::new(),
+        short_term_loudness: loudness,
+        deceleration_start: None,
+        sustain_onset: None,
+        outro_section_start: None,
+        loop_period: None,
+    });
+    track
+}
+
+fn opening(quiet_intro_duration: f32) -> TrackAnalysis {
+    let mut track = track(vec![]);
+    track.intro = Some(automix_analysis::IntroAnalysis {
+        quiet_intro_duration,
+        energy_build_duration: 0.0,
+        intro_energy_ratio: 1.0,
+        multiband_energy: None,
+    });
+    track
+}
+
+fn placed(current: &TrackAnalysis, next: &TrackAnalysis) -> (f64, f64) {
+    let plan = build_analysis_backed_plan(&config(false), 200.0, Some(current), Some(next), 1.0);
+    (plan.start_time, plan.duration)
+}
+
+fn near(got: (f64, f64), want: (f64, f64)) -> bool {
+    (got.0 - want.0).abs() < 0.01 && (got.1 - want.1).abs() < 0.01
+}
+
+#[test]
+fn the_fade_covers_the_tail_where_the_outgoing_song_decays() {
+    let next = opening(4.0);
+    // Steady, then 8 LU down for its last 10 s: B arrives as the decay starts.
+    let decaying = with_loudness("fadeOut", &[(-10.0, 40.0), (-25.0, 10.0)]);
+    assert!(near(placed(&decaying, &next), (190.0, 10.0)));
+    // An 8 LU tail longer than 15 s starts too early; the 20 LU point is the real end.
+    let long_tail = with_loudness("fadeOut", &[(-10.0, 25.0), (-22.0, 20.0), (-40.0, 5.0)]);
+    assert!(near(placed(&long_tail, &next), (195.0, 5.0)));
+    // A tail longer than the overlap budget keeps its end and gives up its start.
+    let capped = with_loudness("fadeOut", &[(-10.0, 36.0), (-25.0, 14.0)]);
+    assert!(near(placed(&capped, &next), (188.0, 12.0)));
+    // An emotional arc may shorten it, but the fade still ends where A does.
+    for current in [&decaying, &long_tail, &capped] {
+        let plan =
+            build_analysis_backed_plan(&config(true), 200.0, Some(current), Some(&next), 1.0);
+        assert!(
+            (plan.start_time + plan.duration - 200.0).abs() < 0.01,
+            "{} + {}",
+            plan.start_time,
+            plan.duration
+        );
+    }
+}
+
+#[test]
+fn a_hard_ending_keeps_its_short_fade() {
+    let next = opening(4.0);
+    let hard = with_loudness("hard", &[(-10.0, 40.0), (-25.0, 10.0)]);
+    let unmeasured = with_loudness("hard", &[]);
+    assert_eq!(placed(&hard, &next), placed(&unmeasured, &next));
+}
+
+#[test]
+fn two_loud_ends_barely_overlap() {
+    let loud_to_the_end = with_loudness("musicalOutro", &[(-10.0, 50.0)]);
+    let (start, duration) = placed(&loud_to_the_end, &opening(0.0));
+    assert!(duration <= 4.0 + 1e-9, "{duration}");
+    assert!((start + duration - 200.0).abs() < 0.01);
+    // B opening quietly can be laid under A as before.
+    let unmeasured = with_loudness("musicalOutro", &[]);
+    assert_eq!(
+        placed(&loud_to_the_end, &opening(4.0)),
+        placed(&unmeasured, &opening(4.0))
+    );
+}
+
+#[test]
+fn an_echo_out_carries_a_filter_cut_or_a_hard_ending_out() {
+    let mut plan = build_time_based_plan(&config(false), 200.0);
+    let current = with_loudness("hard", &[]);
+    let mut effects = config(false);
+    effects.transition_effects = true;
+    let echo = |config: &AutoMixConfig, plan: &CrossfadePlan| {
+        super::plan::choose_echo(config, &current, plan)
+    };
+    // A blend over an ordinary length needs none.
+    plan.duration = 8.0;
+    assert!(echo(&effects, &plan).is_none());
+    // A hard ending's short fade, and a filter-cut, do.
+    plan.duration = 3.0;
+    let thrown = echo(&effects, &plan).unwrap();
+    assert!(
+        (thrown.delay - 0.32).abs() < 1e-6,
+        "no tempo: the Web's default"
+    );
+    assert!((thrown.duration - 1.65).abs() < 1e-6);
+    plan.duration = 15.0;
+    plan.style = FadeStyle::FilterCut;
+    assert_eq!(echo(&effects, &plan).unwrap().duration, 4.0);
+    // Not without transition effects, nor on a calm arc.
+    let mut without = effects.clone();
+    without.transition_effects = false;
+    assert!(echo(&without, &plan).is_none());
+    plan.arc = EmotionalArc::Drift;
+    assert!(echo(&effects, &plan).is_none());
+}
+
+/// Band RMS per 250 ms window: `runs` of (level, seconds).
+fn bands(runs: &[(f32, f32)]) -> automix_analysis::MultibandEnergy {
+    let level: Vec<f32> = runs
+        .iter()
+        .flat_map(|(level, seconds)| std::iter::repeat_n(*level, (seconds * 4.0) as usize))
+        .collect();
+    automix_analysis::MultibandEnergy {
+        low: level.clone(),
+        mid: level.clone(),
+        high: level,
+    }
+}
+
+fn pulses(first: f32, last: f32) -> automix_analysis::BeatRegion {
+    automix_analysis::BeatRegion {
+        beats: (0..)
+            .map(|i| first + i as f32 * 0.5)
+            .take_while(|t| *t <= last + 1e-3)
+            .collect(),
+        period: 0.5,
+        stability: 1.0,
+        downbeat: None,
+    }
+}
+
+#[test]
+fn a_ring_out_swaps_the_bass_over_at_least_one_of_bs_beats() {
+    // Drop on B's first beat (a collapsed window) and a drop well ahead of it.
+    let beat = 0.5 / 6.0;
+    let collapsed = super::plan::arrival_swap(0.4, 0.4, beat);
+    assert!((collapsed.start - (0.4 - 0.5 * beat as f32)).abs() < 1e-6);
+    assert!((collapsed.end - (0.4 + 0.5 * beat as f32)).abs() < 1e-6);
+    let wide = super::plan::arrival_swap(0.2, 0.4, beat);
+    assert_eq!((wide.start, wide.end), (0.2, 0.4));
+    // Never outside the fade.
+    let late = super::plan::arrival_swap(0.99, 0.99, beat);
+    assert_eq!(late.end, 1.0);
+}
+
+#[test]
+fn a_quiet_lead_in_lands_bs_first_beat_where_a_lets_go() {
+    // A is loud until 196 s, its pulse ending at 195.8; B leads in quietly and hits at 2.6 s.
+    let mut current = with_loudness("musicalOutro", &[]);
+    let outro = current.outro.as_mut().unwrap();
+    outro.outro_confidence = 0.3;
+    outro.multiband_energy = bands(&[(0.3, 40.0), (0.005, 4.0)]);
+    let mut next = opening(2.0);
+    next.intro.as_mut().unwrap().multiband_energy = Some(bands(&[(0.001, 2.5), (0.3, 17.5)]));
+    let grid = |head, tail| automix_analysis::BPMResult {
+        bpm: 120.0,
+        confidence: 1.0,
+        beat_grid: Vec::new(),
+        analysis_offset: 0.0,
+        head,
+        tail,
+    };
+    current.bpm = Some(grid(None, Some(pulses(176.3, 195.8))));
+    // Too unsteady to beat-mix, so the ordinary fade plans it, but its first beat still counts.
+    let mut head = pulses(2.6, 19.6);
+    head.stability = 0.8;
+    next.bpm = Some(grid(Some(head), None));
+
+    let plan = build_analysis_backed_plan(&config(false), 200.0, Some(&current), Some(&next), 1.0);
+    // B's first beat on the beat after A's last pulse; A's tail rings out to its end under B.
+    assert!(
+        (plan.start_time - (196.3 - 2.6)).abs() < 1e-3,
+        "{}",
+        plan.start_time
+    );
+    assert!((plan.duration - 6.3).abs() < 1e-3, "{}", plan.duration);
+    assert_eq!(plan.incoming_start, 0.0);
+    // A holds until its drop. Drop to first beat is 0.3 s, under one of B's beats, so the bass
+    // changes hands over one beat centred on B's first beat instead of in a step.
+    let FadeStyle::RingOut { handoff, landed } = plan.style else {
+        panic!("{:?}", plan.style)
+    };
+    let at = |share: f32| plan.start_time + f64::from(share) * plan.duration;
+    assert!((at(handoff) - 196.0).abs() < 1e-3, "{}", at(handoff));
+    let swap = plan.bass_swap.unwrap();
+    assert!(
+        (at(swap.start) - 196.05).abs() < 1e-3 && (at(swap.end) - 196.55).abs() < 1e-3,
+        "{} {}",
+        at(swap.start),
+        at(swap.end)
+    );
+    // B is at full by its first beat.
+    assert!((at(landed) - 196.3).abs() < 1e-3);
+
+    // An echo-out of A's last beat opens on B's first beat and repeats on B's beats.
+    let echo = plan.echo.unwrap();
+    assert!((echo.delay - 0.5).abs() < 1e-6);
+    assert!((plan.start_time + f64::from(echo.start + echo.attack) - 196.3).abs() < 1e-3);
+    let mut plain = config(false);
+    plain.transition_effects = false;
+    let without = build_analysis_backed_plan(&plain, 200.0, Some(&current), Some(&next), 1.0);
+    assert!(without.echo.is_none());
+
+    // A long decay after the drop is faded over, not cut under B.
+    let mut fading = current.clone();
+    fading.outro.as_mut().unwrap().multiband_energy = bands(&[(0.3, 34.0), (0.005, 10.0)]);
+    let faded = build_analysis_backed_plan(&config(false), 200.0, Some(&fading), Some(&next), 1.0);
+    assert!(!matches!(faded.style, FadeStyle::RingOut { .. }));
+
+    // Without B's opening measured, the plan is the ordinary one.
+    next.intro.as_mut().unwrap().multiband_energy = None;
+    let ordinary =
+        build_analysis_backed_plan(&config(false), 200.0, Some(&current), Some(&next), 1.0);
+    assert!(!matches!(ordinary.style, FadeStyle::RingOut { .. }));
+}
+
+#[test]
+fn a_faster_a_rides_into_bs_tempo_before_bs_first_beat() {
+    // As above, but A pulses every 0.47 s against B's 0.5 s: A slows into B's beat over its last
+    // two bars, so its last beats already fall at B's spacing and B's first beat continues them.
+    let mut current = with_loudness("musicalOutro", &[]);
+    let outro = current.outro.as_mut().unwrap();
+    outro.outro_confidence = 0.3;
+    outro.multiband_energy = bands(&[(0.3, 40.0), (0.005, 4.0)]);
+    let mut next = opening(2.0);
+    next.intro.as_mut().unwrap().multiband_energy = Some(bands(&[(0.001, 2.5), (0.3, 17.5)]));
+    let grid = |head, tail| automix_analysis::BPMResult {
+        bpm: 120.0,
+        confidence: 1.0,
+        beat_grid: Vec::new(),
+        analysis_offset: 0.0,
+        head,
+        tail,
+    };
+    let tail = automix_analysis::BeatRegion {
+        beats: (0..40).rev().map(|i| 195.8 - i as f32 * 0.47).collect(),
+        period: 0.47,
+        stability: 1.0,
+        downbeat: None,
+    };
+    current.bpm = Some(grid(None, Some(tail)));
+    let mut head = pulses(2.6, 19.6);
+    head.stability = 0.8;
+    next.bpm = Some(grid(Some(head), None));
+
+    let plan = build_analysis_backed_plan(&config(false), 200.0, Some(&current), Some(&next), 1.0);
+    let rate = f64::from(0.47f32) / 0.5;
+    assert!(
+        (plan.outgoing_rate - rate).abs() < 1e-6,
+        "{}",
+        plan.outgoing_rate
+    );
+    let (from, to) = plan.tempo_ramp.unwrap();
+    assert!((from - (195.8 - 8.0 * 0.47)).abs() < 1e-3 && (to - 195.8).abs() < 1e-3);
+
+    // Output seconds A takes over its source `start..end`, integrated independently of the plan.
+    let played = |start: f64, end: f64| {
+        let steps = 200_000;
+        let ds = (end - start) / f64::from(steps);
+        (0..steps)
+            .map(|i| {
+                let s = start + (f64::from(i) + 0.5) * ds;
+                let progress = ((s - from) / (to - from)).clamp(0.0, 1.0);
+                ds / (1.0 + (rate - 1.0) * progress)
+            })
+            .sum::<f64>()
+    };
+    // B's first beat (2.6 s into the fade) one of B's beats after A's last pulse.
+    let last = played(plan.start_time, to);
+    assert!((last + 0.5 - 2.6).abs() < 1e-3, "{last}");
+    assert!((plan.duration - played(plan.start_time, 200.0)).abs() < 1e-3);
+    // One of B's beats, centred on its first beat.
+    let swap = plan.bass_swap.unwrap();
+    let (from_s, to_s) = (
+        f64::from(swap.start) * plan.duration,
+        f64::from(swap.end) * plan.duration,
+    );
+    assert!(
+        (from_s - 2.35).abs() < 1e-3 && (to_s - 2.85).abs() < 1e-3,
+        "{from_s} {to_s}"
+    );
+    let FadeStyle::RingOut { handoff, landed } = plan.style else {
+        panic!("{:?}", plan.style)
+    };
+    let drop = played(plan.start_time, 196.0);
+    assert!((f64::from(handoff) * plan.duration - drop).abs() < 1e-3);
+    assert!((f64::from(landed) * plan.duration - 2.6).abs() < 1e-3);
+    // Repeats of A's last beat, now at B's spacing, still fall on B's beats.
+    assert!((plan.echo.unwrap().delay - 0.5).abs() < 1e-6);
 }

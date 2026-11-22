@@ -204,6 +204,15 @@ impl Progress {
         id
     }
 
+    /// How far writer `id` has written: where a resume after it failed picks up.
+    pub(crate) fn writer_pos(&self, id: u64) -> u64 {
+        self.lock()
+            .writers
+            .iter()
+            .find(|w| w.id == id)
+            .map_or(0, |w| w.pos)
+    }
+
     pub(crate) fn writer_start(&self, id: u64) -> u64 {
         self.lock()
             .writers
@@ -512,21 +521,51 @@ impl MediaSource for GrowingFile {
 
 // ── Guard ────────────────────────────────────────────────────────
 
-/// A temp file plus, while its download is running, the means to stop it.
+/// A downloaded file plus, while its download is running, the means to stop it.
 /// Dropping it cancels the writers and then deletes the file, so a skipped
-/// track stops costing bandwidth at once.
+/// track stops costing bandwidth at once — unless the audio cache adopted the
+/// file, in which case dropping it only releases the cache's pin.
 pub struct TempGuard {
     // Declared first so the writers are told to stop before the file goes.
     progress: Option<Arc<Progress>>,
-    path: tempfile::TempPath,
+    path: PathBuf,
+    /// Deletes the file on drop; `None` for a file the cache already owned.
+    temp: Option<tempfile::TempPath>,
+    cache: Option<super::cache::Hold>,
 }
 
 impl TempGuard {
     pub(crate) fn streaming(path: tempfile::TempPath, progress: Arc<Progress>) -> Self {
         Self {
             progress: Some(progress),
-            path,
+            path: path.to_path_buf(),
+            temp: Some(path),
+            cache: None,
         }
+    }
+
+    /// A file the audio cache keeps, pinned until this guard drops.
+    pub(crate) fn cached(path: PathBuf, hold: super::cache::Hold) -> Self {
+        Self {
+            progress: None,
+            path,
+            temp: None,
+            cache: Some(hold),
+        }
+    }
+
+    /// Let the cache adopt this download once it has landed and checked out.
+    pub(crate) fn with_cache(mut self, hold: super::cache::Hold) -> Self {
+        self.cache = Some(hold);
+        self
+    }
+
+    /// The download behind this file stopped short (gave up or was cancelled): a replay of it
+    /// ends where the download did, so it must be fetched again rather than reused.
+    pub(crate) fn is_broken(&self) -> bool {
+        self.progress
+            .as_ref()
+            .is_some_and(|p| p.is_finished() && !p.is_complete())
     }
 }
 
@@ -534,7 +573,9 @@ impl From<tempfile::TempPath> for TempGuard {
     fn from(path: tempfile::TempPath) -> Self {
         Self {
             progress: None,
-            path,
+            path: path.to_path_buf(),
+            temp: Some(path),
+            cache: None,
         }
     }
 }
@@ -557,6 +598,11 @@ impl Drop for TempGuard {
         if let Some(p) = self.progress.take() {
             p.cancel();
             unregister(&self.path);
+        }
+        if self.cache.take().is_some_and(super::cache::Hold::release) {
+            if let Some(temp) = self.temp.take() {
+                let _ = temp.keep();
+            }
         }
     }
 }
@@ -786,5 +832,34 @@ mod tests {
         });
         assert!(rig.reader.read(&mut [0u8; 4]).is_err());
         t.join().unwrap();
+    }
+
+    #[test]
+    fn a_guard_is_broken_only_once_its_download_stopped_short() {
+        let guard = |total| {
+            let (file, path) = tempfile::NamedTempFile::new().unwrap().into_parts();
+            file.set_len(total).unwrap();
+            let progress = Progress::new(total);
+            (TempGuard::streaming(path, progress.clone()), progress)
+        };
+
+        // Still landing, then landed in full: reusable.
+        let (whole, progress) = guard(8);
+        let id = progress.begin_writer(0);
+        assert!(!whole.is_broken());
+        progress.advance(id, 8);
+        progress.end_writer(id, Ok(()));
+        assert!(!whole.is_broken());
+
+        // Gave up part-way.
+        let (failed, progress) = guard(8);
+        let id = progress.begin_writer(0);
+        progress.advance(id, 3);
+        progress.end_writer(id, Err("connection reset".into()));
+        assert!(failed.is_broken());
+
+        // Not a download at all.
+        let plain = TempGuard::from(tempfile::NamedTempFile::new().unwrap().into_temp_path());
+        assert!(!plain.is_broken());
     }
 }

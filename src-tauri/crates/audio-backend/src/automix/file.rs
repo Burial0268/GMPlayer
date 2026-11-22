@@ -284,6 +284,28 @@ pub fn analyze_audio_file_until(
     decoded?.analyze(analyze_bpm)
 }
 
+/// Decode a whole file to interleaved f32 at its own rate, for offline diagnostics.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn decode_interleaved(path: &Path) -> Result<(Vec<f32>, u32, usize), String> {
+    let opened = OpenedDecoder::open_with(|| {
+        let input = crate::source::open(crate::source::SourceLocator::from_path(path))?;
+        let extension = input.extension().map(str::to_string);
+        Ok((input, extension))
+    })
+    .map_err(|e| e.to_string())?;
+    let collect = |source: &mut dyn Iterator<Item = f32>| source.collect::<Vec<f32>>();
+    Ok(match opened {
+        OpenedDecoder::Symphonia(mut source) => {
+            let (rate, channels) = (source.sample_rate().get(), source.channels().get());
+            (collect(&mut source), rate, channels as usize)
+        }
+        OpenedDecoder::Ffmpeg(mut source) => {
+            let (rate, channels) = (source.sample_rate().get(), source.channels().get());
+            (collect(&mut source), rate, channels as usize)
+        }
+    })
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub fn analyze_audio_source(req: AutomixAnalyzeSourceRequest) -> Result<TrackAnalysis, String> {
     analyze_audio_file(req.source, req.analyze_bpm.unwrap_or(true))
@@ -526,7 +548,17 @@ mod tests {
 
     #[test]
     fn scratch_analysis_remains_cancellable_after_decode_finishes() {
-        let mut decoder = Decoder::new(Cursor::new(wav_bytes(44_100, 2, 44_100))).unwrap();
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        file.write_all(&wav_bytes(44_100, 2, 44_100)).unwrap();
+        file.flush().unwrap();
+        let opened = OpenedDecoder::open_with(|| {
+            let input = crate::source::open(crate::source::SourceLocator::from_path(file.path()))?;
+            let extension = input.extension().map(str::to_string);
+            Ok((input, extension))
+        });
+        let Ok(OpenedDecoder::Symphonia(mut decoder)) = opened else {
+            panic!("a WAV opens with symphonia");
+        };
         let flag = std::cell::Cell::new(false);
         let cancelled = || flag.get();
         let spool = PcmSpool::decode(&mut decoder, &cancelled).unwrap();

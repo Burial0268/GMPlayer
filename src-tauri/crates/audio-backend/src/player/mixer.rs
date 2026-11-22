@@ -34,6 +34,14 @@ const MORPH_LOW_HZ: f32 = 300.0;
 const MORPH_MID_HZ: f32 = 1_100.0;
 const MORPH_MID_Q: f32 = 0.7;
 const MORPH_HIGH_HZ: f32 = 4_000.0;
+/// How far a staged entry holds B's highs down (on the morph's high shelf) until the crossover.
+const STAGE_HIGH_DB: f32 = -15.0;
+/// Share of the fade over which a staged entry hands the highs from A to B.
+const STAGE_HIGH_SPAN: f32 = 0.15;
+/// Longest echo-out delay; the worker's delay line is sized for it once, on first use.
+pub(crate) const ECHO_MAX_DELAY: f32 = 0.55;
+/// Wet gain the echo envelope decays to by its end, where it is dropped (the Web's floor).
+const ECHO_FLOOR: f32 = 1e-4;
 /// Layouts wider than this skip deck filtering rather than allocate filter state.
 const BASS_SWAP_MAX_CHANNELS: usize = 8;
 /// FilterCut: the outgoing high-pass climbs 300 Hz -> 18 kHz across the fade.
@@ -110,6 +118,9 @@ enum MixerControl {
         ack: mpsc::Sender<()>,
     },
     SetDsp(DspConfig),
+    /// The echo-out delay line, allocated on the sender's thread the first time a fade asks for
+    /// an echo and kept by the worker from then on.
+    EchoLine(Box<[f32]>),
     /// Carries no state: it exists so a paused worker blocked on this channel
     /// wakes for changes announced through shared atomics instead.
     Wake,
@@ -183,7 +194,143 @@ pub struct CrossfadeParams {
     pub bass_swap: Option<BassSwap>,
     /// Lean each deck's tone toward the other's across the fade.
     pub morph: Option<BandMorph>,
+    /// Bring B in early but thin; ignored by `FilterCut`.
+    pub stage: Option<BandStage>,
+    /// Throw the outgoing deck into an echo as it leaves.
+    pub echo: Option<EchoOut>,
     pub style: FadeStyle,
+}
+
+/// A DJ's echo-out, with the Web `TransitionEffects` echo throw's shape: the outgoing deck is
+/// tapped after its fade gain into a feedback delay from the fade's start; the repeats pass a
+/// low-pass, and their wet gain rises to `wet` over the first 15% of `duration`, then decays
+/// exponentially to `ECHO_FLOOR` by its end. Runs past the fade when it is longer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EchoOut {
+    /// Seconds between repeats, at most `ECHO_MAX_DELAY`.
+    pub delay: f32,
+    pub feedback: f32,
+    pub cutoff_hz: f32,
+    pub wet: f32,
+    /// Seconds into the fade the repeats start to be heard; the line is fed from the fade's start
+    /// regardless, so the first repeat can be of what played before.
+    pub start: f32,
+    /// Seconds the wet level takes to rise, from `start`.
+    pub attack: f32,
+    /// Seconds from `start` until the repeats are gone.
+    pub duration: f32,
+}
+
+/// A running `EchoOut`. Plain data: the delay line it writes is the worker's, so starting and
+/// ending an echo allocates and frees nothing on the mixer thread.
+#[derive(Clone, Copy)]
+struct EchoRuntime {
+    channels: usize,
+    feedback: f32,
+    lpf: BiquadCoeffs,
+    lpf_state: [BiquadState; BASS_SWAP_MAX_CHANNELS],
+    /// Samples of the line in use (delay frames x channels), and the frame being read/written.
+    len: usize,
+    pos: usize,
+    gain: f32,
+    attack_step: f32,
+    decay_ratio: f32,
+    /// The wet level rises over frames `(rise_from, rise_to]` and decays after.
+    rise_from: usize,
+    rise_to: usize,
+    frames: usize,
+    elapsed: usize,
+}
+
+impl EchoRuntime {
+    /// `None` when the line cannot hold it: none sent yet, more channels than the filter state,
+    /// or no rate.
+    fn new(echo: EchoOut, rate: u32, channels: usize, line: &mut [f32]) -> Option<Self> {
+        let rate_f = rate as f32;
+        let delay_frames = (echo.delay.clamp(0.01, ECHO_MAX_DELAY) * rate_f) as usize;
+        let len = delay_frames * channels;
+        if channels == 0 || channels > BASS_SWAP_MAX_CHANNELS || len == 0 || len > line.len() {
+            return None;
+        }
+        line[..len].fill(0.0);
+        let rise_from = (echo.start.max(0.0) * rate_f) as usize;
+        let attack_frames = ((echo.attack * rate_f) as usize).max(1);
+        let frames =
+            rise_from + ((echo.duration.max(0.05) * rate_f) as usize).max(attack_frames + 1);
+        let wet = echo.wet.max(ECHO_FLOOR);
+        Some(Self {
+            channels,
+            feedback: echo.feedback.clamp(0.0, 0.9),
+            lpf: BiquadCoeffs::low_pass(rate_f, echo.cutoff_hz.clamp(200.0, rate_f * 0.45), 0.7),
+            lpf_state: Default::default(),
+            len,
+            pos: 0,
+            gain: 0.0,
+            attack_step: wet / attack_frames as f32,
+            decay_ratio: (ECHO_FLOOR / wet)
+                .powf(1.0 / (frames - rise_from - attack_frames).max(1) as f32),
+            rise_from,
+            rise_to: rise_from + attack_frames,
+            frames,
+            elapsed: 0,
+        })
+    }
+
+    /// Feed one sample of the outgoing deck (after its gain) and take one sample of repeats.
+    /// Channels arrive in order; the last one of a frame moves the line on.
+    #[inline(always)]
+    fn tap(&mut self, line: &mut [f32], channel: usize, input: f32) -> f32 {
+        let i = self.pos + channel;
+        let delayed = line[i];
+        line[i] = input + delayed * self.feedback;
+        let out = self.lpf_state[channel].process(self.lpf, delayed) * self.gain;
+        if channel + 1 == self.channels {
+            self.pos += self.channels;
+            if self.pos >= self.len {
+                self.pos = 0;
+            }
+            self.elapsed += 1;
+            if self.elapsed > self.rise_to {
+                self.gain *= self.decay_ratio;
+            } else if self.elapsed > self.rise_from {
+                self.gain += self.attack_step;
+            }
+        }
+        out
+    }
+
+    fn done(&self) -> bool {
+        self.elapsed >= self.frames
+    }
+
+    /// Bring the repeats down to the floor within `frames` instead of cutting them mid-ring.
+    fn release(&mut self, frames: usize) {
+        let frames = frames.clamp(1, self.frames.saturating_sub(self.elapsed).max(1));
+        (self.rise_from, self.rise_to) = (self.elapsed, self.elapsed);
+        self.frames = self.elapsed + frames;
+        self.decay_ratio = (ECHO_FLOOR / self.gain.max(ECHO_FLOOR)).powf(1.0 / frames as f32);
+    }
+}
+
+/// A DJ's staged entry (as in dnb-autodj's transitions): B is heard early as a body without its
+/// highs (and, with a bass swap, without its lows), takes the bass at the `crossover`, and the
+/// highs change hands last, over `STAGE_HIGH_SPAN` from it. Two full spectra never sit on top of
+/// each other, which is what makes a long overlap muddy.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BandStage {
+    pub crossover: f32,
+}
+
+impl BandStage {
+    /// High shelf gains (outgoing, incoming) in dB at `progress`. The handover never starts
+    /// before the crossover (A may still be singing) and always finishes by the end of the fade,
+    /// so B is itself when the filters come off: a late crossover gets a shorter span.
+    fn high_db(self, progress: f32) -> (f32, f32) {
+        let start = self.crossover.clamp(0.0, 0.95);
+        let span = (1.0 - start).min(STAGE_HIGH_SPAN);
+        let s = smootherstep(((progress - start) / span).clamp(0.0, 1.0));
+        (STAGE_HIGH_DB * s, STAGE_HIGH_DB * (1.0 - s))
+    }
 }
 
 /// The tonal half of a handover, per band (low, mid, high) in dB: A's spectrum leans toward B's as
@@ -196,8 +343,9 @@ pub struct BandMorph {
 }
 
 /// How the two decks share the fade. Every style but `FilterCut` sets only the balance between
-/// the decks; the level follows A's gain to B's (see `fade_gains`). Every style but `Blend` still
-/// runs the overlap limiter as a safety net.
+/// the decks; the level follows A's gain to B's (see `fade_gains`). Every style runs the overlap
+/// limiter as a safety net: balancing is a power model, and neither two uncorrelated loud masters'
+/// peaks nor a band morph's boost or an echo's repeats show up in it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum FadeStyle {
     /// Constant-power `curve` with `in_shape`/`out_shape`.
@@ -206,15 +354,14 @@ pub enum FadeStyle {
     Handoff(f32),
     /// Beat-synced: B is level with A by `handoff`, then A releases.
     BeatMix(f32),
+    /// A's tail rings out under B: A holds until `handoff` (its drop) and releases over the rest,
+    /// B reaches full at `landed` (its first beat). Not balanced: A's own decay has already taken
+    /// the energy a power model would charge it for, so balancing held B 3-5 dB under its own
+    /// level after A had gone, a hole between two songs.
+    RingOut { handoff: f32, landed: f32 },
     /// Tempos too far apart to sync: A is high-passed away, holding its level until 70%; B enters
     /// halfway.
     FilterCut,
-}
-
-impl FadeStyle {
-    fn limits(self) -> bool {
-        self != Self::Blend
-    }
 }
 
 /// Progress window (0..1 of the fade) over which the low band changes hands.
@@ -251,6 +398,8 @@ impl Default for CrossfadeParams {
             out_shape: 1.0,
             bass_swap: None,
             morph: None,
+            stage: None,
+            echo: None,
             style: FadeStyle::Blend,
         }
     }
@@ -417,6 +566,8 @@ pub struct DeckMixer {
     output: Arc<RwLock<OutputWriter>>,
     stop_flag: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
+    /// Whether the worker already holds its echo delay line; see `MixerControl::EchoLine`.
+    echo_line_sent: AtomicBool,
 }
 
 impl DeckMixer {
@@ -501,6 +652,8 @@ impl DeckMixer {
                 dsp.set_dsp(&dsp_config);
                 let mut worker = MixerWorker {
                     overlap_limiter: None,
+                    echo: None,
+                    echo_line: Box::default(),
                     output,
                     output_channels: output_channels.max(1) as usize,
                     primary: DeckRuntime {
@@ -552,6 +705,7 @@ impl DeckMixer {
             output: output_state,
             stop_flag,
             thread,
+            echo_line_sent: AtomicBool::new(false),
         }
     }
 
@@ -606,6 +760,12 @@ impl DeckMixer {
     ) {
         let frames = (duration_secs.max(0.05) * sample_rate.max(1) as f64).ceil() as usize;
         let duration_samples = frames.saturating_mul(channels.max(1) as usize).max(1);
+        // Most sessions never echo: the line is paid for by the first fade that does, and here,
+        // so the mixer thread neither allocates it nor ever frees one.
+        if params.echo.is_some() && !self.echo_line_sent.swap(true, Ordering::Relaxed) {
+            let line = echo_line(sample_rate, channels as usize);
+            let _ = self.control_tx.send(MixerControl::EchoLine(line));
+        }
         let _ = self.control_tx.send(MixerControl::StartCrossfade {
             outgoing,
             incoming,
@@ -894,11 +1054,12 @@ struct CrossfadeRuntime {
 }
 
 /// One segment's deck filter coefficients, `[primary, secondary]` per stage. A fade's stage count
-/// is fixed by its params, and a single-filter fade (FilterCut, a bass swap alone) stays a single
-/// biquad per sample.
+/// is fixed by its params and counts only the bands it moves: a single-filter fade (FilterCut, a
+/// bass swap alone, a staged entry alone) stays a single biquad per sample.
 #[derive(Clone, Copy)]
 enum FadeFilters {
     One([[BiquadCoeffs; 1]; 2]),
+    Two([[BiquadCoeffs; 2]; 2]),
     Three([[BiquadCoeffs; 3]; 2]),
 }
 
@@ -955,6 +1116,10 @@ struct MixerWorker {
     spare_block: Option<Vec<f32>>,
     /// Limits an overlap that holds both decks up; kept until it has released.
     overlap_limiter: Option<LimiterRuntime>,
+    /// The fade's echo-out, kept until its repeats have died away.
+    echo: Option<EchoRuntime>,
+    /// `ECHO_MAX_DELAY` of output once a fade has asked for an echo; empty until then.
+    echo_line: Box<[f32]>,
     /// Windowed underrun telemetry; see `note_underrun`.
     underruns_in_window: u32,
     underrun_window_start: Option<std::time::Instant>,
@@ -1148,6 +1313,7 @@ impl MixerWorker {
                 // we actually have, and lets `render.rs` own the fade.
                 let frame_aligned = written - (written % channels);
                 block.truncate(frame_aligned);
+                self.run_echo_tail(block, channels);
                 // Skipping the limiter here, as this path used to, dropped whatever reduction a
                 // limited fade left to unity in one block: a jump the moment it completed.
                 self.run_overlap_limiter(block, channels);
@@ -1182,48 +1348,50 @@ impl MixerWorker {
                 .and_then(|ramp| ramp.filters)
                 .zip(self.crossfade.as_mut());
             let segment_start = block.len();
+            // During a fade the echo taps the outgoing deck inside the mix; after it, it rings.
+            let echo = self
+                .echo
+                .as_mut()
+                .filter(|_| crossfade_ramp.is_some())
+                .map(|echo| (echo, &mut *self.echo_line));
+            let decks = (&mut self.primary, &mut self.secondary);
+            let segment = (
+                &mut *block,
+                channels,
+                segment_frames,
+                paused,
+                crossfade_ramp,
+            );
             let (primary, secondary) = match filters {
-                Some((FadeFilters::One(coeffs), fade)) => mix_segment(
-                    &mut self.primary,
-                    &mut self.secondary,
-                    block,
-                    channels,
-                    segment_frames,
-                    paused,
-                    crossfade_ramp,
-                    &mut BiquadFilters {
-                        state: &mut fade.filters,
-                        coeffs,
-                    },
+                Some((FadeFilters::One(coeffs), fade)) => mix_segment_echoing(
+                    decks,
+                    echo,
+                    segment,
+                    BiquadFilters::new(&mut fade.filters, coeffs),
                 ),
-                Some((FadeFilters::Three(coeffs), fade)) => mix_segment(
-                    &mut self.primary,
-                    &mut self.secondary,
-                    block,
-                    channels,
-                    segment_frames,
-                    paused,
-                    crossfade_ramp,
-                    &mut BiquadFilters {
-                        state: &mut fade.filters,
-                        coeffs,
-                    },
+                Some((FadeFilters::Two(coeffs), fade)) => mix_segment_echoing(
+                    decks,
+                    echo,
+                    segment,
+                    BiquadFilters::new(&mut fade.filters, coeffs),
                 ),
-                None => mix_segment(
-                    &mut self.primary,
-                    &mut self.secondary,
-                    block,
-                    channels,
-                    segment_frames,
-                    paused,
-                    crossfade_ramp,
-                    &mut NoFilter,
+                Some((FadeFilters::Three(coeffs), fade)) => mix_segment_echoing(
+                    decks,
+                    echo,
+                    segment,
+                    BiquadFilters::new(&mut fade.filters, coeffs),
                 ),
+                None => mix_segment_echoing(decks, echo, segment, NoFilter),
             };
             has_audio |= primary > 0 || secondary > 0;
             consumed_primary += primary;
             consumed_secondary += secondary;
 
+            if crossfade_ramp.is_none() {
+                self.run_echo_tail(&mut block[segment_start..], channels);
+            } else if self.echo.is_some_and(|echo| echo.done()) {
+                self.echo = None;
+            }
             self.run_overlap_limiter(&mut block[segment_start..], channels);
             if crossfade_ramp.is_some() {
                 self.commit_crossfade_block(segment_frames);
@@ -1293,10 +1461,7 @@ impl MixerWorker {
     /// zero-attack limiter over the next track, which can sit above its ceiling at its matched
     /// gain, and dropping it at once would snap the level back up.
     fn run_overlap_limiter(&mut self, samples: &mut [f32], channels: usize) {
-        let limiting = self
-            .crossfade
-            .as_ref()
-            .is_some_and(|fade| fade.params.style.limits());
+        let limiting = self.crossfade.is_some();
         let Some(limiter) = self.overlap_limiter.as_mut() else {
             return;
         };
@@ -1307,6 +1472,22 @@ impl MixerWorker {
             if limiter.gain >= 0.9999 {
                 self.overlap_limiter = None;
             }
+        }
+    }
+
+    /// What is left of an echo-out once its fade has ended: the repeats ring on into the block,
+    /// fed nothing new, until the envelope reaches its floor.
+    fn run_echo_tail(&mut self, samples: &mut [f32], channels: usize) {
+        let Some(echo) = self.echo.as_mut() else {
+            return;
+        };
+        for frame in samples.chunks_exact_mut(channels) {
+            for (channel, sample) in frame.iter_mut().enumerate() {
+                *sample += echo.tap(&mut self.echo_line, channel, 0.0);
+            }
+        }
+        if echo.done() {
+            self.echo = None;
         }
     }
 
@@ -1323,7 +1504,15 @@ impl MixerWorker {
             params: schedule.params,
             filters: Default::default(),
         });
-        if schedule.params.style.limits() && self.overlap_limiter.is_none() {
+        self.echo = schedule.params.echo.and_then(|echo| {
+            EchoRuntime::new(
+                echo,
+                self.sample_rate,
+                self.output_channels,
+                &mut self.echo_line,
+            )
+        });
+        if self.overlap_limiter.is_none() {
             let config = LimiterConfig {
                 enabled: true,
                 threshold_db: OVERLAP_LIMIT_DB,
@@ -1395,6 +1584,13 @@ impl MixerWorker {
             self.expected_timeline = None;
             self.transition = 0;
             self.phase = 0;
+            // A cancelled fade or a seek lets the repeats die away over 50 ms rather than cutting
+            // them; a replaced queue takes them with everything else.
+            if matches!(&control, MixerControl::ClearAll { .. }) {
+                self.echo = None;
+            } else if let Some(echo) = self.echo.as_mut() {
+                echo.release(self.sample_rate as usize / 20);
+            }
         }
         match control {
             MixerControl::FlushDeck {
@@ -1486,6 +1682,8 @@ impl MixerWorker {
             MixerControl::SetDsp(config) => {
                 self.dsp.set_dsp(&config);
             }
+            // Sent once per worker, replacing the empty default: nothing is freed here.
+            MixerControl::EchoLine(line) => self.echo_line = line,
             MixerControl::Wake => {}
             MixerControl::Stop => return false,
         }
@@ -1544,9 +1742,9 @@ impl MixerWorker {
         })
     }
 
-    /// Coefficients for this segment: FilterCut's sweep on the outgoing deck, else the band
-    /// morph (with the bass swap as its low stage when one runs), else the bass swap alone, else
-    /// none.
+    /// Coefficients for this segment: FilterCut's sweep on the outgoing deck, else whichever of
+    /// the low (bass swap or morph), mid (morph) and high (morph and staged entry) bands move,
+    /// else none.
     fn deck_filters(&self, fade: &CrossfadeRuntime, progress: f32) -> Option<FadeFilters> {
         if self.output_channels > BASS_SWAP_MAX_CHANNELS {
             return None;
@@ -1686,6 +1884,82 @@ fn mix_segment<L: DeckFilter>(
 /// ordinary mix monomorphises to exactly what it was.
 trait DeckFilter {
     fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32;
+
+    /// Whether `tap` is called at all; a const so a fade without an echo compiles without it
+    /// (`x + 0.0` is not `x` in IEEE arithmetic, so a no-op tap would still cost an add).
+    const TAPS: bool = false;
+
+    /// Post-gain tap of the outgoing deck during a fade: takes its contribution to this sample
+    /// and returns what to add to the mix. Nothing outside an echo-out.
+    #[inline(always)]
+    fn tap(&mut self, _channel: usize, _outgoing: f32) -> f32 {
+        0.0
+    }
+}
+
+/// A fade's deck filter with an echo-out on the outgoing deck's post-gain signal.
+struct Echoing<'a, F> {
+    filter: F,
+    echo: &'a mut EchoRuntime,
+    line: &'a mut [f32],
+}
+
+impl<F: DeckFilter> DeckFilter for Echoing<'_, F> {
+    const TAPS: bool = true;
+
+    #[inline(always)]
+    fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32 {
+        self.filter.apply(deck, channel, sample)
+    }
+
+    #[inline(always)]
+    fn tap(&mut self, channel: usize, outgoing: f32) -> f32 {
+        self.echo.tap(self.line, channel, outgoing)
+    }
+}
+
+/// `mix_segment` with the echo-out wrapped around the filter when one is running, so a fade
+/// without one monomorphises to exactly what it was.
+#[allow(clippy::type_complexity)]
+fn mix_segment_echoing<F: DeckFilter>(
+    (primary, secondary): (&mut DeckRuntime, &mut DeckRuntime),
+    echo: Option<(&mut EchoRuntime, &mut [f32])>,
+    (block, channels, frames, paused, ramp): (
+        &mut Vec<f32>,
+        usize,
+        usize,
+        (bool, bool),
+        Option<CrossfadeBlockRamp>,
+    ),
+    mut filter: F,
+) -> (usize, usize) {
+    match echo {
+        Some((echo, line)) => mix_segment(
+            primary,
+            secondary,
+            block,
+            channels,
+            frames,
+            paused,
+            ramp,
+            &mut Echoing { filter, echo, line },
+        ),
+        None => mix_segment(
+            primary,
+            secondary,
+            block,
+            channels,
+            frames,
+            paused,
+            ramp,
+            &mut filter,
+        ),
+    }
+}
+
+/// The worker's echo delay line: `ECHO_MAX_DELAY` of output frames.
+fn echo_line(rate: u32, channels: usize) -> Box<[f32]> {
+    vec![0.0; (ECHO_MAX_DELAY * rate as f32) as usize * channels.max(1)].into_boxed_slice()
 }
 
 struct NoFilter;
@@ -1702,11 +1976,32 @@ impl DeckFilter for NoFilter {
 struct BiquadFilters<'a, const N: usize> {
     state: &'a mut [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
     coeffs: [[BiquadCoeffs; N]; 2],
+    /// Decks with a stage that is not the pass-through. Most of a staged entry or a bass swap
+    /// leaves one deck's whole chain at identity (A before its band moves, B after), and an
+    /// identity biquad's state stays at zero, so skipping it is exact.
+    active: [bool; 2],
+}
+
+impl<'a, const N: usize> BiquadFilters<'a, N> {
+    fn new(
+        state: &'a mut [[[BiquadState; 3]; BASS_SWAP_MAX_CHANNELS]; 2],
+        coeffs: [[BiquadCoeffs; N]; 2],
+    ) -> Self {
+        let active = coeffs.map(|deck| deck.iter().any(|stage| !stage.is_identity()));
+        Self {
+            state,
+            coeffs,
+            active,
+        }
+    }
 }
 
 impl<const N: usize> DeckFilter for BiquadFilters<'_, N> {
     #[inline(always)]
     fn apply(&mut self, deck: usize, channel: usize, sample: f32) -> f32 {
+        if !self.active[deck] {
+            return sample;
+        }
         let state = &mut self.state[deck][channel];
         let mut sample = sample;
         for stage in 0..N {
@@ -1731,10 +2026,15 @@ fn deck_filters(
     }
     let swap_shelves = |swap: BassSwap| {
         let (out_db, in_db) = swap.shelf_db(progress);
-        (
-            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, out_db),
-            BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, in_db),
-        )
+        // Outside its window one side is exactly 0 dB: no design, and skippable.
+        let shelf = |db: f32| {
+            if db == 0.0 {
+                BiquadCoeffs::IDENTITY
+            } else {
+                BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, db)
+            }
+        };
+        (shelf(out_db), shelf(in_db))
     };
     if params.style == FadeStyle::FilterCut {
         let hz = (FILTER_CUT_FROM_HZ * FILTER_CUT_SPAN.powf(progress)).clamp(10.0, rate * 0.45);
@@ -1744,42 +2044,64 @@ fn deck_filters(
             [BiquadCoeffs::IDENTITY],
         )));
     }
-    let Some(morph) = params.morph else {
-        let (out, inc) = swap_shelves(params.bass_swap?);
-        return Some(FadeFilters::One(order(outgoing, [out], [inc])));
-    };
-    // Outgoing leans 0 -> d, incoming -d -> 0, on the same eased progress as the gains. A band
-    // that never moves is an exact pass-through.
-    let (lean_out, lean_in) = (eased_progress(progress), eased_progress(1.0 - progress));
+    let morph = params.morph.map_or([0.0; 3], |morph| morph.db);
+    // Only the bands the fade moves are filtered. Decided from the params, not from this
+    // segment's values, so a stage never changes slot (and filter state) part way through.
+    let active = [
+        params.bass_swap.is_some() || morph[0] != 0.0,
+        morph[1] != 0.0,
+        morph[2] != 0.0 || params.stage.is_some(),
+    ];
+    // Outgoing leans 0 -> d, incoming -d -> 0, on the same eased progress as the gains; `extra`
+    // (the staged entry) adds on in dB. A side that does not move is an exact pass-through.
+    let lean = (eased_progress(progress), eased_progress(1.0 - progress));
     fn band(
         db: f32,
         (lean_out, lean_in): (f32, f32),
+        (extra_out, extra_in): (f32, f32),
         design: impl Fn(f32) -> BiquadCoeffs,
     ) -> (BiquadCoeffs, BiquadCoeffs) {
-        if db == 0.0 {
-            (BiquadCoeffs::IDENTITY, BiquadCoeffs::IDENTITY)
-        } else {
-            (design(db * lean_out), design(-db * lean_in))
-        }
+        let side = |db: f32| {
+            if db == 0.0 {
+                BiquadCoeffs::IDENTITY
+            } else {
+                design(db)
+            }
+        };
+        (
+            side(db * lean_out + extra_out),
+            side(-db * lean_in + extra_in),
+        )
     }
-    let lean = (lean_out, lean_in);
     let low = match params.bass_swap {
         Some(swap) => swap_shelves(swap),
-        None => band(morph.db[0], lean, |db| {
+        None => band(morph[0], lean, (0.0, 0.0), |db| {
             BiquadCoeffs::low_shelf(rate, MORPH_LOW_HZ, 0.707, db)
         }),
     };
-    let mid = band(morph.db[1], lean, |db| {
+    let mid = band(morph[1], lean, (0.0, 0.0), |db| {
         BiquadCoeffs::peaking(rate, MORPH_MID_HZ, MORPH_MID_Q, db)
     });
-    let high = band(morph.db[2], lean, |db| {
+    let staged = params
+        .stage
+        .map_or((0.0, 0.0), |stage| stage.high_db(progress));
+    let high = band(morph[2], lean, staged, |db| {
         BiquadCoeffs::high_shelf(rate, MORPH_HIGH_HZ, 0.707, db)
     });
-    Some(FadeFilters::Three(order(
-        outgoing,
-        [low.0, mid.0, high.0],
-        [low.1, mid.1, high.1],
-    )))
+    let (mut out, mut inc) = ([BiquadCoeffs::IDENTITY; 3], [BiquadCoeffs::IDENTITY; 3]);
+    let mut stages = 0;
+    for (stage, on) in [low, mid, high].into_iter().zip(active) {
+        if on {
+            (out[stages], inc[stages]) = stage;
+            stages += 1;
+        }
+    }
+    Some(match stages {
+        0 => return None,
+        1 => FadeFilters::One(order(outgoing, [out[0]], [inc[0]])),
+        2 => FadeFilters::Two(order(outgoing, [out[0], out[1]], [inc[0], inc[1]])),
+        _ => FadeFilters::Three(order(outgoing, out, inc)),
+    })
 }
 
 #[inline]
@@ -1794,6 +2116,7 @@ fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool, L: DeckFilter>(
     ramp: Option<CrossfadeBlockRamp>,
     filter: &mut L,
 ) {
+    let outgoing_primary = ramp.is_some_and(|ramp| ramp.outgoing == DeckId::Primary);
     for (frame_index, frame) in output.chunks_exact_mut(channels).enumerate() {
         let (primary_gain, secondary_gain) = match ramp {
             Some(ramp) => {
@@ -1817,7 +2140,11 @@ fn mix_pcm_run<const PRIMARY: bool, const SECONDARY: bool, L: DeckFilter>(
             } else {
                 0.0
             };
-            *sample = p * primary_gain + s * secondary_gain;
+            let (p, s) = (p * primary_gain, s * secondary_gain);
+            *sample = p + s;
+            if L::TAPS {
+                *sample += filter.tap(channel, if outgoing_primary { p } else { s });
+            }
         }
     }
 }
@@ -1861,7 +2188,7 @@ fn starved_retry_backoff(retry_count: &mut u32) {
 }
 
 /// Share of a fade, at each end, over which its progress eases in and out.
-const FADE_EDGE: f32 = 0.15;
+const FADE_EDGE: f32 = 0.06;
 
 /// A fade's progress warped so every curve built on it starts and ends at rest: linear through
 /// the middle, with raised-cosine velocity ramps over the first and last `FADE_EDGE`. On plain `t`
@@ -1929,6 +2256,14 @@ fn fade_gains(progress: f32, params: CrossfadeParams) -> (f32, f32) {
         FadeStyle::BeatMix(handoff) => {
             let (h, _, out) = release(handoff);
             (out, rise(t / h))
+        }
+        FadeStyle::RingOut { handoff, landed } => {
+            let (_, _, out) = release(handoff);
+            let inc = rise((t / landed.clamp(0.05, 1.0)).min(1.0));
+            return (
+                out.max(0.0) * params.outgoing_gain.clamp(0.0, 2.0),
+                inc.max(0.0) * params.incoming_gain.clamp(0.0, 2.0),
+            );
         }
         FadeStyle::FilterCut => {
             let out = (eased_progress((1.0 - t) / 0.3) * FRAC_PI_2).sin();
@@ -2209,6 +2544,10 @@ mod tests {
             FadeStyle::Handoff(0.6),
             FadeStyle::BeatMix(0.5),
             FadeStyle::FilterCut,
+            FadeStyle::RingOut {
+                handoff: 0.4,
+                landed: 0.45,
+            },
         ] {
             let params = CrossfadeParams {
                 style,
@@ -2257,10 +2596,7 @@ mod tests {
             let coeffs =
                 BiquadCoeffs::low_shelf(rate, BASS_SWAP_HZ, 0.707, swap.shelf_db(progress).0);
             let mut state = [[[BiquadState::default(); 3]; BASS_SWAP_MAX_CHANNELS]; 2];
-            let mut band = BiquadFilters::<1> {
-                state: &mut state,
-                coeffs: [[coeffs], [coeffs]],
-            };
+            let mut band = BiquadFilters::<1>::new(&mut state, [[coeffs], [coeffs]]);
             let mut peak = 0.0f32;
             for i in 0..48_000 {
                 let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
@@ -2355,6 +2691,13 @@ mod tests {
             (FadeStyle::BeatMix(0.5), vec![0.5]),
             (FadeStyle::BeatMix(0.9), vec![0.9]),
             (FadeStyle::FilterCut, vec![0.5, 0.7]),
+            (
+                FadeStyle::RingOut {
+                    handoff: 0.4,
+                    landed: 0.45,
+                },
+                vec![0.4, 0.45],
+            ),
         ] {
             let params = CrossfadeParams { style, ..base };
             check(&format!("{style:?}"), &|t| fade_gains(t, params), &joins);
@@ -2412,16 +2755,15 @@ mod tests {
         for i in 0..48_000 {
             let x = (std::f32::consts::TAU * hz * i as f32 / rate).sin();
             let y = match filters {
-                FadeFilters::One(coeffs) => BiquadFilters {
-                    state: &mut state,
-                    coeffs,
+                FadeFilters::One(coeffs) => {
+                    BiquadFilters::new(&mut state, coeffs).apply(deck, 0, x)
                 }
-                .apply(deck, 0, x),
-                FadeFilters::Three(coeffs) => BiquadFilters {
-                    state: &mut state,
-                    coeffs,
+                FadeFilters::Two(coeffs) => {
+                    BiquadFilters::new(&mut state, coeffs).apply(deck, 0, x)
                 }
-                .apply(deck, 0, x),
+                FadeFilters::Three(coeffs) => {
+                    BiquadFilters::new(&mut state, coeffs).apply(deck, 0, x)
+                }
             };
             if i > 24_000 {
                 peak = peak.max(y.abs());
@@ -2458,6 +2800,137 @@ mod tests {
     }
 
     #[test]
+    fn a_staged_entry_holds_b_thin_until_the_crossover_then_hands_the_highs_over() {
+        let params = CrossfadeParams {
+            bass_swap: Some(BassSwap {
+                start: 0.4,
+                end: 0.5,
+            }),
+            stage: Some(BandStage { crossover: 0.5 }),
+            ..Default::default()
+        };
+        let at = |progress| deck_filters(48_000.0, params, DeckId::Primary, progress).unwrap();
+        let (a, b) = (0, 1);
+        let near = |got: f32, want: f32| (got - want).abs() < 0.5;
+        // B arrives as a body: no highs, no lows; A is untouched.
+        assert!(near(tone_level(at(0.0), b, 14_000.0), STAGE_HIGH_DB));
+        assert!(near(tone_level(at(0.0), b, 40.0), BASS_SWAP_KILL_DB));
+        assert!(near(tone_level(at(0.0), b, 700.0), 0.0));
+        assert!(near(tone_level(at(0.0), a, 14_000.0), 0.0));
+        // Still without highs at the crossover, though the bass has changed hands.
+        assert!(near(tone_level(at(0.5), b, 14_000.0), STAGE_HIGH_DB));
+        assert!(near(tone_level(at(0.5), b, 40.0), 0.0));
+        // The highs have changed hands one span later.
+        let handed = at(0.5 + STAGE_HIGH_SPAN);
+        assert!(near(tone_level(handed, b, 14_000.0), 0.0));
+        assert!(near(tone_level(handed, a, 14_000.0), STAGE_HIGH_DB));
+        // A crossover too late for the span still lets B finish as itself.
+        let late = CrossfadeParams {
+            stage: Some(BandStage { crossover: 0.98 }),
+            ..params
+        };
+        let end = deck_filters(48_000.0, late, DeckId::Primary, 1.0).unwrap();
+        assert!(near(tone_level(end, b, 14_000.0), 0.0));
+        // A handoff past 85% (A still singing) keeps A's highs until it.
+        let held = CrossfadeParams {
+            stage: Some(BandStage { crossover: 0.9 }),
+            ..params
+        };
+        let before = deck_filters(48_000.0, held, DeckId::Primary, 0.9).unwrap();
+        assert!(near(tone_level(before, a, 14_000.0), 0.0));
+        // On top of a morph the two add in dB.
+        let morphed = CrossfadeParams {
+            morph: Some(BandMorph {
+                db: [0.0, 0.0, -3.0],
+            }),
+            ..params
+        };
+        let end = deck_filters(48_000.0, morphed, DeckId::Primary, 1.0).unwrap();
+        assert!(near(tone_level(end, a, 14_000.0), STAGE_HIGH_DB - 3.0));
+        // FilterCut has its own sweep.
+        let cut = CrossfadeParams {
+            style: FadeStyle::FilterCut,
+            ..params
+        };
+        assert!(matches!(
+            deck_filters(48_000.0, cut, DeckId::Primary, 0.0),
+            Some(FadeFilters::One(_))
+        ));
+    }
+
+    #[test]
+    fn an_echo_out_repeats_at_its_delay_and_dies_away() {
+        let rate = 48_000;
+        let mut line = echo_line(rate, 1);
+        let echo = EchoOut {
+            delay: 0.25,
+            feedback: 0.4,
+            cutoff_hz: 4_000.0,
+            wet: 0.5,
+            start: 0.0,
+            attack: 0.3,
+            duration: 2.0,
+        };
+        let mut runtime = EchoRuntime::new(echo, rate, 1, &mut line).unwrap();
+        // An impulse in; the repeats out, with the wet envelope divided back out.
+        let mut heard = Vec::new();
+        for n in 0..2 * rate as usize {
+            let gain = runtime.gain;
+            let out = runtime.tap(&mut line, 0, if n == 0 { 1.0 } else { 0.0 });
+            heard.push(if gain > 0.0 { out / gain } else { 0.0 });
+        }
+        let delay = rate as usize / 4;
+        assert!(
+            heard[..delay].iter().all(|x| *x == 0.0),
+            "nothing before the first repeat"
+        );
+        for k in 1..=4 {
+            let repeat: f32 = heard[k * delay..k * delay + 400].iter().sum();
+            let want = 0.4f32.powi(k as i32 - 1);
+            assert!(
+                (repeat - want).abs() < want * 0.02,
+                "repeat {k}: {repeat} vs {want}"
+            );
+        }
+        assert!(runtime.done());
+        assert!((runtime.gain - ECHO_FLOOR).abs() < ECHO_FLOOR * 0.05);
+
+        // Opening later, it is silent until then, and what went in one delay before its attack
+        // ends is its first repeat, at full wet level.
+        let late = EchoOut {
+            start: 0.5,
+            attack: 0.01,
+            ..echo
+        };
+        let mut runtime = EchoRuntime::new(late, rate, 1, &mut line).unwrap();
+        let open = rate as usize / 2;
+        let landed = open + rate as usize / 100;
+        let mut out = Vec::new();
+        for n in 0..landed + 200 {
+            out.push(runtime.tap(&mut line, 0, if n + delay == landed { 1.0 } else { 0.0 }));
+        }
+        assert!(
+            out[..open].iter().all(|x| *x == 0.0),
+            "silent until it opens"
+        );
+        let repeat: f32 = out[landed..].iter().sum();
+        assert!((repeat - 0.5).abs() < 0.05, "first repeat {repeat}");
+
+        // Released mid-ring, it reaches the floor in the frames given and no later.
+        let mut runtime = EchoRuntime::new(echo, rate, 1, &mut line).unwrap();
+        for _ in 0..rate / 2 {
+            runtime.tap(&mut line, 0, 0.1);
+        }
+        runtime.release(2_400);
+        for _ in 0..2_400 {
+            assert!(!runtime.done());
+            runtime.tap(&mut line, 0, 0.0);
+        }
+        assert!(runtime.done());
+        assert!((runtime.gain - ECHO_FLOOR).abs() < ECHO_FLOOR * 0.05);
+    }
+
+    #[test]
     fn a_single_filter_fade_stays_a_single_stage() {
         let swap_only = CrossfadeParams {
             bass_swap: Some(BassSwap::MIDDLE),
@@ -2468,12 +2941,35 @@ mod tests {
             morph: Some(BandMorph { db: [1.0; 3] }),
             ..Default::default()
         };
-        for params in [swap_only, cut] {
+        let staged_only = CrossfadeParams {
+            stage: Some(BandStage { crossover: 0.5 }),
+            ..Default::default()
+        };
+        for params in [swap_only, cut, staged_only] {
             assert!(matches!(
                 deck_filters(48_000.0, params, DeckId::Primary, 0.5),
                 Some(FadeFilters::One(_))
             ));
         }
+        // Before the crossover A's chain is the pass-through, and is skipped.
+        let Some(FadeFilters::One(coeffs)) =
+            deck_filters(48_000.0, staged_only, DeckId::Primary, 0.2)
+        else {
+            panic!("one stage");
+        };
+        let mut state = Default::default();
+        assert_eq!(BiquadFilters::new(&mut state, coeffs).active, [false, true]);
+        // Only the bands that move are filtered.
+        let two_bands = CrossfadeParams {
+            morph: Some(BandMorph {
+                db: [0.0, 4.0, -3.0],
+            }),
+            ..Default::default()
+        };
+        assert!(matches!(
+            deck_filters(48_000.0, two_bands, DeckId::Primary, 0.5),
+            Some(FadeFilters::Two(_))
+        ));
         assert!(deck_filters(48_000.0, CrossfadeParams::default(), DeckId::Primary, 0.5).is_none());
     }
 

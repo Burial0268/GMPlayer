@@ -367,6 +367,7 @@ mod tests {
             file_path: "C:/music/song.flac".into(),
             orig_order: 0,
             display: None,
+            md5: None,
         });
         assert!(d.is_empty());
     }
@@ -402,6 +403,7 @@ mod tests {
                 album: Some("乐与怒".into()),
                 artwork_url: Some("https://p1/x.jpg".into()),
             }),
+            md5: None,
         });
         assert_eq!(d.title.as_deref(), Some("海阔天空"));
         assert_eq!(d.album.as_deref(), Some("乐与怒"));

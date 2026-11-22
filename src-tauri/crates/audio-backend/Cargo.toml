@@ -51,6 +51,8 @@ tokio = { version = "1", features = ["rt", "sync", "time", "macros"] }
 anyhow = "1"
 tracing = "0.1"
 tempfile = "3"
+# Checks a downloaded track against the md5 its resolver declared before the audio cache keeps it.
+md-5 = "0.10"
 # Promotes the two audio producer threads. CPAL already depends on this for its
 # own callback thread; `default-features = false` matches how CPAL declares it,
 # which notably leaves the Linux RealtimeKit backend (and its libdbus build

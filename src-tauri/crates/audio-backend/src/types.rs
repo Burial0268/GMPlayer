@@ -1221,6 +1221,11 @@ pub enum SongData {
         /// absent simply means "fall back to tags".
         #[serde(default, skip_serializing_if = "Option::is_none")]
         display: Option<TrackDisplay>,
+        /// The md5 the resolver declared for `file_path`'s content (`song_url_v1`'s `md5`).
+        /// Keys the audio cache, which checks the downloaded file against it; absent for a
+        /// source that declares none, which is then simply not kept.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        md5: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     Custom {
@@ -1254,6 +1259,14 @@ impl SongData {
     pub fn file_path(&self) -> Option<&str> {
         match self {
             SongData::Local { file_path, .. } => Some(file_path),
+            _ => None,
+        }
+    }
+
+    /// See `SongData::Local::md5`.
+    pub fn md5(&self) -> Option<&str> {
+        match self {
+            SongData::Local { md5, .. } => md5.as_deref(),
             _ => None,
         }
     }

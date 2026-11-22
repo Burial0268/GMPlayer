@@ -36,14 +36,27 @@ pub(super) fn window_region(
     let mut previous = vec![0.0f32; WINDOW / 2];
     let mut flux = Vec::with_capacity(len / HOP);
     let mut low_flux = Vec::with_capacity(len / HOP);
+    // Frames overlap eightfold: slide one resampled frame along by `HOP` and interpolate only
+    // what enters it, and window from a table, rather than interpolating every sample eight
+    // times and taking a cosine per sample per frame.
+    let resample = |j: usize| {
+        let source = j as f64 * sample_rate as f64 / RATE as f64;
+        let left = source as usize;
+        let fraction = (source - left as f64) as f32;
+        input[left] + (input[(left + 1).min(input.len() - 1)] - input[left]) * fraction
+    };
+    let window: Vec<f32> = (0..WINDOW)
+        .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / WINDOW as f32).cos())
+        .collect();
+    let mut frame: Vec<f32> = (0..WINDOW).map(resample).collect();
     for at in (0..=len - WINDOW).step_by(HOP) {
-        for (i, slot) in buffer.iter_mut().enumerate() {
-            let source = (at + i) as f64 * sample_rate as f64 / RATE as f64;
-            let left = source as usize;
-            let fraction = (source - left as f64) as f32;
-            let sample =
-                input[left] + (input[(left + 1).min(input.len() - 1)] - input[left]) * fraction;
-            let window = 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / WINDOW as f32).cos();
+        if at > 0 {
+            frame.copy_within(HOP.., 0);
+            for (k, slot) in frame[WINDOW - HOP..].iter_mut().enumerate() {
+                *slot = resample(at + WINDOW - HOP + k);
+            }
+        }
+        for (slot, (sample, window)) in buffer.iter_mut().zip(frame.iter().zip(&window)) {
             *slot = Complex::new(sample * window, 0.0);
         }
         fft.process_with_scratch(&mut buffer, &mut scratch);

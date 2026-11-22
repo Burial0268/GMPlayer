@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tauri::State;
 #[cfg(target_os = "android")]
-use tracing::{info, warn};
+use tracing::info;
+use tracing::warn;
 
 use crate::automix::{self, AutomixAnalyzeRequest, AutomixAnalyzeSourceRequest, TrackAnalysis};
 use crate::player::Player;
@@ -30,16 +31,21 @@ pub struct PlayerState {
     inner: Arc<PlayerStateInner>,
 }
 
+type EventChannel = Channel<AudioThreadEventMessage<AudioThreadEvent>>;
+
 struct PlayerStateInner {
     app_handle: tauri::AppHandle,
     init_lock: parking_lot::Mutex<()>,
     player: parking_lot::Mutex<Option<Arc<Player>>>,
-    /// Subscribers registered before the player existed.
+    /// Every in-process subscriber, attached to each player that is created.
     ///
     /// The player is created lazily (it opens an audio device), and forcing
     /// that at startup just to attach the media bridge would move device-open
-    /// failures into app launch. Queue instead, attach on creation.
-    pending_subscribers: parking_lot::Mutex<Vec<Arc<dyn crate::player::PlayerEventSubscriber>>>,
+    /// failures into app launch. They are kept rather than drained because a
+    /// player that stopped is replaced, and its replacement needs them too.
+    subscribers: parking_lot::Mutex<Vec<Arc<dyn crate::player::PlayerEventSubscriber>>>,
+    /// The frontend's event channel, re-attached to a replacement player.
+    event_channel: parking_lot::Mutex<Option<EventChannel>>,
 }
 
 impl PlayerState {
@@ -49,7 +55,8 @@ impl PlayerState {
                 app_handle,
                 init_lock: parking_lot::Mutex::new(()),
                 player: parking_lot::Mutex::new(None),
-                pending_subscribers: parking_lot::Mutex::new(Vec::new()),
+                subscribers: parking_lot::Mutex::new(Vec::new()),
+                event_channel: parking_lot::Mutex::new(None),
             }),
         }
     }
@@ -61,14 +68,13 @@ impl PlayerState {
     /// and attached when the player is first created, so registering the media
     /// bridge at startup does not itself open an audio device.
     pub fn subscribe_events(&self, subscriber: Arc<dyn crate::player::PlayerEventSubscriber>) {
-        // Hold the pending list across the check so a player created
-        // concurrently cannot drain an empty list and leave us unattached.
-        let mut pending = self.inner.pending_subscribers.lock();
-        if let Some(player) = self.inner.player.lock().as_ref() {
-            player.subscribe(subscriber);
-            return;
+        // Hold the list across the check so a player created concurrently
+        // cannot attach the list without this one and leave it unattached.
+        let mut subscribers = self.inner.subscribers.lock();
+        if let Some(player) = self.inner.live_player() {
+            player.subscribe(Arc::clone(&subscriber));
         }
-        pending.push(subscriber);
+        subscribers.push(subscriber);
     }
 
     pub fn preheat(&self) -> Result<(), String> {
@@ -87,11 +93,8 @@ impl PlayerState {
     pub fn try_send_msg(&self, msg: AudioThreadMessage) -> Result<(), String> {
         let player = self
             .inner
-            .player
-            .lock()
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| "native audio player has not been created yet".to_string())?;
+            .live_player()
+            .ok_or_else(|| "native audio player is not running".to_string())?;
         player
             .send_msg(AudioThreadEventMessage::new(String::new(), Some(msg)))
             .map_err(|e| e.to_string())
@@ -105,7 +108,7 @@ impl PlayerState {
     }
 
     async fn player(&self) -> Result<Arc<Player>, String> {
-        if let Some(player) = self.inner.player.lock().as_ref().cloned() {
+        if let Some(player) = self.inner.live_player() {
             return Ok(player);
         }
 
@@ -117,14 +120,27 @@ impl PlayerState {
 }
 
 impl PlayerStateInner {
+    /// The player, unless it has stopped. A stopped one is replaced by the next caller that may
+    /// create a player, instead of failing every command until the app restarts.
+    fn live_player(&self) -> Option<Arc<Player>> {
+        self.player
+            .lock()
+            .as_ref()
+            .filter(|player| player.is_alive())
+            .cloned()
+    }
+
     fn preheat(&self) -> Result<(), String> {
-        if self.player.lock().is_some() {
+        if self.live_player().is_some() {
             return Ok(());
         }
 
         let _init = self.init_lock.lock();
-        if self.player.lock().is_some() {
+        if self.live_player().is_some() {
             return Ok(());
+        }
+        if self.player.lock().take().is_some() {
+            warn!("native audio player stopped; starting a new one");
         }
 
         #[cfg(target_os = "android")]
@@ -132,13 +148,16 @@ impl PlayerStateInner {
 
         let next = Player::new(self.app_handle.clone()).map_err(|e| e.to_string())?;
         let next = Arc::new(next);
-        // Attach anything registered before the player existed, while the init
-        // lock is still held — a `subscribe_events` racing this either sees the
-        // player (and attaches directly) or lands in the list before we drain.
+        // Attach every subscriber while holding the list — a `subscribe_events`
+        // racing this either sees the player (and attaches directly) or lands in
+        // the list before we walk it.
         {
-            let mut pending = self.pending_subscribers.lock();
-            for subscriber in pending.drain(..) {
-                next.subscribe(subscriber);
+            let subscribers = self.subscribers.lock();
+            for subscriber in subscribers.iter() {
+                next.subscribe(Arc::clone(subscriber));
+            }
+            if let Some(channel) = self.event_channel.lock().clone() {
+                next.set_event_channel(channel);
             }
             *self.player.lock() = Some(next);
         }
@@ -146,7 +165,7 @@ impl PlayerStateInner {
     }
 
     fn player(&self) -> Result<Arc<Player>, String> {
-        if let Some(player) = self.player.lock().as_ref().cloned() {
+        if let Some(player) = self.live_player() {
             return Ok(player);
         }
 
@@ -278,6 +297,7 @@ pub async fn audio_subscribe_events(
     state: State<'_, PlayerState>,
     channel: Channel<AudioThreadEventMessage<AudioThreadEvent>>,
 ) -> Result<(), String> {
+    *state.inner.event_channel.lock() = Some(channel.clone());
     state.player().await?.set_event_channel(channel);
     Ok(())
 }

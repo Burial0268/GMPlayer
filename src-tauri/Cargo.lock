@@ -2365,6 +2365,7 @@ dependencies = [
  "gmplayer-automix-analysis",
  "gmplayer-ffmpeg-audio",
  "log",
+ "md-5",
  "parking_lot",
  "pulseaudio",
  "rodio",

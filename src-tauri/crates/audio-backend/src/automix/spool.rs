@@ -2,8 +2,8 @@
 
 use std::io::{Read, Seek, SeekFrom, Write};
 
+use crate::decoder::PcmSource;
 use gmplayer_automix_analysis::{analyze_pcm, MonoPcm, TrackAnalysis};
-use rodio::Source;
 
 const BLOCK: usize = 16_384;
 const MEMORY_LIMIT: usize = 4 * 1024 * 1024;
@@ -17,7 +17,7 @@ pub(super) struct PcmSpool<'a> {
 }
 
 impl<'a> PcmSpool<'a> {
-    pub(super) fn decode<D: Source<Item = f32>>(
+    pub(super) fn decode<D: PcmSource>(
         decoder: &mut D,
         cancelled: &'a dyn Fn() -> bool,
     ) -> Result<Self, String> {
@@ -33,17 +33,27 @@ impl<'a> PcmSpool<'a> {
         };
         let mut mono = Vec::with_capacity(BLOCK);
         let (mut sum, mut channel) = (0.0, 0usize);
-        for sample in decoder {
-            sum += sample;
-            channel += 1;
-            if channel == channels {
-                mono.push(sum / channels as f32);
-                sum = 0.0;
-                channel = 0;
-                if mono.len() == BLOCK {
-                    spool.append(&mono)?;
-                    mono.clear();
+        // Whole decoded buffers rather than one `next()` per sample; ends where the iterator
+        // would, including at a refill that yields nothing.
+        loop {
+            let (samples, offset) = decoder.samples_and_offset();
+            let rest = &samples[(*offset).min(samples.len())..];
+            *offset += rest.len();
+            for &sample in rest {
+                sum += sample;
+                channel += 1;
+                if channel == channels {
+                    mono.push(sum / channels as f32);
+                    sum = 0.0;
+                    channel = 0;
+                    if mono.len() == BLOCK {
+                        spool.append(&mono)?;
+                        mono.clear();
+                    }
                 }
+            }
+            if !decoder.refill_buffer() || decoder.samples_and_offset().0.is_empty() {
+                break;
             }
         }
         if channel > 0 {
