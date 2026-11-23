@@ -245,3 +245,14 @@ test("spectrum easing moves from the shown bars to each new frame over the measu
   assert.equal(easer.frame([], 90).length, 0);
   assert.deepEqual(Array.from(easer.frame([7, 7], 100)), [7, 7]);
 });
+
+test("a backend sound with no frames to show is ticked coarsely, not every display frame", () => {
+  // Spectrum frames reach a backend sound only while its analysis stream is on; otherwise the
+  // frame loop ran at the display's rate (240 Hz) for nothing, AutoMix included.
+  const playerFunctions = readFileSync("src/utils/AudioContext/PlayerFunctions.ts", "utf8");
+  assert.match(playerFunctions, /return analysisEnabled;\n\};/);
+  assert.match(
+    playerFunctions,
+    /const hasFrames = syncNativeAnalysisState\(sound, settings\);[\s\S]*?if \(!hasFrames\) \{[\s\S]*?setTimeout\(updateLoop, NATIVE_IDLE_TICK_MS\);\s*return;\s*\}[\s\S]*?requestAnimationFrame\(updateLoop\)/,
+  );
+});

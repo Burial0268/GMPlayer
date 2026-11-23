@@ -23,6 +23,8 @@ fn analyze_optional(
     if cancel.is_cancelled() {
         return None;
     }
+    #[cfg(target_os = "windows")]
+    let _efficiency = efficiency::EcoQos::enter();
     match automix_analysis::analyze_audio_file_until(path, analyze_bpm, &|| cancel.is_cancelled()) {
         Ok(analysis) => Some(analysis),
         Err(_) if cancel.is_cancelled() => None,
@@ -30,6 +32,58 @@ fn analyze_optional(
             warn!("AutoMix {label} analysis failed: {err}");
             None
         }
+    }
+}
+
+/// Analysis is background work with minutes of slack, so Windows may run it on efficiency cores at
+/// a lower clock (EcoQoS) instead of boosting a performance core for it.
+#[cfg(target_os = "windows")]
+mod efficiency {
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadInformation, ThreadPowerThrottling,
+        THREAD_POWER_THROTTLING_CURRENT_VERSION, THREAD_POWER_THROTTLING_EXECUTION_SPEED,
+        THREAD_POWER_THROTTLING_STATE,
+    };
+
+    /// Held for one analysis. The thread is borrowed from Tokio's blocking pool and serves other
+    /// tasks afterwards, so the drop hands it back to the system's default rather than leaving it
+    /// throttled.
+    pub(super) struct EcoQos;
+
+    impl EcoQos {
+        pub(super) fn enter() -> Option<Self> {
+            let speed = THREAD_POWER_THROTTLING_EXECUTION_SPEED;
+            set(speed, speed).then_some(Self)
+        }
+    }
+
+    impl Drop for EcoQos {
+        fn drop(&mut self) {
+            // An empty control mask is "let the system decide", the state a thread starts in.
+            set(0, 0);
+        }
+    }
+
+    fn set(control: u32, state: u32) -> bool {
+        let throttling = THREAD_POWER_THROTTLING_STATE {
+            Version: THREAD_POWER_THROTTLING_CURRENT_VERSION,
+            ControlMask: control,
+            StateMask: state,
+        };
+        // SAFETY: the pointer and size describe `throttling`, which outlives the call.
+        let result = unsafe {
+            SetThreadInformation(
+                GetCurrentThread(),
+                ThreadPowerThrottling,
+                std::ptr::from_ref(&throttling).cast(),
+                std::mem::size_of::<THREAD_POWER_THROTTLING_STATE>() as u32,
+            )
+        };
+        // Windows before 10 1709 has no such class; analysis then runs as it always did.
+        if let Err(error) = &result {
+            tracing::debug!("AutoMix analysis thread power throttling unavailable: {error}");
+        }
+        result.is_ok()
     }
 }
 
