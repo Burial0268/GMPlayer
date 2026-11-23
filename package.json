@@ -22,6 +22,7 @@
     "test:native-sound-attach": "node scripts/test-native-sound-attach.mjs",
     "test:audio-lifecycle": "node scripts/test-audio-lifecycle.mjs",
     "test:automix-native": "node scripts/test-automix-native.mjs",
+    "test:last-backend-session": "node scripts/test-last-backend-session.mjs",
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",
     "fmt": "oxfmt src/",

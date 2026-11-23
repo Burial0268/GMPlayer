@@ -128,6 +128,7 @@ pub fn run() {
             commands::audio_send_msg,
             // Event stream subscription (Rust → frontend Tauri Channel)
             commands::audio_subscribe_events,
+            crate::last_session::last_session_get,
             // Sync query commands
             commands::audio_list_output_devices,
             // Session-based event polling (backward compat)
@@ -196,6 +197,8 @@ pub fn run() {
             // Before the player exists: its first download already lands in the audio cache.
             crate::storage::install(&app_handle);
             app.manage(commands::PlayerState::new());
+            // Before any page subscribes: a cold boot asks it what the last process played.
+            crate::last_session::install(&app_handle);
             // The isolate itself is built lazily on first request, so this only
             // records where its session state lives.
             app.manage(crate::ncm::NcmState::new(&app_handle));

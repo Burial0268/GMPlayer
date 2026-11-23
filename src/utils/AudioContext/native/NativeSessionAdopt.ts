@@ -27,6 +27,7 @@
  * lifetime, so there is nothing to reconcile.
  */
 
+import { invoke } from "@tauri-apps/api/core";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { getAudioBackendTransport } from "@/utils/tauri/audio/transport";
 import type { NativeSessionSnapshot, TrackIdentity } from "@/utils/tauri/audio/protocol";
@@ -36,6 +37,12 @@ import useMusicDataStore from "@/store/musicData";
 import { reconcileNativeManifestRevision } from "./NativeManifestPublisher";
 import { adoptNativePersonalFm } from "./NativePersonalFm";
 import { logNative } from "@/utils/tauri/core/nativeLog";
+import {
+  findQueueIndex,
+  pickResume,
+  planQueueAdoption,
+  type LastBackendResume,
+} from "./LastBackendSession";
 import {
   installPlaybackPhaseSubscriber,
   installQueueOrderSubscriber,
@@ -84,11 +91,18 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   // else may already have connected and consumed the first one.
   const transport = getAudioBackendTransport();
   let adopted: AdoptedBackendSession | null = null;
+  let idle = false;
+  let freshProcess = false;
   let received = false;
   const unsubscribe = transport.subscribe((event) => {
     if (received || event.type !== "hello") return;
     received = true;
-    adopted = adoptSnapshot(event.data.snapshot);
+    const { snapshot } = event.data;
+    adopted = adoptSnapshot(snapshot);
+    idle = !snapshot.hasTrack && !snapshot.personalFm;
+    // A process that has seen no manifest: the queue half of the snapshot is a
+    // default, and the previous process's record is the backend's answer.
+    freshProcess = snapshot.manifestRevision === 0;
   });
   try {
     await transport.resync?.();
@@ -97,7 +111,64 @@ export const adoptNativeBackendSession = async (): Promise<AdoptedBackendSession
   } finally {
     unsubscribe();
   }
+  if (idle) await resumeLastBackendSession(freshProcess);
   return adopted;
+};
+
+/**
+ * Nothing is loaded: resume where the backend's on-disk record says it was,
+ * since this page's queue and cursor are stale whenever the backend advanced,
+ * or a notification press changed the mode, while the page was frozen. The
+ * normal startup path then loads the track.
+ */
+const resumeLastBackendSession = async (freshProcess: boolean): Promise<void> => {
+  const music = useMusicDataStore();
+  if (music.persistData.personalFmMode) return;
+  let resume: LastBackendResume;
+  try {
+    resume = await invoke<LastBackendResume>("last_session_get");
+  } catch (err) {
+    logNative(
+      "warn",
+      `[NativeSessionAdopt] could not read the last backend session: ${String(err)}`,
+    );
+    return;
+  }
+
+  // Queue first: mirroring an order moves the row the track is found at.
+  if (freshProcess) {
+    const { mode, backendOrdered, order } = planQueueAdoption(resume?.queue);
+    if (mode) music.adoptPlaySongMode(mode, { backendOrdered });
+    if (order) {
+      music.adoptBackendQueueOrder(order.order, order.manifestRevision, {
+        force: true,
+        shuffleId: order.shuffleId,
+      });
+    }
+    if (mode) {
+      logNative(
+        "info",
+        `[NativeSessionAdopt] last backend queue: mode=${mode} order=${order?.order.length ?? 0}`,
+      );
+    }
+  }
+
+  const last = resume?.track ?? null;
+  const picked = pickResume(
+    last,
+    music.persistData.playlists ?? [],
+    music.persistData.playSongIndex,
+  );
+  if (!last || !picked) return;
+  const { index, position, duration } = picked;
+  if (!music.commitPlaySongIndex(index, { currentTime: position, duration })) return;
+  // The song watcher, fired by an index move, may reset the clock; re-apply.
+  music.setPlaySongTime({ currentTime: position, duration });
+  logNative(
+    "info",
+    `[NativeSessionAdopt] resuming backend's last track ${trackIdentityKey(last.identity)} ` +
+      `@ index ${index}, ${position.toFixed(1)}s (saved ${new Date(last.savedAt).toISOString()})`,
+  );
 };
 
 /** Synchronous by design — see the caller. */
@@ -148,16 +219,12 @@ const adoptSnapshot = (snapshot: NativeSessionSnapshot): AdoptedBackendSession |
   const playlists = music.persistData.playlists;
   if (!playlists?.length) return null;
 
-  // Both providers map onto a store row, by the key each one is identified by:
-  // a Netease id, or a local file's locator. Refusing `local` here would send an
+  // Both providers map onto a store row. Refusing `local` here would send an
   // imported track down the "resolve a fresh URL and restart" path on every
   // reload — which for a local file means restarting from the persisted position
   // while the backend is still playing it.
   const identity = snapshot.identity;
-  const index =
-    identity.provider === "netease"
-      ? playlists.findIndex((song) => String(song?.id) === identity.id)
-      : playlists.findIndex((song) => song?.local?.uri === identity.path);
+  const index = findQueueIndex(playlists, identity);
   if (index < 0) {
     // The backend is on a track this frontend no longer lists (playlist edited
     // in another window, storage rolled back). Let the normal startup path
