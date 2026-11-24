@@ -19,6 +19,7 @@ import {
   publishNativeManifest,
   clearNativeManifest,
   requestNativeReshuffle,
+  queueNativeOrderEdit,
   publishSessionControls,
 } from "@/utils/AudioContext";
 import { isBackendSound } from "@/utils/AudioContext/sound/types";
@@ -50,6 +51,7 @@ import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import { naturalQueueOrder } from "@/utils/library/playlistOrder";
 import { fmSongId, isNewNativeFmSnapshot } from "@/utils/AudioContext/native/PersonalFmState";
+import { setOrderBase } from "@/utils/AudioContext/native/NativeManifestRevision";
 import { activeSound } from "@/utils/AudioContext/sound/SoundManager";
 import {
   startNativePersonalFm,
@@ -1264,7 +1266,7 @@ const useMusicDataStore = defineStore("musicData", {
     adoptBackendQueueOrder(
       order: TrackIdentity[],
       revision: number,
-      options: { force?: boolean; shuffleId?: string | null } = {},
+      options: { force?: boolean; shuffleId?: string | null; orderGeneration?: number } = {},
     ): boolean {
       if (!isTauri() || this.persistData.personalFmMode) return false;
       const shuffle = this.persistData.shuffleState;
@@ -1335,6 +1337,8 @@ const useMusicDataStore = defineStore("musicData", {
       if (shuffle?.id !== shuffleId || !shuffle.applied) {
         this.persistData.shuffleState = { id: shuffleId, applied: true };
       }
+      // Our queue now is the backend's order, so later edits of it are ours to publish.
+      if (options.orderGeneration !== undefined) setOrderBase(options.orderGeneration);
       if (unchanged) return false;
       this.afterQueueReordered();
       // 后端报告前进用的是条目里的 playlistIndex，收到这份队列之前那还是镜像前的
@@ -1613,6 +1617,7 @@ const useMusicDataStore = defineStore("musicData", {
         this.persistData.playlists.splice(insertIndex, 0, asRawEntry(value));
         if (insertIndex <= this.persistData.playSongIndex) this.persistData.playSongIndex++;
       }
+      queueNativeOrderEdit(value, this.persistData.playlists[insertAfterIndex] ?? null);
       // 已 prepare 但尚未发声的过渡指向的是旧的「下一首」，插队后必须作废，
       // 否则后端仍会切到原来那首。已在发声的 crossfade 不打断。
       if (!autoMix.isCrossfading() && autoMix.isHandoffActive()) {
@@ -1626,8 +1631,8 @@ const useMusicDataStore = defineStore("musicData", {
     /**
      * 拖动排序：把 `from` 处的歌移到 `to`。两端必须在正在播的这首的同一侧——之后（接下来
      * 播放）或之前（循环回到开头后播放）——所以它前面的歌数不变，游标和正在发声的歌都不动。
-     * 随机模式（Tauri）下排列归后端，一次手动移动会被下一次 NativeQueueOrderChanged 还原，
-     * 界面因此不给把手（PlayerQueueList）。
+     * 随机模式（Tauri）下排列归后端：manifest 的 orderBase 说明这份列表建立在后端当前的排列上，
+     * 后端就照单采纳；orderEdits 让洗牌途中做的移动在新排列上重放，而不是被还原。
      */
     moveSong(from: number, to: number) {
       const list = this.persistData.playlists;
@@ -1638,6 +1643,7 @@ const useMusicDataStore = defineStore("musicData", {
       const next = list.slice();
       next.splice(to, 0, next.splice(from, 1)[0]);
       if (!this.applyQueueOrder(next)) return false;
+      queueNativeOrderEdit(next[to], next[to - 1] ?? null);
       this.afterQueueReordered();
       publishNativeManifest();
       return true;

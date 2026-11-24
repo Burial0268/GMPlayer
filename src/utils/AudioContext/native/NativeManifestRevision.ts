@@ -45,6 +45,19 @@ export const bumpManifestRevision = (): number => {
   return revision;
 };
 
+/**
+ * The backend order generation the queue was last mirrored from (`orderBase` on the manifest).
+ * In memory only: it is per backend process, and a page that lost it gets a stale-base answer
+ * that tells it the current one.
+ */
+let orderBase: number | null = null;
+
+export const getOrderBase = (): number | null => orderBase;
+
+export const setOrderBase = (generation: number): void => {
+  orderBase = generation;
+};
+
 /** Move up to a revision the backend holds. Returns whether it moved. */
 export const raiseManifestRevision = (backendRevision: number): boolean => {
   if (!Number.isFinite(backendRevision) || backendRevision <= revision) return false;

@@ -241,7 +241,12 @@ export type AudioThreadEvent =
     }
   | {
       type: "nativeQueueOrderChanged";
-      data: { manifestRevision: number; order: TrackIdentity[]; shuffleId?: string | null };
+      data: {
+        manifestRevision: number;
+        order: TrackIdentity[];
+        shuffleId?: string | null;
+        orderGeneration?: number;
+      };
     }
   | {
       type: "nativePlannerExhausted";

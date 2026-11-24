@@ -73,6 +73,19 @@ export interface NativePlaybackManifest {
   reshuffle?: boolean;
   /** Track to keep at the head of that fresh permutation. */
   shufflePin?: TrackIdentity | null;
+  /**
+   * The backend order generation our queue was mirrored from. While it is current, a random-mode
+   * list is taken as the permutation (so "play next" moves stick); otherwise it is rebased.
+   */
+  orderBase?: number | null;
+  /** Moves since the last publish, replayed by the backend on whatever order it decides. */
+  orderEdits?: OrderEdit[];
+}
+
+/** Put `identity` right after `after`, or at the head when `after` is null. */
+export interface OrderEdit {
+  identity: TrackIdentity;
+  after: TrackIdentity | null;
 }
 
 /**

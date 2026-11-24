@@ -180,6 +180,7 @@ impl Persister {
                 manifest_revision,
                 order,
                 shuffle_id,
+                ..
             } => {
                 queue.order = Some(PendingOrder {
                     manifest_revision: *manifest_revision,
@@ -400,6 +401,7 @@ mod tests {
             manifest_revision: revision,
             order: ids.iter().map(|id| netease(id)).collect(),
             shuffle_id: Some(shuffle.into()),
+            order_generation: 0,
         }
     }
 

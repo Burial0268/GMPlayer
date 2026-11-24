@@ -56,6 +56,7 @@ function queueEnvironment(native = true) {
   });
   const window: any = {};
   const activeSound: { value: any } = { value: undefined };
+  let revision: any;
   const storage = new Map<string, string>();
   const localStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -84,15 +85,23 @@ function queueEnvironment(native = true) {
       "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
       "@/utils/tauri/core/nativeLog": { logNative() {} },
       "@/utils/library/playlistOrder": playlistOrder,
-      "@/utils/rawEntry": { asRawEntries: (songs: any[]) => songs.slice() },
+      "@/utils/AudioContext/native/NativeManifestRevision": {
+        setOrderBase: (generation: number) => revision.setOrderBase(generation),
+      },
+      "@/utils/rawEntry": {
+        asRawEntries: (songs: any[]) => songs.slice(),
+        asRawEntry: (song: any) => song,
+      },
       "@/utils/AudioContext": {
         requestNativeReshuffle: () => publisher.requestNativeReshuffle(),
         publishNativeManifest: (...args: any[]) => publisher.publishNativeManifest(...args),
+        queueNativeOrderEdit: (...args: any[]) => publisher.queueNativeOrderEdit(...args),
         publishSessionControls() {},
         cancelNativeQueuePrefill() {},
         getAudioPreloader: () => ({ cleanup() {} }),
         getAutoMixEngine: () => ({
           isHandoffActive: () => false,
+          isCrossfading: () => false,
           cancelIfHeadingFor: (songId: unknown) => {
             autoMixCancels.push(songId);
             return false;
@@ -117,7 +126,7 @@ function queueEnvironment(native = true) {
     music.afterQueueReordered = () => {};
     music.resetPlaySongTime = () => {};
     music.resetSongLyricState = () => {};
-    const revision = sourceModule(
+    revision = sourceModule(
       "src/utils/AudioContext/native/NativeManifestRevision.ts",
       {},
       { localStorage },
@@ -310,6 +319,29 @@ test("an unchanged permutation still completes its transaction", () => {
     false,
   );
   assert.equal(env.music.persistData.shuffleState.applied, true);
+});
+
+test("play next on a queued song publishes the edit on the mirrored order's generation", async () => {
+  const env = queueEnvironment();
+  env.restore(randomQueue());
+  const sound = env.attach();
+  env.music.checkpointPlaySongTime = () => {};
+  env.music.adoptBackendQueueOrder(identities([3, 1, 4, 2]), 1, {
+    shuffleId: "saved-pass",
+    orderGeneration: 3,
+  });
+  env.music.addSongToNext({ id: 2, name: "2" });
+  await Promise.resolve();
+  const published = sound.manifests.at(-1);
+  assert.equal(published.orderBase, 3);
+  // Replayed by the backend if a reshuffle overtook this list.
+  assert.deepEqual(JSON.parse(JSON.stringify(published.orderEdits)), [
+    { identity: { provider: "netease", id: "2" }, after: { provider: "netease", id: "3" } },
+  ]);
+  assert.deepEqual(
+    Array.from(published.entries, (entry: any) => Number(entry.identity.id)),
+    [3, 2, 1, 4],
+  );
 });
 
 test("manifest carries original identity order including local tracks, removals and additions", async () => {

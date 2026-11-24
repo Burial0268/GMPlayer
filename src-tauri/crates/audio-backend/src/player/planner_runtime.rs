@@ -188,6 +188,7 @@ impl AudioPlayer {
                 manifest_revision,
                 order: order.clone(),
                 shuffle_id: shuffle_id.clone(),
+                order_generation: self.manifest.order_generation(),
             }
         });
         self.bus.emit_with(event, |session| {

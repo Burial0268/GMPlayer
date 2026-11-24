@@ -144,9 +144,9 @@
  * - The playing song, with the shuffle / repeat toggles.
  * - Playing Next: the songs after the cursor; then "from the top", the songs before it, which
  *   list and shuffle repeat reach after the end and Next wraps to. Each reorders within itself
- *   by its ≡ handle (`moveSong`). In shuffle the handles are hidden: on Tauri the backend owns
- *   the permutation and would put a moved song back. Clear empties both and keeps the playing
- *   song. Touch removes a song by swiping it left; a mouse gets a delete button.
+ *   by its ≡ handle (`moveSong`), shuffle included: on Tauri the backend owns the permutation
+ *   and takes a move made on it (`orderBase` / `orderEdits` in the manifest). Clear empties both
+ *   and keeps the playing song. Touch removes a song by swiping it left; a mouse gets a delete button.
  */
 import {
   computed,
@@ -195,8 +195,8 @@ const touchOnly = isTouchOnly();
 
 const mode = computed(() => music.persistData.playSongMode);
 const current = computed(() => music.persistData.playSongIndex);
-// Personal FM owns its own queue; shuffle's order belongs to the backend on Tauri.
-const reorderable = computed(() => mode.value !== "random" && !music.getPersonalFmMode);
+// Personal FM owns its own queue.
+const reorderable = computed(() => !music.getPersonalFmMode);
 
 const cover = (song: Song, size: number) => coverUrl(song.album?.picUrl, size);
 const artists = (song: Song) =>

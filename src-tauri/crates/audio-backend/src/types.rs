@@ -677,6 +677,9 @@ pub enum AudioThreadEvent {
         order: Vec<TrackIdentity>,
         #[serde(default)]
         shuffle_id: Option<String>,
+        /// Echoed back as the manifest's `order_base` once mirrored.
+        #[serde(default)]
+        order_generation: u64,
     },
     /// Every candidate in this revision failed to resolve or play. Terminal
     /// until a new manifest arrives; `reason` is already redacted.
@@ -873,6 +876,25 @@ pub struct NativePlaybackManifest {
     /// playing track, then the declared cursor.
     #[serde(default)]
     pub shuffle_pin: Option<TrackIdentity>,
+    /// The backend order generation (`NativeQueueOrderChanged::order_generation`)
+    /// this list was built on. When it is still current, a random-mode list is
+    /// taken as the permutation; otherwise it is rebased by identity.
+    #[serde(default)]
+    pub order_base: Option<u64>,
+    /// Moves the user made since the last publish, replayed on whatever order this
+    /// manifest leaves. A list on a current `order_base` already shows them; this is
+    /// for one that is not, such as a "play next" pressed while a reshuffle was in flight.
+    #[serde(default)]
+    pub order_edits: Vec<OrderEdit>,
+}
+
+/// "Put `identity` right after `after`", or at the head when `after` is `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderEdit {
+    pub identity: TrackIdentity,
+    #[serde(default)]
+    pub after: Option<TrackIdentity>,
 }
 
 fn default_schema_version() -> u32 {
@@ -1517,12 +1539,15 @@ mod tests {
             manifest_revision: 3,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
             shuffle_id: Some("shuffle-7".into()),
+            order_generation: 2,
         };
         let value = serde_json::to_value(event).expect("serialize");
         assert_eq!(value["type"], "nativeQueueOrderChanged");
         assert_eq!(value["data"]["manifestRevision"], 3);
         assert_eq!(value["data"]["order"][0]["id"], "7");
         assert_eq!(value["data"]["shuffleId"], "shuffle-7");
+        assert_eq!(value["data"]["orderGeneration"], 2);
+        assert!(manifest.order_base.is_none());
         assert!(manifest.shuffle.is_none());
         assert!(manifest.natural_order.is_empty());
     }

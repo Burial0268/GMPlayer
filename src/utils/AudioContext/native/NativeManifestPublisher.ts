@@ -31,6 +31,7 @@ import { isTauri } from "@/utils/tauri/core/runtime";
 import type {
   NativeManifestEntry,
   NativePlaybackManifest,
+  OrderEdit,
   TrackIdentity,
 } from "@/utils/tauri/audio/protocol";
 import { setPlannerRevisionObserver } from "@/utils/AudioContext/sound/NativeRustSound";
@@ -42,8 +43,27 @@ import { createQueueShuffleState, type SongData } from "@/store/musicTypes";
 import type { TrackDisplay } from "@/utils/tauri/audio/protocol/messages";
 import { identityForSong as toIdentity, trackIdentityKey } from "@/utils/tauri/audio/identity";
 import { logNative } from "@/utils/tauri/core/nativeLog";
-import { bumpManifestRevision, raiseManifestRevision } from "./NativeManifestRevision";
+import {
+  bumpManifestRevision,
+  getOrderBase,
+  raiseManifestRevision,
+} from "./NativeManifestRevision";
 import { activeSound } from "../sound/SoundManager";
+
+/** Moves made since the last publish; see `queueNativeOrderEdit`. */
+let pendingOrderEdits: OrderEdit[] = [];
+
+/**
+ * Record a queue move for the next manifest. A list built on the backend's current order already
+ * shows it; the edit is what survives when it is not (a reshuffle still in flight), because the
+ * backend rebases such a list and would otherwise put the song back.
+ */
+export const queueNativeOrderEdit = (song: SongData, after: SongData | null): void => {
+  if (!isTauri()) return;
+  const identity = toIdentity(song);
+  if (!identity) return;
+  pendingOrderEdits.push({ identity, after: after ? toIdentity(after) : null });
+};
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
 let lastFingerprint = "";
@@ -250,6 +270,9 @@ const flushNativeManifest = (): void => {
   publishScheduled = false;
   const force = pendingForce;
   pendingForce = false;
+  // Edits belong to the list they were made on; a publish that is skipped has no backend to tell.
+  const orderEdits = pendingOrderEdits;
+  pendingOrderEdits = [];
 
   const sound = activeSound.value;
   if (!isBackendSound(sound) || sound.isDestroyed()) return;
@@ -341,6 +364,8 @@ const flushNativeManifest = (): void => {
       : [],
     reshuffle,
     shufflePin,
+    orderBase: getOrderBase(),
+    orderEdits,
   };
 
   sound.setNativeManifest(manifest);

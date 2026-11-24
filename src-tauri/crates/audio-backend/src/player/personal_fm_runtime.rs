@@ -491,6 +491,8 @@ fn rebuild_manifest(
         shuffle: None,
         natural_order: Vec::new(),
         shuffle_pin: None,
+        order_base: None,
+        order_edits: Vec::new(),
     });
     if !prefix_unchanged {
         cache.invalidate();
