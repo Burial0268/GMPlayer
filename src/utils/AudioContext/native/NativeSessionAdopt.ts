@@ -35,6 +35,7 @@ import { trackIdentityKey } from "@/utils/tauri/audio/identity";
 // Import the store directly to avoid a cycle through the barrel export.
 import useMusicDataStore from "@/store/musicData";
 import { reconcileNativeManifestRevision } from "./NativeManifestPublisher";
+import { setOrderBase } from "./NativeManifestRevision";
 import { adoptNativePersonalFm } from "./NativePersonalFm";
 import { logNative } from "@/utils/tauri/core/nativeLog";
 import {
@@ -206,8 +207,14 @@ const adoptSnapshot = (snapshot: NativeSessionSnapshot): AdoptedBackendSession |
       music.adoptBackendQueueOrder(snapshot.order, snapshot.manifestRevision, {
         force: true,
         shuffleId: snapshot.shuffleId,
+        // Our queue is this order now, so our first publish needs no stale-base answer.
+        orderGeneration: snapshot.orderGeneration,
       });
     }
+  } else if (!snapshot.personalFm && snapshot.orderGeneration !== undefined) {
+    // A process that has seen no manifest takes the first one as it is: whatever queue we publish
+    // (this one, or the last session's adopted below) is already its order.
+    setOrderBase(snapshot.orderGeneration);
   }
 
   if (!snapshot.hasTrack || !snapshot.identity) return null;

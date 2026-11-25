@@ -493,6 +493,8 @@ fn rebuild_manifest(
         shuffle_pin: None,
         order_base: None,
         order_edits: Vec::new(),
+        entries_from: None,
+        entry_rows: Vec::new(),
     });
     if !prefix_unchanged {
         cache.invalidate();

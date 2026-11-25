@@ -153,6 +153,7 @@ impl AudioPlayer {
         self.bus.update(|session| {
             session.order.clear();
             session.shuffle_id = None;
+            session.order_generation = self.manifest.order_generation();
         });
         self.emit_planner_status().await;
     }
@@ -177,6 +178,7 @@ impl AudioPlayer {
             .flatten();
         let manifest_revision = self.manifest.revision();
         let play_mode = self.session_controls.play_mode;
+        let order_generation = self.manifest.order_generation();
         let event = (emit && random).then(|| {
             info!(
                 "reporting random order to the frontend: {} tracks, revision={}, playing={:?}",
@@ -188,7 +190,7 @@ impl AudioPlayer {
                 manifest_revision,
                 order: order.clone(),
                 shuffle_id: shuffle_id.clone(),
-                order_generation: self.manifest.order_generation(),
+                order_generation,
             }
         });
         self.bus.emit_with(event, |session| {
@@ -196,6 +198,7 @@ impl AudioPlayer {
             session.play_mode = play_mode;
             session.order = order;
             session.shuffle_id = shuffle_id;
+            session.order_generation = order_generation;
         });
     }
 

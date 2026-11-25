@@ -29,11 +29,13 @@
 import { toRaw } from "vue";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import type {
+  EventMeta,
   NativeManifestEntry,
   NativePlaybackManifest,
   OrderEdit,
   TrackIdentity,
 } from "@/utils/tauri/audio/protocol";
+import type { CommandTicket } from "@/utils/tauri/audio/transport";
 import { setPlannerRevisionObserver } from "@/utils/AudioContext/sound/NativeRustSound";
 import { isBackendSound, type BackendSound } from "@/utils/AudioContext/sound/types";
 // Import stores directly to avoid circular dependency through barrel exports
@@ -47,6 +49,7 @@ import {
   bumpManifestRevision,
   getOrderBase,
   raiseManifestRevision,
+  setOrderBase,
 } from "./NativeManifestRevision";
 import { activeSound } from "../sound/SoundManager";
 
@@ -67,6 +70,15 @@ export const queueNativeOrderEdit = (song: SongData, after: SongData | null): vo
 
 /** Last published fingerprint, to skip redundant IPC on unrelated store churn. */
 let lastFingerprint = "";
+/**
+ * What the backend holds as far as we know: the revision of the last manifest sent, the signatures
+ * of its list and natural order, and the row objects its entries were built from, in order. The
+ * next publish is told relative to it (`entriesFrom`): nothing for a track change, where only the
+ * cursor moved, and a few bytes per row for a reorder, a removal or an addition.
+ */
+let held: { revision: number; signature: string; natural: string; rows: SongData[] } | null = null;
+/** The last manifest sent, to notice the backend refusing one told relative to its entries. */
+let lastSent: { revision: number; ticket: CommandTicket; relative: boolean } | null = null;
 let publishScheduled = false;
 let pendingForce = false;
 
@@ -87,10 +99,32 @@ export const requestNativeReshuffle = (): void => {
  * counter is behind the live backend (cleared storage, a different profile):
  * without this the backend would reject everything we publish.
  */
-export const reconcileNativeManifestRevision = (backendRevision: number): void => {
+export const reconcileNativeManifestRevision = (
+  backendRevision: number,
+  meta?: EventMeta,
+): void => {
+  if (
+    lastSent?.relative &&
+    meta &&
+    backendRevision < lastSent.revision &&
+    lastSent.ticket.acknowledgedBy(meta)
+  ) {
+    // It answered that publish without installing it: it no longer holds the entries we named
+    // (a replaced player, a manifest it cleared). Send them.
+    logNative(
+      "warn",
+      `[NativeManifest] rev=${lastSent.revision} was told relative to entries the backend does not hold ` +
+        `(it has rev=${backendRevision}); resending them`,
+    );
+    lastSent = null;
+    held = null;
+    publishNativeManifest({ force: true });
+    return;
+  }
   if (!raiseManifestRevision(backendRevision)) return;
   // Our last-published state no longer describes what the backend holds.
   lastFingerprint = "";
+  held = null;
   plannerEnabled = null;
 };
 
@@ -220,6 +254,30 @@ export const publishNativeManifest = (options: { force?: boolean } = {}): void =
 };
 
 /**
+ * A number per row object. Queue rows are replaced, never edited (`utils/rawEntry`), so a row's
+ * object stands for its display metadata: a title or cover that arrives later changes the
+ * signature and the entries are resent.
+ */
+const rowSerials = new WeakMap<object, number>();
+let nextRowSerial = 0;
+const rowSerial = (song: SongData): number => {
+  let serial = rowSerials.get(song);
+  if (serial === undefined) {
+    serial = ++nextRowSerial;
+    rowSerials.set(song, serial);
+  }
+  return serial;
+};
+
+/** Mirrors `toIdentity`: a row without an identity has no entry. */
+const isPlannable = (song: SongData): boolean => {
+  const localUri = song?.local?.uri;
+  if (typeof localUri === "string" && localUri) return true;
+  const id = Number(song?.id);
+  return Number.isFinite(id) && id > 0;
+};
+
+/**
  * Cheap change probe.
  *
  * Runs over the playlist *without allocating* the entry objects, so the common
@@ -229,33 +287,18 @@ export const publishNativeManifest = (options: { force?: boolean } = {}): void =
  * ran even when the result was discarded.
  *
  * Two independent 32-bit hashes are combined rather than one: a collision here
- * means a skipped publish, which would leave the backend planning on a stale
- * list, so ~2^-64 is the right risk level, whereas a single 32-bit hash is not.
+ * means the backend keeps planning on a stale list, so ~2^-64 is the right risk
+ * level, whereas a single 32-bit hash is not.
  */
-const playlistSignature = (
-  playlists: SongData[],
-  mode: string,
-  cursorSongId: number | null | undefined,
-): string => {
+const listSignature = (playlists: SongData[]): string => {
   let h1 = 0x811c9dc5;
   let h2 = 5381;
   let counted = 0;
   for (let index = 0; index < playlists.length; index++) {
     const song = playlists[index];
-    const id = Number(song?.id);
-    // Mirror `toIdentity`: unplannable songs are omitted from entries, so they
-    // must not contribute to the signature either. A local track *is*
-    // plannable despite its negative id — leaving it out here would freeze the
-    // signature for an all-local playlist, so edits to it would never publish.
-    const localUri = song?.local?.uri;
-    const plannable =
-      typeof localUri === "string" && localUri ? true : Number.isFinite(id) && id > 0;
-    if (!plannable) continue;
+    if (!isPlannable(song)) continue;
     counted++;
-    // A local row always carries the Rust-assigned id, but hash the locator's
-    // length as a backstop so a row built without one cannot make two different
-    // files hash the same.
-    const token = Number.isFinite(id) && id !== 0 ? id : (localUri?.length ?? 0) + 1;
+    const token = rowSerial(song);
     h1 = Math.imul(h1 ^ token, 0x01000193) >>> 0;
     h1 = Math.imul(h1 ^ index, 0x01000193) >>> 0;
     h2 = ((Math.imul(h2, 33) ^ token) >>> 0) + index;
@@ -263,7 +306,84 @@ const playlistSignature = (
   }
   // No seed term: the traversal order is the playlist order (the index is mixed
   // into both hashes above), so a reshuffle *is* a playlist change.
-  return `${mode}|${cursorSongId ?? "?"}|${counted}|${h1.toString(36)}:${h2.toString(36)}`;
+  return `${counted}|${h1.toString(36)}:${h2.toString(36)}`;
+};
+
+/** The natural order by row, so mirroring a permutation of the same rows leaves it unchanged. */
+const naturalSignature = (playlists: SongData[], naturalIndices: number[] | null): string => {
+  if (!naturalIndices) return "-";
+  let h1 = 0x811c9dc5;
+  let h2 = 5381;
+  for (const index of naturalIndices) {
+    const song = playlists[index];
+    if (!song) continue;
+    const token = rowSerial(song);
+    h1 = Math.imul(h1 ^ token, 0x01000193) >>> 0;
+    h2 = (Math.imul(h2, 33) ^ token) >>> 0;
+  }
+  return `${naturalIndices.length}|${h1.toString(36)}:${h2.toString(36)}`;
+};
+
+const toEntry = (song: SongData, identity: TrackIdentity, index: number): NativeManifestEntry => ({
+  identity,
+  playlistIndex: index,
+  title: song.name ?? null,
+  artist: Array.isArray(song.artist)
+    ? song.artist
+        .map((a: any) => a?.name)
+        .filter(Boolean)
+        .join(" / ") || null
+    : null,
+  album: song.album?.name ?? null,
+  artworkUrl: toArtworkUrl(song),
+  durationMs: toDurationMs(song),
+  fee: Number.isFinite(song.fee) ? Number(song.fee) : null,
+  hasPc: song.pc !== null && song.pc !== undefined,
+});
+
+/**
+ * The list as `entryRows` over the rows the backend holds, plus the rows it has not seen. A row is
+ * matched by object, so a reused entry is exactly the one a full publish would build. `null` when
+ * nothing would be reused (a replaced playlist): the whole list is cheaper then.
+ */
+const rowsRelativeTo = (
+  base: SongData[],
+  playlists: SongData[],
+): { rows: number[]; added: NativeManifestEntry[]; composed: SongData[] } | null => {
+  const positions = new Map<SongData, number[]>();
+  base.forEach((song, position) => {
+    const bucket = positions.get(song);
+    if (bucket) bucket.push(position);
+    else positions.set(song, [position]);
+  });
+  const rows: number[] = [];
+  const added: NativeManifestEntry[] = [];
+  const composed: SongData[] = [];
+  for (let index = 0; index < playlists.length; index++) {
+    const song = playlists[index];
+    if (!isPlannable(song)) continue;
+    const position = positions.get(song)?.shift();
+    if (position === undefined) {
+      rows.push(-1 - added.length, index);
+      added.push(toEntry(song, toIdentity(song)!, index));
+    } else rows.push(position, index);
+    composed.push(song);
+  }
+  return added.length < composed.length ? { rows, added, composed } : null;
+};
+
+/** The row the cursor names: the last plannable one with its id, as the entries loop finds it. */
+const findCursor = (
+  playlists: SongData[],
+  cursorSongId: number | null | undefined,
+): { identity: TrackIdentity; index: number } | null => {
+  if (cursorSongId === null || cursorSongId === undefined) return null;
+  for (let index = playlists.length - 1; index >= 0; index--) {
+    if (playlists[index]?.id !== cursorSongId) continue;
+    const identity = toIdentity(playlists[index]);
+    if (identity) return { identity, index };
+  }
+  return null;
 };
 
 const flushNativeManifest = (): void => {
@@ -293,86 +413,103 @@ const flushNativeManifest = (): void => {
   const serverDrivenOrder = listenTogether.isInRoom;
   applyPlannerGate(sound, !serverDrivenOrder);
 
-  const entries: NativeManifestEntry[] = [];
-  let cursorPosition = -1;
   const cursorSongId = music.playingSongId ?? music.getPlaySongData?.id;
+  const mode = music.persistData.playSongMode;
+  // The backend needs the original order while the page is away, even after
+  // entries have been replaced by a mirror of its random permutation.
+  const naturalIndices = music.persistData.preShuffleOrder.length
+    ? music.getNaturalPlaylistOrder
+    : null;
 
   // Probe before building: bail on the no-op path without allocating entries.
-  const signature = playlistSignature(playlists, music.persistData.playSongMode, cursorSongId);
+  const list = listSignature(playlists);
+  const natural = naturalSignature(playlists, naturalIndices);
+  const signature = `${mode}|${cursorSongId ?? "?"}|${list}|${natural}`;
   const shuffle = music.persistData.shuffleState;
   const reshuffle = shuffle !== null && !shuffle.applied;
   if (!force && !reshuffle && signature === lastFingerprint) return;
 
-  for (let index = 0; index < playlists.length; index++) {
-    const song = playlists[index];
-    const identity = toIdentity(song);
-    if (!identity) continue;
-    if (cursorSongId !== null && cursorSongId !== undefined && song.id === cursorSongId) {
-      cursorPosition = entries.length;
+  // Told relative to what the backend holds. An empty natural order there means "the held one" in
+  // random mode and "none" otherwise, so one that went away in random mode needs the whole list.
+  const naturalChanged = held !== null && natural !== held.natural;
+  const base = held && !(naturalChanged && !naturalIndices && mode === "random") ? held : null;
+  let entriesFrom: number | null = null;
+  let entryRows: number[] = [];
+  let entries: NativeManifestEntry[] = [];
+  let composed: SongData[] | null = null;
+  if (base && list === base.signature) {
+    entriesFrom = base.revision;
+    composed = base.rows;
+  } else if (base) {
+    const relative = rowsRelativeTo(base.rows, playlists);
+    if (relative) {
+      entriesFrom = base.revision;
+      entryRows = relative.rows;
+      entries = relative.added;
+      composed = relative.composed;
     }
-    entries.push({
-      identity,
-      playlistIndex: index,
-      title: song.name ?? null,
-      artist: Array.isArray(song.artist)
-        ? song.artist
-            .map((a: any) => a?.name)
-            .filter(Boolean)
-            .join(" / ") || null
-        : null,
-      album: song.album?.name ?? null,
-      artworkUrl: toArtworkUrl(song),
-      durationMs: toDurationMs(song),
-      fee: Number.isFinite(song.fee) ? Number(song.fee) : null,
-      hasPc: song.pc !== null && song.pc !== undefined,
-    });
   }
-
-  if (!entries.length) {
+  if (!composed) {
+    composed = [];
+    for (let index = 0; index < playlists.length; index++) {
+      const song = playlists[index];
+      const identity = toIdentity(song);
+      if (!identity) continue;
+      entries.push(toEntry(song, identity, index));
+      composed.push(song);
+    }
+  }
+  if (!composed.length) {
     clearNativeManifest();
     return;
   }
-
-  const mode = music.persistData.playSongMode;
-  const cursorIdentity = cursorPosition >= 0 ? entries[cursorPosition].identity : null;
-  const cursorIndex = cursorPosition >= 0 ? entries[cursorPosition].playlistIndex : 0;
+  const naturalOrder =
+    naturalIndices && (entriesFrom === null || naturalChanged || mode !== "random")
+      ? naturalIndices
+          .map((index) => toIdentity(playlists[index]))
+          .filter((identity): identity is TrackIdentity => identity !== null)
+      : [];
 
   lastFingerprint = signature;
 
+  const cursor = findCursor(playlists, cursorSongId);
   const pinSong = reshuffle ? music.getPlaySongData : null;
   const shufflePin = pinSong ? toIdentity(pinSong) : null;
+  const revision = bumpManifestRevision();
 
   const manifest: NativePlaybackManifest = {
     schemaVersion: 1,
-    revision: bumpManifestRevision(),
+    revision,
     entries,
     // Empty = natural order. In random mode the backend decides the permutation
     // and ignores this; it tells us when ours is stale rather than us guessing.
     order: [],
-    cursorIdentity,
-    cursorIndex,
+    cursorIdentity: cursor?.identity ?? null,
+    cursorIndex: cursor?.index ?? 0,
     mode: mode === "single" ? "single" : mode === "random" ? "random" : "normal",
     repeatList: true,
     randomSeed,
     shuffle,
-    // The backend needs the original order while the page is away, even after
-    // entries have been replaced by a mirror of its random permutation.
-    naturalOrder: music.persistData.preShuffleOrder.length
-      ? music.getNaturalPlaylistOrder
-          .map((index) => toIdentity(playlists[index]))
-          .filter((identity): identity is TrackIdentity => identity !== null)
-      : [],
+    naturalOrder,
     reshuffle,
     shufflePin,
     orderBase: getOrderBase(),
     orderEdits,
+    entriesFrom,
+    entryRows,
   };
 
-  sound.setNativeManifest(manifest);
+  const ticket = sound.setNativeManifest(manifest);
+  held = ticket ? { revision, signature: list, natural, rows: composed } : null;
+  lastSent = ticket ? { revision, ticket, relative: entriesFrom !== null } : null;
   logNative(
     "info",
-    `[NativeManifest] published rev=${manifest.revision} entries=${entries.length} ` +
-      `mode=${manifest.mode} cursor=${cursorIndex}/${trackIdentityKey(cursorIdentity)} ` +
+    `[NativeManifest] published rev=${revision} ` +
+      (entriesFrom === null
+        ? `entries=${entries.length} `
+        : `from=rev${entriesFrom} rows=${entryRows.length / 2} added=${entries.length} `) +
+      `natural=${naturalOrder.length} mode=${manifest.mode} ` +
+      `cursor=${manifest.cursorIndex}/${trackIdentityKey(manifest.cursorIdentity)} ` +
       `reshuffle=${reshuffle} shuffle=${shuffle?.id ?? "none"} pin=${trackIdentityKey(shufflePin)}`,
   );
 };
@@ -389,6 +526,11 @@ export const clearNativeManifest = (): void => {
   const sound = activeSound.value;
   if (!isBackendSound(sound) || sound.isDestroyed()) return;
   lastFingerprint = "";
+  held = null;
+  lastSent = null;
+  // The backend's generation restarts with the cleared manifest; a number kept from before could
+  // come round again and name an order this queue was never built on.
+  setOrderBase(null);
   // `ClearNativeManifest` rebuilds the backend `Planner` from scratch, which
   // re-enables it. Drop our cached gate so the next publish always re-asserts.
   plannerEnabled = null;

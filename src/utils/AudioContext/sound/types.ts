@@ -14,6 +14,7 @@ import type {
   SongData,
   TrackIdentity,
 } from "../../tauri/audio/protocol";
+import type { CommandTicket } from "../../tauri/audio/transport";
 
 export interface SoundOptions {
   src: string | string[];
@@ -144,7 +145,8 @@ export interface BackendSound extends ISound {
   setAnalysisEnabled(enabled: boolean): void;
   setFFTEnabled(enabled: boolean): void;
 
-  setNativeManifest(manifest: NativePlaybackManifest): void;
+  /** `null` when nothing was sent (a destroyed or cleared sound). */
+  setNativeManifest(manifest: NativePlaybackManifest): CommandTicket | null;
   clearNativeManifest(revision: number): void;
   setNativeResolverConfig(config: NativeResolverConfig): void;
   setNativePlannerEnabled(enabled: boolean): void;

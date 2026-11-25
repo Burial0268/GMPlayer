@@ -458,6 +458,8 @@ mod tests {
             shuffle_pin: None,
             order_base: None,
             order_edits: Vec::new(),
+            entries_from: None,
+            entry_rows: Vec::new(),
         });
         store
     }
@@ -500,6 +502,8 @@ mod tests {
             shuffle_pin: None,
             order_base: None,
             order_edits: Vec::new(),
+            entries_from: None,
+            entry_rows: Vec::new(),
         });
         store
     }
@@ -1030,6 +1034,8 @@ mod tests {
             shuffle_pin: None,
             order_base: None,
             order_edits: Vec::new(),
+            entries_from: None,
+            entry_rows: Vec::new(),
         };
 
         let mut store = ManifestStore::new();

@@ -47,14 +47,14 @@ export const bumpManifestRevision = (): number => {
 
 /**
  * The backend order generation the queue was last mirrored from (`orderBase` on the manifest).
- * In memory only: it is per backend process, and a page that lost it gets a stale-base answer
- * that tells it the current one.
+ * In memory only: it is per backend process. A reloaded page learns it from the `hello` snapshot
+ * it mirrors (`NativeSessionAdopt`); one that still lacks it gets a stale-base answer instead.
  */
 let orderBase: number | null = null;
 
 export const getOrderBase = (): number | null => orderBase;
 
-export const setOrderBase = (generation: number): void => {
+export const setOrderBase = (generation: number | null): void => {
   orderBase = generation;
 };
 

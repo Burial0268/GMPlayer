@@ -886,6 +886,21 @@ pub struct NativePlaybackManifest {
     /// for one that is not, such as a "play next" pressed while a reshuffle was in flight.
     #[serde(default)]
     pub order_edits: Vec<OrderEdit>,
+    /// The list is told relative to the stored manifest, which must be this
+    /// revision; resending every entry cost ~350 bytes per track per publish.
+    ///
+    /// - `entry_rows` empty: `entries` (sent empty) are the stored ones. A track
+    ///   change moves only the cursor.
+    /// - otherwise `entry_rows` is `[source, playlist_index]` pairs, one per entry:
+    ///   a source `>= 0` is a stored entry's position, `-1 - k` is `entries[k]`,
+    ///   which then carries only the additions. Covers a reorder (a mirrored
+    ///   reshuffle), a removal and "play next" at a few bytes per track.
+    ///
+    /// An empty `natural_order` in random mode is the stored one.
+    #[serde(default)]
+    pub entries_from: Option<u64>,
+    #[serde(default)]
+    pub entry_rows: Vec<i64>,
 }
 
 /// "Put `identity` right after `after`", or at the head when `after` is `None`.
@@ -1054,6 +1069,11 @@ pub struct NativeSessionSnapshot {
     pub order: Vec<TrackIdentity>,
     #[serde(default)]
     pub shuffle_id: Option<String>,
+    /// `ManifestStore::order_generation` that `order` belongs to. A page that mirrors
+    /// `order` from this snapshot publishes on it, so a reload costs no second copy of
+    /// the order as a stale-base `NativeQueueOrderChanged`.
+    #[serde(default)]
+    pub order_generation: u64,
     /// Last published phase, so a recreated page starts from it instead of
     /// waiting for the next edge.
     #[serde(default)]
@@ -1441,12 +1461,14 @@ mod tests {
             play_mode: NativePlaybackMode::Random,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
             shuffle_id: Some("saved-pass".into()),
+            order_generation: 3,
             phase: PlaybackPhase::Buffering,
             buffered_position: 42.0,
         };
         let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
         let object = value.as_object().expect("object");
         assert_eq!(object["phase"], "buffering");
+        assert_eq!(object["orderGeneration"], 3);
         let edge = serde_json::to_value(AudioThreadEvent::PlaybackPhaseChanged {
             phase: PlaybackPhase::Loading,
             identity: None,

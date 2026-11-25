@@ -69,7 +69,7 @@ const NATIVE_ADVANCE_LOAD_TIMEOUT_MS = 20_000;
  * of the backend's. Kept as a module-level hook rather than a direct import to
  * avoid a cycle (the publisher imports this module for the `instanceof` check).
  */
-type PlannerRevisionObserver = (backendRevision: number) => void;
+type PlannerRevisionObserver = (backendRevision: number, meta: EventMeta) => void;
 let plannerRevisionObserver: PlannerRevisionObserver | null = null;
 let nativePersonalFmActive = false;
 
@@ -437,9 +437,9 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
    * pre-resolved URLs, so the backend can advance to any track in the list —
    * and re-resolve expired links — without a live JS runtime.
    */
-  setNativeManifest(manifest: NativePlaybackManifest): void {
-    if (this._destroyed || this._terminallyCleared) return;
-    this._sendCommand({ type: "setNativeManifest", manifest });
+  setNativeManifest(manifest: NativePlaybackManifest): CommandTicket | null {
+    if (this._destroyed || this._terminallyCleared) return null;
+    return this._sendCommand({ type: "setNativeManifest", manifest });
   }
 
   /** Drop the backend manifest, returning advancement to the JS-driven path. */
@@ -823,7 +823,7 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         // Keep our revision counter ahead of the backend's. Without this a
         // WebView reload (module state resets, backend does not) would leave
         // every subsequent publish rejected as stale.
-        plannerRevisionObserver?.(planner.manifestRevision);
+        plannerRevisionObserver?.(planner.manifestRevision, meta);
         break;
       }
 
