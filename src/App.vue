@@ -566,10 +566,10 @@ onMounted(() => {
       }
     })
     .catch((err) => {
+      // 请求失败不等于退出登录：保留本地登录态，留在当前页，只提示。以前这里跳 /500，
+      // 接口一抖整个应用就被顶掉。
       console.error(t("general.message.acquisitionFailed"), err);
       $message.error(t("general.message.acquisitionFailed"));
-      router.push("/500");
-      return false;
     });
 
   // 喜欢音乐列表：启动、登录、换号、退出都要重拉（退出时清空），见下面的 watch。
