@@ -88,6 +88,9 @@ let fmRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let fmRetryAttempt = 0;
 let fmWaiting = false;
 let nativeFmStarting = false;
+// setLikeList bookkeeping: newest request wins, and foreground refreshes are throttled.
+let likeListSerial = 0;
+let likeListFetchedAt = 0;
 const cancelFmRetry = () => {
   if (fmRetryTimer !== null) clearTimeout(fmRetryTimer);
   fmRetryTimer = null;
@@ -730,14 +733,37 @@ const useMusicDataStore = defineStore("musicData", {
       });
     },
 
+    /**
+     * Re-read the account's liked songs from Netease.
+     *
+     * Called on start, on every account change and when the app comes back to
+     * the foreground, because a like made on another device has no other way in.
+     * Signed out, the list is emptied: hearts belong to an account.
+     */
     setLikeList() {
       const user = userStore();
-      if (user.userLogin) {
-        getLikelist(user.userData.id).then((res: any) => {
+      const uid = user.userLogin ? user.userData.userId : undefined;
+      const serial = ++likeListSerial;
+      if (!uid) {
+        this.persistData.likeList = [];
+        this.likeSet = new Set();
+        return;
+      }
+      likeListFetchedAt = Date.now();
+      getLikelist(uid)
+        .then((res: any) => {
+          // A slower answer for an earlier account (or an earlier refresh) must not win.
+          if (serial !== likeListSerial || !Array.isArray(res?.ids)) return;
           this.persistData.likeList = res.ids;
           this.likeSet = new Set(res.ids);
-        });
-      }
+          publishSessionControls();
+        })
+        .catch((err) => console.warn("[likelist] refresh failed", err));
+    },
+
+    /** {@link setLikeList}, unless it ran within `maxAgeMs`. */
+    refreshLikeListIfStale(maxAgeMs: number) {
+      if (Date.now() - likeListFetchedAt >= maxAgeMs) this.setLikeList();
     },
 
     getSongIsLike(target: number | SongData): boolean {
