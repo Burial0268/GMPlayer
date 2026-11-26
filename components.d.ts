@@ -35,6 +35,7 @@ declare module 'vue' {
     DetailPageSkeleton: typeof import('./src/components/Navigation/DetailPageSkeleton.vue')['default']
     DownloadManager: typeof import('./src/components/DataModal/DownloadManager.vue')['default']
     DownloadSong: typeof import('./src/components/DataModal/DownloadSong.vue')['default']
+    GlassSheet: typeof import('./src/components/Common/GlassSheet.vue')['default']
     IconForward: typeof import('./src/components/Player/icons/IconForward.vue')['default']
     IconLossless: typeof import('./src/components/Player/icons/IconLossless.vue')['default']
     IconLyricsOff: typeof import('./src/components/Player/icons/IconLyricsOff.vue')['default']

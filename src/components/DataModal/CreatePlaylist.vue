@@ -1,6 +1,8 @@
 <template>
+  <!-- 高于 GlassSheet（2200）：添加到歌单面板里点「新建」时要盖在它上面。 -->
   <n-modal
     class="s-modal"
+    :z-index="2300"
     v-model:show="createPlaylistShow"
     preset="card"
     :title="$t('menu.create')"
