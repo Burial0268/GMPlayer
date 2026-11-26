@@ -442,7 +442,8 @@ watch(trackKey, (key, previous) => {
           overflow: hidden;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 700;
-          line-height: 1.06;
+          // 截断的标题按字体自身的上下伸排行，定值会切掉 y/g/p（同 SongView）。
+          line-height: normal;
           overflow-wrap: anywhere;
           -webkit-box-orient: vertical;
           -webkit-line-clamp: 2;
@@ -565,7 +566,7 @@ watch(trackKey, (key, previous) => {
 
           .name {
             font-size: clamp(25px, 8vw, 36px);
-            line-height: 1.12;
+            line-height: normal;
           }
 
           .creator {

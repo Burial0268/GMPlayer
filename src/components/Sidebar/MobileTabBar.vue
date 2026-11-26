@@ -140,7 +140,8 @@ const select = (tab) => {
 .tab-label {
   max-width: 100%;
   font-size: 10px;
-  line-height: 1;
+  // overflow: hidden 会裁掉行盒外的部分：line-height 1 切掉英文 g/y 的下半截。
+  line-height: normal;
   // 4 equal columns: keep each label on one line and clip cleanly instead of
   // wrapping to a second line that the 56px bar height then cuts in half.
   white-space: nowrap;

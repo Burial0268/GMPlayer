@@ -219,7 +219,7 @@ onMounted(getDailySongsData);
   color: rgba(255, 255, 255, 0.68);
   font-size: 9px;
   font-weight: 700;
-  line-height: 1.15;
+  line-height: normal;
   letter-spacing: 0.07em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -268,7 +268,8 @@ onMounted(getDailySongsData);
   color: inherit;
   font-size: 19px;
   font-weight: 750;
-  line-height: 1.2;
+  // 单行省略 + overflow: hidden，定值行高会切掉 y/g/p 的下半截。
+  line-height: normal;
   letter-spacing: -0.02em;
   white-space: nowrap;
   text-overflow: ellipsis;
