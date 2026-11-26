@@ -36,7 +36,12 @@
             <n-skeleton text style="width: 60%" />
           </div>
           <div class="content">
-            <Comment v-for="item in commentData.hotComments" :key="item" :commentData="item" />
+            <Comment
+              v-for="item in commentData.hotComments"
+              :key="item.commentId"
+              :commentData="item"
+              resourceType="mv"
+            />
           </div>
         </div>
         <div class="allComments" ref="allCommentsRef">
@@ -49,7 +54,12 @@
             <n-skeleton text style="width: 60%" />
           </div>
           <div class="content">
-            <Comment v-for="item in commentData.allComments" :key="item" :commentData="item" />
+            <Comment
+              v-for="item in commentData.allComments"
+              :key="item.commentId"
+              :commentData="item"
+              resourceType="mv"
+            />
           </div>
         </div>
         <Pagination

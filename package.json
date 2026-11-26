@@ -23,6 +23,7 @@
     "test:audio-lifecycle": "node scripts/test-audio-lifecycle.mjs",
     "test:automix-native": "node scripts/test-automix-native.mjs",
     "test:last-backend-session": "node scripts/test-last-backend-session.mjs",
+    "test:comment-cache": "node scripts/test-comment-cache.mjs",
     "lint": "oxlint src/",
     "lint:fix": "oxlint --fix src/",
     "fmt": "oxfmt src/",

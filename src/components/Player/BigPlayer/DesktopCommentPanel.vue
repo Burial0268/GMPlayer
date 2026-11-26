@@ -257,7 +257,7 @@ const clearComments = () => {
   hasMore.value = false;
 };
 
-const requestComments = async (append = false) => {
+const requestComments = async (append = false, fresh = false) => {
   const currentSongId = songId.value;
   // No thread to ask for. Without the local test this fired `/comment/music`
   // with a negative id on open and again on every track change while the panel
@@ -290,7 +290,7 @@ const requestComments = async (append = false) => {
   }
 
   try {
-    const response = await getComment(currentSongId, offset, before);
+    const response = await getComment(currentSongId, offset, before, "music", fresh);
     if (requestId !== requestSerial || currentSongId !== songId.value) return;
 
     const comments = Array.isArray(response?.comments) ? response.comments : [];
@@ -298,7 +298,8 @@ const requestComments = async (append = false) => {
       allComments.value.push(...comments);
     } else {
       hotComments.value = Array.isArray(response?.hotComments) ? response.hotComments : [];
-      allComments.value = comments;
+      // 拷贝：下面的 push 不能改到评论缓存里共用的那份数组
+      allComments.value = comments.slice();
       commentsCount.value = Number(response?.total) || comments.length;
       if (!hotComments.value.length) activeTab.value = "all";
       scheduleCommentsReady(requestId);
@@ -322,7 +323,7 @@ const requestComments = async (append = false) => {
 };
 
 const refreshComments = () => {
-  void requestComments();
+  void requestComments(false, true);
 };
 
 const loadMore = () => {
