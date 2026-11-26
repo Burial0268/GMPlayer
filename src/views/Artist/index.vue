@@ -20,15 +20,15 @@
         </div>
 
         <div v-content-intro class="detail-stats">
-          <button class="num" type="button" @click="tabChange('songs')">
+          <button class="num touch-target" type="button" @click="tabChange('songs')">
             <n-icon :depth="3" :component="MusicNoteFilled" />
             <n-text>{{ $t("general.name.songSize", { size: artistData.musicSize }) }}</n-text>
           </button>
-          <button class="num" type="button" @click="tabChange('albums')">
+          <button class="num touch-target" type="button" @click="tabChange('albums')">
             <n-icon :depth="3" :component="AlbumFilled" />
             <n-text>{{ $t("general.name.albumSize", { size: artistData.albumSize }) }}</n-text>
           </button>
-          <button class="num" type="button" @click="tabChange('videos')">
+          <button class="num touch-target" type="button" @click="tabChange('videos')">
             <n-icon :depth="3" :component="VideocamRound" />
             <n-text>{{ $t("general.name.mvSize", { size: artistData.mvSize }) }}</n-text>
           </button>

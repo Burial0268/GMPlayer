@@ -2,7 +2,7 @@
   <div ref="searchAnchorRef" class="search-anchor">
     <div
       v-if="isMobile"
-      class="searchInp search-trigger"
+      class="searchInp search-trigger touch-target"
       role="button"
       tabindex="0"
       :aria-label="$t('navigation.search')"

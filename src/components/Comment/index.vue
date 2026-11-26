@@ -48,7 +48,7 @@
             <n-text :depth="3">{{ commentData.ipLocation.location }}</n-text>
           </div>
           <div
-            :class="commentData.liked ? 'like liked' : 'like'"
+            :class="['like', 'touch-target', { liked: commentData.liked }]"
             role="button"
             tabindex="0"
             :aria-pressed="commentData.liked"

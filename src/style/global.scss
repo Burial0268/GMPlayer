@@ -254,6 +254,20 @@ textarea,
   select {
     touch-action: manipulation;
   }
+  /* 小于 44px 的点击目标：透明的 ::after 把可点区域撑到 44×44，外观不变。
+     只给周围留有余量的控件用——可点区域会盖住 22px 以内的邻居。 */
+  .touch-target {
+    position: relative;
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
+  }
   :where(button:not(:disabled), [role="button"], .n-button) {
     transition: transform var(--duration-150, 150ms) var(--ease-out, ease-out);
     &:active {
@@ -872,4 +886,3 @@ html.has-floating-titlebar {
 @media (max-width: 768px) {
   @include changeWidth($padding: 4vw);
 }
-
