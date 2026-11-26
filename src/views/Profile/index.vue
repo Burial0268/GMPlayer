@@ -69,7 +69,12 @@
           :listData="ownLists"
           :loading="loading"
         />
-        <CoverLists v-else key="collected" :listData="likeLists" :loading="loading" />
+        <CoverLists
+          v-else
+          key="collected"
+          :listData="likeLists"
+          :loading="loading || fillingCollected"
+        />
       </Transition>
       <div class="load-more" v-if="!loading && hasMore">
         <n-button strong secondary round :loading="loadingMore" @click="loadMorePlaylists">
@@ -116,8 +121,9 @@ const followLoading = ref(false);
 const tabValue = ref("created");
 
 // 歌单分批拉取。网易返回顺序是「自建在前、收藏在后」，因此按页追加不会打乱
-// 下面 creator.userId 的归类；一次性 limit=1001 会让 CoverLists 直接铺开上千格。
-const PLAYLIST_PAGE_SIZE = 100;
+// 下面 creator.userId 的归类。页大小决定列表出现那一下要铺多少卡片：100 张在 4 倍
+// CPU 降速下一次占住主线程约 1 秒（Android 上「列表出来时卡一下」），30 张就够填满首屏。
+const PLAYLIST_PAGE_SIZE = 30;
 let requestSerial = 0;
 
 // 头像地址
@@ -190,24 +196,46 @@ const loadProfile = async (id: string | string[] | null) => {
   }
 };
 
-// 加载下一页歌单
-const loadMorePlaylists = async () => {
-  if (loadingMore.value || !hasMore.value) return;
+// 加载下一页歌单；返回这一页是否成功落地
+const loadMorePlaylists = async (): Promise<boolean> => {
+  if (loadingMore.value || !hasMore.value) return false;
   const requestId = requestSerial;
   const numericId = Number(uid.value);
   const offset = ownLists.value.length + likeLists.value.length;
   loadingMore.value = true;
   try {
     const res = await getUserPlaylist(numericId, PLAYLIST_PAGE_SIZE, offset);
-    if (requestId !== requestSerial) return;
+    if (requestId !== requestSerial) return false;
     if (res?.playlist) collectPlaylists(res.playlist, numericId);
     hasMore.value = Boolean(res?.more ?? res?.playlist?.length === PLAYLIST_PAGE_SIZE);
+    return Boolean(res?.playlist?.length);
   } catch (err) {
     console.error(t("general.message.acquisitionFailed"), err);
+    return false;
   } finally {
     if (requestId === requestSerial) loadingMore.value = false;
   }
 };
+
+// 收藏的歌单排在自建之后：自建超过一页的人，切到「收藏」时这一栏还是空的。
+// 接着往下拉直到出现收藏或拉完；失败或没有新内容就停，不会空转。
+const fillingCollected = ref(false);
+const fillCollected = async () => {
+  if (fillingCollected.value) return;
+  fillingCollected.value = true;
+  try {
+    while (tabValue.value === "collected" && !likeLists.value.length && hasMore.value) {
+      if (!(await loadMorePlaylists())) break;
+    }
+  } finally {
+    fillingCollected.value = false;
+  }
+};
+watch([tabValue, loading], () => {
+  if (tabValue.value === "collected" && !loading.value && !likeLists.value.length) {
+    void fillCollected();
+  }
+});
 
 // 关注 / 取消关注
 const toggleFollow = async () => {
