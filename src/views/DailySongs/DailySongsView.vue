@@ -1,19 +1,15 @@
 <template>
   <div class="dailysongs">
-    <div class="top">
-      <div class="title">
-        <div class="date">
-          <n-icon class="calendar" :component="CalendarTodayFilled" />
-          <n-text class="num">{{ displayDay }}</n-text>
-        </div>
-        <div class="right">
-          <n-gradient-text class="big" type="danger">
-            {{ $t("home.modules.dailySongs.title") }}
-          </n-gradient-text>
-          <n-text class="tip" :depth="3">
-            {{ displaySubtitle }}
-          </n-text>
-        </div>
+    <!-- 与评论页、用户页同一套头部：方块（这里是日期）+ 小标签 + 大标题，右侧放操作。 -->
+    <header class="daily-head">
+      <div class="date-tile" aria-hidden="true">
+        <n-icon class="calendar" :component="CalendarTodayFilled" />
+        <span class="day">{{ displayDay }}</span>
+      </div>
+      <div class="text">
+        <span class="eyebrow s-label">{{ displayDate }}</span>
+        <h1 class="title">{{ $t("home.modules.dailySongs.title") }}</h1>
+        <n-text class="tip" :depth="3">{{ displaySubtitle }}</n-text>
       </div>
       <n-select
         v-model:value="selectedDate"
@@ -27,7 +23,7 @@
         :options="historyDateOptions"
         @update:value="handleDateChange"
       />
-    </div>
+    </header>
     <DataLists
       :listData="displaySongs"
       :loading="songsLoading"
@@ -77,6 +73,10 @@ const formatHistoryDate = (date: string) => {
     day: Number(day),
   });
 };
+
+const displayDate = computed(() =>
+  formatHistoryDate(selectedDate.value === todayValue ? todayDate.value : selectedDate.value),
+);
 
 const displaySubtitle = computed(() => {
   if (selectedDate.value === todayValue) return t("home.modules.dailySongs.subtitle");
@@ -182,60 +182,84 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 .dailysongs {
-  .top {
-    margin: 30px 0 40px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 32px;
+
+  .daily-head {
+    margin-bottom: 24px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    flex-wrap: wrap;
-    .title {
-      font-size: 40px;
-      display: flex;
-      align-items: center;
+    gap: 16px;
+    min-width: 0;
+
+    .date-tile {
+      --size: clamp(64px, 9vw, 96px);
+      position: relative;
+      width: var(--size);
+      height: var(--size);
+      flex-shrink: 0;
+      display: grid;
+      place-items: center;
+      border-radius: var(--radius-md);
+      color: var(--main-color);
+      background: color-mix(in srgb, var(--main-color) 12%, transparent);
+
       .calendar {
-        font-size: 70px;
-        color: #d03050;
-        transform: translateY(-3px);
+        position: absolute;
+        top: 10%;
+        font-size: calc(var(--size) * 0.22);
+        opacity: 0.7;
       }
-      .date {
-        position: relative;
-        margin-right: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        .num {
-          margin-top: 7px;
-          position: absolute;
-          font-size: 30px;
-          font-weight: bold;
-          color: #d03050;
-        }
-      }
-      .right {
-        display: flex;
-        flex-direction: column;
-        .big {
-          --n-font-weight: bold;
-          line-height: 50px;
-        }
-        .tip {
-          font-size: 14px;
-          margin-left: 2px;
-        }
+
+      .day {
+        margin-top: 12%;
+        font-size: calc(var(--size) * 0.42);
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        line-height: 1;
       }
     }
+
+    .text {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+
+      .eyebrow {
+        margin-bottom: 10px;
+        color: var(--n-text-color-3);
+      }
+
+      .title {
+        margin: 0;
+        font-size: clamp(26px, 4.6vw, 50px);
+        font-weight: 700;
+        line-height: 1.08;
+        letter-spacing: -0.02em;
+        color: var(--n-text-color);
+      }
+
+      .tip {
+        margin-top: 8px;
+        font-size: 14px;
+      }
+    }
+
     .history-select {
       width: 190px;
+      flex-shrink: 0;
     }
-  }
-  @media (max-width: 768px) {
-    .top {
-      align-items: flex-start;
+
+    @media (max-width: 768px) {
+      flex-wrap: wrap;
+
       .history-select {
         width: 100%;
       }
     }
   }
+
 }
 </style>
