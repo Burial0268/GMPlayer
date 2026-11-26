@@ -269,7 +269,7 @@
               <span class="row-label">{{ $t("menu.play") }}</span>
             </button>
             <button
-              v-if="!music.getPersonalFmMode && music.getPlaySongData.id != drawerData.id"
+              v-if="!music.getPersonalFmMode && music.getPlaySongData?.id != drawerData.id"
               type="button"
               class="sheet-row"
               @click="drawerRun(() => music.addSongToNext(drawerData))"
