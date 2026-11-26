@@ -14,7 +14,7 @@
         <RouteShadow class="shadow" :src="getCoverUrl(playListDetail.coverImgUrl, 1024)" />
       </RouteArtwork>
       <div class="meta">
-        <div class="title">
+        <div class="title selectable">
           <span v-content-intro class="detail-kind">{{ t("general.name.playlist") }}</span>
           <n-text class="name text-hidden" data-navigation-title="page">{{
             playListDetail!.name
@@ -39,7 +39,7 @@
           <span class="name">{{
             t("general.name.desc", { name: t("general.name.playlist") })
           }}</span>
-          <span class="desc text-hidden">
+          <span ref="descRef" class="desc text-hidden selectable">
             {{
               playListDetail && playListDetail.description
                 ? playListDetail.description
@@ -51,9 +51,7 @@
             block
             strong
             secondary
-            v-if="
-              playListDetail && playListDetail.description && playListDetail.description.length > 70
-            "
+            v-if="descOverflow"
             @click="playListDescShow = true"
           >
             {{ t("general.name.allDesc") }}
@@ -160,7 +158,7 @@
         :bordered="false"
       >
         <n-scrollbar v-if="hasPlaylistDescription">
-          <n-text v-html="playlistDescriptionHtml" />
+          <n-text class="selectable long-text">{{ playListDetail.description }}</n-text>
         </n-scrollbar>
       </n-modal>
     </div>
@@ -182,6 +180,7 @@ import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
 import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import RouteShadow from "@/components/Navigation/RouteShadow.vue";
 import { useContentIntro } from "@/composables/useContentIntro";
+import { useTextOverflow } from "@/composables/useTextOverflow";
 import { useLayerNavigation } from "@/utils/navigation";
 import type { DropdownMixedOption } from "naive-ui/es/dropdown/src/interface";
 import { NIcon, NText } from "naive-ui";
@@ -322,9 +321,8 @@ const hasPlaylistDescription = computed(
   () => !!playListDetail.value && !!playListDetail.value.description,
 );
 
-const playlistDescriptionHtml = computed(
-  () => playListDetail.value?.description?.replace(/\n/g, "<br>") ?? "",
-);
+const descRef = ref<HTMLElement | null>(null);
+const descOverflow = useTextOverflow(descRef, () => playListDetail.value?.description);
 
 const normalizePlaylistId = (id: string | number | string[]) =>
   Number(Array.isArray(id) ? id[0] : id);

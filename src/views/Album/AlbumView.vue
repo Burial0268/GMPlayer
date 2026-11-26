@@ -33,7 +33,7 @@
         />
       </RouteArtwork>
       <div class="meta">
-        <div class="title">
+        <div class="title selectable">
           <span v-content-intro class="detail-kind">{{ $t("general.name.album") }}</span>
           <n-text class="name" data-navigation-title="page">{{ albumDetail.name }}</n-text>
           <n-text
@@ -62,7 +62,7 @@
           <span class="name">{{
             $t("general.name.desc", { name: $t("general.name.album") })
           }}</span>
-          <span class="desc text-hidden">
+          <span ref="descRef" class="desc text-hidden selectable">
             {{ albumDetail.description ? albumDetail.description : $t("other.noDesc") }}
           </span>
           <n-button
@@ -70,7 +70,7 @@
             block
             strong
             secondary
-            v-if="albumDetail?.description?.length > 70"
+            v-if="descOverflow"
             @click="albumDescShow = true"
           >
             {{ $t("general.name.allDesc") }}
@@ -154,7 +154,7 @@
         :bordered="false"
       >
         <n-scrollbar>
-          <n-text v-html="albumDetail.description.replace(/\n/g, '<br>')" />
+          <n-text class="selectable long-text">{{ albumDetail.description }}</n-text>
         </n-scrollbar>
       </n-modal>
     </div>
@@ -174,6 +174,7 @@
 import DetailPageSkeleton from "@/components/Navigation/DetailPageSkeleton.vue";
 import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
 import { useContentIntro } from "@/composables/useContentIntro";
+import { useTextOverflow } from "@/composables/useTextOverflow";
 import { NIcon, NText } from "naive-ui";
 import { getAlbum, likeAlbum } from "@/api/album";
 import { useRouter } from "vue-router";
@@ -269,6 +270,8 @@ const albumId = ref(router.currentRoute.value.query.id);
 const albumDetail = ref(null);
 const albumData = ref([]);
 const albumDescShow = ref(false);
+const descRef = ref<HTMLElement | null>(null);
+const descOverflow = useTextOverflow(descRef, () => albumDetail.value?.description);
 const loadFailed = ref(false);
 
 // ── 列表内搜索 ──────────────────────────────────────────────

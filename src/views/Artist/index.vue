@@ -11,7 +11,7 @@
       </RouteArtwork>
 
       <div class="meta">
-        <div class="title">
+        <div class="title selectable">
           <span v-content-intro class="detail-kind">{{ $t("general.name.artists") }}</span>
           <n-text class="name" data-navigation-title="page">{{ artistData.name }}</n-text>
           <n-text v-if="artistData.occupation" v-content-intro class="creator">
@@ -36,8 +36,14 @@
 
         <div v-content-intro class="intr" v-if="artistData.desc">
           <span class="name">{{ $t("general.name.artistDesc") }}</span>
-          <span class="desc text-hidden">{{ artistData.desc }}</span>
-          <n-button class="all-desc" strong secondary @click="artistDescShow = true">
+          <span ref="descRef" class="desc text-hidden selectable">{{ artistData.desc }}</span>
+          <n-button
+            v-if="descOverflow"
+            class="all-desc"
+            strong
+            secondary
+            @click="artistDescShow = true"
+          >
             {{ $t("general.name.allDesc") }}
           </n-button>
         </div>
@@ -116,7 +122,7 @@
       :bordered="false"
     >
       <n-scrollbar>
-        <n-text v-html="artistData.desc.replace(/\n/g, '<br>')" />
+        <n-text class="selectable long-text">{{ artistData.desc }}</n-text>
       </n-scrollbar>
     </n-modal>
   </div>
@@ -158,6 +164,7 @@ import RouteShadow from "@/components/Navigation/RouteShadow.vue";
 import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { useContentIntro } from "@/composables/useContentIntro";
+import { useTextOverflow } from "@/composables/useTextOverflow";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -190,6 +197,8 @@ const artistData = ref<ArtistDetailData | null>(null);
 const artistHotSongs = ref<any[]>([]);
 const artistSongsLoading = ref(false);
 const artistDescShow = ref(false);
+const descRef = ref<HTMLElement | null>(null);
+const descOverflow = useTextOverflow(descRef, () => artistData.value?.desc);
 const artistLikeBtn = ref(false);
 
 const safeArtistCover = computed(() =>

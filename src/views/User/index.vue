@@ -13,7 +13,7 @@
       />
       <div class="text">
         <span class="eyebrow s-label">{{ $t("nav.user") }}</span>
-        <h1 class="title text-hidden">{{ user.getUserData.nickname }}</h1>
+        <h1 class="title text-hidden selectable">{{ user.getUserData.nickname }}</h1>
       </div>
       <!-- 本地音乐入口与退出登录收进一个菜单：并排两颗按钮在手机上会挤出头部。 -->
       <n-dropdown

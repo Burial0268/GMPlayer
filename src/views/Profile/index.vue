@@ -5,7 +5,7 @@
       <div class="meta">
         <span class="kind">{{ $t("profile.title") }}</span>
         <div class="name-row">
-          <n-text class="name">{{ profile.nickname || "-" }}</n-text>
+          <n-text class="name selectable">{{ profile.nickname || "-" }}</n-text>
           <n-tag v-if="profile.vipType > 0" class="badge vip" size="small" round :bordered="false">
             {{ $t("profile.vip") }}
           </n-tag>
@@ -19,7 +19,7 @@
             {{ $t("profile.level", { level: detail.level }) }}
           </n-tag>
         </div>
-        <p class="sign">{{ profile.signature || $t("profile.signature") }}</p>
+        <p class="sign selectable">{{ profile.signature || $t("profile.signature") }}</p>
         <div class="stats">
           <div class="stat">
             <strong>{{ formatNumber(profile.follows || 0) }}</strong>
@@ -161,24 +161,26 @@ const loadProfile = async (id: string | string[] | null) => {
   hasMore.value = false;
   ownLists.value = [];
   likeLists.value = [];
-  try {
-    // 两个请求互不依赖，并行发出，少一个往返
-    const [detailRes, listRes] = await Promise.all([
-      getUserDetail(numericId),
-      getUserPlaylist(numericId, PLAYLIST_PAGE_SIZE, 0),
-    ]);
+  // 换人时不要先露出上一个人的头部
+  detail.value = {};
+  profile.value = {};
+  // 资料与歌单互不依赖：各自返回各自渲染，头部不用等上百个歌单
+  const detailTask = getUserDetail(numericId).then((detailRes) => {
     if (requestId !== requestSerial) return;
-
     detail.value = detailRes || {};
     profile.value = detailRes?.profile || {};
     followed.value = Boolean(profile.value?.followed);
     $setSiteTitle(profile.value?.nickname || t("profile.title"));
-
+  });
+  const listTask = getUserPlaylist(numericId, PLAYLIST_PAGE_SIZE, 0).then((listRes) => {
+    if (requestId !== requestSerial) return;
     if (listRes?.playlist) collectPlaylists(listRes.playlist, numericId);
     hasMore.value = Boolean(listRes?.more ?? listRes?.playlist?.length === PLAYLIST_PAGE_SIZE);
-
     loading.value = false;
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
+  });
+  if (typeof $scrollToTop !== "undefined") $scrollToTop();
+  try {
+    await Promise.all([detailTask, listTask]);
   } catch (err) {
     if (requestId !== requestSerial) return;
     loading.value = false;

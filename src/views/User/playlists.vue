@@ -16,10 +16,7 @@
       <!-- 新建歌单 -->
       <CreatePlaylist ref="createPlaylistRef" />
     </div>
-    <CoverLists
-      :listData="user.getUserPlayLists.own"
-      :loading="user.getUserPlayLists.isLoading || !user.getUserPlayLists.has"
-    />
+    <CoverLists :listData="user.getUserPlayLists.own" :loading="!user.getUserPlayLists.has" />
   </div>
 </template>
 

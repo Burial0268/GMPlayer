@@ -6,7 +6,10 @@
 
 input,
 textarea,
-[contenteditable="true"] {
+[contenteditable="true"],
+/* 允许复制的文本（评论、标题、简介、签名）；`*` 会给每个后代重新设 none，所以后代也要放行 */
+.selectable,
+.selectable * {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -232,7 +235,8 @@ textarea,
   input,
   textarea,
   [contenteditable="true"],
-  .selectable {
+  .selectable,
+  .selectable * {
     -webkit-user-select: text;
     user-select: text;
     -webkit-touch-callout: default;
@@ -727,6 +731,12 @@ html.has-floating-titlebar {
 }
 
 // 文本超出隐藏
+/* 用户写的长文本（评论、简介）：保留换行，超长链接 / 连续字符在容器内折行 */
+.long-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .text-hidden {
   display: -webkit-box !important;
   -webkit-box-orient: vertical;

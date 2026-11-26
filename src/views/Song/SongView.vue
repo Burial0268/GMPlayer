@@ -26,9 +26,9 @@
         />
       </div>
       <div class="meta">
-        <div class="title">
+        <div class="title selectable">
           <span class="detail-kind">{{ $t("general.name.song") }}</span>
-          <n-text class="name text-hidden" v-html="musicDetail.name" />
+          <n-text class="name text-hidden">{{ musicDetail.name }}</n-text>
           <AllArtists
             v-if="musicDetail.ar"
             class="creator"
@@ -39,11 +39,9 @@
         <div class="detail-stats">
           <div class="num">
             <n-icon :depth="3" :component="RecordDisc" />
-            <n-text
-              class="link"
-              v-html="musicDetail.al.name"
-              @click="router.push(`/album?id=${musicDetail.al.id}`)"
-            />
+            <n-text class="link selectable" @click="router.push(`/album?id=${musicDetail.al.id}`)">
+              {{ musicDetail.al.name }}
+            </n-text>
           </div>
           <div class="num" v-if="musicDetail.publishTime">
             <n-icon :depth="3" :component="Time" />
@@ -55,7 +53,7 @@
           </div>
         </div>
         <div class="intr" v-if="songAlias">
-          <span class="desc text-hidden" v-html="songAlias" />
+          <span class="desc text-hidden selectable">{{ songAlias }}</span>
         </div>
         <n-space class="tag" v-if="hasSongTags">
           <n-tag
