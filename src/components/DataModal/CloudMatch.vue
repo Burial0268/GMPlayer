@@ -89,6 +89,12 @@ const user = userStore();
 const cloudDataLoad = inject("cloudDataLoad", null);
 const cloudMatchModal = ref(false);
 const cloudMatchBeforeData = ref(null);
+// 先于下面读它的 watch 声明：watch 注册时就会跑一次 getter，晚声明会在 setup 里抛 TDZ 错误。
+const cloudMatchValue = ref({
+  uid: user.getUserData.userId,
+  sid: null,
+  asid: null,
+});
 // 「检查」查到的目标歌曲；只有查到了才允许匹配。
 const target = ref(null);
 const checking = ref(false);
@@ -120,11 +126,6 @@ watch(
   () => cloudMatchValue.value.asid,
   () => (target.value = null),
 );
-const cloudMatchValue = ref({
-  uid: user.getUserData.userId,
-  sid: null,
-  asid: null,
-});
 
 // 歌曲纠正
 const setCloudMatchBtn = (data) => {
