@@ -1,9 +1,9 @@
 import type { AudioThreadEventCallback, AudioThreadMessage } from "../protocol";
 import { isTauri } from "../../core/runtime";
 import { createTauriAudioBackendTransport } from "./tauri";
-import type { AudioBackendTransport } from "./types";
+import type { AudioBackendTransport, CommandTicket } from "./types";
 
-export type { AudioBackendTransport } from "./types";
+export type { AudioBackendTransport, CommandTicket } from "./types";
 
 declare const __GMPLAYER_TAURI_BUILD__: boolean;
 
@@ -31,10 +31,13 @@ class LazyWasmAudioBackendTransport implements AudioBackendTransport {
     };
   }
 
-  sendOrQueue(msg: AudioThreadMessage): boolean {
-    if (this._impl) return this._impl.sendOrQueue(msg);
-    void this._load().then((impl) => impl.sendOrQueue(msg));
-    return false;
+  send(msg: AudioThreadMessage): CommandTicket {
+    if (this._impl) return this._impl.send(msg);
+    let sent: CommandTicket | null = null;
+    void this._load().then((impl) => {
+      sent = impl.send(msg);
+    });
+    return { acknowledgedBy: (meta) => sent?.acknowledgedBy(meta) ?? false };
   }
 
   getGainNode(): GainNode | null {

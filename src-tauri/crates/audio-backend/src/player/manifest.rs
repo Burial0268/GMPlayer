@@ -23,8 +23,10 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use tracing::warn;
+
 use crate::types::{
-    NativeManifestEntry, NativePlaybackManifest, NativePlaybackMode, TrackIdentity,
+    NativeManifestEntry, NativePlaybackManifest, NativePlaybackMode, OrderEdit, TrackIdentity,
 };
 
 #[derive(Debug, Default)]
@@ -66,8 +68,8 @@ impl ManifestStore {
 
     /// Replace the manifest wholesale. Returns `false` when the incoming
     /// revision is not strictly newer, leaving the store untouched.
-    pub fn set(&mut self, manifest: NativePlaybackManifest) -> bool {
-        if manifest.revision <= self.revision() {
+    pub fn set(&mut self, mut manifest: NativePlaybackManifest) -> bool {
+        if manifest.revision <= self.revision() || !self.fill_entries(&mut manifest) {
             return false;
         }
         let natural_keys = if !manifest.natural_order.is_empty() {
@@ -103,20 +105,30 @@ impl ManifestStore {
     /// - fresh permutation when the frontend replaced the list (`reshuffle`) or
     ///   the mode just became random, with `pin` kept at the head so the change
     ///   alone never moves what is audible;
+    /// - the published list as given when its `order_base` is our current
+    ///   generation: the page had mirrored our order, so a difference is an edit;
     /// - otherwise the previous permutation carried over by identity, so a
     ///   republish — which follows every track change — cannot restart the pass;
     /// - the very first manifest is trusted as it is: it is the queue the user
     ///   saw last session, which is the permutation to resume.
     pub fn set_owning_order(
         &mut self,
-        manifest: NativePlaybackManifest,
+        mut manifest: NativePlaybackManifest,
         pin: Option<&str>,
     ) -> Option<bool> {
-        if manifest.revision <= self.revision() {
+        if manifest.revision <= self.revision() || !self.fill_entries(&mut manifest) {
             return None;
         }
+        let edits = std::mem::take(&mut manifest.order_edits);
         let previous_mode = self.manifest.as_ref().map(|m| m.mode);
-        let previous_keys = self.order_keys();
+        // Built on the permutation we hold, so any difference is the user's edit
+        // ("play next" on a queued track); otherwise it may be a page that was away.
+        let edited_ours = manifest.order_base == Some(self.order_generation());
+        let previous_keys = if edited_ours {
+            Vec::new()
+        } else {
+            self.order_keys()
+        };
         let random = manifest.mode == NativePlaybackMode::Random;
         let legacy_reshuffle = manifest.reshuffle;
         let shuffle = manifest.shuffle.clone();
@@ -138,13 +150,96 @@ impl ManifestStore {
             }
             self.pin_to_head(pin);
         } else if previous_mode.is_some() {
-            self.order = rebase_order(&previous_keys, self.entries());
+            if !edited_ours {
+                self.order = rebase_order(&previous_keys, self.entries());
+            }
         } else {
             // An applied token proves that the first entries already contain
             // the saved permutation. A new process must not draw it again.
             self.shuffle_id = shuffle.as_ref().map(|state| state.id.clone());
         }
-        Some(pending.is_some() || fresh || !self.is_natural_order())
+        self.apply_edits(&edits);
+        // A stale base is reported even when nothing moved, or the page never
+        // learns the generation and every later edit of it is rebased away.
+        Some(pending.is_some() || fresh || !edited_ours || !self.is_natural_order())
+    }
+
+    /// Build the entries of a manifest told relative to the stored one
+    /// (`entries_from`, see its doc). `false` when the store holds another
+    /// revision (a replaced player, a cleared or refused manifest) or the rows do
+    /// not fit: the planner status that answers it acknowledges the publish with a
+    /// lower revision, and the frontend resends the whole list.
+    fn fill_entries(&self, manifest: &mut NativePlaybackManifest) -> bool {
+        let Some(base) = manifest.entries_from.take() else {
+            return true;
+        };
+        let Some(held) = self.manifest.as_ref().filter(|held| held.revision == base) else {
+            warn!(
+                "manifest {} is told relative to revision {base}, store holds {}",
+                manifest.revision,
+                self.revision()
+            );
+            return false;
+        };
+        let rows = std::mem::take(&mut manifest.entry_rows);
+        if rows.is_empty() {
+            manifest.entries = held.entries.clone();
+        } else {
+            let added = std::mem::take(&mut manifest.entries);
+            let entries: Option<Vec<_>> = rows
+                .chunks(2)
+                .map(|pair| {
+                    let (&source, &index) = (pair.first()?, pair.get(1)?);
+                    let mut entry = match usize::try_from(source) {
+                        Ok(position) => held.entries.get(position)?,
+                        Err(_) => added.get(usize::try_from(-1 - source).ok()?)?,
+                    }
+                    .clone();
+                    entry.playlist_index = usize::try_from(index).ok()?;
+                    Some(entry)
+                })
+                .collect();
+            let Some(entries) = entries else {
+                warn!("manifest {} has rows that do not fit", manifest.revision);
+                return false;
+            };
+            manifest.entries = entries;
+        }
+        if manifest.natural_order.is_empty() && manifest.mode == NativePlaybackMode::Random {
+            manifest.natural_order = held.natural_order.clone();
+        }
+        true
+    }
+
+    /// Replay the user's moves on the order just decided.
+    ///
+    /// shortcut: a duplicated identity moves its first occurrence; upgrade if a
+    /// queue that lists one track twice needs a specific copy moved.
+    fn apply_edits(&mut self, edits: &[OrderEdit]) {
+        for edit in edits {
+            let Some(position) = self.position_of_key(&edit.identity.key()) else {
+                continue;
+            };
+            let Some(from) = self.slot_of_position(position) else {
+                continue;
+            };
+            self.order.remove(from);
+            let at = match &edit.after {
+                None => Some(0),
+                Some(after) => self
+                    .position_of_key(&after.key())
+                    .and_then(|anchor| self.slot_of_position(anchor))
+                    .map(|slot| slot + 1),
+            };
+            // An anchor that is gone (or the track itself) leaves it where it was.
+            self.order.insert(at.unwrap_or(from), position);
+        }
+    }
+
+    /// Changes exactly when the backend draws a permutation of its own. A
+    /// manifest whose `order_base` names it was built on the current one.
+    pub fn order_generation(&self) -> u64 {
+        self.shuffle_pass
     }
 
     /// Keys of the traversal, in order. The identity-keyed form of `order`, which
@@ -474,7 +569,137 @@ mod tests {
             shuffle: None,
             natural_order: Vec::new(),
             shuffle_pin: None,
+            order_base: None,
+            order_edits: Vec::new(),
+            entries_from: None,
+            entry_rows: Vec::new(),
         }
+    }
+
+    /// What a page publishes when only its cursor or mode moved.
+    fn reusing(base: u64, revision: u64) -> NativePlaybackManifest {
+        NativePlaybackManifest {
+            entries_from: Some(base),
+            ..manifest(revision, &[])
+        }
+    }
+
+    fn ids_of(store: &ManifestStore) -> Vec<(String, usize)> {
+        store
+            .entries()
+            .iter()
+            .map(|e| (e.identity.key(), e.playlist_index))
+            .collect()
+    }
+
+    #[test]
+    fn a_publish_naming_the_held_entries_reuses_them() {
+        let mut store = ManifestStore::new();
+        store.set(manifest(1, &["a", "b"]));
+        let held = ids_of(&store);
+        assert!(store.set(NativePlaybackManifest {
+            cursor_index: 1,
+            ..reusing(1, 2)
+        }));
+        assert_eq!(store.revision(), 2);
+        assert_eq!(ids_of(&store), held);
+        // The next one names the revision that reused them.
+        assert!(store.set(reusing(2, 3)));
+        assert_eq!(ids_of(&store), held);
+    }
+
+    #[test]
+    fn a_random_publish_without_a_natural_order_keeps_the_held_one() {
+        let mut store = ManifestStore::new();
+        let id = |id: &str| entry(id, 0).identity;
+        store.set(NativePlaybackManifest {
+            natural_order: vec![id("b"), id("a")],
+            ..random_manifest(1, &["a", "b"])
+        });
+        let random_reuse = |base, revision| NativePlaybackManifest {
+            mode: NativePlaybackMode::Random,
+            ..reusing(base, revision)
+        };
+        assert!(store.set(random_reuse(1, 2)));
+        assert!(store.set(random_reuse(2, 3)));
+        assert_eq!(store.natural_order, vec![id("b").key(), id("a").key()]);
+        // Outside random there is no natural order to keep.
+        assert!(store.set(reusing(3, 4)));
+        assert_eq!(store.natural_order, vec![id("a").key(), id("b").key()]);
+    }
+
+    #[test]
+    fn rows_reorder_drop_and_add_entries() {
+        let mut store = ManifestStore::new();
+        store.set(manifest(1, &["a", "b", "c"]));
+        // c, a, then the new d; b is gone.
+        assert!(store.set(NativePlaybackManifest {
+            entries: vec![entry("d", 0)],
+            entry_rows: vec![2, 0, 0, 1, -1, 2],
+            ..reusing(1, 2)
+        }));
+        let key = |id: &str| entry(id, 0).identity.key();
+        assert_eq!(
+            ids_of(&store),
+            vec![(key("c"), 0), (key("a"), 1), (key("d"), 2)]
+        );
+    }
+
+    #[test]
+    fn rows_that_do_not_fit_are_refused() {
+        let mut store = ManifestStore::new();
+        store.set(manifest(1, &["a", "b"]));
+        let rows = |entry_rows: Vec<i64>, entries| NativePlaybackManifest {
+            entries,
+            entry_rows,
+            ..reusing(1, 2)
+        };
+        assert!(
+            !store.set(rows(vec![2, 0], Vec::new())),
+            "past the held entries"
+        );
+        assert!(
+            !store.set(rows(vec![-2, 0], vec![entry("c", 0)])),
+            "past the additions"
+        );
+        assert!(
+            !store.set(rows(vec![0, -1], Vec::new())),
+            "negative playlist index"
+        );
+        assert!(!store.set(rows(vec![0], Vec::new())), "half a pair");
+        assert_eq!(store.revision(), 1);
+    }
+
+    #[test]
+    fn entries_named_from_another_revision_are_refused() {
+        let mut store = ManifestStore::new();
+        assert!(!store.set(reusing(1, 2)), "nothing held");
+        store.set(manifest(1, &["a", "b"]));
+        assert!(!store.set(reusing(5, 6)));
+        assert_eq!(store.set_owning_order(reusing(5, 7), None), None);
+        assert_eq!(store.revision(), 1);
+        assert_eq!(store.len(), 2);
+    }
+
+    #[test]
+    fn a_reused_list_keeps_the_mirrored_permutation() {
+        let mut store = ManifestStore::new();
+        let ids = ["a", "b", "c", "d", "e", "f"];
+        let order = shuffled(&mut store, &ids);
+        let order_ids: Vec<&str> = order
+            .iter()
+            .map(|k| k.rsplit(':').next().unwrap())
+            .collect();
+        assert_eq!(
+            store.set_owning_order(mirrored_manifest(&store, 3, &order_ids), None),
+            Some(false)
+        );
+        let delta = NativePlaybackManifest {
+            entries_from: Some(3),
+            ..mirrored_manifest(&store, 4, &[])
+        };
+        assert_eq!(store.set_owning_order(delta, None), Some(false));
+        assert_eq!(keys(&store), order);
     }
 
     #[test]
@@ -706,8 +931,33 @@ mod tests {
         NativePlaybackManifest {
             mode: NativePlaybackMode::Random,
             random_seed: Some(11),
+            order_base: Some(0),
             ..manifest(revision, ids)
         }
+    }
+
+    /// What a page publishes after mirroring the store's latest order.
+    fn mirrored_manifest(
+        store: &ManifestStore,
+        revision: u64,
+        ids: &[&str],
+    ) -> NativePlaybackManifest {
+        NativePlaybackManifest {
+            order_base: Some(store.order_generation()),
+            ..random_manifest(revision, ids)
+        }
+    }
+
+    fn shuffled(store: &mut ManifestStore, ids: &[&str]) -> Vec<String> {
+        store.set_owning_order(random_manifest(1, ids), None);
+        store.set_owning_order(
+            NativePlaybackManifest {
+                reshuffle: true,
+                ..random_manifest(2, ids)
+            },
+            None,
+        );
+        keys(store)
     }
 
     fn keys(store: &ManifestStore) -> Vec<String> {
@@ -745,9 +995,102 @@ mod tests {
 
         // The frontend applied that order and publishes its queue as it now is.
         let mirrored: Vec<&str> = permutation.iter().map(|k| &k["netease:".len()..]).collect();
-        let outcome = store.set_owning_order(random_manifest(3, &mirrored), None);
+        let outcome = store.set_owning_order(mirrored_manifest(&store, 3, &mirrored), None);
         assert_eq!(outcome, Some(false));
         assert_eq!(keys(&store), permutation);
+    }
+
+    /// "Play next" on a track already in the queue moves it in the page's mirror.
+    /// Rebasing by identity used to put it straight back, so the action did nothing.
+    #[test]
+    fn an_edit_of_the_mirrored_order_is_taken_as_published() {
+        let mut store = ManifestStore::new();
+        let held = shuffled(&mut store, &["a", "b", "c", "d", "e"]);
+        let mut edited: Vec<&str> = held.iter().map(|k| &k["netease:".len()..]).collect();
+        let moved = edited.remove(4);
+        edited.insert(1, moved);
+
+        let outcome = store.set_owning_order(mirrored_manifest(&store, 3, &edited), None);
+        assert_eq!(outcome, Some(false), "nothing for the page to mirror back");
+        let expected: Vec<String> = edited.iter().map(|id| format!("netease:{id}")).collect();
+        assert_eq!(keys(&store), expected);
+    }
+
+    /// The same list built on an order the backend has since replaced is a stale
+    /// page, not an edit: rebased, and reported so the page learns the generation.
+    #[test]
+    fn an_edit_on_a_superseded_order_is_rebased_and_reported() {
+        let mut store = ManifestStore::new();
+        let held = shuffled(&mut store, &["a", "b", "c", "d", "e"]);
+        let mut edited: Vec<&str> = held.iter().map(|k| &k["netease:".len()..]).collect();
+        let moved = edited.remove(4);
+        edited.insert(1, moved);
+
+        let stale = NativePlaybackManifest {
+            order_base: Some(store.order_generation() - 1),
+            ..random_manifest(3, &edited)
+        };
+        assert_eq!(store.set_owning_order(stale, None), Some(true));
+        assert_eq!(keys(&store), held);
+    }
+
+    /// "Play next" pressed while a reshuffle was in flight: the list is built on
+    /// the old order, so it is rebased onto the new draw, and the move carried
+    /// with it is replayed there instead of being lost.
+    #[test]
+    fn an_edit_on_a_superseded_order_is_replayed_on_the_new_one() {
+        let mut store = ManifestStore::new();
+        let held = shuffled(&mut store, &["a", "b", "c", "d", "e"]);
+        let id = |key: &String| key["netease:".len()..].to_string();
+        let (playing, moved) = (id(&held[0]), id(&held[4]));
+        let netease = |id: &str| TrackIdentity::Netease { id: id.to_string() };
+
+        let stale = NativePlaybackManifest {
+            order_base: Some(store.order_generation() - 1),
+            order_edits: vec![OrderEdit {
+                identity: netease(&moved),
+                after: Some(netease(&playing)),
+            }],
+            ..random_manifest(3, &["a", "b", "c", "d", "e"])
+        };
+        assert_eq!(store.set_owning_order(stale, None), Some(true));
+        let mut expected = held.clone();
+        let key = expected.remove(4);
+        expected.insert(1, key);
+        assert_eq!(keys(&store), expected);
+    }
+
+    #[test]
+    fn an_edit_to_the_head_or_after_a_missing_track() {
+        let mut store = ManifestStore::new();
+        let held = shuffled(&mut store, &["a", "b", "c"]);
+        let netease = |key: &String| TrackIdentity::Netease {
+            id: key["netease:".len()..].to_string(),
+        };
+        let ids: Vec<String> = held
+            .iter()
+            .map(|k| k["netease:".len()..].to_string())
+            .collect();
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+
+        let manifest = NativePlaybackManifest {
+            order_edits: vec![
+                OrderEdit {
+                    identity: netease(&held[2]),
+                    after: None,
+                },
+                OrderEdit {
+                    identity: netease(&held[0]),
+                    after: Some(TrackIdentity::Netease { id: "gone".into() }),
+                },
+            ],
+            ..mirrored_manifest(&store, 3, &refs)
+        };
+        store.set_owning_order(manifest, None);
+        assert_eq!(
+            keys(&store),
+            vec![held[2].clone(), held[0].clone(), held[1].clone()]
+        );
     }
 
     /// The bug itself: a page that was away publishes its stale queue order. The
@@ -812,7 +1155,7 @@ mod tests {
 
         // Carried over rather than drawn, the same order is not news.
         assert_eq!(
-            store.set_owning_order(random_manifest(3, &["a", "b"]), None),
+            store.set_owning_order(mirrored_manifest(&store, 3, &["a", "b"]), None),
             Some(false)
         );
     }

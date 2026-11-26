@@ -34,7 +34,7 @@ impl AudioPlayer {
             }
         }
 
-        let music_id = self.session.lock().music_id.clone();
+        let music_id = self.bus.session().music_id;
         let _ = self
             .emitter()
             .emit(AudioThreadEvent::Buffering {

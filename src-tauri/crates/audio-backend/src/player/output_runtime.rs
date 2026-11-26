@@ -590,7 +590,7 @@ impl AudioPlayer {
                     // playback_id) and the new gate reports only a fresh starve, so a
                     // flag left set would keep the output paused on a playable file.
                     if std::mem::take(&mut self.stream_buffering) {
-                        let music_id = self.session.lock().music_id.clone();
+                        let music_id = self.bus.session().music_id;
                         let _ = self
                             .emitter()
                             .emit(AudioThreadEvent::Buffering {

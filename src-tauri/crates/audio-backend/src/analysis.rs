@@ -23,18 +23,22 @@
 //! long it will wait in the playback queues and is held back by that long; the
 //! visuals then follow what is audible instead of what was decoded.
 //!
-//! Events leave through the same `tokio::sync::mpsc::UnboundedSender` that
-//! every other player event uses, so the WS forwarder picks them up unchanged.
+//! Events leave through the player's `EventBus` as analysis frames: unordered,
+//! never part of the session snapshot, paced by the forwarder.
 
 use std::collections::VecDeque;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use audio_analysis::{visualization_downmix_gain, FftConfig, FftProcessor, FFT_SIZE};
+#[cfg(test)]
 use tokio::sync::mpsc as tokio_mpsc;
 use tracing::warn;
 
-use crate::types::{AudioThreadEvent, AudioThreadEventMessage};
+use crate::player::EventBus;
+use crate::types::AudioThreadEvent;
+#[cfg(test)]
+use crate::types::EventEnvelope;
 
 /// Poll interval while a frame is due but not enough audio has arrived yet.
 const TICK: Duration = Duration::from_millis(8);
@@ -169,7 +173,7 @@ impl AnalysisSender {
 /// The loop terminates when every `Sender` has been dropped (the channel
 /// returns `Disconnected`) or the event sink is closed.
 pub fn spawn_analysis_thread(
-    evt_sender: tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
+    evt_sender: EventSink,
 ) -> std::io::Result<(AnalysisSender, std::thread::JoinHandle<()>)> {
     let (control_tx, control_rx) = mpsc::channel::<AnalysisCommand>();
     let (pcm_tx, pcm_rx) = mpsc::sync_channel::<AnalysisPcm>(PCM_QUEUE_CAPACITY);
@@ -179,7 +183,7 @@ pub fn spawn_analysis_thread(
     Ok((AnalysisSender { control_tx, pcm_tx }, handle))
 }
 
-type EventSink = tokio_mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>;
+type EventSink = std::sync::Arc<EventBus>;
 
 fn analysis_loop(
     control_rx: mpsc::Receiver<AnalysisCommand>,
@@ -346,23 +350,14 @@ impl Analysis {
         let bins = self.fft.low_frequency_bins().to_vec();
         let sent = self
             .evt
-            .send(AudioThreadEventMessage::new(
-                String::new(),
-                Some(AudioThreadEvent::LowFreqBins { bins }),
-            ))
-            .is_ok();
+            .emit_ephemeral(AudioThreadEvent::LowFreqBins { bins });
         if !sent || !self.fft_enabled || now < self.next_fft_data {
             return sent;
         }
         self.next_fft_data = (self.next_fft_data + FFT_DATA_INTERVAL).max(now);
-        self.evt
-            .send(AudioThreadEventMessage::new(
-                String::new(),
-                Some(AudioThreadEvent::FFTData {
-                    data: self.fft.display_spectrum().to_vec(),
-                }),
-            ))
-            .is_ok()
+        self.evt.emit_ephemeral(AudioThreadEvent::FFTData {
+            data: self.fft.display_spectrum().to_vec(),
+        })
     }
 
     /// Until the next frame slot; a slot already passed is waiting on audio
@@ -409,13 +404,13 @@ mod tests {
     }
 
     fn wait_event(
-        events: &mut tokio_mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadEvent>>,
+        events: &mut tokio_mpsc::UnboundedReceiver<EventEnvelope>,
         matches: impl Fn(&AudioThreadEvent) -> bool,
     ) {
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             if let Ok(message) = events.try_recv() {
-                if message.data.as_ref().is_some_and(&matches) {
+                if matches(&message.data) {
                     return;
                 }
             }
@@ -429,7 +424,7 @@ mod tests {
         let (control_tx, control_rx) = mpsc::channel();
         let (pcm_tx, pcm_rx) = mpsc::sync_channel(PCM_QUEUE_CAPACITY);
         let (recycle_tx, recycle_rx) = mpsc::channel();
-        let (evt_tx, mut evt_rx) = tokio_mpsc::unbounded_channel();
+        let (evt_tx, mut evt_rx) = EventBus::new();
         let (done_tx, done_rx) = mpsc::channel();
         control_tx
             .send(AnalysisCommand::SetEnabled { enabled: false })
@@ -460,7 +455,7 @@ mod tests {
 
     #[test]
     fn controls_wake_disabled_analysis_and_reenabling_restores_fft() {
-        let (events, mut received) = tokio_mpsc::unbounded_channel();
+        let (events, mut received) = EventBus::new();
         let (sender, worker) = spawn_analysis_thread(events).unwrap();
         sender
             .send(AnalysisCommand::SetEnabled { enabled: false })
@@ -509,7 +504,7 @@ mod tests {
 
     #[test]
     fn opening_burst_fits_the_channel_and_queued_audio_survives_a_toggle() {
-        let (events, _received) = tokio_mpsc::unbounded_channel();
+        let (events, _received) = EventBus::new();
         let (sender, worker) = spawn_analysis_thread(events).unwrap();
         // Deepest real queue: the decoder fills it in a burst after a start/seek.
         for _ in 0..96 {
@@ -559,7 +554,7 @@ mod tests {
 
     #[test]
     fn sleeps_until_the_next_frame_and_polls_once_it_is_overdue() {
-        let (evt, _rx) = tokio_mpsc::unbounded_channel();
+        let (evt, _rx) = EventBus::new();
         let mut state = Analysis::new(evt);
         let now = Instant::now();
         state.next_fft = now + Duration::from_millis(5);

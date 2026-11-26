@@ -21,7 +21,7 @@ fn run(cancel_and_pause: bool) {
     file.write_all(bytes).unwrap();
     file.flush().unwrap();
     let mut output = TestOutput::new(2, 48_000, 16);
-    let (events, _event_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (events, _event_rx) = crate::player::EventBus::new();
     let (analysis, analysis_thread) = crate::analysis::spawn_analysis_thread(events).unwrap();
     let (decoder_events, mut decoder_rx) = tokio::sync::mpsc::unbounded_channel();
     let rate = 1.03;

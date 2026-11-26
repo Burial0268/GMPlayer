@@ -15,17 +15,16 @@ use super::planner_runtime::PlannerDirection;
 use super::{AudioPlayer, PlaybackIntent};
 
 impl AudioPlayer {
-    pub(super) async fn process_message(
-        &mut self,
-        msg: AudioThreadEventMessage<AudioThreadMessage>,
-    ) -> anyhow::Result<()> {
+    pub(super) async fn process_message(&mut self, msg: CommandEnvelope) -> anyhow::Result<()> {
+        // Everything emitted from here on acknowledges this command.
+        self.bus.take_up_command(msg.cmd);
         let emitter = self.emitter();
-        if let Some(ref data) = msg.data {
-            match data {
+        {
+            match &msg.data {
                 AudioThreadMessage::ResumeAudio => {
                     if self.personal_fm.is_some() {
                         self.set_personal_fm_playing(true).await;
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     self.playback_intent = PlaybackIntent::Playing;
                     self.resume_audio_output().await;
@@ -39,7 +38,7 @@ impl AudioPlayer {
                 AudioThreadMessage::PauseAudio => {
                     if self.personal_fm.is_some() {
                         self.set_personal_fm_playing(false).await;
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     self.playback_intent = PlaybackIntent::Paused;
                     let current_pos = self.clock_position();
@@ -58,7 +57,7 @@ impl AudioPlayer {
                 AudioThreadMessage::ResumeOrPauseAudio => {
                     if let Some(fm) = &self.personal_fm {
                         self.set_personal_fm_playing(!fm.desired_playing).await;
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     let was_paused = self.playback_intent == PlaybackIntent::Paused;
                     let current_pos = self.clock_position();
@@ -116,7 +115,7 @@ impl AudioPlayer {
                 AudioThreadMessage::NextSong => {
                     if self.personal_fm.is_some() {
                         self.advance_personal_fm().await;
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     // Planner first, for the same reason `handle_decoder_finished`
                     // prefers it: it can reach any track in the list and
@@ -127,43 +126,43 @@ impl AudioPlayer {
                     if self.planner_can_advance()
                         && self.advance_via_planner_in(PlannerDirection::Next).await
                     {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if self.playback_queue.next().is_none() || !self.sync_current_from_queue() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     self.start_playing_song(true, None, None).await?;
                 }
                 AudioThreadMessage::NextSongGapless => {
                     if self.personal_fm.is_some() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     // Deliberately queue-only: this is what `handle_decoder_finished`
                     // falls back to *after* the planner already declined or
                     // failed, so re-entering the planner here would retry a
                     // transition that just lost.
                     if self.playback_queue.next().is_none() || !self.sync_current_from_queue() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     self.start_playing_song(true, None, None).await?;
                 }
                 AudioThreadMessage::PrevSong => {
                     if self.personal_fm.is_some() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if self.planner_can_advance()
                         && self.advance_via_planner_in(PlannerDirection::Prev).await
                     {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if self.playback_queue.prev().is_none() || !self.sync_current_from_queue() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     self.start_playing_song(true, None, None).await?;
                 }
                 AudioThreadMessage::JumpToSong { song_index } => {
                     if self.personal_fm.is_some() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if self.playback_queue.set_index(*song_index).is_some()
                         && self.sync_current_from_queue()
@@ -176,7 +175,7 @@ impl AudioPlayer {
                     position,
                 } => {
                     if self.personal_fm.is_some() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if self.playback_queue.set_index(*song_index).is_some()
                         && self.sync_current_from_queue()
@@ -193,7 +192,7 @@ impl AudioPlayer {
                     autoplay,
                 } => {
                     if self.personal_fm.is_some() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     let current_id = self.current_song.as_ref().map(SongData::get_id);
                     self.playback_queue.set_playlist(songs.clone(), *windowed);
@@ -340,7 +339,7 @@ impl AudioPlayer {
                     transition_id,
                 } => {
                     if self.personal_fm.is_some() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if !self.native_prepare_matches_current(current_identity.as_ref()) {
                         info!(
@@ -348,7 +347,7 @@ impl AudioPlayer {
                             current_index, self.current_play_index
                         );
                         self.sync_ui().await;
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     let next_identity = next_identity
                         .clone()
@@ -357,7 +356,7 @@ impl AudioPlayer {
                         .resume_native_mix(*next_index, next_identity.as_ref(), *transition_id)
                         .await
                     {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     info!(
                         "AutoMix prepare requested: current_index={}, next_index={}, transition_id={:?}",
@@ -399,15 +398,15 @@ impl AudioPlayer {
                 AudioThreadMessage::AutomixForceStart { generation } => {
                     if let Some(generation) = generation {
                         if *generation != self.native_crossfade_gen() {
-                            return self.finish_message(msg).await;
+                            return Ok(());
                         }
                     }
                     if self.native_crossfade_active {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if !self.native_automix_incoming_ready() {
                         self.schedule_native_automix_ready_retry(self.native_crossfade_gen());
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if let Err(err) = self.start_native_automix_crossfade().await {
                         self.cancel_native_automix_runtime().await;
@@ -423,7 +422,7 @@ impl AudioPlayer {
                     position,
                 } => {
                     if *generation != self.native_crossfade_gen() {
-                        return self.finish_message(msg).await;
+                        return Ok(());
                     }
                     if self.native_mix.is_none() {
                         self.complete_native_automix(*current_index, *position, None)
@@ -468,21 +467,6 @@ impl AudioPlayer {
                 }
             }
         }
-        self.finish_message(msg).await
-    }
-
-    /// Ack the request (so the frontend's callback_id pairing resolves) and
-    /// return. Specific state-change events (PlayStatus, PlayPosition,
-    /// VolumeChanged, PlayListChanged) are emitted at the point of change.
-    /// SyncStatus snapshots are only emitted on explicit `SyncStatus`
-    /// requests or after `start_playing_song` — emitting one per command
-    /// caused races where a snapshot could observe the old playback intent
-    /// before a follow-on ResumeAudio had been processed.
-    async fn finish_message(
-        &self,
-        msg: AudioThreadEventMessage<AudioThreadMessage>,
-    ) -> anyhow::Result<()> {
-        let _ = self.emitter().ret_none(msg).await;
         Ok(())
     }
 }

@@ -31,6 +31,20 @@ tauri-build = { version = "2", features = [] }
 [profile.dev]
 incremental = true # 以较小的步骤编译您的二进制文件。
 
+# Audio is real work even in dev: unoptimized, decoding plus AutoMix analysis of one
+# 6-minute track took 24-35 s of a core (1 s in release) and the tempo stretcher ran
+# at 2.7x realtime. Dependencies (symphonia, signalsmith-stretch, rustfft) and the
+# rarely edited analysis crates are optimized; audio-backend itself is not, because
+# opt-level 1/2 there turned a one-line edit's rebuild from 9 s into 27/44 s.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.gmplayer-automix-analysis]
+opt-level = 2
+
+[profile.dev.package.audio-analysis]
+opt-level = 2
+
 [profile.release]
 codegen-units = 1 # 允许 LLVM 执行更好的优化。
 lto = true # 启用链接时优化。

@@ -5,8 +5,8 @@ import { buildSync } from "esbuild";
 
 import type {
   AudioThreadEvent,
-  AudioThreadEventMessage,
   AudioThreadMessage,
+  EventEnvelope,
   NativeSessionSnapshot,
   TrackIdentity,
 } from "../src/utils/tauri/audio/protocol";
@@ -81,34 +81,41 @@ const statusFor = (snapshot: NativeSessionSnapshot, position: number): AudioThre
 });
 
 /**
- * A fake backend: `audio_get_session` answers at once from `snapshot`, while
- * the `syncStatus` reply is held for `statusDelayMs` (Infinity = never) — the
- * player loop being busy with a download. A `setPlaylist` is acknowledged with
- * the `loadAudio` the real backend would emit after restarting the track.
+ * A fake backend: every subscription opens with a `hello` holding `snapshot`
+ * (it never enters the player loop), while the `syncStatus` reply is held for
+ * `statusDelayMs` (Infinity = never) — the player loop being busy with a
+ * download. A `setPlaylist` is acknowledged with the `loadAudio` the real
+ * backend would emit after restarting the track. Envelopes are stamped the way
+ * the bus stamps them: the epoch an event names, the last command received.
  */
 function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: number) {
   const sent: AudioThreadMessage[] = [];
-  let channel: {
-    onmessage?: (envelope: AudioThreadEventMessage<AudioThreadEvent>) => void;
-  } | null = null;
+  let channel: { onmessage?: (envelope: EventEnvelope) => void } | null = null;
   let seq = 0;
+  let epoch = 0;
+  let ack = 0;
   const emit = (data: AudioThreadEvent) => {
-    channel?.onmessage?.({ callbackId: "", data, seq: ++seq });
+    const named = (data as any).data?.timelineEpoch;
+    if (typeof named === "number") epoch = Math.max(epoch, named);
+    channel?.onmessage?.({ seq: ++seq, epoch, ack, data });
   };
 
   class Channel {
-    onmessage?: (envelope: AudioThreadEventMessage<AudioThreadEvent>) => void;
+    onmessage?: (envelope: EventEnvelope) => void;
   }
 
   const invoke = async (cmd: string, args?: Record<string, any>) => {
     switch (cmd) {
       case "audio_subscribe_events":
         channel = args?.channel;
+        emit({
+          type: "hello",
+          data: { bootId: 0, snapshot: snapshot ?? ({ hasTrack: false } as NativeSessionSnapshot) },
+        });
         return undefined;
-      case "audio_get_session":
-        return snapshot;
       case "audio_send_msg": {
         const msg = args?.msg?.data as AudioThreadMessage;
+        ack = args?.msg?.cmd ?? ack;
         sent.push(msg);
         if (msg.type === "syncStatus" && snapshot?.hasTrack && Number.isFinite(statusDelayMs)) {
           setTimeout(
@@ -168,6 +175,7 @@ function environment(snapshot: NativeSessionSnapshot | null, statusDelayMs: numb
     window,
     setTimeout,
     clearTimeout,
+    queueMicrotask,
     Date,
     CustomEvent: class {
       constructor(
@@ -351,4 +359,24 @@ test("one backend track change is announced once, whole, however many events des
   // A load the frontend asked for is not a backend-initiated change.
   env.emit({ ...changed, data: { ...(changed as any).data, timelineEpoch: 14, loadRequestId: 9 } });
   assert.equal(changes.length, 1);
+});
+
+test("a play status emitted before a pause was processed does not undo the pause", async () => {
+  const env = environment(session(), 20);
+  const { sound } = await attach(env, 0);
+  assert.equal(sound.playing(), true);
+  const events: string[] = [];
+  for (const name of ["play", "pause"] as const) sound.on(name, () => events.push(name));
+
+  sound.pause();
+  // Still in flight: the backend has not taken the pause up, so this describes
+  // the state the user just left.
+  env.emit({ type: "playStatus", data: { isPlaying: true } });
+  await wait(0);
+  assert.equal(sound.playing(), false);
+  // The pause's own answer, which acknowledges it.
+  env.emit({ type: "playStatus", data: { isPlaying: false } });
+  await wait(0);
+  assert.equal(sound.playing(), false);
+  assert.deepEqual(events, ["pause"], "one pause, no play bounced back in between");
 });

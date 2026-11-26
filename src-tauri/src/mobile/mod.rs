@@ -58,14 +58,11 @@ pub fn run() {
             // message/Channel transport surface.
             commands::audio_send_msg,
             commands::audio_subscribe_events,
-            commands::audio_get_state,
-            commands::audio_get_session,
+            crate::last_session::last_session_get,
             commands::audio_list_output_devices,
             commands::audio_preheat,
             commands::audio_analyze_automix,
             commands::audio_analyze_automix_source,
-            commands::audio_set_session,
-            commands::audio_poll_events,
             // In-process NCM protocol layer (QuickJS + Rust primitives)
             crate::ncm::ncm_request,
             crate::ncm::ncm_request_projected,
@@ -134,7 +131,9 @@ pub fn run() {
             }
             // Before the player exists: its first download already lands in the audio cache.
             crate::storage::install(&app_handle);
-            app.manage(commands::PlayerState::new(app_handle.clone()));
+            app.manage(commands::PlayerState::new());
+            // Before any page subscribes: a cold boot asks it what the last process played.
+            crate::last_session::install(&app_handle);
             // The isolate itself is built lazily on first request, so this only
             // records where its session state lives.
             app.manage(crate::ncm::NcmState::new(&app_handle));

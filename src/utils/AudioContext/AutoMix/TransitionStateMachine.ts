@@ -40,7 +40,6 @@ import { resolveSongUrl } from "../resolveSongUrl";
 import { declaredMd5For } from "../native/DeclaredMd5";
 import { lyricFetcher } from "../../lyrics/fetcher";
 import { getAudioBackendTransport } from "../../tauri/audio/transport";
-import { audioSendMsg } from "../../tauri/audio/bridge";
 import { isNativeAudioBackendAvailable } from "../../tauri/audio/backendRuntime";
 import { identityForSong } from "../../tauri/audio/identity";
 import type { AudioThreadEvent } from "../../tauri/audio/protocol";
@@ -707,7 +706,8 @@ export class TransitionStateMachine {
         source: resolved.source,
       });
     }
-    await audioSendMsg({
+    // Sent in order on one queue, so the prepare always finds this config.
+    transport.send({
       type: "automixConfigure",
       config: {
         enabled: true,
@@ -720,8 +720,7 @@ export class TransitionStateMachine {
         emotionalTransition: this._settingsEmotionalTransition,
       },
     });
-    if (!this._isTransitionActive(transitionId, "native")) return;
-    await audioSendMsg({
+    transport.send({
       type: "automixPrepareNext",
       currentIndex,
       nextIndex,
@@ -1603,7 +1602,7 @@ export class TransitionStateMachine {
     if (this._nativeAutoMixReady) {
       if (!this._nativeForceStartSent && currentTime + 0.15 >= this._crossfadeStartTime) {
         this._nativeForceStartSent = true;
-        getAudioBackendTransport().sendOrQueue({ type: "automixForceStart" });
+        getAudioBackendTransport().send({ type: "automixForceStart" });
       }
       return;
     }
@@ -2240,7 +2239,7 @@ export class TransitionStateMachine {
     this._clearTransition();
     if (isNativeAudioBackendAvailable()) {
       try {
-        getAudioBackendTransport().sendOrQueue({ type: "automixCancel" });
+        getAudioBackendTransport().send({ type: "automixCancel" });
       } catch {
         /* ignore: transport may not be connected during teardown */
       }

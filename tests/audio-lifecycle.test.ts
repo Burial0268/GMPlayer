@@ -56,6 +56,8 @@ function queueEnvironment(native = true) {
   });
   const window: any = {};
   const activeSound: { value: any } = { value: undefined };
+  let revision: any;
+  let revisionObserver: any = null;
   const storage = new Map<string, string>();
   const localStorage = {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -64,12 +66,16 @@ function queueEnvironment(native = true) {
   class NativeRustSound {
     kind = "backend";
     manifests: any[] = [];
+    /** Hand out tickets, acknowledged by an event whose `ack` reaches the command's number. */
+    tickets = false;
     isDestroyed() {
       return false;
     }
     setNativePlannerEnabled() {}
     setNativeManifest(manifest: any) {
       this.manifests.push(manifest);
+      const sent = this.manifests.length;
+      return this.tickets ? { acknowledgedBy: (meta: any) => meta.ack >= sent } : null;
     }
   }
   const storeOptions = sourceModule(
@@ -84,15 +90,23 @@ function queueEnvironment(native = true) {
       "@/utils/tauri/audio/identity": { trackIdentityKey: keyOf },
       "@/utils/tauri/core/nativeLog": { logNative() {} },
       "@/utils/library/playlistOrder": playlistOrder,
-      "@/utils/rawEntry": { asRawEntries: (songs: any[]) => songs.slice() },
+      "@/utils/AudioContext/native/NativeManifestRevision": {
+        setOrderBase: (generation: number) => revision.setOrderBase(generation),
+      },
+      "@/utils/rawEntry": {
+        asRawEntries: (songs: any[]) => songs.slice(),
+        asRawEntry: (song: any) => song,
+      },
       "@/utils/AudioContext": {
         requestNativeReshuffle: () => publisher.requestNativeReshuffle(),
         publishNativeManifest: (...args: any[]) => publisher.publishNativeManifest(...args),
+        queueNativeOrderEdit: (...args: any[]) => publisher.queueNativeOrderEdit(...args),
         publishSessionControls() {},
         cancelNativeQueuePrefill() {},
         getAudioPreloader: () => ({ cleanup() {} }),
         getAutoMixEngine: () => ({
           isHandoffActive: () => false,
+          isCrossfading: () => false,
           cancelIfHeadingFor: (songId: unknown) => {
             autoMixCancels.push(songId);
             return false;
@@ -117,7 +131,7 @@ function queueEnvironment(native = true) {
     music.afterQueueReordered = () => {};
     music.resetPlaySongTime = () => {};
     music.resetSongLyricState = () => {};
-    const revision = sourceModule(
+    revision = sourceModule(
       "src/utils/AudioContext/native/NativeManifestRevision.ts",
       {},
       { localStorage },
@@ -128,7 +142,9 @@ function queueEnvironment(native = true) {
         vue: { toRaw },
         "@/utils/tauri/core/runtime": { isTauri: () => native },
         "@/store/musicTypes": musicTypes,
-        "@/utils/AudioContext/sound/NativeRustSound": { setPlannerRevisionObserver() {} },
+        "@/utils/AudioContext/sound/NativeRustSound": {
+          setPlannerRevisionObserver: (observer: any) => (revisionObserver = observer),
+        },
         "@/utils/AudioContext/sound/types": soundTypes,
         "@/store/musicData": { __esModule: true, default: () => music },
         "@/store/listenTogether": { __esModule: true, default: () => ({ isInRoom: false }) },
@@ -154,6 +170,10 @@ function queueEnvironment(native = true) {
       return shuffleDraws;
     },
     autoMixCancels,
+    /** A planner status from the backend, as `NativeRustSound` forwards it. */
+    plannerStatus(manifestRevision: number, ack: number) {
+      revisionObserver?.(manifestRevision, { ack });
+    },
     attach() {
       activeSound.value = new NativeRustSound();
       return activeSound.value;
@@ -310,6 +330,164 @@ test("an unchanged permutation still completes its transaction", () => {
     false,
   );
   assert.equal(env.music.persistData.shuffleState.applied, true);
+});
+
+test("play next on a queued song publishes the edit on the mirrored order's generation", async () => {
+  const env = queueEnvironment();
+  env.restore(randomQueue());
+  const sound = env.attach();
+  env.music.checkpointPlaySongTime = () => {};
+  env.music.adoptBackendQueueOrder(identities([3, 1, 4, 2]), 1, {
+    shuffleId: "saved-pass",
+    orderGeneration: 3,
+  });
+  env.music.addSongToNext({ id: 2, name: "2" });
+  await Promise.resolve();
+  const published = sound.manifests.at(-1);
+  assert.equal(published.orderBase, 3);
+  // Replayed by the backend if a reshuffle overtook this list.
+  assert.deepEqual(JSON.parse(JSON.stringify(published.orderEdits)), [
+    { identity: { provider: "netease", id: "2" }, after: { provider: "netease", id: "3" } },
+  ]);
+  assert.deepEqual(
+    Array.from(published.entries, (entry: any) => Number(entry.identity.id)),
+    [3, 2, 1, 4],
+  );
+});
+
+test("a cursor-only publish names the held entries, and resends them once the backend refuses", async () => {
+  const env = queueEnvironment();
+  env.restore(randomQueue());
+  const sound = env.attach();
+  sound.tickets = true;
+  env.publisher.publishNativeManifest();
+  await Promise.resolve();
+  const full = sound.manifests.at(-1);
+  assert.equal(full.entries.length, 4);
+  assert.equal(full.naturalOrder.length, 4);
+  assert.equal(full.entriesFrom, null);
+
+  env.music.playingSongId = 4;
+  env.publisher.publishNativeManifest();
+  await Promise.resolve();
+  const reused = sound.manifests.at(-1);
+  assert.equal(reused.entriesFrom, full.revision);
+  assert.equal(reused.entries.length, 0);
+  assert.equal(reused.naturalOrder.length, 0);
+  assert.equal(Number(reused.cursorIdentity.id), 4);
+  assert.equal(reused.cursorIndex, 2);
+
+  // A status from before that publish was taken up says nothing about it.
+  env.plannerStatus(full.revision, 1);
+  await Promise.resolve();
+  assert.equal(sound.manifests.length, 2);
+  // One that acknowledges it without installing it: the backend lost the entries.
+  env.plannerStatus(0, 2);
+  await Promise.resolve();
+  const resent = sound.manifests.at(-1);
+  assert.equal(sound.manifests.length, 3);
+  assert.equal(resent.entriesFrom, null);
+  assert.equal(resent.entries.length, 4);
+
+  // A replaced row (a title that arrived late) is new metadata: it goes as an addition.
+  env.music.persistData.playlists[1] = { id: 1, name: "one" };
+  env.music.playingSongId = 3;
+  env.publisher.publishNativeManifest();
+  await Promise.resolve();
+  const replaced = sound.manifests.at(-1);
+  assert.equal(replaced.entriesFrom, resent.revision);
+  assert.deepEqual(Array.from(replaced.entryRows), [0, 0, -1, 1, 2, 2, 3, 3]);
+  assert.deepEqual(
+    Array.from(replaced.entries, (entry: any) => entry.title),
+    ["one"],
+  );
+});
+
+/** What the backend's `ManifestStore::fill_entries` builds from a manifest. */
+function composeEntries(held: any[] | null, manifest: any): any[] | null {
+  if (manifest.entriesFrom === null || manifest.entriesFrom === undefined) return manifest.entries;
+  if (!held) return null;
+  if (!manifest.entryRows?.length) return held;
+  const entries = [];
+  for (let i = 0; i < manifest.entryRows.length; i += 2) {
+    const source = manifest.entryRows[i];
+    const entry = source >= 0 ? held[source] : manifest.entries[-1 - source];
+    if (!entry) return null;
+    entries.push({ ...entry, playlistIndex: manifest.entryRows[i + 1] });
+  }
+  return entries;
+}
+
+test("a manifest told relative to the last one always rebuilds the full list", async () => {
+  let random = 7;
+  const next = (n: number) => (random = (Math.imul(random, 1664525) + 1013904223) >>> 0) % n;
+  const env = queueEnvironment();
+  env.restore(randomQueue());
+  const sound = env.attach();
+  sound.tickets = true;
+  env.music.checkpointPlaySongTime = () => {};
+  let fresh = 100;
+  let held: any[] | null = null;
+  let heldNatural: any[] = [];
+  let revision = 0;
+  for (let step = 0; step < 400; step++) {
+    const list = env.music.persistData.playlists;
+    const op = next(7);
+    if (op === 0 && list.length > 2) env.music.moveSong(next(list.length), next(list.length));
+    else if (op === 1) env.music.addSongToNext({ id: ++fresh, name: String(fresh) });
+    else if (op === 2 && list.length > 3) {
+      const index = next(list.length);
+      if (index !== env.music.persistData.playSongIndex) env.music.removeSong(index);
+    } else if (op === 3 && list.length) {
+      const index = next(list.length);
+      list[index] = { ...list[index], name: `renamed ${step}` };
+    } else if (op === 4 && list.length) env.music.playingSongId = list[next(list.length)].id;
+    else if (op === 5 && list.length > 1) {
+      // A mirrored backend permutation.
+      const order = list.slice().sort(() => next(3) - 1);
+      env.music.adoptBackendQueueOrder(
+        order.map((song: any) => ({ provider: "netease", id: String(song.id) })),
+        999,
+        { orderGeneration: step },
+      );
+    } else if (op === 6) list.push({ id: -step - 1, name: "unplannable" });
+    env.publisher.publishNativeManifest(next(4) === 0 ? { force: true } : {});
+    await Promise.resolve();
+    const manifest = sound.manifests.at(-1);
+    if (!manifest || manifest.revision === revision) continue;
+    revision = manifest.revision;
+    held = composeEntries(held, manifest);
+    const relative = manifest.entriesFrom !== null && manifest.entriesFrom !== undefined;
+    if (manifest.naturalOrder.length || !relative || manifest.mode !== "random") {
+      heldNatural = manifest.naturalOrder;
+    }
+    const playlists = env.music.persistData.playlists;
+    const naturalIds = env.music.persistData.preShuffleOrder.length
+      ? env.music.getNaturalPlaylistOrder
+          .map((i: number) => playlists[i].id)
+          .filter((id: number) => id > 0)
+      : [];
+    assert.deepEqual(
+      JSON.parse(JSON.stringify(heldNatural.map((identity: any) => Number(identity.id)))),
+      JSON.parse(JSON.stringify(naturalIds)),
+      `natural at step ${step}`,
+    );
+    const expected = env.music.persistData.playlists
+      .map((song: any, index: number) => ({ song, index }))
+      .filter(({ song }: any) => song.id > 0)
+      .map(({ song, index }: any) => [song.id, index, song.name]);
+    assert.deepEqual(
+      JSON.parse(
+        JSON.stringify(
+          held?.map((entry: any) => [Number(entry.identity.id), entry.playlistIndex, entry.title]),
+        ),
+      ),
+      JSON.parse(JSON.stringify(expected)),
+      `step ${step}`,
+    );
+  }
+  const relative = sound.manifests.filter((m: any) => m.entriesFrom !== null).length;
+  assert.ok(relative > sound.manifests.length / 2, `${relative} of ${sound.manifests.length}`);
 });
 
 test("manifest carries original identity order including local tracks, removals and additions", async () => {
@@ -805,42 +983,47 @@ function deferred() {
 
 function transportEnvironment() {
   const handshake = deferred();
-  const fallbackHandshake = deferred();
-  const fallbackStarted = deferred();
   const channels: any[] = [];
   const sent: any[] = [];
-  let globalEvent: any;
-  let fallbackCount = 0;
-  const transportModule = sourceModule("src/utils/tauri/audio/transport/tauri.ts", {
-    "@tauri-apps/api/core": {
-      Channel: class {
-        constructor() {
-          channels.push(this);
-        }
+  const failures = new Map<number, Error>();
+  const transportModule = sourceModule(
+    "src/utils/tauri/audio/transport/tauri.ts",
+    {
+      "@tauri-apps/api/core": {
+        Channel: class {
+          constructor() {
+            channels.push(this);
+          }
+        },
+        invoke: () => handshake.promise,
       },
-      invoke: () => handshake.promise,
-    },
-    "../bridge": {
-      audioSendMsg: (msg: any) => sent.push(msg),
-      listenPlayerEvents: (handler: any) => {
-        fallbackCount++;
-        globalEvent = handler;
-        fallbackStarted.resolve();
-        return fallbackHandshake.promise.then(() => () => {});
+      "../bridge": {
+        sendAudioCommand: (envelope: any) => {
+          sent.push(envelope);
+          const failure = failures.get(envelope.cmd);
+          return failure ? Promise.reject(failure) : Promise.resolve();
+        },
       },
+      "../../core/nativeLog": { logNative() {} },
+      "./ticket": sourceModule("src/utils/tauri/audio/transport/ticket.ts", {}),
     },
-  });
+    {
+      requestAnimationFrame: (fn: () => void) => setTimeout(fn, 0),
+      cancelAnimationFrame: clearTimeout,
+    },
+  );
+  /** What the backend's bus would put on the channel. */
+  const envelope = (seq: number, data: any, ack = 0, epoch = 0) => ({ seq, epoch, ack, data });
+  const hello = (seq: number, ack = 0, bootId = 0) =>
+    envelope(seq, { type: "hello", data: { bootId, snapshot: { hasTrack: false } } }, ack);
   return {
     transport: transportModule.createTauriAudioBackendTransport(),
     handshake,
-    fallbackHandshake,
-    fallbackStarted,
     channels,
     sent,
-    emitFallback: (event: any) => globalEvent(event),
-    get fallbackCount() {
-      return fallbackCount;
-    },
+    failures,
+    envelope,
+    hello,
   };
 }
 
@@ -861,6 +1044,7 @@ test("session-control subscribers install before the transport is connected", as
   assert.equal(typeof drop, "function");
   const connected = env.transport.connect();
   env.handshake.resolve();
+  env.channels[0].onmessage(env.hello(1));
   await connected;
   drop();
 });
@@ -899,53 +1083,95 @@ test("a backend mode nobody has stated yet is not adopted", () => {
   assert.deepEqual(adopted, ["normal"]);
 });
 
-test("cold subscribers hear events during a single shared connection handshake", async () => {
+test("subscribers bound before connecting hear the hello and everything after it, once", async () => {
   const env = transportEnvironment();
   const seen: any[] = [];
-  const drop = env.transport.subscribe((event: any) => seen.push(event));
+  const drop = env.transport.subscribe((event: any) => seen.push(event.type));
   const first = env.transport.connect();
   const second = env.transport.connect();
   assert.equal(first, second);
   assert.equal(env.channels.length, 1);
-  env.channels[0].onmessage({ data: pause, seq: 1 });
-  assert.deepEqual(seen, [pause]);
-  drop();
-  env.channels[0].onmessage({ data: pause, seq: 2 });
-  assert.equal(seen.length, 1);
   env.handshake.resolve();
+  env.channels[0].onmessage(env.hello(5));
+  env.channels[0].onmessage(env.envelope(6, pause));
   await first;
-  env.transport.sendOrQueue({ type: "pauseAudio" });
-  assert.equal(env.sent.length, 1);
+  assert.deepEqual(seen, ["hello", "playStatus"]);
+  drop();
+  env.channels[0].onmessage(env.envelope(7, pause));
+  assert.equal(seen.length, 2);
 });
 
-test("cold subscribers and queued commands survive channel fallback", async () => {
+test("commands wait for the hello and are numbered above what the backend has taken up", async () => {
+  const env = transportEnvironment();
+  env.transport.send({ type: "pauseAudio" });
+  env.transport.send({ type: "resumeAudio" });
+  assert.equal(env.sent.length, 0);
+  env.handshake.resolve();
+  // A previous page left the backend at command 41.
+  env.channels[0].onmessage(env.hello(1, 41));
+  assert.deepEqual(
+    env.sent.map((e: any) => [e.cmd, e.data.type]),
+    [
+      [42, "pauseAudio"],
+      [43, "resumeAudio"],
+    ],
+  );
+  env.transport.send({ type: "pauseAudio" });
+  assert.equal(env.sent[2].cmd, 44);
+});
+
+test("a ticket is acknowledged only by events emitted after its command was taken up", async () => {
+  const env = transportEnvironment();
+  env.handshake.resolve();
+  const connected = env.transport.connect();
+  env.channels[0].onmessage(env.hello(1, 0));
+  await connected;
+  const ticket = env.transport.send({ type: "resumeAudio" });
+  assert.equal(ticket.acknowledgedBy({ seq: 2, epoch: 0, ack: 0 }), false);
+  assert.equal(ticket.acknowledgedBy({ seq: 3, epoch: 0, ack: 1 }), true);
+
+  // A command the backend never received must not be waited on forever.
+  env.failures.set(2, new Error("player channel closed"));
+  const lost = env.transport.send({ type: "pauseAudio" });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(lost.acknowledgedBy({ seq: 4, epoch: 0, ack: 1 }), true);
+});
+
+test("a resync drops whatever its hello already covers, from either channel", async () => {
   const env = transportEnvironment();
   const seen: any[] = [];
-  env.transport.subscribe((event: any) => seen.push(event));
-  env.transport.sendOrQueue({ type: "pauseAudio" });
+  env.transport.subscribe((event: any, meta: any) => seen.push([event.type, meta.seq]));
+  env.handshake.resolve();
   const connected = env.transport.connect();
-  env.handshake.reject(new Error("channel unavailable"));
-  await env.fallbackStarted.promise;
-  assert.equal(env.fallbackCount, 1);
-  env.emitFallback(pause);
-  assert.deepEqual(seen, [pause]);
-  env.fallbackHandshake.resolve();
+  env.channels[0].onmessage(env.hello(1));
   await connected;
-  await Promise.resolve();
-  assert.equal(env.sent.length, 1);
+  env.channels[0].onmessage(env.envelope(2, pause));
+
+  const resynced = env.transport.resync();
+  // The fresh hello is numbered after event 3, which the old channel then delivers late.
+  env.channels[1].onmessage(env.hello(4));
+  env.channels[0].onmessage(env.envelope(3, pause));
+  env.channels[1].onmessage(env.envelope(5, pause));
+  await resynced;
+  assert.deepEqual(seen, [
+    ["hello", 1],
+    ["playStatus", 2],
+    ["hello", 4],
+    ["playStatus", 5],
+  ]);
 });
 
-test("shutdown during connect cannot resurrect a transport or replay an old command", async () => {
+test("shutdown drops queued commands instead of sending them later", async () => {
   const env = transportEnvironment();
-  env.transport.sendOrQueue({ type: "pauseAudio" });
-  const first = env.transport.connect();
+  const ticket = env.transport.send({ type: "pauseAudio" });
+  const connecting = env.transport.connect();
   env.transport.shutdown();
-  const next = env.transport.connect();
   env.handshake.resolve();
-  await Promise.all([first, next]);
-  await Promise.resolve();
-  assert.equal(env.channels.length, 2);
+  env.channels[0].onmessage(env.hello(1));
   assert.equal(env.sent.length, 0);
+  assert.equal(ticket.acknowledgedBy({ seq: 0, epoch: 0, ack: 0 }), true);
+  void connecting;
 });
 
 for (const permissionDenied of [false, true])

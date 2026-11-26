@@ -105,6 +105,7 @@ let playStateSessionKey: string | null = null;
 let playStateSessionId: string | null = null;
 // 频谱更新动画帧 ID
 let spectrumAnimationId: number | null = null;
+let spectrumTimerId: ReturnType<typeof setTimeout> | null = null;
 let spectrumUpdateGeneration = 0;
 // 页面可见性状态
 let isPageVisible = true;
@@ -115,6 +116,10 @@ let lastBackendStateAuditAt = 0;
 let lastPlaybackPresentationAt = 0;
 
 const PLAYBACK_PRESENTATION_INTERVAL_MS = 1000 / 30;
+// A backend sound with its analysis stream off has no frames to show, and the backend schedules
+// a native mix itself (the state machine only starts the prepare and sends a fallback
+// force-start), so a coarse tick serves it as well as one per display frame.
+const NATIVE_IDLE_TICK_MS = 500;
 /**
  * A crash, a killed process, Windows shutdown/logoff (`WM_ENDSESSION`) and
  * macOS Cmd+Q/logout (`applicationWillTerminate`) give the page no usable exit
@@ -247,7 +252,7 @@ const requestNativeBackendSync = (): void => {
   const now = Date.now();
   if (now - lastBackendSyncRequestAt < 250) return;
   lastBackendSyncRequestAt = now;
-  getAudioBackendTransport().sendOrQueue({ type: "syncStatus" });
+  getAudioBackendTransport().send({ type: "syncStatus" });
 };
 
 const getActiveNativeSound = (): BackendSound | null => {
@@ -267,11 +272,12 @@ const resolveSeekTarget = (sound: ISound | undefined): ISound | undefined => {
   return undefined;
 };
 
+/** Returns false for a backend sound whose analysis stream is off, i.e. one with no frames to show. */
 const syncNativeAnalysisState = (
   sound: ISound | undefined | null,
   settings = settingStore(),
-): void => {
-  if (!isBackendSound(sound)) return;
+): boolean => {
+  if (!isBackendSound(sound)) return true;
   // Both consumers (the spectrum and the background's flow speed) live in the big player. Every
   // frame of this stream is one IPC crossing (~60/s each kind), and on WebView2 each crossing
   // leaves memory behind that a GC does not fully return -- measured at ~100 MB per 8 minutes.
@@ -281,6 +287,7 @@ const syncNativeAnalysisState = (
     (settings.musicFrequency || settings.dynamicFlowSpeed);
   sound.setAnalysisEnabled(analysisEnabled);
   sound.setFFTEnabled(analysisEnabled && settings.musicFrequency);
+  return analysisEnabled;
 };
 
 const disableActiveNativeAnalysis = (): void => {
@@ -615,6 +622,10 @@ const stopSpectrumUpdate = (disableNativeAnalysis = true): void => {
     cancelAnimationFrame(spectrumAnimationId);
     spectrumAnimationId = null;
   }
+  if (spectrumTimerId !== null) {
+    clearTimeout(spectrumTimerId);
+    spectrumTimerId = null;
+  }
   clearSpectrumFrame();
   // Return the background to neutral instead of leaving it pinned at whatever
   // transient the analysis loop happened to stop on.
@@ -645,6 +656,7 @@ const startSpectrumUpdate = (sound: ISound): void => {
   const autoMix = getAutoMixEngine();
 
   const updateLoop = (): void => {
+    spectrumTimerId = null;
     if (generation !== spectrumUpdateGeneration || SoundManager.getCurrentSound() !== sound) {
       return;
     }
@@ -655,9 +667,15 @@ const startSpectrumUpdate = (sound: ISound): void => {
     const needsSpectrum = settings.musicFrequency;
     const needsLowFreq = settings.dynamicFlowSpeed;
     const needsAutoMix = settings.autoMixEnabled;
-    syncNativeAnalysisState(sound, settings);
+    const hasFrames = syncNativeAnalysisState(sound, settings);
     if (!needsSpectrum && !needsLowFreq && !needsAutoMix) {
       stopSpectrumUpdate();
+      return;
+    }
+    if (!hasFrames) {
+      // Otherwise 240 wakeups a second on a 240 Hz display, for nothing. Opening the big player
+      // restarts the loop (`Spectrum.vue`), or the next tick finds the stream on.
+      spectrumTimerId = setTimeout(updateLoop, NATIVE_IDLE_TICK_MS);
       return;
     }
 

@@ -141,6 +141,13 @@ impl PlayerClock {
         self.epoch
     }
 
+    /// Continue numbering from `epoch`. A replacement player's clock starts
+    /// from the bus's epoch, so the epoch only grows along the stream for the
+    /// whole process — a subscriber compares it with `<`.
+    pub(super) fn continue_epoch_from(&mut self, epoch: u64) {
+        self.epoch = epoch;
+    }
+
     fn mapping(&self) -> (f64, u64, f64) {
         if let Some(anchor) = self
             .render_clock

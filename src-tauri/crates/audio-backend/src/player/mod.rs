@@ -2,11 +2,11 @@
 ///
 /// Architecture (mirrors `amll-player-core`):
 /// - `Player` — public API: sends `AudioThreadMessage` to the internal player thread.
-/// - `PlayerHandle` — cloneable handle for sending messages from anywhere.
 /// - `AudioPlayer` — internal event loop that processes messages + emits events.
+/// - `bus` — `EventBus` (ordering, snapshot) and the sinks it forwards to.
 ///
-/// Message flow:  frontend → WebSocket → Player::send_msg() → AudioPlayer → decoder/output
-/// Event flow:   AudioPlayer → callback → WebSocket broadcast → frontend
+/// Message flow:  frontend → `audio_send_msg` → Player::send_msg() → AudioPlayer → decoder/output
+/// Event flow:   AudioPlayer → EventBus → forwarder → frontend Channel / in-process subscribers
 ///
 /// The `AudioPlayer` impl is split by responsibility across sibling modules —
 /// this file owns the struct, construction and the `run()` event loop:
@@ -35,6 +35,7 @@ use crate::types::*;
 
 mod api;
 mod automix;
+pub mod bus;
 mod automix_runtime;
 mod clock;
 mod listen_together;
@@ -58,10 +59,8 @@ pub mod source_resolver;
 mod status;
 mod stream_stall;
 
-#[allow(unused_imports)]
-pub use api::{
-    EventBuffer, Player, PlayerEventSubscriber, PlayerHandle, PlayerShared, SubscriberId,
-};
+pub use api::Player;
+pub use bus::{EventBus, EventSinks, PlayerEventSubscriber};
 
 use api::{join_thread_async, SeekRequest};
 use automix::AutoMixManager;
@@ -72,7 +71,6 @@ use output_runtime::OutputRefreshEvent;
 use planner::Planner;
 use queue::PlaybackQueue;
 use source_cache::{PrefetchResult, SourceCache};
-use status::EventEmitter;
 
 // ═══════════════════════════════════════════════════════════════════
 //  Internal AudioPlayer
@@ -80,13 +78,15 @@ use status::EventEmitter;
 
 struct AudioPlayer {
     // Channels
-    msg_receiver: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
-    seek_rx: mpsc::UnboundedReceiver<SeekRequest>,
-    evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
+    msg_receiver: mpsc::UnboundedReceiver<CommandEnvelope>,
+    /// The command that ended a run of seeks, taken off the queue to find
+    /// where the run ended and handled before the queue is read again.
+    stashed_msg: Option<CommandEnvelope>,
+    bus: Arc<bus::EventBus>,
     // Self-message channel: lets `run()` re-enter `process_message` for
     // auto-advance, matching the AMLL reference's NextSongGapless pattern.
-    self_msg_tx: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadMessage>>,
-    self_msg_rx: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
+    self_msg_tx: mpsc::UnboundedSender<CommandEnvelope>,
+    self_msg_rx: mpsc::UnboundedReceiver<CommandEnvelope>,
 
     // CPAL playback. Decoding runs on a worker thread and pushes PCM blocks
     // into the deck mixer; the mixer pushes mixed PCM blocks to this output queue.
@@ -258,11 +258,6 @@ struct AudioPlayer {
     current_audio_info: Arc<TokioRwLock<DisplayAudioInfo>>,
     current_position: Arc<TokioRwLock<f64>>,
     current_audio_quality: Arc<TokioRwLock<AudioQuality>>,
-    /// Authoritative session snapshot, shared with `PlayerShared` so the
-    /// `audio_get_session` command can read it without a message round-trip.
-    /// Written from `sync_ui` (full) and `publish_position_anchor` (clock only)
-    /// — i.e. every point where playback identity or the timeline changes.
-    session: Arc<parking_lot::Mutex<NativeSessionSnapshot>>,
 
     // Background tasks
     tasks: Vec<tokio::task::JoinHandle<()>>,
@@ -288,10 +283,8 @@ enum PlaybackIntent {
 
 impl AudioPlayer {
     async fn new(
-        msg_receiver: mpsc::UnboundedReceiver<AudioThreadEventMessage<AudioThreadMessage>>,
-        seek_rx: mpsc::UnboundedReceiver<SeekRequest>,
-        evt_sender: mpsc::UnboundedSender<AudioThreadEventMessage<AudioThreadEvent>>,
-        session: Arc<parking_lot::Mutex<NativeSessionSnapshot>>,
+        msg_receiver: mpsc::UnboundedReceiver<CommandEnvelope>,
+        bus: Arc<bus::EventBus>,
     ) -> AudioResult<Self> {
         let output_selector = output::OutputDeviceSelector::Default;
         let output =
@@ -306,6 +299,7 @@ impl AudioPlayer {
         );
         let automix = AutoMixManager::new();
         let clock = Arc::new(parking_lot::Mutex::new(PlayerClock::new()));
+        clock.lock().continue_epoch_from(bus.epoch());
         {
             let writer = output.writer();
             let config = output.config();
@@ -325,8 +319,8 @@ impl AudioPlayer {
         // Dedicated `audio-analysis` OS thread owns the `AudioProcessor` so
         // FFT work doesn't compete with the player's `current_thread` tokio
         // runtime. PCM flows in via the returned `Sender`; FFT/LowFreq events
-        // are emitted through the existing `evt_sender` (multi-`Send`).
-        let (analysis_tx, analysis_thread) = analysis::spawn_analysis_thread(evt_sender.clone())
+        // are emitted through the bus as analysis frames.
+        let (analysis_tx, analysis_thread) = analysis::spawn_analysis_thread(Arc::clone(&bus))
             .map_err(|e| AudioError::ThreadError(format!("spawn audio-analysis thread: {e}")))?;
         let analysis_thread = Some(analysis_thread);
         let analysis_enabled = Arc::new(AtomicBool::new(true));
@@ -339,9 +333,8 @@ impl AudioPlayer {
         // same clock anchor. Rust publishes immediate anchors on play/pause/
         // seek and a low-rate heartbeat for reconciliation.
         let position_writer = current_position.clone();
-        let session_writer = Arc::clone(&session);
         let clock_reader = Arc::clone(&clock);
-        let emitter_pos = EventEmitter::new(evt_sender.clone());
+        let bus_pos = Arc::clone(&bus);
 
         tasks.push(tokio::task::spawn(async move {
             let mut time_it = tokio::time::interval(Duration::from_secs(1));
@@ -360,27 +353,20 @@ impl AudioPlayer {
                 };
                 if is_playing {
                     *position_writer.write().await = current_pos;
-                    // The session snapshot is otherwise written only by anchors
-                    // and by `sync_ui`, which runs on the frontend's own
-                    // `SyncStatus` requests. With no WebView alive (Android,
-                    // every track the planner starts in the background) it would
-                    // still report the load anchor — `0.0` — when the page comes
-                    // back and adopts the track from it.
-                    session_writer.lock().position = current_pos;
-                    let _ = emitter_pos
-                        .emit(AudioThreadEvent::PlayPosition {
-                            position: current_pos,
-                            timeline_epoch,
-                        })
-                        .await;
+                    // Also keeps the snapshot's position live (the bus applies
+                    // it): with no WebView alive it would otherwise still report
+                    // the load anchor — `0.0` — when the page comes back and
+                    // adopts the track from it.
+                    bus_pos.emit(AudioThreadEvent::PlayPosition {
+                        position: current_pos,
+                        timeline_epoch,
+                    });
                     // Rides the heartbeat instead of being edge-triggered, so a
                     // page that reloaded mid-session learns it within a second.
                     if latency_us != 0 {
-                        let _ = emitter_pos
-                            .emit(AudioThreadEvent::OutputLatency {
-                                latency_ms: latency_us as f64 / 1000.0,
-                            })
-                            .await;
+                        bus_pos.emit(AudioThreadEvent::OutputLatency {
+                            latency_ms: latency_us as f64 / 1000.0,
+                        });
                     }
                 }
             }
@@ -391,7 +377,7 @@ impl AudioPlayer {
         // Moved out of this runtime entirely — see `crate::analysis`. The
         // dedicated OS thread owns the `AudioProcessor`, receives PCM via
         // `analysis_tx`, and emits `FFTData` + `LowFreqBins` events
-        // through the same `evt_sender` we use here.
+        // through the bus.
 
         let (self_msg_tx, self_msg_rx) = mpsc::unbounded_channel();
         let (decoder_event_tx, decoder_event_rx) = mpsc::unbounded_channel();
@@ -405,8 +391,8 @@ impl AudioPlayer {
 
         Ok(Self {
             msg_receiver,
-            seek_rx,
-            evt_sender,
+            stashed_msg: None,
+            bus,
             self_msg_tx,
             self_msg_rx,
             output,
@@ -499,7 +485,6 @@ impl AudioPlayer {
             current_audio_info,
             current_position,
             current_audio_quality,
-            session,
             tasks,
             analysis_tx,
             analysis_thread,
@@ -523,24 +508,13 @@ impl AudioPlayer {
             tokio::select! {
               biased;
 
-              seek = self.seek_rx.recv() => {
-                if let Some(first_seek) = seek {
-                  let seek = self.drain_latest_seek(first_seek);
-                  if let Err(err) = self.process_seek_request(seek).await {
-                    warn!("处理 seek 消息时出错：{err:?}");
-                  }
-                } else {
-                  break;
+              msg = next_command(&mut self.stashed_msg, &mut self.msg_receiver) => {
+                let Some(msg) = msg else { break; };
+                if matches!(msg.data, AudioThreadMessage::Close) { break; }
+                let msg = coalesce_seeks(msg, &mut self.msg_receiver, &mut self.stashed_msg);
+                if let Err(err) = self.process_message(msg).await {
+                  warn!("处理音频线程消息时出错：{err:?}");
                 }
-              }
-
-              msg = self.msg_receiver.recv() => {
-                if let Some(msg) = msg {
-                  if let Some(AudioThreadMessage::Close) = &msg.data { break; }
-                  if let Err(err) = self.process_message(msg).await {
-                    warn!("处理音频线程消息时出错：{err:?}");
-                  }
-                } else { break; }
               }
 
               msg = self.self_msg_rx.recv() => {
@@ -633,14 +607,6 @@ impl AudioPlayer {
         // The `Drop for AudioPlayer` impl joins the thread.
     }
 
-    fn drain_latest_seek(&mut self, first_seek: SeekRequest) -> SeekRequest {
-        let mut seek = first_seek;
-        while let Ok(next_seek) = self.seek_rx.try_recv() {
-            seek = next_seek;
-        }
-        seek
-    }
-
     fn native_crossfade_gen(&self) -> u64 {
         self.native_crossfade_generation.load(Ordering::Acquire)
     }
@@ -690,5 +656,80 @@ impl Drop for AudioPlayer {
         if let Some(thread) = self.analysis_thread.take() {
             join_thread_async("audio-analysis-join", thread);
         }
+    }
+}
+
+/// A seek is superseded by the next one, so a run of them queued while the
+/// loop was busy (a drag) is handled as its last. The command that ends the
+/// run waits in `stashed` so nothing overtakes it.
+fn coalesce_seeks(
+    mut msg: CommandEnvelope,
+    queue: &mut mpsc::UnboundedReceiver<CommandEnvelope>,
+    stashed: &mut Option<CommandEnvelope>,
+) -> CommandEnvelope {
+    if !matches!(msg.data, AudioThreadMessage::SeekAudio { .. }) {
+        return msg;
+    }
+    while let Ok(next) = queue.try_recv() {
+        if matches!(next.data, AudioThreadMessage::SeekAudio { .. }) {
+            msg = next;
+        } else {
+            *stashed = Some(next);
+            break;
+        }
+    }
+    msg
+}
+
+/// The stashed command if there is one, else the next from the queue.
+async fn next_command(
+    stashed: &mut Option<CommandEnvelope>,
+    queue: &mut mpsc::UnboundedReceiver<CommandEnvelope>,
+) -> Option<CommandEnvelope> {
+    match stashed.take() {
+        Some(msg) => Some(msg),
+        None => queue.recv().await,
+    }
+}
+
+#[cfg(test)]
+mod command_queue_tests {
+    use super::*;
+
+    fn seek(cmd: u64) -> CommandEnvelope {
+        CommandEnvelope {
+            cmd,
+            data: AudioThreadMessage::SeekAudio {
+                position: cmd as f64,
+                request_id: None,
+                expected_music_id: None,
+            },
+        }
+    }
+
+    fn other(cmd: u64) -> CommandEnvelope {
+        CommandEnvelope {
+            cmd,
+            data: AudioThreadMessage::ResumeAudio,
+        }
+    }
+
+    /// Commands are taken up in the order they were sent — `ack` is measured
+    /// against it — and only a run of seeks collapses, to its last.
+    #[tokio::test]
+    async fn a_run_of_seeks_collapses_and_nothing_overtakes_the_command_after_it() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        for msg in [other(1), seek(2), seek(3), seek(4), other(5), seek(6)] {
+            tx.send(msg).unwrap();
+        }
+        let mut stashed = None;
+        let mut taken = Vec::new();
+        while let Ok(Some(msg)) =
+            tokio::time::timeout(Duration::from_millis(10), next_command(&mut stashed, &mut rx))
+                .await
+        {
+            taken.push(coalesce_seeks(msg, &mut rx, &mut stashed).cmd);
+        }
+        assert_eq!(taken, vec![1, 4, 5, 6]);
     }
 }

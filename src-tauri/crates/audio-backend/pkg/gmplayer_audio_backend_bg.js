@@ -41,7 +41,7 @@ export class DecodedAudioJs {
      */
     samples() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.decodedaudiojs_samples(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -59,7 +59,7 @@ export class DecodedAudioJs {
      */
     takeSamples() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.decodedaudiojs_takeSamples(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -162,20 +162,30 @@ export class SongStructureAnalyzer {
      * @returns {string}
      */
     finishJson(duration, content_end, bpm, bpm_confidence) {
-        let deferred1_0;
-        let deferred1_1;
+        let deferred5_0;
+        let deferred5_1;
         try {
-            const ptr = this.__destroy_into_raw();
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            wasm.songstructureanalyzer_finishJson(retptr, ptr, duration, content_end, bpm, bpm_confidence);
+            const val1 = +duration;
+            const val2 = +content_end;
+            const val3 = +bpm;
+            const val4 = +bpm_confidence;
+            let ptr, retptr;
+            try {
+                ptr = this.__destroy_into_raw();
+                retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            } catch (e) {
+                if (ptr) wasm.__wbg_songstructureanalyzer_free(ptr, 1);
+                throw e;
+            }
+            wasm.songstructureanalyzer_finishJson(retptr, ptr, val1, val2, val3, val4);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-            deferred1_0 = r0;
-            deferred1_1 = r1;
+            deferred5_0 = r0;
+            deferred5_1 = r1;
             return getStringFromWasm0(r0, r1);
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
-            wasm.__wbindgen_export(deferred1_0, deferred1_1, 1);
+            wasm.__wbindgen_export(deferred5_0, deferred5_1, 1);
         }
     }
     /**
@@ -188,7 +198,7 @@ export class SongStructureAnalyzer {
         return this;
     }
     /**
-     * @param {Float32Array} samples
+     * @param {Float32Array | number[]} samples
      */
     push(samples) {
         const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_export2);
@@ -225,7 +235,7 @@ export class WasmAudioBackend {
         let deferred2_0;
         let deferred2_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             const ptr0 = passStringToWasm0(error, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.wasmaudiobackend_applyLoadError(retptr, this.__wbg_ptr, ptr0, len0);
@@ -251,7 +261,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_applyLoadedTrack(retptr, this.__wbg_ptr, duration, sample_rate, channels, bitrate);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -271,7 +281,7 @@ export class WasmAudioBackend {
         let deferred2_0;
         let deferred2_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             const ptr0 = passStringToWasm0(error, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.wasmaudiobackend_applyPlayError(retptr, this.__wbg_ptr, ptr0, len0);
@@ -293,7 +303,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_applyPlayPosition(retptr, this.__wbg_ptr, position);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -312,7 +322,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_applyPlaybackFinished(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -332,7 +342,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_applyPlaybackState(retptr, this.__wbg_ptr, is_playing);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -352,7 +362,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_applyVolume(retptr, this.__wbg_ptr, volume);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -369,23 +379,30 @@ export class WasmAudioBackend {
      *
      * This is intentionally state-independent: AutoMix analysis must not mutate
      * the playback backend's playlist/current-track state.
-     * @param {Uint8Array} bytes
+     * @param {Uint8Array | number[]} bytes
      * @param {string} extension
      * @returns {DecodedAudioJs}
      */
     decodeAudioBytes(bytes, extension) {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
-            const len0 = WASM_VECTOR_LEN;
-            const ptr1 = passStringToWasm0(extension, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
-            const len1 = WASM_VECTOR_LEN;
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            let ptr0, len0, ptr1, len1;
+            try {
+                ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
+                len0 = WASM_VECTOR_LEN;
+                ptr1 = passStringToWasm0(extension, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+                len1 = WASM_VECTOR_LEN;
+            } catch (e) {
+                if (ptr1) { wasm.__wbindgen_export(ptr1, len1 * 1, 1); }
+                if (ptr0) { wasm.__wbindgen_export(ptr0, len0 * 1, 1); }
+                throw e;
+            }
             wasm.wasmaudiobackend_decodeAudioBytes(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
             if (r2) {
-                throw takeObject(r1);
+                throw takeFromExternrefTable0(r1);
             }
             return DecodedAudioJs.__wrap(r0);
         } finally {
@@ -397,7 +414,7 @@ export class WasmAudioBackend {
      *
      * Playback remains owned by the browser media host; this sidechain feeds
      * the same Rust `audio-analysis` processor used by native playback.
-     * @param {Uint8Array} bytes
+     * @param {Uint8Array | number[]} bytes
      * @param {string} extension
      * @param {string} music_id
      * @returns {string}
@@ -406,13 +423,21 @@ export class WasmAudioBackend {
         let deferred4_0;
         let deferred4_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-            const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
-            const len0 = WASM_VECTOR_LEN;
-            const ptr1 = passStringToWasm0(extension, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
-            const len1 = WASM_VECTOR_LEN;
-            const ptr2 = passStringToWasm0(music_id, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
-            const len2 = WASM_VECTOR_LEN;
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            let ptr0, len0, ptr1, len1, ptr2, len2;
+            try {
+                ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_export2);
+                len0 = WASM_VECTOR_LEN;
+                ptr1 = passStringToWasm0(extension, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+                len1 = WASM_VECTOR_LEN;
+                ptr2 = passStringToWasm0(music_id, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+                len2 = WASM_VECTOR_LEN;
+            } catch (e) {
+                if (ptr2) { wasm.__wbindgen_export(ptr2, len2 * 1, 1); }
+                if (ptr1) { wasm.__wbindgen_export(ptr1, len1 * 1, 1); }
+                if (ptr0) { wasm.__wbindgen_export(ptr0, len0 * 1, 1); }
+                throw e;
+            }
             wasm.wasmaudiobackend_loadAnalysisBytes(retptr, this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -439,7 +464,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_processAnalysisFrame(retptr, this.__wbg_ptr, position, delta_ms);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -452,7 +477,7 @@ export class WasmAudioBackend {
         }
     }
     /**
-     * Process an `AudioThreadEventMessage<AudioThreadMessage>` JSON envelope.
+     * Process a `CommandEnvelope` JSON string.
      *
      * Returns `{ events, effects }` as JSON. Parse failures are returned as a
      * `loadError` event instead of panicking across the WASM boundary.
@@ -463,7 +488,7 @@ export class WasmAudioBackend {
         let deferred2_0;
         let deferred2_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             const ptr0 = passStringToWasm0(envelope_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
             const len0 = WASM_VECTOR_LEN;
             wasm.wasmaudiobackend_sendMessageJson(retptr, this.__wbg_ptr, ptr0, len0);
@@ -484,7 +509,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_stateJson(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -503,7 +528,7 @@ export class WasmAudioBackend {
         let deferred1_0;
         let deferred1_1;
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudiobackend_syncStatusJson(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -565,7 +590,7 @@ export class WasmAudioProcessor {
      */
     getRawBins(count) {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudioprocessor_getRawBins(retptr, this.__wbg_ptr, count);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -582,7 +607,7 @@ export class WasmAudioProcessor {
      */
     getSpectrum() {
         try {
-            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmaudioprocessor_getSpectrum(retptr, this.__wbg_ptr);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
@@ -639,9 +664,10 @@ export class WasmAudioProcessor {
      * @returns {number}
      */
     processFrame(delta_ms, spectrum) {
+        const val2 = +delta_ms;
         var ptr0 = passArrayF32ToWasm0(spectrum, wasm.__wbindgen_export2);
         var len0 = WASM_VECTOR_LEN;
-        const ret = wasm.wasmaudioprocessor_processFrame(this.__wbg_ptr, delta_ms, ptr0, len0, addHeapObject(spectrum));
+        const ret = wasm.wasmaudioprocessor_processFrame(this.__wbg_ptr, val2, ptr0, len0, spectrum);
         return ret;
     }
     /**
@@ -651,12 +677,13 @@ export class WasmAudioProcessor {
      * `sample_rate`: AudioContext sample rate (e.g. 44100, 48000)
      * `samples`: Float32Array of mono PCM
      * @param {number} sample_rate
-     * @param {Float32Array} samples
+     * @param {Float32Array | number[]} samples
      */
     pushPCM(sample_rate, samples) {
+        const val2 = +sample_rate;
         const ptr0 = passArrayF32ToWasm0(samples, wasm.__wbindgen_export2);
         const len0 = WASM_VECTOR_LEN;
-        wasm.wasmaudioprocessor_pushPCM(this.__wbg_ptr, sample_rate, ptr0, len0);
+        wasm.wasmaudioprocessor_pushPCM(this.__wbg_ptr, val2, ptr0, len0);
     }
     /**
      * Reset normalization, smoothing, and gradient state (e.g. on track change).
@@ -685,19 +712,24 @@ export class WasmAudioProcessor {
     }
 }
 if (Symbol.dispose) WasmAudioProcessor.prototype[Symbol.dispose] = WasmAudioProcessor.prototype.free;
-export function __wbg___wbindgen_copy_to_typed_array_4db0cbe2cc60dbee(arg0, arg1, arg2) {
-    new Uint8Array(getObject(arg2).buffer, getObject(arg2).byteOffset, getObject(arg2).byteLength).set(getArrayU8FromWasm0(arg0, arg1));
+export function __wbg___wbindgen_copy_to_typed_array_680b191e71920dc1(arg0, arg1, arg2) {
+    new Uint8Array(arg2.buffer, arg2.byteOffset, arg2.byteLength).set(getArrayU8FromWasm0(arg0, arg1));
 }
-export function __wbg___wbindgen_throw_344f42d3211c4765(arg0, arg1) {
+export function __wbg___wbindgen_throw_4c88d8bf264fd984(arg0, arg1) {
     throw new Error(getStringFromWasm0(arg0, arg1));
 }
-export function __wbindgen_cast_0000000000000001(arg0, arg1) {
+export function __wbindgen_generic_0000000000000001(arg0, arg1) {
     // Cast intrinsic for `Ref(String) -> Externref`.
     const ret = getStringFromWasm0(arg0, arg1);
-    return addHeapObject(ret);
+    return ret;
 }
-export function __wbindgen_object_drop_ref(arg0) {
-    takeObject(arg0);
+export function __wbindgen_init_externref_table() {
+    const table = wasm.__wbindgen_externrefs;
+    table.set(0, undefined);
+    table.set(1024, undefined);
+    table.set(1025, null);
+    table.set(1026, true);
+    table.set(1027, false);
 }
 const DecodedAudioJsFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
@@ -714,21 +746,6 @@ const WasmAudioBackendFinalization = (typeof FinalizationRegistry === 'undefined
 const WasmAudioProcessorFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_wasmaudioprocessor_free(ptr, 1));
-
-function addHeapObject(obj) {
-    if (heap_next === heap.length) heap.push(heap.length + 1);
-    const idx = heap_next;
-    heap_next = heap[idx];
-
-    heap[idx] = obj;
-    return idx;
-}
-
-function dropObject(idx) {
-    if (idx < 1028) return;
-    heap[idx] = heap_next;
-    heap_next = idx;
-}
 
 function getArrayF32FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -757,7 +774,8 @@ function getFloat32ArrayMemory0() {
 }
 
 function getStringFromWasm0(ptr, len) {
-    return decodeText(ptr >>> 0, len);
+    ptr = ptr >>> 0;
+    return decodeText(getUint8ArrayMemory0().subarray(ptr, ptr + len));
 }
 
 let cachedUint8ArrayMemory0 = null;
@@ -767,13 +785,6 @@ function getUint8ArrayMemory0() {
     }
     return cachedUint8ArrayMemory0;
 }
-
-function getObject(idx) { return heap[idx]; }
-
-let heap = new Array(1024).fill(undefined);
-heap.push(undefined, null, true, false);
-
-let heap_next = heap.length;
 
 function isLikeNone(x) {
     return x === undefined || x === null;
@@ -830,24 +841,24 @@ function passStringToWasm0(arg, malloc, realloc) {
     return ptr;
 }
 
-function takeObject(idx) {
-    const ret = getObject(idx);
-    dropObject(idx);
-    return ret;
+function takeFromExternrefTable0(idx) {
+    const value = wasm.__wbindgen_externrefs.get(idx);
+    wasm.__wbindgen_export4(idx);
+    return value;
 }
 
-let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
 cachedTextDecoder.decode();
 const MAX_SAFARI_DECODE_BYTES = 2146435072;
 let numBytesDecoded = 0;
-function decodeText(ptr, len) {
-    numBytesDecoded += len;
+function decodeText(bytes) {
+    numBytesDecoded += bytes.length;
     if (numBytesDecoded >= MAX_SAFARI_DECODE_BYTES) {
-        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+        cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true });
         cachedTextDecoder.decode();
-        numBytesDecoded = len;
+        numBytesDecoded = bytes.length;
     }
-    return cachedTextDecoder.decode(getUint8ArrayMemory0().subarray(ptr, ptr + len));
+    return cachedTextDecoder.decode(bytes);
 }
 
 const cachedTextEncoder = new TextEncoder();

@@ -70,15 +70,13 @@ function environment(deferResolution = false) {
     "../../tauri/audio/identity": { identityForSong },
     "../../tauri/audio/transport": {
       getAudioBackendTransport: () => ({
-        sendOrQueue: (msg: unknown) => sent.push(msg),
+        send: (msg: unknown) => {
+          sent.push(msg);
+          return { acknowledgedBy: () => true };
+        },
         connect: async () => {},
         subscribe: () => () => {},
       }),
-    },
-    "../../tauri/audio/bridge": {
-      audioSendMsg: async (msg: unknown) => {
-        sent.push(msg);
-      },
     },
     "../native/DeclaredMd5": { declaredMd5For: () => undefined },
     "../resolveSongUrl": {

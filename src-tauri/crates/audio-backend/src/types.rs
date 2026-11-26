@@ -442,6 +442,14 @@ pub enum AudioThreadMessage {
 #[serde(rename_all = "camelCase")]
 #[serde(tag = "type", content = "data")]
 pub enum AudioThreadEvent {
+    /// The first message on every subscription, and again in the stream when a
+    /// stopped player is replaced (`boot_id` changes; the new one holds nothing).
+    /// Everything the subscriber receives after it is newer than `snapshot`.
+    #[serde(rename_all = "camelCase")]
+    Hello {
+        boot_id: u64,
+        snapshot: NativeSessionSnapshot,
+    },
     #[serde(rename_all = "camelCase")]
     PersonalFmChanged { session: Option<NativeFmSnapshot> },
     #[serde(rename_all = "camelCase")]
@@ -669,6 +677,9 @@ pub enum AudioThreadEvent {
         order: Vec<TrackIdentity>,
         #[serde(default)]
         shuffle_id: Option<String>,
+        /// Echoed back as the manifest's `order_base` once mirrored.
+        #[serde(default)]
+        order_generation: u64,
     },
     /// Every candidate in this revision failed to resolve or play. Terminal
     /// until a new manifest arrives; `reason` is already redacted.
@@ -692,59 +703,42 @@ pub enum AudioThreadEvent {
     SessionControlsChanged { controls: SessionControls },
 }
 
-/// Wrapper message that carries a `callback_id` for request/response
-/// correlation (same shape as AMLL's `AudioThreadEventMessage<T>`).
+/// One event on its way out, stamped by `player::bus::EventBus`.
 ///
-/// `seq` is a monotonic counter the event forwarder stamps on every
-/// outbound event. Both transports (local WebSocket + Tauri channel)
-/// deliver the same event with the same `seq`, so the frontend can drop
-/// the duplicate that arrives second. Without this, a fast Pause →
-/// Seek → Resume burst causes the second transport to re-play
-/// `PlayStatus(false)` after the state has already flipped to playing,
-/// flipping it back to paused and triggering a spurious `play` toast on
-/// the recovery to `true`. `seq = 0` means "unsequenced" — used for
-/// inbound messages from the frontend, where there's no risk of dup
-/// delivery (single transport per send).
+/// The three numbers are what every subscriber orders and gates on, so no
+/// payload has to carry its own copy:
+/// - `seq` is the bus's total order; a snapshot (`Hello`) is "every event up to
+///   its `seq`", so anything that arrives with a lower one is already in it.
+///   `0` marks an analysis frame, which describes no state and is never ordered.
+/// - `epoch` is the timeline the player was on when the event was emitted (see
+///   `PlayerClock::epoch`). It only grows along the stream.
+/// - `ack` is the last frontend command the player had taken up (see
+///   [`CommandEnvelope::cmd`]). An event with `ack < K` was emitted before
+///   command `K` was processed, so it cannot reflect it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct AudioThreadEventMessage<T> {
-    pub callback_id: String,
-    pub data: Option<T>,
-    #[serde(default)]
+pub struct EventEnvelope {
     pub seq: u64,
+    pub epoch: u64,
+    pub ack: u64,
+    pub data: AudioThreadEvent,
 }
 
-impl<T> AudioThreadEventMessage<T> {
-    pub fn new(callback_id: String, data: Option<T>) -> Self {
-        Self {
-            callback_id,
-            data,
-            seq: 0,
-        }
-    }
+/// One command on its way in. `cmd` is assigned by the frontend, increasing,
+/// starting above the `ack` of the `Hello` it connected with; `0` is a command
+/// from in-process glue (the OS media session) or the player itself, which no
+/// subscriber waits on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandEnvelope {
+    #[serde(default)]
+    pub cmd: u64,
+    pub data: AudioThreadMessage,
+}
 
-    pub fn data(&self) -> Option<&T> {
-        self.data.as_ref()
-    }
-
-    pub fn callback_id(&self) -> &str {
-        &self.callback_id
-    }
-
-    pub fn to<D>(self, new_data: D) -> AudioThreadEventMessage<D> {
-        AudioThreadEventMessage {
-            callback_id: self.callback_id,
-            data: Some(new_data),
-            seq: self.seq,
-        }
-    }
-
-    pub fn to_none<D>(self) -> AudioThreadEventMessage<D> {
-        AudioThreadEventMessage {
-            callback_id: self.callback_id,
-            data: None,
-            seq: self.seq,
-        }
+impl CommandEnvelope {
+    pub fn internal(data: AudioThreadMessage) -> Self {
+        Self { cmd: 0, data }
     }
 }
 
@@ -882,6 +876,40 @@ pub struct NativePlaybackManifest {
     /// playing track, then the declared cursor.
     #[serde(default)]
     pub shuffle_pin: Option<TrackIdentity>,
+    /// The backend order generation (`NativeQueueOrderChanged::order_generation`)
+    /// this list was built on. When it is still current, a random-mode list is
+    /// taken as the permutation; otherwise it is rebased by identity.
+    #[serde(default)]
+    pub order_base: Option<u64>,
+    /// Moves the user made since the last publish, replayed on whatever order this
+    /// manifest leaves. A list on a current `order_base` already shows them; this is
+    /// for one that is not, such as a "play next" pressed while a reshuffle was in flight.
+    #[serde(default)]
+    pub order_edits: Vec<OrderEdit>,
+    /// The list is told relative to the stored manifest, which must be this
+    /// revision; resending every entry cost ~350 bytes per track per publish.
+    ///
+    /// - `entry_rows` empty: `entries` (sent empty) are the stored ones. A track
+    ///   change moves only the cursor.
+    /// - otherwise `entry_rows` is `[source, playlist_index]` pairs, one per entry:
+    ///   a source `>= 0` is a stored entry's position, `-1 - k` is `entries[k]`,
+    ///   which then carries only the additions. Covers a reorder (a mirrored
+    ///   reshuffle), a removal and "play next" at a few bytes per track.
+    ///
+    /// An empty `natural_order` in random mode is the stored one.
+    #[serde(default)]
+    pub entries_from: Option<u64>,
+    #[serde(default)]
+    pub entry_rows: Vec<i64>,
+}
+
+/// "Put `identity` right after `after`", or at the head when `after` is `None`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OrderEdit {
+    pub identity: TrackIdentity,
+    #[serde(default)]
+    pub after: Option<TrackIdentity>,
 }
 
 fn default_schema_version() -> u32 {
@@ -993,9 +1021,9 @@ pub struct NativeFmSnapshot {
     pub error: Option<String>,
 }
 
-/// Authoritative snapshot of the live playback session, readable synchronously
-/// (no round-trip through the player message loop) via the `audio_get_session`
-/// command.
+/// Authoritative snapshot of the live playback session, kept by the event bus
+/// and carried by the `Hello` that opens every subscription — no round-trip
+/// through the player message loop.
 ///
 /// This exists for one reason: on Android the WebView is destroyed and the page
 /// reloaded while the Rust process — and playback — survives. The reloaded
@@ -1041,6 +1069,11 @@ pub struct NativeSessionSnapshot {
     pub order: Vec<TrackIdentity>,
     #[serde(default)]
     pub shuffle_id: Option<String>,
+    /// `ManifestStore::order_generation` that `order` belongs to. A page that mirrors
+    /// `order` from this snapshot publishes on it, so a reload costs no second copy of
+    /// the order as a stale-base `NativeQueueOrderChanged`.
+    #[serde(default)]
+    pub order_generation: u64,
     /// Last published phase, so a recreated page starts from it instead of
     /// waiting for the next edge.
     #[serde(default)]
@@ -1377,7 +1410,7 @@ mod tests {
         );
     }
 
-    /// `audio_get_session` is read by the boot path before it commits to
+    /// The snapshot (in `Hello`) is read by the boot path before it commits to
     /// loading anything; the field names must match
     /// `NativeSessionSnapshot` in `src/utils/tauri/audio/protocol/manifest.ts`.
     #[test]
@@ -1428,12 +1461,14 @@ mod tests {
             play_mode: NativePlaybackMode::Random,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
             shuffle_id: Some("saved-pass".into()),
+            order_generation: 3,
             phase: PlaybackPhase::Buffering,
             buffered_position: 42.0,
         };
         let value: serde_json::Value = serde_json::to_value(&snapshot).expect("serialize");
         let object = value.as_object().expect("object");
         assert_eq!(object["phase"], "buffering");
+        assert_eq!(object["orderGeneration"], 3);
         let edge = serde_json::to_value(AudioThreadEvent::PlaybackPhaseChanged {
             phase: PlaybackPhase::Loading,
             identity: None,
@@ -1526,12 +1561,15 @@ mod tests {
             manifest_revision: 3,
             order: vec![TrackIdentity::Netease { id: "7".into() }],
             shuffle_id: Some("shuffle-7".into()),
+            order_generation: 2,
         };
         let value = serde_json::to_value(event).expect("serialize");
         assert_eq!(value["type"], "nativeQueueOrderChanged");
         assert_eq!(value["data"]["manifestRevision"], 3);
         assert_eq!(value["data"]["order"][0]["id"], "7");
         assert_eq!(value["data"]["shuffleId"], "shuffle-7");
+        assert_eq!(value["data"]["orderGeneration"], 2);
+        assert!(manifest.order_base.is_none());
         assert!(manifest.shuffle.is_none());
         assert!(manifest.natural_order.is_empty());
     }

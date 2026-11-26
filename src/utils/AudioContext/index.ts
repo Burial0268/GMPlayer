@@ -35,6 +35,7 @@ export {
   publishNativeManifest,
   clearNativeManifest,
   requestNativeReshuffle,
+  queueNativeOrderEdit,
 } from "./native/NativeManifestPublisher";
 export {
   syncNativeResolverConfig,
