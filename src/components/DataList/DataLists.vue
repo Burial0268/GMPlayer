@@ -89,7 +89,7 @@
                   class="text-hidden"
                   :artistsData="row.item?.artist"
                 />
-                <n-text class="alia text-hidden" depth="3" v-if="row.item?.alia[0]">
+                <n-text class="alia text-hidden" depth="3" v-if="row.item?.alia?.[0]">
                   {{ row.item.alia[0] }}
                 </n-text>
               </div>
@@ -191,7 +191,7 @@
                   class="text-hidden"
                   :artistsData="row.item?.artist"
                 />
-                <n-text class="alia text-hidden" depth="3" v-if="row.item?.alia[0]">
+                <n-text class="alia text-hidden" depth="3" v-if="row.item?.alia?.[0]">
                   {{ row.item.alia[0] }}
                 </n-text>
               </div>
