@@ -51,7 +51,12 @@ textarea,
   --font-family-ui:
     system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-  --font-family-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  // CJK faces before the generic: a glyph no listed font has does not fall back to the
+  // parent's UI font but to the browser's own `monospace` default, which on Chinese Windows
+  // is a Song/FangSong face. `.s-label` and `.detail-kind` carry Chinese text in this stack.
+  --font-family-mono:
+    ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", "Noto Sans SC", monospace;
   --font-size-caption: 0.75rem;
   --font-size-footnote: 0.8125rem;
   --font-size-body: 0.9375rem;
@@ -329,7 +334,7 @@ html[lang^="en"] :is(.s-label, .detail-kind) {
 }
 
 /* 等宽 + 表格数字：序号、时长、计数。
-   等宽栈里没有 CJK 字形，汉字会自然回落到 UI 字体，所以只影响数字本身。 */
+   汉字由等宽栈里的 CJK 字体接住（见 --font-family-mono），所以只影响数字本身。 */
 .s-num {
   font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;

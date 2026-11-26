@@ -244,6 +244,7 @@
 </template>
 
 <script setup lang="ts">
+import { lyricFontStack } from "@/utils/ui/fontStack";
 import { ref, computed, watch, shallowRef, onMounted, onUnmounted, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { usePlayerBridge } from "@/utils/tauri/player/bridge";
@@ -905,7 +906,7 @@ const secondaryColor = computed(() =>
 
 const lyricTextStyle = computed(() => ({
   fontWeight: bridge.settings.lyricFontWeight || "bold",
-  fontFamily: bridge.settings.lyricFont || "HarmonyOS Sans SC",
+  fontFamily: lyricFontStack(bridge.settings.lyricFont),
   letterSpacing: bridge.settings.lyricLetterSpacing || "normal",
   "--active-color": accentColor.value,
   "--inactive-color": inactiveColor.value,

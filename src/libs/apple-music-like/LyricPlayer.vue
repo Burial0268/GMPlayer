@@ -19,6 +19,7 @@
 </template>
 
 <script setup lang="ts">
+import { lyricFontStack } from "@/utils/ui/fontStack";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, toRaw, shallowRef } from "vue";
 import { musicStore, settingStore, siteStore } from "../../store";
 import {
@@ -65,7 +66,7 @@ const lyricStyles = computed(() => ({
   "--amll-lp-color": mainColor.value,
   "--amll-lyric-view-color": mainColor.value,
   "font-weight": setting.lyricFontWeight,
-  "font-family": setting.lyricFont,
+  "font-family": lyricFontStack(setting.lyricFont),
   "letter-spacing": setting.lyricLetterSpacing,
   cursor: "pointer",
   "-webkit-tap-highlight-color": "transparent",

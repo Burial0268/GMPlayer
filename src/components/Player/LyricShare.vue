@@ -178,6 +178,7 @@
 </template>
 
 <script setup lang="ts">
+import { lyricFontStack } from "@/utils/ui/fontStack";
 import {
   computed,
   nextTick,
@@ -613,7 +614,7 @@ const layerStyle = computed(() => {
     "--share-padding": origin?.padding ?? "0px",
     "--card-unit": `${cardUnit.value}px`,
     ...Object.fromEntries(Object.entries(CARD_METRICS).map(([k, v]) => [`--card-${k}`, v])),
-    "--share-font": setting.lyricFont,
+    "--share-font": lyricFontStack(setting.lyricFont),
     "--share-weight": setting.lyricFontWeight,
     "--share-spacing": setting.lyricLetterSpacing,
     "--share-align": setting.lyricsPosition === "center" ? "center" : "left",
