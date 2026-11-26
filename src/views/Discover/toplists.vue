@@ -27,10 +27,10 @@
                 :src="item.coverImgUrl.replace(/^http:/, 'https:') + '?param=300y300'"
                 fallback-src="/images/pic/default.png"
               />
-              <n-text class="update" v-html="item.updateFrequency" />
+              <n-text class="update">{{ item.updateFrequency }}</n-text>
             </div>
             <div class="data">
-              <n-text class="title" data-navigation-title v-html="item.name" />
+              <n-text class="title" data-navigation-title>{{ item.name }}</n-text>
               <div class="desc">
                 <div class="song text-hidden" v-for="(song, index) in item.tracks" :key="song">
                   <n-text>{{ Number(index) + 1 }}. {{ song.first }} - </n-text>

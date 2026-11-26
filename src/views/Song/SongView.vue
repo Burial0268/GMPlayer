@@ -45,7 +45,7 @@
           </div>
           <div class="num" v-if="musicDetail.publishTime">
             <n-icon :depth="3" :component="Time" />
-            <n-text v-html="getLongTime(musicDetail.publishTime)" />
+            <n-text>{{ getLongTime(musicDetail.publishTime) }}</n-text>
           </div>
           <div class="num" v-if="musicDetail.ar">
             <n-icon :depth="3" :component="People" />

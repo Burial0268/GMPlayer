@@ -24,11 +24,11 @@
         <div v-content-intro class="detail-stats">
           <div class="num" v-if="playListDetail && playListDetail.createTime">
             <n-icon :depth="3" :component="Newlybuild" />
-            <n-text v-html="getLongTime(playListDetail.createTime)" />
+            <n-text>{{ getLongTime(playListDetail.createTime) }}</n-text>
           </div>
           <div class="num" v-if="playListDetail && playListDetail.updateTime">
             <n-icon :depth="3" :component="Write" />
-            <n-text v-html="getLongTime(playListDetail.updateTime)" />
+            <n-text>{{ getLongTime(playListDetail.updateTime) }}</n-text>
           </div>
           <div class="num" v-if="totalCount">
             <n-icon :depth="3" :component="MusicList" />
@@ -103,17 +103,15 @@
         <n-space class="time">
           <div class="num">
             <n-icon :depth="3" :component="Newlybuild" />
-            <n-text
-              v-if="playListDetail && playListDetail.createTime"
-              v-html="getLongTime(playListDetail.createTime)"
-            />
+            <n-text v-if="playListDetail && playListDetail.createTime">{{
+              getLongTime(playListDetail.createTime)
+            }}</n-text>
           </div>
           <div class="num">
             <n-icon :depth="3" :component="Write" />
-            <n-text
-              v-if="playListDetail && playListDetail.updateTime"
-              v-html="getLongTime(playListDetail.updateTime)"
-            />
+            <n-text v-if="playListDetail && playListDetail.updateTime">{{
+              getLongTime(playListDetail.updateTime)
+            }}</n-text>
           </div>
         </n-space>
       </div>

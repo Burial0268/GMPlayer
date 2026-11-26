@@ -101,9 +101,10 @@
                     :key="item"
                     :bordered="false"
                     round
-                    v-html="item"
                     @click="toSearch(item, 0)"
-                  />
+                  >
+                    {{ item }}
+                  </n-tag>
                 </n-space>
                 <div v-button class="del" @click="delHistory">
                   <n-icon size="16" :depth="3">
@@ -133,7 +134,7 @@
                         {{ item.iconType == 1 ? "HOT" : "UP" }}
                       </n-tag>
                     </span>
-                    <n-text class="tip" depth="3" v-html="item.content" />
+                    <n-text class="tip" depth="3">{{ item.content }}</n-text>
                   </div>
                 </div>
               </div>
@@ -176,7 +177,8 @@
                     @keydown.enter="toSearch(songs.id, 1, $event)"
                     @click="toSearch(songs.id, 1, $event)"
                   >
-                    {{ songs.name }} - {{ songs.artists[0].name }}</span
+                    {{ songs.name
+                    }}{{ songs.artists?.[0]?.name ? ` - ${songs.artists[0].name}` : "" }}</span
                   >
                 </div>
                 <div class="suggest-item" v-if="searchData.suggest.artists">
@@ -194,8 +196,8 @@
                     tabindex="0"
                     @keydown.enter="toSearch(artists.id, 100, $event)"
                     @click="toSearch(artists.id, 100, $event)"
-                    v-html="artists.name"
-                  />
+                    >{{ artists.name }}</span
+                  >
                 </div>
                 <div class="suggest-item" v-if="searchData.suggest.albums">
                   <div class="type">

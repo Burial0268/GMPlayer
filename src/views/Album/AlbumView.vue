@@ -47,11 +47,11 @@
         <div v-content-intro class="detail-stats">
           <div class="num">
             <n-icon :depth="3" :component="Time" />
-            <n-text v-html="getLongTime(albumDetail.publishTime)" />
+            <n-text>{{ getLongTime(albumDetail.publishTime) }}</n-text>
           </div>
           <div class="num" v-if="albumDetail.company">
             <n-icon :depth="3" :component="City" />
-            <n-text v-html="albumDetail.company" />
+            <n-text>{{ albumDetail.company }}</n-text>
           </div>
           <div class="num" v-if="albumData.length">
             <n-icon :depth="3" :component="MusicList" />
@@ -113,11 +113,11 @@
         <n-space class="time">
           <div class="num">
             <n-icon :depth="3" :component="Time" />
-            <n-text v-html="getLongTime(albumDetail.publishTime)" />
+            <n-text>{{ getLongTime(albumDetail.publishTime) }}</n-text>
           </div>
           <div class="num" v-if="albumDetail.company">
             <n-icon :depth="3" :component="City" />
-            <n-text v-html="albumDetail.company" />
+            <n-text>{{ albumDetail.company }}</n-text>
           </div>
         </n-space>
       </div>

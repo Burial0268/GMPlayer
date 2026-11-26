@@ -1,15 +1,16 @@
 <template>
   <div class="artists">
     <span class="artist" v-for="(item, index) in artistsData.filter((v) => v)" :key="item">
+      <!-- 纯文本：本地曲目的歌手名原样来自文件标签，v-html 会把标签里的 HTML 当页面执行。 -->
       <n-text
         class="name"
         :depth="isDark ? 3 : 0"
-        v-html="item.name"
         role="link"
         tabindex="0"
         @keydown.enter.stop="jumpArtist(item.id, $event)"
         @click.stop="jumpArtist(item.id, $event)"
-      />
+        >{{ item.name }}</n-text
+      >
       <span
         class="line"
         v-if="index != artistsData.length - 1 && artistsData[artistsData.length - 1]"
