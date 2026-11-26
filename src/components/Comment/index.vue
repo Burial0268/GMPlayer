@@ -280,6 +280,52 @@ const toLikeComment = () => {
     }
   }
 }
+// 列表形态：评论连成一组条纹行，首尾圆角（歌曲页、评论页、MV 页共用）。
+// 写成 `.comment-stack > .comment`，作用域属性落在 .comment 上，优先级高于上面的卡片样式。
+.comment-stack > .comment {
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+
+  &:nth-child(odd) {
+    background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
+  }
+
+  &:nth-child(even) {
+    background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+  }
+
+  &:first-child {
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+  }
+
+  &:last-child {
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+  }
+
+  &:only-child {
+    border-radius: var(--radius-md);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+      box-shadow: none;
+    }
+  }
+
+  :deep(.n-card__content) {
+    min-height: 82px;
+    padding: 12px !important;
+
+    @media (max-width: 768px) {
+      min-height: 76px;
+      padding: 11px 8px !important;
+    }
+  }
+}
+
 .skeleton {
   width: 100%;
   height: 120px;

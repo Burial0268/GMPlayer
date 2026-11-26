@@ -35,7 +35,7 @@
             <n-skeleton text :repeat="3" />
             <n-skeleton text style="width: 60%" />
           </div>
-          <div class="content">
+          <div class="content comment-stack">
             <Comment
               v-for="item in commentData.hotComments"
               :key="item.commentId"
@@ -53,7 +53,7 @@
             <n-skeleton text :repeat="3" />
             <n-skeleton text style="width: 60%" />
           </div>
-          <div class="content">
+          <div class="content comment-stack">
             <Comment
               v-for="item in commentData.allComments"
               :key="item.commentId"

@@ -111,7 +111,7 @@
     <div class="right">
       <section v-content-intro class="comments detail-section" v-if="commentData[0]">
         <n-h6 class="section-title" prefix="bar">{{ $t("general.name.hotComments") }}</n-h6>
-        <div class="content">
+        <div class="content comment-stack">
           <Comment v-for="item in commentData" :key="item.commentId || item" :commentData="item" />
         </div>
       </section>
@@ -579,56 +579,6 @@ watch(
     }
   }
 
-  .comments {
-    .content {
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-    }
-
-    :deep(.comment) {
-      --n-color: transparent;
-      --n-border-color: transparent;
-
-      margin-bottom: 0;
-      border: 0;
-      border-radius: 0;
-      box-shadow: none;
-    }
-
-    :deep(.comment:nth-child(odd)) {
-      background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
-    }
-
-    :deep(.comment:nth-child(even)) {
-      background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
-    }
-
-    :deep(.comment:first-child) {
-      border-radius: var(--radius-md) var(--radius-md) 0 0;
-    }
-
-    :deep(.comment:last-child) {
-      border-radius: 0 0 var(--radius-md) var(--radius-md);
-    }
-
-    :deep(.comment:only-child) {
-      border-radius: var(--radius-md);
-    }
-
-    @media (hover: hover) {
-      :deep(.comment:hover) {
-        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-        box-shadow: none;
-      }
-    }
-
-    :deep(.comment .n-card__content) {
-      min-height: 82px;
-      padding: 12px !important;
-    }
-  }
-
   .simiPlayList {
     :deep(.coverlists) {
       margin-top: 2px;
@@ -699,13 +649,6 @@ watch(
             height: 38px;
           }
         }
-      }
-    }
-
-    .comments {
-      :deep(.comment .n-card__content) {
-        min-height: 76px;
-        padding: 11px 8px !important;
       }
     }
   }
