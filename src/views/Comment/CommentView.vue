@@ -168,8 +168,9 @@ watch(
         margin: 0;
         font-size: clamp(26px, 4.6vw, 50px);
         font-weight: 700;
-        // 单行截断（text-hidden）会裁掉行盒以外的部分：1.08 切掉 y/g/p 的下半截。
-        line-height: 1.2;
+        // 单行截断（text-hidden）会裁掉行盒以外的部分。normal 按字体自己的上下伸高度排行：
+        // 定值在某些字体下总会切掉 y/g/p（1.2 在 Noto Sans CJK 下仍切 5px）。与歌曲页标题一致。
+        line-height: normal;
         letter-spacing: -0.02em;
         color: var(--n-text-color);
         cursor: pointer;
