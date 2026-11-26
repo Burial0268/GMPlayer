@@ -145,7 +145,7 @@ import {
   ErrorOutlineRound,
   RefreshRound,
 } from "@vicons/material";
-import { getComment } from "@/api/comment";
+import { useCommentThread } from "@/composables/useCommentThread";
 import Comment from "@/components/Comment/index.vue";
 import { musicStore } from "@/store";
 // Aliased: this file already exposes a `coverUrl` computed of its own.
@@ -153,12 +153,6 @@ import { coverUrl as toCoverUrl } from "@/utils/ncm/coverUrl";
 import { Motion } from "motion-v";
 import { NVirtualList } from "naive-ui";
 import { getDesktopPlayerSharedLayoutIds } from "../desktopSharedLayout";
-
-type CommentItem = {
-  commentId: number;
-  time: number;
-  [key: string]: any;
-};
 
 defineEmits<{
   close: [];
@@ -173,14 +167,6 @@ const sharedContentTransition = {
   restDelta: 0.001,
   restSpeed: 0.01,
 } as const;
-const activeTab = ref<"hot" | "all">("hot");
-const hotComments = ref<CommentItem[]>([]);
-const allComments = ref<CommentItem[]>([]);
-const commentsCount = ref(0);
-const loading = ref(false);
-const loadingMore = ref(false);
-const loadError = ref(false);
-const hasMore = ref(false);
 const commentsReady = ref(false);
 // n-virtual-list treats `item-size` as the MINIMUM row height and sizes its render
 // window from `ceil(listHeight / itemSize + 1)`. Comment rows vary in height and the
@@ -191,7 +177,7 @@ const commentItemSize = 72;
 const scrollRef = ref<{
   scrollTo: (options: { top?: number; index?: number; behavior?: ScrollBehavior }) => void;
 } | null>(null);
-let requestSerial = 0;
+let readyGeneration = 0;
 let readyTimer: number | null = null;
 let readyFrame: number | null = null;
 
@@ -213,9 +199,20 @@ const artistNames = computed(() =>
     .join(" / "),
 );
 const coverUrl = computed(() => toCoverUrl(music.getPlaySongData?.album?.picUrl, 96));
-const visibleComments = computed(() =>
-  activeTab.value === "hot" ? hotComments.value : allComments.value,
-);
+// An imported local file has no thread: the composable shows the empty state without asking.
+const threadId = computed(() => (isLocalTrack.value ? null : songId.value || null));
+const {
+  tab: activeTab,
+  hot: hotComments,
+  visible: visibleComments,
+  total: commentsCount,
+  hasMore,
+  loading,
+  loadingMore,
+  error: loadError,
+  refresh,
+  loadMore,
+} = useCommentThread(threadId);
 
 const cancelCommentsReady = () => {
   if (readyTimer !== null) {
@@ -231,7 +228,8 @@ const cancelCommentsReady = () => {
 // Let the stage/shared-element animation get a couple of frames before the
 // virtual list measures its first rows. This keeps API resolution from forcing
 // a large synchronous layout during the hand-off.
-const scheduleCommentsReady = (requestId: number) => {
+const scheduleCommentsReady = () => {
+  const generation = readyGeneration;
   cancelCommentsReady();
   if (typeof window === "undefined") {
     commentsReady.value = true;
@@ -241,104 +239,32 @@ const scheduleCommentsReady = (requestId: number) => {
     readyTimer = null;
     readyFrame = window.requestAnimationFrame(() => {
       readyFrame = null;
-      if (requestId !== requestSerial) return;
+      if (generation !== readyGeneration) return;
       commentsReady.value = true;
       void nextTick(() => scrollRef.value?.scrollTo({ top: 0 }));
     });
   }, 48);
 };
 
-const clearComments = () => {
-  cancelCommentsReady();
-  commentsReady.value = false;
-  hotComments.value = [];
-  allComments.value = [];
-  commentsCount.value = 0;
-  hasMore.value = false;
-};
+const refreshComments = () => void refresh(true);
 
-const requestComments = async (append = false, fresh = false) => {
-  const currentSongId = songId.value;
-  // No thread to ask for. Without the local test this fired `/comment/music`
-  // with a negative id on open and again on every track change while the panel
-  // stayed open, and rendered the refusal as "could not load" rather than as the
-  // empty state. `loading` is cleared here too: the watcher clears the list and
-  // calls straight back in, so a track change from a Netease song to a local one
-  // would otherwise leave the spinner up for good.
-  if (!currentSongId || isLocalTrack.value) {
-    clearComments();
-    loading.value = false;
-    loadingMore.value = false;
-    loadError.value = false;
-    commentsReady.value = true;
-    return;
-  }
-
-  const requestId = ++requestSerial;
-  const offset = append ? allComments.value.length : 0;
-  const before =
-    append && offset >= 5000 && allComments.value.length
-      ? allComments.value[allComments.value.length - 1].time
-      : null;
-
-  if (append) loadingMore.value = true;
-  else {
-    loading.value = true;
-    loadError.value = false;
-    commentsReady.value = false;
-    cancelCommentsReady();
-  }
-
-  try {
-    const response = await getComment(currentSongId, offset, before, "music", fresh);
-    if (requestId !== requestSerial || currentSongId !== songId.value) return;
-
-    const comments = Array.isArray(response?.comments) ? response.comments : [];
-    if (append) {
-      allComments.value.push(...comments);
-    } else {
-      hotComments.value = Array.isArray(response?.hotComments) ? response.hotComments : [];
-      // 拷贝：下面的 push 不能改到评论缓存里共用的那份数组
-      allComments.value = comments.slice();
-      commentsCount.value = Number(response?.total) || comments.length;
-      if (!hotComments.value.length) activeTab.value = "all";
-      scheduleCommentsReady(requestId);
-    }
-
-    hasMore.value = Boolean(response?.more ?? allComments.value.length < commentsCount.value);
-  } catch {
-    if (requestId === requestSerial && currentSongId === songId.value) {
-      if (!append) {
-        clearComments();
-        loadError.value = true;
-        commentsReady.value = true;
-      }
-    }
-  } finally {
-    if (requestId === requestSerial) {
-      loading.value = false;
-      loadingMore.value = false;
-    }
-  }
-};
-
-const refreshComments = () => {
-  void requestComments(false, true);
-};
-
-const loadMore = () => {
-  if (!loadingMore.value && hasMore.value) void requestComments(true);
-};
-
+// A new track hides the list until its first page has landed and the stage has settled;
+// "no thread" never loads, so it is ready at once.
 watch(
-  songId,
-  () => {
-    activeTab.value = "hot";
-    clearComments();
-    void requestComments();
+  threadId,
+  (id) => {
+    readyGeneration++;
+    cancelCommentsReady();
+    commentsReady.value = !id;
   },
   { immediate: true },
 );
+watch(loading, (now, was) => {
+  if (!was || now) return;
+  // An error shows at once; a list waits for the hand-off (see scheduleCommentsReady).
+  if (loadError.value) commentsReady.value = true;
+  else scheduleCommentsReady();
+});
 
 onBeforeUnmount(cancelCommentsReady);
 </script>

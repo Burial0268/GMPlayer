@@ -28,45 +28,45 @@
           </span>
         </div>
       </div>
-      <div class="comment" v-if="commentData.allComments[0]">
-        <div class="hotComments" v-if="commentData.hotComments[0]">
-          <n-h6 prefix="bar"> {{ $t("general.name.hotComments") }} </n-h6>
-          <div class="loading" v-if="!commentData.hotComments[0]">
-            <n-skeleton text :repeat="3" />
-            <n-skeleton text style="width: 60%" />
-          </div>
+      <!-- 与评论页同一套：热门 / 全部 + 加载更多（useCommentThread）。 -->
+      <div
+        class="comment-section"
+        v-if="thread.loading.value || thread.error.value || thread.total.value"
+      >
+        <n-tabs class="comment-tab" type="segment" v-model:value="thread.tab.value">
+          <n-tab name="hot" :disabled="!thread.hot.value.length">
+            {{ $t("general.name.hotComments") }}
+          </n-tab>
+          <n-tab name="all">
+            {{ $t("general.name.allComments") }} · {{ formatNumber(thread.total.value) }}
+          </n-tab>
+        </n-tabs>
+        <PageLoadState v-if="thread.error.value" error @retry="thread.refresh(true)" />
+        <div v-else-if="thread.loading.value" class="comment-stack">
+          <n-skeleton v-for="index in 4" :key="index" class="row-skeleton" />
+        </div>
+        <template v-else>
           <div class="content comment-stack">
             <Comment
-              v-for="item in commentData.hotComments"
+              v-for="item in thread.visible.value"
               :key="item.commentId"
               :commentData="item"
+              :resourceId="commentResourceId"
               resourceType="mv"
             />
           </div>
-        </div>
-        <div class="allComments" ref="allCommentsRef">
-          <n-h6 prefix="bar">
-            {{ $t("general.name.allComments") }}
-            <span class="count">{{ commentsCount }} +</span>
-          </n-h6>
-          <div class="loading" v-if="!commentData.allComments[0]">
-            <n-skeleton text :repeat="3" />
-            <n-skeleton text style="width: 60%" />
+          <div v-if="thread.tab.value === 'all' && thread.hasMore.value" class="load-more">
+            <n-button
+              strong
+              secondary
+              round
+              :loading="thread.loadingMore.value"
+              @click="thread.loadMore"
+            >
+              {{ $t("general.name.loadMore") }}
+            </n-button>
           </div>
-          <div class="content comment-stack">
-            <Comment
-              v-for="item in commentData.allComments"
-              :key="item.commentId"
-              :commentData="item"
-              resourceType="mv"
-            />
-          </div>
-        </div>
-        <Pagination
-          :totalCount="commentsCount"
-          :showSizePicker="false"
-          @pageNumberChange="pageNumberChange"
-        />
+        </template>
       </div>
     </section>
     <section class="simiVideo">
@@ -80,17 +80,16 @@
 import { useRouter } from "vue-router";
 import { musicStore, settingStore } from "@/store";
 import { getVideoDetail, getVideoUrl, getSimiVideo } from "@/api/video";
-import { getComment } from "@/api/comment";
+import { useCommentThread } from "@/composables/useCommentThread";
 import { formatNumber, getSongTime } from "@/utils/timeTools";
 import { OndemandVideoFilled, ShareFilled, MessageOutlined } from "@vicons/material";
 import { useI18n } from "vue-i18n";
 import VideoLists from "@/components/DataList/VideoLists.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import Comment from "@/components/Comment/index.vue";
-import Pagination from "@/components/Pagination/index.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
-import type { CommentResourceType } from "@/api";
 import { lockLandscape, restoreDefaultOrientation } from "@/utils/tauri/platform/screenOrientation";
 import { isTauri } from "@/utils/tauri";
 
@@ -139,11 +138,11 @@ const playerOptions = {
 };
 
 // 评论数据
-const commentData = reactive({
-  hotComments: [], // 热门评论
-  allComments: [], // 全部评论
+const commentResourceId = computed(() => {
+  const id = Number(videoId.value);
+  return Number.isFinite(id) && id > 0 ? id : null;
 });
-const commentsCount = ref(0);
+const thread = useCommentThread(commentResourceId, "mv");
 
 // 获取视频数据
 const getVideoData = (id) => {
@@ -195,39 +194,11 @@ const getVideoData = (id) => {
   });
 };
 
-// 获取评论数据
-const getCommentData = (id, offset = 0, type: CommentResourceType = "mv") => {
-  // 获取 before
-  let before = null;
-  if (commentData.allComments[0] && offset >= 5000) {
-    before = commentData.allComments[commentData.allComments.length - 1].time;
-  }
-  getComment(id, offset, before, type).then((res) => {
-    // 写入数据
-    if (res.hotComments) {
-      commentData.hotComments = res.hotComments;
-    } else {
-      commentData.hotComments = [];
-    }
-    commentData.allComments = res.comments;
-    commentsCount.value = res.total;
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
-  });
-};
-
-// 当前页数数据变化
-const pageNumberChange = (val) => {
-  getCommentData(videoId.value, (val - 1) * 20);
-};
-
 onMounted(() => {
   // 初始化播放器
   player.value = new Plyr(videoRef.value, playerOptions);
   // 获取视频数据
   getVideoData(videoId.value);
-  // 获取评论数据
-  getCommentData(videoId.value);
   // 播放器事件
   player.value.on("playing", () => {
     // 隐藏控制条及暂停音乐
@@ -277,7 +248,6 @@ watch(
     if (val.name === "video") {
       videoId.value = val.query.id;
       getVideoData(val.query.id);
-      getCommentData(val.query.id);
     }
   },
 );
@@ -352,16 +322,19 @@ watch(
         }
       }
     }
-    .comment {
-      margin-top: 20px;
-      .hotComments,
-      .allComments {
-        margin-top: 40px;
-        .count {
-          font-size: 13px;
-          margin-left: 4px;
-          opacity: 0.6;
-        }
+    .comment-section {
+      margin-top: 28px;
+      .comment-tab {
+        max-width: 360px;
+        margin-bottom: 16px;
+      }
+      .row-skeleton {
+        height: 82px;
+      }
+      .load-more {
+        display: flex;
+        justify-content: center;
+        margin-top: 20px;
       }
     }
   }
