@@ -73,6 +73,31 @@ export interface NativePlaybackManifest {
   reshuffle?: boolean;
   /** Track to keep at the head of that fresh permutation. */
   shufflePin?: TrackIdentity | null;
+  /**
+   * The backend order generation our queue was mirrored from. While it is current, a random-mode
+   * list is taken as the permutation (so "play next" moves stick); otherwise it is rebased.
+   */
+  orderBase?: number | null;
+  /** Moves since the last publish, replayed by the backend on whatever order it decides. */
+  orderEdits?: OrderEdit[];
+  /**
+   * The list is told relative to the backend's stored manifest, which must be this revision; it
+   * refuses the publish otherwise and the publisher resends the whole list. With `entryRows` empty
+   * the entries are the stored ones; otherwise see `entryRows`. An empty `naturalOrder` in random
+   * mode is the stored one.
+   */
+  entriesFrom?: number | null;
+  /**
+   * `[source, playlistIndex]` pairs, one per entry: a source `>= 0` is a stored entry's position,
+   * `-1 - k` is `entries[k]`, which then carries only the additions.
+   */
+  entryRows?: number[];
+}
+
+/** Put `identity` right after `after`, or at the head when `after` is null. */
+export interface OrderEdit {
+  identity: TrackIdentity;
+  after: TrackIdentity | null;
 }
 
 /**
@@ -123,8 +148,8 @@ export interface NativePlannerStatus {
 }
 
 /**
- * Authoritative snapshot of the live backend playback session, read through the
- * `audio_get_session` command.
+ * Authoritative snapshot of the live backend playback session, carried by the
+ * `hello` that opens every event subscription.
  *
  * Exists because the Rust process outlives the WebView: on Android the page is
  * destroyed and reloaded while playback continues. The reloaded frontend
@@ -174,6 +199,8 @@ export interface NativeSessionSnapshot {
   order?: TrackIdentity[];
   /** Proof that the backend completed this queue's shuffle transaction. */
   shuffleId?: string | null;
+  /** The backend order generation `order` belongs to; a page that mirrors it publishes on it. */
+  orderGeneration?: number;
   /** Last phase the backend published. */
   phase?: PlaybackPhase;
   /** Seconds of the track playable without waiting on the network. */

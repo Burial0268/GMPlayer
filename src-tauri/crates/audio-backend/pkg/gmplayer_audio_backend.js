@@ -3,7 +3,7 @@ import * as wasm from "./gmplayer_audio_backend_bg.wasm";
 import { __wbg_set_wasm } from "./gmplayer_audio_backend_bg.js";
 
 __wbg_set_wasm(wasm);
-
+wasm.__wbindgen_start();
 export {
     DecodedAudioJs, LFOptionsJs, SongStructureAnalyzer, WasmAudioBackend, WasmAudioProcessor
 } from "./gmplayer_audio_backend_bg.js";

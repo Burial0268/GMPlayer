@@ -1,141 +1,63 @@
 import { Channel, invoke } from "@tauri-apps/api/core";
 
+import { logNative } from "../../core/nativeLog";
 import type {
   AudioThreadEvent,
   AudioThreadEventCallback,
-  AudioThreadEventMessage,
   AudioThreadMessage,
+  EventEnvelope,
+  EventMeta,
 } from "../protocol";
-import { audioSendMsg, listenPlayerEvents } from "../bridge";
-import type { AudioBackendTransport } from "./types";
-
-class TauriInvokeAudioIpc implements AudioBackendTransport {
-  private _listeners: Set<AudioThreadEventCallback> = new Set();
-  private _unlisten: (() => void) | null = null;
-  private _connectPromise: Promise<void> | null = null;
-  private _visualFrame: number | null = null;
-  private _pendingFft: { event: AudioThreadEvent; seq?: number } | null = null;
-  private _pendingLowFreq: { event: AudioThreadEvent; seq?: number } | null = null;
-
-  connect(): Promise<void> {
-    if (this._unlisten) return Promise.resolve();
-    if (this._connectPromise) return this._connectPromise;
-
-    this._connectPromise = listenPlayerEvents((event, seq) => {
-      this._dispatchOrCoalesce(event, seq);
-    })
-      .then((unlisten) => {
-        this._unlisten = unlisten;
-      })
-      .finally(() => {
-        this._connectPromise = null;
-      });
-
-    return this._connectPromise;
-  }
-
-  subscribe(listener: AudioThreadEventCallback): () => void {
-    this._listeners.add(listener);
-    return () => {
-      this._listeners.delete(listener);
-    };
-  }
-
-  sendOrQueue(msg: AudioThreadMessage): boolean {
-    void audioSendMsg(msg);
-    return true;
-  }
-
-  shutdown(): void {
-    if (this._visualFrame !== null) {
-      cancelAnimationFrame(this._visualFrame);
-      this._visualFrame = null;
-    }
-    this._pendingFft = null;
-    this._pendingLowFreq = null;
-    if (this._unlisten) {
-      this._unlisten();
-      this._unlisten = null;
-    }
-    this._listeners.clear();
-  }
-
-  private _dispatchOrCoalesce(event: AudioThreadEvent, seq?: number): void {
-    if (event.type === "fftData" || event.type === "analysisFrame") {
-      this._pendingFft = { event, seq };
-      this._scheduleVisualDispatch();
-      return;
-    }
-    if (event.type === "lowFrequencyVolume" || event.type === "lowFreqBins") {
-      this._pendingLowFreq = { event, seq };
-      this._scheduleVisualDispatch();
-      return;
-    }
-    this._dispatch(event, seq);
-  }
-
-  private _scheduleVisualDispatch(): void {
-    if (this._visualFrame !== null) return;
-    this._visualFrame = requestAnimationFrame(() => {
-      this._visualFrame = null;
-      const fft = this._pendingFft;
-      const lowFreq = this._pendingLowFreq;
-      this._pendingFft = null;
-      this._pendingLowFreq = null;
-      if (fft) this._dispatch(fft.event, fft.seq);
-      if (lowFreq) this._dispatch(lowFreq.event, lowFreq.seq);
-    });
-  }
-
-  private _dispatch(event: AudioThreadEvent, seq?: number): void {
-    for (const listener of this._listeners) {
-      try {
-        listener(event, seq);
-      } catch {
-        /* listener errors should not break dispatch */
-      }
-    }
-  }
-}
+import { sendAudioCommand } from "../bridge";
+import { PendingTicket } from "./ticket";
+import type { AudioBackendTransport, CommandTicket } from "./types";
 
 /**
- * Primary Tauri transport: a `Channel` carries the Rust -> frontend event
- * stream (FFT / status / position); control commands go out over the existing
- * `audio_send_msg` invoke. The Channel rides the webview's native IPC, so it
- * behaves identically on WebView2 / WebKitGTK / WKWebView / Android WebView.
+ * The Tauri transport: one `Channel` carries the backend's event stream in,
+ * `audio_send_msg` carries numbered commands out.
  *
- * `connect()` rejects if `audio_subscribe_events` fails so the hybrid can fall
- * back to `TauriInvokeAudioIpc` (global `audio-player://event` emit), which the
- * Rust forwarder targets whenever no channel is registered.
+ * Subscribing is a handshake. Its first message is a `hello` holding the
+ * session snapshot, numbered in the stream, and everything after it is newer.
+ * That gives the three rules this class enforces for every consumer:
+ *
+ * - **No stale overwrite.** An event numbered at or below the newest `hello`
+ *   is already in it and is dropped. Without this a snapshot read beside the
+ *   stream could be older than an event a subscriber had already applied.
+ * - **No gap.** A page reload or `resync()` subscribes again and gets a fresh
+ *   `hello`, so the events the old page missed are folded into the snapshot.
+ * - **Commands are numbered above what the backend has seen.** Numbering starts
+ *   after the `hello`'s `ack`, so a reloaded page can never be mistaken for one
+ *   whose commands were already processed. Commands sent before the first
+ *   `hello` wait for it; `CommandTicket` reads acknowledgement off later events.
+ *
+ * Analysis frames (`seq` 0) carry no state: they skip the ordering and are
+ * coalesced to one per display frame.
  */
-class TauriChannelAudioIpc implements AudioBackendTransport {
-  private _listeners: Set<AudioThreadEventCallback> = new Set();
-  private _channel: Channel<AudioThreadEventMessage<AudioThreadEvent>> | null = null;
+class TauriAudioBackendTransport implements AudioBackendTransport {
+  private _listeners = new Set<AudioThreadEventCallback>();
+  /** `seq` of the newest `hello`; anything at or below it is covered by it. */
+  private _fence = 0;
+  private _lastSeq = 0;
+  /** Next command number; 0 until the first `hello` says where to start. */
+  private _nextCmd = 0;
+  private _queued: { msg: AudioThreadMessage; ticket: PendingTicket }[] = [];
+  private _helloWaiters = new Set<() => void>();
   private _connectPromise: Promise<void> | null = null;
+  private _connected = false;
+  private _shutdown = false;
   private _visualFrame: number | null = null;
-  private _pendingFft: { event: AudioThreadEvent; seq?: number } | null = null;
-  private _pendingLowFreq: { event: AudioThreadEvent; seq?: number } | null = null;
+  private _pendingAnalysis: EventEnvelope | null = null;
 
   connect(): Promise<void> {
-    if (this._channel) return Promise.resolve();
-    if (this._connectPromise) return this._connectPromise;
-
-    const channel = new Channel<AudioThreadEventMessage<AudioThreadEvent>>();
-    channel.onmessage = (envelope) => {
-      if (envelope && envelope.data) {
-        this._dispatchOrCoalesce(envelope.data, envelope.seq);
-      }
-    };
-
-    this._connectPromise = invoke<void>("audio_subscribe_events", { channel })
-      .then(() => {
-        this._channel = channel;
-      })
-      .finally(() => {
-        this._connectPromise = null;
-      });
-
+    if (this._connected) return Promise.resolve();
+    this._connectPromise ??= this._subscribe().finally(() => {
+      this._connectPromise = null;
+    });
     return this._connectPromise;
+  }
+
+  resync(): Promise<void> {
+    return this._subscribe();
   }
 
   subscribe(listener: AudioThreadEventCallback): () => void {
@@ -145,138 +67,102 @@ class TauriChannelAudioIpc implements AudioBackendTransport {
     };
   }
 
-  sendOrQueue(msg: AudioThreadMessage): boolean {
-    void audioSendMsg(msg);
-    return true;
-  }
-
-  shutdown(): void {
-    if (this._visualFrame !== null) {
-      cancelAnimationFrame(this._visualFrame);
-      this._visualFrame = null;
-    }
-    this._pendingFft = null;
-    this._pendingLowFreq = null;
-    this._channel = null;
-    this._listeners.clear();
-  }
-
-  private _dispatchOrCoalesce(event: AudioThreadEvent, seq?: number): void {
-    if (event.type === "fftData" || event.type === "analysisFrame") {
-      this._pendingFft = { event, seq };
-      this._scheduleVisualDispatch();
-      return;
-    }
-    if (event.type === "lowFrequencyVolume" || event.type === "lowFreqBins") {
-      this._pendingLowFreq = { event, seq };
-      this._scheduleVisualDispatch();
-      return;
-    }
-    this._dispatch(event, seq);
-  }
-
-  private _scheduleVisualDispatch(): void {
-    if (this._visualFrame !== null) return;
-    this._visualFrame = requestAnimationFrame(() => {
-      this._visualFrame = null;
-      const fft = this._pendingFft;
-      const lowFreq = this._pendingLowFreq;
-      this._pendingFft = null;
-      this._pendingLowFreq = null;
-      if (fft) this._dispatch(fft.event, fft.seq);
-      if (lowFreq) this._dispatch(lowFreq.event, lowFreq.seq);
-    });
-  }
-
-  private _dispatch(event: AudioThreadEvent, seq?: number): void {
-    for (const listener of this._listeners) {
-      try {
-        listener(event, seq);
-      } catch {
-        /* listener errors should not break dispatch */
-      }
-    }
-  }
-}
-
-class TauriHybridAudioIpc implements AudioBackendTransport {
-  private _active: AudioBackendTransport | null = null;
-  private _connectPromise: Promise<void> | null = null;
-  private _listeners: Set<AudioThreadEventCallback> = new Set();
-  private _generation = 0;
-
-  connect(): Promise<void> {
-    if (this._active) return Promise.resolve();
-    if (this._connectPromise) return this._connectPromise;
-    const generation = this._generation;
-    this._connectPromise = this._connect(generation).finally(() => {
-      if (generation === this._generation) this._connectPromise = null;
-    });
-    return this._connectPromise;
-  }
-
-  private async _connect(generation: number): Promise<void> {
-    const channel = new TauriChannelAudioIpc();
-    // Bind before the handshake: Rust can emit while invoke is still pending.
-    channel.subscribe((event, seq) => {
-      if (generation === this._generation) this._dispatch(event, seq);
-    });
-    let connected: AudioBackendTransport = channel;
-    try {
-      await channel.connect();
-    } catch (err) {
-      channel.shutdown();
-      if (generation !== this._generation) return;
-      console.warn(
-        "[audioIpc] Tauri Channel transport unavailable, falling back to global events",
-        err,
+  send(msg: AudioThreadMessage): CommandTicket {
+    const ticket = new PendingTicket();
+    if (this._shutdown) {
+      ticket.dropped = true;
+    } else if (this._nextCmd === 0) {
+      this._queued.push({ msg, ticket });
+      void this.connect().catch((err) =>
+        console.error("[audioIpc] could not connect to send", msg.type, err),
       );
-      const fallback = new TauriInvokeAudioIpc();
-      connected = fallback;
-      fallback.subscribe((event, seq) => {
-        if (generation === this._generation) this._dispatch(event, seq);
-      });
-      await fallback.connect();
+    } else {
+      this._post(msg, ticket);
     }
-    if (generation !== this._generation) {
-      connected.shutdown?.();
-      return;
-    }
-    this._active = connected;
-  }
-
-  subscribe(listener: AudioThreadEventCallback): () => void {
-    this._listeners.add(listener);
-    return () => {
-      this._listeners.delete(listener);
-    };
-  }
-
-  sendOrQueue(msg: AudioThreadMessage): boolean {
-    if (!this._active) {
-      const generation = this._generation;
-      void this.connect()
-        .then(() => {
-          if (generation === this._generation) this._active?.sendOrQueue(msg);
-        })
-        .catch((err) => console.error("[audioIpc] could not connect to send", msg.type, err));
-      return false;
-    }
-    return this._active.sendOrQueue(msg);
+    return ticket;
   }
 
   shutdown(): void {
-    this._generation++;
-    this._active?.shutdown?.();
-    this._active = null;
-    this._connectPromise = null;
+    this._shutdown = true;
+    if (this._visualFrame !== null) cancelAnimationFrame(this._visualFrame);
+    this._visualFrame = null;
+    this._pendingAnalysis = null;
+    for (const { ticket } of this._queued) ticket.dropped = true;
+    this._queued = [];
     this._listeners.clear();
   }
 
-  private _dispatch(event: AudioThreadEvent, seq?: number): void {
+  private async _subscribe(): Promise<void> {
+    let helloDelivered!: () => void;
+    const hello = new Promise<void>((resolve) => (helloDelivered = resolve));
+    this._helloWaiters.add(helloDelivered);
+    const channel = new Channel<EventEnvelope>();
+    // A replaced channel may still deliver; the fence drops what it repeats.
+    channel.onmessage = (envelope) => this._receive(envelope);
+    try {
+      await invoke<void>("audio_subscribe_events", { channel });
+    } catch (err) {
+      this._helloWaiters.delete(helloDelivered);
+      throw err;
+    }
+    await hello;
+  }
+
+  private _receive(envelope: EventEnvelope): void {
+    if (this._shutdown) return;
+    if (envelope.seq === 0) {
+      this._pendingAnalysis = envelope;
+      this._visualFrame ??= requestAnimationFrame(() => {
+        this._visualFrame = null;
+        const frame = this._pendingAnalysis;
+        this._pendingAnalysis = null;
+        if (frame) this._dispatch(frame.data, frame);
+      });
+      return;
+    }
+    if (envelope.seq <= this._fence) return;
+    if (envelope.data.type === "hello") {
+      this._fence = envelope.seq;
+      this._lastSeq = envelope.seq;
+      this._numberCommandsAbove(envelope.ack);
+      this._connected = true;
+      this._dispatch(envelope.data, envelope);
+      const waiters = [...this._helloWaiters];
+      this._helloWaiters.clear();
+      for (const resolve of waiters) resolve();
+      return;
+    }
+    if (envelope.seq !== this._lastSeq + 1) {
+      // Nothing on the backend skips a number, so a gap means events were lost.
+      logNative(
+        "warn",
+        `[audioIpc] event stream gap: expected seq ${this._lastSeq + 1}, got ${envelope.seq} (${envelope.data.type})`,
+      );
+    }
+    this._lastSeq = envelope.seq;
+    this._dispatch(envelope.data, envelope);
+  }
+
+  /** Start (or keep) numbering above `ack`, and send what waited for it. */
+  private _numberCommandsAbove(ack: number): void {
+    this._nextCmd = Math.max(this._nextCmd, ack + 1);
+    const queued = this._queued;
+    this._queued = [];
+    for (const { msg, ticket } of queued) this._post(msg, ticket);
+  }
+
+  private _post(msg: AudioThreadMessage, ticket: PendingTicket): void {
+    ticket.cmd = this._nextCmd++;
+    sendAudioCommand({ cmd: ticket.cmd, data: msg }).catch((err) => {
+      ticket.dropped = true;
+      console.error("[audioIpc] audio_send_msg failed", msg.type, err);
+    });
+  }
+
+  private _dispatch(event: AudioThreadEvent, meta: EventMeta): void {
     for (const listener of this._listeners) {
       try {
-        listener(event, seq);
+        listener(event, meta);
       } catch (err) {
         console.error("[audioIpc] event listener failed", event.type, err);
       }
@@ -285,5 +171,5 @@ class TauriHybridAudioIpc implements AudioBackendTransport {
 }
 
 export function createTauriAudioBackendTransport(): AudioBackendTransport {
-  return new TauriHybridAudioIpc();
+  return new TauriAudioBackendTransport();
 }

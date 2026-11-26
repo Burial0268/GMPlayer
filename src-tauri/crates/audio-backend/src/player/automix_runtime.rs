@@ -11,7 +11,7 @@ use tracing::{info, warn};
 
 use crate::decoder::{self, PlaybackSink};
 use crate::types::{
-    AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage, AutoMixNativeState, SongData,
+    AudioThreadEvent, AudioThreadMessage, CommandEnvelope, AutoMixNativeState, SongData,
     TrackIdentity,
 };
 
@@ -126,11 +126,10 @@ impl AudioPlayer {
         let tx = self.self_msg_tx.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            let _ = tx.send(AudioThreadEventMessage::new(
-                String::new(),
-                Some(AudioThreadMessage::AutomixForceStart {
+            let _ = tx.send(CommandEnvelope::internal(
+                AudioThreadMessage::AutomixForceStart {
                     generation: Some(generation),
-                }),
+                },
             ));
         });
     }

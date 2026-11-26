@@ -39,7 +39,7 @@ pub use error::{AudioError, AudioResult};
 #[cfg(not(target_arch = "wasm32"))]
 pub use formats::AUDIO_EXTENSIONS;
 #[cfg(not(target_arch = "wasm32"))]
-pub use player::{Player, PlayerEventSubscriber, SubscriberId};
+pub use player::{Player, PlayerEventSubscriber};
 // The in-process NCM protocol layer lives in the host app (this crate also
 // builds for wasm32, where a QuickJS isolate has no place), so it is injected
 // rather than depended on. See `player::source_resolver`.
@@ -65,7 +65,7 @@ pub use player::session_controls::{
     has_local_favourite_store, install_local_favourite_store, LocalFavouriteStore,
 };
 pub use types::{
-    AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
+    AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadMessage, CommandEnvelope, EventEnvelope,
     DisplayAudioInfo, NativePlaybackMode, NativeSessionSnapshot, NowPlayingInfo, PlaybackPhase,
     PlaybackState,
     SessionControls, SessionControlsPatch, SongData, TrackIdentity,

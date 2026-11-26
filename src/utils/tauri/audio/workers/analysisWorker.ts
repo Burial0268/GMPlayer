@@ -1,9 +1,4 @@
-import type {
-  AudioThreadEvent,
-  AudioThreadEventMessage,
-  AudioThreadMessage,
-  SongData,
-} from "../protocol";
+import type { AudioThreadMessage, CommandEnvelope, EventEnvelope, SongData } from "../protocol";
 
 interface WasmAudioBackendBinding {
   sendMessageJson(envelopeJson: string): string;
@@ -18,7 +13,7 @@ interface WasmAudioBackendModule {
 }
 
 interface WasmReply {
-  events?: AudioThreadEventMessage<AudioThreadEvent>[];
+  events?: EventEnvelope[];
   effects?: unknown[];
   error?: string;
 }
@@ -74,12 +69,8 @@ function parseReply(replyJson: string): WasmReply {
 
 function sendMessage(wasmBackend: WasmAudioBackendBinding, data: AudioThreadMessage): WasmReply {
   return parseReply(
-    wasmBackend.sendMessageJson(
-      JSON.stringify({
-        callbackId: "",
-        data,
-      }),
-    ),
+    // The analysis worker's backend is private to it; nothing waits on an ack.
+    wasmBackend.sendMessageJson(JSON.stringify({ cmd: 0, data } satisfies CommandEnvelope)),
   );
 }
 

@@ -103,7 +103,7 @@ export const publishSessionControls = (options: { force?: boolean } = {}): void 
   lastPublished = serialized;
 
   try {
-    getAudioBackendTransport().sendOrQueue({ type: "setSessionControls", controls });
+    getAudioBackendTransport().send({ type: "setSessionControls", controls });
   } catch (err) {
     if (IS_DEV) console.warn("[SessionControls] publish failed", err);
   }
@@ -124,7 +124,7 @@ export const invalidateSessionControls = (): void => {
 export const requestNextPlayMode = (): boolean => {
   if (!isTauri()) return false;
   try {
-    getAudioBackendTransport().sendOrQueue({ type: "setNextPlayMode" });
+    getAudioBackendTransport().send({ type: "setNextPlayMode" });
     return true;
   } catch {
     return false;
@@ -140,7 +140,7 @@ export const requestNextPlayMode = (): boolean => {
 export const requestToggleFavourite = (): boolean => {
   if (!isTauri()) return false;
   try {
-    getAudioBackendTransport().sendOrQueue({ type: "toggleFavourite" });
+    getAudioBackendTransport().send({ type: "toggleFavourite" });
     return true;
   } catch {
     return false;

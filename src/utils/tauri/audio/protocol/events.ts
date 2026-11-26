@@ -1,33 +1,40 @@
 /**
  * Inbound protocol: the `AudioThreadEvent` union and its payload types.
  *
- * Mirrors the Rust `AudioThreadEvent` enum. Events reach the frontend over two
- * transports — the primary Tauri `Channel` and the global-emit fallback — so
- * every envelope carries a `seq` for dedup across a transport switch.
+ * Mirrors the Rust `AudioThreadEvent` enum. Every event arrives in an
+ * `EventEnvelope` stamped by the backend's event bus; see `EventMeta`.
  */
 import type { SongData } from "./messages";
 import type {
   NativeFmSnapshot,
   NativePlannerStatus,
+  NativeSessionSnapshot,
   PlaybackPhase,
   TrackIdentity,
 } from "./manifest";
 
-export interface AudioThreadEventMessage<T> {
-  callbackId: string;
-  data: T | null;
+/**
+ * What the backend's event bus stamped on an event. Mirrors the Rust
+ * `EventEnvelope`; consumers order and gate on these instead of payload fields.
+ */
+export interface EventMeta {
   /**
-   * Monotonic sequence number stamped by the Rust event forwarder. The
-   * primary Tauri `Channel` and the global-emit fallback deliver the same
-   * event with the same `seq`; subscribers use it to drop duplicates that
-   * arrive via the secondary transport during a fallback transition
-   * (otherwise state-flip dedup breaks on Pause → Seek → Resume bursts and
-   * similar patterns).
-   *
-   * `0` (or missing) means the event was not stamped — fall back to the
-   * legacy "no dedup" behavior in that case.
+   * The bus's total order. A `hello` is "every event up to its `seq`", so the
+   * transport drops anything older that arrives after one. `0` marks an
+   * analysis frame, which carries no state and is never ordered.
    */
-  seq?: number;
+  seq: number;
+  /** The timeline the backend was on when it emitted the event. Only grows along the stream. */
+  epoch: number;
+  /**
+   * The last command of this page the backend had taken up. An event with
+   * `ack < K` was emitted before command `K` was processed — see `CommandTicket`.
+   */
+  ack: number;
+}
+
+export interface EventEnvelope extends EventMeta {
+  data: AudioThreadEvent;
 }
 
 export interface AudioQuality {
@@ -76,6 +83,12 @@ export interface AutoMixNativeStatus {
 }
 
 export type AudioThreadEvent =
+  /**
+   * First on every subscription, and again in the stream when a stopped native
+   * player was replaced (`bootId` changes and the snapshot is empty).
+   * Everything delivered after it is newer than `snapshot`.
+   */
+  | { type: "hello"; data: { bootId: number; snapshot: NativeSessionSnapshot } }
   | { type: "personalFmChanged"; data: { session: NativeFmSnapshot | null } }
   | {
       type: "personalFmTrashResult";
@@ -228,7 +241,12 @@ export type AudioThreadEvent =
     }
   | {
       type: "nativeQueueOrderChanged";
-      data: { manifestRevision: number; order: TrackIdentity[]; shuffleId?: string | null };
+      data: {
+        manifestRevision: number;
+        order: TrackIdentity[];
+        shuffleId?: string | null;
+        orderGeneration?: number;
+      };
     }
   | {
       type: "nativePlannerExhausted";
@@ -284,4 +302,4 @@ export interface NowPlayingInfo {
   nextArtworkUrl: string | null;
 }
 
-export type AudioThreadEventCallback = (event: AudioThreadEvent, seq?: number) => void;
+export type AudioThreadEventCallback = (event: AudioThreadEvent, meta: EventMeta) => void;

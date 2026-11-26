@@ -1,10 +1,13 @@
 import type {
   AudioThreadEvent,
   AudioThreadEventCallback,
-  AudioThreadEventMessage,
   AudioThreadMessage,
+  CommandEnvelope,
+  EventEnvelope,
+  EventMeta,
 } from "../protocol";
-import type { AudioBackendTransport } from "./types";
+import { PendingTicket } from "./ticket";
+import type { AudioBackendTransport, CommandTicket } from "./types";
 
 // Keep the PCM windows overlapping, matching native analysis.rs's FFT_HOP.
 const WASM_ANALYSIS_INTERVAL_MS = 16;
@@ -36,7 +39,7 @@ type WasmEffect =
   | { type: "close" };
 
 interface WasmReply {
-  events?: AudioThreadEventMessage<AudioThreadEvent>[];
+  events?: EventEnvelope[];
   effects?: WasmEffect[];
   error?: string;
 }
@@ -46,7 +49,7 @@ type WasmBackendWorkerRequest =
   | {
       id: number;
       type: "sendMessage";
-      envelope: Omit<AudioThreadEventMessage<AudioThreadMessage>, "seq">;
+      envelope: CommandEnvelope;
     }
   | {
       id: number;
@@ -113,9 +116,7 @@ class WasmAudioBackendWorkerHost {
     await this._callReply({ type: "init" });
   }
 
-  sendMessage(
-    envelope: Omit<AudioThreadEventMessage<AudioThreadMessage>, "seq">,
-  ): Promise<WasmReply> {
+  sendMessage(envelope: CommandEnvelope): Promise<WasmReply> {
     return this._callReply({ type: "sendMessage", envelope });
   }
 
@@ -397,6 +398,9 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
   private _outputDeviceName = "";
   private _isClosing = false;
   private _playPromise: Promise<void> | null = null;
+  private _nextCmd = 0;
+  /** Stamped on events this side makes up itself (element clock, output changes). */
+  private _lastMeta: EventMeta = { seq: 0, epoch: 0, ack: 0 };
 
   connect(): Promise<void> {
     if (this._backend) return Promise.resolve();
@@ -427,27 +431,29 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     };
   }
 
-  sendOrQueue(msg: AudioThreadMessage): boolean {
+  send(msg: AudioThreadMessage): CommandTicket {
     this._mirrorAnalysisControl(msg);
+    // The backend lives with the page, so numbering starts at 1.
+    const ticket = new PendingTicket();
+    ticket.cmd = ++this._nextCmd;
     void this.connect()
       .then(() => {
         const backend = this._backend;
-        if (!backend) return;
-        return backend
-          .sendMessage({
-            callbackId: this._newCallbackId(),
-            data: msg,
-          })
-          .then((reply) => {
-            if (this._backend === backend) {
-              this._handleReply(reply);
-            }
-          });
+        if (!backend) {
+          ticket.dropped = true;
+          return;
+        }
+        return backend.sendMessage({ cmd: ticket.cmd, data: msg }).then((reply) => {
+          if (this._backend === backend) {
+            this._handleReply(reply);
+          }
+        });
       })
       .catch((err) => {
+        ticket.dropped = true;
         console.warn("[audioIpc] WASM audio backend command failed", err);
       });
-    return this._backend !== null;
+    return ticket;
   }
 
   getGainNode(): GainNode | null {
@@ -468,14 +474,17 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     this._listeners.clear();
   }
 
-  private _handleReply(reply: WasmReply, preserveSeq = true): void {
+  private _handleReply(reply: WasmReply): void {
     if (reply.error) {
       console.warn("[audioIpc] WASM audio backend:", reply.error);
     }
-    for (const event of reply.events ?? []) {
-      if (event.data) {
-        this._dispatch(event.data, preserveSeq ? event.seq : undefined);
-      }
+    for (const envelope of reply.events ?? []) {
+      this._lastMeta = {
+        seq: 0,
+        epoch: envelope.epoch,
+        ack: Math.max(this._lastMeta.ack, envelope.ack),
+      };
+      this._dispatch(envelope.data, envelope);
     }
     for (const effect of reply.effects ?? []) {
       this._applyEffect(effect);
@@ -829,7 +838,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
           this._analysisEnabled &&
           this._analysisReady
         ) {
-          this._handleReply(reply, false);
+          this._handleReply(reply);
         }
       })
       .catch((err) => {
@@ -885,7 +894,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
       }
 
       this._analysisReady = !reply.error;
-      this._handleReply(reply, false);
+      this._handleReply(reply);
       if (this._analysisReady && this._audio && !this._audio.paused && !this._audio.ended) {
         this._startAnalysisTimer();
       }
@@ -941,7 +950,7 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
     void replyPromise
       .then((reply) => {
         if (analysisWorker && this._analysisWorker === analysisWorker) {
-          this._handleReply(reply, false);
+          this._handleReply(reply);
         }
       })
       .catch((err) => {
@@ -951,21 +960,14 @@ class WasmAudioBackendIpc implements AudioBackendTransport {
       });
   }
 
-  private _dispatch(event: AudioThreadEvent, seq?: number): void {
+  private _dispatch(event: AudioThreadEvent, meta: EventMeta = this._lastMeta): void {
     for (const listener of this._listeners) {
       try {
-        listener(event, seq);
+        listener(event, meta);
       } catch {
         /* listener errors should not break dispatch */
       }
     }
-  }
-
-  private _newCallbackId(): string {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   }
 
   private _formatMediaError(error: MediaError | null): string {

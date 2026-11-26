@@ -24,8 +24,15 @@ type AutoMixVisual = {
 
 let shared: AutoMixVisual | null = null;
 
-const setMix = (value: number) =>
-  document.documentElement.style.setProperty("--automix-mix", value.toFixed(3));
+// An inherited property on the root restyles the whole document, so it is written only when it
+// moves by a step an 8-bit alpha can show: ~255 writes per mix rather than one every frame.
+let written = "";
+const setMix = (value: number) => {
+  const step = (Math.round(value * 255) / 255).toFixed(4);
+  if (step === written) return;
+  written = step;
+  document.documentElement.style.setProperty("--automix-mix", step);
+};
 
 export function useAutoMixVisual(): AutoMixVisual {
   if (shared) return shared;

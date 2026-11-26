@@ -96,7 +96,8 @@ pulseaudio = "0.3.1"
 cpal = "0.18"
 
 # COM/WASAPI for output/platform/windows.rs and device_watcher/windows.rs:
-# endpoint identity, apartment policy and device notifications. The same major
+# endpoint identity, apartment policy and device notifications; and EcoQoS for
+# the AutoMix analysis thread (player/automix/cache.rs). The same major
 # CPAL 0.18 builds, so both halves of the WASAPI code in this process speak one
 # set of generated bindings and this declaration unifies into a copy that is
 # already compiled. `PROPERTYKEY` moved into `Win32_Foundation`, so no extra
@@ -107,6 +108,7 @@ features = [
   "Win32_Foundation",
   "Win32_Media_Audio",
   "Win32_System_Com",
+  "Win32_System_Threading",
 ]
 
 # Not redundant with `windows` above, and not optional. `windows::core::implement`

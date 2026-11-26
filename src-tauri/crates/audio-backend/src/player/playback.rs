@@ -12,7 +12,7 @@ use crate::analysis::AnalysisCommand;
 use crate::decoder;
 use crate::error::AudioResult;
 use crate::types::{
-    AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadEventMessage, AudioThreadMessage,
+    AudioInfo, AudioQuality, AudioThreadEvent, AudioThreadMessage, CommandEnvelope,
     DisplayAudioInfo, SongData,
 };
 
@@ -102,10 +102,9 @@ impl AudioPlayer {
         }
 
         if !self.playlist.is_empty() {
-            let _ = self.self_msg_tx.send(AudioThreadEventMessage::new(
-                "".into(),
-                Some(AudioThreadMessage::NextSongGapless),
-            ));
+            let _ = self
+                .self_msg_tx
+                .send(CommandEnvelope::internal(AudioThreadMessage::NextSongGapless));
         }
     }
 

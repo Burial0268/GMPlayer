@@ -161,3 +161,12 @@ export type AudioThreadMessage =
   | { type: "setNextPlayMode" }
   /** Toggle the loaded track's like state. The backend performs the call. */
   | { type: "toggleFavourite" };
+
+/**
+ * One command on its way in. Mirrors the Rust `CommandEnvelope`: `cmd` is the
+ * page's increasing command number, which events acknowledge as `ack`.
+ */
+export interface CommandEnvelope {
+  cmd: number;
+  data: AudioThreadMessage;
+}
