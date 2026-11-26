@@ -31,6 +31,9 @@
         <div class="sheet-scroll">
           <slot />
         </div>
+        <div v-if="$slots.footer" class="sheet-footer">
+          <slot name="footer" />
+        </div>
       </Motion>
     </div>
   </Teleport>
@@ -262,6 +265,24 @@ onBeforeUnmount(() => {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding: 0 16px calc(16px + var(--app-safe-area-bottom, 0px));
+  }
+
+  // 操作按钮（下载、匹配）：固定在面板底部，不随列表滚走；底部安全区由它让出。
+  .sheet-scroll:has(+ .sheet-footer) {
+    padding-bottom: 8px;
+  }
+
+  .sheet-footer {
+    flex: 0 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 12px 16px calc(14px + var(--app-safe-area-bottom, 0px));
+    border-top: 1px solid var(--sheet-separator);
+
+    .bottom > & .n-button {
+      flex: 1;
+    }
   }
 
   // 头部：封面 + 两行文字（歌曲操作）或标题行（添加到歌单）。

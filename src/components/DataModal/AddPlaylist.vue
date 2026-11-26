@@ -1,5 +1,5 @@
 <template>
-  <GlassSheet v-model:show="addToPlaylistModal" class="add-playlist" :label="$t('menu.add')">
+  <GlassSheet v-model:show="addToPlaylistModal" :label="$t('menu.add')">
     <template #header>
       <div class="sheet-song add-playlist-head">
         <div class="sheet-song-text">

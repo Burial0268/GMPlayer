@@ -1,80 +1,125 @@
 <template>
-  <n-modal
-    class="s-modal"
-    v-model:show="cloudMatchModal"
-    preset="card"
-    :title="$t('menu.match')"
-    :bordered="false"
-    :on-after-leave="closeCloudMatch"
-  >
-    <n-form class="cloud-match" :label-width="80" :model="cloudMatchValue">
-      <n-form-item :label="$t('other.sData')">
-        <n-card content-style="padding: 16px" :bordered="false" embedded>
-          <SmallSongData :songData="cloudMatchBeforeData" notJump />
-        </n-card>
-      </n-form-item>
-      <n-form-item :label="$t('other.asId')" path="asid">
-        <n-input-number
-          v-model:value="cloudMatchValue.asid"
-          :placeholder="$t('other.asIdDes')"
-          :show-button="false"
-        />
-        <n-popover trigger="hover" :keep-alive-on-hover="false" :disabled="isTouchOnly()">
-          <template #trigger>
-            <n-button style="margin-left: 12px" @click="toSearch(cloudMatchBeforeData.name)">
-              <template #icon>
-                <n-icon :component="Search" />
-              </template>
-            </n-button>
-          </template>
-          {{ $t("menu.search") }}
-        </n-popover>
-        <n-button
-          style="margin-left: 12px"
-          :disabled="!cloudMatchValue.asid"
-          @click="cloudMatchId = cloudMatchValue.asid.toString()"
-        >
-          {{ $t("general.dialog.check") }}
-        </n-button>
-      </n-form-item>
-    </n-form>
-    <n-card v-if="cloudMatchId" content-style="padding: 16px" :bordered="false" embedded>
-      <SmallSongData ref="smallSongDataRef" :getDataByID="cloudMatchId" notJump />
-    </n-card>
-    <template #footer>
-      <n-space justify="end">
-        <n-button @click="closeCloudMatch">
-          {{ $t("general.dialog.cancel") }}
-        </n-button>
-        <n-button
-          type="primary"
-          @click="setCloudMatchBtn(cloudMatchValue)"
-          :disabled="!cloudMatchValue.asid"
-        >
-          {{ $t("general.dialog.match") }}
-        </n-button>
-      </n-space>
+  <GlassSheet v-model:show="cloudMatchModal" :label="$t('menu.match')">
+    <template #header>
+      <div class="sheet-song">
+        <div class="sheet-song-text">
+          <div class="sheet-song-name">{{ $t("menu.match") }}</div>
+        </div>
+      </div>
     </template>
-  </n-modal>
+
+    <p class="group-label">{{ $t("other.sData") }}</p>
+    <section class="sheet-group">
+      <div class="sheet-row song-row">
+        <img class="song-cover" :src="coverUrl(cloudMatchBeforeData?.album?.picUrl, 64)" alt="" />
+        <span class="row-label">
+          <span class="text-hidden">{{ cloudMatchBeforeData?.name }}</span>
+          <span class="row-meta text-hidden">{{ artistsOf(cloudMatchBeforeData) }}</span>
+        </span>
+      </div>
+    </section>
+
+    <p class="group-label">{{ $t("other.asId") }}</p>
+    <div class="id-row">
+      <n-input-number
+        v-model:value="cloudMatchValue.asid"
+        :placeholder="$t('other.asIdDes')"
+        :show-button="false"
+      />
+      <n-button
+        secondary
+        :aria-label="$t('menu.search')"
+        @click="toSearch(cloudMatchBeforeData?.name)"
+      >
+        <template #icon>
+          <n-icon :component="Search" />
+        </template>
+      </n-button>
+      <n-button
+        secondary
+        :disabled="!cloudMatchValue.asid"
+        :loading="checking"
+        @click="checkTarget"
+      >
+        {{ $t("general.dialog.check") }}
+      </n-button>
+    </div>
+
+    <section v-if="target" class="sheet-group target">
+      <div class="sheet-row song-row">
+        <img class="song-cover" :src="coverUrl(target.album?.picUrl, 64)" alt="" />
+        <span class="row-label">
+          <span class="text-hidden">{{ target.name }}</span>
+          <span class="row-meta text-hidden">{{ artistsOf(target) }}</span>
+        </span>
+      </div>
+    </section>
+
+    <template #footer>
+      <n-button strong secondary round @click="closeCloudMatch">
+        {{ $t("general.dialog.cancel") }}
+      </n-button>
+      <n-button
+        type="primary"
+        strong
+        secondary
+        round
+        :disabled="!cloudMatchValue.asid"
+        @click="setCloudMatchBtn(cloudMatchValue)"
+      >
+        {{ $t("general.dialog.match") }}
+      </n-button>
+    </template>
+  </GlassSheet>
 </template>
 
 <script setup>
 import { setCloudMatch } from "@/api/user";
-import { isTouchOnly } from "@/utils/ui/touchOnly";
 import { userStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import { Search } from "@icon-park/vue-next";
-import SmallSongData from "@/components/DataList/SmallSongData.vue";
+import { getMusicDetail } from "@/api/song";
+import { coverUrl } from "@/utils/ncm/coverUrl";
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 
 const { t } = useI18n();
 const user = userStore();
 
 // 歌曲信息纠正数据
 const cloudDataLoad = inject("cloudDataLoad", null);
-const smallSongDataRef = ref(null);
 const cloudMatchModal = ref(false);
 const cloudMatchBeforeData = ref(null);
-const cloudMatchId = ref(null);
+// 「检查」查到的目标歌曲；只有查到了才允许匹配。
+const target = ref(null);
+const checking = ref(false);
+const artistsOf = (song) => (song?.artist ?? []).map((artist) => artist?.name).join(" / ");
+
+const checkTarget = async () => {
+  const asid = cloudMatchValue.value.asid;
+  if (!asid) return;
+  checking.value = true;
+  target.value = null;
+  try {
+    const res = await getMusicDetail(String(asid));
+    const song = res.songs?.[0];
+    // 输入框在查询期间可能又改了：只认仍然对应当前输入的结果。
+    if (song && cloudMatchValue.value.asid === asid) {
+      target.value = { name: song.name, artist: song.ar, album: song.al };
+    } else if (!song) {
+      $message.error(t("general.message.acquisitionFailed"));
+    }
+  } catch (err) {
+    console.error(t("general.message.acquisitionFailed"), err);
+    $message.error(t("general.message.acquisitionFailed"));
+  } finally {
+    checking.value = false;
+  }
+};
+// 换了 id 之前的检查结果就不算数了。
+watch(
+  () => cloudMatchValue.value.asid,
+  () => (target.value = null),
+);
 const cloudMatchValue = ref({
   uid: user.getUserData.userId,
   sid: null,
@@ -86,11 +131,10 @@ const setCloudMatchBtn = (data) => {
   if (data.sid === data.asid) {
     $message.error(t("other.noNeedMatch"));
   } else {
-    if (!smallSongDataRef.value) {
+    if (!target.value) {
       $message.error(t("other.plaseCheck"));
-    } else if (smallSongDataRef.value.checkSongData()) {
+    } else {
       setCloudMatch(data.uid, data.sid, data.asid).then((res) => {
-        console.log(res);
         if (res.data) {
           closeCloudMatch();
           $message.success(t("other.matchSuccess"));
@@ -99,8 +143,6 @@ const setCloudMatchBtn = (data) => {
           $message.error(t("other.matchFailed"));
         }
       });
-    } else {
-      $message.error(t("other.matchError"));
     }
   }
 };
@@ -113,15 +155,15 @@ const toSearch = (name) => {
 // 开启歌曲纠正
 const openCloudMatch = (data) => {
   cloudMatchValue.value.sid = data.id;
+  cloudMatchValue.value.asid = null;
+  target.value = null;
   cloudMatchBeforeData.value = data;
   cloudMatchModal.value = true;
 };
 
 // 关闭歌曲纠正
+// 原曲留到下次打开时再换：面板收起动画期间还要显示它。
 const closeCloudMatch = () => {
-  cloudMatchBeforeData.value = null;
-  cloudMatchId.value = null;
-  cloudMatchValue.value.asid = null;
   cloudMatchModal.value = false;
 };
 
@@ -132,9 +174,46 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.cloud-match {
+.group-label {
+  margin: 4px 4px 8px;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.sheet-group + .group-label {
+  margin-top: 16px;
+}
+
+.song-row {
+  --sheet-row-inset: 70px;
+  min-height: 64px;
+}
+
+.song-cover {
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--sheet-fill);
+}
+
+.row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.id-row {
+  display: flex;
+  gap: 8px;
+
   :deep(.n-input-number) {
-    width: 100%;
+    flex: 1;
   }
+}
+
+.target {
+  margin-top: 12px;
 }
 </style>
