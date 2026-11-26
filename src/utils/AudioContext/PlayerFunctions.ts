@@ -742,7 +742,7 @@ const checkAudioTime = (sound: ISound, music: ReturnType<typeof musicStore>): vo
  * @param music - pinia
  */
 const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
-  if ("mediaSession" in navigator && Object.keys(music.getPlaySongData).length) {
+  if ("mediaSession" in navigator && Object.keys(music.getPlaySongData ?? {}).length) {
     const artists = music.getPlaySongData.artist.map((a: { name: string }) => a.name);
     const picUrl = music.getPlaySongData.album?.picUrl;
     // Three sizes so the OS picks the one it wants — but for a local file all

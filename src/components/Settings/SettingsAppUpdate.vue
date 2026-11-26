@@ -465,8 +465,9 @@ const handleInstallUpdate = () => {
         --base-text-weight-medium: 500;
         --base-text-weight-normal: 400;
         --base-text-weight-semibold: 600;
-        --fontStack-monospace:
-          ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+        // The app's mono stack: it carries CJK faces, so Chinese in a release note's inline
+        // code does not fall back to the browser's monospace default (a Song face on Windows).
+        --fontStack-monospace: var(--font-family-mono);
         --fontStack-sansSerif:
           -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif,
           "Apple Color Emoji", "Segoe UI Emoji";
