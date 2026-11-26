@@ -167,7 +167,8 @@ watch(
         margin: 0;
         font-size: clamp(26px, 4.6vw, 50px);
         font-weight: 700;
-        line-height: 1.08;
+        // 单行截断（text-hidden）会裁掉行盒以外的部分：1.08 切掉 y/g/p 的下半截。
+        line-height: 1.2;
         letter-spacing: -0.02em;
         color: var(--n-text-color);
         word-break: break-all;
