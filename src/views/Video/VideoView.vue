@@ -11,8 +11,9 @@
           expand-trigger="click"
           line-clamp="3"
           :tooltip="false"
-          v-html="videoData.desc.replace(/\n/g, '<br>')"
-        />
+        >
+          <span class="long-text">{{ videoData.desc }}</span>
+        </n-ellipsis>
         <div class="num">
           <span class="playCount">
             <n-icon :component="OndemandVideoFilled" />
@@ -146,52 +147,54 @@ const thread = useCommentThread(commentResourceId, "mv");
 
 // 获取视频数据
 const getVideoData = (id) => {
-  getVideoDetail(id).then((res) => {
-    videoData.value = res.data;
-    $setSiteTitle(
-      res.data.name + " - " + res.data.artists[0].name + " - " + t("general.name.videos"),
-    );
-    const requests = res.data.brs.map((v) => {
-      return getVideoUrl(id, v.br);
-    });
-    Promise.all(requests)
-      .then((results) => {
-        const sources = results.map((result) => {
-          return {
-            src: result.data.url.replace(/^http:/, "https:"),
+  getVideoDetail(id)
+    .then((res) => {
+      videoData.value = res.data;
+      // 用户上传的视频可能没有 artists，标题里直接跳过这一段。
+      $setSiteTitle(
+        [res.data.name, res.data.artists?.[0]?.name, t("general.name.videos")]
+          .filter(Boolean)
+          .join(" - "),
+      );
+      // 请求后回顶
+      if (typeof $scrollToTop !== "undefined") $scrollToTop();
+      // 各清晰度分别解析：某一档取不到只少一个选项，不该让整个视频放不了。
+      const requests = (res.data.brs ?? []).map((v) => getVideoUrl(id, v.br));
+      return Promise.allSettled(requests).then((results) => {
+        const sources = results
+          .filter((result) => result.status === "fulfilled" && result.value?.data?.url)
+          .map(({ value }) => ({
+            src: value.data.url.replace(/^http:/, "https:"),
             type: "video/mp4",
-            size: result.data.r,
-          };
-        });
+            size: value.data.r,
+          }));
+        if (!sources.length) throw new Error("no playable video source");
         player.value.source = {
           type: "video",
           title: videoData.value.name,
           sources,
-          poster: videoData.value.cover.replace(/^http:/, "https:"),
+          poster: videoData.value.cover?.replace(/^http:/, "https:"),
         };
-      })
-      .catch((err) => {
-        console.error(t("general.message.userChildren.playlist"), err);
-        $message.error(t("general.message.userChildren.playlist"));
       });
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
-  });
+    })
+    .catch((err) => {
+      console.error(t("general.message.acquisitionFailed"), err);
+      $message.error(t("general.message.acquisitionFailed"));
+    });
 
-  // 获取相似视频
-  getSimiVideo(id).then((res) => {
-    simiVideo.value = [];
-    res.mvs.forEach((v) => {
-      simiVideo.value.push({
+  // 获取相似视频：失败只是少了侧栏推荐，不打扰用户。
+  getSimiVideo(id)
+    .then((res) => {
+      simiVideo.value = (res.mvs ?? []).map((v) => ({
         id: v.id,
         cover: v.cover,
         name: v.name,
         artist: v.artists,
         playCount: formatNumber(v.playCount),
         duration: getSongTime(v.duration),
-      });
-    });
-  });
+      }));
+    })
+    .catch((err) => console.error("[video] similar videos failed", err));
 };
 
 onMounted(() => {
