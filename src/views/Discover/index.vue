@@ -6,7 +6,7 @@
       <n-tab name="toplists">{{ $t("nav.discoverChildren.toplists") }}</n-tab>
       <n-tab name="artists">{{ $t("nav.discoverChildren.artists") }}</n-tab>
     </n-tabs>
-    <main class="content">
+    <div class="content">
       <router-view v-slot="{ Component }">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive>
@@ -14,7 +14,7 @@
           </keep-alive>
         </Transition>
       </router-view>
-    </main>
+    </div>
   </div>
 </template>
 

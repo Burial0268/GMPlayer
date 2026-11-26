@@ -104,7 +104,7 @@
       <n-tab name="videos"> MV </n-tab>
     </n-tabs>
 
-    <main class="content">
+    <div class="content">
       <router-view v-slot="{ Component }" :mvSize="artistData ? artistData.mvSize : null">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive :max="3">
@@ -112,7 +112,7 @@
           </keep-alive>
         </Transition>
       </router-view>
-    </main>
+    </div>
 
     <n-modal
       class="s-modal"

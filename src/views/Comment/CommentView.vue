@@ -32,7 +32,7 @@
       <n-tab name="all">{{ $t("general.name.allComments") }}</n-tab>
     </n-tabs>
 
-    <main class="content">
+    <div class="content">
       <PageLoadState v-if="thread.error.value" error @retry="thread.refresh(true)" />
       <div v-else-if="thread.loading.value" class="comment-stack">
         <n-skeleton v-for="index in 5" :key="index" class="row-skeleton" />
@@ -59,7 +59,7 @@
           </n-button>
         </div>
       </template>
-    </main>
+    </div>
   </div>
   <div class="title-empty" v-else>
     <span class="key">{{ $t("general.name.noKeywords") }}</span>

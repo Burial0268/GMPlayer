@@ -61,7 +61,7 @@
       <n-tab name="collected">{{ $t("profile.collected") }}</n-tab>
     </n-tabs>
 
-    <main class="content">
+    <div class="content">
       <Transition name="fade" mode="out-in">
         <CoverLists
           v-if="tabValue === 'created'"
@@ -76,7 +76,7 @@
           {{ $t("general.name.loadMore") }}
         </n-button>
       </div>
-    </main>
+    </div>
   </div>
 
   <div class="title" v-else>
