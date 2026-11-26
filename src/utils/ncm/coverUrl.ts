@@ -49,8 +49,25 @@ export const coverUrl = (url: string | null | undefined, size?: number): string 
   // and the rewrite actively breaks it.
   if (isAssetUrl(url)) return url;
   const secure = url.replace(/^http:/, "https:");
-  return size ? `${secure}?param=${size}y${size}` : secure;
+  if (!size) return secure;
+  const snapped = snapCoverSize(size);
+  return `${secure}?param=${snapped}y${snapped}`;
 };
+
+/** Square sizes every cover request is rounded up to. */
+const COVER_SIZES = [64, 128, 256, 512, 1024];
+
+/**
+ * Round a requested cover size up to {@link COVER_SIZES}.
+ *
+ * Each `?param=` is its own URL to the HTTP cache, and the views asked for
+ * ~15 different sizes of the same cover (50, 60, 80, 96, 100, 120, 128, 200,
+ * 240, 256, 300, 360, 500, 512, 1024), so one cover was downloaded again for
+ * nearly every view it appeared in. Snapping lets those views share a download
+ * at the cost of a slightly larger image.
+ */
+export const snapCoverSize = (size: number): number =>
+  COVER_SIZES.find((step) => step >= size) ?? size;
 
 /**
  * Non-square variant, for the few places that ask for one.
