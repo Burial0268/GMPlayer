@@ -26,18 +26,25 @@ import "@/style/animate.scss";
 
 if ("serviceWorker" in navigator) {
   let pwaMessage: { destroy: () => void } | null = null;
+  // 首次安装也会触发下面两个事件（clientsClaim 会接管页面），那不是「更新」。
+  // 只有页面加载时已经被某个 SW 控制，之后的事件才说明换了新版本。
+  const hadController = Boolean(navigator.serviceWorker.controller);
 
-  // 检测到更新提醒
-  navigator.serviceWorker.addEventListener("onupdatefound", () => {
-    console.info("发现站点更新，正在下载新版本");
-    pwaMessage = $message.loading("发现站点更新，正在下载新版本", {
-      closable: true,
-      duration: 0,
+  // 检测到更新提醒。`updatefound` 在 registration 上，不在 navigator.serviceWorker 上。
+  void navigator.serviceWorker.ready.then((registration) => {
+    registration.addEventListener("updatefound", () => {
+      if (!hadController) return;
+      console.info("发现站点更新，正在下载新版本");
+      pwaMessage = $message.loading("发现站点更新，正在下载新版本", {
+        closable: true,
+        duration: 0,
+      });
     });
   });
 
   // 更新完成提醒
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) return;
     console.info("站点已更新，刷新后生效");
     if (pwaMessage) pwaMessage?.destroy();
     $message.info("站点已更新，刷新后生效", {
