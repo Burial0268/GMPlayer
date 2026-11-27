@@ -1189,6 +1189,8 @@ watch(
 </script>
 
 <style lang="scss" scoped>
+@use "@/style/detail-song-list" as song-list;
+
 .playlist,
 .loading {
   // 悬浮搜索控件的玻璃参数。结构抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
@@ -1449,97 +1451,7 @@ watch(
       display: none;
     }
 
-    :deep(.datalists) {
-      // 列宽的唯一出处：`.songs` 的行和 `.song-list-head` 的列头都读这组变量，
-      // 所以不可能出现「改了行没改列头」的错位。
-      // name:album 给到 1.6:1（NCM 官方大致是这个比例）——两边都 flex:1 会把专辑名
-      // 顶到正中间，中间空一大段。
-      --song-lead-size: 38px;
-      --song-lead-gap: 14px;
-      --song-action-width: 76px;
-      --song-time-width: 46px;
-      --song-name-flex: 1.6;
-      --song-album-flex: 1;
-      --song-row-padding-x: 12px;
-
-      --detail-song-list-radius: var(--radius-md);
-
-      margin-top: 2px;
-    }
-
-    :deep(.datalists .songs) {
-      --n-color: transparent;
-      --n-border-color: transparent;
-
-      margin-bottom: 0;
-      border: 0;
-      border-radius: 0;
-      background-color: transparent;
-      box-shadow: none;
-    }
-
-    // 只用 `song-row-*` 类，不用 `:nth-child`。页面窗口模式下行被包在
-    // `.song-plain-list` 里且前面有一个占位块，`:nth-child` 的奇偶会整体错位，
-    // 而这些类是按**绝对下标**打的，滚到哪里都对。
-    :deep(.datalists .songs.song-row-odd) {
-      background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
-    }
-
-    :deep(.datalists .songs.song-row-even) {
-      background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
-    }
-
-    :deep(.datalists .songs.song-row-first) {
-      border-radius: var(--detail-song-list-radius) var(--detail-song-list-radius) 0 0;
-    }
-
-    :deep(.datalists .songs.song-row-last) {
-      border-radius: 0 0 var(--detail-song-list-radius) var(--detail-song-list-radius);
-    }
-
-    :deep(.datalists .songs.song-row-single) {
-      border-radius: var(--detail-song-list-radius);
-    }
-
-    @media (hover: hover) {
-      :deep(.datalists .songs:hover) {
-        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-        box-shadow: none;
-      }
-    }
-
-    :deep(.datalists .songs.play) {
-      background-color: color-mix(in srgb, var(--main-color) 13%, transparent);
-    }
-
-    :deep(.datalists .songs .n-card__content) {
-      min-height: 52px;
-      padding: 8px var(--song-row-padding-x) !important;
-    }
-
-    :deep(.datalists .songs .pic),
-    :deep(.datalists .songs .num) {
-      border-radius: var(--radius-sm);
-      font-size: 13px;
-    }
-
-    :deep(.datalists .songs .name .title) {
-      font-size: 14px;
-    }
-
-    :deep(.datalists .songs .name .meta) {
-      font-size: 12px;
-    }
-
-    :deep(.datalists .songs .album) {
-      font-size: 13px;
-      opacity: 0.72;
-    }
-
-    :deep(.datalists .songs .time) {
-      font-size: 12px;
-      opacity: 0.64;
-    }
+    @include song-list.rows;
 
     :deep(.pagination) {
       margin-top: 18px;
@@ -1692,12 +1604,6 @@ watch(
     }
 
     .right {
-      :deep(.datalists) {
-        --song-lead-size: 42px;
-        --song-lead-gap: 11px;
-        --song-row-padding-x: 6px;
-      }
-
       // 窄屏上「靠右的窄输入框 + 左边一大片空」很怪，而且手指要伸到角上。
       // 直接占满一行，也就不需要聚焦展开了。
       // 填充抬高、描边收紧在根的 token 块里按断点声明（见文件上方），这里不重复。
@@ -1712,25 +1618,6 @@ watch(
         &.has-value {
           width: 100%;
         }
-      }
-
-      :deep(.datalists .songs) {
-        margin-bottom: 0;
-        border-radius: 0;
-      }
-
-      :deep(.datalists .songs .n-card__content) {
-        min-height: 58px;
-        padding: 9px var(--song-row-padding-x) !important;
-      }
-
-      :deep(.datalists .songs .name) {
-        padding-right: 8px;
-      }
-
-      :deep(.datalists .songs .album),
-      :deep(.datalists .songs .time) {
-        display: none;
       }
     }
   }

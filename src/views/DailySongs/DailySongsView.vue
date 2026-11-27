@@ -183,10 +183,14 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
+@use "@/style/detail-song-list" as song-list;
+
 .dailysongs {
   display: flex;
   flex-direction: column;
   padding: 6px 0 32px;
+
+  @include song-list.rows;
 
   .daily-head {
     margin-bottom: 24px;
