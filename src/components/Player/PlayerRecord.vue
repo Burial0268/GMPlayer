@@ -177,6 +177,7 @@
         </BouncingSlider>
       </div>
     </div>
+    <component :is="DownloadSheet" v-if="DownloadSheet" ref="downloadSheetRef" />
   </div>
 </template>
 
@@ -193,6 +194,7 @@ import {
   PictureInPictureAltRound,
   ClosedCaptionRound,
   SubtitlesRound,
+  DownloadRound,
 } from "@vicons/material";
 import { ShuffleOne, PlayOnce, PlayCycle } from "@icon-park/vue-next";
 import { computed, h, ref } from "vue";
@@ -215,6 +217,8 @@ import { seekActiveSound } from "@/utils/AudioContext";
 import BouncingSlider from "./BouncingSlider.vue";
 import { NIcon } from "naive-ui";
 import { useI18n } from "vue-i18n";
+import { useSongDownloadSheet } from "@/composables/useSongDownloadSheet";
+import { isLocalSong } from "@/utils/library/localLibrary";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import { Motion } from "motion-v";
@@ -270,12 +274,24 @@ const openTaskbarLyrics = async () => {
   await windowManager.openTaskbarLyrics();
 };
 
+const { DownloadSheet, downloadSheetRef, openDownload } = useSongDownloadSheet();
+// 下载放在「更多」的第一项，与移动端面板一致；本地曲目没有可下载的来源。
+const canDownload = computed(
+  () => Boolean(music.getPlaySongData) && !isLocalSong(music.getPlaySongData),
+);
+
 // 更多菜单
 const renderIcon = (icon) => () => h(NIcon, { size: 18 }, { default: () => h(icon) });
 
 const moreOptions = computed(() => {
   const options = [];
   if (isTauriEnv.value) {
+    if (canDownload.value) {
+      options.push(
+        { label: t("menu.download"), key: "download", icon: renderIcon(DownloadRound) },
+        { type: "divider", key: "download-divider" },
+      );
+    }
     options.push(
       {
         label: t("setting.miniPlayer"),
@@ -296,7 +312,8 @@ const moreOptions = computed(() => {
 });
 
 const handleMoreSelect = (key) => {
-  if (key === "miniPlayer") toggleMiniPlayer();
+  if (key === "download") openDownload(music.getPlaySongData);
+  else if (key === "miniPlayer") toggleMiniPlayer();
   else if (key === "desktopLyrics") toggleDesktopLyrics();
   else if (key === "taskbarLyrics") openTaskbarLyrics();
 };
