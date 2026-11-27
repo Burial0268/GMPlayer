@@ -167,6 +167,15 @@ function environment(deferResolution = false) {
   };
 }
 
+test("a backend track change defers to the AutoMix target only during the handoff", () => {
+  const env = environment();
+  // Prepared, not yet crossfading: a backend change now is a manual skip or a planner advance.
+  assert.equal(env.state.resolveActiveTransitionTargetIndex(5), 1, "the prepared target exists");
+  assert.equal(env.state.resolveHandoffTargetIndex(5), -1, "but does not explain a skip");
+  env.event("automixCrossfadeStarted", { duration: 8, transitionId: env.transitionId });
+  assert.equal(env.state.resolveHandoffTargetIndex(5), 1, "during the crossfade it does");
+});
+
 test("deleting the song a transition heads for calls it off, before the commit only", () => {
   const env = environment();
   assert.equal(env.state.cancelIfHeadingFor(3), false, "another song: the transition stays");
@@ -182,7 +191,10 @@ test("deleting the song a transition heads for calls it off, before the commit o
   // After the commit the store shows the incoming song; deleting it is deleting the playing song.
   const committed = environment();
   committed.event("automixCrossfadeStarted", { duration: 8, transitionId: committed.transitionId });
-  committed.event("automixCrossfadeComplete", { currentIndex: 1, transitionId: committed.transitionId });
+  committed.event("automixCrossfadeComplete", {
+    currentIndex: 1,
+    transitionId: committed.transitionId,
+  });
   assert.equal(committed.state.cancelIfHeadingFor(2), false);
   assert.deepEqual(committed.sent, []);
 });
