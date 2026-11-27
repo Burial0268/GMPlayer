@@ -262,6 +262,11 @@ onBeforeUnmount(() => {
   --queue-pad-bottom: calc(12px + var(--app-safe-area-bottom, 0px));
   // 玻璃在这一层，所以 QueuePanel 的实色外壳底要让开，不然模糊是白做的。
   --queue-surface-bg: transparent;
+  // Rows are separate rounded cards here, not the desktop's striped stack: a sheet shows a
+  // window into the middle of a long queue, where the stack's square corners read as a flat band.
+  --queue-row-radius: var(--radius-md);
+  --queue-row-odd-bg: transparent;
+  --queue-row-even-bg: transparent;
   background-color: rgba(var(--app-shell-rgb, 242, 242, 244), 0.86);
   // 前缀在前、标准在后：压缩器把两者视作同一属性的重复声明、只留最后一条，
   // 写反顺序会让不认前缀的引擎彻底丢掉模糊（全项目同此约定）。

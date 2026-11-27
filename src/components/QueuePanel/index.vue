@@ -289,33 +289,45 @@ defineExpose({ scrollToCurrent });
   gap: 8px;
   min-height: 48px;
   padding: 5px 6px;
-  border-radius: 0;
+  // A host can round every row (the mobile sheet); otherwise only the list's two ends are.
+  border-radius: var(--queue-row-radius, 0);
   cursor: pointer;
   color: var(--n-text-color-2);
   transition:
     background-color 0.16s ease,
     color 0.16s ease;
 
-  &:first-child,
+  // Index classes, not :first-child / :nth-child: the list is virtualised, so position
+  // selectors matched the first *rendered* row and rounded a mid-list row on one side.
   &.queue-row-first {
     border-top-left-radius: var(--radius-md);
     border-top-right-radius: var(--radius-md);
   }
 
-  &:last-child,
   &.queue-row-last {
     border-bottom-right-radius: var(--radius-md);
     border-bottom-left-radius: var(--radius-md);
   }
 
-  &:nth-child(odd),
   &.queue-row-odd {
-    background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
+    background-color: var(
+      --queue-row-odd-bg,
+      color-mix(in srgb, var(--n-text-color) 3%, transparent)
+    );
   }
 
-  &:nth-child(even),
   &.queue-row-even {
-    background-color: color-mix(in srgb, var(--n-text-color) 5%, transparent);
+    background-color: var(
+      --queue-row-even-bg,
+      color-mix(in srgb, var(--n-text-color) 5%, transparent)
+    );
+  }
+
+  // Touch has no hover: show the press instead.
+  @media (hover: none) {
+    &:active {
+      background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
+    }
   }
 
   @media (hover: hover) {
