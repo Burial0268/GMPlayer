@@ -82,6 +82,12 @@
             </template>
             {{ $t("general.name.add") }}
           </n-button>
+          <n-button v-if="canDownload" strong secondary round @click="openDownload">
+            <template #icon>
+              <n-icon :component="DownloadFour" />
+            </template>
+            {{ $t("menu.download") }}
+          </n-button>
           <n-button
             strong
             secondary
@@ -122,6 +128,7 @@
     </div>
     <!-- 添加到歌单 -->
     <AddPlaylist ref="addPlayListRef" />
+    <DownloadSong v-if="canDownload" ref="downloadSongRef" />
   </div>
   <div class="title" v-else-if="!musicId || !loadingState">
     <span class="key">{{
@@ -175,7 +182,16 @@ import { getComment } from "@/api/comment";
 import { useRouter } from "vue-router";
 import { musicStore } from "@/store";
 import { getLongTime, getSongTime } from "@/utils/timeTools";
-import { PlayOne, Comments, ListAdd, Youtube, People, RecordDisc, Time } from "@icon-park/vue-next";
+import {
+  PlayOne,
+  Comments,
+  ListAdd,
+  DownloadFour,
+  Youtube,
+  People,
+  RecordDisc,
+  Time,
+} from "@icon-park/vue-next";
 import { formatNumber } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
@@ -183,6 +199,8 @@ import { useContentIntro } from "@/composables/useContentIntro";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
+import DownloadSong from "@/components/DataModal/DownloadSong.vue";
+import { downloadAvailable } from "@/utils/library/download";
 import Comment from "@/components/Comment/index.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
@@ -193,6 +211,9 @@ const router = useRouter();
 const navigation = useLayerNavigation();
 const music = musicStore();
 const addPlayListRef = ref<any>(null);
+const downloadSongRef = ref<any>(null);
+// Web 端没有落盘位置（DownloadSong 会直接报错），不如不显示按钮。
+const canDownload = downloadAvailable();
 const { applyContentPanelAccent } = useContentPanelAccent();
 const { vContentIntro } = useContentIntro();
 
@@ -301,6 +322,11 @@ const getSimiData = (id: number) => {
 
 const openAddToPlaylist = () => {
   addPlayListRef.value?.openAddToPlaylist(normalizeMusicNumberId(musicId.value));
+};
+
+// 原始详情就带 DownloadSong 要的 id / fee / pc，其余它自己再取。
+const openDownload = () => {
+  downloadSongRef.value?.openDownloadModal(musicDetail.value);
 };
 
 // 添加歌曲并播放
