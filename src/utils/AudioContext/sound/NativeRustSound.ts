@@ -668,11 +668,30 @@ export class NativeRustSound extends SoundEvents implements BackendSound {
         if (d.loadRequestId !== undefined && d.loadRequestId !== null) break;
         // shortcut: the WASM backend never starts a track by itself and does not
         // emit this; drop the `isTauri()` gate if it ever does.
-        if (!isTauri() || !this._isActiveController()) break;
+        if (!isTauri()) break;
+        // The remaining drops leave the store on the previous track while the backend plays the
+        // new one, so each says why: a skip that was never adopted is otherwise invisible.
+        const dropped = (why: string) =>
+          logNative(
+            "info",
+            `[NativeRustSound] trackChanged not adopted (${why}): epoch ${d.timelineEpoch}, ` +
+              `identity ${d.identity ? `${d.identity.provider}:${d.identity.id}` : "none"}, ` +
+              `index ${d.currentPlayIndex}, held epoch ${this._backendTimelineEpoch}`,
+          );
+        if (!this._isActiveController()) {
+          dropped("not the active controller");
+          break;
+        }
         // Mid-load this controller answers only to the load it asked for.
-        if (this._pendingLoad) break;
+        if (this._pendingLoad) {
+          dropped("own load pending");
+          break;
+        }
         // Once per timeline, whatever repeats the same change afterwards.
-        if (this._backendTimelineEpoch === d.timelineEpoch) break;
+        if (this._backendTimelineEpoch === d.timelineEpoch) {
+          dropped("epoch already adopted");
+          break;
+        }
         this._adoptBackendTrack(d);
         break;
       }
