@@ -21,6 +21,10 @@
           @click="toLink(item.id, $event)"
           @keydown.enter="toLink(item.id, $event)"
           @contextmenu="openRightMenu($event, item)"
+          @mouseenter="marqueeId = item.id"
+          @mouseleave="marqueeId = null"
+          @focusin="marqueeId = item.id"
+          @focusout="marqueeId = null"
         >
           <div class="cover" data-navigation-cover>
             <n-image
@@ -62,7 +66,12 @@
             </div>
           </div>
           <div class="title">
-            <span class="name text-hidden" data-navigation-title>{{ item.name }}</span>
+            <span class="name" data-navigation-title>
+              <OverflowMarquee v-if="marqueeId === item.id" :pause="0.6">{{
+                item.name
+              }}</OverflowMarquee>
+              <template v-else>{{ item.name }}</template>
+            </span>
             <span v-if="listType == 'playlist' && item.artist" class="by">
               By {{ item.artist.nickname }}
             </span>
@@ -96,6 +105,7 @@
     <ActionMenu
       v-model:show="rightMenuShow"
       manual
+      :sheet="rightMenuSheet"
       style="--n-font-size: 14px; --n-border-radius: var(--radius-sm)"
       placement="bottom-start"
       size="large"
@@ -124,11 +134,13 @@ import { NIcon } from "naive-ui";
 import { PlayOne, Headset, LinkTwo, Like, Unlike, Editor, DeleteFour } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import ActionMenu from "@/components/Common/ActionMenu.vue";
+import { isTouchContextMenu } from "@/utils/ui/touchOnly";
 import { delPlayList, likePlaylist } from "@/api/playlist";
 import { likeAlbum } from "@/api/album";
 import { musicStore, userStore, settingStore } from "@/store";
 import { useRouter } from "vue-router";
 import AllArtists from "./AllArtists.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import PlaylistUpdate from "@/components/DataModal/PlaylistUpdate.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
 import { useLayerNavigation } from "@/utils/navigation";
@@ -198,17 +210,24 @@ const renderIcon = (icon) => {
 };
 
 // 右键菜单数据
+// The card under the pointer (or keyboard focus) scrolls its name; the rest keep an ellipsis.
+// One marquee at a time, mounted on demand: this grid is not virtualised, and a ResizeObserver per
+// card would cost every card for the one being looked at.
+const marqueeId = ref(null);
 const rightMenuX = ref(0);
 const rightMenuY = ref(0);
 const rightMenuShow = ref(false);
 // 移动端菜单是托盘，头部显示长按的那一项。
 const rightMenuItem = ref(null);
+// A long press gets the tray whatever the width (a touch tablet is wider than the mobile layout).
+const rightMenuSheet = ref(false);
 const rightMenuOptions = ref(null);
 
 // 打开右键菜单
 const openRightMenu = (e, data) => {
   e.preventDefault();
   rightMenuItem.value = data;
+  rightMenuSheet.value = isTouchContextMenu(e);
   rightMenuShow.value = false;
   nextTick().then(() => {
     rightMenuOptions.value = [
@@ -592,8 +611,11 @@ onMounted(() => {
       margin-top: 12px;
       .name {
         // font-size: 2vh;
+        display: block;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
         font-size: 15px;
-        -webkit-line-clamp: 2;
         transition: color var(--duration-150) var(--ease-out);
         cursor: pointer;
         @media (hover: hover) {

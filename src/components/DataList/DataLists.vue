@@ -245,10 +245,10 @@
         :on-clickoutside="onClickoutside"
         @select="closeRightMenu"
       />
-      <!-- 移动端操作菜单：与大播放器「更多」同一个 GlassSheet -->
-      <GlassSheet v-model:show="drawerShow" :label="$t('player.controls.more')">
-        <template #header>
-          <div v-if="drawerData" class="sheet-song">
+      <!-- 移动端（长按或行尾的 ⋯）：与右键菜单同一份选项，以托盘呈现 -->
+      <ActionMenu v-model:show="drawerShow" manual :sheet="true" :options="rightMenuOptions">
+        <template v-if="drawerData" #header>
+          <div class="sheet-song">
             <img class="sheet-cover" :src="coverUrl(drawerData.album?.picUrl, 128)" alt="" />
             <div class="sheet-song-text">
               <div class="sheet-song-name text-hidden">{{ drawerData.name }}</div>
@@ -258,129 +258,7 @@
             </div>
           </div>
         </template>
-        <template v-if="drawerData">
-          <section class="sheet-group">
-            <button
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => playSong(listData, drawerData))"
-            >
-              <n-icon class="row-icon" size="20"><PlayOne theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.play") }}</span>
-            </button>
-            <button
-              v-if="!music.getPersonalFmMode && music.getPlaySongData?.id != drawerData.id"
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => music.addSongToNext(drawerData))"
-            >
-              <n-icon class="row-icon" size="20"><AddMusic theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.nextPlay") }}</span>
-            </button>
-            <button
-              v-if="!drawerIsLocal"
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => openAddToPlaylist(drawerData.id))"
-            >
-              <n-icon class="row-icon" size="20"><ListAdd theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.add") }}</span>
-            </button>
-            <button
-              v-if="!drawerIsLocal"
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => openDownloadModal(drawerData))"
-            >
-              <n-icon class="row-icon" size="20"><DownloadFour theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.download") }}</span>
-            </button>
-            <!-- 本地曲目的「详情」是这一页：基本信息 / 元数据 / 歌词导入。
-                 移动端点行是播放，所以这里是它唯一的入口。 -->
-            <button type="button" class="sheet-row" @click="drawerRun(() => jumpSong(drawerData))">
-              <n-icon class="row-icon" size="20"><FileMusic theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.songDetail") }}</span>
-            </button>
-            <button
-              v-if="!drawerIsLocal"
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => router.push(`/comment?id=${drawerData.id}`))"
-            >
-              <n-icon class="row-icon" size="20"><Comments theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.comment") }}</span>
-            </button>
-            <button
-              v-if="drawerData.mv"
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => router.push(`/video?id=${drawerData.mv}`))"
-            >
-              <n-icon class="row-icon" size="20"><Video theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.mv") }}</span>
-            </button>
-            <button
-              v-if="!drawerIsLocal"
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => copySongData(drawerData.id))"
-            >
-              <n-icon class="row-icon" size="20"><LinkTwo theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.copy") }}</span>
-            </button>
-          </section>
-          <section class="sheet-group">
-            <!-- 每位歌手各自是链接，所以这一行本身不是按钮。 -->
-            <div class="sheet-row">
-              <n-icon class="row-icon" size="20"><Voice theme="filled" /></n-icon>
-              <span class="row-label text-hidden">
-                <AllArtists :artistsData="drawerData.artist" />
-              </span>
-            </div>
-            <button
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => jumpLink(drawerData.album?.id, 10))"
-            >
-              <n-icon class="row-icon" size="20"><RecordDisc theme="filled" /></n-icon>
-              <span class="row-label text-hidden">{{ drawerData.album?.name }}</span>
-            </button>
-          </section>
-          <section v-if="router.currentRoute.value.name === 'user-cloud'" class="sheet-group">
-            <button
-              type="button"
-              class="sheet-row"
-              @click="
-                drawerRun(() =>
-                  router.push({
-                    path: '/search/songs',
-                    query: { keywords: drawerData.name, page: 1 },
-                  }),
-                )
-              "
-            >
-              <n-icon class="row-icon" size="20"><Search theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.search") }}</span>
-            </button>
-            <button
-              type="button"
-              class="sheet-row"
-              @click="drawerRun(() => openCloudMatch(drawerData))"
-            >
-              <n-icon class="row-icon" size="20"><FileMusic theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.match") }}</span>
-            </button>
-            <button
-              type="button"
-              class="sheet-row danger-row"
-              @click="drawerRun(() => delCloudSong(drawerData))"
-            >
-              <n-icon class="row-icon" size="20"><DeleteFour theme="filled" /></n-icon>
-              <span class="row-label">{{ $t("menu.delete") }}</span>
-            </button>
-          </section>
-        </template>
-      </GlassSheet>
+      </ActionMenu>
       <!-- 歌曲信息纠正 / 收藏到歌单 / 歌曲下载。
            三个都是点开之后才载入的（见 script 里的 `openLazyModal`）：在此之前
            `*Component` 是 null，这里连元素都不存在。 -->
@@ -453,7 +331,8 @@ import { NIcon, NVirtualList, useThemeVars } from "naive-ui";
 import { stopActiveSound } from "@/utils/AudioContext";
 import { useI18n } from "vue-i18n";
 import AllArtists from "./AllArtists.vue";
-import GlassSheet from "@/components/Common/GlassSheet.vue";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
+import { isTouchContextMenu } from "@/utils/ui/touchOnly";
 import { Motion, AnimatePresence } from "motion-v";
 import { miuixSpring, withReducedMotion } from "@/utils/motion/springs";
 import { prefersReducedMotion } from "@/utils/ui/reducedMotion";
@@ -1229,22 +1108,11 @@ const rightMenuProps = () => ({
   },
 });
 
-// 抽屉数据
+// 托盘（移动端菜单）：选项与右键菜单是同一份 `rightMenuOptions`，只是呈现不同，
+// 所以手机上能做的事和桌面右键完全一样（以前手写的抽屉漏了本地歌单的加入 / 移出等项）。
 const drawerShow = ref(false);
 const drawerData = ref(null);
-/**
- * 抽屉里那半打动作全是网易语义（加入网易歌单、下载、评论、复制链接、MV）。
- *
- * 移动端只有这个抽屉，桌面端的右键菜单早就按 `isLocal` 分好了；这里不分的话，本地
- * 曲目会被摆出一排点下去只会打空请求的按钮。
- */
-const drawerIsLocal = computed(() => Boolean(drawerData.value?.local?.uri));
-// 菜单项先收起面板再执行，两件事在同一帧开始，收起动画不被跳页打断。
-const drawerRun = (action) => {
-  drawerShow.value = false;
-  action();
-};
-// 歌手名是面板里的链接，跳走时面板要跟着收起。
+// 跳走时托盘跟着收起。
 watch(
   () => router.currentRoute.value.fullPath,
   () => (drawerShow.value = false),
@@ -1317,8 +1185,11 @@ const settleContextMenuPosition = (attempt = 0, token = contextMenuPositionToken
 };
 
 // 打开右键菜单：一级只保留动作分类，具体操作放入 children，避免云盘页面把菜单撑出视口。
-const openRightMenu = (e, data) => {
-  e.preventDefault();
+// `asSheet`: the row's ⋯ button asks for the tray outright; a long press asks for it through
+// the event (`isTouchContextMenu`), so a finger never gets the desktop dropdown.
+const openRightMenu = (e, data, asSheet = false) => {
+  e?.preventDefault();
+  const sheet = asSheet || isTouchContextMenu(e);
   const positionToken = ++contextMenuPositionToken;
   contextMenuEl = null;
   rightMenuShow.value = false;
@@ -1448,6 +1319,25 @@ const openRightMenu = (e, data) => {
         props: { onClick: () => delCloudSong(data) },
       },
     ];
+    // Where the row leads: each artist and the album. A local track's ids are placeholders
+    // (0 / a negative hash) with no Netease page behind them, so those are left out.
+    for (const artist of isLocal ? [] : (data.artist ?? [])) {
+      if (!(Number(artist?.id) > 0)) continue;
+      discoverChildren.push({
+        key: `artist-${artist.id}`,
+        label: artist.name,
+        icon: renderIcon(Voice),
+        props: { onClick: () => router.push(`/artist/songs?id=${artist.id}`) },
+      });
+    }
+    if (!isLocal && Number(data.album?.id) > 0) {
+      discoverChildren.push({
+        key: "album",
+        label: data.album.name,
+        icon: renderIcon(RecordDisc),
+        props: { onClick: () => jumpLink(data.album.id, 10) },
+      });
+    }
     const copyChildren = [
       {
         key: "copyId",
@@ -1514,6 +1404,11 @@ const openRightMenu = (e, data) => {
       },
     ];
 
+    if (sheet) {
+      drawerData.value = data;
+      drawerShow.value = true;
+      return;
+    }
     const point = clampContextMenuPoint(e.clientX, e.clientY);
     rightMenuX.value = point.x;
     rightMenuY.value = point.y;
@@ -1615,12 +1510,8 @@ const delCloudSong = (data) => {
   });
 };
 
-// 开启抽屉
-const openDrawer = (data) => {
-  console.log(data);
-  drawerData.value = data;
-  drawerShow.value = true;
-};
+// 行尾的 ⋯（移动端）
+const openDrawer = (data) => openRightMenu(null, data, true);
 
 const resolveQueue = async (visible) => {
   try {

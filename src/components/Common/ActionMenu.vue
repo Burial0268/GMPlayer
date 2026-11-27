@@ -1,13 +1,13 @@
 <template>
   <n-dropdown
-    v-if="!isMobile && manual"
+    v-if="!asSheet && manual"
     v-bind="$attrs"
     trigger="manual"
     :options="options"
     :show="open"
     @select="onSelect"
   />
-  <n-dropdown v-else-if="!isMobile" v-bind="$attrs" :options="options" @select="onSelect">
+  <n-dropdown v-else-if="!asSheet" v-bind="$attrs" :options="options" @select="onSelect">
     <slot />
   </n-dropdown>
   <template v-else>
@@ -45,8 +45,13 @@
  * (`placement`, `trigger`, …) go to the dropdown.
  *
  * `manual` is the right-click form: no trigger slot, the caller owns `v-model:show`
- * and passes `x`/`y`/`on-clickoutside` for the dropdown; at mobile width the same
- * show opens the sheet instead (a long press fires `contextmenu` there).
+ * and passes `x`/`y`/`on-clickoutside` for the dropdown. `sheet` picks the form per
+ * opening (a long press asks for the tray, see `isTouchContextMenu`); left unset, the
+ * mobile width decides.
+ *
+ * Submenus (`children`) become one tray section each, so a nested right-click menu
+ * offers everything on a phone too; a grandchild list (a submenu inside a submenu)
+ * is spelled out as rows prefixed with its parent's label.
  */
 import { computed } from "vue";
 import type { DropdownOption } from "naive-ui";
@@ -54,11 +59,16 @@ import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 
 defineOptions({ inheritAttrs: false });
-const props = defineProps<{
-  options: DropdownOption[] | null;
-  label?: string;
-  manual?: boolean;
-}>();
+const props = withDefaults(
+  defineProps<{
+    options: DropdownOption[] | null;
+    label?: string;
+    manual?: boolean;
+    /** Tray (true) or dropdown (false) for this opening; unset follows the mobile width. */
+    sheet?: boolean;
+  }>(),
+  { label: undefined, manual: false, sheet: undefined },
+);
 const emit = defineEmits<{ select: [key: string | number, option: DropdownOption] }>();
 
 // GlassSheet's own bottom-sheet breakpoint (PLAYLIST_SHEET_MEDIA_QUERY, 768px).
@@ -66,11 +76,28 @@ const { isMobile } = useResponsiveLayout(768);
 // Local when the caller does not bind it (the trigger form), the caller's in manual form.
 const open = defineModel<boolean>("show", { default: false });
 
+const asSheet = computed(() => props.sheet ?? isMobile.value);
+
+const visible = (options: DropdownOption[] | undefined) =>
+  (options ?? []).filter((option) => option.show !== false);
+
+// Rows of one submenu; a nested submenu is spelled out under its own label.
+const rowsOf = (options: DropdownOption[] | undefined): DropdownOption[] =>
+  visible(options).flatMap((option) =>
+    option.children
+      ? visible(option.children as DropdownOption[]).map((child) => ({
+          ...child,
+          icon: child.icon ?? option.icon,
+          label: `${option.label} · ${child.label}`,
+        }))
+      : [option],
+  );
+
 const groups = computed(() => {
   const result: DropdownOption[][] = [[]];
-  for (const option of props.options ?? []) {
-    if (option.show === false) continue;
+  for (const option of visible(props.options ?? [])) {
     if (option.type === "divider") result.push([]);
+    else if (option.children) result.push(rowsOf(option.children as DropdownOption[]), []);
     else result[result.length - 1].push(option);
   }
   return result.filter((group) => group.length);
