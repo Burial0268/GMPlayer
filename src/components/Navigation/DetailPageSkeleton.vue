@@ -91,13 +91,13 @@ const preview = inject(pageSourceKey, undefined);
   font-weight: 700;
   line-height: 1;
 }
+// One line like the page's own title (which scrolls when it does not fit), so the shared title
+// does not change line count when the page replaces the skeleton.
 .detail-name {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   font-size: clamp(32px, 5vw, 56px);
   font-weight: 700;
   line-height: normal;

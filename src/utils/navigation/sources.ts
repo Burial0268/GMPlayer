@@ -51,17 +51,28 @@ export interface TitleGeometry {
 
 export const pageSourceKey: InjectionKey<SourceGeometry | undefined> = Symbol("page-source");
 
+// A scrolling title (OverflowMarquee) carries an aria-hidden copy of its text; the transition's
+// stand-in must show the title once.
+function visibleText(title: HTMLElement | undefined): string {
+  if (!title) return "";
+  if (!title.querySelector('[aria-hidden="true"]')) return title.textContent?.trim() ?? "";
+  const clone = title.cloneNode(true) as HTMLElement;
+  clone.querySelectorAll('[aria-hidden="true"]').forEach((node) => node.remove());
+  return clone.textContent?.trim() ?? "";
+}
+
 export function measureTitle(element: HTMLElement): TitleGeometry | undefined {
   const title = element.matches("[data-navigation-title]")
     ? element
     : [...element.querySelectorAll<HTMLElement>("[data-navigation-title]")].find(
         (node) => node.getClientRects().length,
       );
-  if (!title?.textContent?.trim()) return;
+  const text = visibleText(title);
+  if (!title || !text) return;
   const style = getComputedStyle(title);
   return {
     rect: rectOf(title),
-    text: title.textContent.trim(),
+    text,
     fontFamily: style.fontFamily,
     fontSize: style.fontSize,
     fontWeight: style.fontWeight,

@@ -28,7 +28,9 @@
       <div class="meta">
         <div class="title selectable">
           <span class="detail-kind">{{ $t("general.name.song") }}</span>
-          <n-text class="name text-hidden">{{ musicDetail.name }}</n-text>
+          <n-text class="name">
+            <OverflowMarquee :key="musicDetail.id">{{ musicDetail.name }}</OverflowMarquee>
+          </n-text>
           <AllArtists
             v-if="musicDetail.ar"
             class="creator"
@@ -197,6 +199,7 @@ import { useI18n } from "vue-i18n";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
 import { useContentIntro } from "@/composables/useContentIntro";
 import AllArtists from "@/components/DataList/AllArtists.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
 import DownloadSong from "@/components/DataModal/DownloadSong.vue";
@@ -467,12 +470,15 @@ watch(
         }
 
         .name {
-          max-width: 780px;
+          // One line; a title that does not fit scrolls (OverflowMarquee) rather than being cut.
+          display: block;
+          max-width: min(780px, 100%);
+          min-width: 0;
+          overflow: hidden;
+          white-space: nowrap;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 700;
           line-height: normal;
-          -webkit-line-clamp: 2;
-          line-clamp: 2;
         }
 
         .creator {

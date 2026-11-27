@@ -16,9 +16,9 @@
       <div class="meta">
         <div class="title selectable">
           <span v-content-intro class="detail-kind">{{ t("general.name.playlist") }}</span>
-          <n-text class="name text-hidden" data-navigation-title="page">{{
-            playListDetail!.name
-          }}</n-text>
+          <n-text class="name" data-navigation-title="page">
+            <OverflowMarquee :key="playListDetail!.id">{{ playListDetail!.name }}</OverflowMarquee>
+          </n-text>
           <n-text v-content-intro class="creator">{{ playListDetail!.creator.nickname }}</n-text>
         </div>
         <div v-content-intro class="detail-stats">
@@ -224,6 +224,7 @@ import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
 import ActionMenu from "@/components/Common/ActionMenu.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import { alignListUnderToolbar } from "@/utils/ui/listFilterScroll";
 
 const { t } = useI18n();
@@ -1329,16 +1330,15 @@ watch(
         }
 
         .name {
-          display: -webkit-box;
+          // One line; a title that does not fit scrolls (OverflowMarquee) rather than being cut.
+          display: block;
           max-width: min(780px, 100%);
+          min-width: 0;
           overflow: hidden;
+          white-space: nowrap;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 700;
           line-height: normal;
-          overflow-wrap: anywhere;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 2;
-          line-clamp: 2;
         }
 
         .creator {
