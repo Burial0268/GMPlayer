@@ -1,14 +1,16 @@
 <template>
   <div class="dailysongs">
-    <!-- 与评论页、用户页同一套头部：方块（这里是日期）+ 小标签 + 大标题，右侧放操作。 -->
+    <!-- 与评论页、用户页同一套头部：日历 + 小标签 + 大标题，右侧放操作。 -->
     <header class="daily-head">
-      <div class="date-tile" aria-hidden="true">
+      <div class="date" aria-hidden="true">
         <n-icon class="calendar" :component="CalendarTodayFilled" />
-        <span class="day">{{ displayDay }}</span>
+        <n-text class="num">{{ displayDay }}</n-text>
       </div>
       <div class="text">
         <span class="eyebrow s-label">{{ displayDate }}</span>
-        <h1 class="title">{{ $t("home.modules.dailySongs.title") }}</h1>
+        <h1 class="title">
+          <n-gradient-text type="danger">{{ $t("home.modules.dailySongs.title") }}</n-gradient-text>
+        </h1>
         <n-text class="tip" :depth="3">{{ displaySubtitle }}</n-text>
       </div>
       <n-select
@@ -27,10 +29,10 @@
     <DataLists
       :listData="displaySongs"
       :loading="songsLoading"
-      virtual
-      virtual-height="min(68vh, 760px)"
-      :virtual-item-size="82"
+      page-window
+      :virtual-item-size="54"
       :virtual-threshold="40"
+      show-header
     />
   </div>
 </template>
@@ -193,31 +195,25 @@ onMounted(() => {
     gap: 16px;
     min-width: 0;
 
-    .date-tile {
-      --size: clamp(64px, 9vw, 96px);
+    .date {
       position: relative;
-      width: var(--size);
-      height: var(--size);
       flex-shrink: 0;
-      display: grid;
-      place-items: center;
-      border-radius: var(--radius-md);
-      color: var(--main-color);
-      background: color-mix(in srgb, var(--main-color) 12%, transparent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
 
       .calendar {
-        position: absolute;
-        top: 10%;
-        font-size: calc(var(--size) * 0.22);
-        opacity: 0.7;
+        font-size: 70px;
+        color: #d03050;
+        transform: translateY(-3px);
       }
 
-      .day {
-        margin-top: 12%;
-        font-size: calc(var(--size) * 0.42);
-        font-weight: 700;
-        font-variant-numeric: tabular-nums;
-        line-height: 1;
+      .num {
+        margin-top: 7px;
+        position: absolute;
+        font-size: 30px;
+        font-weight: bold;
+        color: #d03050;
       }
     }
 
@@ -234,11 +230,12 @@ onMounted(() => {
 
       .title {
         margin: 0;
-        font-size: clamp(26px, 4.6vw, 50px);
-        font-weight: 700;
-        line-height: 1.08;
-        letter-spacing: -0.02em;
-        color: var(--n-text-color);
+        font-size: 40px;
+        line-height: 50px;
+
+        .n-gradient-text {
+          --n-font-weight: bold;
+        }
       }
 
       .tip {
@@ -260,6 +257,5 @@ onMounted(() => {
       }
     }
   }
-
 }
 </style>
