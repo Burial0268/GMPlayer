@@ -1,14 +1,6 @@
 <template>
-  <n-modal
-    class="download-manager s-modal"
-    v-model:show="show"
-    preset="card"
-    :bordered="false"
-    style="max-width: 620px"
-  >
-    <template #header>{{ $t("download.manager") }}</template>
-
-    <n-space vertical :size="16">
+  <GlassSheet v-model:show="show" :width="620" :title="$t('download.manager')">
+    <n-space class="download-manager" vertical :size="16">
       <div class="destination">
         <div class="text">
           <n-text class="key">{{ $t("download.destination") }}</n-text>
@@ -118,10 +110,11 @@
         </n-space>
       </template>
     </n-space>
-  </n-modal>
+  </GlassSheet>
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { DeleteFour, FolderOpen, PauseOne, PlayOne, Refresh } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { useDownloadStore } from "@/store";

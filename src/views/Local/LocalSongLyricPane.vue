@@ -54,13 +54,7 @@
     </div>
 
     <!-- 粘贴导入。跟 DataModal 下的弹窗一个风格（`s-modal`）。 -->
-    <n-modal
-      class="s-modal"
-      v-model:show="pasteShow"
-      preset="card"
-      :title="$t('local.detail.lyric.paste')"
-      :bordered="false"
-    >
+    <GlassSheet v-model:show="pasteShow" :title="$t('local.detail.lyric.paste')">
       <n-input
         v-model:value="pasteText"
         type="textarea"
@@ -68,33 +62,25 @@
         :placeholder="$t('local.detail.lyric.pastePlaceholder')"
       />
       <template #footer>
-        <n-space justify="end">
-          <n-button strong secondary round @click="pasteShow = false">
-            {{ $t("general.dialog.cancel") }}
-          </n-button>
-          <n-button
-            strong
-            secondary
-            round
-            type="primary"
-            :disabled="!pasteText.trim()"
-            :loading="busy"
-            @click="importText"
-          >
-            {{ $t("local.detail.lyric.importPasted") }}
-          </n-button>
-        </n-space>
+        <n-button strong secondary round @click="pasteShow = false">
+          {{ $t("general.dialog.cancel") }}
+        </n-button>
+        <n-button
+          strong
+          secondary
+          round
+          type="primary"
+          :disabled="!pasteText.trim()"
+          :loading="busy"
+          @click="importText"
+        >
+          {{ $t("local.detail.lyric.importPasted") }}
+        </n-button>
       </template>
-    </n-modal>
+    </GlassSheet>
 
     <!-- AMLL 词库搜索。本地文件没有网易云 id，只能按标签找，所以标题/艺术家都可改。 -->
-    <n-modal
-      class="s-modal"
-      v-model:show="searchShow"
-      preset="card"
-      :title="$t('local.detail.lyric.searchAmll')"
-      :bordered="false"
-    >
+    <GlassSheet v-model:show="searchShow" :title="$t('local.detail.lyric.searchAmll')">
       <div class="search-form">
         <n-input
           v-model:value="searchTitle"
@@ -123,38 +109,33 @@
       <div class="results">
         <n-spin v-if="searching" :size="16" />
         <n-empty v-else-if="!results.length" :description="emptyText" size="small" />
-        <n-scrollbar v-else class="scroll">
-          <div
-            v-for="row in results"
-            :key="row.id"
-            class="row"
-            :class="{ busy: importingId !== null }"
-            @click="importFromAmll(row)"
-          >
-            <div class="name">{{ row.musicNames.join(" / ") }}</div>
-            <div class="meta">{{ rowMeta(row) }}</div>
-            <div v-if="row.authorUsernames.length" class="authors">
-              {{
-                $t("local.detail.lyric.contributedBy", { names: row.authorUsernames.join("、") })
-              }}
-            </div>
+        <div
+          v-for="row in results"
+          :key="row.id"
+          class="row"
+          :class="{ busy: importingId !== null }"
+          @click="importFromAmll(row)"
+        >
+          <div class="name">{{ row.musicNames.join(" / ") }}</div>
+          <div class="meta">{{ rowMeta(row) }}</div>
+          <div v-if="row.authorUsernames.length" class="authors">
+            {{ $t("local.detail.lyric.contributedBy", { names: row.authorUsernames.join("、") }) }}
           </div>
-        </n-scrollbar>
+        </div>
       </div>
 
       <template #footer>
-        <n-space justify="end">
-          <n-text v-if="totalText" class="total" :depth="3">{{ totalText }}</n-text>
-          <n-button strong secondary round @click="searchShow = false">
-            {{ $t("general.dialog.cancel") }}
-          </n-button>
-        </n-space>
+        <n-text v-if="totalText" class="total" :depth="3">{{ totalText }}</n-text>
+        <n-button strong secondary round @click="searchShow = false">
+          {{ $t("general.dialog.cancel") }}
+        </n-button>
       </template>
-    </n-modal>
+    </GlassSheet>
   </div>
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { Clipboard, Delete, FolderOpen, Search } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import {

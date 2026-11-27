@@ -93,18 +93,27 @@
       </n-grid>
     </Transition>
     <!-- 右键菜单 -->
-    <n-dropdown
+    <ActionMenu
+      v-model:show="rightMenuShow"
+      manual
       style="--n-font-size: 14px; --n-border-radius: var(--radius-sm)"
       placement="bottom-start"
-      trigger="manual"
       size="large"
       :x="rightMenuX"
       :y="rightMenuY"
       :options="rightMenuOptions"
-      :show="rightMenuShow"
       :on-clickoutside="onClickoutside"
       @select="rightMenuShow = false"
-    />
+    >
+      <template v-if="rightMenuItem" #header>
+        <div class="sheet-song">
+          <img class="sheet-cover" :src="getCoverUrl(rightMenuItem.cover, 128)" alt="" />
+          <div class="sheet-song-text">
+            <div class="sheet-song-name text-hidden">{{ rightMenuItem.name }}</div>
+          </div>
+        </div>
+      </template>
+    </ActionMenu>
     <!-- 更新歌单弹窗 -->
     <PlaylistUpdate ref="playlistUpdateRef" />
   </div>
@@ -114,6 +123,7 @@
 import { NIcon } from "naive-ui";
 import { PlayOne, Headset, LinkTwo, Like, Unlike, Editor, DeleteFour } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
 import { delPlayList, likePlaylist } from "@/api/playlist";
 import { likeAlbum } from "@/api/album";
 import { musicStore, userStore, settingStore } from "@/store";
@@ -191,11 +201,14 @@ const renderIcon = (icon) => {
 const rightMenuX = ref(0);
 const rightMenuY = ref(0);
 const rightMenuShow = ref(false);
+// 移动端菜单是托盘，头部显示长按的那一项。
+const rightMenuItem = ref(null);
 const rightMenuOptions = ref(null);
 
 // 打开右键菜单
 const openRightMenu = (e, data) => {
   e.preventDefault();
+  rightMenuItem.value = data;
   rightMenuShow.value = false;
   nextTick().then(() => {
     rightMenuOptions.value = [

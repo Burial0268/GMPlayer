@@ -1,12 +1,5 @@
 <template>
-  <n-modal
-    class="s-modal"
-    v-model:show="playlistUpdateModal"
-    preset="card"
-    :title="$t('menu.update')"
-    :bordered="false"
-    :on-after-leave="closeUpdateModal"
-  >
+  <GlassSheet v-model:show="playlistUpdateModal" :title="$t('menu.update')">
     <n-form
       ref="playlistUpdateRef"
       :rules="playlistUpdateRules"
@@ -38,19 +31,18 @@
       </n-form-item>
     </n-form>
     <template #footer>
-      <n-space justify="end">
-        <n-button @click="closeUpdateModal">
-          {{ $t("general.dialog.cancel") }}
-        </n-button>
-        <n-button type="primary" @click="toUpdatePlayList">
-          {{ $t("general.dialog.editor") }}
-        </n-button>
-      </n-space>
+      <n-button @click="closeUpdateModal">
+        {{ $t("general.dialog.cancel") }}
+      </n-button>
+      <n-button type="primary" @click="toUpdatePlayList">
+        {{ $t("general.dialog.editor") }}
+      </n-button>
     </template>
-  </n-modal>
+  </GlassSheet>
 </template>
 
 <script setup>
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { playlistUpdate } from "@/api/playlist";
 import { notifyPlaylistChanged } from "@/utils/library/playlistMutations";
 import { formRules } from "@/utils/ui/formRules";

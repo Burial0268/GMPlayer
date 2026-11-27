@@ -1,13 +1,5 @@
 <template>
-  <n-modal
-    v-model:show="showModal"
-    preset="card"
-    :title="getModalTitle"
-    class="lt-modal"
-    :style="{ width: isMobile ? '92%' : '420px' }"
-    :bordered="false"
-    transform-origin="center"
-  >
+  <GlassSheet v-model:show="showModal" :title="getModalTitle" :width="420">
     <div class="lt-body">
       <!-- ══════════════════════════════════════════════════
            NOT IN ROOM — Create / Join tabs
@@ -309,10 +301,11 @@
         </div>
       </template>
     </div>
-  </n-modal>
+  </GlassSheet>
 </template>
 
 <script setup>
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { ref, computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMusicDataStore, useUserDataStore, useListenTogetherStore } from "@/store";
@@ -325,7 +318,6 @@ import {
   KeyOutline,
 } from "@vicons/ionicons5";
 import AllArtists from "@/components/DataList/AllArtists.vue";
-import { useResponsiveLayout } from "@/composables/useResponsiveLayout";
 import { coverUrl } from "@/utils/ncm/coverUrl";
 
 // ── i18n / stores ──────────────────────────────────────────────────────────
@@ -333,7 +325,6 @@ const { t } = useI18n();
 const musicStore = useMusicDataStore();
 const userStore = useUserDataStore();
 const listenTogether = useListenTogetherStore();
-const { isMobile } = useResponsiveLayout();
 
 // ── Props / emits ──────────────────────────────────────────────────────────
 const props = defineProps({
@@ -449,13 +440,6 @@ async function copyShareLink() {
 </script>
 
 <style scoped lang="scss">
-// ─── Card shell ─────────────────────────────────────────────────────────────
-.lt-modal {
-  :deep(.n-card__content) {
-    padding: 16px;
-  }
-}
-
 .lt-body {
   min-height: 220px;
 }

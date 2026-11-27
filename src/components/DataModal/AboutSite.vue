@@ -1,18 +1,12 @@
 <template>
   <!-- 关于本站：与设置页「关于」分区共用同一份内容 -->
-  <n-modal
-    class="s-modal"
-    v-model:show="showAboutModal"
-    preset="card"
-    :title="$t('nav.avatar.about')"
-    :bordered="false"
-    transform-origin="center"
-  >
+  <GlassSheet v-model:show="showAboutModal" :title="$t('nav.avatar.about')">
     <SettingsAbout />
-  </n-modal>
+  </GlassSheet>
 </template>
 
 <script setup>
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import SettingsAbout from "@/components/Settings/SettingsAbout.vue";
 
 const showAboutModal = ref(false);

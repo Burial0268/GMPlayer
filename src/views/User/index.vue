@@ -16,9 +16,10 @@
         <h1 class="title text-hidden selectable">{{ user.getUserData.nickname }}</h1>
       </div>
       <!-- 本地音乐入口与退出登录收进一个菜单：并排两颗按钮在手机上会挤出头部。 -->
-      <n-dropdown
+      <ActionMenu
         trigger="click"
         placement="bottom-end"
+        :label="$t('nav.userChildren.more')"
         :options="menuOptions"
         @select="handleMenuSelect"
       >
@@ -27,7 +28,7 @@
             <n-icon :component="More" />
           </template>
         </n-button>
-      </n-dropdown>
+      </ActionMenu>
     </header>
 
     <n-tabs
@@ -55,6 +56,7 @@
 
 <script setup lang="ts">
 import { NIcon } from "naive-ui";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
 import { userStore } from "@/store";
 import { useRoute } from "vue-router";
 import { useLayerNavigation } from "@/utils/navigation";

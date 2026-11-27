@@ -88,18 +88,27 @@
             </template>
             {{ $t("general.name.play") }}
           </n-button>
-          <n-dropdown
+          <ActionMenu
             placement="right-start"
             trigger="click"
             :show-arrow="true"
             :options="dropdownOptions"
           >
+            <template #header>
+              <div class="sheet-song">
+                <img class="sheet-cover" :src="getCoverUrl(albumDetail.picUrl, 128)" alt="" />
+                <div class="sheet-song-text">
+                  <div class="sheet-song-name text-hidden">{{ albumDetail.name }}</div>
+                  <div class="sheet-song-artists text-hidden">{{ albumDetail.artist?.name }}</div>
+                </div>
+              </div>
+            </template>
             <n-button strong secondary circle>
               <template #icon>
                 <n-icon :component="More" />
               </template>
             </n-button>
-          </n-dropdown>
+          </ActionMenu>
         </n-space>
       </div>
     </div>
@@ -146,17 +155,12 @@
         :loading="false"
       />
       <!-- 专辑简介 -->
-      <n-modal
-        class="s-modal"
+      <GlassSheet
         v-model:show="albumDescShow"
-        preset="card"
         :title="$t('general.name.desc', { name: $t('general.name.album') })"
-        :bordered="false"
       >
-        <n-scrollbar>
-          <n-text class="selectable long-text">{{ albumDetail.description }}</n-text>
-        </n-scrollbar>
-      </n-modal>
+        <n-text class="selectable long-text">{{ albumDetail.description }}</n-text>
+      </GlassSheet>
     </div>
   </div>
   <div class="title" v-else-if="!albumId">
@@ -171,6 +175,7 @@
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import DetailPageSkeleton from "@/components/Navigation/DetailPageSkeleton.vue";
 import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
 import { useContentIntro } from "@/composables/useContentIntro";
@@ -202,6 +207,7 @@ import { userStore, musicStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
 import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { layerMotion } from "@/utils/navigation/motion";

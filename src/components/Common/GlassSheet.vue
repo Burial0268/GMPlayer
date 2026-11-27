@@ -3,15 +3,15 @@
     <div
       v-if="mounted"
       :class="['action-sheet', 'glass-sheet', layout, { closing: !show }]"
-      :style="{ zIndex }"
+      :style="{ zIndex, '--sheet-width': width ? `${width}px` : undefined }"
     >
-      <Motion class="glass-sheet-scrim" :style="scrimStyle" @click="show = false" />
+      <Motion class="glass-sheet-scrim" :style="scrimStyle" @click="dismiss" />
       <Motion
         ref="panelRef"
         class="glass-sheet-panel"
         role="dialog"
         aria-modal="true"
-        :aria-label="label"
+        :aria-label="label ?? title"
         :style="panelStyle"
         @touchstart.passive="onTouchStart"
         @touchmove="onTouchMove"
@@ -27,7 +27,13 @@
         >
           <span class="sheet-grip-bar" />
         </button>
-        <slot name="header" />
+        <slot name="header">
+          <div v-if="title" class="sheet-song">
+            <div class="sheet-song-text">
+              <div class="sheet-song-name">{{ title }}</div>
+            </div>
+          </div>
+        </slot>
         <div class="sheet-scroll">
           <slot />
         </div>
@@ -38,6 +44,11 @@
     </div>
   </Teleport>
 </template>
+
+<script lang="ts">
+// Module scope, shared by every GlassSheet: the open sheets, oldest first.
+const openSheets: symbol[] = [];
+</script>
 
 <script setup lang="ts">
 /**
@@ -60,11 +71,26 @@ import { PLAYLIST_SHEET_MEDIA_QUERY } from "@/utils/ui/playlistLayout";
 import { useSheetDrag } from "@/composables/useSheetDrag";
 
 const show = defineModel<boolean>("show", { required: true });
-withDefaults(defineProps<{ label?: string; zIndex?: number }>(), {
-  label: undefined,
-  // 与 PlayListSheet / 队列抽屉同层，盖过大播放器（2000）。
-  zIndex: 2200,
-});
+const props = withDefaults(
+  defineProps<{
+    label?: string;
+    /** Header text when no `header` slot is given; also the default `label`. */
+    title?: string;
+    /** Centred panel width in px (default 440). */
+    width?: number;
+    /** Scrim, Escape and drag do not close it (e.g. an upload in progress). */
+    persistent?: boolean;
+    zIndex?: number;
+  }>(),
+  {
+    label: undefined,
+    title: undefined,
+    width: undefined,
+    persistent: false,
+    // 与 PlayListSheet / 队列抽屉同层，盖过大播放器（2000）。
+    zIndex: 2200,
+  },
+);
 
 const sheetMedia =
   typeof window !== "undefined" ? window.matchMedia(PLAYLIST_SHEET_MEDIA_QUERY) : null;
@@ -116,7 +142,7 @@ const drag = useSheetDrag({
   travel,
   stop: stopSettle,
   settleOpen: () => settleTo(1),
-  dismiss: () => (show.value = false),
+  dismiss: () => (props.persistent ? settleTo(1) : (show.value = false)),
   scrollers: ".sheet-scroll",
   grip: ".sheet-grip",
 });
@@ -126,8 +152,18 @@ const onTouchMove = (e: TouchEvent) => isBottom.value && drag.handleTouchMove(e)
 const onTouchEnd = (e: TouchEvent) => isBottom.value && drag.handleTouchEnd(e);
 const onTouchCancel = () => isBottom.value && drag.handleTouchCancel();
 
+const dismiss = () => {
+  if (!props.persistent) show.value = false;
+};
+
+// Sheets stack (a confirmation over "manage sources", "new playlist" over "add to playlist"),
+// and keydown listeners run in the order they were added: only the topmost may take Escape,
+// or the first sheet opened closes underneath the one the user is looking at.
+const self = Symbol("glass-sheet");
+
 const onKeydown = (event: KeyboardEvent) => {
-  if (event.key !== "Escape" || !show.value || event.defaultPrevented) return;
+  if (openSheets[openSheets.length - 1] !== self) return;
+  if (event.key !== "Escape" || !show.value || event.defaultPrevented || props.persistent) return;
   event.preventDefault();
   show.value = false;
 };
@@ -136,6 +172,9 @@ watch(
   show,
   async (open) => {
     drag.reset();
+    const index = openSheets.indexOf(self);
+    if (index >= 0) openSheets.splice(index, 1);
+    if (open) openSheets.push(self);
     if (open) document.addEventListener("keydown", onKeydown);
     else document.removeEventListener("keydown", onKeydown);
     if (!open) {
@@ -155,6 +194,8 @@ watch(
 );
 
 onBeforeUnmount(() => {
+  const index = openSheets.indexOf(self);
+  if (index >= 0) openSheets.splice(index, 1);
   stopSettle();
   sheetMedia?.removeEventListener("change", syncLayout);
   document.removeEventListener("keydown", onKeydown);
@@ -180,6 +221,12 @@ onBeforeUnmount(() => {
     place-items: center;
     padding: 24px;
   }
+}
+
+// naive's floating layers (select menus, colour pickers, tooltips) take z-indexes counting up
+// from 2000, under a sheet at 2200 or more, so a select inside a sheet opened behind it.
+body:has(> .glass-sheet) .v-binder-follower-container {
+  z-index: 10100 !important;
 }
 
 .glass-sheet-scrim {
@@ -224,7 +271,7 @@ onBeforeUnmount(() => {
 
   .center > & {
     position: relative;
-    width: min(440px, 100%);
+    width: min(var(--sheet-width, 440px), 100%);
     max-height: min(640px, calc(100vh - 96px));
     padding-top: 16px;
     border-radius: var(--radius-lg, 16px);

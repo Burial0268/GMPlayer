@@ -80,18 +80,27 @@
       </n-grid>
     </Transition>
     <!-- 右键菜单 -->
-    <n-dropdown
+    <ActionMenu
+      v-model:show="rightMenuShow"
+      manual
       style="--n-font-size: 14px; --n-border-radius: var(--radius-sm)"
       placement="bottom-start"
-      trigger="manual"
       size="large"
       :x="rightMenuX"
       :y="rightMenuY"
       :options="rightMenuOptions"
-      :show="rightMenuShow"
       :on-clickoutside="onClickoutside"
       @select="rightMenuShow = false"
-    />
+    >
+      <template v-if="rightMenuItem" #header>
+        <div class="sheet-song">
+          <img class="sheet-cover" :src="getCoverUrl(rightMenuItem.cover, 128)" alt="" />
+          <div class="sheet-song-text">
+            <div class="sheet-song-name text-hidden">{{ rightMenuItem.name }}</div>
+          </div>
+        </div>
+      </template>
+    </ActionMenu>
   </div>
 </template>
 
@@ -102,6 +111,8 @@ import { likeArtist } from "@/api/artist";
 import { useLayerNavigation } from "@/utils/navigation";
 import { userStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
+import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
 const { t } = useI18n();
 const user = userStore();
@@ -147,6 +158,8 @@ const props = defineProps({
 const rightMenuX = ref(0);
 const rightMenuY = ref(0);
 const rightMenuShow = ref(false);
+// 移动端菜单是托盘，头部显示长按的那一项。
+const rightMenuItem = ref(null);
 const rightMenuOptions = ref(null);
 
 // 图标渲染
@@ -165,6 +178,7 @@ const renderIcon = (icon) => {
 // 打开右键菜单
 const openRightMenu = (e, data) => {
   e.preventDefault();
+  rightMenuItem.value = data;
   rightMenuShow.value = false;
   nextTick().then(() => {
     rightMenuOptions.value = [

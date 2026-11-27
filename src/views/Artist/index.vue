@@ -114,17 +114,9 @@
       </router-view>
     </div>
 
-    <n-modal
-      class="s-modal"
-      v-model:show="artistDescShow"
-      preset="card"
-      :title="$t('general.name.artistDesc')"
-      :bordered="false"
-    >
-      <n-scrollbar>
-        <n-text class="selectable long-text">{{ artistData.desc }}</n-text>
-      </n-scrollbar>
-    </n-modal>
+    <GlassSheet v-model:show="artistDescShow" :title="$t('general.name.artistDesc')">
+      <n-text class="selectable long-text">{{ artistData.desc }}</n-text>
+    </GlassSheet>
   </div>
 
   <div class="title" v-else-if="!artistId">
@@ -139,6 +131,7 @@
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { useRouter, useRoute } from "vue-router";
 import { userStore } from "@/store";
 import { getArtistDetail, getArtistSongs, likeArtist } from "@/api/artist";

@@ -1,14 +1,6 @@
 <template>
   <!-- 高于 GlassSheet（2200）：添加到歌单面板里点「新建」时要盖在它上面。 -->
-  <n-modal
-    class="s-modal"
-    :z-index="2300"
-    v-model:show="createPlaylistShow"
-    preset="card"
-    :title="$t('menu.create')"
-    :bordered="false"
-    :on-after-leave="closeCreatePlaylist"
-  >
+  <GlassSheet :z-index="2300" v-model:show="createPlaylistShow" :title="$t('menu.create')">
     <n-input
       style="margin-bottom: 12px"
       v-model:value="createName"
@@ -19,23 +11,22 @@
       {{ $t("other.setPrivacy") }}
     </n-checkbox>
     <template #footer>
-      <n-space justify="end">
-        <n-button @click="closeCreatePlaylist">
-          {{ $t("general.dialog.cancel") }}
-        </n-button>
-        <n-button
-          type="primary"
-          :disabled="!createName"
-          @click="createPlaylistBtn(createName, createPrivacy)"
-        >
-          {{ $t("general.dialog.create") }}
-        </n-button>
-      </n-space>
+      <n-button @click="closeCreatePlaylist">
+        {{ $t("general.dialog.cancel") }}
+      </n-button>
+      <n-button
+        type="primary"
+        :disabled="!createName"
+        @click="createPlaylistBtn(createName, createPrivacy)"
+      >
+        {{ $t("general.dialog.create") }}
+      </n-button>
     </template>
-  </n-modal>
+  </GlassSheet>
 </template>
 
 <script setup>
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { userStore } from "@/store";
 import { createPlaylist } from "@/api/playlist";
 import { useI18n } from "vue-i18n";
@@ -63,6 +54,9 @@ const createPlaylistBtn = (name, privacy = false) => {
 
 // 开启新建歌单
 const openCreatePlaylist = () => {
+  // 面板可从遮罩或下拉关掉，不经过 closeCreatePlaylist，所以打开时清空上一次的输入。
+  createName.value = null;
+  createPrivacy.value = false;
   createPlaylistShow.value = true;
 };
 

@@ -24,6 +24,7 @@
           <n-message-provider :max="3" :duration="2000" :placement="isMobile ? 'top' : 'top'">
             <slot></slot>
             <NaiveProviderContent />
+            <ConfirmSheet />
           </n-message-provider>
         </n-notification-provider>
       </n-dialog-provider>
@@ -32,13 +33,14 @@
 </template>
 
 <script setup>
+import ConfirmSheet from "@/components/Common/ConfirmSheet.vue";
+import { confirmApi } from "@/utils/ui/confirmSheet";
 import {
   zhCN,
   dateZhCN,
   darkTheme,
   useOsTheme,
   useLoadingBar,
-  useDialog,
   useMessage,
   useNotification,
 } from "naive-ui";
@@ -288,7 +290,8 @@ const setupNaiveTools = () => {
   window.$loadingBar = useLoadingBar(); // 进度条
   window.$notification = useNotification(); // 通知
   window.$message = useMessage(); // 信息
-  window.$dialog = useDialog(); // 对话框
+  // 确认框统一走 GlassSheet（ConfirmSheet），与其他面板同一种外观。
+  window.$dialog = confirmApi;
 };
 
 const NaiveProviderContent = defineComponent({

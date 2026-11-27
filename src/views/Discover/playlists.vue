@@ -15,63 +15,54 @@
         </template>
         {{ catName }}
       </n-button>
-      <n-modal
-        class="s-modal"
-        v-model:show="catModalShow"
-        preset="card"
-        :title="$t('general.name.playlistType')"
-        :bordered="false"
-      >
+      <GlassSheet v-model:show="catModalShow" :title="$t('general.name.playlistType')">
         <template #header>
-          {{ $t("general.name.playlistType") }}
-          <n-tag
-            round
-            class="tag"
-            :type="catName == '全部歌单' ? 'primary' : 'default'"
-            :style="{
-              marginLeft: '12px',
-              fontSize: '12px',
-              transform: 'translateY(-2px)',
-              cursor: 'pointer',
-            }"
-            :bordered="false"
-            @click="changeTagName('全部歌单')"
-          >
-            {{ $t("general.name.allPLaylist") }}
-          </n-tag>
+          <div class="sheet-song">
+            <div class="sheet-song-text">
+              <div class="sheet-song-name">{{ $t("general.name.playlistType") }}</div>
+            </div>
+            <n-tag
+              round
+              class="tag"
+              :type="catName == '全部歌单' ? 'primary' : 'default'"
+              :style="{ fontSize: '12px', cursor: 'pointer' }"
+              :bordered="false"
+              @click="changeTagName('全部歌单')"
+            >
+              {{ $t("general.name.allPLaylist") }}
+            </n-tag>
+          </div>
         </template>
-        <n-scrollbar>
-          <div class="all-cat" v-if="music.catList?.sub[0]">
-            <n-list>
-              <n-list-item v-for="(cat, key) in music.catList.categories" :key="cat">
-                <template #prefix>
-                  <n-text class="type"> {{ cat }} </n-text>
-                </template>
-                <n-space>
-                  <n-tag
-                    round
-                    class="tag"
-                    size="large"
-                    v-for="item in music.catList.sub.filter((v) => v.category === key)"
-                    :key="item"
-                    :bordered="false"
-                    :type="item.name == catName ? 'primary' : 'default'"
-                    @click="changeTagName(item.name)"
-                  >
-                    {{ item.name }}
-                    <template #icon>
-                      <n-icon class="icon" v-if="item.hot" :component="LocalFireDepartmentRound" />
-                    </template>
-                  </n-tag>
-                </n-space>
-              </n-list-item>
-            </n-list>
-          </div>
-          <div class="error" v-else>
-            {{ $t("general.message.acquisitionFailed") }}
-          </div>
-        </n-scrollbar>
-      </n-modal>
+        <div class="all-cat" v-if="music.catList?.sub[0]">
+          <n-list>
+            <n-list-item v-for="(cat, key) in music.catList.categories" :key="cat">
+              <template #prefix>
+                <n-text class="type"> {{ cat }} </n-text>
+              </template>
+              <n-space>
+                <n-tag
+                  round
+                  class="tag"
+                  size="large"
+                  v-for="item in music.catList.sub.filter((v) => v.category === key)"
+                  :key="item"
+                  :bordered="false"
+                  :type="item.name == catName ? 'primary' : 'default'"
+                  @click="changeTagName(item.name)"
+                >
+                  {{ item.name }}
+                  <template #icon>
+                    <n-icon class="icon" v-if="item.hot" :component="LocalFireDepartmentRound" />
+                  </template>
+                </n-tag>
+              </n-space>
+            </n-list-item>
+          </n-list>
+        </div>
+        <div class="error" v-else>
+          {{ $t("general.message.acquisitionFailed") }}
+        </div>
+      </GlassSheet>
       <!-- 精品歌单开关 -->
       <n-space
         v-if="getHaveHqPlaylists(music.highqualityCatList, catName.toString())"
@@ -113,6 +104,7 @@
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { ChevronRightRound, LocalFireDepartmentRound } from "@vicons/material";
 import { useRoute } from "vue-router";
 import { useLayerNavigation } from "@/utils/navigation";

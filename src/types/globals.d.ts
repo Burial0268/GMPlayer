@@ -1,4 +1,5 @@
-import type { MessageApi, DialogApi, NotificationApi, LoadingBarApi } from "naive-ui";
+import type { MessageApi, NotificationApi, LoadingBarApi } from "naive-ui";
+import type { ConfirmApi } from "@/utils/ui/confirmSheet";
 
 declare global {
   interface Window {
@@ -9,7 +10,7 @@ declare global {
     // Naive UI (mounted by Provider component)
     $message: MessageApi;
     $notification: NotificationApi;
-    $dialog: DialogApi;
+    $dialog: ConfirmApi;
     $loadingBar: LoadingBarApi;
     $setSiteThemeWithTransition?: (theme: "light" | "dark" | "auto") => void;
 

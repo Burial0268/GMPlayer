@@ -56,17 +56,7 @@
       @pageNumberChange="pageNumberChange"
     />
     <!-- 上传进度弹窗 -->
-    <n-modal
-      class="s-modal close"
-      v-model:show="upSongModal"
-      preset="card"
-      :title="$t('general.name.upCloud')"
-      :auto-focus="false"
-      :bordered="false"
-      :close-on-esc="false"
-      :esc="false"
-      :mask-closable="false"
-    >
+    <GlassSheet v-model:show="upSongModal" :title="$t('general.name.upCloud')" persistent>
       <n-progress
         type="line"
         :status="upSongType"
@@ -84,11 +74,12 @@
           </n-button>
         </n-space>
       </template>
-    </n-modal>
+    </GlassSheet>
   </div>
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { getCloud, upCloudSong } from "@/api/user";
 import { useRoute } from "vue-router";
 import { useLayerNavigation } from "@/utils/navigation";
