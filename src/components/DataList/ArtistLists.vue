@@ -21,9 +21,9 @@
           @click="openArtist(item, $event)"
           @keydown.enter="openArtist(item, $event)"
           @contextmenu="openRightMenu($event, item)"
-          @mouseenter="marqueeId = item.id"
-          @mouseleave="marqueeId = null"
-          @focusin="marqueeId = item.id"
+          @pointerenter="$event.pointerType === 'mouse' && (marqueeId = item.id)"
+          @pointerleave="marqueeId = null"
+          @focusin="$event.target.matches(':focus-visible') && (marqueeId = item.id)"
           @focusout="marqueeId = null"
         >
           <div class="cover" data-navigation-cover>
@@ -167,9 +167,12 @@ const props = defineProps({
 });
 
 // 弹窗数据
-// The card under the pointer (or keyboard focus) scrolls its name; the rest keep an ellipsis.
+// The card under a mouse (or keyboard focus) scrolls its name; the rest keep an ellipsis.
 // One marquee at a time, mounted on demand: this grid is not virtualised, and a ResizeObserver per
-// card would cost every card for the one being looked at.
+// card would cost every card for the one being looked at. Mouse and :focus-visible only: a tap
+// also fires a hover and focuses the card, and mounting the marquee then changes the card's
+// content mid-transition, which makes the route animation drop its source (observeSource) and
+// the page appear with no motion.
 const marqueeId = ref(null);
 const rightMenuX = ref(0);
 const rightMenuY = ref(0);

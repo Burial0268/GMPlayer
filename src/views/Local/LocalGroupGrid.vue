@@ -10,9 +10,9 @@
           :data-navigation-identity="`${kind}:${group.id}`"
           @click="open(group, $event)"
           @keydown.enter="open(group, $event)"
-          @mouseenter="marqueeId = group.id"
-          @mouseleave="marqueeId = null"
-          @focusin="marqueeId = group.id"
+          @pointerenter="$event.pointerType === 'mouse' && (marqueeId = group.id)"
+          @pointerleave="marqueeId = null"
+          @focusin="$event.target.matches(':focus-visible') && (marqueeId = group.id)"
           @focusout="marqueeId = null"
         >
           <div class="cover" data-navigation-cover>
@@ -111,9 +111,12 @@ const open = (group: LocalGroup, origin: Event) => {
   );
 };
 
-// The card under the pointer (or keyboard focus) scrolls its name; the rest keep an ellipsis.
+// The card under a mouse (or keyboard focus) scrolls its name; the rest keep an ellipsis.
 // One marquee at a time, mounted on demand: this grid is not virtualised, and a ResizeObserver per
-// card would cost every card for the one being looked at.
+// card would cost every card for the one being looked at. Mouse and :focus-visible only: a tap
+// also fires a hover and focuses the card, and mounting the marquee then changes the card's
+// content mid-transition, which makes the route animation drop its source (observeSource) and
+// the page appear with no motion.
 const marqueeId = ref<string | number | null>(null);
 </script>
 
