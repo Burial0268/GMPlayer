@@ -137,6 +137,7 @@
         </BouncingSlider>
       </div>
     </div>
+    <component :is="AddPlaylistSheet" v-if="AddPlaylistSheet" ref="addPlaylistSheetRef" />
     <component :is="DownloadSheet" v-if="DownloadSheet" ref="downloadSheetRef" />
   </div>
 </template>
@@ -154,7 +155,6 @@ import {
   ThumbDownRound,
   VolumeOffRound,
   VolumeUpRound,
-  DownloadRound,
 } from "@vicons/material";
 import { PlayCycle, PlayOnce, ShuffleOne } from "@icon-park/vue-next";
 import { computed, h, ref, type Component } from "vue";
@@ -162,8 +162,7 @@ import { emit as emitTauriEvent } from "@tauri-apps/api/event";
 import { NIcon } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
-import { useSongDownloadSheet } from "@/composables/useSongDownloadSheet";
-import { isLocalSong } from "@/utils/library/localLibrary";
+import { usePlayingSongMenu } from "@/composables/usePlayingSongMenu";
 import { useLayerNavigation } from "@/utils/navigation";
 import { getRemainingTime } from "@/utils/timeTools";
 import type { LocationQueryRaw } from "vue-router";
@@ -231,17 +230,21 @@ const toggleLike = () => {
   music.changeLikeList(song.id, !music.getSongIsLike(song.id));
 };
 
-const { DownloadSheet, downloadSheetRef, openDownload } = useSongDownloadSheet();
-// 下载放在「更多」的第一项，与移动端面板一致；本地曲目没有可下载的来源。
-const canDownload = computed(
-  () => Boolean(music.getPlaySongData) && !isLocalSong(music.getPlaySongData),
-);
+// 当前歌曲的「添加到歌单」「下载」排在「更多」最前，与移动端面板一致。
+const {
+  AddPlaylistSheet,
+  addPlaylistSheetRef,
+  DownloadSheet,
+  downloadSheetRef,
+  withSongOptions,
+  selectSongOption,
+} = usePlayingSongMenu();
 
 // 更多菜单：与封面模式同一组从属窗口开关
 const renderIcon = (icon: Component) => () => h(NIcon, { size: 18 }, { default: () => h(icon) });
 
 const moreOptions = computed(() => {
-  if (!isTauriEnv.value) return [];
+  if (!isTauriEnv.value) return withSongOptions([]);
   const options = [
     {
       label: t("setting.miniPlayer"),
@@ -257,12 +260,7 @@ const moreOptions = computed(() => {
       icon: renderIcon(ClosedCaptionRound),
     });
   }
-  if (!canDownload.value) return options;
-  return [
-    { label: t("menu.download"), key: "download", icon: renderIcon(DownloadRound) },
-    { type: "divider", key: "download-divider" },
-    ...options,
-  ];
+  return withSongOptions(options);
 });
 
 const toggleMiniPlayer = async () => {
@@ -282,8 +280,8 @@ const toggleDesktopLyrics = async () => {
 };
 
 const handleMoreSelect = (key: string) => {
-  if (key === "download") openDownload(music.getPlaySongData);
-  else if (key === "miniPlayer") toggleMiniPlayer();
+  if (selectSongOption(key)) return;
+  if (key === "miniPlayer") toggleMiniPlayer();
   else if (key === "desktopLyrics") toggleDesktopLyrics();
   else if (key === "taskbarLyrics") windowManager.openTaskbarLyrics();
 };
