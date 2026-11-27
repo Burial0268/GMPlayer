@@ -13,8 +13,6 @@ use crate::shared;
 use gmplayer_audio_backend::commands;
 use log::warn;
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
-#[cfg(target_os = "macos")]
-use tauri_plugin_decorum::WebviewWindowExt;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 /// Persist geometry only. Visibility is owned by close-to-tray behavior and
@@ -245,15 +243,6 @@ pub fn run() {
                 )
                 .into());
             };
-
-            // macOS-specific helpers that are not part of the generic window preset.
-            #[cfg(target_os = "macos")]
-            {
-                // NSWindowLevel: https://developer.apple.com/documentation/appkit/nswindowlevel
-                if let Err(e) = main_window.set_window_level(25) {
-                    warn!("Failed to set main window level: {}", e);
-                }
-            }
 
             if let Err(e) = main_window.restore_state(WINDOW_STATE_FLAGS) {
                 warn!("Failed to restore main window state before show: {}", e);
