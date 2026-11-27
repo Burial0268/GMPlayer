@@ -306,7 +306,10 @@ pub fn resolve_blocking(
             }
             Ok(ResolvedSource::local(entry.identity.clone(), path.clone()))
         }
-        ResolutionPlan::UnmOnly => resolve_via_unm(entry, config),
+        ResolutionPlan::UnmOnly => resolve_via_unm(entry, config).map_err(|mut err| {
+            err.message = format!("UNM: {}", err.message);
+            err
+        }),
         ResolutionPlan::NcmThenUnm { unm_enabled } => {
             let ncm_result = resolve_via_ncm(entry, config);
             match ncm_result {
@@ -316,12 +319,15 @@ pub fn resolve_blocking(
                     // unavailable/trial track is exactly what it is for.
                     if unm_enabled && err.kind != ResolveErrorKind::NotConfigured {
                         resolve_via_unm(entry, config).map_err(|unm_err| {
-                            // Report the more actionable of the two.
-                            if err.kind == ResolveErrorKind::Auth {
-                                err
+                            // Report the more actionable kind, but both reasons:
+                            // otherwise a UNM timeout hides why NCM fell through.
+                            let message = format!("NCM: {}; UNM: {}", err.message, unm_err.message);
+                            let kind = if err.kind == ResolveErrorKind::Auth {
+                                err.kind
                             } else {
-                                unm_err
-                            }
+                                unm_err.kind
+                            };
+                            ResolveError::new(kind, message)
                         })
                     } else {
                         Err(err)
@@ -570,11 +576,29 @@ fn send_and_read(request: ureq::Request) -> Result<String, ResolveError> {
             Err(ResolveError::new(kind, format!("HTTP {status}")))
         }
         // `ureq::Error::Transport` carries the URL, which for a signed CDN link
-        // can embed a token — never surface it verbatim.
-        Err(ureq::Error::Transport(_)) => Err(ResolveError::new(
+        // can embed a token — name only its kind.
+        Err(ureq::Error::Transport(transport)) => Err(ResolveError::new(
             ResolveErrorKind::Transient,
-            "transport error",
+            format!("transport error ({})", transport_kind(&transport)),
         )),
+    }
+}
+
+/// `Debug` of the ureq kind, except that a read or connect timeout says so:
+/// ureq files both under `Io`, which is what a slow UNM match looks like.
+fn transport_kind(transport: &ureq::Transport) -> String {
+    let timed_out = std::error::Error::source(transport)
+        .and_then(|source| source.downcast_ref::<std::io::Error>())
+        .is_some_and(|io| {
+            matches!(
+                io.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            )
+        });
+    if timed_out {
+        "timeout".to_owned()
+    } else {
+        format!("{:?}", transport.kind())
     }
 }
 
