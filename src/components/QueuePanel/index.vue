@@ -292,8 +292,9 @@ defineExpose({ scrollToCurrent });
   gap: 8px;
   min-height: 48px;
   padding: 5px 6px;
-  // A floating host (popover, sheet) rounds every row; the docked column rounds only the ends.
-  border-radius: var(--queue-row-radius, 0);
+  // One striped stack, rounded at its two ends — the detail pages' song list
+  // (`style/detail-song-list.scss`), in every host: column, popover and sheet.
+  border-radius: 0;
   cursor: pointer;
   color: var(--n-text-color-2);
   transition:
@@ -313,29 +314,23 @@ defineExpose({ scrollToCurrent });
   }
 
   &.queue-row-odd {
-    background-color: var(
-      --queue-row-odd-bg,
-      color-mix(in srgb, var(--n-text-color) 3%, transparent)
-    );
+    background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
   }
 
   &.queue-row-even {
-    background-color: var(
-      --queue-row-even-bg,
-      color-mix(in srgb, var(--n-text-color) 5%, transparent)
-    );
+    background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
   }
 
   // Touch has no hover: show the press instead.
   @media (hover: none) {
     &:active {
-      background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
+      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
     }
   }
 
   @media (hover: hover) {
     &:hover {
-      background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
+      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
 
       .queue-remove {
         opacity: 1;
@@ -345,7 +340,7 @@ defineExpose({ scrollToCurrent });
 
   &.active {
     color: var(--main-color);
-    background-color: color-mix(in srgb, var(--main-color) 14%, transparent);
+    background-color: color-mix(in srgb, var(--main-color) 13%, transparent);
 
     .queue-name,
     .queue-artists,

@@ -138,10 +138,6 @@ onBeforeUnmount(() => {
   --n-padding: 0 !important;
   // QueuePanel paints its own opaque surface unless told otherwise; the glass is this layer.
   --queue-surface-bg: transparent;
-  // Floating queue: rounded rows, every other one tinted (same as the mobile sheet). The
-  // docked column at >=1041px keeps the flush striped stack.
-  --queue-row-radius: var(--radius-md);
-  --queue-row-odd-bg: transparent;
   width: 340px;
   border-radius: var(--radius-panel, 16px);
 
