@@ -30,10 +30,10 @@
     "fmt:check": "oxfmt --check src/"
   },
   "dependencies": {
-    "@applemusic-like-lyrics/core": "^0.6.0",
+    "@applemusic-like-lyrics/core": "^0.7.2",
     "@applemusic-like-lyrics/lyric": "^1.1.0",
     "@applemusic-like-lyrics/ttml": "^1.0.1",
-    "@applemusic-like-lyrics/vue": "^0.6.0",
+    "@applemusic-like-lyrics/vue": "^0.7.2",
     "@icon-park/vue-next": "^1.4.2",
     "@ivanv/vue-collapse-transition": "^1.0.2",
     "@material/material-color-utilities": "^0.4.0",
@@ -125,7 +125,7 @@
       "@swc/wasm": "1.15.46"
     },
     "patchedDependencies": {
-      "@applemusic-like-lyrics/core@0.6.0": "patches/@applemusic-like-lyrics__core@0.6.0.patch",
+      "@applemusic-like-lyrics/core@0.7.2": "patches/@applemusic-like-lyrics__core@0.7.2.patch",
       "motion-v@1.10.3": "patches/motion-v@1.10.3.patch"
     }
   },
