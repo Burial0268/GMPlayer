@@ -323,8 +323,10 @@ const openShare = (evt: LyricLineMouseEvent) => {
 
 // AMLL follows the playing line again only when the next line starts already on screen
 // (upstream #617), so lyrics scrolled far away, or backwards, stayed there until a seek. Once
-// they are left alone for a while during playback, return to the playing line the way AMLL's
-// own resume does: reset the scroll, then lay out as a playback tick.
+// they are left alone for a while during playback, reset the scroll and lay out again.
+// As a scroll, not a playback tick: a tick staggers the lines 50 ms apart from the top, which
+// reads as flow going forward, but going back the top lines start down first and pile into the
+// ones below, so the view looked reloaded. Without the stagger every line rides the same spring.
 const IDLE_RETURN_MS = 5000;
 let idleReturnTimer = 0;
 let touching = false;
@@ -349,7 +351,7 @@ function returnToPlayingLine() {
   if (!player || sharing || touching || !playState.value) return;
   scrolledAway = false;
   player.resetScroll();
-  player.calcLayout(LayoutReason.PlaybackTick);
+  player.calcLayout(LayoutReason.DiscreteScroll);
 }
 
 function passToPlayer(event: Event) {
