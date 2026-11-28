@@ -261,6 +261,9 @@ defineExpose({ scrollToCurrent });
   flex: 1;
   // 底边留量由容器给：底部抽屉贴着屏幕底边，要在这里让出 home indicator 的高度。
   padding: 0 8px var(--queue-pad-bottom, 12px);
+  // The scrollbar root is width: 100%; content-box let the padding push it 16px past the
+  // panel, whose overflow: hidden then cut off the right gutter and the rows' right corners.
+  box-sizing: border-box;
   overflow-x: clip;
   overscroll-behavior: contain;
   contain: layout paint style;
@@ -289,7 +292,7 @@ defineExpose({ scrollToCurrent });
   gap: 8px;
   min-height: 48px;
   padding: 5px 6px;
-  // A host can round every row (the mobile sheet); otherwise only the list's two ends are.
+  // A floating host (popover, sheet) rounds every row; the docked column rounds only the ends.
   border-radius: var(--queue-row-radius, 0);
   cursor: pointer;
   color: var(--n-text-color-2);
