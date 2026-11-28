@@ -21,6 +21,10 @@
           @click="openArtist(item, $event)"
           @keydown.enter="openArtist(item, $event)"
           @contextmenu="openRightMenu($event, item)"
+          @pointerenter="$event.pointerType === 'mouse' && (marqueeId = item.id)"
+          @pointerleave="marqueeId = null"
+          @focusin="$event.target.matches(':focus-visible') && (marqueeId = item.id)"
+          @focusout="marqueeId = null"
         >
           <div class="cover" data-navigation-cover>
             <n-avatar
@@ -51,7 +55,12 @@
             />
             <n-icon size="40" :component="PeopleSearchOne" />
           </div>
-          <n-text class="name text-hidden" data-navigation-title>{{ item.name }}</n-text>
+          <n-text class="name" data-navigation-title>
+            <OverflowMarquee v-if="marqueeId === item.id" :pause="0.6">{{
+              item.name
+            }}</OverflowMarquee>
+            <template v-else>{{ item.name }}</template>
+          </n-text>
           <n-text class="size" :depth="3" v-if="item.size">
             {{
               $t("general.name.songSize", {
@@ -80,18 +89,28 @@
       </n-grid>
     </Transition>
     <!-- 右键菜单 -->
-    <n-dropdown
+    <ActionMenu
+      v-model:show="rightMenuShow"
+      manual
+      :sheet="rightMenuSheet"
       style="--n-font-size: 14px; --n-border-radius: var(--radius-sm)"
       placement="bottom-start"
-      trigger="manual"
       size="large"
       :x="rightMenuX"
       :y="rightMenuY"
       :options="rightMenuOptions"
-      :show="rightMenuShow"
       :on-clickoutside="onClickoutside"
       @select="rightMenuShow = false"
-    />
+    >
+      <template v-if="rightMenuItem" #header>
+        <div class="sheet-song">
+          <img class="sheet-cover" :src="getCoverUrl(rightMenuItem.cover, 128)" alt="" />
+          <div class="sheet-song-text">
+            <div class="sheet-song-name text-hidden">{{ rightMenuItem.name }}</div>
+          </div>
+        </div>
+      </template>
+    </ActionMenu>
   </div>
 </template>
 
@@ -102,6 +121,10 @@ import { likeArtist } from "@/api/artist";
 import { useLayerNavigation } from "@/utils/navigation";
 import { userStore, settingStore } from "@/store";
 import { useI18n } from "vue-i18n";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
+import { isTouchContextMenu } from "@/utils/ui/touchOnly";
+import getCoverUrl from "@/utils/ncm/getCoverUrl";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 const { t } = useI18n();
 const user = userStore();
@@ -144,9 +167,20 @@ const props = defineProps({
 });
 
 // 弹窗数据
+// The card under a mouse (or keyboard focus) scrolls its name; the rest keep an ellipsis.
+// One marquee at a time, mounted on demand: this grid is not virtualised, and a ResizeObserver per
+// card would cost every card for the one being looked at. Mouse and :focus-visible only: a tap
+// also fires a hover and focuses the card, and mounting the marquee then changes the card's
+// content mid-transition, which makes the route animation drop its source (observeSource) and
+// the page appear with no motion.
+const marqueeId = ref(null);
 const rightMenuX = ref(0);
 const rightMenuY = ref(0);
 const rightMenuShow = ref(false);
+// 移动端菜单是托盘，头部显示长按的那一项。
+const rightMenuItem = ref(null);
+// A long press gets the tray whatever the width (a touch tablet is wider than the mobile layout).
+const rightMenuSheet = ref(false);
 const rightMenuOptions = ref(null);
 
 // 图标渲染
@@ -165,6 +199,8 @@ const renderIcon = (icon) => {
 // 打开右键菜单
 const openRightMenu = (e, data) => {
   e.preventDefault();
+  rightMenuItem.value = data;
+  rightMenuSheet.value = isTouchContextMenu(e);
   rightMenuShow.value = false;
   nextTick().then(() => {
     rightMenuOptions.value = [
@@ -354,6 +390,10 @@ onMounted(() => {
       }
     }
     .name {
+      display: block;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
       margin-top: 14px;
       font-size: 16px;
       transition: color var(--duration-300) var(--ease-out);

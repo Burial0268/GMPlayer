@@ -31,7 +31,7 @@
       <SearchInp v-if="showNavSearch" location="nav" class="nav-search" />
       <button
         type="button"
-        class="action-icon"
+        class="action-icon touch-target"
         :aria-label="$t('setting.theme')"
         @click="toggleTheme"
       >

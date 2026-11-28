@@ -64,14 +64,7 @@
       </n-list-item>
     </n-list>
 
-    <n-modal
-      class="s-modal"
-      v-model:show="createShow"
-      preset="card"
-      :title="$t('local.createPlaylist')"
-      :bordered="false"
-      style="max-width: 400px"
-    >
+    <GlassSheet v-model:show="createShow" :title="$t('local.createPlaylist')" :width="400">
       <n-input
         v-model:value="newName"
         clearable
@@ -79,27 +72,19 @@
         @keyup.enter="create"
       />
       <template #footer>
-        <n-space justify="end">
-          <n-button strong secondary round @click="createShow = false">
-            {{ $t("general.dialog.cancel") }}
-          </n-button>
-          <n-button
-            strong
-            secondary
-            round
-            type="primary"
-            :disabled="!newName.trim()"
-            @click="create"
-          >
-            {{ $t("general.dialog.confirm") }}
-          </n-button>
-        </n-space>
+        <n-button strong secondary round @click="createShow = false">
+          {{ $t("general.dialog.cancel") }}
+        </n-button>
+        <n-button strong secondary round type="primary" :disabled="!newName.trim()" @click="create">
+          {{ $t("general.dialog.confirm") }}
+        </n-button>
       </template>
-    </n-modal>
+    </GlassSheet>
   </div>
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { DeleteFour, FolderOpen, Like, MusicList, Plus } from "@icon-park/vue-next";
 import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";

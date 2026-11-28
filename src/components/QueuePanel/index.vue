@@ -261,6 +261,9 @@ defineExpose({ scrollToCurrent });
   flex: 1;
   // 底边留量由容器给：底部抽屉贴着屏幕底边，要在这里让出 home indicator 的高度。
   padding: 0 8px var(--queue-pad-bottom, 12px);
+  // The scrollbar root is width: 100%; content-box let the padding push it 16px past the
+  // panel, whose overflow: hidden then cut off the right gutter and the rows' right corners.
+  box-sizing: border-box;
   overflow-x: clip;
   overscroll-behavior: contain;
   contain: layout paint style;
@@ -289,6 +292,8 @@ defineExpose({ scrollToCurrent });
   gap: 8px;
   min-height: 48px;
   padding: 5px 6px;
+  // One striped stack, rounded at its two ends — the detail pages' song list
+  // (`style/detail-song-list.scss`), in every host: column, popover and sheet.
   border-radius: 0;
   cursor: pointer;
   color: var(--n-text-color-2);
@@ -296,31 +301,36 @@ defineExpose({ scrollToCurrent });
     background-color 0.16s ease,
     color 0.16s ease;
 
-  &:first-child,
+  // Index classes, not :first-child / :nth-child: the list is virtualised, so position
+  // selectors matched the first *rendered* row and rounded a mid-list row on one side.
   &.queue-row-first {
     border-top-left-radius: var(--radius-md);
     border-top-right-radius: var(--radius-md);
   }
 
-  &:last-child,
   &.queue-row-last {
     border-bottom-right-radius: var(--radius-md);
     border-bottom-left-radius: var(--radius-md);
   }
 
-  &:nth-child(odd),
   &.queue-row-odd {
     background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
   }
 
-  &:nth-child(even),
   &.queue-row-even {
-    background-color: color-mix(in srgb, var(--n-text-color) 5%, transparent);
+    background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+  }
+
+  // Touch has no hover: show the press instead.
+  @media (hover: none) {
+    &:active {
+      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+    }
   }
 
   @media (hover: hover) {
     &:hover {
-      background-color: color-mix(in srgb, var(--n-text-color) 9%, transparent);
+      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
 
       .queue-remove {
         opacity: 1;
@@ -330,7 +340,7 @@ defineExpose({ scrollToCurrent });
 
   &.active {
     color: var(--main-color);
-    background-color: color-mix(in srgb, var(--main-color) 14%, transparent);
+    background-color: color-mix(in srgb, var(--main-color) 13%, transparent);
 
     .queue-name,
     .queue-artists,

@@ -1,8 +1,8 @@
 diff --git a/dist/style.css b/dist/style.css
-index a3db199dd283f54219ced8c141d32b189ba54b41..e4616622d579c17ceb18637b4d99294593c6ae31 100644
+index 0ac89ca..86eacbe 100644
 --- a/dist/style.css
 +++ b/dist/style.css
-@@ -56,8 +56,10 @@
+@@ -44,8 +44,10 @@
    top: 0;
    left: 0;
  
@@ -15,7 +15,7 @@ index a3db199dd283f54219ced8c141d32b189ba54b41..e4616622d579c17ceb18637b4d992945
    }
  
    &:not(.FmKaba_bottomLineWrapper):active {
-@@ -298,8 +300,10 @@
+@@ -306,8 +308,10 @@
      --lyric-line-padding-x: 20px;
    }
  

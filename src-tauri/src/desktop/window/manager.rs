@@ -96,6 +96,16 @@ pub fn create_window(app: &AppHandle, config: &WindowConfig) -> Result<(), Strin
         builder = builder.transparent(config.transparent);
     }
 
+    // A borderless NSWindow has no traffic lights at all, so the overlay titlebar
+    // keeps the native frame and lays the web content under a hidden title.
+    #[cfg(target_os = "macos")]
+    if config.use_overlay_titlebar {
+        builder = builder
+            .decorations(true)
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
+    }
+
     let mut builder = builder
         .always_on_top(config.always_on_top)
         .skip_taskbar(config.skip_taskbar)

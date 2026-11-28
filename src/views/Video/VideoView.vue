@@ -11,8 +11,9 @@
           expand-trigger="click"
           line-clamp="3"
           :tooltip="false"
-          v-html="videoData.desc.replace(/\n/g, '<br>')"
-        />
+        >
+          <span class="long-text">{{ videoData.desc }}</span>
+        </n-ellipsis>
         <div class="num">
           <span class="playCount">
             <n-icon :component="OndemandVideoFilled" />
@@ -28,35 +29,45 @@
           </span>
         </div>
       </div>
-      <div class="comment" v-if="commentData.allComments[0]">
-        <div class="hotComments" v-if="commentData.hotComments[0]">
-          <n-h6 prefix="bar"> {{ $t("general.name.hotComments") }} </n-h6>
-          <div class="loading" v-if="!commentData.hotComments[0]">
-            <n-skeleton text :repeat="3" />
-            <n-skeleton text style="width: 60%" />
-          </div>
-          <div class="content">
-            <Comment v-for="item in commentData.hotComments" :key="item" :commentData="item" />
-          </div>
+      <!-- 与评论页同一套：热门 / 全部 + 加载更多（useCommentThread）。 -->
+      <div
+        class="comment-section"
+        v-if="thread.loading.value || thread.error.value || thread.total.value"
+      >
+        <n-tabs class="comment-tab" type="segment" v-model:value="thread.tab.value">
+          <n-tab name="hot" :disabled="!thread.hot.value.length">
+            {{ $t("general.name.hotComments") }}
+          </n-tab>
+          <n-tab name="all">
+            {{ $t("general.name.allComments") }} · {{ formatNumber(thread.total.value) }}
+          </n-tab>
+        </n-tabs>
+        <PageLoadState v-if="thread.error.value" error @retry="thread.refresh(true)" />
+        <div v-else-if="thread.loading.value" class="comment-stack">
+          <n-skeleton v-for="index in 4" :key="index" class="row-skeleton" />
         </div>
-        <div class="allComments" ref="allCommentsRef">
-          <n-h6 prefix="bar">
-            {{ $t("general.name.allComments") }}
-            <span class="count">{{ commentsCount }} +</span>
-          </n-h6>
-          <div class="loading" v-if="!commentData.allComments[0]">
-            <n-skeleton text :repeat="3" />
-            <n-skeleton text style="width: 60%" />
+        <template v-else>
+          <div class="content comment-stack">
+            <Comment
+              v-for="item in thread.visible.value"
+              :key="item.commentId"
+              :commentData="item"
+              :resourceId="commentResourceId"
+              resourceType="mv"
+            />
           </div>
-          <div class="content">
-            <Comment v-for="item in commentData.allComments" :key="item" :commentData="item" />
+          <div v-if="thread.tab.value === 'all' && thread.hasMore.value" class="load-more">
+            <n-button
+              strong
+              secondary
+              round
+              :loading="thread.loadingMore.value"
+              @click="thread.loadMore"
+            >
+              {{ $t("general.name.loadMore") }}
+            </n-button>
           </div>
-        </div>
-        <Pagination
-          :totalCount="commentsCount"
-          :showSizePicker="false"
-          @pageNumberChange="pageNumberChange"
-        />
+        </template>
       </div>
     </section>
     <section class="simiVideo">
@@ -70,17 +81,16 @@
 import { useRouter } from "vue-router";
 import { musicStore, settingStore } from "@/store";
 import { getVideoDetail, getVideoUrl, getSimiVideo } from "@/api/video";
-import { getComment } from "@/api/comment";
+import { useCommentThread } from "@/composables/useCommentThread";
 import { formatNumber, getSongTime } from "@/utils/timeTools";
 import { OndemandVideoFilled, ShareFilled, MessageOutlined } from "@vicons/material";
 import { useI18n } from "vue-i18n";
 import VideoLists from "@/components/DataList/VideoLists.vue";
 import AllArtists from "@/components/DataList/AllArtists.vue";
 import Comment from "@/components/Comment/index.vue";
-import Pagination from "@/components/Pagination/index.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import Plyr from "plyr";
 import "plyr/dist/plyr.css";
-import type { CommentResourceType } from "@/api";
 import { lockLandscape, restoreDefaultOrientation } from "@/utils/tauri/platform/screenOrientation";
 import { isTauri } from "@/utils/tauri";
 
@@ -129,86 +139,62 @@ const playerOptions = {
 };
 
 // 评论数据
-const commentData = reactive({
-  hotComments: [], // 热门评论
-  allComments: [], // 全部评论
+const commentResourceId = computed(() => {
+  const id = Number(videoId.value);
+  return Number.isFinite(id) && id > 0 ? id : null;
 });
-const commentsCount = ref(0);
+const thread = useCommentThread(commentResourceId, "mv");
 
 // 获取视频数据
 const getVideoData = (id) => {
-  getVideoDetail(id).then((res) => {
-    videoData.value = res.data;
-    $setSiteTitle(
-      res.data.name + " - " + res.data.artists[0].name + " - " + t("general.name.videos"),
-    );
-    const requests = res.data.brs.map((v) => {
-      return getVideoUrl(id, v.br);
-    });
-    Promise.all(requests)
-      .then((results) => {
-        const sources = results.map((result) => {
-          return {
-            src: result.data.url.replace(/^http:/, "https:"),
+  getVideoDetail(id)
+    .then((res) => {
+      videoData.value = res.data;
+      // 用户上传的视频可能没有 artists，标题里直接跳过这一段。
+      $setSiteTitle(
+        [res.data.name, res.data.artists?.[0]?.name, t("general.name.videos")]
+          .filter(Boolean)
+          .join(" - "),
+      );
+      // 请求后回顶
+      if (typeof $scrollToTop !== "undefined") $scrollToTop();
+      // 各清晰度分别解析：某一档取不到只少一个选项，不该让整个视频放不了。
+      const requests = (res.data.brs ?? []).map((v) => getVideoUrl(id, v.br));
+      return Promise.allSettled(requests).then((results) => {
+        const sources = results
+          .filter((result) => result.status === "fulfilled" && result.value?.data?.url)
+          .map(({ value }) => ({
+            src: value.data.url.replace(/^http:/, "https:"),
             type: "video/mp4",
-            size: result.data.r,
-          };
-        });
+            size: value.data.r,
+          }));
+        if (!sources.length) throw new Error("no playable video source");
         player.value.source = {
           type: "video",
           title: videoData.value.name,
           sources,
-          poster: videoData.value.cover.replace(/^http:/, "https:"),
+          poster: videoData.value.cover?.replace(/^http:/, "https:"),
         };
-      })
-      .catch((err) => {
-        console.error(t("general.message.userChildren.playlist"), err);
-        $message.error(t("general.message.userChildren.playlist"));
       });
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
-  });
+    })
+    .catch((err) => {
+      console.error(t("general.message.acquisitionFailed"), err);
+      $message.error(t("general.message.acquisitionFailed"));
+    });
 
-  // 获取相似视频
-  getSimiVideo(id).then((res) => {
-    simiVideo.value = [];
-    res.mvs.forEach((v) => {
-      simiVideo.value.push({
+  // 获取相似视频：失败只是少了侧栏推荐，不打扰用户。
+  getSimiVideo(id)
+    .then((res) => {
+      simiVideo.value = (res.mvs ?? []).map((v) => ({
         id: v.id,
         cover: v.cover,
         name: v.name,
         artist: v.artists,
         playCount: formatNumber(v.playCount),
         duration: getSongTime(v.duration),
-      });
-    });
-  });
-};
-
-// 获取评论数据
-const getCommentData = (id, offset = 0, type: CommentResourceType = "mv") => {
-  // 获取 before
-  let before = null;
-  if (commentData.allComments[0] && offset >= 5000) {
-    before = commentData.allComments[commentData.allComments.length - 1].time;
-  }
-  getComment(id, offset, before, type).then((res) => {
-    // 写入数据
-    if (res.hotComments) {
-      commentData.hotComments = res.hotComments;
-    } else {
-      commentData.hotComments = [];
-    }
-    commentData.allComments = res.comments;
-    commentsCount.value = res.total;
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
-  });
-};
-
-// 当前页数数据变化
-const pageNumberChange = (val) => {
-  getCommentData(videoId.value, (val - 1) * 20);
+      }));
+    })
+    .catch((err) => console.error("[video] similar videos failed", err));
 };
 
 onMounted(() => {
@@ -216,8 +202,6 @@ onMounted(() => {
   player.value = new Plyr(videoRef.value, playerOptions);
   // 获取视频数据
   getVideoData(videoId.value);
-  // 获取评论数据
-  getCommentData(videoId.value);
   // 播放器事件
   player.value.on("playing", () => {
     // 隐藏控制条及暂停音乐
@@ -267,7 +251,6 @@ watch(
     if (val.name === "video") {
       videoId.value = val.query.id;
       getVideoData(val.query.id);
-      getCommentData(val.query.id);
     }
   },
 );
@@ -342,16 +325,19 @@ watch(
         }
       }
     }
-    .comment {
-      margin-top: 20px;
-      .hotComments,
-      .allComments {
-        margin-top: 40px;
-        .count {
-          font-size: 13px;
-          margin-left: 4px;
-          opacity: 0.6;
-        }
+    .comment-section {
+      margin-top: 28px;
+      .comment-tab {
+        max-width: 360px;
+        margin-bottom: 16px;
+      }
+      .row-skeleton {
+        height: 82px;
+      }
+      .load-more {
+        display: flex;
+        justify-content: center;
+        margin-top: 20px;
       }
     }
   }

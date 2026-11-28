@@ -1,49 +1,66 @@
 <template>
   <div class="toplists">
-    <n-divider v-if="toplistData.officialList[0]">
-      {{ $t("nav.officialList") }}
-    </n-divider>
-    <Transition mode="out-in">
-      <n-grid class="official" x-gap="20" y-gap="20" :cols="2" v-if="toplistData.officialList[0]">
-        <n-gi v-for="item in toplistData.officialList" :key="item">
-          <n-card
-            class="item"
-            :bordered="false"
-            :content-style="{
-              padding: '0',
-              display: 'flex',
-              alignItems: 'center',
-            }"
-            hoverable
-            role="link"
-            tabindex="0"
-            :data-navigation-identity="`playlist:${item.id}`"
-            @click="openPlaylist(item.id, $event)"
-            @keydown.enter="openPlaylist(item.id, $event)"
-          >
-            <div class="cover" data-navigation-cover>
-              <n-avatar
-                class="coverImg"
-                :src="item.coverImgUrl.replace(/^http:/, 'https:') + '?param=300y300'"
-                fallback-src="/images/pic/default.png"
-              />
-              <n-text class="update" v-html="item.updateFrequency" />
-            </div>
-            <div class="data">
-              <n-text class="title" data-navigation-title v-html="item.name" />
-              <div class="desc">
-                <div class="song text-hidden" v-for="(song, index) in item.tracks" :key="song">
-                  <n-text>{{ Number(index) + 1 }}. {{ song.first }} - </n-text>
-                  <n-text depth="3">{{ song.second }}</n-text>
-                </div>
+    <PageLoadState v-if="failed" error @retry="getToplistData" />
+    <template v-else>
+      <n-divider>
+        {{ $t("nav.officialList") }}
+      </n-divider>
+      <Transition mode="out-in">
+        <!-- 与真实卡片同尺寸的占位，数据到了原地替换，下方的全球榜不被推开。 -->
+        <n-grid v-if="loading" key="loading" class="official" x-gap="20" y-gap="20" :cols="2">
+          <n-gi v-for="n in 4" :key="n">
+            <div class="item skeleton-item">
+              <div class="cover">
+                <n-skeleton class="coverImg" />
+              </div>
+              <div class="data">
+                <n-skeleton text style="width: 40%" />
+                <n-skeleton text :repeat="3" />
               </div>
             </div>
-          </n-card>
-        </n-gi>
-      </n-grid>
-    </Transition>
-    <n-divider>{{ $t("nav.globalList") }}</n-divider>
-    <CoverLists :listData="toplistData.globalList" listType="topList" />
+          </n-gi>
+        </n-grid>
+        <n-grid v-else key="official" class="official" x-gap="20" y-gap="20" :cols="2">
+          <n-gi v-for="item in toplistData.officialList" :key="item">
+            <n-card
+              class="item"
+              :bordered="false"
+              :content-style="{
+                padding: '0',
+                display: 'flex',
+                alignItems: 'center',
+              }"
+              hoverable
+              role="link"
+              tabindex="0"
+              :data-navigation-identity="`playlist:${item.id}`"
+              @click="openPlaylist(item.id, $event)"
+              @keydown.enter="openPlaylist(item.id, $event)"
+            >
+              <div class="cover" data-navigation-cover>
+                <n-avatar
+                  class="coverImg"
+                  :src="item.coverImgUrl.replace(/^http:/, 'https:') + '?param=300y300'"
+                  fallback-src="/images/pic/default.png"
+                />
+                <n-text class="update">{{ item.updateFrequency }}</n-text>
+              </div>
+              <div class="data">
+                <n-text class="title" data-navigation-title>{{ item.name }}</n-text>
+                <div class="desc">
+                  <div class="song text-hidden" v-for="(song, index) in item.tracks" :key="song">
+                    <n-text>{{ Number(index) + 1 }}. {{ song.first }} - </n-text>
+                    <n-text depth="3">{{ song.second }}</n-text>
+                  </div>
+                </div>
+              </div>
+            </n-card>
+          </n-gi>
+        </n-grid>
+      </Transition>
+      <n-divider>{{ $t("nav.globalList") }}</n-divider>
+      <CoverLists :listData="toplistData.globalList" listType="topList" :loading="loading" />
+    </template>
   </div>
 </template>
 
@@ -53,6 +70,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { formatNumber } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import CoverLists from "@/components/DataList/CoverLists.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 
 const { t } = useI18n();
 const navigation = useLayerNavigation();
@@ -71,13 +89,18 @@ const toplistData = reactive({
   globalList: [],
 });
 
+const loading = ref(true);
+const failed = ref(false);
+
 // 获取排行榜数据
 const getToplistData = () => {
-  getToplist().then((res) => {
-    if (res.list[0]) {
+  loading.value = true;
+  failed.value = false;
+  getToplist()
+    .then((res) => {
       const official: any[] = [];
       const global: any[] = [];
-      res.list.forEach((v: any) => {
+      for (const v of res.list ?? []) {
         if (v.ToplistType) {
           official.push(v);
         } else {
@@ -89,13 +112,17 @@ const getToplistData = () => {
             playCount: formatNumber(v.playCount),
           });
         }
-      });
+      }
       toplistData.officialList = official;
       toplistData.globalList = global;
-    } else {
-      $message.error(t("general.message.acquisitionFailed"));
-    }
-  });
+    })
+    .catch((err) => {
+      console.error("[discover] toplists failed", err);
+      failed.value = true;
+    })
+    .finally(() => {
+      loading.value = false;
+    });
 };
 
 onMounted(() => {
@@ -138,6 +165,13 @@ onMounted(() => {
       transition: all var(--duration-300) var(--ease-out);
       overflow: hidden;
       cursor: pointer;
+      // 占位卡片：和 n-card 的 content-style 一样横排，但不可点。
+      &.skeleton-item {
+        display: flex;
+        align-items: center;
+        cursor: default;
+        background-color: color-mix(in srgb, var(--n-text-color) 4%, transparent);
+      }
       &:active {
         transform: scale(0.98);
       }

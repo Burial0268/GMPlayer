@@ -8,6 +8,11 @@
     @touchmove.self="passToPlayer"
     @touchend.self="passToPlayer"
     @pointerdown="pressLine"
+    @wheel.capture.passive="noteInteraction"
+    @touchstart.capture.passive="noteInteraction"
+    @touchmove.capture.passive="noteInteraction"
+    @touchend.capture.passive="noteInteraction"
+    @touchcancel.capture.passive="noteInteraction"
     @pointerup="dropLine"
     @pointercancel="dropLine"
   >
@@ -19,10 +24,12 @@
 </template>
 
 <script setup lang="ts">
+import { lyricFontStack } from "@/utils/ui/fontStack";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, toRaw, shallowRef } from "vue";
 import { musicStore, settingStore, siteStore } from "../../store";
 import {
   LyricPlayer as CoreLyricPlayer,
+  LayoutReason,
   type DomLyricPlayer,
   type HasElement,
   type LyricLineMouseEvent,
@@ -65,7 +72,7 @@ const lyricStyles = computed(() => ({
   "--amll-lp-color": mainColor.value,
   "--amll-lyric-view-color": mainColor.value,
   "font-weight": setting.lyricFontWeight,
-  "font-family": setting.lyricFont,
+  "font-family": lyricFontStack(setting.lyricFont),
   "letter-spacing": setting.lyricLetterSpacing,
   cursor: "pointer",
   "-webkit-tap-highlight-color": "transparent",
@@ -125,10 +132,12 @@ function syncCurrentTimeFromPlayback() {
   const player = getDomPlayer();
   if (!player) return;
 
+  // Reset first: a forced seek lays out at once, but keeps a touch scroll, and a reset
+  // after it would not be laid out until the next line.
   const lyricTime = lyricPresentationTimeMs(currentTime);
+  player.resetScroll();
   player.setCurrentTime(lyricTime, true);
   lastSubmittedLyricTime = lyricTime;
-  player.resetScroll();
 }
 
 let syncFrameId = 0;
@@ -220,9 +229,9 @@ const jumpSeek = (evt: LyricLineMouseEvent) => {
   const time = lineClickStartTime(evt);
   if (typeof time !== "number") return;
   const player = getDomPlayer();
+  player?.resetScroll();
   player?.setCurrentTime(time, true);
   lastSubmittedLyricTime = time;
-  player?.resetScroll();
   emit("lrcTextClick", time / 1000);
   emit("line-click", evt);
 };
@@ -312,6 +321,39 @@ const openShare = (evt: LyricLineMouseEvent) => {
   );
 };
 
+// AMLL follows the playing line again only when the next line starts already on screen
+// (upstream #617), so lyrics scrolled far away, or backwards, stayed there until a seek. Once
+// they are left alone for a while during playback, reset the scroll and lay out again.
+// As a scroll, not a playback tick: a tick staggers the lines 50 ms apart from the top, which
+// reads as flow going forward, but going back the top lines start down first and pile into the
+// ones below, so the view looked reloaded. Without the stagger every line rides the same spring.
+const IDLE_RETURN_MS = 5000;
+let idleReturnTimer = 0;
+let touching = false;
+let scrolledAway = false;
+
+function armIdleReturn() {
+  clearTimeout(idleReturnTimer);
+  idleReturnTimer = window.setTimeout(returnToPlayingLine, IDLE_RETURN_MS);
+}
+
+function noteInteraction(event: WheelEvent | TouchEvent) {
+  clearTimeout(idleReturnTimer);
+  scrolledAway = true;
+  touching = "touches" in event && event.touches.length > 0;
+  if (!touching && playState.value) armIdleReturn();
+}
+
+function returnToPlayingLine() {
+  idleReturnTimer = 0;
+  const player = getDomPlayer();
+  // Paused, the reader keeps their place; resuming re-arms the return (see the playState watch).
+  if (!player || sharing || touching || !playState.value) return;
+  scrolledAway = false;
+  player.resetScroll();
+  player.calcLayout(LayoutReason.DiscreteScroll);
+}
+
 function passToPlayer(event: Event) {
   const playerEl = getDomPlayer()?.getElement();
   if (!playerEl) return;
@@ -335,6 +377,8 @@ onMounted(() => {
     applyPlayerSettings(lyricPlayer);
     applyPlayback(playState.value);
     applyLyricLines(amllLyricLines.value);
+    // As the official bindings do when their frame loop starts.
+    lyricPlayer.calcLayout(LayoutReason.ConfigChange);
     lyricFrameId = requestAnimationFrame(updateLyricPlayer);
   }
 
@@ -347,6 +391,7 @@ onMounted(() => {
 });
 
 onBeforeUnmount(() => {
+  clearTimeout(idleReturnTimer);
   releaseSegmenter?.();
   stopDelayWatch?.();
   stopDelayWatch = null;
@@ -373,7 +418,10 @@ onBeforeUnmount(() => {
 
 watch(
   () => playState.value,
-  (playing) => applyPlayback(playing),
+  (playing) => {
+    applyPlayback(playing);
+    if (playing && scrolledAway && !touching) armIdleReturn();
+  },
 );
 
 // Reopening the big player after a parked stretch: jump the lyric view to the

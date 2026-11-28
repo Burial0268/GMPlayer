@@ -1,12 +1,20 @@
 <template>
   <div class="discover">
-    <n-text class="title">{{ $t("nav.discover") }}</n-text>
-    <n-tabs class="main-tab" type="line" @update:value="tabChange" v-model:value="tabValue">
+    <!-- 与搜索页、我的页同一套头部与分段标签 -->
+    <header class="discover-head">
+      <h1 class="title">{{ $t("nav.discover") }}</h1>
+    </header>
+    <n-tabs
+      class="main-tab discover-tab"
+      type="segment"
+      @update:value="tabChange"
+      v-model:value="tabValue"
+    >
       <n-tab name="playlists">{{ $t("nav.discoverChildren.playlists") }}</n-tab>
       <n-tab name="toplists">{{ $t("nav.discoverChildren.toplists") }}</n-tab>
       <n-tab name="artists">{{ $t("nav.discoverChildren.artists") }}</n-tab>
     </n-tabs>
-    <main class="content">
+    <div class="content">
       <router-view v-slot="{ Component }">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive>
@@ -14,7 +22,7 @@
           </keep-alive>
         </Transition>
       </router-view>
-    </main>
+    </div>
   </div>
 </template>
 
@@ -55,16 +63,28 @@ watch(
 
 <style lang="scss" scoped>
 .discover {
-  .title {
-    display: block;
-    margin: 30px 0 20px;
-    font-size: 40px;
-    font-weight: bold;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 32px;
+
+  .discover-head .title {
+    margin: 0;
+    font-size: clamp(30px, 4.6vw, 50px);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    color: var(--n-text-color);
   }
+
+  .discover-tab {
+    margin-top: 22px;
+    max-width: 480px;
+  }
+
   .content {
     position: relative;
     overflow: hidden;
-    margin-top: 20px;
+    margin-top: 24px;
   }
 }
 </style>

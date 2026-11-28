@@ -335,6 +335,7 @@
 </template>
 
 <script setup lang="ts">
+import { lyricFontStack } from "@/utils/ui/fontStack";
 import { ref, computed, watch, shallowRef, nextTick, onMounted, onUnmounted } from "vue";
 import { usePlayerBridge } from "@/utils/tauri/player/bridge";
 import { windowManager } from "@/utils/tauri/window/manager";
@@ -392,7 +393,7 @@ const amllStyles = computed(() => ({
   "--amll-lyric-view-color": state.accentColor ? `rgb(${state.accentColor})` : "rgb(239, 239, 239)",
   "--amll-lp-font-size": "22px",
   "font-weight": bridge.settings.lyricFontWeight || "bold",
-  "font-family": bridge.settings.lyricFont || "HarmonyOS Sans SC",
+  "font-family": lyricFontStack(bridge.settings.lyricFont),
   "letter-spacing": bridge.settings.lyricLetterSpacing || "normal",
   "font-size": "22px",
 }));

@@ -395,7 +395,10 @@ const applyNativeAutoMixCompletion = (sound: BackendSound, playback: BackendTrac
     return;
   }
 
-  const autoMixIndex = getAutoMixEngine().resolveActiveTransitionTargetIndex(currentIndex);
+  // The AutoMix target explains a backend change only during that handoff: consulted always, it
+  // turned a manual skip from the notification into "the AutoMix target" (logged: reported 7,
+  // resolved 2). Identity below rescued Netease tracks, not local ones.
+  const autoMixIndex = getAutoMixEngine().resolveHandoffTargetIndex(currentIndex);
   let resolvedIndex = autoMixIndex >= 0 ? autoMixIndex : currentIndex;
 
   // Reconcile against the backend-reported track *identity* first.
@@ -742,7 +745,7 @@ const checkAudioTime = (sound: ISound, music: ReturnType<typeof musicStore>): vo
  * @param music - pinia
  */
 const setMediaSession = (music: ReturnType<typeof musicStore>): void => {
-  if ("mediaSession" in navigator && Object.keys(music.getPlaySongData).length) {
+  if ("mediaSession" in navigator && Object.keys(music.getPlaySongData ?? {}).length) {
     const artists = music.getPlaySongData.artist.map((a: { name: string }) => a.name);
     const picUrl = music.getPlaySongData.album?.picUrl;
     // Three sizes so the OS picks the one it wants — but for a local file all

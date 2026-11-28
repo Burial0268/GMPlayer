@@ -5,7 +5,7 @@
       <div class="meta">
         <span class="kind">{{ $t("profile.title") }}</span>
         <div class="name-row">
-          <n-text class="name">{{ profile.nickname || "-" }}</n-text>
+          <n-text class="name selectable">{{ profile.nickname || "-" }}</n-text>
           <n-tag v-if="profile.vipType > 0" class="badge vip" size="small" round :bordered="false">
             {{ $t("profile.vip") }}
           </n-tag>
@@ -19,7 +19,7 @@
             {{ $t("profile.level", { level: detail.level }) }}
           </n-tag>
         </div>
-        <p class="sign">{{ profile.signature || $t("profile.signature") }}</p>
+        <p class="sign selectable">{{ profile.signature || $t("profile.signature") }}</p>
         <div class="stats">
           <div class="stat">
             <strong>{{ formatNumber(profile.follows || 0) }}</strong>
@@ -61,7 +61,7 @@
       <n-tab name="collected">{{ $t("profile.collected") }}</n-tab>
     </n-tabs>
 
-    <main class="content">
+    <div class="content">
       <Transition name="fade" mode="out-in">
         <CoverLists
           v-if="tabValue === 'created'"
@@ -69,14 +69,19 @@
           :listData="ownLists"
           :loading="loading"
         />
-        <CoverLists v-else key="collected" :listData="likeLists" :loading="loading" />
+        <CoverLists
+          v-else
+          key="collected"
+          :listData="likeLists"
+          :loading="loading || fillingCollected"
+        />
       </Transition>
       <div class="load-more" v-if="!loading && hasMore">
         <n-button strong secondary round :loading="loadingMore" @click="loadMorePlaylists">
           {{ $t("general.name.loadMore") }}
         </n-button>
       </div>
-    </main>
+    </div>
   </div>
 
   <div class="title" v-else>
@@ -116,8 +121,9 @@ const followLoading = ref(false);
 const tabValue = ref("created");
 
 // 歌单分批拉取。网易返回顺序是「自建在前、收藏在后」，因此按页追加不会打乱
-// 下面 creator.userId 的归类；一次性 limit=1001 会让 CoverLists 直接铺开上千格。
-const PLAYLIST_PAGE_SIZE = 100;
+// 下面 creator.userId 的归类。页大小决定列表出现那一下要铺多少卡片：100 张在 4 倍
+// CPU 降速下一次占住主线程约 1 秒（Android 上「列表出来时卡一下」），30 张就够填满首屏。
+const PLAYLIST_PAGE_SIZE = 30;
 let requestSerial = 0;
 
 // 头像地址
@@ -161,24 +167,26 @@ const loadProfile = async (id: string | string[] | null) => {
   hasMore.value = false;
   ownLists.value = [];
   likeLists.value = [];
-  try {
-    // 两个请求互不依赖，并行发出，少一个往返
-    const [detailRes, listRes] = await Promise.all([
-      getUserDetail(numericId),
-      getUserPlaylist(numericId, PLAYLIST_PAGE_SIZE, 0),
-    ]);
+  // 换人时不要先露出上一个人的头部
+  detail.value = {};
+  profile.value = {};
+  // 资料与歌单互不依赖：各自返回各自渲染，头部不用等上百个歌单
+  const detailTask = getUserDetail(numericId).then((detailRes) => {
     if (requestId !== requestSerial) return;
-
     detail.value = detailRes || {};
     profile.value = detailRes?.profile || {};
     followed.value = Boolean(profile.value?.followed);
     $setSiteTitle(profile.value?.nickname || t("profile.title"));
-
+  });
+  const listTask = getUserPlaylist(numericId, PLAYLIST_PAGE_SIZE, 0).then((listRes) => {
+    if (requestId !== requestSerial) return;
     if (listRes?.playlist) collectPlaylists(listRes.playlist, numericId);
     hasMore.value = Boolean(listRes?.more ?? listRes?.playlist?.length === PLAYLIST_PAGE_SIZE);
-
     loading.value = false;
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
+  });
+  if (typeof $scrollToTop !== "undefined") $scrollToTop();
+  try {
+    await Promise.all([detailTask, listTask]);
   } catch (err) {
     if (requestId !== requestSerial) return;
     loading.value = false;
@@ -188,24 +196,46 @@ const loadProfile = async (id: string | string[] | null) => {
   }
 };
 
-// 加载下一页歌单
-const loadMorePlaylists = async () => {
-  if (loadingMore.value || !hasMore.value) return;
+// 加载下一页歌单；返回这一页是否成功落地
+const loadMorePlaylists = async (): Promise<boolean> => {
+  if (loadingMore.value || !hasMore.value) return false;
   const requestId = requestSerial;
   const numericId = Number(uid.value);
   const offset = ownLists.value.length + likeLists.value.length;
   loadingMore.value = true;
   try {
     const res = await getUserPlaylist(numericId, PLAYLIST_PAGE_SIZE, offset);
-    if (requestId !== requestSerial) return;
+    if (requestId !== requestSerial) return false;
     if (res?.playlist) collectPlaylists(res.playlist, numericId);
     hasMore.value = Boolean(res?.more ?? res?.playlist?.length === PLAYLIST_PAGE_SIZE);
+    return Boolean(res?.playlist?.length);
   } catch (err) {
     console.error(t("general.message.acquisitionFailed"), err);
+    return false;
   } finally {
     if (requestId === requestSerial) loadingMore.value = false;
   }
 };
+
+// 收藏的歌单排在自建之后：自建超过一页的人，切到「收藏」时这一栏还是空的。
+// 接着往下拉直到出现收藏或拉完；失败或没有新内容就停，不会空转。
+const fillingCollected = ref(false);
+const fillCollected = async () => {
+  if (fillingCollected.value) return;
+  fillingCollected.value = true;
+  try {
+    while (tabValue.value === "collected" && !likeLists.value.length && hasMore.value) {
+      if (!(await loadMorePlaylists())) break;
+    }
+  } finally {
+    fillingCollected.value = false;
+  }
+};
+watch([tabValue, loading], () => {
+  if (tabValue.value === "collected" && !loading.value && !likeLists.value.length) {
+    void fillCollected();
+  }
+});
 
 // 关注 / 取消关注
 const toggleFollow = async () => {

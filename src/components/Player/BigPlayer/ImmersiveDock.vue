@@ -137,6 +137,8 @@
         </BouncingSlider>
       </div>
     </div>
+    <component :is="AddPlaylistSheet" v-if="AddPlaylistSheet" ref="addPlaylistSheetRef" />
+    <component :is="DownloadSheet" v-if="DownloadSheet" ref="downloadSheetRef" />
   </div>
 </template>
 
@@ -160,6 +162,7 @@ import { emit as emitTauriEvent } from "@tauri-apps/api/event";
 import { NIcon } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
+import { usePlayingSongMenu } from "@/composables/usePlayingSongMenu";
 import { useLayerNavigation } from "@/utils/navigation";
 import { getRemainingTime } from "@/utils/timeTools";
 import type { LocationQueryRaw } from "vue-router";
@@ -227,11 +230,21 @@ const toggleLike = () => {
   music.changeLikeList(song.id, !music.getSongIsLike(song.id));
 };
 
+// 当前歌曲的「添加到歌单」「下载」排在「更多」最前，与移动端面板一致。
+const {
+  AddPlaylistSheet,
+  addPlaylistSheetRef,
+  DownloadSheet,
+  downloadSheetRef,
+  withSongOptions,
+  selectSongOption,
+} = usePlayingSongMenu();
+
 // 更多菜单：与封面模式同一组从属窗口开关
 const renderIcon = (icon: Component) => () => h(NIcon, { size: 18 }, { default: () => h(icon) });
 
 const moreOptions = computed(() => {
-  if (!isTauriEnv.value) return [];
+  if (!isTauriEnv.value) return withSongOptions([]);
   const options = [
     {
       label: t("setting.miniPlayer"),
@@ -247,7 +260,7 @@ const moreOptions = computed(() => {
       icon: renderIcon(ClosedCaptionRound),
     });
   }
-  return options;
+  return withSongOptions(options);
 });
 
 const toggleMiniPlayer = async () => {
@@ -267,6 +280,7 @@ const toggleDesktopLyrics = async () => {
 };
 
 const handleMoreSelect = (key: string) => {
+  if (selectSongOption(key)) return;
   if (key === "miniPlayer") toggleMiniPlayer();
   else if (key === "desktopLyrics") toggleDesktopLyrics();
   else if (key === "taskbarLyrics") windowManager.openTaskbarLyrics();

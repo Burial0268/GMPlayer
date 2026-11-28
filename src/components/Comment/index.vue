@@ -30,25 +30,25 @@
           <n-text class="name" @click="goToUser(commentData.user.userId)">
             {{ commentData.user.nickname }}：
           </n-text>
-          <n-text class="text" v-html="commentData.content" />
+          <n-text class="text selectable long-text">{{ commentData.content }}</n-text>
         </div>
         <div class="beReplied" v-if="commentData.beReplied?.[0]">
           <n-text class="name" @click="goToUser(commentData.beReplied[0].user.userId)">
             @{{ commentData.beReplied[0].user.nickname }}：
           </n-text>
-          <n-text class="text">{{ commentData.beReplied[0].content }}</n-text>
+          <n-text class="text selectable long-text">{{ commentData.beReplied[0].content }}</n-text>
         </div>
         <div class="thing">
           <div class="item">
             <n-icon size="14" :depth="3" :component="Time" />
-            <n-text :depth="3" v-html="getCommentTime(commentData.time)" />
+            <n-text :depth="3">{{ getCommentTime(commentData.time) }}</n-text>
           </div>
           <div class="item" v-if="commentData.ipLocation?.location">
             <n-icon size="14" :depth="3" :component="Local" />
-            <n-text :depth="3" v-html="commentData.ipLocation.location" />
+            <n-text :depth="3">{{ commentData.ipLocation.location }}</n-text>
           </div>
           <div
-            :class="commentData.liked ? 'like liked' : 'like'"
+            :class="['like', 'touch-target', { liked: commentData.liked }]"
             role="button"
             tabindex="0"
             :aria-pressed="commentData.liked"
@@ -91,6 +91,11 @@ const props = defineProps({
     type: [Number, String],
     default: null,
   },
+  // 评论所属资源类型，点赞接口按它区分歌曲 / MV
+  resourceType: {
+    type: String,
+    default: "music",
+  },
   // 嵌入虚拟列表时关闭逐条淡入，避免大量评论同时触发过渡。
   animated: {
     type: Boolean,
@@ -110,7 +115,7 @@ const toLikeComment = () => {
     const resourceId = Number(props.resourceId ?? router.currentRoute.value.query.id);
     if (!Number.isFinite(resourceId)) return;
     const type = props.commentData.liked ? 0 : 1;
-    likeComment(resourceId, props.commentData.commentId, type).then((res) => {
+    likeComment(resourceId, props.commentData.commentId, type, props.resourceType).then((res) => {
       if (res.code === 200) {
         props.commentData.liked = !props.commentData.liked;
         props.commentData.likedCount += type ? 1 : -1;
@@ -275,6 +280,52 @@ const toLikeComment = () => {
     }
   }
 }
+// 列表形态：评论连成一组条纹行，首尾圆角（歌曲页、评论页、MV 页共用）。
+// 写成 `.comment-stack > .comment`，作用域属性落在 .comment 上，优先级高于上面的卡片样式。
+.comment-stack > .comment {
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+
+  &:nth-child(odd) {
+    background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
+  }
+
+  &:nth-child(even) {
+    background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
+  }
+
+  &:first-child {
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+  }
+
+  &:last-child {
+    border-radius: 0 0 var(--radius-md) var(--radius-md);
+  }
+
+  &:only-child {
+    border-radius: var(--radius-md);
+  }
+
+  @media (hover: hover) {
+    &:hover {
+      background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
+      box-shadow: none;
+    }
+  }
+
+  :deep(.n-card__content) {
+    min-height: 82px;
+    padding: 12px !important;
+
+    @media (max-width: 768px) {
+      min-height: 76px;
+      padding: 11px 8px !important;
+    }
+  }
+}
+
 .skeleton {
   width: 100%;
   height: 120px;

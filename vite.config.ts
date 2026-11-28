@@ -184,7 +184,19 @@ export default defineConfig(({ mode }) => {
                 {
                   urlPattern: /(.*?)\.(webp|png|jpe?g|svg|gif|bmp|psd|tiff|tga|eps)/,
                   handler: "CacheFirst",
-                  options: { cacheName: "image-cache" },
+                  options: {
+                    cacheName: "image-cache",
+                    // Covers and avatars come from the Netease CDN as opaque (no-cors <img>)
+                    // responses, which CacheFirst refuses by default — so they were never cached.
+                    cacheableResponse: { statuses: [0, 200] },
+                    // Opaque entries are padded heavily in quota accounting; bound the cache and
+                    // let a quota error drop it rather than fail every later write.
+                    expiration: {
+                      maxEntries: 300,
+                      maxAgeSeconds: 30 * 24 * 60 * 60,
+                      purgeOnQuotaError: true,
+                    },
+                  },
                 },
               ],
             },

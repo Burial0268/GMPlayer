@@ -16,9 +16,9 @@
       <div class="meta">
         <div class="title">
           <span v-content-intro class="detail-kind">{{ typeLabel }}</span>
-          <n-text class="name text-hidden" data-navigation-title="page">{{
-            meta.name || $t("local.unknown")
-          }}</n-text>
+          <n-text class="name" data-navigation-title="page">
+            <OverflowMarquee>{{ meta.name || $t("local.unknown") }}</OverflowMarquee>
+          </n-text>
           <n-text v-content-intro class="creator">{{
             meta.description || $t("sidebar.localMusic")
           }}</n-text>
@@ -108,6 +108,7 @@ import { musicStore, settingStore, useLocalLibraryStore } from "@/store";
 import { fuzzyFilterSongs } from "@/utils/ui/fuzzySearch";
 import { DEFAULT_COVER } from "@/utils/ncm/coverUrl";
 import DataLists from "@/components/DataList/DataLists.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import RouteShadow from "@/components/Navigation/RouteShadow.vue";
 import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
 import { useContentIntro } from "@/composables/useContentIntro";
@@ -609,16 +610,15 @@ onMounted(async () => {
         }
 
         .name {
-          display: -webkit-box;
+          // One line; a title that does not fit scrolls (OverflowMarquee) rather than being cut.
+          display: block;
           max-width: min(780px, 100%);
+          min-width: 0;
           overflow: hidden;
+          white-space: nowrap;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 700;
-          line-height: 1.06;
-          overflow-wrap: anywhere;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 2;
-          line-clamp: 2;
+          line-height: normal;
         }
 
         .creator {
@@ -863,7 +863,7 @@ onMounted(async () => {
 
           .name {
             font-size: clamp(25px, 8vw, 36px);
-            line-height: 1.12;
+            line-height: normal;
           }
 
           .creator {

@@ -41,7 +41,11 @@
         <div class="meta">
           <div class="title">
             <span class="detail-kind">{{ $t("local.detail.kind") }}</span>
-            <n-text class="name text-hidden">{{ view?.title || view?.displayName }}</n-text>
+            <n-text class="name">
+              <OverflowMarquee :key="view?.key">{{
+                view?.title || view?.displayName
+              }}</OverflowMarquee>
+            </n-text>
             <n-text class="creator">{{ view?.artist || $t("local.unknown") }}</n-text>
           </div>
           <div class="detail-stats">
@@ -184,6 +188,7 @@ import { getSongTime } from "@/utils/timeTools";
 import { DEFAULT_COVER } from "@/utils/ncm/coverUrl";
 import { isTauri } from "@/utils/tauri/core/runtime";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import LocalSongInfoPane from "./LocalSongInfoPane.vue";
 import LocalSongTagsPane from "./LocalSongTagsPane.vue";
 import LocalSongLyricPane from "./LocalSongLyricPane.vue";
@@ -437,16 +442,15 @@ watch(trackKey, (key, previous) => {
         }
 
         .name {
-          display: -webkit-box;
+          // One line; a title that does not fit scrolls (OverflowMarquee) rather than being cut.
+          display: block;
           max-width: min(780px, 100%);
+          min-width: 0;
           overflow: hidden;
+          white-space: nowrap;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 700;
-          line-height: 1.06;
-          overflow-wrap: anywhere;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 2;
-          line-clamp: 2;
+          line-height: normal;
         }
 
         .creator {
@@ -565,7 +569,7 @@ watch(trackKey, (key, previous) => {
 
           .name {
             font-size: clamp(25px, 8vw, 36px);
-            line-height: 1.12;
+            line-height: normal;
           }
 
           .creator {

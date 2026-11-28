@@ -71,7 +71,7 @@
       <n-tab name="playlists">{{ $t("local.tab.playlists") }}</n-tab>
     </n-tabs>
 
-    <main class="content">
+    <div class="content">
       <router-view v-slot="{ Component }">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive>
@@ -79,7 +79,7 @@
           </keep-alive>
         </Transition>
       </router-view>
-    </main>
+    </div>
 
     <ImportLocalMusic ref="importRef" />
     <DownloadManager ref="downloadRef" />

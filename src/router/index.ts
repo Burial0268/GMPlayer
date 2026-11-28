@@ -58,7 +58,10 @@ router.beforeEach(async (to, from): Promise<RouteLocationRaw | void> => {
     } catch (err) {
       $message.error("请求发生错误");
       console.error("请求发生错误", err);
-      return "/500";
+      // 查不到登录状态不等于没登录：本地有登录态就放行（页面自己的请求会报错），
+      // 没有才去登录页。以前一律跳 /500，网络一抖就进不了「我的」。
+      if (user.userLogin) return;
+      return { path: "/login", query: { redirect: to.fullPath } };
     }
   }
 

@@ -391,6 +391,18 @@ export class TransitionStateMachine {
     return this._resolvePlaylistIndexForSong(active.toSongId, fallbackIndex);
   }
 
+  /**
+   * The active transition's target, but only while that handoff is under way.
+   *
+   * Native AutoMix prepares as a track starts, so a transition exists for nearly the whole song;
+   * before the crossfade a backend track change is not this transition (a manual skip from the
+   * notification, a planner advance) and must keep the index the backend reported. -1 when there
+   * is no handoff to defer to.
+   */
+  resolveHandoffTargetIndex(fallbackIndex: number): number {
+    return this.isCrossfading() ? this.resolveActiveTransitionTargetIndex(fallbackIndex) : -1;
+  }
+
   private _isTransitionActive(id: number, mode?: AutoMixTransitionMode): boolean {
     const active = this._activeTransition;
     return !!active && active.id === id && (!mode || active.mode === mode);

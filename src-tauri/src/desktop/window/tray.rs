@@ -1,7 +1,7 @@
 use log::{info, warn};
 use std::sync::{Mutex, OnceLock};
 use tauri::image::Image;
-use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Rect, WebviewWindow};
 
 use crate::desktop::window::config::{WindowConfig, TRAY_POPUP_BASE_HEIGHT, TRAY_POPUP_WIDTH};
@@ -60,7 +60,16 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), String> {
         .icon(icon)
         .tooltip("GMPlayer")
         .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click { button, rect, .. } = event {
+            // Act on release only: every click also reports its press, and on macOS the
+            // press lands while the menu bar is still tracking the mouse, so a popup
+            // focused then loses focus at once and hides itself.
+            if let TrayIconEvent::Click {
+                button,
+                rect,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 let app = tray.app_handle();
                 match button {
                     MouseButton::Left => {

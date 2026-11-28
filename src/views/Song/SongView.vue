@@ -26,9 +26,11 @@
         />
       </div>
       <div class="meta">
-        <div class="title">
+        <div class="title selectable">
           <span class="detail-kind">{{ $t("general.name.song") }}</span>
-          <n-text class="name text-hidden" v-html="musicDetail.name" />
+          <n-text class="name">
+            <OverflowMarquee :key="musicDetail.id">{{ musicDetail.name }}</OverflowMarquee>
+          </n-text>
           <AllArtists
             v-if="musicDetail.ar"
             class="creator"
@@ -39,15 +41,13 @@
         <div class="detail-stats">
           <div class="num">
             <n-icon :depth="3" :component="RecordDisc" />
-            <n-text
-              class="link"
-              v-html="musicDetail.al.name"
-              @click="router.push(`/album?id=${musicDetail.al.id}`)"
-            />
+            <n-text class="link selectable" @click="router.push(`/album?id=${musicDetail.al.id}`)">
+              {{ musicDetail.al.name }}
+            </n-text>
           </div>
           <div class="num" v-if="musicDetail.publishTime">
             <n-icon :depth="3" :component="Time" />
-            <n-text v-html="getLongTime(musicDetail.publishTime)" />
+            <n-text>{{ getLongTime(musicDetail.publishTime) }}</n-text>
           </div>
           <div class="num" v-if="musicDetail.ar">
             <n-icon :depth="3" :component="People" />
@@ -55,7 +55,7 @@
           </div>
         </div>
         <div class="intr" v-if="songAlias">
-          <span class="desc text-hidden" v-html="songAlias" />
+          <span class="desc text-hidden selectable">{{ songAlias }}</span>
         </div>
         <n-space class="tag" v-if="hasSongTags">
           <n-tag
@@ -83,6 +83,12 @@
               <n-icon :component="ListAdd" />
             </template>
             {{ $t("general.name.add") }}
+          </n-button>
+          <n-button v-if="canDownload" strong secondary round @click="openDownload">
+            <template #icon>
+              <n-icon :component="DownloadFour" />
+            </template>
+            {{ $t("menu.download") }}
           </n-button>
           <n-button
             strong
@@ -113,7 +119,7 @@
     <div class="right">
       <section v-content-intro class="comments detail-section" v-if="commentData[0]">
         <n-h6 class="section-title" prefix="bar">{{ $t("general.name.hotComments") }}</n-h6>
-        <div class="content">
+        <div class="content comment-stack">
           <Comment v-for="item in commentData" :key="item.commentId || item" :commentData="item" />
         </div>
       </section>
@@ -124,6 +130,7 @@
     </div>
     <!-- 添加到歌单 -->
     <AddPlaylist ref="addPlayListRef" />
+    <DownloadSong v-if="canDownload" ref="downloadSongRef" />
   </div>
   <div class="title" v-else-if="!musicId || !loadingState">
     <span class="key">{{
@@ -177,14 +184,26 @@ import { getComment } from "@/api/comment";
 import { useRouter } from "vue-router";
 import { musicStore } from "@/store";
 import { getLongTime, getSongTime } from "@/utils/timeTools";
-import { PlayOne, Comments, ListAdd, Youtube, People, RecordDisc, Time } from "@icon-park/vue-next";
+import {
+  PlayOne,
+  Comments,
+  ListAdd,
+  DownloadFour,
+  Youtube,
+  People,
+  RecordDisc,
+  Time,
+} from "@icon-park/vue-next";
 import { formatNumber } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import { useContentPanelAccent } from "@/composables/useContentPanelAccent";
 import { useContentIntro } from "@/composables/useContentIntro";
 import AllArtists from "@/components/DataList/AllArtists.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import AddPlaylist from "@/components/DataModal/AddPlaylist.vue";
+import DownloadSong from "@/components/DataModal/DownloadSong.vue";
+import { downloadAvailable } from "@/utils/library/download";
 import Comment from "@/components/Comment/index.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
 
@@ -195,6 +214,9 @@ const router = useRouter();
 const navigation = useLayerNavigation();
 const music = musicStore();
 const addPlayListRef = ref<any>(null);
+const downloadSongRef = ref<any>(null);
+// Web 端没有落盘位置（DownloadSong 会直接报错），不如不显示按钮。
+const canDownload = downloadAvailable();
 const { applyContentPanelAccent } = useContentPanelAccent();
 const { vContentIntro } = useContentIntro();
 
@@ -303,6 +325,11 @@ const getSimiData = (id: number) => {
 
 const openAddToPlaylist = () => {
   addPlayListRef.value?.openAddToPlaylist(normalizeMusicNumberId(musicId.value));
+};
+
+// 原始详情就带 DownloadSong 要的 id / fee / pc，其余它自己再取。
+const openDownload = () => {
+  downloadSongRef.value?.openDownloadModal(musicDetail.value);
 };
 
 // 添加歌曲并播放
@@ -443,12 +470,15 @@ watch(
         }
 
         .name {
-          max-width: 780px;
+          // One line; a title that does not fit scrolls (OverflowMarquee) rather than being cut.
+          display: block;
+          max-width: min(780px, 100%);
+          min-width: 0;
+          overflow: hidden;
+          white-space: nowrap;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 700;
           line-height: normal;
-          -webkit-line-clamp: 2;
-          line-clamp: 2;
         }
 
         .creator {
@@ -581,56 +611,6 @@ watch(
     }
   }
 
-  .comments {
-    .content {
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-    }
-
-    :deep(.comment) {
-      --n-color: transparent;
-      --n-border-color: transparent;
-
-      margin-bottom: 0;
-      border: 0;
-      border-radius: 0;
-      box-shadow: none;
-    }
-
-    :deep(.comment:nth-child(odd)) {
-      background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
-    }
-
-    :deep(.comment:nth-child(even)) {
-      background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
-    }
-
-    :deep(.comment:first-child) {
-      border-radius: var(--radius-md) var(--radius-md) 0 0;
-    }
-
-    :deep(.comment:last-child) {
-      border-radius: 0 0 var(--radius-md) var(--radius-md);
-    }
-
-    :deep(.comment:only-child) {
-      border-radius: var(--radius-md);
-    }
-
-    @media (hover: hover) {
-      :deep(.comment:hover) {
-        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-        box-shadow: none;
-      }
-    }
-
-    :deep(.comment .n-card__content) {
-      min-height: 82px;
-      padding: 12px !important;
-    }
-  }
-
   .simiPlayList {
     :deep(.coverlists) {
       margin-top: 2px;
@@ -701,13 +681,6 @@ watch(
             height: 38px;
           }
         }
-      }
-    }
-
-    .comments {
-      :deep(.comment .n-card__content) {
-        min-height: 76px;
-        padding: 11px 8px !important;
       }
     }
   }

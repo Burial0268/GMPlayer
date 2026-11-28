@@ -1,9 +1,6 @@
 <template>
   <div class="artists">
-    <ArtistLists
-      :listData="user.getUserArtistLists.list"
-      :loading="user.getUserArtistLists.isLoading || !user.getUserArtistLists.has"
-    />
+    <ArtistLists :listData="user.getUserArtistLists.list" :loading="!user.getUserArtistLists.has" />
   </div>
 </template>
 

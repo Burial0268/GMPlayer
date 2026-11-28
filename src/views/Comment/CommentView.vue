@@ -1,59 +1,72 @@
 <template>
-  <div class="comment">
-    <Transition name="up">
-      <n-card
-        v-if="music.getPlaySongData && music.getPlaySongData.id != Number(songId)"
-        class="goback"
-        @click="router.push(`/comment?id=${music.getPlaySongData.id}&page=1`)"
-        content-style="padding: 6px"
+  <div class="comment-page" v-if="songId">
+    <!-- 与用户页、搜索页同一套头部：封面 + 小标签 + 大标题，右侧放操作。 -->
+    <header class="comment-head">
+      <img class="cover" :src="coverUrl(song?.album?.picUrl, 128)" alt="" />
+      <div class="text">
+        <span class="eyebrow s-label">
+          {{ $t("general.name.allComments") }}
+          <template v-if="thread.total.value"> · {{ formatNumber(thread.total.value) }}</template>
+        </span>
+        <h1 class="title text-hidden selectable" @click="router.push(`/song?id=${songId}`)">
+          {{ song?.name ?? "" }}
+        </h1>
+        <AllArtists v-if="song?.artist" class="artists text-hidden" :artistsData="song.artist" />
+      </div>
+      <n-button
+        v-if="playingId && playingId !== songId"
+        class="to-current"
+        strong
+        secondary
+        round
+        @click="navigation.replacePage({ path: '/comment', query: { id: playingId } })"
       >
         {{ $t("general.name.toCurrentlySong") }}
-      </n-card>
-    </Transition>
-    <div class="title" v-if="songId">
-      <span class="key">{{ $t("general.name.allComments") }}</span>
-      <n-card class="song">
-        <SmallSongData :getDataByID="songId.toString()" />
-      </n-card>
-    </div>
-    <div class="title" v-else>
-      <span class="key">{{ $t("general.name.noKeywords") }}</span>
-      <br />
-      <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
-        {{ $t("general.name.goBack") }}
       </n-button>
-    </div>
-    <div class="commentData" v-if="songId && commentData.allComments[0]">
-      <div class="hotComments" v-if="commentData.hotComments[0]">
-        <n-h6 prefix="bar"> {{ $t("general.name.hotComments") }} </n-h6>
-        <div class="loading" v-if="!commentData.hotComments[0]">
-          <n-skeleton text :repeat="3" />
-          <n-skeleton text style="width: 60%" />
-        </div>
-        <div class="content">
-          <Comment v-for="item in commentData.hotComments" :key="item" :commentData="item" />
-        </div>
+    </header>
+
+    <n-tabs class="main-tab comment-tab" type="segment" v-model:value="thread.tab.value">
+      <n-tab name="hot" :disabled="!thread.hot.value.length">
+        {{ $t("general.name.hotComments") }}
+      </n-tab>
+      <n-tab name="all">{{ $t("general.name.allComments") }}</n-tab>
+    </n-tabs>
+
+    <div class="content">
+      <PageLoadState v-if="thread.error.value" error @retry="thread.refresh(true)" />
+      <div v-else-if="thread.loading.value" class="comment-stack">
+        <n-skeleton v-for="index in 5" :key="index" class="row-skeleton" />
       </div>
-      <div class="allComments" ref="allCommentsRef">
-        <n-h6 prefix="bar">
-          {{ $t("general.name.allComments") }}
-          <span class="count">{{ commentsCount }} +</span>
-        </n-h6>
-        <div class="loading" v-if="!commentData.allComments[0]">
-          <n-skeleton text :repeat="3" />
-          <n-skeleton text style="width: 60%" />
+      <template v-else>
+        <div v-if="thread.visible.value.length" class="comment-stack">
+          <Comment
+            v-for="item in thread.visible.value"
+            :key="item.commentId"
+            :commentData="item"
+            :resourceId="songId"
+          />
         </div>
-        <div class="content">
-          <Comment v-for="item in commentData.allComments" :key="item" :commentData="item" />
+        <n-text v-else class="empty" :depth="3">{{ $t("general.name.allComments") }} · 0</n-text>
+        <div v-if="thread.tab.value === 'all' && thread.hasMore.value" class="load-more">
+          <n-button
+            strong
+            secondary
+            round
+            :loading="thread.loadingMore.value"
+            @click="thread.loadMore"
+          >
+            {{ $t("general.name.loadMore") }}
+          </n-button>
         </div>
-      </div>
-      <Pagination
-        :totalCount="commentsCount"
-        :pageNumber="pageNumber"
-        :showSizePicker="false"
-        @pageNumberChange="pageNumberChange"
-      />
+      </template>
     </div>
+  </div>
+  <div class="title-empty" v-else>
+    <span class="key">{{ $t("general.name.noKeywords") }}</span>
+    <br />
+    <n-button strong secondary @click="navigation.closeTop()" style="margin-top: 20px">
+      {{ $t("general.name.goBack") }}
+    </n-button>
   </div>
 </template>
 
@@ -61,137 +74,161 @@
 import { useLayerNavigation } from "@/utils/navigation";
 import { musicStore } from "@/store";
 import { useRouter } from "vue-router";
-import { getComment } from "@/api/comment";
+import { getMusicDetail } from "@/api/song";
 import { useI18n } from "vue-i18n";
-import SmallSongData from "@/components/DataList/SmallSongData.vue";
+import { coverUrl } from "@/utils/ncm/coverUrl";
+import { formatNumber } from "@/utils/timeTools";
+import { useCommentThread } from "@/composables/useCommentThread";
+import AllArtists from "@/components/DataList/AllArtists.vue";
 import Comment from "@/components/Comment/index.vue";
-import Pagination from "@/components/Pagination/index.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 
 const { t } = useI18n();
 const router = useRouter();
 const navigation = useLayerNavigation();
 const music = musicStore();
 
-// 歌曲信息
-const songId = ref(router.currentRoute.value.query.id);
-const pageNumber = ref(
-  router.currentRoute.value.query.page ? Number(router.currentRoute.value.query.page) : 1,
+const readId = () => {
+  const id = Number(router.currentRoute.value.query.id);
+  return Number.isFinite(id) && id > 0 ? id : null;
+};
+const songId = ref<number | null>(readId());
+const thread = useCommentThread(songId);
+
+// A local file has no thread to jump to.
+const playingId = computed(() => {
+  const data = music.getPlaySongData;
+  const id = Number(data?.id);
+  return !data?.local?.uri && id > 0 ? id : null;
+});
+
+const song = ref<{ name: string; artist: any[]; album: any } | null>(null);
+watch(
+  songId,
+  (id) => {
+    song.value = null;
+    if (!id) return;
+    getMusicDetail(String(id))
+      .then((res) => {
+        const detail = res.songs?.[0];
+        if (detail && songId.value === id) {
+          song.value = { name: detail.name, artist: detail.ar, album: detail.al };
+        }
+      })
+      .catch((err) => console.error(t("general.message.acquisitionFailed"), err));
+  },
+  { immediate: true },
 );
 
-// 评论数据
-const commentData = reactive({
-  hotComments: [], // 热门评论
-  allComments: [], // 全部评论
-});
+onMounted(() => $setSiteTitle(t("general.name.allComments")));
 
-// 评论总数
-const commentsCount = ref(0);
-
-// 获取评论数据
-const getCommentData = (id: string | number | string[], offset = 0) => {
-  // 获取 before
-  let before = null;
-  if (commentData.allComments[0] && offset >= 5000) {
-    before = commentData.allComments[commentData.allComments.length - 1].time;
-  }
-  getComment(Number(id), offset, before).then((res) => {
-    // 写入数据
-    if (res.comments && res.comments[0]) {
-      if (res.hotComments) {
-        commentData.hotComments = res.hotComments;
-      } else {
-        commentData.hotComments = [];
-      }
-      commentData.allComments = res.comments;
-      commentsCount.value = res.total;
-    } else {
-      $message.error(t("general.message.acquisitionFailed"));
-      navigation.closeTop();
-    }
-    // 请求后回顶
-    if (typeof $scrollToTop !== "undefined") $scrollToTop();
-  });
-};
-
-// 当前页数数据变化
-const pageNumberChange = (val: number) => {
-  navigation.replacePage({
-    path: "/comment",
-    query: {
-      id: songId.value,
-      page: val,
-    },
-  });
-};
-
-onMounted(() => {
-  $setSiteTitle(t("general.name.allComments"));
-  // 获取评论数据
-  if (songId.value) getCommentData(songId.value, (pageNumber.value - 1) * 20);
-});
-
-// 监听路由参数变化
+// 同一页内换歌（「前往当前播放歌曲」，或从别处再次进入）。
 watch(
   () => router.currentRoute.value,
-  (val) => {
-    if (val.name === "comment") {
-      pageNumber.value = Number(val.query.page ? val.query.page : 1);
-      songId.value = val.query.id;
-      getCommentData(val.query.id, (pageNumber.value - 1) * 20);
-    }
+  (route) => {
+    if (route.name === "comment") songId.value = readId();
   },
 );
 </script>
 
 <style lang="scss" scoped>
-.comment {
-  .up-enter-active,
-  .up-leave-active {
-    transition: all var(--duration-300) var(--ease-out);
-  }
+.comment-page {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 32px;
 
-  .up-enter-from,
-  .up-leave-to {
-    transform: translateY(-34px);
-  }
-  .goback {
-    cursor: pointer;
-    position: absolute;
-    top: 0;
-    left: 0;
-    text-align: center;
-    z-index: 2;
-    @media (hover: hover) {
-      :hover {
-        background-color: var(--n-border-color);
+  .comment-head {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    min-width: 0;
+
+    .cover {
+      --size: clamp(64px, 9vw, 96px);
+      width: var(--size);
+      height: var(--size);
+      flex-shrink: 0;
+      border-radius: var(--radius-md);
+      object-fit: cover;
+      box-shadow: 0 6px 8px -2px rgb(0 0 0 / 16%);
+    }
+
+    .text {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+
+      .eyebrow {
+        margin-bottom: 10px;
+        color: var(--n-text-color-3);
+      }
+
+      .title {
+        margin: 0;
+        font-size: clamp(26px, 4.6vw, 50px);
+        font-weight: 700;
+        // 单行截断（text-hidden）会裁掉行盒以外的部分。normal 按字体自己的上下伸高度排行：
+        // 定值在某些字体下总会切掉 y/g/p（1.2 在 Noto Sans CJK 下仍切 5px）。与歌曲页标题一致。
+        line-height: normal;
+        letter-spacing: -0.02em;
+        color: var(--n-text-color);
+        cursor: pointer;
+      }
+
+      .artists {
+        margin-top: 8px;
+        font-size: 15px;
+        font-weight: 600;
       }
     }
-    :deep(.n-card__content) {
-      transition: all var(--duration-300) var(--ease-out);
-      font-size: 12px;
+
+    .to-current {
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 578px) {
+      flex-wrap: wrap;
+
+      .to-current {
+        width: 100%;
+      }
     }
   }
-  .title {
-    margin-top: 30px;
-    margin-bottom: 20px;
-    .key {
-      font-size: 40px;
-      font-weight: bold;
-      margin-right: 8px;
-    }
-    .song {
-      margin-top: 20px;
-      border-radius: var(--radius-md);
-    }
+
+  .comment-tab {
+    margin-top: 22px;
+    max-width: 360px;
   }
-  .hotComments,
-  .allComments {
-    margin-top: 40px;
-    .count {
-      font-size: 13px;
-      margin-left: 4px;
-      opacity: 0.6;
-    }
+
+  .content {
+    margin-top: 20px;
+  }
+
+  .row-skeleton {
+    height: 82px;
+  }
+
+  .empty {
+    display: block;
+    padding: 24px 0;
+    text-align: center;
+  }
+
+  .load-more {
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+  }
+}
+
+.title-empty {
+  margin-top: 30px;
+  margin-bottom: 20px;
+
+  .key {
+    font-size: 40px;
+    font-weight: bold;
   }
 }
 </style>

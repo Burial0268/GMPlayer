@@ -1,9 +1,6 @@
 <template>
   <div class="like">
-    <CoverLists
-      :listData="user.getUserPlayLists.like"
-      :loading="user.getUserPlayLists.isLoading || !user.getUserPlayLists.has"
-    />
+    <CoverLists :listData="user.getUserPlayLists.like" :loading="!user.getUserPlayLists.has" />
   </div>
 </template>
 

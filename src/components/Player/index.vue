@@ -194,6 +194,7 @@
             <n-popover trigger="hover" :keep-alive-on-hover="false" :disabled="isTouchOnly()">
               <template #trigger>
                 <div
+                  ref="playlistButtonRef"
                   :class="music.showPlayList ? 'playlist open' : 'playlist'"
                   role="button"
                   tabindex="0"
@@ -248,7 +249,7 @@
       </div>
     </Transition>
     <!-- 播放列表 -->
-    <PlayListDrawer ref="PlayListDrawerRef" />
+    <PlayListDrawer ref="PlayListDrawerRef" :anchor="playlistButtonRef" />
     <!-- 添加到歌单 -->
     <AddPlaylist ref="addPlayListRef" />
     <!-- 一起听歌 -->
@@ -358,6 +359,7 @@ const bootAdopting = ref(isTauri());
 useNativeMediaControls(computed(() => !bootAdopting.value));
 const addPlayListRef = ref(null);
 const PlayListDrawerRef = ref(null);
+const playlistButtonRef = ref(null);
 const bigPlayerRef = ref(null);
 const { incoming: mixIncoming } = useAutoMixVisual();
 

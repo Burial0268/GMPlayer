@@ -35,7 +35,7 @@
     </n-tabs>
 
     <!-- 结果内容 -->
-    <main class="content" v-if="searchKeywords">
+    <div class="content" v-if="searchKeywords">
       <router-view v-slot="{ Component, route: childRoute }">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive :max="6">
@@ -43,7 +43,7 @@
           </keep-alive>
         </Transition>
       </router-view>
-    </main>
+    </div>
   </div>
 </template>
 

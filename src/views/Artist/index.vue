@@ -11,7 +11,7 @@
       </RouteArtwork>
 
       <div class="meta">
-        <div class="title">
+        <div class="title selectable">
           <span v-content-intro class="detail-kind">{{ $t("general.name.artists") }}</span>
           <n-text class="name" data-navigation-title="page">{{ artistData.name }}</n-text>
           <n-text v-if="artistData.occupation" v-content-intro class="creator">
@@ -20,15 +20,15 @@
         </div>
 
         <div v-content-intro class="detail-stats">
-          <button class="num" type="button" @click="tabChange('songs')">
+          <button class="num touch-target" type="button" @click="tabChange('songs')">
             <n-icon :depth="3" :component="MusicNoteFilled" />
             <n-text>{{ $t("general.name.songSize", { size: artistData.musicSize }) }}</n-text>
           </button>
-          <button class="num" type="button" @click="tabChange('albums')">
+          <button class="num touch-target" type="button" @click="tabChange('albums')">
             <n-icon :depth="3" :component="AlbumFilled" />
             <n-text>{{ $t("general.name.albumSize", { size: artistData.albumSize }) }}</n-text>
           </button>
-          <button class="num" type="button" @click="tabChange('videos')">
+          <button class="num touch-target" type="button" @click="tabChange('videos')">
             <n-icon :depth="3" :component="VideocamRound" />
             <n-text>{{ $t("general.name.mvSize", { size: artistData.mvSize }) }}</n-text>
           </button>
@@ -36,8 +36,14 @@
 
         <div v-content-intro class="intr" v-if="artistData.desc">
           <span class="name">{{ $t("general.name.artistDesc") }}</span>
-          <span class="desc text-hidden">{{ artistData.desc }}</span>
-          <n-button class="all-desc" strong secondary @click="artistDescShow = true">
+          <span ref="descRef" class="desc text-hidden selectable">{{ artistData.desc }}</span>
+          <n-button
+            v-if="descOverflow"
+            class="all-desc"
+            strong
+            secondary
+            @click="artistDescShow = true"
+          >
             {{ $t("general.name.allDesc") }}
           </n-button>
         </div>
@@ -98,7 +104,7 @@
       <n-tab name="videos"> MV </n-tab>
     </n-tabs>
 
-    <main class="content">
+    <div class="content">
       <router-view v-slot="{ Component }" :mvSize="artistData ? artistData.mvSize : null">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive :max="3">
@@ -106,19 +112,11 @@
           </keep-alive>
         </Transition>
       </router-view>
-    </main>
+    </div>
 
-    <n-modal
-      class="s-modal"
-      v-model:show="artistDescShow"
-      preset="card"
-      :title="$t('general.name.artistDesc')"
-      :bordered="false"
-    >
-      <n-scrollbar>
-        <n-text v-html="artistData.desc.replace(/\n/g, '<br>')" />
-      </n-scrollbar>
-    </n-modal>
+    <GlassSheet v-model:show="artistDescShow" :title="$t('general.name.artistDesc')">
+      <n-text class="selectable long-text">{{ artistData.desc }}</n-text>
+    </GlassSheet>
   </div>
 
   <div class="title" v-else-if="!artistId">
@@ -133,6 +131,7 @@
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { useRouter, useRoute } from "vue-router";
 import { userStore } from "@/store";
 import { getArtistDetail, getArtistSongs, likeArtist } from "@/api/artist";
@@ -158,6 +157,7 @@ import RouteShadow from "@/components/Navigation/RouteShadow.vue";
 import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import { useLayerNavigation } from "@/utils/navigation";
 import { useContentIntro } from "@/composables/useContentIntro";
+import { useTextOverflow } from "@/composables/useTextOverflow";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -190,6 +190,8 @@ const artistData = ref<ArtistDetailData | null>(null);
 const artistHotSongs = ref<any[]>([]);
 const artistSongsLoading = ref(false);
 const artistDescShow = ref(false);
+const descRef = ref<HTMLElement | null>(null);
+const descOverflow = useTextOverflow(descRef, () => artistData.value?.desc);
 const artistLikeBtn = ref(false);
 
 const safeArtistCover = computed(() =>

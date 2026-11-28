@@ -1,57 +1,71 @@
 <template>
-  <n-modal
-    class="s-modal downloadModal"
-    v-model:show="downloadModal"
-    preset="card"
-    :title="$t('menu.download')"
-    :bordered="false"
-    :on-after-leave="closeDownloadModal"
-  >
-    <Transition mode="out-in">
-      <div v-if="songData">
-        <SmallSongData ref="smallSongDataRef" :songData="songData" notJump />
-        <n-alert v-if="songData.pc" class="tip" type="info" :show-icon="false">
-          {{ $t("other.cloudTip") }}
-        </n-alert>
-        <n-radio-group class="downloadGroup" v-model:value="downloadChoose" name="downloadGroup">
-          <n-space vertical>
-            <n-radio
-              v-for="item in downloadLevel"
-              :key="item"
-              :value="item.value"
-              :disabled="item.disabled"
-            >
-              <div :class="item.disabled ? 'text disabled' : 'text'">
-                <n-text class="name">{{ item.label }}</n-text>
-                <n-text v-if="item.size" class="size" :depth="3">
-                  {{ item.size }}
-                </n-text>
-                <n-text v-else-if="!item.disabled" class="error" :depth="3">
-                  {{ $t("general.message.acquisitionFailed") }}
-                </n-text>
-              </div>
-            </n-radio>
-          </n-space>
-        </n-radio-group>
+  <GlassSheet v-model:show="downloadModal" :label="$t('menu.download')">
+    <template #header>
+      <div class="sheet-song">
+        <img class="sheet-cover" :src="coverUrl(songData?.album?.picUrl, 128)" alt="" />
+        <div class="sheet-song-text">
+          <div class="sheet-song-name text-hidden">
+            {{ songData?.name ?? $t("general.message.isLoading") }}
+          </div>
+          <div class="sheet-song-artists text-hidden">
+            {{ (songData?.artist ?? []).map((artist) => artist?.name).join(" / ") }}
+          </div>
+        </div>
       </div>
-      <n-text v-else>{{ $t("general.message.isLoading") }}</n-text>
-    </Transition>
-    <template #footer>
-      <n-space justify="end">
-        <n-button @click="closeDownloadModal">
-          {{ $t("general.dialog.cancel") }}
-        </n-button>
-        <n-button
-          :disabled="!downloadChoose"
-          :loading="downloadStatus"
-          type="primary"
-          @click="toSongDownload"
-        >
-          {{ downloadStatus ? $t("general.dialog.downloadingNow") : $t("general.dialog.download") }}
-        </n-button>
-      </n-space>
     </template>
-  </n-modal>
+
+    <p v-if="songData?.pc" class="cloud-tip">{{ $t("other.cloudTip") }}</p>
+    <section class="sheet-group" role="radiogroup" :aria-label="$t('menu.download')">
+      <template v-if="downloadLevel">
+        <button
+          v-for="item in downloadLevel"
+          :key="item.value"
+          type="button"
+          role="radio"
+          class="sheet-row"
+          :aria-checked="downloadChoose === item.value"
+          :disabled="item.disabled"
+          @click="downloadChoose = item.value"
+        >
+          <span class="row-label">{{ item.label }}</span>
+          <span class="row-meta">
+            <template v-if="item.size">{{ item.size }} MB</template>
+            <template v-else-if="!item.disabled">
+              {{ $t("general.message.acquisitionFailed") }}
+            </template>
+          </span>
+          <n-icon
+            class="row-icon check"
+            size="20"
+            :component="CheckRound"
+            :style="{ visibility: downloadChoose === item.value ? 'visible' : 'hidden' }"
+          />
+        </button>
+      </template>
+      <template v-else>
+        <div v-for="index in 5" :key="index" class="sheet-row">
+          <n-skeleton text style="width: 40%" />
+        </div>
+      </template>
+    </section>
+
+    <template #footer>
+      <n-button strong secondary round @click="closeDownloadModal">
+        {{ $t("general.dialog.cancel") }}
+      </n-button>
+      <n-button
+        :disabled="!downloadChoose"
+        :loading="downloadStatus"
+        type="primary"
+        strong
+        secondary
+        round
+        @click="toSongDownload"
+      >
+        {{ downloadStatus ? $t("general.dialog.downloadingNow") : $t("general.dialog.download") }}
+      </n-button>
+    </template>
+  </GlassSheet>
 </template>
 
 <script setup>
@@ -60,7 +74,9 @@ import { useRouter } from "vue-router";
 import { getMusicDetail } from "@/api/song";
 import { downloadAvailable } from "@/utils/library/download";
 import { useI18n } from "vue-i18n";
-import SmallSongData from "@/components/DataList/SmallSongData.vue";
+import { CheckRound } from "@vicons/material";
+import { coverUrl } from "@/utils/ncm/coverUrl";
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 
 const { t } = useI18n();
 const user = userStore();
@@ -173,7 +189,6 @@ const generateLists = (data) => {
       size: getSongSize(data, "hr"),
     },
   ];
-  console.log(downloadLevel.value);
   // 预选：设置里的默认音质，前提是这首歌确实给这个档位。不给就退回最高的可用档，
   // 免得用户每次都得先点一下才能按「下载」。
   const preferred = download.settings?.defaultBr;
@@ -220,6 +235,9 @@ const openDownloadModal = (data) => {
       data?.pc
     ) {
       songId.value = data.id;
+      songData.value = null;
+      downloadLevel.value = null;
+      downloadChoose.value = null;
       downloadModal.value = true;
       download.hydrate();
       getMusicDetailData(data.id);
@@ -232,12 +250,10 @@ const openDownloadModal = (data) => {
 };
 
 // 关闭歌曲下载
+// 数据留到下次打开时再清：面板收起动画期间还要显示这首歌。
 const closeDownloadModal = () => {
-  songId.value = null;
-  songData.value = null;
   downloadStatus.value = false;
   downloadModal.value = false;
-  downloadChoose.value = null;
 };
 
 // 暴露方法
@@ -247,48 +263,13 @@ defineExpose({
 </script>
 
 <style lang="scss" scoped>
-.downloadModal {
-  .v-enter-active,
-  .v-leave-active {
-    transition: opacity var(--duration-300) var(--ease-out);
-  }
+.cloud-tip {
+  margin: 0 4px 12px;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
 
-  .v-enter-from,
-  .v-leave-to {
-    opacity: 0;
-  }
-  .tip {
-    margin-top: 20px;
-  }
-  .downloadGroup {
-    margin-top: 20px;
-    .text {
-      &.disabled {
-        span {
-          color: var(--n-text-color-disabled);
-        }
-      }
-      .size {
-        font-size: 13px;
-        &::before {
-          content: "-";
-          margin: 0 4px;
-        }
-        &::after {
-          content: "Mb";
-          margin-left: 4px;
-        }
-      }
-      .error {
-        font-size: 13px;
-        &::before {
-          content: "-";
-          transform: translateY(-1.5px);
-          display: inline-block;
-          margin: 0 4px;
-        }
-      }
-    }
-  }
+.sheet-row {
+  --sheet-row-inset: 14px;
 }
 </style>

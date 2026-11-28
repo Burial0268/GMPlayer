@@ -26,18 +26,25 @@ import "@/style/animate.scss";
 
 if ("serviceWorker" in navigator) {
   let pwaMessage: { destroy: () => void } | null = null;
+  // 首次安装也会触发下面两个事件（clientsClaim 会接管页面），那不是「更新」。
+  // 只有页面加载时已经被某个 SW 控制，之后的事件才说明换了新版本。
+  const hadController = Boolean(navigator.serviceWorker.controller);
 
-  // 检测到更新提醒
-  navigator.serviceWorker.addEventListener("onupdatefound", () => {
-    console.info("发现站点更新，正在下载新版本");
-    pwaMessage = $message.loading("发现站点更新，正在下载新版本", {
-      closable: true,
-      duration: 0,
+  // 检测到更新提醒。`updatefound` 在 registration 上，不在 navigator.serviceWorker 上。
+  void navigator.serviceWorker.ready.then((registration) => {
+    registration.addEventListener("updatefound", () => {
+      if (!hadController) return;
+      console.info("发现站点更新，正在下载新版本");
+      pwaMessage = $message.loading("发现站点更新，正在下载新版本", {
+        closable: true,
+        duration: 0,
+      });
     });
   });
 
   // 更新完成提醒
   navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!hadController) return;
     console.info("站点已更新，刷新后生效");
     if (pwaMessage) pwaMessage?.destroy();
     $message.info("站点已更新，刷新后生效", {
@@ -56,15 +63,19 @@ if ("serviceWorker" in navigator) {
 async function bootstrap() {
   const pinia = createPinia();
   pinia.use(piniaPluginPersistedstate);
-  // 播放队列存在 IndexedDB（只有异步接口），必须在任何 store 实例化之前预载——
-  // `.use(router)` 就会触发首次导航和守卫。见 store/musicPersistedData。
+  // 播放队列存在 IndexedDB（只有异步接口），必须在任何 store 实例化之前预载，
+  // 也就早于下面 `.use(router)` 触发的首次导航和守卫。见 store/musicPersistedData。
   await Promise.all([installTauriPinia(pinia), loadMusicPersist()]);
 
   // 顺序是硬约束：pinia.use() 在 `app.use(pinia)` 之前只是把插件挂进
   // toBeInstalled 队列（pinia 源码里 `use()` 判的是 `this._a`），要等安装到
   // app 上才真正生效。在这之前实例化 store，persistedstate 不会 hydrate、
   // $tauri 也不会注入——store 会静悄悄停在默认值上。
-  const app = createApp(App).use(pinia).use(router);
+  // router 不在这里装：`.use(router)` 会立刻触发首次导航和路由守卫，而需要登录的路由
+  // （/user/*、日推）在守卫里就请求 /login/status。那一刻下面的内嵌链路和 cookie 来源
+  // 还没设置，请求走 remote、不带 cookie，Netease 答「无 profile」，守卫就把用户登出并
+  // 清掉 cookie——Tauri 上停在这些页面刷新，每次都掉登录。见下方 `app.use(router)`。
+  const app = createApp(App).use(pinia);
 
   // 持久化层出任何问题都不能让页面白屏。走到这里 persistedstate 已经
   // hydrate 完了（localStorage 那份是同步的），Tauri 层失败只是少了落盘和
@@ -143,6 +154,8 @@ async function bootstrap() {
   // 外链统一出口：Tauri 交给系统浏览器，Web 走新标签页
   installExternalLinkInterceptor();
 
+  // 链路与 cookie 都就位之后才装 router（首次导航的守卫会用到它们，见上方）。
+  app.use(router);
   app.mount("#app");
 
   if (isTauri()) {

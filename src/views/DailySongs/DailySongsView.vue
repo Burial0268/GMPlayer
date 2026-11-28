@@ -1,19 +1,17 @@
 <template>
   <div class="dailysongs">
-    <div class="top">
-      <div class="title">
-        <div class="date">
-          <n-icon class="calendar" :component="CalendarTodayFilled" />
-          <n-text class="num">{{ displayDay }}</n-text>
-        </div>
-        <div class="right">
-          <n-gradient-text class="big" type="danger">
-            {{ $t("home.modules.dailySongs.title") }}
-          </n-gradient-text>
-          <n-text class="tip" :depth="3">
-            {{ displaySubtitle }}
-          </n-text>
-        </div>
+    <!-- 与评论页、用户页同一套头部：日历 + 小标签 + 大标题，右侧放操作。 -->
+    <header class="daily-head">
+      <div class="date" aria-hidden="true">
+        <n-icon class="calendar" :component="CalendarTodayFilled" />
+        <n-text class="num">{{ displayDay }}</n-text>
+      </div>
+      <div class="text">
+        <span class="eyebrow s-label">{{ displayDate }}</span>
+        <h1 class="title">
+          <n-gradient-text type="danger">{{ $t("home.modules.dailySongs.title") }}</n-gradient-text>
+        </h1>
+        <n-text class="tip" :depth="3">{{ displaySubtitle }}</n-text>
       </div>
       <n-select
         v-model:value="selectedDate"
@@ -27,14 +25,14 @@
         :options="historyDateOptions"
         @update:value="handleDateChange"
       />
-    </div>
+    </header>
     <DataLists
       :listData="displaySongs"
       :loading="songsLoading"
-      virtual
-      virtual-height="min(68vh, 760px)"
-      :virtual-item-size="82"
+      page-window
+      :virtual-item-size="54"
       :virtual-threshold="40"
+      show-header
     />
   </div>
 </template>
@@ -77,6 +75,10 @@ const formatHistoryDate = (date: string) => {
     day: Number(day),
   });
 };
+
+const displayDate = computed(() =>
+  formatHistoryDate(selectedDate.value === todayValue ? todayDate.value : selectedDate.value),
+);
 
 const displaySubtitle = computed(() => {
   if (selectedDate.value === todayValue) return t("home.modules.dailySongs.subtitle");
@@ -181,57 +183,79 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
+@use "@/style/detail-song-list" as song-list;
+
 .dailysongs {
-  .top {
-    margin: 30px 0 40px;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 32px;
+
+  @include song-list.rows;
+
+  .daily-head {
+    margin-bottom: 24px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 20px;
-    flex-wrap: wrap;
-    .title {
-      font-size: 40px;
+    gap: 16px;
+    min-width: 0;
+
+    .date {
+      position: relative;
+      flex-shrink: 0;
       display: flex;
       align-items: center;
+      justify-content: center;
+
       .calendar {
         font-size: 70px;
         color: #d03050;
         transform: translateY(-3px);
       }
-      .date {
-        position: relative;
-        margin-right: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        .num {
-          margin-top: 7px;
-          position: absolute;
-          font-size: 30px;
-          font-weight: bold;
-          color: #d03050;
-        }
-      }
-      .right {
-        display: flex;
-        flex-direction: column;
-        .big {
-          --n-font-weight: bold;
-          line-height: 50px;
-        }
-        .tip {
-          font-size: 14px;
-          margin-left: 2px;
-        }
+
+      .num {
+        margin-top: 7px;
+        position: absolute;
+        font-size: 30px;
+        font-weight: bold;
+        color: #d03050;
       }
     }
+
+    .text {
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+      min-width: 0;
+
+      .eyebrow {
+        margin-bottom: 10px;
+        color: var(--n-text-color-3);
+      }
+
+      .title {
+        margin: 0;
+        font-size: 40px;
+        line-height: 50px;
+
+        .n-gradient-text {
+          --n-font-weight: bold;
+        }
+      }
+
+      .tip {
+        margin-top: 8px;
+        font-size: 14px;
+      }
+    }
+
     .history-select {
       width: 190px;
+      flex-shrink: 0;
     }
-  }
-  @media (max-width: 768px) {
-    .top {
-      align-items: flex-start;
+
+    @media (max-width: 768px) {
+      flex-wrap: wrap;
+
       .history-select {
         width: 100%;
       }

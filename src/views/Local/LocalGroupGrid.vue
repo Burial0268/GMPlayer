@@ -10,6 +10,10 @@
           :data-navigation-identity="`${kind}:${group.id}`"
           @click="open(group, $event)"
           @keydown.enter="open(group, $event)"
+          @pointerenter="$event.pointerType === 'mouse' && (marqueeId = group.id)"
+          @pointerleave="marqueeId = null"
+          @focusin="$event.target.matches(':focus-visible') && (marqueeId = group.id)"
+          @focusout="marqueeId = null"
         >
           <div class="cover" data-navigation-cover>
             <!-- `lazy` + `decoding="async"` are load-bearing here, not polish:
@@ -27,9 +31,12 @@
             />
             <n-icon v-else :size="34" :component="fallbackIcon" />
           </div>
-          <n-text class="name" data-navigation-title>{{
-            group.name || $t("local.unknown")
-          }}</n-text>
+          <n-text class="name" data-navigation-title>
+            <OverflowMarquee v-if="marqueeId === group.id" :pause="0.6">{{
+              group.name || $t("local.unknown")
+            }}</OverflowMarquee>
+            <template v-else>{{ group.name || $t("local.unknown") }}</template>
+          </n-text>
           <n-text class="meta" :depth="3">
             {{ subtitleFor(group) }}
           </n-text>
@@ -46,6 +53,7 @@ import { useI18n } from "vue-i18n";
 import type { Component } from "vue";
 import type { LocalGroup } from "@/utils/library/localLibrary";
 import { refToQuery, type PlaylistRef } from "@/utils/library/playlistSource";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 
 /**
  * The grid behind the albums / artists / folders tabs.
@@ -102,6 +110,14 @@ const open = (group: LocalGroup, origin: Event) => {
     },
   );
 };
+
+// The card under a mouse (or keyboard focus) scrolls its name; the rest keep an ellipsis.
+// One marquee at a time, mounted on demand: this grid is not virtualised, and a ResizeObserver per
+// card would cost every card for the one being looked at. Mouse and :focus-visible only: a tap
+// also fires a hover and focuses the card, and mounting the marquee then changes the card's
+// content mid-transition, which makes the route animation drop its source (observeSource) and
+// the page appear with no motion.
+const marqueeId = ref<string | number | null>(null);
 </script>
 
 <style lang="scss" scoped>

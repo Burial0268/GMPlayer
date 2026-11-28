@@ -13,12 +13,13 @@
       />
       <div class="text">
         <span class="eyebrow s-label">{{ $t("nav.user") }}</span>
-        <h1 class="title text-hidden">{{ user.getUserData.nickname }}</h1>
+        <h1 class="title text-hidden selectable">{{ user.getUserData.nickname }}</h1>
       </div>
       <!-- 本地音乐入口与退出登录收进一个菜单：并排两颗按钮在手机上会挤出头部。 -->
-      <n-dropdown
+      <ActionMenu
         trigger="click"
         placement="bottom-end"
+        :label="$t('nav.userChildren.more')"
         :options="menuOptions"
         @select="handleMenuSelect"
       >
@@ -27,7 +28,7 @@
             <n-icon :component="More" />
           </template>
         </n-button>
-      </n-dropdown>
+      </ActionMenu>
     </header>
 
     <n-tabs
@@ -41,7 +42,7 @@
       </n-tab>
     </n-tabs>
 
-    <main class="content">
+    <div class="content">
       <router-view v-slot="{ Component }">
         <Transition :name="transitionName" mode="out-in">
           <keep-alive>
@@ -49,12 +50,13 @@
           </keep-alive>
         </Transition>
       </router-view>
-    </main>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { NIcon } from "naive-ui";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
 import { userStore } from "@/store";
 import { useRoute } from "vue-router";
 import { useLayerNavigation } from "@/utils/navigation";
@@ -167,7 +169,9 @@ watch(
         margin: 0;
         font-size: clamp(26px, 4.6vw, 50px);
         font-weight: 700;
-        line-height: 1.08;
+        // 单行截断（text-hidden）会裁掉行盒以外的部分。normal 按字体自己的上下伸高度排行：
+        // 定值在某些字体下总会切掉 y/g/p（1.2 在 Noto Sans CJK 下仍切 5px）。与歌曲页标题一致。
+        line-height: normal;
         letter-spacing: -0.02em;
         color: var(--n-text-color);
         word-break: break-all;

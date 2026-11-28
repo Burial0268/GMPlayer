@@ -65,6 +65,10 @@ export class AutoMixService {
     return this._stateMachine.resolveActiveTransitionTargetIndex(fallbackIndex);
   }
 
+  resolveHandoffTargetIndex(fallbackIndex: number): number {
+    return this._stateMachine.resolveHandoffTargetIndex(fallbackIndex);
+  }
+
   monitorPlayback(currentSound: ISound): void {
     this._stateMachine.monitorPlayback(currentSound);
   }

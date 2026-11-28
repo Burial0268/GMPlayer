@@ -196,6 +196,8 @@
         </BouncingSlider>
       </div>
     </div>
+    <component :is="AddPlaylistSheet" v-if="AddPlaylistSheet" ref="addPlaylistSheetRef" />
+    <component :is="DownloadSheet" v-if="DownloadSheet" ref="downloadSheetRef" />
   </div>
 </template>
 
@@ -238,6 +240,7 @@ import defaultCover from "/images/pic/default.png?url";
 import gsap from "gsap";
 import { NIcon } from "naive-ui";
 import { useI18n } from "vue-i18n";
+import { usePlayingSongMenu } from "@/composables/usePlayingSongMenu";
 import { isWindowsTauri } from "@/utils/tauri/core/runtime";
 import { windowManager } from "@/utils/tauri/window/manager";
 import { Motion } from "motion-v";
@@ -292,6 +295,16 @@ const openTaskbarLyrics = async () => {
   await windowManager.openTaskbarLyrics();
 };
 
+// 当前歌曲的「添加到歌单」「下载」排在「更多」最前，与移动端面板一致。
+const {
+  AddPlaylistSheet,
+  addPlaylistSheetRef,
+  DownloadSheet,
+  downloadSheetRef,
+  withSongOptions,
+  selectSongOption,
+} = usePlayingSongMenu();
+
 // 更多菜单
 const renderIcon = (icon) => () => h(NIcon, { size: 18 }, { default: () => h(icon) });
 
@@ -314,10 +327,11 @@ const moreOptions = computed(() => {
       });
     }
   }
-  return options;
+  return withSongOptions(options);
 });
 
 const handleMoreSelect = (key) => {
+  if (selectSongOption(key)) return;
   if (key === "miniPlayer") toggleMiniPlayer();
   else if (key === "desktopLyrics") toggleDesktopLyrics();
   else if (key === "taskbarLyrics") openTaskbarLyrics();

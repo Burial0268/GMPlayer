@@ -29,10 +29,11 @@
         </n-tag>
       </n-space>
     </div>
-    <ArtistLists :listData="artistsData" :loadingNum="30" />
+    <PageLoadState v-if="listFailed" error @retry="reloadArtists" />
+    <ArtistLists v-else :listData="artistsData" :loadingNum="30" :loading="listLoading" />
     <n-space justify="center">
       <n-button
-        v-if="hasMore"
+        v-if="hasMore && !listFailed && artistsData.length"
         class="more"
         size="large"
         strong
@@ -53,6 +54,7 @@ import { useLayerNavigation } from "@/utils/navigation";
 import { useI18n } from "vue-i18n";
 import { getArtistList } from "@/api/artist";
 import ArtistLists from "@/components/DataList/ArtistLists.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import { ArtistArea, ArtistType } from "@/api";
 
 const { t } = useI18n();
@@ -100,6 +102,11 @@ const artistsData = ref([]);
 const artistsOffset = ref(0);
 const hasMore = ref(true);
 const loading = ref(false);
+// 列表本身的加载态（骨架屏 / 空状态 / 错误）；`loading` 只管「加载更多」按钮。
+const listLoading = ref(true);
+const listFailed = ref(false);
+// 只认最新一次请求：快速切分类时，迟到的旧结果不能追加进新分类的列表。
+let requestSerial = 0;
 
 // 获取歌手数据
 const getArtistListData = (
@@ -109,24 +116,55 @@ const getArtistListData = (
   offset = 0,
   initial = -1,
 ) => {
-  getArtistList(type, area, limit, offset, initial).then((res) => {
-    if (res.artists[0]) {
-      // 是否还有更多
-      hasMore.value = Boolean(res.more);
+  const serial = ++requestSerial;
+  const append = offset > 0;
+  if (!append) {
+    listLoading.value = true;
+    listFailed.value = false;
+  }
+  getArtistList(type, area, limit, offset, initial)
+    .then((res) => {
+      if (serial !== requestSerial) return;
+      const artists = res.artists ?? [];
+      hasMore.value = Boolean(res.more) && artists.length > 0;
+      artistsData.value.push(
+        ...artists.map((v: any) => ({
+          id: v.id,
+          name: v.name,
+          cover: v.img1v1Url,
+          size: v.musicSize,
+        })),
+      );
+    })
+    .catch((err) => {
+      if (serial !== requestSerial) return;
+      console.error("[discover] artists failed", err);
+      if (append) {
+        // 退回这一页，下次「加载更多」重新要它，而不是跳过。
+        if (artistsOffset.value === offset) artistsOffset.value -= limit;
+        $message.error(t("general.message.acquisitionFailed"));
+      } else {
+        listFailed.value = true;
+      }
+    })
+    .finally(() => {
+      if (serial !== requestSerial) return;
       loading.value = false;
-      // 遍历数据
-      const newItems = res.artists.map((v: any) => ({
-        id: v.id,
-        name: v.name,
-        cover: v.img1v1Url,
-        size: v.musicSize,
-      }));
-      artistsData.value.push(...newItems);
-    } else {
-      hasMore.value = false;
-      $message.error(t("general.message.acquisitionFailed"));
-    }
-  });
+      listLoading.value = false;
+    });
+};
+
+// 错误页的「重新载入」
+const reloadArtists = () => {
+  artistsOffset.value = 0;
+  artistsData.value = [];
+  getArtistListData(
+    artistType[artistTypeNamesChoose.value] as ArtistType,
+    artistArea[artistTypeNamesChoose.value] as ArtistArea,
+    30,
+    0,
+    Number(artistInitialChoose.value),
+  );
 };
 
 // 歌手标签变化

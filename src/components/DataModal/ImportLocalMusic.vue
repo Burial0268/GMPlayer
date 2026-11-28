@@ -1,14 +1,6 @@
 <template>
-  <n-modal
-    class="import-local-music s-modal"
-    v-model:show="show"
-    preset="card"
-    :bordered="false"
-    style="max-width: 560px"
-  >
-    <template #header>{{ $t("local.manageSources") }}</template>
-
-    <n-space vertical :size="16">
+  <GlassSheet v-model:show="show" :width="560" :title="$t('local.manageSources')">
+    <n-space class="import-local-music" vertical :size="16">
       <n-space :size="10">
         <n-button
           strong
@@ -129,10 +121,11 @@
         </n-list-item>
       </n-list>
     </n-space>
-  </n-modal>
+  </GlassSheet>
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { DeleteFour, FileMusic, FolderOpen, Refresh } from "@icon-park/vue-next";
 import { useI18n } from "vue-i18n";
 import { useDownloadStore, useLocalLibraryStore } from "@/store";

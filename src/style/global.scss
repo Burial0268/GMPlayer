@@ -6,7 +6,10 @@
 
 input,
 textarea,
-[contenteditable="true"] {
+[contenteditable="true"],
+/* 允许复制的文本（评论、标题、简介、签名）；`*` 会给每个后代重新设 none，所以后代也要放行 */
+.selectable,
+.selectable * {
   -webkit-user-select: text;
   user-select: text;
 }
@@ -48,7 +51,12 @@ textarea,
   --font-family-ui:
     system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei",
     sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-  --font-family-mono: ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, monospace;
+  // CJK faces before the generic: a glyph no listed font has does not fall back to the
+  // parent's UI font but to the browser's own `monospace` default, which on Chinese Windows
+  // is a Song/FangSong face. `.s-label` and `.detail-kind` carry Chinese text in this stack.
+  --font-family-mono:
+    ui-monospace, "SFMono-Regular", "Cascadia Code", Consolas, "PingFang SC", "Microsoft YaHei",
+    "Noto Sans CJK SC", "Noto Sans SC", monospace;
   --font-size-caption: 0.75rem;
   --font-size-footnote: 0.8125rem;
   --font-size-body: 0.9375rem;
@@ -232,7 +240,8 @@ textarea,
   input,
   textarea,
   [contenteditable="true"],
-  .selectable {
+  .selectable,
+  .selectable * {
     -webkit-user-select: text;
     user-select: text;
     -webkit-touch-callout: default;
@@ -244,6 +253,20 @@ textarea,
   input,
   select {
     touch-action: manipulation;
+  }
+  /* 小于 44px 的点击目标：透明的 ::after 把可点区域撑到 44×44，外观不变。
+     只给周围留有余量的控件用——可点区域会盖住 22px 以内的邻居。 */
+  .touch-target {
+    position: relative;
+    &::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: max(100%, 44px);
+      height: max(100%, 44px);
+      transform: translate(-50%, -50%);
+    }
   }
   :where(button:not(:disabled), [role="button"], .n-button) {
     transition: transform var(--duration-150, 150ms) var(--ease-out, ease-out);
@@ -325,7 +348,7 @@ html[lang^="en"] :is(.s-label, .detail-kind) {
 }
 
 /* 等宽 + 表格数字：序号、时长、计数。
-   等宽栈里没有 CJK 字形，汉字会自然回落到 UI 字体，所以只影响数字本身。 */
+   汉字由等宽栈里的 CJK 字体接住（见 --font-family-mono），所以只影响数字本身。 */
 .s-num {
   font-family: var(--font-family-mono);
   font-variant-numeric: tabular-nums;
@@ -727,6 +750,12 @@ html.has-floating-titlebar {
 }
 
 // 文本超出隐藏
+/* 用户写的长文本（评论、简介）：保留换行，超长链接 / 连续字符在容器内折行 */
+.long-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .text-hidden {
   display: -webkit-box !important;
   -webkit-box-orient: vertical;
@@ -856,105 +885,4 @@ html.has-floating-titlebar {
 /* 小于768px时 (移动端 - 无侧边栏) */
 @media (max-width: 768px) {
   @include changeWidth($padding: 4vw);
-}
-
-// Bottom action sheet (n-drawer `class="data-list-action-drawer"`): song lists and the mobile
-// player's ⋯ menu. Global because the drawer teleports to <body> from more than one component.
-.n-drawer-container .n-drawer.data-list-action-drawer {
-  --drawer-menu-bg: rgba(var(--app-shell-rgb, 242, 242, 244), 0.82);
-  --drawer-menu-border: var(--acrylic-border, rgba(0, 0, 0, 0.08));
-  --drawer-item-hover: color-mix(in srgb, var(--content-panel-bg, #fff) 82%, var(--main-color) 18%);
-
-  overflow: hidden;
-  border-radius: var(--radius-panel) var(--radius-panel) 0 0;
-  background-color: var(--drawer-menu-bg);
-  -webkit-backdrop-filter: blur(26px) saturate(180%);
-  backdrop-filter: blur(26px) saturate(180%);
-  box-shadow:
-    0 -18px 46px rgb(0 0 0 / 14%),
-    inset 0 0 0 1px var(--acrylic-border, rgba(255, 255, 255, 0.14));
-}
-
-.data-list-action-drawer-header {
-  padding: 16px 20px 12px;
-  border-bottom: 1px solid var(--drawer-menu-border);
-}
-
-.data-list-action-drawer-body {
-  padding: 0;
-}
-
-.data-list-action-drawer .drawer-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
-}
-
-.data-list-action-drawer .drawer-menu-divider {
-  height: 1px;
-  margin: 6px 8px;
-  background-color: var(--drawer-menu-border);
-}
-
-.data-list-action-drawer .drawer-menu {
-  .item {
-    display: flex;
-    align-items: center;
-    flex-direction: row;
-    min-height: 44px;
-    padding: 0 12px;
-    border-radius: var(--radius-md);
-    cursor: pointer;
-    transition:
-      background-color var(--duration-150) var(--ease-out),
-      color var(--duration-150) var(--ease-out),
-      transform var(--duration-150) var(--ease-out);
-
-    &:active {
-      color: var(--main-color);
-      background-color: var(--drawer-item-hover);
-    }
-
-    @media (hover: hover) {
-      &:hover {
-        color: var(--main-color);
-        background-color: var(--drawer-item-hover);
-      }
-    }
-
-    &:active {
-      transform: scale(0.98);
-    }
-
-    &.info-item {
-      color: var(--n-text-color-2);
-    }
-
-    &.danger {
-      &:active {
-        color: var(--n-error-color, #d03050);
-        background-color: color-mix(in srgb, var(--n-error-color, #d03050) 12%, transparent);
-      }
-
-      @media (hover: hover) {
-        &:hover {
-          color: var(--n-error-color, #d03050);
-          background-color: color-mix(in srgb, var(--n-error-color, #d03050) 12%, transparent);
-        }
-      }
-    }
-
-    .n-icon {
-      margin-right: 12px;
-      color: var(--main-color);
-    }
-
-    .n-text {
-      display: flex;
-      flex-direction: row;
-      min-width: 0;
-      transform: translateY(1px);
-    }
-  }
 }

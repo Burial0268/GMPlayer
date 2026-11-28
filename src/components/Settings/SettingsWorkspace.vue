@@ -133,13 +133,7 @@
       </template>
     </SettingsPanel>
 
-    <n-modal
-      v-model:show="showThemeCustom"
-      class="s-modal"
-      preset="card"
-      :title="t('general.name.customTheme')"
-      :bordered="false"
-    >
+    <GlassSheet v-model:show="showThemeCustom" :title="t('general.name.customTheme')">
       <n-form class="color-custom" :model="customColorData">
         <n-form-item :label="t('general.name.primaryColor')" path="primaryColor">
           <n-color-picker v-model:value="customColorData.primaryColor" />
@@ -158,21 +152,14 @@
         </n-form-item>
       </n-form>
       <template #footer>
-        <n-space justify="end">
-          <n-button @click="showThemeCustom = false">{{ t("general.dialog.cancel") }}</n-button>
-          <n-button type="primary" @click="setThemeCustom">
-            {{ t("general.name.customTheme") }}
-          </n-button>
-        </n-space>
+        <n-button @click="showThemeCustom = false">{{ t("general.dialog.cancel") }}</n-button>
+        <n-button type="primary" @click="setThemeCustom">
+          {{ t("general.name.customTheme") }}
+        </n-button>
       </template>
-    </n-modal>
+    </GlassSheet>
 
-    <n-modal
-      v-model:show="showEploryModal"
-      class="s-modal"
-      preset="dialog"
-      :title="t('setting.eploryBackgroundConfig')"
-    >
+    <GlassSheet v-model:show="showEploryModal" :title="t('setting.eploryBackgroundConfig')">
       <n-form class="settings-form">
         <n-form-item :label="t('setting.eplorySetting.fps.title')">
           <n-input-number v-model:value="fps" :min="0.1" />
@@ -203,14 +190,9 @@
           <template #feedback>{{ t("setting.eplorySetting.albumImageUrl.tip") }}</template>
         </n-form-item>
       </n-form>
-    </n-modal>
+    </GlassSheet>
 
-    <n-modal
-      v-model:show="showBlurModal"
-      class="s-modal"
-      preset="dialog"
-      :title="t('setting.blurBackgroundConfig')"
-    >
+    <GlassSheet v-model:show="showBlurModal" :title="t('setting.blurBackgroundConfig')">
       <n-form class="settings-form">
         <n-form-item :label="t('setting.blurFps')">
           <n-input-number v-model:value="fps" :min="1" :max="60" />
@@ -229,11 +211,12 @@
           <template #feedback>{{ t("setting.blurRenderScaleTip") }}</template>
         </n-form-item>
       </n-form>
-    </n-modal>
+    </GlassSheet>
   </div>
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { NCheckbox, NText } from "naive-ui";
 import { storeToRefs } from "pinia";
 import { useI18n } from "vue-i18n";
@@ -434,47 +417,9 @@ const handleAction = (key: string) => {
   min-height: 0;
   overflow: hidden;
 
+  // Inside LyricSetting's GlassSheet: the sheet's own colours, the panel scrolls.
   &.is-modal {
     overflow: visible;
-    color: #fff;
-
-    :deep(.settings-search .n-input-wrapper),
-    :deep(.set-item) {
-      color: #fff;
-      background-color: rgb(255 255 255 / 0.18);
-      border-color: transparent;
-    }
-
-    :deep(.settings-nav-item) {
-      color: rgb(255 255 255 / 0.76);
-
-      &.active {
-        color: #fff;
-        background-color: rgb(255 255 255 / 0.16);
-      }
-
-      @media (hover: hover) {
-        &:hover {
-          color: #fff;
-          background-color: rgb(255 255 255 / 0.16);
-        }
-      }
-    }
-
-    :deep(.n-base-selection),
-    :deep(.n-input),
-    :deep(.n-input-number) {
-      --n-color: rgb(255 255 255 / 0.18) !important;
-      --n-color-focus: rgb(255 255 255 / 0.22) !important;
-      --n-text-color: #fff !important;
-      --n-border: 1px solid rgb(255 255 255 / 0.14) !important;
-      --n-border-hover: 1px solid rgb(255 255 255 / 0.26) !important;
-      --n-border-focus: 1px solid rgb(255 255 255 / 0.34) !important;
-    }
-
-    :deep(.n-switch.n-switch--active .n-switch__rail) {
-      background-color: rgb(255 255 255 / 0.48);
-    }
   }
 }
 

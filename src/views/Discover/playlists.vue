@@ -15,63 +15,54 @@
         </template>
         {{ catName }}
       </n-button>
-      <n-modal
-        class="s-modal"
-        v-model:show="catModalShow"
-        preset="card"
-        :title="$t('general.name.playlistType')"
-        :bordered="false"
-      >
+      <GlassSheet v-model:show="catModalShow" :title="$t('general.name.playlistType')">
         <template #header>
-          {{ $t("general.name.playlistType") }}
-          <n-tag
-            round
-            class="tag"
-            :type="catName == '全部歌单' ? 'primary' : 'default'"
-            :style="{
-              marginLeft: '12px',
-              fontSize: '12px',
-              transform: 'translateY(-2px)',
-              cursor: 'pointer',
-            }"
-            :bordered="false"
-            @click="changeTagName('全部歌单')"
-          >
-            {{ $t("general.name.allPLaylist") }}
-          </n-tag>
+          <div class="sheet-song">
+            <div class="sheet-song-text">
+              <div class="sheet-song-name">{{ $t("general.name.playlistType") }}</div>
+            </div>
+            <n-tag
+              round
+              class="tag"
+              :type="catName == '全部歌单' ? 'primary' : 'default'"
+              :style="{ fontSize: '12px', cursor: 'pointer' }"
+              :bordered="false"
+              @click="changeTagName('全部歌单')"
+            >
+              {{ $t("general.name.allPLaylist") }}
+            </n-tag>
+          </div>
         </template>
-        <n-scrollbar>
-          <div class="all-cat" v-if="music.catList?.sub[0]">
-            <n-list>
-              <n-list-item v-for="(cat, key) in music.catList.categories" :key="cat">
-                <template #prefix>
-                  <n-text class="type"> {{ cat }} </n-text>
-                </template>
-                <n-space>
-                  <n-tag
-                    round
-                    class="tag"
-                    size="large"
-                    v-for="item in music.catList.sub.filter((v) => v.category === key)"
-                    :key="item"
-                    :bordered="false"
-                    :type="item.name == catName ? 'primary' : 'default'"
-                    @click="changeTagName(item.name)"
-                  >
-                    {{ item.name }}
-                    <template #icon>
-                      <n-icon class="icon" v-if="item.hot" :component="LocalFireDepartmentRound" />
-                    </template>
-                  </n-tag>
-                </n-space>
-              </n-list-item>
-            </n-list>
-          </div>
-          <div class="error" v-else>
-            {{ $t("general.message.acquisitionFailed") }}
-          </div>
-        </n-scrollbar>
-      </n-modal>
+        <div class="all-cat" v-if="music.catList?.sub[0]">
+          <n-list>
+            <n-list-item v-for="(cat, key) in music.catList.categories" :key="cat">
+              <template #prefix>
+                <n-text class="type"> {{ cat }} </n-text>
+              </template>
+              <n-space>
+                <n-tag
+                  round
+                  class="tag"
+                  size="large"
+                  v-for="item in music.catList.sub.filter((v) => v.category === key)"
+                  :key="item"
+                  :bordered="false"
+                  :type="item.name == catName ? 'primary' : 'default'"
+                  @click="changeTagName(item.name)"
+                >
+                  {{ item.name }}
+                  <template #icon>
+                    <n-icon class="icon" v-if="item.hot" :component="LocalFireDepartmentRound" />
+                  </template>
+                </n-tag>
+              </n-space>
+            </n-list-item>
+          </n-list>
+        </div>
+        <div class="error" v-else>
+          {{ $t("general.message.acquisitionFailed") }}
+        </div>
+      </GlassSheet>
       <!-- 精品歌单开关 -->
       <n-space
         v-if="getHaveHqPlaylists(music.highqualityCatList, catName.toString())"
@@ -81,9 +72,10 @@
         <n-switch v-model:value="hqPLayListOpen" @update:value="hqPLayListChange" :round="false" />
       </n-space>
     </div>
-    <CoverLists :listData="playlistsData" />
+    <PageLoadState v-if="listFailed" error @retry="reloadList" />
+    <CoverLists v-else :listData="playlistsData" :loading="listLoading" />
     <Pagination
-      v-if="playlistsData[0] && !hqPLayListOpen"
+      v-if="totalCount && !hqPLayListOpen && !listFailed"
       :totalCount="totalCount"
       :pageNumber="pageNumber"
       @pageSizeChange="pageSizeChange"
@@ -91,7 +83,7 @@
     />
     <n-space justify="center">
       <n-button
-        v-if="hqPLayListOpen && hasMore"
+        v-if="hqPLayListOpen && hasMore && !listFailed && playlistsData.length"
         class="more"
         size="large"
         strong
@@ -112,6 +104,7 @@
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import { ChevronRightRound, LocalFireDepartmentRound } from "@vicons/material";
 import { useRoute } from "vue-router";
 import { useLayerNavigation } from "@/utils/navigation";
@@ -121,6 +114,7 @@ import { formatNumber } from "@/utils/timeTools";
 import { useI18n } from "vue-i18n";
 import CoverLists from "@/components/DataList/CoverLists.vue";
 import Pagination from "@/components/Pagination/index.vue";
+import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 
 const { t } = useI18n();
 const route = useRoute();
@@ -141,6 +135,11 @@ const pageNumber = ref(route.query.page ? Number(route.query.page) : 1);
 const hqPLayListOpen = ref(route.query.hq ? (route.query.hq === "true" ? true : false) : false);
 const hasMore = ref(true);
 const loading = ref(false);
+// 列表本身的加载态（骨架屏 / 空状态 / 错误）；`loading` 只管「加载更多」按钮。
+const listLoading = ref(true);
+const listFailed = ref(false);
+// 只认最新一次请求：快速切分类时，迟到的旧结果不能写进新分类的列表。
+let requestSerial = 0;
 
 // 获取是否有精品歌单
 const getHaveHqPlaylists = (array: any[], name: string) => {
@@ -166,54 +165,85 @@ const hqPLayListChange = (val: any) => {
   });
 };
 
-// 获取歌单数据
+// 获取歌单数据（换页 / 换分类都先清空，期间显示骨架屏，不留旧页）
 const getPlaylistData = (cat = "全部歌单", limit = 30, offset = 0) => {
-  getTopPlaylist(cat, limit, offset).then((res) => {
-    // 数据总数
-    totalCount.value = res.total;
-    // 列表数据
-    if (res.playlists[0]) {
-      playlistsData.value = res.playlists.map((v: any) => ({
+  const serial = ++requestSerial;
+  playlistsData.value = [];
+  listLoading.value = true;
+  listFailed.value = false;
+  getTopPlaylist(cat, limit, offset)
+    .then((res) => {
+      if (serial !== requestSerial) return;
+      totalCount.value = res.total;
+      playlistsData.value = (res.playlists ?? []).map((v: any) => ({
         id: v.id,
         cover: v.coverImgUrl,
         name: v.name,
         artist: v.creator,
         playCount: formatNumber(v.playCount),
       }));
-    } else {
-      $message.error(t("general.message.acquisitionFailed"));
-    }
-  });
+    })
+    .catch((err) => {
+      if (serial !== requestSerial) return;
+      console.error("[discover] playlists failed", err);
+      listFailed.value = true;
+    })
+    .finally(() => {
+      if (serial === requestSerial) listLoading.value = false;
+    });
 };
 
-// 获取精品歌单数据
+// 获取精品歌单数据（按 before 追加）
 const getHqPlaylistData = (cat = "全部歌单", limit = 30) => {
-  // 获取 before
-  const before = playlistsData.value[0]
-    ? playlistsData.value[playlistsData.value.length - 1].updateTime
-    : null;
-  // 获取数据
-  getHighqualityPlaylist(cat, limit, before).then((res) => {
-    // 列表数据
-    if (res.playlists[0]) {
-      // 是否还有更多
-      hasMore.value = !!res.more;
+  const serial = ++requestSerial;
+  const append = playlistsData.value.length > 0;
+  const before = append ? playlistsData.value[playlistsData.value.length - 1].updateTime : null;
+  if (!append) {
+    listLoading.value = true;
+    listFailed.value = false;
+  }
+  getHighqualityPlaylist(cat, limit, before)
+    .then((res) => {
+      if (serial !== requestSerial) return;
+      const playlists = res.playlists ?? [];
+      hasMore.value = Boolean(res.more) && playlists.length > 0;
+      playlistsData.value.push(
+        ...playlists.map((v: any) => ({
+          id: v.id,
+          cover: v.coverImgUrl,
+          name: v.name,
+          artist: v.creator,
+          playCount: formatNumber(v.playCount),
+          updateTime: v.updateTime,
+        })),
+      );
+    })
+    .catch((err) => {
+      if (serial !== requestSerial) return;
+      console.error("[discover] high-quality playlists failed", err);
+      // 首屏失败给错误页；加载更多失败只提示，已有内容留着。
+      if (append) $message.error(t("general.message.acquisitionFailed"));
+      else listFailed.value = true;
+    })
+    .finally(() => {
+      if (serial !== requestSerial) return;
       loading.value = false;
-      // 追加数据
-      const newItems = res.playlists.map((v: any) => ({
-        id: v.id,
-        cover: v.coverImgUrl,
-        name: v.name,
-        artist: v.creator,
-        playCount: formatNumber(v.playCount),
-        updateTime: v.updateTime,
-      }));
-      playlistsData.value.push(...newItems);
-    } else {
-      hasMore.value = false;
-      $message.error(t("general.message.acquisitionFailed"));
-    }
-  });
+      listLoading.value = false;
+    });
+};
+
+// 错误页的「重新载入」
+const reloadList = () => {
+  if (hqPLayListOpen.value) {
+    playlistsData.value = [];
+    getHqPlaylistData(catName.value.toString());
+  } else {
+    getPlaylistData(
+      catName.value.toString(),
+      pagelimit.value,
+      (pageNumber.value - 1) * pagelimit.value,
+    );
+  }
 };
 
 // 更换标签名

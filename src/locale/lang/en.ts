@@ -260,6 +260,7 @@ const messages: Record<string, unknown> = {
       noKeywords: "Incomplete parameters",
       filterInList: "Filter this list",
       noSearchResult: "No matching songs",
+      noPlaylistResult: "No matching playlists",
       colTitle: "Title",
       colDuration: "Time",
       goBack: "Back to previous page",

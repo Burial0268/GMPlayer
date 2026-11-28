@@ -22,9 +22,9 @@
       <header class="setting-header">
         <h1 class="title" data-navigation-title="page">{{ detailTitle }}</h1>
       </header>
-      <main class="content">
+      <div class="content">
         <SettingsWorkspace :section="detail" variant="page" :searchable="false" />
-      </main>
+      </div>
     </template>
   </div>
 
@@ -36,13 +36,13 @@
       </div>
     </header>
 
-    <main class="content">
+    <div class="content">
       <SettingsWorkspace
         :active="activeSection"
         variant="page"
         @update:active="handleActiveUpdate"
       />
-    </main>
+    </div>
   </div>
 </template>
 

@@ -14,21 +14,21 @@
         <RouteShadow class="shadow" :src="getCoverUrl(playListDetail.coverImgUrl, 1024)" />
       </RouteArtwork>
       <div class="meta">
-        <div class="title">
+        <div class="title selectable">
           <span v-content-intro class="detail-kind">{{ t("general.name.playlist") }}</span>
-          <n-text class="name text-hidden" data-navigation-title="page">{{
-            playListDetail!.name
-          }}</n-text>
+          <n-text class="name" data-navigation-title="page">
+            <OverflowMarquee :key="playListDetail!.id">{{ playListDetail!.name }}</OverflowMarquee>
+          </n-text>
           <n-text v-content-intro class="creator">{{ playListDetail!.creator.nickname }}</n-text>
         </div>
         <div v-content-intro class="detail-stats">
           <div class="num" v-if="playListDetail && playListDetail.createTime">
             <n-icon :depth="3" :component="Newlybuild" />
-            <n-text v-html="getLongTime(playListDetail.createTime)" />
+            <n-text>{{ getLongTime(playListDetail.createTime) }}</n-text>
           </div>
           <div class="num" v-if="playListDetail && playListDetail.updateTime">
             <n-icon :depth="3" :component="Write" />
-            <n-text v-html="getLongTime(playListDetail.updateTime)" />
+            <n-text>{{ getLongTime(playListDetail.updateTime) }}</n-text>
           </div>
           <div class="num" v-if="totalCount">
             <n-icon :depth="3" :component="MusicList" />
@@ -39,7 +39,7 @@
           <span class="name">{{
             t("general.name.desc", { name: t("general.name.playlist") })
           }}</span>
-          <span class="desc text-hidden">
+          <span ref="descRef" class="desc text-hidden selectable">
             {{
               playListDetail && playListDetail.description
                 ? playListDetail.description
@@ -51,9 +51,7 @@
             block
             strong
             secondary
-            v-if="
-              playListDetail && playListDetail.description && playListDetail.description.length > 70
-            "
+            v-if="descOverflow"
             @click="playListDescShow = true"
           >
             {{ t("general.name.allDesc") }}
@@ -80,18 +78,33 @@
             </template>
             {{ t("general.name.play") }}
           </n-button>
-          <n-dropdown
+          <ActionMenu
             placement="right-start"
             trigger="click"
             :show-arrow="true"
             :options="dropdownOptions"
           >
+            <template #header>
+              <div class="sheet-song">
+                <img
+                  class="sheet-cover"
+                  :src="getCoverUrl(playListDetail.coverImgUrl, 128)"
+                  alt=""
+                />
+                <div class="sheet-song-text">
+                  <div class="sheet-song-name text-hidden">{{ playListDetail.name }}</div>
+                  <div class="sheet-song-artists text-hidden">
+                    {{ playListDetail.creator?.nickname }}
+                  </div>
+                </div>
+              </div>
+            </template>
             <n-button strong secondary circle>
               <template #icon>
                 <n-icon :component="More" />
               </template>
             </n-button>
-          </n-dropdown>
+          </ActionMenu>
         </n-space>
       </div>
     </div>
@@ -105,17 +118,15 @@
         <n-space class="time">
           <div class="num">
             <n-icon :depth="3" :component="Newlybuild" />
-            <n-text
-              v-if="playListDetail && playListDetail.createTime"
-              v-html="getLongTime(playListDetail.createTime)"
-            />
+            <n-text v-if="playListDetail && playListDetail.createTime">{{
+              getLongTime(playListDetail.createTime)
+            }}</n-text>
           </div>
           <div class="num">
             <n-icon :depth="3" :component="Write" />
-            <n-text
-              v-if="playListDetail && playListDetail.updateTime"
-              v-html="getLongTime(playListDetail.updateTime)"
-            />
+            <n-text v-if="playListDetail && playListDetail.updateTime">{{
+              getLongTime(playListDetail.updateTime)
+            }}</n-text>
           </div>
         </n-space>
       </div>
@@ -152,17 +163,12 @@
         @reach-end="hydrateMore"
       />
       <!-- 歌单简介 -->
-      <n-modal
-        class="s-modal"
+      <GlassSheet
         v-model:show="playListDescShow"
-        preset="card"
         :title="t('general.name.desc', { name: t('general.name.playlist') })"
-        :bordered="false"
       >
-        <n-scrollbar v-if="hasPlaylistDescription">
-          <n-text v-html="playlistDescriptionHtml" />
-        </n-scrollbar>
-      </n-modal>
+        <n-text class="selectable long-text">{{ playListDetail.description }}</n-text>
+      </GlassSheet>
     </div>
   </div>
   <div class="title" v-else-if="!playListId">
@@ -177,11 +183,13 @@
 </template>
 
 <script setup lang="ts">
+import GlassSheet from "@/components/Common/GlassSheet.vue";
 import DetailPageSkeleton from "@/components/Navigation/DetailPageSkeleton.vue";
 import RouteArtwork from "@/components/Navigation/RouteArtwork.vue";
 import PageLoadState from "@/components/Navigation/PageLoadState.vue";
 import RouteShadow from "@/components/Navigation/RouteShadow.vue";
 import { useContentIntro } from "@/composables/useContentIntro";
+import { useTextOverflow } from "@/composables/useTextOverflow";
 import { useLayerNavigation } from "@/utils/navigation";
 import type { DropdownMixedOption } from "naive-ui/es/dropdown/src/interface";
 import { NIcon, NText } from "naive-ui";
@@ -215,6 +223,8 @@ import {
 import { useI18n } from "vue-i18n";
 import DataLists from "@/components/DataList/DataLists.vue";
 import getCoverUrl from "@/utils/ncm/getCoverUrl";
+import ActionMenu from "@/components/Common/ActionMenu.vue";
+import OverflowMarquee from "@/components/Common/OverflowMarquee.vue";
 import { alignListUnderToolbar } from "@/utils/ui/listFilterScroll";
 
 const { t } = useI18n();
@@ -322,9 +332,8 @@ const hasPlaylistDescription = computed(
   () => !!playListDetail.value && !!playListDetail.value.description,
 );
 
-const playlistDescriptionHtml = computed(
-  () => playListDetail.value?.description?.replace(/\n/g, "<br>") ?? "",
-);
+const descRef = ref<HTMLElement | null>(null);
+const descOverflow = useTextOverflow(descRef, () => playListDetail.value?.description);
 
 const normalizePlaylistId = (id: string | number | string[]) =>
   Number(Array.isArray(id) ? id[0] : id);
@@ -1193,6 +1202,8 @@ watch(
 </script>
 
 <style lang="scss" scoped>
+@use "@/style/detail-song-list" as song-list;
+
 .playlist,
 .loading {
   // 悬浮搜索控件的玻璃参数。结构抄自 Nav 的悬浮按钮，但 `--floating-control-bg` 是
@@ -1319,16 +1330,15 @@ watch(
         }
 
         .name {
-          display: -webkit-box;
+          // One line; a title that does not fit scrolls (OverflowMarquee) rather than being cut.
+          display: block;
           max-width: min(780px, 100%);
+          min-width: 0;
           overflow: hidden;
+          white-space: nowrap;
           font-size: clamp(32px, 5vw, 56px);
           font-weight: 700;
           line-height: normal;
-          overflow-wrap: anywhere;
-          -webkit-box-orient: vertical;
-          -webkit-line-clamp: 2;
-          line-clamp: 2;
         }
 
         .creator {
@@ -1453,97 +1463,7 @@ watch(
       display: none;
     }
 
-    :deep(.datalists) {
-      // 列宽的唯一出处：`.songs` 的行和 `.song-list-head` 的列头都读这组变量，
-      // 所以不可能出现「改了行没改列头」的错位。
-      // name:album 给到 1.6:1（NCM 官方大致是这个比例）——两边都 flex:1 会把专辑名
-      // 顶到正中间，中间空一大段。
-      --song-lead-size: 38px;
-      --song-lead-gap: 14px;
-      --song-action-width: 76px;
-      --song-time-width: 46px;
-      --song-name-flex: 1.6;
-      --song-album-flex: 1;
-      --song-row-padding-x: 12px;
-
-      --detail-song-list-radius: var(--radius-md);
-
-      margin-top: 2px;
-    }
-
-    :deep(.datalists .songs) {
-      --n-color: transparent;
-      --n-border-color: transparent;
-
-      margin-bottom: 0;
-      border: 0;
-      border-radius: 0;
-      background-color: transparent;
-      box-shadow: none;
-    }
-
-    // 只用 `song-row-*` 类，不用 `:nth-child`。页面窗口模式下行被包在
-    // `.song-plain-list` 里且前面有一个占位块，`:nth-child` 的奇偶会整体错位，
-    // 而这些类是按**绝对下标**打的，滚到哪里都对。
-    :deep(.datalists .songs.song-row-odd) {
-      background-color: color-mix(in srgb, var(--n-text-color) 3%, transparent);
-    }
-
-    :deep(.datalists .songs.song-row-even) {
-      background-color: color-mix(in srgb, var(--n-text-color) 6%, transparent);
-    }
-
-    :deep(.datalists .songs.song-row-first) {
-      border-radius: var(--detail-song-list-radius) var(--detail-song-list-radius) 0 0;
-    }
-
-    :deep(.datalists .songs.song-row-last) {
-      border-radius: 0 0 var(--detail-song-list-radius) var(--detail-song-list-radius);
-    }
-
-    :deep(.datalists .songs.song-row-single) {
-      border-radius: var(--detail-song-list-radius);
-    }
-
-    @media (hover: hover) {
-      :deep(.datalists .songs:hover) {
-        background-color: color-mix(in srgb, var(--n-text-color) 10%, transparent);
-        box-shadow: none;
-      }
-    }
-
-    :deep(.datalists .songs.play) {
-      background-color: color-mix(in srgb, var(--main-color) 13%, transparent);
-    }
-
-    :deep(.datalists .songs .n-card__content) {
-      min-height: 52px;
-      padding: 8px var(--song-row-padding-x) !important;
-    }
-
-    :deep(.datalists .songs .pic),
-    :deep(.datalists .songs .num) {
-      border-radius: var(--radius-sm);
-      font-size: 13px;
-    }
-
-    :deep(.datalists .songs .name .title) {
-      font-size: 14px;
-    }
-
-    :deep(.datalists .songs .name .meta) {
-      font-size: 12px;
-    }
-
-    :deep(.datalists .songs .album) {
-      font-size: 13px;
-      opacity: 0.72;
-    }
-
-    :deep(.datalists .songs .time) {
-      font-size: 12px;
-      opacity: 0.64;
-    }
+    @include song-list.rows;
 
     :deep(.pagination) {
       margin-top: 18px;
@@ -1696,12 +1616,6 @@ watch(
     }
 
     .right {
-      :deep(.datalists) {
-        --song-lead-size: 42px;
-        --song-lead-gap: 11px;
-        --song-row-padding-x: 6px;
-      }
-
       // 窄屏上「靠右的窄输入框 + 左边一大片空」很怪，而且手指要伸到角上。
       // 直接占满一行，也就不需要聚焦展开了。
       // 填充抬高、描边收紧在根的 token 块里按断点声明（见文件上方），这里不重复。
@@ -1716,25 +1630,6 @@ watch(
         &.has-value {
           width: 100%;
         }
-      }
-
-      :deep(.datalists .songs) {
-        margin-bottom: 0;
-        border-radius: 0;
-      }
-
-      :deep(.datalists .songs .n-card__content) {
-        min-height: 58px;
-        padding: 9px var(--song-row-padding-x) !important;
-      }
-
-      :deep(.datalists .songs .name) {
-        padding-right: 8px;
-      }
-
-      :deep(.datalists .songs .album),
-      :deep(.datalists .songs .time) {
-        display: none;
       }
     }
   }

@@ -566,14 +566,24 @@ onMounted(() => {
       }
     })
     .catch((err) => {
+      // 请求失败不等于退出登录：保留本地登录态，留在当前页，只提示。以前这里跳 /500，
+      // 接口一抖整个应用就被顶掉。
       console.error(t("general.message.acquisitionFailed"), err);
       $message.error(t("general.message.acquisitionFailed"));
-      router.push("/500");
-      return false;
     });
 
-  // 获取喜欢音乐列表
-  music.setLikeList();
+  // 喜欢音乐列表：启动、登录、换号、退出都要重拉（退出时清空），见下面的 watch。
+  watch(
+    () => (user.userLogin ? user.getUserData?.userId : null),
+    () => music.setLikeList(),
+    {
+      immediate: true,
+    },
+  );
+  // 别的设备上收藏 / 取消的歌只能靠回到前台时重拉才看得到。
+  document.addEventListener("visibilitychange", refreshLikeListOnForeground);
+  // 桌面端从托盘恢复不触发 visibilitychange（hide() 不改可见性），靠 focus 补上。
+  window.addEventListener("focus", refreshLikeListOnForeground);
 
   // 本地库的来源 / 歌单 / 收藏。
   //
@@ -625,7 +635,17 @@ onMounted(() => {
   }
 });
 
+// 与 ncm-core 对 likelist 的缓存时长一致：更短也只会打在缓存上。
+const LIKE_LIST_FOREGROUND_REFRESH_MS = 2 * 60 * 1000;
+const refreshLikeListOnForeground = () => {
+  if (document.visibilityState === "visible" && user.userLogin) {
+    music.refreshLikeListIfStale(LIKE_LIST_FOREGROUND_REFRESH_MS);
+  }
+};
+
 onBeforeUnmount(() => {
+  document.removeEventListener("visibilitychange", refreshLikeListOnForeground);
+  window.removeEventListener("focus", refreshLikeListOnForeground);
   inlineQueueMediaQuery?.removeEventListener("change", syncInlineQueueLayout);
   window.removeEventListener("keydown", spacePlayOrPause);
   if (glassRaf) cancelAnimationFrame(glassRaf);

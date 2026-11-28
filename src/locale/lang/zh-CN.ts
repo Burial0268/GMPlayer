@@ -262,6 +262,7 @@ const messages: Record<string, unknown> = {
       // 这份列表。两个语义各自有图标（放大镜 vs 漏斗），移动端两者同屏也不会读成重复。
       filterInList: "筛选这份列表",
       noSearchResult: "没有匹配的歌曲",
+      noPlaylistResult: "没有匹配的歌单",
       colTitle: "标题",
       colDuration: "时长",
       goBack: "返回上一级",
